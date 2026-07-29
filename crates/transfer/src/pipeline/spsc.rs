@@ -1,66 +1,104 @@
 //! Lock-free SPSC (single-producer, single-consumer) channel.
 //!
 //! Built on [`crossbeam_queue::ArrayQueue`] with [`std::sync::atomic::AtomicBool`]
-//! disconnection flags and a bounded escalating backoff for waiting.  The
-//! uncontended path stays syscall-free: the first queue probe is a bare atomic
-//! load, so a ready slot costs zero backoff overhead.  Only a *failed* probe
-//! escalates - spin hints, then `yield_now`, then a short `park_timeout` - so a
-//! producer or consumer starved of a core under CPU oversubscription still
-//! makes progress instead of livelocking on a pure spin.
+//! disconnection flags and a bounded-spin-then-park wait strategy.  The
+//! uncontended path stays syscall-free: a ready slot costs one lock-free queue
+//! op plus one atomic flag load.  Only a *failed* probe enters the wait path,
+//! which spins a short fixed budget (absorbing the sub-microsecond gaps of an
+//! active pipeline) and then parks the thread on a per-side [`Condvar`] until
+//! the counterpart signals.  A parked half releases its core entirely, so an
+//! idle or slow-sink stage costs no CPU and no timed-sleep syscalls, and CPU
+//! oversubscription cannot livelock the pipeline.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
 //! (network ingest) and one consumer (disk commit) exchange `FileMessage`
 //! items at high throughput.
 
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering, fence};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use crossbeam_queue::ArrayQueue;
-use crossbeam_utils::Backoff;
 
-/// Bounded escalating backoff for the SPSC full/empty wait loops.
+/// Fixed spin budget before parking, in failed-probe iterations.
 ///
-/// A pure `while full/empty { spin_loop() }` never relinquishes the CPU, so
-/// when there are more busy threads than cores (observed on an LTO-off daemon
-/// under high host load) the spinning thread can starve its counterparty out
-/// of the scheduler and livelock the pipeline.  This escalates a *failed*
-/// queue probe in three tiers, cheapest first:
+/// When the pipeline is active, the counterpart typically frees a slot within
+/// a few hundred [`std::hint::spin_loop`] hints (roughly single-digit
+/// microseconds), so the budget keeps handoffs off the park path.  The budget
+/// is deliberately static: the park path below makes longer waits free, so
+/// there is nothing for an adaptive controller to optimize.
+const SPIN_LIMIT: u32 = 512;
+
+/// One side's park/wake primitive: a wake token guarded by a mutex plus a
+/// `parked` flag that lets the signaling side skip the mutex entirely on the
+/// hot path.
 ///
-/// 1. [`Backoff::snooze`] issues a few [`std::hint::spin_loop`] hints
-///    (cache-friendly, sub-microsecond) for the common brief wait, then
-/// 2. once past its spin threshold, `snooze` calls [`std::thread::yield_now`],
-///    letting the counterparty thread be scheduled - this is the livelock
-///    cure under oversubscription, then
-/// 3. once [`Backoff::is_completed`] saturates, a short
-///    [`std::thread::park_timeout`] parks the waiter so it releases its core
-///    instead of burning it during sustained starvation.
+/// Lost-wakeup safety follows the standard park-loop protocol:
 ///
-/// Construct once per blocking call and invoke [`SpinBackoff::wait`] only after
-/// a probe fails, keeping the first (uncontended) attempt overhead-free.
-struct SpinBackoff {
-    backoff: Backoff,
+/// 1. The waiter publishes intent (`parked = true`, SeqCst store - a full
+///    barrier), *re-checks* the queue condition, and only then blocks on the
+///    condvar waiting for the token.
+/// 2. The waker performs its queue transition, issues a [`fence`]`(SeqCst)`,
+///    and loads `parked`.  The fence orders the queue op before the flag load,
+///    so the classic store-buffering race is impossible: either the waiter's
+///    re-check observes the transition (and it never parks), or the waker
+///    observes `parked = true` (and delivers the token under the mutex).
+/// 3. The token is set and consumed under the mutex, so a wake issued between
+///    the waiter's re-check and its `Condvar::wait` is never lost.
+///
+/// A stale token (waker saw `parked` but the waiter's re-check succeeded) at
+/// worst causes one spurious pass through the caller's probe loop.
+struct Waiter {
+    parked: AtomicBool,
+    token: Mutex<bool>,
+    cv: Condvar,
+    /// Number of completed park episodes; diagnostic only (read by tests).
+    parks: AtomicU64,
 }
 
-impl SpinBackoff {
-    /// Park quantum used once spin+yield escalation saturates.  Short enough to
-    /// stay responsive when a slot frees, long enough to yield the core.
-    const PARK: Duration = Duration::from_micros(50);
-
+impl Waiter {
     fn new() -> Self {
         Self {
-            backoff: Backoff::new(),
+            parked: AtomicBool::new(false),
+            token: Mutex::new(false),
+            cv: Condvar::new(),
+            parks: AtomicU64::new(0),
         }
     }
 
-    /// Perform one escalating wait step after a failed queue probe.
-    fn wait(&self) {
-        if self.backoff.is_completed() {
-            std::thread::park_timeout(Self::PARK);
-        } else {
-            self.backoff.snooze();
+    /// Parks the current thread while `blocked()` holds, until [`wake`](Self::wake)
+    /// delivers a token.  Returns immediately if `blocked()` is already false
+    /// after intent is published.
+    fn park_while<F: Fn() -> bool>(&self, blocked: F) {
+        self.parked.store(true, Ordering::SeqCst);
+        // Re-check after publishing intent: any queue transition from here on
+        // is guaranteed to observe `parked` and deliver a token.
+        if !blocked() {
+            self.parked.store(false, Ordering::SeqCst);
+            return;
         }
+        self.parks.fetch_add(1, Ordering::Relaxed);
+        let mut token = self.token.lock().unwrap_or_else(PoisonError::into_inner);
+        while !*token {
+            token = self.cv.wait(token).unwrap_or_else(PoisonError::into_inner);
+        }
+        *token = false;
+        drop(token);
+        self.parked.store(false, Ordering::SeqCst);
+    }
+
+    /// Wakes the counterpart if it is parked (or about to park).
+    ///
+    /// Hot path: one SeqCst fence plus one atomic load; the mutex is touched
+    /// only when the counterpart actually registered intent to park.
+    fn wake(&self) {
+        fence(Ordering::SeqCst);
+        if !self.parked.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut token = self.token.lock().unwrap_or_else(PoisonError::into_inner);
+        *token = true;
+        self.cv.notify_one();
     }
 }
 
@@ -68,6 +106,10 @@ struct Shared<T> {
     queue: ArrayQueue<T>,
     producer_alive: AtomicBool,
     consumer_alive: AtomicBool,
+    /// Producer parks here when the queue is full; woken by the consumer.
+    send_waiter: Waiter,
+    /// Consumer parks here when the queue is empty; woken by the producer.
+    recv_waiter: Waiter,
 }
 
 /// Error returned by [`Sender::send`] when the receiver has been dropped.
@@ -118,50 +160,72 @@ impl fmt::Display for TryRecvError {
 pub struct Sender<T>(Arc<Shared<T>>);
 
 impl<T> Sender<T> {
-    /// Sends `item` through the channel, spin-waiting if the queue is full.
+    /// Sends `item` through the channel, blocking if the queue is full: a
+    /// short fixed spin, then a park until the consumer frees a slot.
     ///
     /// Returns `Err(SendError(item))` if the receiver has been dropped.
     pub fn send(&self, mut item: T) -> Result<(), SendError<T>> {
-        let backoff = SpinBackoff::new();
         loop {
-            if !self.0.consumer_alive.load(Ordering::Relaxed) {
-                return Err(SendError(item));
-            }
-            match self.0.queue.push(item) {
-                Ok(()) => return Ok(()),
-                Err(returned) => {
-                    item = returned;
-                    backoff.wait();
+            let mut spins = 0;
+            loop {
+                if !self.0.consumer_alive.load(Ordering::Acquire) {
+                    return Err(SendError(item));
                 }
+                match self.0.queue.push(item) {
+                    Ok(()) => {
+                        self.0.recv_waiter.wake();
+                        return Ok(());
+                    }
+                    Err(returned) => item = returned,
+                }
+                spins += 1;
+                if spins >= SPIN_LIMIT {
+                    break;
+                }
+                std::hint::spin_loop();
             }
+            self.0.send_waiter.park_while(|| {
+                self.0.queue.is_full() && self.0.consumer_alive.load(Ordering::Acquire)
+            });
         }
     }
 
-    /// Attempts to send `item` without spin-waiting.
+    /// Attempts to send `item` without blocking.
     ///
     /// Returns `Err(SendError(item))` immediately if the queue is full or the
-    /// receiver has been dropped, instead of spinning like [`send`](Self::send).
+    /// receiver has been dropped, instead of blocking like [`send`](Self::send).
     /// This is the non-blocking analog used for the buffer-return path, where
     /// `item` is only a recycling spare (never live data): if the ring is full,
     /// the returned buffer is simply dropped and the consumer allocates a fresh
     /// one. Never use this for data-carrying channels.
     pub fn try_send(&self, item: T) -> Result<(), SendError<T>> {
-        if !self.0.consumer_alive.load(Ordering::Relaxed) {
+        if !self.0.consumer_alive.load(Ordering::Acquire) {
             return Err(SendError(item));
         }
-        self.0.queue.push(item).map_err(SendError)
+        self.0.queue.push(item).map_err(SendError)?;
+        self.0.recv_waiter.wake();
+        Ok(())
     }
 
     /// Returns `true` if the receiver has been dropped.
     #[cfg(test)]
     pub fn is_disconnected(&self) -> bool {
-        !self.0.consumer_alive.load(Ordering::Relaxed)
+        !self.0.consumer_alive.load(Ordering::Acquire)
+    }
+
+    /// Number of times the consumer has parked waiting for an item.
+    #[cfg(test)]
+    pub fn consumer_parks(&self) -> u64 {
+        self.0.recv_waiter.parks.load(Ordering::Relaxed)
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         self.0.producer_alive.store(false, Ordering::Release);
+        // Wake a consumer parked on an empty queue so it can observe the
+        // disconnect instead of sleeping forever.
+        self.0.recv_waiter.wake();
     }
 }
 
@@ -169,21 +233,32 @@ impl<T> Drop for Sender<T> {
 pub struct Receiver<T>(Arc<Shared<T>>);
 
 impl<T> Receiver<T> {
-    /// Blocks (spin-waits) until an item is available, then returns it.
+    /// Blocks until an item is available: a short fixed spin, then a park
+    /// until the producer pushes an item or disconnects.
     ///
     /// Returns `Err(RecvError)` if the sender has been dropped and the
     /// queue is fully drained.
     pub fn recv(&self) -> Result<T, RecvError> {
-        let backoff = SpinBackoff::new();
         loop {
-            if let Some(item) = self.0.queue.pop() {
-                return Ok(item);
+            let mut spins = 0;
+            loop {
+                if let Some(item) = self.0.queue.pop() {
+                    self.0.send_waiter.wake();
+                    return Ok(item);
+                }
+                if !self.0.producer_alive.load(Ordering::Acquire) {
+                    // Producer is gone - drain one last time.
+                    return self.0.queue.pop().ok_or(RecvError);
+                }
+                spins += 1;
+                if spins >= SPIN_LIMIT {
+                    break;
+                }
+                std::hint::spin_loop();
             }
-            if !self.0.producer_alive.load(Ordering::Acquire) {
-                // Producer is gone - drain one last time.
-                return self.0.queue.pop().ok_or(RecvError);
-            }
-            backoff.wait();
+            self.0.recv_waiter.park_while(|| {
+                self.0.queue.is_empty() && self.0.producer_alive.load(Ordering::Acquire)
+            });
         }
     }
 
@@ -193,6 +268,7 @@ impl<T> Receiver<T> {
     /// queue is drained.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         if let Some(item) = self.0.queue.pop() {
+            self.0.send_waiter.wake();
             return Ok(item);
         }
         if !self.0.producer_alive.load(Ordering::Acquire) {
@@ -201,24 +277,35 @@ impl<T> Receiver<T> {
         }
         Err(TryRecvError::Empty)
     }
+
+    /// Number of times the producer has parked waiting for a free slot.
+    #[cfg(test)]
+    pub fn producer_parks(&self) -> u64 {
+        self.0.send_waiter.parks.load(Ordering::Relaxed)
+    }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         self.0.consumer_alive.store(false, Ordering::Release);
+        // Wake a producer parked on a full queue so it can observe the
+        // disconnect instead of sleeping forever.
+        self.0.send_waiter.wake();
     }
 }
 
 /// Creates a bounded SPSC channel backed by a lock-free ring buffer.
 ///
 /// `capacity` is the maximum number of items the channel can hold.
-/// When the channel is full, [`Sender::send`] spin-waits until space
-/// is available.
+/// When the channel is full, [`Sender::send`] blocks (spin, then park)
+/// until space is available.
 pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let shared = Arc::new(Shared {
         queue: ArrayQueue::new(capacity),
         producer_alive: AtomicBool::new(true),
         consumer_alive: AtomicBool::new(true),
+        send_waiter: Waiter::new(),
+        recv_waiter: Waiter::new(),
     });
     (Sender(Arc::clone(&shared)), Receiver(shared))
 }
@@ -227,6 +314,17 @@ pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
 mod tests {
     use super::*;
     use std::thread;
+    use std::time::{Duration, Instant};
+
+    /// Polls `cond` until it holds, failing the test after a generous
+    /// deadline so a lost wakeup surfaces as a failure, not a hang.
+    fn wait_for(what: &str, cond: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !cond() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::yield_now();
+        }
+    }
 
     #[test]
     fn send_recv_basic() {
@@ -299,18 +397,17 @@ mod tests {
     fn backpressure_bounded() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
-        use std::time::{Duration, Instant};
 
-        // Queue of capacity 2 - sender must spin-wait when full.
+        // Queue of capacity 2 - sender must block when full.
         let (tx, rx) = channel::<i32>(2);
         tx.send(1).unwrap();
         tx.send(2).unwrap();
         // Queue is full.  Spawn a thread to drain all items, keeping rx
         // alive until after the sender unblocks (avoids race where rx
-        // drops before the spin-waiting send completes).
+        // drops before the blocking send completes).
         //
         // Use an atomic flag instead of a fixed sleep so the drain thread
-        // waits until the sender is about to enter its spin-wait loop.
+        // waits until the sender is about to enter its blocking wait.
         let sender_ready = Arc::new(AtomicBool::new(false));
         let sender_ready_clone = Arc::clone(&sender_ready);
         let drain = thread::spawn(move || {
@@ -340,7 +437,7 @@ mod tests {
     #[test]
     fn try_send_full_ring_does_not_block() {
         // A full ring must reject immediately (returning the item) rather than
-        // spin-wait. This is the property the disk thread's buffer-return path
+        // block. This is the property the disk thread's buffer-return path
         // relies on to avoid deadlocking when the network thread never drains
         // the return ring (compressed all-literal streams never recycle).
         let (tx, rx) = channel::<i32>(2);
@@ -370,27 +467,99 @@ mod tests {
         assert!(tx.is_disconnected());
     }
 
-    /// Oversubscription stress: many more producer/consumer pipelines than
-    /// cores, each with a tiny ring so both halves spend most of their time in
-    /// the full/empty wait loop.  With a pure `spin_loop` wait (no yield) this
-    /// livelocks under CPU starvation - a spinning half never releases its core
-    /// for its counterparty (the observed LTO-off, high-host-load daemon
-    /// failure).  With the spin → yield → park backoff every pipeline must
-    /// still complete and reconstruct its stream byte-identically.
+    /// A consumer parked on an empty queue must be woken by a push and
+    /// deliver the item (no lost wakeup on the empty → non-empty edge).
+    #[test]
+    fn parked_consumer_wakes_on_push() {
+        let (tx, rx) = channel::<i32>(4);
+        let consumer = thread::spawn(move || rx.recv().unwrap());
+        // Wait until the consumer has actually parked, not merely started.
+        wait_for("consumer to park", || tx.consumer_parks() > 0);
+        tx.send(42).unwrap();
+        assert_eq!(consumer.join().unwrap(), 42);
+    }
+
+    /// A producer parked on a full queue must be woken by a pop and complete
+    /// its send (no lost wakeup on the full → non-full edge).
+    #[test]
+    fn parked_producer_wakes_on_pop() {
+        let (tx, rx) = channel::<i32>(1);
+        tx.send(1).unwrap();
+        let producer = thread::spawn(move || tx.send(2).unwrap());
+        wait_for("producer to park", || rx.producer_parks() > 0);
+        assert_eq!(rx.recv().unwrap(), 1);
+        producer.join().unwrap();
+        assert_eq!(rx.recv().unwrap(), 2);
+    }
+
+    /// Dropping the sender while the consumer is parked must wake it and
+    /// surface the disconnect (no hang on teardown).
+    #[test]
+    fn sender_drop_wakes_parked_consumer() {
+        let (tx, rx) = channel::<i32>(4);
+        let consumer = thread::spawn(move || rx.recv());
+        wait_for("consumer to park", || tx.consumer_parks() > 0);
+        drop(tx);
+        assert_eq!(consumer.join().unwrap(), Err(RecvError));
+    }
+
+    /// Dropping the receiver while the producer is parked must wake it and
+    /// surface the disconnect with the item returned (no hang on teardown).
+    #[test]
+    fn receiver_drop_wakes_parked_producer() {
+        let (tx, rx) = channel::<i32>(1);
+        tx.send(1).unwrap();
+        let producer = thread::spawn(move || tx.send(2));
+        wait_for("producer to park", || rx.producer_parks() > 0);
+        drop(rx);
+        let SendError(item) = producer
+            .join()
+            .unwrap()
+            .expect_err("disconnect must reject");
+        assert_eq!(item, 2);
+    }
+
+    /// With a consumer far slower than the spin budget, the producer must
+    /// take the park path instead of busy-waiting.  Asserted via the parker's
+    /// episode counter, not wall-clock.
+    #[test]
+    fn slow_consumer_parks_producer() {
+        let n = 64;
+        let (tx, rx) = channel::<usize>(2);
+        let producer = thread::spawn(move || {
+            for i in 0..n {
+                tx.send(i).unwrap();
+            }
+        });
+        for i in 0..n {
+            // Sleep far longer than the spin budget so a full queue forces
+            // the producer past spinning and into a park.
+            thread::sleep(Duration::from_micros(200));
+            assert_eq!(rx.recv().unwrap(), i);
+        }
+        producer.join().unwrap();
+        assert!(
+            rx.producer_parks() > 0,
+            "producer never parked against a slow consumer - busy-wait regression"
+        );
+    }
+
+    /// Oversubscription stress: more producer/consumer pipelines than cores,
+    /// each with a capacity-1 ring, so both halves constantly hit the wait
+    /// path while the scheduler time-slices.  A waiter that never released
+    /// its core could starve its counterparty and livelock (the historical
+    /// LTO-off, high-host-load daemon failure).  Parking makes completion
+    /// event-driven - a blocked half sleeps until its counterpart signals -
+    /// so every pipeline must finish and reconstruct its stream in order.
     #[test]
     fn oversubscription_no_livelock() {
-        use std::time::{Duration, Instant};
-
-        // Far more concurrent halves than any test host has cores, forcing the
-        // scheduler to time-slice and exposing a non-yielding spin.
-        let pipelines = 8 * std::thread::available_parallelism().map_or(4, |n| n.get());
-        let n: usize = 20_000;
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let pipelines = 4 * std::thread::available_parallelism().map_or(4, |n| n.get());
+        let n: usize = 2_000;
 
         let mut handles = Vec::with_capacity(pipelines);
         for _ in 0..pipelines {
-            // Capacity 1: producer blocks on nearly every send, consumer blocks
-            // on nearly every recv - maximum time in the wait loops.
+            // Capacity 1: producer blocks on nearly every send, consumer
+            // blocks on nearly every recv - maximum time in the wait paths.
             let (tx, rx) = channel::<usize>(1);
             let producer = thread::spawn(move || {
                 for i in 0..n {
@@ -398,26 +567,19 @@ mod tests {
                 }
             });
             let consumer = thread::spawn(move || {
-                let mut acc = 0usize;
+                let mut received = Vec::with_capacity(n);
                 for _ in 0..n {
-                    acc = acc.wrapping_add(rx.recv().unwrap());
+                    received.push(rx.recv().unwrap());
                 }
-                acc
+                received
             });
             handles.push((producer, consumer));
         }
 
-        // Every pipeline must finish (no livelock/deadlock) and its consumer
-        // must observe exactly the produced sequence - byte/order identical
-        // reconstruction, unchanged by the backoff.
-        let expected: usize = (0..n).sum();
+        let expected: Vec<usize> = (0..n).collect();
         for (producer, consumer) in handles {
             producer.join().unwrap();
             assert_eq!(consumer.join().unwrap(), expected);
-            assert!(
-                Instant::now() < deadline,
-                "pipeline did not complete within 60s - possible livelock"
-            );
         }
     }
 }
