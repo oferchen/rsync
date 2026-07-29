@@ -766,11 +766,13 @@ where
     // it is never forwarded. Capture the explicit bit before the OR.
     let list_only_arg = list_only;
     // upstream: options.c:2194-2195 - `if (argc < 2 && !read_batch && !am_server)
-    // list_only |= 1;`. A single remote source with no destination (e.g.
-    // `host::module` or `rsync://host/module`) implies list-only mode: list the
-    // module's contents instead of erroring "need source and destination".
-    let list_only =
-        list_only || (transfer_operands.len() == 1 && read_batch.is_none() && is_daemon_transfer);
+    // list_only |= 1;`. A single source with no destination implies list-only
+    // mode regardless of transport: a local path (`rsync src/`), an SSH source
+    // (`rsync host:path`), or a daemon module (`host::module`,
+    // `rsync://host/module`) all list their contents instead of erroring "need
+    // source and destination". The rule is transport-agnostic; `am_server` never
+    // applies on the client path.
+    let list_only = list_only || (transfer_operands.len() == 1 && read_batch.is_none());
 
     // upstream: options.c:2187-2188 - relative_paths defaults to 1 when files_from
     let effective_relative = if files_from_active && relative.is_none() {

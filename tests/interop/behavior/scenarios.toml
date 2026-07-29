@@ -447,8 +447,17 @@ echo "file1" > src/file1.txt
 echo "file2" > src/file2.txt
 """
 compare = ["exit_code"]
-skip = true
-known_difference = "oc-rsync returns exit code 23 for --list-only on local paths; upstream returns 0"
+
+[[scenario]]
+name = "list_only_implicit"
+description = "A bare source with no destination implies list-only"
+args = ["src/"]
+setup = """
+mkdir -p src
+echo "file1" > src/file1.txt
+echo "file2" > src/file2.txt
+"""
+compare = ["exit_code"]
 
 # ============== Relative Path Handling ==============
 

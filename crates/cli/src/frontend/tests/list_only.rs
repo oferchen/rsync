@@ -112,6 +112,39 @@ fn list_only_lists_bare_directory_without_recursion_or_slash() {
     assert!(!rendered.contains("file.txt"));
 }
 
+/// A bare source operand with no destination and no `--list-only` flag implies
+/// list-only mode regardless of transport. upstream: options.c:2194-2195 -
+/// `if (argc < 2 && !read_batch && !am_server) list_only |= 1;`. The rule is not
+/// gated on the transport, so a local `oc-rsync src/` lists the directory and
+/// exits 0 (RERR_OK) rather than erroring "need source and destination" (which
+/// oc previously reported as exit 23).
+#[test]
+fn implicit_list_only_lists_local_source_without_destination() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
+
+    let (code, stdout, stderr) =
+        run_with_args([OsString::from(RSYNC), source_dir.clone().into_os_string()]);
+
+    assert_eq!(code, 0, "bare local source implies list-only and exits 0");
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let directory_line = rendered
+        .lines()
+        .find(|line| line.ends_with("src"))
+        .expect("bare directory operand entry present");
+    assert!(directory_line.starts_with('d'));
+    assert!(!directory_line.ends_with('/'));
+    // Without -r the directory's children must not be listed.
+    assert!(!rendered.contains("file.txt"));
+}
+
 #[cfg(unix)]
 #[test]
 fn list_only_matches_rsync_format_for_regular_file() {
