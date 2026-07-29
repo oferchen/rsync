@@ -264,17 +264,22 @@ existing operators see no behavioural change.
   table and rationale are in
   [`docs/design/spill-policy-public-api.md`](design/spill-policy-public-api.md)
   section 2.
-- **Environment variables.** All five `SpillPolicy` fields are
-  reachable through `OC_RSYNC_SPILL_*` env vars; precedence (highest
-  wins) is CLI flag > env var > programmatic policy > default.
+- **Environment variables.** Three of the five `SpillPolicy` fields
+  are reachable through `OC_RSYNC_SPILL_*` env vars; precedence
+  (highest wins) is CLI flag > env var > programmatic policy >
+  default. The remaining two fields (`reclaim_mode` and
+  `granularity`) are settable only through the `SpillPolicy` builder
+  API.
 
 | Variable | Maps to | Accepted values |
 |----------|---------|-----------------|
 | `OC_RSYNC_SPILL_THRESHOLD_BYTES` | `threshold_bytes` | Unsigned integer byte count; no `K`/`M`/`G` suffixes. Invalid values are logged and ignored, leaving the field unchanged. |
 | `OC_RSYNC_SPILL_DIR` | `dir` | Absolute or relative path. Created on first spill via `create_dir_all`. |
-| `OC_RSYNC_SPILL_RECLAIM` | `reclaim_mode` | `keep` (default) or `re-spill`. |
-| `OC_RSYNC_SPILL_GRANULARITY` | `granularity` | `whole-batch` (default) or `per-item`. |
 | `OC_RSYNC_SPILL_COMPRESSION` | `compression` | `none` (default), `zstd`, or `zstd:LEVEL` where `LEVEL` is in `[-22, 22]`. |
+
+  `OC_RSYNC_SPILL_RECLAIM` and `OC_RSYNC_SPILL_GRANULARITY` appeared
+  in earlier drafts of this guide but are not consulted by any
+  production code path; setting them has no effect on current builds.
 
 - **When to override.**
   - *Memory-constrained receivers* (containers with tight cgroup
@@ -284,23 +289,23 @@ existing operators see no behavioural change.
     `OC_RSYNC_SPILL_DIR` at a fast tmpfs or local SSD.
   - *Adversarial fan-out workloads* (deep INC_RECURSE trees with
     many unfinished segments held in the reorder window) benefit
-    from `OC_RSYNC_SPILL_RECLAIM=re-spill` to keep the post-reload
-    footprint bounded under sustained pressure.
+    from `ReclaimMode::ReSpillIfPressureContinues` (builder API) to
+    keep the post-reload footprint bounded under sustained pressure.
   - *Slow or SMR spill directories* should set
     `OC_RSYNC_SPILL_COMPRESSION=zstd` to trade CPU for disk
     bandwidth; default level 3 is usually appropriate, raise to
     `zstd:7` only when the spill device is the bottleneck.
   - *Diagnostic granularity* on benchmark runs:
-    `OC_RSYNC_SPILL_GRANULARITY=per-item` smooths the memory curve
-    at the cost of more syscalls per spill event.
+    `SpillGranularity::PerItem` (builder API) smooths the memory
+    curve at the cost of more syscalls per spill event.
 - **When to stay on the default.** Every workload that fits inside
   the documented 64 MiB high-water mark on the audit baseline. Spill
   is opt-in for a reason: the in-memory path is the fastest and
   byte-stable.
 - **CLI flags.** `--spill-dir` and `--spill-threshold-bytes` are
   planned for STN-11 and will land in a future release; they shadow
-  the two highest-value env vars. The remaining three knobs stay
-  env-only.
+  the two highest-value env vars. The remaining knob,
+  `OC_RSYNC_SPILL_COMPRESSION`, stays env-only.
 - **References.** Public-API surface and validation rules:
   [`docs/design/spill-policy-public-api.md`](design/spill-policy-public-api.md).
   Spillable buffer internals:
