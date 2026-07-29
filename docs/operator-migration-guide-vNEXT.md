@@ -270,7 +270,7 @@ existing operators see no behavioural change.
 
 | Variable | Maps to | Accepted values |
 |----------|---------|-----------------|
-| `OC_RSYNC_SPILL_THRESHOLD_BYTES` | `threshold_bytes` | Integer with optional `K`/`M`/`G` suffix (case-insensitive, base 1024). Empty string clears. `0` is rejected. |
+| `OC_RSYNC_SPILL_THRESHOLD_BYTES` | `threshold_bytes` | Unsigned integer byte count; no `K`/`M`/`G` suffixes. Invalid values are logged and ignored, leaving the field unchanged. |
 | `OC_RSYNC_SPILL_DIR` | `dir` | Absolute or relative path. Created on first spill via `create_dir_all`. |
 | `OC_RSYNC_SPILL_RECLAIM` | `reclaim_mode` | `keep` (default) or `re-spill`. |
 | `OC_RSYNC_SPILL_GRANULARITY` | `granularity` | `whole-batch` (default) or `per-item`. |
