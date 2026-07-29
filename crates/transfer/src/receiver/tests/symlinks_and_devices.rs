@@ -215,7 +215,7 @@ fn out_format_collects_events_and_suppresses_string_path() {
     let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.record_itemize(3, &iflags, &entry);
+    ctx.record_itemize(3, &iflags, &entry, None);
 
     // String path suppressed; event path populated.
     assert!(ctx.itemize_rows.borrow().is_empty());
@@ -251,7 +251,7 @@ fn out_format_inactive_uses_string_path() {
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.record_itemize(0, &iflags, &entry);
+    ctx.record_itemize(0, &iflags, &entry, None);
 
     assert!(ctx.drain_event_rows().is_empty());
     assert_eq!(ctx.itemize_rows.borrow().len(), 1);
@@ -326,6 +326,68 @@ fn out_format_collects_special() {
     // and the `S` special type.
     assert_eq!(row.itemize.len(), 11);
     assert!(row.itemize.starts_with("cS"), "itemize = {:?}", row.itemize);
+}
+
+#[test]
+fn out_format_pull_hardlink_follower_carries_leader() {
+    // upstream: hlink.c:232-234 - create_hardlinks itemizes each follower with the
+    // leader's transfer-relative name (`xname`), which log.c:643-646 renders as the
+    // `%L` ` => <leader>` suffix. On a pull under a custom `--out-format` the row is
+    // collected as an event rather than written as a string; the xname must ride
+    // into `hardlink_leader` so `%L` is not empty (#256). This asserts the receiver
+    // populates that field from the same xname `emit_itemize_indexed` receives.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = false;
+    config.flags.info_flags.out_format_active = true;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_file("dir/alias.txt".into(), 4, 0o644);
+    let iflags = ItemFlags::from_raw(
+        ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS | ItemFlags::ITEM_IS_NEW,
+    );
+
+    ctx.emit_itemize_indexed(&mut writer, 2, &iflags, &entry, Some(b"dir/leader.txt"))
+        .unwrap();
+
+    // String path suppressed; the collected event carries the leader for `%L`.
+    assert!(ctx.itemize_rows.borrow().is_empty());
+    let rows = ctx.drain_event_rows();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.name, std::path::Path::new("dir/alias.txt"));
+    assert_eq!(
+        row.hardlink_leader.as_deref(),
+        Some(std::path::Path::new("dir/leader.txt"))
+    );
+    assert!(row.itemize.starts_with("hf"), "itemize = {:?}", row.itemize);
+}
+
+#[test]
+fn out_format_pull_empty_xname_carries_no_leader() {
+    // upstream: log.c:644 gates the ` => hlink` suffix on `hlink && *hlink`, so an
+    // already-correct hard-link alias itemized with the empty xname (hlink.c:218-222)
+    // carries no leader and `%L` stays empty. An empty xname must not populate
+    // `hardlink_leader`.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = false;
+    config.flags.info_flags.out_format_active = true;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_file("dir/alias.txt".into(), 4, 0o644);
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+
+    ctx.emit_itemize_indexed(&mut writer, 2, &iflags, &entry, Some(b""))
+        .unwrap();
+
+    let rows = ctx.drain_event_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].hardlink_leader, None);
 }
 
 #[test]

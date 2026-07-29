@@ -449,13 +449,15 @@ impl ReceiverContext {
     /// Builds the owned metadata row for a custom `--out-format` event, applying
     /// the same significance gate and `%i` glyph as [`Self::render_itemize_line`].
     ///
-    /// The receiver-side generator computes iflags locally rather than reading
-    /// them off the wire, so no alternate-basis xname is available; the
-    /// hard-link ` => leader` suffix is owned by the push sender renderer.
+    /// `xname` is the hard-link group leader's transfer-relative name for a
+    /// hard-link follower (upstream `hlink.c:232-234` `realname`); it is carried
+    /// into the row's `hardlink_leader` so the CLI renders the `%L` ` => <leader>`
+    /// suffix (upstream `log.c:643-646`). `None` for every non-follower row.
     fn build_event_row(
         &self,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
     ) -> Option<crate::progress::OwnedItemizeRow> {
         let effective_iflags = self.itemize_effective_flags(iflags, entry)?;
         let ctx = self.itemize_context();
@@ -465,11 +467,17 @@ impl ReceiverContext {
             entry,
             is_sender,
             &ctx,
-            None,
+            xname,
         );
         let itemize =
             crate::generator::itemize::format_iflags(&effective_iflags, entry, is_sender, &ctx);
         let raw = effective_iflags.raw();
+        // upstream: log.c:644 gates the ` => hlink` suffix on `hlink && *hlink`,
+        // so an empty xname carries no leader (an already-correct hard-link alias
+        // itemized with the empty string, hlink.c:218-222).
+        let hardlink_leader = xname
+            .filter(|bytes| !bytes.is_empty())
+            .map(bytes_to_path_buf);
         Some(crate::progress::OwnedItemizeRow {
             line,
             itemize,
@@ -487,6 +495,7 @@ impl ReceiverContext {
             is_dir: entry.is_dir(),
             is_symlink: entry.is_symlink(),
             symlink_target: entry.link_target().cloned(),
+            hardlink_leader,
             is_new: raw & crate::generator::ItemFlags::ITEM_IS_NEW != 0,
             is_deletion: raw & crate::generator::ItemFlags::ITEM_DELETED != 0,
         })
@@ -579,7 +588,7 @@ impl ReceiverContext {
         xname: Option<&[u8]>,
     ) -> std::io::Result<()> {
         if self.collect_out_format_events() {
-            self.record_itemize(flist_idx, iflags, entry);
+            self.record_itemize(flist_idx, iflags, entry, xname);
             return Ok(());
         }
         self.emit_itemize(writer, iflags, entry, xname)
@@ -750,7 +759,7 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
     ) -> std::io::Result<()> {
         if self.defer_itemize || self.collect_out_format_events() {
-            self.record_itemize(flist_idx, iflags, entry);
+            self.record_itemize(flist_idx, iflags, entry, None);
             Ok(())
         } else {
             self.emit_itemize(writer, iflags, entry, None)
@@ -772,6 +781,7 @@ impl ReceiverContext {
         flist_idx: usize,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
     ) {
         if !self.config.connection.client_mode {
             return;
@@ -780,7 +790,7 @@ impl ReceiverContext {
         // rendered default string (mutually exclusive - the string path is
         // suppressed so the CLI renders the user's template from these events).
         if self.collect_out_format_events() {
-            if let Some(row) = self.build_event_row(iflags, entry) {
+            if let Some(row) = self.build_event_row(iflags, entry, xname) {
                 self.event_rows
                     .borrow_mut()
                     .entry(flist_idx)
@@ -792,7 +802,7 @@ impl ReceiverContext {
         if !self.should_emit_itemize() {
             return;
         }
-        if let Some(line) = self.render_itemize_line(iflags, entry, None) {
+        if let Some(line) = self.render_itemize_line(iflags, entry, xname) {
             self.itemize_rows
                 .borrow_mut()
                 .entry(flist_idx)
@@ -896,6 +906,23 @@ impl ReceiverContext {
             self.emit_name_line(&line)?;
         }
         Ok(())
+    }
+}
+
+/// Decodes a hard-link leader xname (transfer-relative name bytes) into a
+/// `PathBuf`, preserving raw bytes verbatim on Unix and falling back to a lossy
+/// UTF-8 decode elsewhere. Mirrors the receiver's other byte-to-path decoding
+/// (`dest_root.rs`, `basis.rs`) so a non-UTF-8 leader name survives to the `%L`
+/// renderer under `--8-bit-output`.
+fn bytes_to_path_buf(bytes: &[u8]) -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
     }
 }
 
