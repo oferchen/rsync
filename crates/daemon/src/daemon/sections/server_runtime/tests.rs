@@ -1621,9 +1621,9 @@ fn warn_per_family_accept_failure_labels_ipv4() {
 
 #[test]
 fn single_listener_engine_poll_idle_when_no_connection() {
-    // A quiet daemon must yield control rather than error: the non-blocking
-    // accept returns WouldBlock, which the engine maps to AcceptOutcome::Idle
-    // after its bounded sleep so the accept loop can re-check signal flags.
+    // A quiet daemon must yield control rather than error: the bounded
+    // readiness wait times out, which the engine maps to AcceptOutcome::Idle
+    // so the accept loop can re-check signal flags.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
     let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
@@ -1632,6 +1632,151 @@ fn single_listener_engine_poll_idle_when_no_connection() {
         matches!(engine.poll().expect("poll"), AcceptOutcome::Idle),
         "poll with no pending connection must yield Idle"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn wait_for_incoming_times_out_on_idle_listener() {
+    // With no pending connection the readiness wait must report Ok(false)
+    // after its bounded timeout - the signal-check path - instead of readable.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    assert!(
+        !wait_for_incoming(&listener, 10).expect("poll(2)"),
+        "an idle listener must time out as not-readable"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn wait_for_incoming_wakes_on_connection_while_parked() {
+    // The park must wake on real readiness, not run its timeout to completion:
+    // with a generous 5s timeout and a client connecting shortly after the
+    // wait begins, the call must return readable well before the timeout. A
+    // sleep-then-probe implementation (the pre-fix busy-poll shape, or the
+    // non-unix stub) would burn the full interval before reporting readiness.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let client = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(50));
+        TcpStream::connect(local).expect("connect")
+    });
+
+    let start = std::time::Instant::now();
+    let readable = wait_for_incoming(&listener, 5000).expect("poll(2)");
+    let elapsed = start.elapsed();
+
+    assert!(readable, "a pending connection must report readable");
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "the park must wake on readiness, not run the 5s timeout down \
+         (took {elapsed:?})"
+    );
+    let _ = client.join();
+}
+
+#[test]
+fn single_listener_engine_accepts_queued_connection_on_first_poll() {
+    // Promptness contract, count-based: with a connection already queued on
+    // the listen backlog, the very FIRST poll() must return Connection - no
+    // Idle iterations, no polling-interval delay before the accept happens.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let _client = TcpStream::connect(local).expect("connect");
+    // Let the kernel finish the loopback handshake and queue the connection.
+    thread::sleep(Duration::from_millis(20));
+
+    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+    assert!(
+        matches!(
+            engine.poll().expect("poll"),
+            AcceptOutcome::Connection(_, _)
+        ),
+        "a queued connection must be delivered on the first poll"
+    );
+}
+
+#[test]
+fn accept_loop_stops_after_shutdown_signal_while_parked() {
+    // A shutdown flag raised while the engine is parked in its readiness wait
+    // must still stop the accept loop: the park is bounded by the signal-check
+    // interval, after which check_signals_and_maintain observes the flag and
+    // breaks. Event-based: the scoped join only completes if the loop exits
+    // (a wedged loop hangs the test until the harness timeout kills it).
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let flags = no_op_signal_flags();
+    let shutdown = Arc::clone(&flags.shutdown);
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+
+    thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            let mut engine =
+                SingleListenerEngine::new(listener, local, None).expect("engine");
+            let mut state = test_accept_loop_state(
+                &flags,
+                &config_path,
+                &limiter,
+                &log_sink,
+                &notifier,
+                ConnectionCounter::new(),
+                None,
+            );
+            run_accept_loop(&mut engine, &mut state)
+        });
+
+        // Give the loop time to enter the parked readiness wait, then raise
+        // the flag. The sleep only steers WHICH code path is parked when the
+        // flag lands; the assertion does not depend on it.
+        thread::sleep(Duration::from_millis(20));
+        shutdown.store(true, Ordering::Relaxed);
+
+        let result = handle.join().expect("accept loop thread");
+        assert!(
+            result.is_ok(),
+            "shutdown while parked must stop the loop cleanly"
+        );
+    });
+}
+
+#[test]
+fn multi_listener_engine_shutdown_joins_parked_acceptors() {
+    // Dual-stack teardown: shutdown() must wake and join acceptor threads that
+    // are parked in their readiness wait with no traffic. Event-based - a
+    // parked acceptor that never re-checks the flag would wedge join() and
+    // hang the test until the harness timeout kills it.
+    // Two loopback listeners stand in for the dual-stack pair; the engine is
+    // family-agnostic and some CI sandboxes lack IPv6.
+    let first = TcpListener::bind("127.0.0.1:0").expect("bind first");
+    let second = TcpListener::bind("127.0.0.1:0").expect("bind second");
+    let addrs = [
+        first.local_addr().expect("first addr"),
+        second.local_addr().expect("second addr"),
+    ];
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        ConnectionCounter::new(),
+        None,
+    );
+
+    let mut engine =
+        MultiListenerEngine::new(vec![first, second], &addrs, &state).expect("engine");
+    engine.shutdown();
 }
 
 #[test]

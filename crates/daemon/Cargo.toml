@@ -53,12 +53,10 @@ daemon-seccomp = ["dep:seccompiler"]
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
 # macOS-only, default-off: source accepted connections in the daemon accept
 # loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
-# non-blocking-accept-plus-50ms-sleep busy-poll. Event-driven (parks in the
-# kernel until a connection arrives or the signal-check timeout elapses) rather
-# than busy-waiting, dropping first-connection latency on a quiet daemon from up
-# to 50ms to a syscall round-trip. Falls back to the portable engines if kqueue
-# setup fails, so it never breaks connection service. Off by default: the
-# default build uses the portable accept path unchanged. No-op on non-macOS.
+# engines' per-listener `poll(2)` park, giving a single kernel wait over all
+# listener fds. Falls back to the portable engines if kqueue setup fails, so it
+# never breaks connection service. Off by default: the default build uses the
+# portable accept path unchanged. No-op on non-macOS.
 macos-kqueue = []
 
 [dependencies]
@@ -85,8 +83,9 @@ checksums = { path = "../checksums" }
 libc = { workspace = true }
 # `process` enables nix::sys::prctl for PR_SET_NO_NEW_PRIVS startup hardening
 # (Linux only); `fs` enables nix::fcntl for the per-slot record locks in the
-# connection limiter, used on every unix target.
-nix = { workspace = true, features = ["process", "fs"] }
+# connection limiter, used on every unix target; `poll` enables nix::poll for
+# the accept loop's listener readiness park.
+nix = { workspace = true, features = ["process", "fs", "poll"] }
 
 # fast_io carries the Landlock LSM defense-in-depth helper (SEC-1.p). On
 # non-Linux targets the stub module compiles with the same public surface
