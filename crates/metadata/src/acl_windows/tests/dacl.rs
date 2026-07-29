@@ -27,8 +27,10 @@ fn reconstruct_acl_fills_base_entries_from_mode() {
 
 #[test]
 fn reconstruct_acl_keeps_existing_entries() {
-    let mut acl = RsyncAcl::default();
-    acl.user_obj = 0o4;
+    let acl = RsyncAcl {
+        user_obj: 0o4,
+        ..Default::default()
+    };
     let restored = reconstruct_acl(&acl, Some(0o777));
     assert_eq!(restored.user_obj, 0o4);
     assert_eq!(restored.group_obj, 0o7);
@@ -37,8 +39,10 @@ fn reconstruct_acl_keeps_existing_entries() {
 
 #[test]
 fn reconstruct_acl_no_mode_passes_through() {
-    let mut acl = RsyncAcl::default();
-    acl.user_obj = 0o7;
+    let acl = RsyncAcl {
+        user_obj: 0o7,
+        ..Default::default()
+    };
     let restored = reconstruct_acl(&acl, None);
     assert_eq!(restored.user_obj, 0o7);
     assert_eq!(restored.group_obj, NO_ENTRY);

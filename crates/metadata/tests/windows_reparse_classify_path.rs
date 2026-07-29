@@ -108,7 +108,7 @@ fn missing_path_returns_not_found_error() {
     let err = classify_path(&missing).expect_err("missing path must error");
     assert!(
         err.kind() == std::io::ErrorKind::NotFound
-            || err.raw_os_error().map_or(false, |n| n == 2 || n == 3),
+            || err.raw_os_error().is_some_and(|n| n == 2 || n == 3),
         "expected NotFound for missing path, got {err}"
     );
 }
