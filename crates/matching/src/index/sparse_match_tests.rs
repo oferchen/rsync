@@ -177,7 +177,7 @@ fn build_index(basis: &[u8]) -> DeltaSignatureIndex {
 /// Stress runs invoke it via `cargo nextest run --run-ignored only -p
 /// matching -E 'test(sparse_match_100mib_single_overlap)'`.
 #[test]
-#[ignore]
+#[ignore = "100 MiB allocations plus a full-buffer rolling scan exceed the standard nextest budget; opt-in via --run-ignored"]
 fn sparse_match_100mib_single_overlap() {
     let basis = build_basis();
     let target = build_target(&basis);
