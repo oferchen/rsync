@@ -4,11 +4,18 @@ This page documents the oc-rsync-specific environment variables that tune
 local behaviour of a production build. They are extensions, not upstream
 rsync options:
 
-- **Local only.** No variable on this page is ever forwarded to a remote
-  peer. Each one affects only the process it is set for.
-- **Observable-neutral.** These knobs change memory footprint, syscall
-  profile, or timing - never wire bytes, transferred contents, stats,
-  exit codes, or output.
+- **Local only (tuning knobs).** No tuning knob on this page is forwarded
+  to a remote peer; each affects only the process it is set for. The one
+  deliberate exception is the [Negotiated oc-to-oc
+  optimizations](#negotiated-oc-to-oc-optimizations) section below, whose
+  whole purpose is to advertise a private capability marker to the peer
+  (which upstream ignores).
+- **Observable-neutral (tuning knobs).** The tuning knobs change memory
+  footprint, syscall profile, or timing - never wire bytes, transferred
+  contents, stats, exit codes, or output. The sole exception is the
+  negotiated oc-to-oc optimization below: it is default-off and, when
+  enabled, changes the delta signature **only between two opted-in oc
+  peers** while staying byte-identical and inert against any upstream peer.
 - **Env-only by design.** Stable user-facing behaviour is controlled by CLI
   flags (sometimes with an env equivalent). Tuning and experimental knobs
   are deliberately env-only so the flag namespace stays close to upstream
@@ -290,6 +297,43 @@ path candidates). Accepts `oc` or `upstream`, case-insensitive, plus the
 corresponding program-name aliases (`oc-rsync`, `rsync`, `rsyncd`).
 Unset or unrecognised values keep the identity derived from the invoked
 executable name. Intended for testing and development.
+
+## Negotiated oc-to-oc optimizations
+
+Unlike every tuning knob above, the variable in this section is **not**
+observable-neutral and **not** purely local: when enabled it negotiates a
+private, wire-affecting delta optimization with the peer. It is safe to leave
+enabled because it is **default-off** and engages only between two opted-in
+oc peers - it is inert, and the wire stays byte-identical, against any
+upstream rsync.
+
+### OC_CONSECUTIVE_MATCH
+
+Opts this process in to the consecutive-match (zsync `seq_matches=2`) delta
+optimization. Set to `1` or `true` to enable; unset or any other value leaves
+it off (the default). **Both** peers must opt in - and both must be oc - for
+it to engage.
+
+When engaged, the delta matcher requires a block match to be preceded by a
+matching neighbour, which halves the per-block false-alarm probability and
+lets the per-file strong-sum length (`s2length`) be halved, saving signature
+bytes on the receiver-to-sender channel.
+
+- **Negotiated, oc-peer only.** An opted-in client advertises a private
+  capability letter (`Z`) in the `-e.<...>` string. Upstream rsync ignores
+  unknown `-e` letters (`compat.c` only `strchr`s for its own set), so the
+  letter is inert against a stock peer. The private compat bit that halves
+  `s2length` is set only when the oc server both sees the letter **and** is
+  itself opted in, so the halving can never engage against upstream or an
+  un-opted-in oc peer - those transfers stay byte-identical to upstream.
+- **Data-integrity backstop.** A lone (un-paired) match is demoted to a
+  literal of its own source bytes, so reconstruction is always byte-exact
+  even if a halved checksum false-alarms; the receiver's whole-file checksum
+  and the phase-2 full-checksum redo remain the same backstops upstream
+  already relies on for its short phase-1 sums.
+- **Default-off, experimental.** The default is deliberately not flipped
+  pending a benchmark-before-default decision. Enable it only when both ends
+  are oc and you have validated the win for your workload.
 
 ## Legacy variables
 
