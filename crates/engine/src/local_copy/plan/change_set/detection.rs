@@ -90,17 +90,17 @@ impl LocalCopyChangeSet {
             modify_window,
         ));
 
-        // Symlinks are excluded from the perm compare because oc does not
-        // currently apply a symlink's mode (nothing calls lchmod/setattrlist),
-        // so reporting a `p` change would promise an action never performed.
-        // This is NOT upstream's rule: upstream skips the compare only where
-        // `CAN_CHMOD_SYMLINK` is undefined (rsync.h:438-440 defines it whenever
-        // HAVE_LCHMOD or HAVE_SETATTRLIST, both probed by configure.ac:911,918),
-        // so on glibc >= 2.32 and on macOS the `#ifndef` block at
-        // generator.c:542-544 compiles out and upstream DOES compare.
-        // Revisit together with applying symlink modes so report and action
-        // cannot drift apart.
+        // Symlinks join the perm compare only where oc can actually chmod a
+        // link (`metadata::CAN_CHMOD_SYMLINK` = macOS/BSD), so report and
+        // action never drift: a reported `p` is always backed by the matching
+        // apply in metadata::apply_symlink_permissions_like. Upstream skips the
+        // compare only where `CAN_CHMOD_SYMLINK` is undefined (rsync.h:438-440,
+        // HAVE_LCHMOD or HAVE_SETATTRLIST, probed at configure.ac:911,918); the
+        // `#ifndef` block at generator.c:542-544 then compiles out. On Linux
+        // the const is false and a link's `st_mode` is a fixed 0777, so nothing
+        // is reported or applied. Mirrors the receiver itemize guard.
         let is_symlink = metadata.file_type().is_symlink();
+        let symlink_perms_ok = !is_symlink || ::metadata::CAN_CHMOD_SYMLINK;
 
         // upstream: generator.c:531-533 - itemize() sets ITEM_REPORT_ATIME when
         // `atimes_ndx` (`-U`) is active for a non-dir, non-symlink whose access
@@ -125,14 +125,14 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_access_time_changed(true);
         }
 
-        if !is_symlink
+        if symlink_perms_ok
             && metadata_options.permissions()
             && permissions_changed(metadata, existing, destination_previously_existed)
         {
             change_set = change_set.with_permissions_changed(true);
         }
 
-        if !is_symlink && metadata_options.chmod().is_some() {
+        if symlink_perms_ok && metadata_options.chmod().is_some() {
             change_set = change_set.with_permissions_changed(true);
         }
 

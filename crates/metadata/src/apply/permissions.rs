@@ -652,6 +652,107 @@ fn chmod_path_honoring_keep_dirlinks(
     Ok(())
 }
 
+/// Chmods a symbolic link's own permission bits, matching the itemize `p`
+/// decision the receiver reports from a `FileEntry`.
+///
+/// Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD). Reproduces
+/// upstream `generator.c:546-552`: under `-p` the link is chmod'd to the
+/// sender's mode bits; under `-E` (without `-p`) only the execute bits track
+/// the source. The chmod uses `fchmodat(AT_SYMLINK_NOFOLLOW)` via
+/// [`fast_io::secure_chmod_at`] (`follow_symlinks = false`) so the link
+/// itself, not its target, is modified.
+///
+/// upstream: rsync.c:658-668 (`set_file_attrs()` chmods every file type with
+/// no `S_ISLNK` gate) + syscall.c:761 `do_chmod()`. The symlink chmod is a
+/// SOFT outcome (`rsync.c:667`, `ret == 1`), so any failure is swallowed and
+/// never propagated - exactly as an unsupported symlink chmod is on any
+/// platform that compiled the const to `true` but hit a filesystem that
+/// refuses it at runtime.
+pub(super) fn apply_symlink_permissions_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    if crate::CAN_CHMOD_SYMLINK {
+        use std::os::unix::fs::PermissionsExt;
+
+        let current_mode = match cached_meta {
+            Some(meta) => meta.permissions().mode(),
+            None => match fs::symlink_metadata(destination) {
+                Ok(meta) => meta.permissions().mode(),
+                Err(_) => return Ok(()),
+            },
+        };
+        let current = current_mode & 0o7777;
+        let target = if options.permissions() {
+            Some(entry.mode() & 0o7777)
+        } else if options.executability() {
+            Some((current & !0o111) | (entry.mode() & 0o111))
+        } else {
+            None
+        };
+        if let Some(target) = target
+            && current != target
+        {
+            let _ = fast_io::secure_chmod_at(destination, target, false);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (destination, entry, options, cached_meta);
+    Ok(())
+}
+
+/// Chmods a symbolic link's own permission bits from a source [`fs::Metadata`],
+/// matching the local-copy change-set `p` decision.
+///
+/// The local-copy counterpart to [`apply_symlink_permissions_from_entry`].
+/// Reproduces the change-set detection compare (`-p` full-bits, `-E`
+/// exec-bits) plus the `--chmod` tweak that upstream `tweak_mode()` layers on
+/// every file type. Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds; the
+/// chmod is a SOFT outcome and any error is swallowed.
+///
+/// upstream: rsync.c:658-668 + syscall.c:761 `do_chmod()`.
+pub(super) fn apply_symlink_permissions_like(
+    destination: &Path,
+    source_metadata: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    if crate::CAN_CHMOD_SYMLINK {
+        use std::os::unix::fs::PermissionsExt;
+
+        let current = match fs::symlink_metadata(destination) {
+            Ok(meta) => meta.permissions().mode() & 0o7777,
+            Err(_) => return Ok(()),
+        };
+        let source = source_metadata.permissions().mode();
+        let base = if options.permissions() {
+            Some(source & 0o7777)
+        } else if options.executability() {
+            Some((current & !0o111) | (source & 0o111))
+        } else {
+            None
+        };
+        let target = match options.chmod() {
+            Some(modifiers) => {
+                let start = base.unwrap_or(current);
+                Some(modifiers.apply(start, source_metadata.file_type()) & 0o7777)
+            }
+            None => base,
+        };
+        if let Some(target) = target
+            && current != target
+        {
+            let _ = fast_io::secure_chmod_at(destination, target, false);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (destination, source_metadata, options);
+    Ok(())
+}
+
 /// Computes the intended full mode (`S_IFMT` + perms) that upstream's
 /// `set_file_attrs()` would chmod a non-fake-super destination to.
 ///
