@@ -20,7 +20,6 @@
 mod bandwidth;
 mod builder;
 mod client;
-mod compress_env;
 mod enums;
 mod filters;
 mod iconv;
@@ -33,7 +32,6 @@ pub use builder::{ClientConfigBuilder, ConfigConflict};
 pub use client::ClientConfig;
 #[cfg(feature = "embedded-ssh")]
 pub use client::EmbeddedSshOptions;
-pub use compress_env::force_no_compress_from_env;
 pub use enums::{
     AddressMode, CompressionSetting, DeleteMode, FilesFromPlan, FilesFromSource, HumanReadableMode,
     HumanReadableModeParseError, ParseTcpFastOpenModeError, StrongChecksumAlgorithm,
