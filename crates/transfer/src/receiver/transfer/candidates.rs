@@ -834,14 +834,16 @@ impl ReceiverContext {
             {
                 iflags |= ItemFlags::ITEM_REPORT_ATIME;
             }
-            // Symlinks are excluded because oc does not currently apply a
-            // symlink's own mode, so it must not report a `p` change it will
-            // not make. Not upstream's rule: `CAN_CHMOD_SYMLINK` is defined
-            // whenever HAVE_LCHMOD or HAVE_SETATTRLIST (rsync.h:438-440,
-            // probed at configure.ac:911,918), so on glibc >= 2.32 and macOS
-            // the `#ifndef` at generator.c:542-544 compiles out and upstream
-            // does compare. Mirrors the same guard in engine's local-copy
-            // change-set detection; revisit both with symlink-mode support.
+            // Symlinks join the perm compare only where oc can actually chmod
+            // a link (`metadata::CAN_CHMOD_SYMLINK` = macOS/BSD), so a reported
+            // `p` is always backed by an applied chmod. Upstream defines
+            // `CAN_CHMOD_SYMLINK` whenever HAVE_LCHMOD or HAVE_SETATTRLIST
+            // (rsync.h:438-440, probed at configure.ac:911,918); where it is
+            // undefined the `#ifndef` at generator.c:542-544 skips the compare.
+            // On Linux the const is false and a link's `st_mode` is a fixed
+            // 0777, so nothing is reported or applied. The matching apply lives
+            // in metadata::apply_symlink_permissions_from_entry, and the same
+            // guard gates engine's local-copy change-set detection.
             //
             // The compare itself is an if/else-if (generator.c:546-552), not a
             // lone `preserve_perms` test:
@@ -857,7 +859,7 @@ impl ReceiverContext {
             // executability bit, so only a change in *whether* the file is
             // executable is a permission change - the other mode bits stay as
             // they are and must not raise the `p` column.
-            if !entry.is_symlink() {
+            if !entry.is_symlink() || metadata::CAN_CHMOD_SYMLINK {
                 if self.config.flags.perms {
                     const CHMOD_BITS: u32 = 0o7777;
                     if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
