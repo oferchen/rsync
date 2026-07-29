@@ -28,10 +28,10 @@ fn test_compression_algorithm_roundtrip() {
 }
 
 #[test]
-fn test_xxh_alias() {
-    // "xxh" should parse to XXH64
-    let algo = ChecksumAlgorithm::parse("xxh").unwrap();
-    assert_eq!(algo, ChecksumAlgorithm::XXH64);
+fn test_xxh_is_not_a_valid_name() {
+    // upstream: checksum.c:49-65 valid_checksums_items - only "xxh64" and
+    // "xxhash" name CSUM_XXH64; a bare "xxh" is unrecognised.
+    assert!(ChecksumAlgorithm::parse("xxh").is_err());
 }
 
 #[test]
@@ -1009,9 +1009,10 @@ fn test_lz4_is_advertised_in_preference_order() {
 
 #[test]
 fn test_choose_compression_empty_list() {
-    // Empty list should fall back to None
-    let result = choose_compression_algorithm("", true).unwrap();
-    assert_eq!(result, CompressionAlgorithm::None);
+    // upstream: compat.c:381 `if (len > 0 && parse_negotiate_str(...))` - an
+    // empty list never negotiates and falls into the RERR_UNSUPPORTED abort.
+    let result = choose_compression_algorithm("", true);
+    assert!(result.is_err(), "empty list should be a negotiation error");
 }
 
 #[test]
@@ -1036,14 +1037,14 @@ fn test_daemon_client_handles_empty_capabilities() {
 
     // Empty checksum list from server is a negotiation failure
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
 }
 
 #[test]
 fn test_daemon_client_handles_single_algorithm() {
     // Server offers only one checksum and compression option
     let protocol = ProtocolVersion::try_from(31).unwrap();
-    let server_lists = b"\x03md4\x04none";
+    let server_lists = b"\x03md4\x04zlib";
     let mut stdin = &server_lists[..];
     let mut stdout = Vec::new();
 
@@ -1059,9 +1060,34 @@ fn test_daemon_client_handles_single_algorithm() {
     .unwrap();
 
     assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-    assert_eq!(result.compression, CompressionAlgorithm::None);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
     // Client also sends its lists (bidirectional)
     assert!(!stdout.is_empty());
+}
+
+#[test]
+fn test_client_rejects_none_only_compression_from_server() {
+    // upstream: compat.c:485-486 get_default_nno_list - the client skips the
+    // zero-numbered "none" entry, so its saw[] cannot accept a server list
+    // holding only "none"; recv_negotiate_str aborts with RERR_UNSUPPORTED.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let server_lists = b"\x03md4\x04none";
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    );
+
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
 }
 
 #[test]
@@ -2166,10 +2192,10 @@ fn phase5_negotiate_only_unsupported_checksums() {
 
 #[test]
 fn phase5_negotiate_only_unsupported_compressions() {
-    // If client sends only unsupported compressions, fallback to None
+    // upstream: compat.c:383-406 - no common compression is a hard error
     let list = "bzip2 lzma xz brotli";
-    let result = choose_compression_algorithm(list, true).unwrap();
-    assert_eq!(result, CompressionAlgorithm::None);
+    let err = choose_compression_algorithm(list, true).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
 }
 
 #[test]
@@ -2182,8 +2208,11 @@ fn phase5_negotiate_whitespace_only_list() {
         "whitespace-only list should be a negotiation error"
     );
 
-    let compression = choose_compression_algorithm(list, true).unwrap();
-    assert_eq!(compression, CompressionAlgorithm::None);
+    let compression = choose_compression_algorithm(list, true);
+    assert!(
+        compression.is_err(),
+        "whitespace-only list should be a negotiation error"
+    );
 }
 
 #[test]
@@ -2406,13 +2435,15 @@ fn capability_fallback_server_offers_unavailable_compression() {
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
-/// Tests fallback when server offers only unavailable compressions.
+/// Tests that a peer list with only unavailable compressions is a hard error.
 #[test]
 fn capability_fallback_server_only_unavailable_compression() {
+    // upstream: compat.c:383-406 recv_negotiate_str - no mutual compression
+    // aborts with RERR_UNSUPPORTED; there is no silent "none" fallback.
     let remote_list = "brotli lzma xz";
-    let result = choose_compression_algorithm(remote_list, true).unwrap();
-    // Should fall back to None when nothing matches
-    assert_eq!(result, CompressionAlgorithm::None);
+    let err = choose_compression_algorithm(remote_list, true).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
 }
 
 /// Tests fallback when server offers only 'none' compression.
@@ -2438,10 +2469,10 @@ fn capability_fallback_unknown_checksum_strings() {
 /// Tests handling of completely unknown compression algorithm names.
 #[test]
 fn capability_fallback_unknown_compression_strings() {
+    // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
     let remote_list = "snappy lzo lzf brotli";
-    let result = choose_compression_algorithm(remote_list, true).unwrap();
-    // Should fall back to None
-    assert_eq!(result, CompressionAlgorithm::None);
+    let err = choose_compression_algorithm(remote_list, true).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
 }
 
 /// Tests mixed known and unknown checksums - unknown first.
@@ -2462,16 +2493,33 @@ fn capability_fallback_mixed_unknown_known_compression() {
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
-/// Tests handling of malformed algorithm names (typos, case errors).
+/// Tests handling of malformed algorithm names (typos, punctuation).
 #[test]
 fn capability_fallback_malformed_algorithm_names() {
     // upstream: compat.c:383-406 - malformed names with no valid match is a hard error
-    let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
+    let remote_list = "md-5 md_5 md55 mdv md5!";
     let result = choose_checksum_algorithm(remote_list, true);
     assert!(
         result.is_err(),
         "all malformed algorithms should be a negotiation error"
     );
+}
+
+/// Tests that name matching is case-insensitive, like upstream's
+/// `get_nni_by_name()` (compat.c:230-236 `strncasecmp`). A peer whose
+/// `RSYNC_CHECKSUM_LIST` carries upper-case names advertises them verbatim
+/// (parse_nni_str keeps a non-alias token's original bytes), and upstream
+/// still negotiates them.
+#[test]
+fn capability_fallback_case_insensitive_names() {
+    for list in ["MD5", "Md5", "mD5"] {
+        for is_server in [true, false] {
+            let result = choose_checksum_algorithm(list, is_server).unwrap();
+            assert_eq!(result, ChecksumAlgorithm::MD5, "list {list:?}");
+        }
+    }
+    let result = choose_compression_algorithm("ZLIB", true).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
 /// Tests handling of empty algorithm string between spaces.
@@ -2783,18 +2831,81 @@ fn capability_fallback_compression_parse_unknown() {
     assert!(err.to_string().contains("bzip2"));
 }
 
-/// Tests that xxh alias parsing works correctly for fallback.
+/// Tests alias handling in a peer list: "xxhash" resolves to xxh64
+/// (upstream checksum.c:55-56, both names share CSUM_XXH64 and the alias
+/// resolves through `main_nni`), while a bare "xxh" is not in
+/// `valid_checksums_items[]` and is skipped as unknown.
 #[test]
 fn capability_fallback_xxh_alias_in_list() {
-    // "xxh" should be recognized as xxh64
-    let remote_list = "xxh md5";
-    let result = choose_checksum_algorithm(remote_list, true).unwrap();
-    // "xxh" parses to XXH64, whose canonical name "xxh64" is in
-    // SUPPORTED_CHECKSUMS, so it matches before "md5".
-    assert_eq!(result, ChecksumAlgorithm::XXH64);
+    for is_server in [true, false] {
+        let result = choose_checksum_algorithm("xxhash md5", is_server).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::XXH64);
+
+        let result = choose_checksum_algorithm("xxh md5", is_server).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5, "bare xxh must be skipped");
+    }
 }
 
-/// Tests that algorithm names must be exact matches.
+/// Pins forward compatibility with checksum names upstream may add later,
+/// e.g. sha256 as a transfer checksum (proposed upstream PR #1007). A newer
+/// peer advertising such a name must not break negotiation: upstream
+/// `parse_negotiate_str()` skips names `get_nni_by_name()` does not recognise
+/// (compat.c:350) and falls through to the best mutual algorithm.
+#[test]
+fn forward_compat_unknown_sha256_in_peer_list_is_skipped() {
+    for is_server in [true, false] {
+        let result = choose_checksum_algorithm("sha256 xxh128 md5", is_server).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::XXH128, "server={is_server}");
+
+        // A future-name-first list still lands on the best mutual choice.
+        let result = choose_checksum_algorithm("sha512 sha256 md5", is_server).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5, "server={is_server}");
+    }
+}
+
+/// A peer list holding ONLY unknown names fails negotiation with upstream's
+/// hard error - `recv_negotiate_str` prints "Failed to negotiate a checksum
+/// choice." and exits with RERR_UNSUPPORTED (compat.c:387,406; errcode.h:28
+/// `RERR_UNSUPPORTED 4`). There is no silent md5/md4 fallback on the
+/// negotiated path; that fallback only exists for peers that cannot negotiate
+/// at all (compat.c:550-554).
+#[test]
+fn forward_compat_only_unknown_names_hard_error() {
+    for is_server in [true, false] {
+        let err = choose_checksum_algorithm("sha256 sha512 blake3", is_server).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported, "server={is_server}");
+        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+    }
+}
+
+/// Full negotiation round against a newer peer whose checksum list leads with
+/// a future name: the exchange completes and lands on the best mutual
+/// algorithm without error.
+#[test]
+fn forward_compat_full_negotiation_with_future_peer() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut peer = Vec::new();
+    write_vstring(&mut peer, "sha256 xxh128 xxh3 xxh64 md5 md4 sha1").unwrap();
+    let mut stdin = &peer[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        false, // send_compression
+        false, // is_daemon_mode
+        false, // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+}
+
+/// Tests that algorithm names must be whole-token matches. Case variants DO
+/// match (upstream compat.c:233 `strncasecmp`), but prefixes/suffixes do not:
+/// `get_nni_by_name()` requires `nni->name[len] == '\0'`.
 #[test]
 fn capability_fallback_exact_match_required() {
     // These should NOT match any algorithm - upstream compat.c:383-406
@@ -2802,8 +2913,8 @@ fn capability_fallback_exact_match_required() {
     let invalid_names = [
         "md5-hmac",   // suffix
         "prefix-md5", // prefix
-        "MD5",        // uppercase
-        "Md5",        // mixed case
+        "md",         // truncation
+        "xxh",        // truncation of xxh64/xxhash
     ];
 
     for name in invalid_names {
@@ -3319,7 +3430,35 @@ mod env_list_overrides {
         // upstream exits with RERR_UNSUPPORTED here.
         let err =
             choose_checksum_algorithm_in("xxh128 md5 md4", false, &over.candidates).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    // (d'') Forward compatibility: an env list naming a checksum this build
+    // does not know (e.g. sha256, proposed upstream PR #1007) drops the
+    // unknown name and negotiates the surviving mutual choice - upstream
+    // parse_nni_str() drops names get_nni_by_name() rejects (compat.c:295-306),
+    // so `RSYNC_CHECKSUM_LIST="sha256 md5"` behaves exactly like "md5".
+    #[test]
+    fn env_list_with_unknown_sha256_negotiates_survivor() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("sha256 md5"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
+        assert_eq!(over.candidates, vec!["md5"]);
+        assert_eq!(over.advertised, "md5");
+
+        // Full round against a peer advertising the stock upstream list:
+        // negotiation lands on md5 without error.
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let peer = test_peer_data(false);
+        let mut stdin = &peer[..];
+        let mut stdout = Vec::new();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, false)
+                .unwrap();
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(first_vstring(&stdout), "md5");
     }
 
     // Empty / whitespace-only values are treated as unset (default order).

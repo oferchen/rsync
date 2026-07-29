@@ -142,6 +142,12 @@ Server-to-client flags (unidirectional):
 - Client (`am_server=false`): calls `read_varint(f_in)`
 - No bidirectional exchange
 
+When `CF_VARINT_FLIST_FLAGS` is set, checksum/compression name lists are then
+exchanged per `negotiate_the_strings()`; unknown names in a peer's list are
+skipped (compat.c:350), so future additions stay interoperable. WATCH: upstream
+PR #1007 proposes `sha256` as a negotiable transfer checksum - add it here once
+that merges.
+
 ---
 
 ## Roles
