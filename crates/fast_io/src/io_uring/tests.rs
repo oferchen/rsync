@@ -1015,6 +1015,9 @@ fn zero_copy_large_payload_roundtrip() {
         match peer.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => received.extend_from_slice(&buf[..n]),
+            // A signal (e.g. SIGCHLD under heavy parallel nextest on musl) can
+            // interrupt the blocking read; EINTR is transient, so retry.
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => panic!("read error: {e}"),
         }
     }
