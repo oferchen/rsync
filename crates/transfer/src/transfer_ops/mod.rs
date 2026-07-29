@@ -499,12 +499,16 @@ mod tests {
         );
     }
 
-    /// The managed trailing-field bits (XATTR/BASIS/XNAME) must never leak from
-    /// `base_iflags` into the wire shortint, since they demand trailing bytes
-    /// this call site does not write for a plain FNAME request.
+    /// The trailing-field bits (BASIS/XNAME) must never leak from `base_iflags`
+    /// into the wire shortint, since this call site re-derives them from
+    /// `fnamecmp_type`/`xname` and owns the bytes they demand. ITEM_REPORT_XATTR
+    /// is dropped here only because `request_bytes` runs with `-X` off; with
+    /// `preserve_xattrs` false, upstream itemize() never sets it either
+    /// (generator.c:566/575).
     #[test]
     fn base_iflags_managed_bits_are_masked_off() {
-        // Deliberately pollute base_iflags with the managed bits.
+        // Deliberately pollute base_iflags with the trailing-field bits and the
+        // xattr bit that only survives under preserve_xattrs.
         let polluted = u32::from(
             SenderAttrs::ITEM_TRANSFER
                 | SenderAttrs::ITEM_REPORT_XATTR
@@ -512,11 +516,52 @@ mod tests {
                 | SenderAttrs::ITEM_XNAME_FOLLOWS,
         );
         let bytes = request_bytes(polluted);
-        // Only ITEM_TRANSFER (0x8000, LE 00 80) survives; none of the managed
-        // bits (which would each demand a trailing wire field) appear.
+        // Only ITEM_TRANSFER (0x8000, LE 00 80) survives: BASIS/XNAME are managed
+        // trailing-field bits and XATTR is gated off by preserve_xattrs = false.
         assert!(
             bytes.windows(2).any(|w| w == [0x00, 0x80]),
             "masked request keeps ITEM_TRANSFER only: {bytes:02x?}"
+        );
+        assert!(
+            !bytes.windows(2).any(|w| w == [0x00, 0x81]),
+            "xattr bit must stay off without -X: {bytes:02x?}"
+        );
+    }
+
+    /// upstream: generator.c:581 `iflags &= 0xffff` keeps ITEM_REPORT_XATTR
+    /// (1<<8). A push of a file whose xattrs differ carries the bit into the
+    /// wire shortint (0x8100, LE 00 81) so the row prints `<f.s......x`, and the
+    /// terminating xattr-request byte follows it (send_xattr_request writes
+    /// `write_byte(0)` when no abbreviated value is outstanding). Pre-fix code
+    /// masked the bit off unconditionally, dropping the `x` column on the push.
+    #[test]
+    fn xattr_diff_bit_survives_on_push() {
+        use protocol::codec::MonotonicNdxWriter;
+        let mut config = iflags_request_config();
+        config.preserve_xattrs = true;
+        let mut ndx_codec = MonotonicNdxWriter::new(config.protocol.as_u8());
+        let mut bytes: Vec<u8> = Vec::new();
+        // base_iflags as itemize_existing_flags would produce it for a
+        // transferred file whose destination xattrs differ: ITEM_TRANSFER plus
+        // the xattr value-diff bit.
+        let base = u32::from(SenderAttrs::ITEM_TRANSFER | SenderAttrs::ITEM_REPORT_XATTR);
+        send_file_request(
+            &mut bytes,
+            &mut ndx_codec,
+            0,
+            std::path::PathBuf::from("data.txt"),
+            None,
+            None,
+            protocol::FnameCmpType::Fname,
+            None,
+            0,
+            base,
+            &config,
+        )
+        .expect("request encodes");
+        assert!(
+            bytes.windows(2).any(|w| w == [0x00, 0x81]),
+            "push request must carry ITEM_TRANSFER|ITEM_REPORT_XATTR (0x8100): {bytes:02x?}"
         );
     }
 
