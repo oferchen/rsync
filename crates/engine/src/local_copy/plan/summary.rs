@@ -545,6 +545,7 @@ impl LocalCopySummary {
         elapsed: Duration,
         literal_data: u64,
         matched_data: u64,
+        flist_size: u64,
         delete_stats: protocol::DeleteStats,
         created_stats: protocol::CreatedStats,
         file_type_totals: FileTypeTotals,
@@ -587,6 +588,11 @@ impl LocalCopySummary {
             bytes_sent,
             bytes_copied: literal_data,
             matched_bytes: matched_data,
+            // upstream: flist.c:2789 - the pulling client's receiver accumulates
+            // stats.flist_size from its own raw read counter across every
+            // recv_file_list() span; it is never sent over the wire (main.c:445
+            // prints each role's local figure).
+            file_list_size: flist_size,
             total_source_bytes,
             items_deleted: u64::from(delete_stats.total()),
             deleted_dirs: u64::from(delete_stats.dirs),
@@ -662,6 +668,11 @@ impl LocalCopySummary {
             deleted_specials: u64::from(delete_stats.specials),
             total_elapsed: elapsed,
             wall_clock_elapsed: elapsed,
+            // `file_list_size` stays 0 on a push: upstream's client sender
+            // samples stats.total_written around send_file_list (flist.c:2254,
+            // flist.c:2560), but the encoded list is still sitting unflushed in
+            // the 64 KiB iobuf.out (io.c:1382), so the raw counter has not
+            // moved and the client prints `File list size: 0`.
             ..Default::default()
         }
     }
@@ -915,6 +926,7 @@ mod tests {
             Duration::from_secs(5),
             0,
             0,
+            0,
             protocol::DeleteStats::new(),
             protocol::CreatedStats::new(),
             FileTypeTotals::default(),
@@ -929,6 +941,32 @@ mod tests {
         assert_eq!(summary.bytes_sent(), 256);
         assert_eq!(summary.total_source_bytes(), 8192);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(5));
+    }
+
+    /// The receiver-measured flist span must reach the client summary.
+    ///
+    /// WHY: upstream never sends `stats.flist_size` over the wire - the pulling
+    /// client prints its own locally measured span (flist.c:2789, main.c:445).
+    /// Before the fix the remote-pull constructor dropped it, so `--stats`
+    /// printed `File list size: 0` on every remote transfer.
+    #[test]
+    fn from_receiver_stats_maps_flist_size() {
+        let summary = LocalCopySummary::from_receiver_stats(
+            10,
+            5,
+            2000,
+            2048,
+            512,
+            4096,
+            Duration::from_secs(1),
+            0,
+            0,
+            18_821,
+            protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
+        );
+        assert_eq!(summary.file_list_size(), 18_821);
     }
 
     /// A remote pull (ssh or daemon) must reconstruct the `--stats` "Number of
@@ -949,6 +987,7 @@ mod tests {
             10,
             100,
             Duration::from_secs(1),
+            0,
             0,
             0,
             protocol::DeleteStats::new(),
@@ -980,6 +1019,7 @@ mod tests {
             Duration::from_secs(2),
             800,
             1200,
+            0,
             protocol::DeleteStats::new(),
             protocol::CreatedStats::new(),
             FileTypeTotals::default(),
@@ -1051,6 +1091,7 @@ mod tests {
             Duration::from_secs(2),
             0,
             0,
+            0,
             delete_stats,
             protocol::CreatedStats::new(),
             FileTypeTotals::default(),
@@ -1088,6 +1129,7 @@ mod tests {
             256,
             8192,
             Duration::from_secs(1),
+            0,
             0,
             0,
             protocol::DeleteStats::new(),

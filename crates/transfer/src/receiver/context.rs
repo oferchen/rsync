@@ -198,6 +198,22 @@ pub struct ReceiverContext {
     /// id lists (upstream: flist.c:2552-2553). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     pub(in crate::receiver) flist_io_error: i32,
+    /// Shared handle on the raw wire byte counter, used to measure the
+    /// file-list spans for `stats.flist_size`.
+    ///
+    /// Upstream snapshots `stats.total_read` (the raw descriptor counter,
+    /// io.c:820) at `recv_file_list()` entry and accumulates the delta on
+    /// return (flist.c:2615, flist.c:2789), so the figure counts raw wire
+    /// bytes - multiplex frame headers included - not decoded entry bytes.
+    /// This handle is the same counter that feeds `bytes_received`.
+    pub(in crate::receiver) raw_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Accumulated `File list size` in raw wire bytes across every received
+    /// file-list span (initial list plus INC_RECURSE sub-list segments).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    pub(in crate::receiver) flist_size: u64,
     /// Per-operation thresholds for switching between sequential and parallel execution.
     ///
     /// Different operations have different overhead profiles: CPU-bound signature
@@ -451,6 +467,8 @@ impl ReceiverContext {
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
             flist_io_error: 0,
+            raw_read_counter: None,
+            flist_size: 0,
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
             pending_del_stats: DeleteStats::new(),
@@ -524,6 +542,45 @@ impl ReceiverContext {
     #[must_use]
     pub fn delete_context(&self) -> Option<Arc<DeleteContext>> {
         self.delete_ctx.as_ref().map(Arc::clone)
+    }
+
+    /// Attaches the raw wire byte counter used to measure file-list spans.
+    ///
+    /// The counter must be the raw transport counter that also feeds
+    /// `bytes_received` (upstream `stats.total_read`, io.c:820). Must be set
+    /// before [`run`](Self::run) for `File list size` to be reported.
+    pub fn set_raw_read_counter(&mut self, counter: Arc<std::sync::atomic::AtomicU64>) {
+        self.raw_read_counter = Some(counter);
+    }
+
+    /// Returns the accumulated `File list size` in raw wire bytes.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    #[must_use]
+    pub fn flist_size(&self) -> u64 {
+        self.flist_size
+    }
+
+    /// Snapshots the raw read counter at the start of a file-list span.
+    ///
+    /// upstream: flist.c:2615 `start_read = stats.total_read;`
+    pub(in crate::receiver) fn flist_span_start(&self) -> u64 {
+        self.raw_read_counter
+            .as_ref()
+            .map_or(0, |c| c.load(Ordering::Relaxed))
+    }
+
+    /// Accumulates the raw bytes read since `start` into `flist_size`.
+    ///
+    /// upstream: flist.c:2789 `stats.flist_size += stats.total_read - start_read;`
+    pub(in crate::receiver) fn flist_span_end(&mut self, start: u64) {
+        if let Some(counter) = &self.raw_read_counter {
+            self.flist_size = self
+                .flist_size
+                .saturating_add(counter.load(Ordering::Relaxed).saturating_sub(start));
+        }
     }
 
     /// Converts a wire NDX value to a flat file list array index.

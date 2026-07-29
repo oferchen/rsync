@@ -906,9 +906,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
+            // upstream: flist.c:2615/2789 - recv_file_list() measures its span
+            // against the raw read counter to accumulate stats.flist_size.
+            ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
             // upstream: io.c:859 - stats.total_written tracking
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
             let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
+            stats.flist_size = ctx.flist_size();
             stats.bytes_sent = counting_writer.bytes_written();
             // upstream: io.c:820 - stats.total_read counts raw bytes read off the
             // socket (mux frames + compressed tokens), below decompression. Source

@@ -40,6 +40,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 elapsed,
                 transfer_stats.literal_data,
                 transfer_stats.matched_data,
+                transfer_stats.flist_size,
                 transfer_stats.delete_stats,
                 transfer_stats.created_stats,
                 engine::local_copy::FileTypeTotals {
