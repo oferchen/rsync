@@ -88,26 +88,41 @@ pub(super) fn render_placeholder_value(
         OutFormatPlaceholder::PermissionString => {
             Some(format_out_format_permissions(event.metadata()).into_bytes())
         }
-        OutFormatPlaceholder::SymlinkTarget => match event
-            .metadata()
-            .and_then(ClientEntryMetadata::symlink_target)
-        {
-            Some(target) => {
-                let mut rendered = symlink_target_connector(event).as_bytes().to_vec();
-                rendered.extend_from_slice(&escape_path(target, allow_8bit));
+        OutFormatPlaceholder::SymlinkTarget => {
+            // upstream: log.c:643-646 - `%L` renders the hard-link leader
+            // (`hlink`) before the symlink target: `if (hlink && *hlink) { n =
+            // hlink; " => " }`. A remote pull carries the leader in
+            // `hardlink_leader`; a local copy routes it through the metadata
+            // `symlink_target` slot keyed on the `HardLink` event kind (handled by
+            // `symlink_target_connector` in the else-branch).
+            if let Some(leader) = event.hardlink_leader() {
+                let mut rendered = b" => ".to_vec();
+                rendered.extend_from_slice(&escape_path(leader, allow_8bit));
                 Some(rendered)
+            } else {
+                match event
+                    .metadata()
+                    .and_then(ClientEntryMetadata::symlink_target)
+                {
+                    Some(target) => {
+                        let mut rendered = symlink_target_connector(event).as_bytes().to_vec();
+                        rendered.extend_from_slice(&escape_path(target, allow_8bit));
+                        Some(rendered)
+                    }
+                    // upstream: log.c:648-654 - the `case 'L'` else-branch sets n
+                    // = "" for a non-link/non-hardlink entry. With no width
+                    // modifier upstream breaks with the empty string (matched here
+                    // by returning None); with a width modifier it copies four
+                    // leading spaces then formats the empty string under the width
+                    // specifier, emitting `4 + width` spaces so the empty target
+                    // aligns under the ` -> ` connector column.
+                    None => spec
+                        .format
+                        .width()
+                        .map(|width| vec![b' '; 4 + width.min(MAX_PLACEHOLDER_WIDTH)]),
+                }
             }
-            // upstream: log.c:648-654 - the `case 'L'` else-branch sets n = ""
-            // for a non-link/non-hardlink entry. With no width modifier upstream
-            // breaks with the empty string (matched here by returning None); with
-            // a width modifier it copies four leading spaces then formats the
-            // empty string under the width specifier, emitting `4 + width` spaces
-            // so the empty target aligns under the ` -> ` connector column.
-            None => spec
-                .format
-                .width()
-                .map(|width| vec![b' '; 4 + width.min(MAX_PLACEHOLDER_WIDTH)]),
-        },
+        }
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
         // upstream: log.c:570-573 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
         // so the numeric uid appears only under `-o`/`--owner`; otherwise `0`.

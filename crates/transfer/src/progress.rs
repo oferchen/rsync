@@ -116,6 +116,12 @@ pub struct ItemizeRow<'a> {
     pub is_symlink: bool,
     /// Symlink target, when the entry is a symlink.
     pub symlink_target: Option<&'a std::path::Path>,
+    /// Hard-link group leader's transfer-relative name, when this row is a
+    /// hard-link follower. Renders the `%L` ` => <leader>` suffix (upstream
+    /// `hlink.c:232-234` passes `realname`; `log.c:643-646` renders ` => hlink`).
+    /// `None` for every non-hard-link row; distinct from `symlink_target`, which
+    /// carries a symlink's ` -> ` target.
+    pub hardlink_leader: Option<&'a std::path::Path>,
     /// Whether the entry is newly created at the destination (`ITEM_IS_NEW`).
     pub is_new: bool,
     /// Whether the row reports a deletion (`ITEM_DELETED`).
@@ -158,6 +164,8 @@ pub struct OwnedItemizeRow {
     pub is_symlink: bool,
     /// Owned copy of [`ItemizeRow::symlink_target`].
     pub symlink_target: Option<std::path::PathBuf>,
+    /// Owned copy of [`ItemizeRow::hardlink_leader`].
+    pub hardlink_leader: Option<std::path::PathBuf>,
     /// See [`ItemizeRow::is_new`].
     pub is_new: bool,
     /// See [`ItemizeRow::is_deletion`].
@@ -182,6 +190,7 @@ impl OwnedItemizeRow {
             is_dir: self.is_dir,
             is_symlink: self.is_symlink,
             symlink_target: self.symlink_target.as_deref(),
+            hardlink_leader: self.hardlink_leader.as_deref(),
             is_new: self.is_new,
             is_deletion: self.is_deletion,
         }

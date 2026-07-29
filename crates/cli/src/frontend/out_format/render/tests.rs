@@ -1413,9 +1413,56 @@ fn remote_event_with_source_prefix(relative: &str, source_prefix: Option<&str>) 
         is_dir: false,
         is_symlink: false,
         symlink_target: None,
+        hardlink_leader: None,
         is_new: true,
         is_deletion: false,
     })
+}
+
+/// Builds a remote-pull hard-link follower event carrying its group leader's
+/// transfer-relative name, mirroring the receiver's `create_hardlinks` xname
+/// (upstream `hlink.c:232-234`) that a custom `--out-format` collects on a pull.
+fn remote_pull_hardlink_follower(relative: &str, leader: &str) -> ClientEvent {
+    ClientEvent::from_remote_itemize(RemoteItemizeFields {
+        relative_path: PathBuf::from(relative),
+        source_prefix: None,
+        itemize: "hf+++++++++".to_owned(),
+        mode: 0o100_644,
+        size: 4,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        uid: None,
+        gid: None,
+        is_dir: false,
+        is_symlink: false,
+        symlink_target: None,
+        hardlink_leader: Some(PathBuf::from(leader)),
+        is_new: true,
+        is_deletion: false,
+    })
+}
+
+#[test]
+fn render_percent_l_hardlink_leader_on_remote_pull() {
+    // upstream log.c:643-646 - `%L` renders ` => <hlink>` when a hard-link leader
+    // (`hlink`) is present, before any symlink target. A remote pull has no engine
+    // record, so the receiver's xname rides in `hardlink_leader`; without it `%L`
+    // printed empty for a pulled hard link (#256). Assert the exact ` => ` bytes.
+    let event = remote_pull_hardlink_follower("dir/alias.txt", "dir/leader.txt");
+    assert_eq!(render_format("%L", &event), " => dir/leader.txt\n");
+    // The full default-style template still resolves name then leader.
+    assert_eq!(
+        render_format("%n%L", &event),
+        "dir/alias.txt => dir/leader.txt\n"
+    );
+}
+
+#[test]
+fn render_percent_l_empty_for_remote_pull_regular_file() {
+    // A pulled regular file with no leader and no symlink target renders an empty
+    // `%L` (upstream log.c:650-653 sets n = "" and breaks with no width modifier).
+    let event = remote_event_with_source_prefix("plain.txt", None);
+    assert_eq!(render_format("%L", &event), "\n");
 }
 
 #[test]

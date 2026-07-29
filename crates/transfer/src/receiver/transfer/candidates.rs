@@ -587,7 +587,7 @@ impl ReceiverContext {
                 modify_window,
             );
             let iflags = crate::generator::ItemFlags::from_raw(raw);
-            self.record_itemize(idx, &iflags, entry);
+            self.record_itemize(idx, &iflags, entry, None);
             if raw & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
                 self.record_created(entry.mode());
             }

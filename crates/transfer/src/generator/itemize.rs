@@ -45,6 +45,9 @@ pub(crate) fn build_itemize_row<'a>(
         is_dir: entry.is_dir(),
         is_symlink: entry.is_symlink(),
         symlink_target: entry.link_target().map(PathBuf::as_path),
+        // The push sender renders a hard-link follower's ` => leader` suffix from
+        // the wire xname in its own itemize path, not through this row builder.
+        hardlink_leader: None,
         is_new: raw & ItemFlags::ITEM_IS_NEW != 0,
         is_deletion: raw & ItemFlags::ITEM_DELETED != 0,
     }

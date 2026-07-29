@@ -126,6 +126,15 @@ pub struct ClientEvent {
     /// placeholder (upstream `F_PATHNAME` joined with the name). `None` on a pull
     /// or local copy, where `%f` falls back to [`Self::relative_path`].
     source_prefix: Option<PathBuf>,
+    /// Hard-link group leader's transfer-relative name for a remote-pull
+    /// hard-link follower, carried so `%L` renders the ` => <leader>` suffix.
+    ///
+    /// A local copy already routes its leader through the metadata `symlink_target`
+    /// slot keyed on [`ClientEventKind::HardLink`] (engine `plan/metadata.rs`); a
+    /// remote pull has no engine record, so the receiver's already-computed xname
+    /// (upstream `hlink.c:232-234`) rides here instead. `None` on every path that
+    /// is not a remote-pull hard-link follower.
+    hardlink_leader: Option<PathBuf>,
 }
 
 impl ClientEvent {
@@ -222,6 +231,7 @@ impl ClientEvent {
             is_directory,
             precomputed_itemize: None,
             source_prefix: None,
+            hardlink_leader: None,
         }
     }
 
@@ -248,6 +258,7 @@ impl ClientEvent {
             is_directory: false,
             precomputed_itemize: None,
             source_prefix: None,
+            hardlink_leader: None,
         }
     }
 
@@ -288,6 +299,7 @@ impl ClientEvent {
             is_directory,
             precomputed_itemize: None,
             source_prefix: None,
+            hardlink_leader: None,
         }
     }
 
@@ -326,6 +338,7 @@ impl ClientEvent {
             is_directory: fields.is_dir,
             precomputed_itemize: Some(fields.itemize),
             source_prefix: fields.source_prefix,
+            hardlink_leader: fields.hardlink_leader,
         }
     }
 
@@ -340,6 +353,16 @@ impl ClientEvent {
     #[must_use]
     pub fn source_prefix(&self) -> Option<&Path> {
         self.source_prefix.as_deref()
+    }
+
+    /// Returns the hard-link group leader's transfer-relative name for a
+    /// remote-pull hard-link follower, which `%L` renders as ` => <leader>`
+    /// (upstream `log.c:643-646`). `None` for every other event, including a
+    /// local-copy hard link, whose leader travels through the metadata
+    /// `symlink_target` slot instead.
+    #[must_use]
+    pub fn hardlink_leader(&self) -> Option<&Path> {
+        self.hardlink_leader.as_deref()
     }
 
     /// Returns the action recorded by this event.
@@ -483,6 +506,7 @@ impl ClientEvent {
             is_directory: false,
             precomputed_itemize: None,
             source_prefix: None,
+            hardlink_leader: None,
         }
     }
 
@@ -557,6 +581,7 @@ mod tests {
             is_dir: false,
             is_symlink: false,
             symlink_target: None,
+            hardlink_leader: None,
             is_new: true,
             is_deletion: false,
         });
@@ -589,6 +614,7 @@ mod tests {
             is_dir: false,
             is_symlink: false,
             symlink_target: None,
+            hardlink_leader: None,
             is_new: false,
             is_deletion: true,
         });
