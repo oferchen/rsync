@@ -541,8 +541,9 @@ pub(super) fn set_owner_like(
         let _ = destination;
         let _ = metadata;
         let _ = follow_symlinks;
-        let _ = options;
         let _ = existing;
+        // Windows cannot chown; warn once when the user asked for ownership.
+        super::platform_warn::warn_ownership_unsupported(options);
         Ok(false)
     }
 }
@@ -858,15 +859,18 @@ fn store_fake_super_from_local_metadata(
 
 /// No-op stub for non-Unix platforms where ownership (`chown`) is not supported.
 ///
-/// Returns `Ok(())` unconditionally since Windows and other non-Unix targets
-/// do not support POSIX ownership semantics.
+/// Windows/NTFS has no POSIX uid/gid, so the drop is unavoidable - but it must
+/// not be silent: when the user requested ownership preservation, warn once
+/// (see [`super::platform_warn`]) before returning. Returns `Ok(false)` since no
+/// setuid/setgid re-stat is ever needed here.
 #[cfg(not(unix))]
 pub(super) fn apply_ownership_from_entry(
     _destination: &Path,
     _entry: &protocol::flist::FileEntry,
-    _options: &MetadataOptions,
+    options: &MetadataOptions,
     _cached_meta: Option<&fs::Metadata>,
 ) -> Result<bool, MetadataError> {
+    super::platform_warn::warn_ownership_unsupported(options);
     Ok(false)
 }
 
