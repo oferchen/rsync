@@ -597,6 +597,54 @@ impl GeneratorContext {
         join_source_path(&self.source_bases[ndx], self.file_list[ndx].path())
     }
 
+    /// Builds the per-connection source-open policy the sender applies to
+    /// every source file.
+    ///
+    /// Mirrors the branch upstream `sender.c` takes before reading a file:
+    /// a non-chroot daemon (`use_secure_symlinks = am_daemon && !am_chrooted`;
+    /// oc never chroots, so it is simply `is_daemon_connection`) confines the
+    /// open beneath the module root; otherwise `do_open_checklinks` opens with
+    /// `O_NOFOLLOW` unless `--copy-links` / `--copy-unsafe-links` follows the
+    /// symlink.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon && !am_chrooted`
+    /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
+    pub(crate) fn source_open(&self) -> open_source::SourceOpen {
+        let confine_root = if self.config.connection.is_daemon_connection {
+            self.config.connection.daemon_module_root.clone()
+        } else {
+            None
+        };
+        let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
+        open_source::SourceOpen::new(
+            confine_root,
+            follow_symlinks,
+            self.config.write.open_noatime,
+        )
+    }
+
+    /// Whether the source open must apply confinement or `O_NOFOLLOW`, which
+    /// the path-based io_uring / IOCP fast readers cannot express (they follow
+    /// symlinks). Only a non-daemon transfer that already follows symlinks
+    /// (`--copy-links` / `--copy-unsafe-links`) may take the fast path.
+    ///
+    /// Non-Unix targets apply no symlink-race defence here (`O_NOFOLLOW` is a
+    /// Unix concept), so the fast path is always available.
+    pub(crate) fn requires_protected_source_open(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let follows = !self.config.connection.is_daemon_connection
+                && (self.config.flags.copy_links || self.config.flags.copy_unsafe_links);
+            !follows
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// Returns the full source path for entry `ndx` for the `%f` out-format
     /// placeholder, mirroring upstream `log.c` `pathjoin(F_PATHNAME(file),
     /// f_name(file))`.
@@ -786,6 +834,7 @@ impl GeneratorContext {
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
+            && !self.requires_protected_source_open()
         {
             // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
             // IOCP reader mirrors the disk-commit writer's dispatch: runtime
@@ -814,7 +863,7 @@ impl GeneratorContext {
             }
         }
 
-        let f = open_source::open_source_with_noatime(path, use_noatime)?;
+        let f = self.source_open().open(path)?;
         Ok(Box::new(std::io::BufReader::with_capacity(
             adaptive_buffer_size(file_size),
             f,
@@ -863,11 +912,23 @@ impl GeneratorContext {
     /// yields `None` for the fd because its reader owns the descriptor behind an
     /// abstraction; a later zero-copy SERVE gate applies only to the plain-file
     /// case. The fd is purely informational here - the byte stream is identical.
+    ///
+    /// The third tuple element is the effective source length: on the plain-file
+    /// path it is the fstat'd size (with a 0-length device resolved via
+    /// `get_device_size`), preferred over the flist scan-time length exactly as
+    /// upstream `sender.c:404-419` prefers `st.st_size`. The fast path, taken
+    /// only for a non-device regular file that follows symlinks, reports the
+    /// flist length. A device source opened without `--copy-devices` aborts the
+    /// transfer with `RERR_PROTOCOL` (a tagged `ProtocolViolation` error).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:404-419` - `do_fstat` + `IS_DEVICE` guard + `get_device_size`.
     pub(crate) fn open_source_unbuffered(
         &self,
         path: &std::path::Path,
         file_size: u64,
-    ) -> std::io::Result<(Box<dyn std::io::Read>, Option<SourceFd>)> {
+    ) -> std::io::Result<(Box<dyn std::io::Read>, Option<SourceFd>, u64)> {
         // 1 MB threshold: io_uring ring creation has fixed overhead that only
         // pays off for larger reads where batched syscalls reduce total cost.
         const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
@@ -881,6 +942,7 @@ impl GeneratorContext {
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
+            && !self.requires_protected_source_open()
         {
             // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
             // IOCP reader mirrors the disk-commit writer's dispatch: runtime
@@ -890,7 +952,7 @@ impl GeneratorContext {
             #[cfg(target_os = "windows")]
             {
                 if let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto) {
-                    return Ok((Box::new(r), None));
+                    return Ok((Box::new(r), None, file_size));
                 }
                 // Fall through to raw File on IOCP failure.
             }
@@ -901,7 +963,7 @@ impl GeneratorContext {
                     self.config.write.io_uring_policy,
                     self.config.write.io_uring_depth,
                 ) {
-                    Ok(r) => return Ok((Box::new(r), None)),
+                    Ok(r) => return Ok((Box::new(r), None, file_size)),
                     Err(_) => {
                         // Fall through to raw File on io_uring failure
                     }
@@ -909,12 +971,43 @@ impl GeneratorContext {
             }
         }
 
-        let f = open_source::open_source_with_noatime(path, use_noatime)?;
+        let mut f = self.source_open().open(path)?;
+        // upstream: sender.c:404-419 - fstat the opened fd, reject a device
+        // without --copy-devices, and prefer the fstat'd size (resolving a
+        // 0-length device via get_device_size) over the flist scan-time size.
+        let effective_size = self.fstat_source_guard(&mut f)?;
         #[cfg(unix)]
         let src_fd = Some(std::os::fd::AsRawFd::as_raw_fd(&f));
         #[cfg(not(unix))]
         let src_fd = None;
-        Ok((Box::new(f), src_fd))
+        Ok((Box::new(f), src_fd, effective_size))
+    }
+
+    /// Fstats the opened source fd, enforces the sender's device guard, and
+    /// resolves the effective source length.
+    ///
+    /// `File::metadata` performs the `fstat(2)` on the already-open fd using a
+    /// safe std API (no `unsafe` in this crate). A block/char device opened
+    /// without `--copy-devices` aborts the transfer with `RERR_PROTOCOL`; a
+    /// 0-length device with `--copy-devices` has its real size resolved by
+    /// seeking to the end. Every other source reports its fstat length.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:404-419` - `do_fstat` (exit `RERR_FILEIO` on failure),
+    ///   `IS_DEVICE(st.st_mode)` guard (`RERR_PROTOCOL`), and
+    ///   `st.st_size = get_device_size(fd, fname)` for a 0-length device.
+    fn fstat_source_guard(&self, file: &mut std::fs::File) -> std::io::Result<u64> {
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        let size = match source_device_guard(&metadata, self.config.flags.copy_devices)? {
+            Some(size) => size,
+            // upstream: sender.c:418 - st.st_size = get_device_size(fd, fname).
+            None => get_device_size(file)?,
+        };
+        #[cfg(not(unix))]
+        let size = metadata.len();
+        Ok(size)
     }
 
     /// Returns the upstream `missing_args` mode for ENOENT handling.
@@ -1021,6 +1114,61 @@ fn join_source_path(base: &Path, name: &Path) -> PathBuf {
     let mut path = base.to_path_buf();
     path.extend(name.components());
     path
+}
+
+/// Applies the sender's device guard to an fstat'd source and reports the
+/// size to use.
+///
+/// Returns `Ok(Some(len))` for a normal source or a non-empty device (use the
+/// fstat length), `Ok(None)` for a 0-length device whose real size must be
+/// resolved with [`get_device_size`], and `Err(_)` (a tagged
+/// [`protocol::ProtocolViolation`]) when a device is opened without
+/// `--copy-devices`.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:405-419` - `if (IS_DEVICE(st.st_mode)) { if (!copy_devices) ...
+///   exit_cleanup(RERR_PROTOCOL); if (st.st_size == 0) st.st_size =
+///   get_device_size(fd, fname); }`.
+#[cfg(unix)]
+fn source_device_guard(
+    metadata: &std::fs::Metadata,
+    copy_devices: bool,
+) -> std::io::Result<Option<u64>> {
+    use std::os::unix::fs::FileTypeExt;
+    let file_type = metadata.file_type();
+    if file_type.is_block_device() || file_type.is_char_device() {
+        if !copy_devices {
+            // upstream: sender.c:407-409 - rprintf(FERROR, "attempt to copy
+            // device contents without --copy-devices\n") + exit_cleanup(RERR_PROTOCOL).
+            return Err(protocol::protocol_violation(format!(
+                "attempt to copy device contents without --copy-devices {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::sender()
+            )));
+        }
+        if metadata.len() == 0 {
+            return Ok(None);
+        }
+    }
+    Ok(Some(metadata.len()))
+}
+
+/// Resolves a device's readable size by seeking to its end, then rewinds the
+/// fd so the subsequent read streams from offset 0.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1550 get_device_size` - `lseek(fd, 0, SEEK_END)` yields the
+///   size; `lseek(fd, 0, SEEK_SET)` rewinds. A seek failure logs and returns
+///   `0` upstream, so the transfer degrades to an empty stream rather than
+///   aborting; the rewind failure is likewise non-fatal.
+#[cfg(unix)]
+fn get_device_size(file: &mut std::fs::File) -> std::io::Result<u64> {
+    use std::io::{Seek, SeekFrom};
+    let size = file.seek(SeekFrom::End(0)).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(0));
+    Ok(size)
 }
 
 /// Derives the interned base for a `(full_path, name)` pair such that
@@ -1196,5 +1344,65 @@ mod source_base_windows_tests {
             join_source_path(&base, name),
             PathBuf::from(r"C:\srv\module\foo"),
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod device_guard_tests {
+    //! Sender device guard (`sender.c:405-419`): a device source without
+    //! `--copy-devices` must abort with `RERR_PROTOCOL`, a device with
+    //! `--copy-devices` defers to `get_device_size`, and a regular file
+    //! reports its fstat length.
+    use super::source_device_guard;
+
+    /// WHY: without `--copy-devices` upstream refuses to stream device
+    /// contents and `exit_cleanup(RERR_PROTOCOL)`. The guard must surface a
+    /// `ProtocolViolation` so the core mapper returns exit 2, not a silent
+    /// device read.
+    #[test]
+    fn char_device_without_copy_devices_is_refused() {
+        let metadata = std::fs::metadata("/dev/null").expect("/dev/null present");
+        assert!(
+            metadata.file_type_is_device(),
+            "/dev/null must be a character device for this test to mean anything"
+        );
+        let err = source_device_guard(&metadata, false)
+            .expect_err("a device without --copy-devices must abort");
+        assert!(
+            err.get_ref()
+                .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+            "the device guard must raise a ProtocolViolation (RERR_PROTOCOL), got: {err}"
+        );
+    }
+
+    /// With `--copy-devices` a 0-length device defers size resolution to
+    /// `get_device_size` (upstream `sender.c:418`), signalled by `Ok(None)`.
+    #[test]
+    fn char_device_with_copy_devices_defers_size_resolution() {
+        let metadata = std::fs::metadata("/dev/null").expect("/dev/null present");
+        assert_eq!(source_device_guard(&metadata, true).unwrap(), None);
+    }
+
+    /// A regular file reports its fstat length regardless of `--copy-devices`.
+    #[test]
+    fn regular_file_reports_fstat_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"12345").unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(source_device_guard(&metadata, false).unwrap(), Some(5));
+    }
+
+    /// Local extension trait so the test can assert `/dev/null` really is a
+    /// device without importing `FileTypeExt` at module scope.
+    trait FileTypeIsDevice {
+        fn file_type_is_device(&self) -> bool;
+    }
+    impl FileTypeIsDevice for std::fs::Metadata {
+        fn file_type_is_device(&self) -> bool {
+            use std::os::unix::fs::FileTypeExt;
+            let ft = self.file_type();
+            ft.is_block_device() || ft.is_char_device()
+        }
     }
 }
