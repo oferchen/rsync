@@ -824,11 +824,17 @@ impl ReceiverContext {
                             if link_meta.dev() == leader_meta.dev()
                                 && link_meta.ino() == leader_meta.ino()
                             {
-                                // upstream: hlink.c:218-222 - hardlink already
-                                // correct, metadata only; the itemize xname is
-                                // the empty string, so no ` => ` suffix renders
-                                // (log.c:644 gates on `hlink && *hlink`).
-                                let iflags = ItemFlags::from_raw(0);
+                                // upstream: hlink.c:218-222 - an up-to-date
+                                // hardlink follower itemizes with
+                                // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS and an
+                                // empty xname. log.c:707-708 renders column 0 as
+                                // 'h' (LOCAL_CHANGE + XNAME_FOLLOWS), and the
+                                // empty xname suppresses the ` => ` suffix
+                                // (log.c:644 / itemize.rs:192 gate on a
+                                // non-empty name).
+                                let iflags = ItemFlags::from_raw(
+                                    ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS,
+                                );
                                 let _ = self.emit_itemize_indexed(
                                     writer,
                                     follower_ndx,
