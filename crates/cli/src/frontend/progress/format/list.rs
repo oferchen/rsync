@@ -110,9 +110,19 @@ mod tests {
     }
 
     #[test]
-    fn format_list_timestamp_epoch_returns_epoch() {
+    fn format_list_timestamp_epoch_renders_epoch_in_local_time() {
+        // Upstream `log.c:timestring()` renders modtimes in local time via
+        // `localtime_r`, so `format_list_timestamp` displays the epoch in the
+        // host timezone rather than a hardcoded UTC string. Deriving the
+        // expected value through the same local-time conversion keeps this
+        // assertion correct on any runner (UTC, UTC+1, America/New_York, ...)
+        // while still proving the `Some` branch formats the supplied instant
+        // instead of falling back to the epoch literal.
+        let expected = crate::frontend::local_time::to_local(SystemTime::UNIX_EPOCH)
+            .format(LIST_TIMESTAMP_FORMAT)
+            .expect("epoch is representable in the local timezone");
         let result = format_list_timestamp(Some(SystemTime::UNIX_EPOCH));
-        assert_eq!(result, "1970/01/01 00:00:00");
+        assert_eq!(result, expected);
     }
 
     #[test]
