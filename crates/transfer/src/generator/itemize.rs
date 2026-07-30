@@ -596,6 +596,38 @@ mod tests {
         assert_eq!(line, "hf+++++++++ follower\n");
     }
 
+    /// HL-1 (#78): an UP-TO-DATE hardlink follower (destination already links to
+    /// its leader) itemizes with `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS` and an
+    /// EMPTY xname - exactly what upstream `hlink.c:218-222` passes. Column 0 must
+    /// render `h` (LOCAL_CHANGE + XNAME_FOLLOWS, `log.c:707-708`); with
+    /// `ITEM_IS_NEW` absent and no report flags, the all-dot attribute columns
+    /// collapse to blanks (`log.c:741-750`), and the empty xname suppresses the
+    /// ` => leader` suffix (`log.c:644`). This pins the flags the already-linked
+    /// branch now passes instead of a bare `0`, which rendered a spurious `.`.
+    #[test]
+    fn format_itemize_line_up_to_date_hardlink_follower_renders_h() {
+        let iflags =
+            ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS);
+        let entry = make_file_entry("follower");
+        let line = format_itemize_line(&iflags, &entry, false, &default_ctx(), None);
+
+        // "hf" + 9 blanked attribute columns + " " (%i/%n separator) + name.
+        let mut expected = String::from("hf");
+        expected.push_str(&" ".repeat(9));
+        expected.push(' ');
+        expected.push_str("follower\n");
+        assert_eq!(line, expected);
+        assert_eq!(
+            line.as_bytes()[0],
+            b'h',
+            "column 0 renders the hardlink glyph"
+        );
+        assert!(
+            !line.contains("=>"),
+            "an empty xname suppresses the ` => ` suffix"
+        );
+    }
+
     /// upstream: log.c:716-717 - non-symlink with preserve_mtimes shows lowercase 't'
     #[test]
     fn file_time_with_preserve_mtimes_shows_lowercase_t() {

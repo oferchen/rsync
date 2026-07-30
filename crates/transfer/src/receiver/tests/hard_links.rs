@@ -33,6 +33,26 @@ fn call_create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         .expect("create_hardlinks must succeed in fixture-controlled tempdirs");
 }
 
+/// `emit_server_hardlink_follower_itemize` took a `dest_dir` plus a
+/// `#[cfg(unix)]` sandbox so it can skip an already-linked follower
+/// (HL-2 / upstream `hlink.c:215-227`). Route every test call through this
+/// cfg-aware shim rather than gating each site.
+fn call_emit_follower_itemize<W: std::io::Write + ?Sized>(
+    ctx: &ReceiverContext,
+    dest: &std::path::Path,
+    buf: &mut W,
+    ndx_codec: &mut protocol::codec::NdxCodecEnum,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, dest, None)
+    }
+    #[cfg(not(unix))]
+    {
+        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, dest)
+    }
+}
+
 #[test]
 fn create_hardlinks_links_follower_to_leader() {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -747,9 +767,12 @@ fn server_push_emits_follower_ndx_iflags_and_leader_xname() {
     let ctx = receiver_with_hardlinks(entries);
     let expected_ndx = ctx.flat_to_wire_ndx(1);
 
+    // No on-disk fixture: the follower is not yet linked, so it is a new
+    // follower and must be forwarded (the HL-2 up-to-date gate is inactive).
+    let dest = tempfile::TempDir::new().unwrap();
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
-    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
         .expect("server-mode follower itemize must serialize");
     assert!(
         !buf.is_empty(),
@@ -814,9 +837,11 @@ fn server_push_emits_one_record_per_follower() {
     let ctx = receiver_with_hardlinks(entries);
     let expected = [ctx.flat_to_wire_ndx(1), ctx.flat_to_wire_ndx(2)];
 
+    // No on-disk fixture: both followers are new and must be forwarded.
+    let dest = tempfile::TempDir::new().unwrap();
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
-    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
         .expect("server-mode follower itemize must serialize");
     assert_eq!(
         ctx.hardlink_follower_echoes.get(),
@@ -858,9 +883,10 @@ fn pull_receiver_emits_no_follower_wire_record() {
     ];
     let ctx = pull_receiver_with_hardlinks(entries);
 
+    let dest = tempfile::TempDir::new().unwrap();
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
-    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
         .expect("client-mode call must succeed as a no-op");
     assert!(
         buf.is_empty(),
@@ -882,15 +908,119 @@ fn server_push_without_followers_emits_nothing() {
     let entries = vec![make_hlink_leader("solo.txt", 9, 7)];
     let ctx = receiver_with_hardlinks(entries);
 
+    let dest = tempfile::TempDir::new().unwrap();
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
-    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
         .expect("no-follower call must succeed");
     assert!(
         buf.is_empty(),
         "a lone leader has no follower rows to forward",
     );
     assert_eq!(ctx.hardlink_follower_echoes.get(), 0);
+}
+
+/// HL-2 (#79, wire): a server-mode push whose destination already hard-links
+/// the follower to its leader (a re-run) must forward NOTHING for that
+/// follower. Upstream `hlink.c:215-227` itemizes an up-to-date follower with
+/// `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS` and an EMPTY xname; neither flag is
+/// significant (`rsync.h:258-259`), so the `generator.c:582` emit gate is false
+/// and no wire record is written. Emitting one here would make the pushing
+/// client's sender print a spurious `hf...` row on every unchanged re-run.
+#[cfg(unix)]
+#[test]
+fn server_push_skips_up_to_date_follower_on_wire() {
+    use protocol::codec::create_ndx_codec;
+
+    let dest = tempfile::TempDir::new().unwrap();
+    let leader = dest.path().join("leader.txt");
+    let follower = dest.path().join("follower.txt");
+    std::fs::write(&leader, "shared").unwrap();
+    // The destination already links follower -> leader (a prior run did this),
+    // so they share dev/ino and the follower is up-to-date.
+    std::fs::hard_link(&leader, &follower).unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower.txt", 14, 42),
+    ];
+    let ctx = receiver_with_hardlinks(entries);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
+        .expect("up-to-date follower call must succeed");
+    assert!(
+        buf.is_empty(),
+        "an already-linked follower writes no itemize record on the wire",
+    );
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        0,
+        "no wire record means the sender emits no echo to drain",
+    );
+}
+
+/// HL-2 companion: a first-time transfer (destination leader present, follower
+/// not yet linked) MUST still forward the follower's itemize record carrying a
+/// non-empty leader xname - the `atomic_create` path at upstream
+/// `hlink.c:230-237`, whose `(xname && *xname)` makes the `generator.c:582`
+/// gate true. This pins that the up-to-date gate narrows emission without
+/// suppressing genuinely new followers.
+#[cfg(unix)]
+#[test]
+fn server_push_emits_new_follower_when_not_yet_linked() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    let dest = tempfile::TempDir::new().unwrap();
+    // The leader is on disk but the follower is not linked yet (first run).
+    std::fs::write(dest.path().join("leader.txt"), "shared").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower.txt", 14, 42),
+    ];
+    let ctx = receiver_with_hardlinks(entries);
+    let expected_ndx = ctx.flat_to_wire_ndx(1);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
+        .expect("new follower call must succeed");
+    assert!(
+        !buf.is_empty(),
+        "a not-yet-linked follower must be forwarded so the sender renders its row",
+    );
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        1,
+        "the one new follower record produces one echo to drain",
+    );
+
+    let mut cur = std::io::Cursor::new(buf);
+    let mut rd = create_ndx_codec(32);
+    let ndx = rd.read_ndx(&mut cur).expect("follower NDX must decode");
+    assert_eq!(
+        ndx, expected_ndx,
+        "the new follower is itemized under its NDX"
+    );
+    let iflags = ItemFlags::read(&mut cur, 32).expect("iflags must decode");
+    assert!(
+        iflags.raw() & ItemFlags::ITEM_IS_NEW != 0,
+        "a first-time follower carries ITEM_IS_NEW",
+    );
+    let (_ft, xname, _n) = iflags.read_trailing(&mut cur).expect("xname must decode");
+    assert_eq!(
+        xname.as_deref(),
+        Some(b"leader.txt".as_ref()),
+        "the new follower names its leader for the `=> leader.txt` suffix",
+    );
+    assert_eq!(
+        cur.position() as usize,
+        cur.get_ref().len(),
+        "exactly one follower record on the wire",
+    );
 }
 
 /// The peer's sender echoes every non-transfer item back (upstream

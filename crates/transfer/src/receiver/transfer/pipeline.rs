@@ -654,7 +654,19 @@ impl ReceiverContext {
             // pass, which carries no new followers) so a pushing client's
             // sender renders each `hf...` / `=> leader` row.
             if !is_redo_pass {
-                self.emit_server_hardlink_follower_itemize(writer, ndx_write_codec.inner_mut())?;
+                #[cfg(unix)]
+                self.emit_server_hardlink_follower_itemize(
+                    writer,
+                    ndx_write_codec.inner_mut(),
+                    &setup.dest_dir,
+                    setup.sandbox.as_deref(),
+                )?;
+                #[cfg(not(unix))]
+                self.emit_server_hardlink_follower_itemize(
+                    writer,
+                    ndx_write_codec.inner_mut(),
+                    &setup.dest_dir,
+                )?;
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
