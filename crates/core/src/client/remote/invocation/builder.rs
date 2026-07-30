@@ -587,6 +587,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // derives inplace from append); the two are mutually exclusive.
         if self.config.inplace() && !self.config.append() {
             args.push(OsString::from("--inplace"));
+            // upstream: options.c:server_options - `else if (inplace) {
+            // --inplace; if (sparse_files && !whole_file && am_sender) --no-W }`.
+            // Works around a bug in older remote receivers where --inplace
+            // --sparse wrongly selected whole-file mode; a PUSH (am_sender)
+            // appends --no-W to force delta transfer there. `whole_file_raw() !=
+            // Some(true)` mirrors upstream `!whole_file`: the compact 'W' letter
+            // is packed only for an explicit whole-file, so its absence is
+            // upstream's resolved `whole_file == 0` for a remote transfer.
+            if am_sender && self.config.sparse() && self.config.whole_file_raw() != Some(true) {
+                args.push(OsString::from("--no-W"));
+            }
         }
 
         // upstream: options.c:2951-2954 server_options() - append_mode is sent
