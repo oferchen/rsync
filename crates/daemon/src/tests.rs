@@ -272,6 +272,8 @@ include!("tests/chunks/daemon_safe_links_receive.rs");
 // Daemon `munge symlinks = yes` round-trip tests (push + pull)
 include!("tests/chunks/daemon_munge_symlinks_push.rs");
 include!("tests/chunks/daemon_munge_symlinks_pull.rs");
+// Daemon rejects a pre-existing `rsyncd-munged` directory under munge symlinks
+include!("tests/chunks/daemon_munge_symlinks_rejects_preexisting_munged_dir.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
