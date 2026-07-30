@@ -225,15 +225,32 @@ pub(super) fn partial_dir_path(file_path: &Path) -> PathBuf {
 /// Errors are logged and silently ignored - partial retention is best-effort.
 /// On failure, the guard's Drop will clean up the temp file.
 ///
+/// `zero_mtime` selects between the two upstream retention paths for plain
+/// `--partial`:
+///
+/// - `true` (signal/abort cleanup): upstream `cleanup.c:174-180` zeros the
+///   modtime (`cleanup_file->modtime = 0`, `tweak_modtime = 1`) so an
+///   interrupted partial stands out in `ls` and is not skipped by `--update`.
+///   Used by the interrupt paths (channel disconnect, `Abort`, `Shutdown`).
+/// - `false` (normal failed-verify keep): upstream `receiver.c:1047` calls
+///   `finish_transfer(..., recv_ok, ...)` with `recv_ok == 0`, which maps to
+///   `ATTRS_SKIP_MTIME` (`rsync.c:748-749`), so the retained stub keeps its
+///   recent temp-creation mtime rather than being reset to the epoch.
+///
+/// `--partial-dir` never zeros the mtime in either case (upstream routes it
+/// through `handle_partial_dir()`, which leaves the timestamp alone).
+///
 /// # Upstream Reference
 ///
 /// - `cleanup.c:105-115` - `handle_partial_dir()` moves temp to partial-dir
-/// - `cleanup.c:130-135` - `keep_partial && got_literal` guard
-/// - `receiver.c:340-345` - `do_rename(partialptr, fname)` for `--partial`
+/// - `cleanup.c:174-180` - signal cleanup zeros modtime for plain `--partial`
+/// - `receiver.c:1047` - normal keep uses `ok_to_set_time = recv_ok` (0 on fail)
+/// - `rsync.c:748-749` - `ok_to_set_time ? ATTRS_ACCURATE_TIME : ATTRS_SKIP_MTIME`
 pub(super) fn retain_partial_file(
     config: &DiskCommitConfig,
     cleanup_guard: &mut TempFileGuard,
     dest_path: &Path,
+    zero_mtime: bool,
 ) {
     match &config.partial_mode {
         PartialMode::None => {}
@@ -244,12 +261,15 @@ pub(super) fn retain_partial_file(
             let temp_path = cleanup_guard.path().to_path_buf();
             match rename_config_sandboxed(config, cleanup_guard.path(), dest_path) {
                 Ok(_) => {
-                    // upstream: cleanup.c:174-178 - stamp modtime=0 on
-                    // retained partial files so --update does not skip them
-                    // as "up to date" on the next run. Only for plain
-                    // --partial, not --partial-dir (upstream uses
-                    // handle_partial_dir() for --partial-dir which does not
-                    // zero the mtime).
+                    // upstream: cleanup.c:174-180 - the signal/abort cleanup
+                    // path stamps modtime=0 on the retained partial so it
+                    // stands out as unfinished in an ls and --update does not
+                    // skip it as "up to date". Only for plain --partial, not
+                    // --partial-dir (handle_partial_dir() leaves the mtime
+                    // alone). The normal failed-verify keep (receiver.c:1047,
+                    // ok_to_set_time=0 -> ATTRS_SKIP_MTIME) does NOT zero it,
+                    // preserving the recent temp-creation mtime - so zero only
+                    // when `zero_mtime` is set (the interrupt paths).
                     //
                     // Use from_unix_time(0, 0) rather than FileTime::zero()
                     // because on Windows, zero() maps to the Windows epoch
@@ -258,15 +278,17 @@ pub(super) fn retain_partial_file(
                     // skipping the stamp. from_unix_time(0, 0) maps to
                     // 1970-01-01 which is a non-zero FILETIME that Windows
                     // will actually apply.
-                    let epoch = filetime::FileTime::from_unix_time(0, 0);
-                    if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
-                        logging::debug_log!(
-                            Io,
-                            1,
-                            "failed to set mtime=0 on partial file {}: {}",
-                            dest_path.display(),
-                            e
-                        );
+                    if zero_mtime {
+                        let epoch = filetime::FileTime::from_unix_time(0, 0);
+                        if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
+                            logging::debug_log!(
+                                Io,
+                                1,
+                                "failed to set mtime=0 on partial file {}: {}",
+                                dest_path.display(),
+                                e
+                            );
+                        }
                     }
                     logging::debug_log!(Io, 1, "retained partial file: {}", dest_path.display());
                     CleanupManager::global().unregister_temp_file(&temp_path);
