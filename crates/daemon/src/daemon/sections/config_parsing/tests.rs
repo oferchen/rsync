@@ -436,8 +436,13 @@ mod config_parsing_tests {
     }
 
 
+    /// A bare global `include` is the P_LOCAL include-filter parameter
+    /// (daemon-parm.txt Locals; loadparm.c via daemon-parm.h), NOT file
+    /// inclusion - upstream reserves `&include` for pulling in another file
+    /// (params.c). So `include = <file>` must be treated as a filter value and
+    /// must NOT load the modules declared in that file.
     #[test]
-    fn parse_include_directive() {
+    fn parse_bare_include_is_filter_default_not_file_inclusion() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -449,8 +454,9 @@ mod config_parsing_tests {
         let main_file = write_config(&main_config);
 
         let result = parse_config_modules(main_file.path()).expect("parse succeeds");
-        assert_eq!(result.modules.len(), 1);
-        assert_eq!(result.modules[0].name, "included_mod");
+        // The referenced file's `[included_mod]` is NOT pulled in: bare
+        // `include` set a filter default instead of including the file.
+        assert!(result.modules.is_empty());
     }
 
     #[test]
@@ -701,8 +707,10 @@ mod config_parsing_tests {
         let dir = TempDir::new().expect("create temp dir");
         let config_path = dir.path().join("config.conf");
 
-        // Write config that includes itself
-        let content = format!("include = {}\n", config_path.display());
+        // Write a config that includes itself. Recursion detection guards the
+        // file-inclusion directive, which is `&include` (params.c) - a bare
+        // `include` is only a filter default and never opens a file.
+        let content = format!("&include {}\n", config_path.display());
         fs::write(&config_path, &content).expect("write config");
 
         let err = parse_config_modules(&config_path).expect_err("should fail");
@@ -724,11 +732,15 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("must not be empty"));
     }
 
+    /// A bare global `include` is the P_LOCAL include-filter parameter, so an
+    /// empty value is a no-op default (mirroring an empty `exclude`), not an
+    /// error. Empty-value rejection belongs to the file-inclusion directive
+    /// `&include`, covered by `parse_amp_include_empty_value_names_directive`.
     #[test]
-    fn parse_empty_include_errors() {
+    fn parse_empty_bare_include_is_noop() {
         let file = write_config("include = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules.is_empty());
     }
 
     #[test]
