@@ -58,7 +58,8 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn_proto::{ClientConfig, ConnectionError, Endpoint, EndpointConfig, ServerConfig, VarInt};
-use rustls::RootCertStore;
+pub use rustls::RootCertStore;
+pub use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
@@ -314,25 +315,84 @@ impl std::fmt::Debug for QuicAcceptor {
     }
 }
 
-/// QUIC client: connects to an acceptor whose certificate it pins.
+/// How a [`QuicConnector`] decides whether to trust the server's certificate.
+///
+/// The connector's connect path is identical for every variant - the trust
+/// source only shapes the rustls [`rustls::ClientConfig`] the handshake runs
+/// against. This is the seam the client-verification ladder (policy B) plugs
+/// into: `--quic-ca` supplies [`QuicTrust::Roots`] built from a private CA
+/// bundle, system-root verification supplies [`QuicTrust::Roots`] built from
+/// the platform store, and TOFU `quic_known_hosts` supplies a
+/// [`QuicTrust::Verifier`] that pins the server's SPKI. Tests and the
+/// exact-pin escape hatch use [`QuicTrust::Pinned`].
+///
+/// See `docs/design/quic-transport-policy.md` (Decision B) and
+/// `docs/design/quic-transport-integration.md` (Phase 3).
+pub enum QuicTrust {
+    /// Trust exactly one certificate, verifying the chain against it as the
+    /// sole trust anchor. The zero-dependency escape hatch and the shape the
+    /// loopback tests use.
+    Pinned(CertificateDer<'static>),
+    /// Verify the server's certificate chain against a root store - the
+    /// platform trust store (system-roots default) or a private CA bundle
+    /// supplied via `--quic-ca`.
+    Roots(RootCertStore),
+    /// Delegate the trust decision to a custom rustls verifier, e.g. the TOFU
+    /// SPKI-pinning verifier that backs `quic_known_hosts`.
+    Verifier(Arc<dyn ServerCertVerifier>),
+}
+
+impl std::fmt::Debug for QuicTrust {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pinned(_) => f.write_str("QuicTrust::Pinned(..)"),
+            Self::Roots(_) => f.write_str("QuicTrust::Roots(..)"),
+            Self::Verifier(_) => f.write_str("QuicTrust::Verifier(..)"),
+        }
+    }
+}
+
+/// QUIC client: connects to an acceptor over a trust source it is configured
+/// with (an exact pin, a root store, or a custom verifier - see [`QuicTrust`]).
 pub struct QuicConnector {
     config: ClientConfig,
 }
 
 impl QuicConnector {
     /// Creates a client configuration that trusts exactly
-    /// `server_certificate`.
+    /// `server_certificate`. Convenience wrapper over
+    /// [`QuicConnector::with_trust`] with [`QuicTrust::Pinned`], preserved as
+    /// the exact-pin path used by the loopback tests.
     pub fn new(server_certificate: &CertificateDer<'_>) -> io::Result<Self> {
-        let mut roots = RootCertStore::empty();
-        roots
-            .add(server_certificate.clone().into_owned())
-            .map_err(io_err)?;
+        Self::pinned(server_certificate.clone().into_owned())
+    }
 
-        let mut client_crypto = rustls::ClientConfig::builder_with_provider(ring_provider())
+    /// Creates a connector that trusts exactly `server_certificate`.
+    pub fn pinned(server_certificate: CertificateDer<'static>) -> io::Result<Self> {
+        Self::with_trust(QuicTrust::Pinned(server_certificate))
+    }
+
+    /// Creates a connector whose trust decision is supplied by `trust`.
+    ///
+    /// Every variant produces a TLS 1.3, ALPN-`rsync` client config through
+    /// the one shared builder below; only the verifier stage differs. This is
+    /// the constructor the CA/system-root/TOFU resolution feeds.
+    pub fn with_trust(trust: QuicTrust) -> io::Result<Self> {
+        let builder = rustls::ClientConfig::builder_with_provider(ring_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(io_err)?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+            .map_err(io_err)?;
+        let builder = match trust {
+            QuicTrust::Pinned(certificate) => {
+                let mut roots = RootCertStore::empty();
+                roots.add(certificate).map_err(io_err)?;
+                builder.with_root_certificates(roots)
+            }
+            QuicTrust::Roots(roots) => builder.with_root_certificates(roots),
+            QuicTrust::Verifier(verifier) => builder
+                .dangerous()
+                .with_custom_certificate_verifier(verifier),
+        };
+        let mut client_crypto = builder.with_no_client_auth();
         client_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
         let config = ClientConfig::new(Arc::new(
@@ -517,5 +577,127 @@ impl Write for QuicStream {
 impl std::fmt::Debug for QuicStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicStream").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread;
+
+    use rustls::DigitallySignedStruct;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
+    use rustls::pki_types::{ServerName, UnixTime};
+    use rustls::{Error as TlsError, SignatureScheme};
+
+    use super::*;
+
+    /// Test-only verifier that accepts any certificate identity while still
+    /// checking handshake signatures against the crypto provider. It stands in
+    /// for the shape a real TOFU/SPKI-pinning verifier (QUIC-5c/5d) will take:
+    /// the trust *decision* is custom, the TLS mechanics are unchanged. Its
+    /// existence proves [`QuicConnector`] can drive an arbitrary
+    /// [`ServerCertVerifier`] through the same `connect` path.
+    #[derive(Debug)]
+    struct AcceptAnyCert {
+        provider: Arc<rustls::crypto::CryptoProvider>,
+    }
+
+    impl ServerCertVerifier for AcceptAnyCert {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, TlsError> {
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, TlsError> {
+            rustls::crypto::verify_tls12_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, TlsError> {
+            rustls::crypto::verify_tls13_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.provider
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    /// A [`QuicTrust::Roots`] store built from the server certificate yields a
+    /// working connector without touching `connect`. Encodes WHY the trust
+    /// source is pluggable: `--quic-ca` and system-roots verification (policy
+    /// B) both arrive as a `RootCertStore`, and the connector must accept one
+    /// without any change to the pin-based path the loopback tests exercise.
+    #[test]
+    fn roots_trust_source_builds_connector() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(acceptor.certificate().clone().into_owned())
+            .expect("add cert");
+        QuicConnector::with_trust(QuicTrust::Roots(roots)).expect("build roots connector");
+    }
+
+    /// A custom [`ServerCertVerifier`] drives a full round trip over the same
+    /// `connect`/`QuicStream` path as the pinned form. Encodes WHY the trust
+    /// source is pluggable: the future TOFU verifier is a `dyn
+    /// ServerCertVerifier`, and swapping the trust decision must not perturb
+    /// the connect path or the byte pipe below it.
+    #[test]
+    fn custom_verifier_trust_source_round_trips() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let addr = acceptor.local_addr().expect("local addr");
+
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut buf = [0u8; 4];
+            stream.read_exact(&mut buf).expect("read");
+            assert_eq!(&buf, b"ping");
+            stream.write_all(b"pong").expect("write");
+            stream.finish().expect("finish");
+        });
+
+        let verifier = Arc::new(AcceptAnyCert {
+            provider: ring_provider(),
+        });
+        let connector = QuicConnector::with_trust(QuicTrust::Verifier(verifier))
+            .expect("build verifier connector");
+        let mut stream = connector.connect(addr, "localhost").expect("connect");
+        stream.write_all(b"ping").expect("write");
+        stream.finish().expect("finish");
+        let mut reply = [0u8; 4];
+        stream.read_exact(&mut reply).expect("read reply");
+        assert_eq!(&reply, b"pong");
+        stream.close();
+
+        server.join().expect("server thread");
     }
 }

@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rsync_io::quic::{QuicAcceptor, QuicConnector};
+use rsync_io::quic::{QuicAcceptor, QuicConnector, QuicTrust, RootCertStore};
 
 const PAYLOAD_LEN: usize = 4096;
 /// Prompt-teardown bound: far below any idle timeout, so a pass proves the
@@ -56,6 +56,53 @@ fn round_trip_and_eof() {
     stream.read_exact(&mut received).expect("read reply");
     assert_eq!(received, server_to_client, "server payload corrupted");
     // After the server finishes its send side, the next read is clean EOF.
+    let mut eof = [0u8; 1];
+    assert_eq!(stream.read(&mut eof).expect("read eof"), 0, "expected EOF");
+    stream.close();
+
+    server.join().expect("server thread");
+}
+
+/// The same round trip as `round_trip_and_eof`, but the connector is built
+/// from a [`QuicTrust::Roots`] store instead of an exact pin. Both tests drive
+/// the identical `connect`/`QuicStream` path; passing both proves the trust
+/// source is pluggable - a `RootCertStore` (the shape `--quic-ca` and the
+/// system-roots default deliver) reaches the server without any change to the
+/// connect path, so QUIC-5b/5c/5d can supply CA/system/TOFU trust without
+/// touching the transport.
+#[test]
+fn round_trip_via_roots_trust() {
+    let acceptor =
+        QuicAcceptor::bind("127.0.0.1:0".parse().expect("loopback addr")).expect("bind acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(acceptor.certificate().clone().into_owned())
+        .expect("add server cert to roots");
+
+    let client_to_server = pattern(0x11);
+    let server_to_client = pattern(0xa7);
+
+    let expected_request = client_to_server.clone();
+    let reply = server_to_client.clone();
+    let server = thread::spawn(move || {
+        let mut stream = acceptor.accept().expect("accept stream");
+        let mut request = vec![0u8; PAYLOAD_LEN];
+        stream.read_exact(&mut request).expect("read request");
+        assert_eq!(request, expected_request, "client payload corrupted");
+        stream.write_all(&reply).expect("write reply");
+        stream.finish().expect("finish reply");
+    });
+
+    let connector = QuicConnector::with_trust(QuicTrust::Roots(roots)).expect("build connector");
+    let mut stream = connector.connect(addr, "localhost").expect("connect");
+    stream.write_all(&client_to_server).expect("write request");
+    stream.finish().expect("finish request");
+
+    let mut received = vec![0u8; PAYLOAD_LEN];
+    stream.read_exact(&mut received).expect("read reply");
+    assert_eq!(received, server_to_client, "server payload corrupted");
     let mut eof = [0u8; 1];
     assert_eq!(stream.read(&mut eof).expect("read eof"), 0, "expected EOF");
     stream.close();
