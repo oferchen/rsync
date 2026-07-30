@@ -80,6 +80,14 @@ impl<W> CountingWriter<W> {
         &mut self.inner
     }
 
+    /// Returns a shared reference to the inner writer.
+    ///
+    /// Used by [`MsgInfoSender`](super::MsgInfoSender) to query multiplex state
+    /// without going through the byte-counting `Write` path.
+    pub(super) fn inner_ref(&self) -> &W {
+        &self.inner
+    }
+
     /// Consumes the wrapper, returning the inner writer.
     pub fn into_inner(self) -> W {
         self.inner

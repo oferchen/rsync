@@ -157,6 +157,34 @@ pub trait MsgInfoSender {
     ///
     /// - `sender.c:217` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
     fn set_batch_route(&mut self, _route: BatchRoute) {}
+
+    /// Returns `true` when ordinary writes are wrapped in `MSG_DATA` multiplex
+    /// frames (i.e. the output stream is multiplexed).
+    ///
+    /// The default is `false`, matching plain writers (e.g. test `Vec<u8>`
+    /// sinks) that never frame their output. Callers forwarding `--files-from`
+    /// names gate on this to reproduce upstream's `OUT_MULTIPLEXED` test.
+    fn is_output_multiplexed(&self) -> bool {
+        false
+    }
+
+    /// Writes forwarded `--files-from` names to the socket bypassing `MSG_DATA`
+    /// framing, mirroring upstream's `MPLX_TO_BUFFERED` switch.
+    ///
+    /// Below protocol 31 a receiver forwards its local files-from names to the
+    /// sender un-multiplexed. On a multiplexed stream that means flushing any
+    /// pending frame, then writing the payload raw, leaving the stream
+    /// multiplexed for subsequent output. Callers gate on
+    /// [`is_output_multiplexed`](Self::is_output_multiplexed); the default is a
+    /// no-op because plain writers never advertise multiplexing and instead
+    /// take the caller's normal `write_all` path.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1228` `start_filesfrom_forwarding` - `io_end_multiplex_out(MPLX_TO_BUFFERED)`.
+    fn write_files_from_unframed(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -231,6 +259,17 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         // sender unambiguous; the inherent method owns the variant match.
         ServerWriter::set_batch_route(self, route);
     }
+
+    fn is_output_multiplexed(&self) -> bool {
+        self.is_multiplexed()
+    }
+
+    fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
+        // upstream: io.c:1228 start_filesfrom_forwarding switches the stream to
+        // MPLX_TO_BUFFERED; write_raw flushes the pending frame and emits the
+        // payload without MSG_DATA framing, leaving the stream multiplexed.
+        self.write_raw(data)
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
@@ -265,6 +304,14 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn set_batch_route(&mut self, route: BatchRoute) {
         (**self).set_batch_route(route);
     }
+
+    fn is_output_multiplexed(&self) -> bool {
+        (**self).is_output_multiplexed()
+    }
+
+    fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).write_files_from_unframed(data)
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
@@ -298,5 +345,13 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn set_batch_route(&mut self, route: BatchRoute) {
         self.inner_ref_mut().set_batch_route(route);
+    }
+
+    fn is_output_multiplexed(&self) -> bool {
+        self.inner_ref().is_output_multiplexed()
+    }
+
+    fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner_ref_mut().write_files_from_unframed(data)
     }
 }
