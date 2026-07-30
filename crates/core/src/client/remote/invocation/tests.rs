@@ -801,6 +801,39 @@ fn includes_inplace_long_arg() {
 }
 
 #[test]
+fn ignore_missing_args_is_pull_only_delete_missing_is_both() {
+    // upstream: options.c:2866-2871 - "--delete-missing-args needs the
+    // cooperation of both sides, but the sender can handle
+    // --ignore-missing-args by itself." WHY: forwarding --ignore-missing-args
+    // on a PUSH would steer the remote receiver for a decision the local
+    // sender already makes, so it is emitted only on a PULL (!am_sender);
+    // --delete-missing-args always goes both directions.
+    let ignore = ClientConfig::builder().ignore_missing_args(true).build();
+    let pull = RemoteInvocationBuilder::new(&ignore, RemoteRole::Receiver).build("/path");
+    assert!(
+        pull.iter().any(|a| a == "--ignore-missing-args"),
+        "--ignore-missing-args must be forwarded on a pull: {pull:?}"
+    );
+    let push = RemoteInvocationBuilder::new(&ignore, RemoteRole::Sender).build("/path");
+    assert!(
+        !push.iter().any(|a| a == "--ignore-missing-args"),
+        "--ignore-missing-args must NOT be forwarded on a push: {push:?}"
+    );
+
+    let delete = ClientConfig::builder().delete_missing_args(true).build();
+    let del_pull = RemoteInvocationBuilder::new(&delete, RemoteRole::Receiver).build("/path");
+    let del_push = RemoteInvocationBuilder::new(&delete, RemoteRole::Sender).build("/path");
+    assert!(
+        del_pull.iter().any(|a| a == "--delete-missing-args"),
+        "--delete-missing-args must be forwarded on a pull: {del_pull:?}"
+    );
+    assert!(
+        del_push.iter().any(|a| a == "--delete-missing-args"),
+        "--delete-missing-args must be forwarded on a push: {del_push:?}"
+    );
+}
+
+#[test]
 fn includes_partial_dir_long_arg() {
     let config = ClientConfig::builder()
         .partial_directory(Some(".rsync-partial"))

@@ -682,12 +682,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:817-818 - missing_args forwarded as long-form.
-        if self.config.ignore_missing_args() {
-            args.push(OsString::from("--ignore-missing-args"));
-        }
+        // upstream: options.c:2866-2871 - "--delete-missing-args needs the
+        // cooperation of both sides, but the sender can handle
+        // --ignore-missing-args by itself." So --delete-missing-args
+        // (missing_args == 2) is ALWAYS forwarded, while --ignore-missing-args
+        // (missing_args == 1) is forwarded only on a PULL (`!am_sender`): a
+        // sender applies the ignore locally and must not steer the remote. The
+        // if/else-if mirrors upstream's mutually-exclusive missing_args state so
+        // the two spellings can never be emitted together.
         if self.config.delete_missing_args() {
             args.push(OsString::from("--delete-missing-args"));
+        } else if self.config.ignore_missing_args() && !am_sender {
+            args.push(OsString::from("--ignore-missing-args"));
         }
 
         // upstream: options.c:2982-2985 - `if (remove_source_files == 1)
