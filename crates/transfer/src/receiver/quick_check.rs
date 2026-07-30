@@ -303,7 +303,7 @@ fn best_reference_match<'a>(
         // upstream: generator.c:977 - unchanged_attrs() distinguishes level 3
         // (every preserved attr equal) from level 2 (content matches, attrs
         // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
-        let level = if metadata_unchanged(entry, metadata_opts, &ref_meta) {
+        let level = if metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
             MatchLevel::Exact
         } else {
             MatchLevel::Content
@@ -570,6 +570,7 @@ pub(super) fn try_reference_dest_non(
     reference_directories: &[ReferenceDirectory],
     basis: &NonRegularBasis,
     metadata_opts: &MetadataOptions,
+    modify_window: ModifyWindow,
 ) -> bool {
     if reference_directories.is_empty() {
         return false;
@@ -590,7 +591,7 @@ pub(super) fn try_reference_dest_non(
         }
         // upstream: generator.c:1100 - unchanged_attrs() promotes to match_level
         // 3; `metadata_unchanged` is oc's equivalent.
-        if !metadata_unchanged(entry, metadata_opts, &ref_meta) {
+        if !metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
             return None;
         }
         Some((ref_dir.kind, ref_path))
@@ -1769,6 +1770,7 @@ mod non_regular_alt_dest_tests {
                 target: Path::new("target"),
             },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         assert!(handled, "identical compare-dest symlink must be handled");
@@ -1796,6 +1798,7 @@ mod non_regular_alt_dest_tests {
                 target: Path::new("target"),
             },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         assert!(
@@ -1823,6 +1826,7 @@ mod non_regular_alt_dest_tests {
                 target: Path::new("target"),
             },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         let dest_link = dest.join("link");
@@ -1858,6 +1862,7 @@ mod non_regular_alt_dest_tests {
             &refs(ReferenceDirectoryKind::Link, &basis),
             &NonRegularBasis::Special { is_socket: false },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         let dest_fifo = dest.join("pipe");
@@ -1887,6 +1892,7 @@ mod non_regular_alt_dest_tests {
                 target: Path::new("target"),
             },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         assert!(
@@ -1915,6 +1921,7 @@ mod non_regular_alt_dest_tests {
             &refs(ReferenceDirectoryKind::Compare, &basis),
             &NonRegularBasis::Special { is_socket: true },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
 
         assert!(!handled, "a socket source must not match a fifo basis");
@@ -1950,6 +1957,7 @@ mod non_regular_alt_dest_tests {
                 target: Path::new("target"),
             },
             &opts,
+            metadata::ModifyWindow::from_secs(0),
         );
 
         assert!(
@@ -1981,6 +1989,7 @@ mod non_regular_alt_dest_tests {
             &refs(ReferenceDirectoryKind::Link, &basis),
             &NonRegularBasis::Device { rdev },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
         let dest_dev = dest.join("dev");
         assert!(handled, "identical link-dest device must be handled");
@@ -2003,6 +2012,7 @@ mod non_regular_alt_dest_tests {
                 rdev: metadata::device_word(1, 5),
             },
             &identity_only_opts(),
+            metadata::ModifyWindow::from_secs(0),
         );
         assert!(!handled2, "a differing device rdev must not match");
     }

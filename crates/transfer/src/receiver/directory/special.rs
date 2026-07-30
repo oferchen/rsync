@@ -145,6 +145,7 @@ impl ReceiverContext {
                         &self.config.reference_directories,
                         &basis,
                         &compare_opts,
+                        self.config.file_selection.modify_window,
                     ) {
                         continue;
                     }
