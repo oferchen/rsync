@@ -35,6 +35,17 @@ pub(super) const PRESENT_HLINKED: u8 = 1 << 4;
 /// when `PRESENT_HLINKED` is also set. Packed here to avoid per-entry
 /// `FileFlags`.
 pub(super) const PRESENT_HLINK_FIRST: u8 = 1 << 5;
+/// Presence bit: this directory is a later duplicate of an earlier same-named
+/// directory kept alive by the sender under INC_RECURSE.
+///
+/// Corresponds to upstream's `FLAG_DUPLICATE` (rsync.h:84, sender-only). A
+/// non-incremental sender never removes duplicates and the receiver tombstones
+/// them, but under INC_RECURSE the sender keeps a duplicate directory alive and
+/// marks it so `send_extra_file_list()` can batch the duplicate-named dirs into
+/// a single sub-list (upstream: flist.c:3073, flist.c:2162-2168). This flag is
+/// internal to the sender's file-list build - it is never encoded on the wire
+/// (the wire encoder reads only `top_dir()`/`content_dir()`).
+pub(super) const PRESENT_DUPLICATE: u8 = 1 << 6;
 
 /// A single entry in the rsync file list.
 ///
@@ -122,7 +133,8 @@ pub struct FileEntry {
     /// `PRESENT_HLINK_FIRST`). These are the only 3 of 24 XMIT wire flags
     /// that survive past decoding - the rest are transient delta-encoding
     /// state recomputed during send.
-    /// Bits 6-7: reserved.
+    /// Bit 6: internal sender-only `PRESENT_DUPLICATE` (never wire-encoded).
+    /// Bit 7: reserved.
     pub(super) present: u8,
 }
 
