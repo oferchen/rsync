@@ -127,6 +127,20 @@ pub struct BeginMessage {
     /// Mirrors `xattrs.c:set_xattr()` called from `set_file_attrs()` in
     /// `receiver.c` after file transfer completes.
     pub xattr_list: Option<XattrList>,
+    /// Basis (`fnamecmp`) file whose xattrs an abbreviated entry references.
+    ///
+    /// Carries the exact basis the delta request selected
+    /// (`find_basis_file_with_config`), so an abbreviated value the generator
+    /// left unrequested - because it matched the basis - resolves at apply time
+    /// against that same `--fuzzy` / `--link-dest` / `--compare-dest` /
+    /// `--partial-dir` file rather than only the primary destination. `None`
+    /// falls back to the pre-transfer destination path (`file_path`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `xattrs.c:944-1009` `rsync_xal_set(fname, ..., fnamecmp, ...)` - the
+    ///   abbreviated resolution re-reads `fnamecmp`, the basis actually used.
+    pub xattr_basis: Option<PathBuf>,
 }
 
 /// Sender's trailing whole-file checksum, carried to the disk thread for

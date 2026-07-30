@@ -39,7 +39,7 @@ mod prefix;
 mod wire;
 
 pub use cache::XattrCache;
-pub use diff::xattr_diff;
+pub use diff::{mark_xattr_requests, xattr_diff};
 pub use entry::{XattrEntry, XattrState};
 pub use list::XattrList;
 pub use prefix::{

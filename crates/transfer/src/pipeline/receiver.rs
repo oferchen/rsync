@@ -621,6 +621,7 @@ mod tests {
                 is_inplace: false,
                 append_offset: 0,
                 xattr_list: None,
+                xattr_basis: None,
             })))
             .unwrap();
 
@@ -966,6 +967,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1044,6 +1046,7 @@ mod tests {
                 is_inplace: false,
                 append_offset: 0,
                 xattr_list: None,
+                xattr_basis: None,
             })))
             .unwrap();
         pr.file_sender()
@@ -1104,6 +1107,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"next".to_vec(),
                 expected_checksum: Default::default(),
@@ -1167,6 +1171,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1243,6 +1248,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1449,6 +1455,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"drop staged".to_vec(),
                 expected_checksum: Default::default(),
@@ -1513,6 +1520,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"shutdown stage".to_vec(),
                 expected_checksum: Default::default(),
@@ -1567,6 +1575,7 @@ mod tests {
                     is_inplace: false,
                     append_offset: 0,
                     xattr_list: None,
+                    xattr_basis: None,
                 }),
                 data: b"e2e staged".to_vec(),
                 expected_checksum: Default::default(),

@@ -746,6 +746,7 @@ fn begin_with_append_offset(path: &Path, append_offset: u64) -> BeginMessage {
         is_inplace: true,
         append_offset,
         xattr_list: None,
+        xattr_basis: None,
     }
 }
 
