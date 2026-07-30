@@ -8,10 +8,12 @@ fn runtime_options_loads_modules_from_included_config() {
     )
     .expect("write include");
 
+    // File inclusion is `&include` (params.c); a bare `include` sets a filter
+    // default rather than pulling in another config file.
     let main_path = dir.path().join("rsyncd.conf");
     writeln!(
         File::create(&main_path).expect("create config"),
-        "include = modules.conf\n"
+        "&include modules.conf\n"
     )
     .expect("write main config");
 

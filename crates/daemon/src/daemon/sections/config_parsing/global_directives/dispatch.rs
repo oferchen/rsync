@@ -69,14 +69,14 @@ fn apply_global_directive(
                 },
             ));
         }
-        "include" | "&include" | "&merge" => {
+        "&include" | "&merge" => {
             // upstream: params.c:parse_directives - `&include` and `&merge` both
-            // pull configuration from another file. The historical `include =`
-            // form is retained as a synonym so existing oc-rsync configs keep
-            // working. `&include` runs under a private global scope (`]push`/
-            // `]pop`) so the included file's globals do not leak back, and a
-            // directory target globs `*.conf`; `&merge` shares the current scope
-            // and globs `*.inc`. `apply_include_directive` implements both.
+            // pull configuration from another file. `&include` runs under a
+            // private global scope (`]push`/`]pop`) so the included file's globals
+            // do not leak back, and a directory target globs `*.conf`; `&merge`
+            // shares the current scope and globs `*.inc`. `apply_include_directive`
+            // implements both. A bare `include` (no `&`) is NOT file inclusion -
+            // it is the P_LOCAL `include` filter parameter, handled below.
             apply_include_directive(state, key, value, path, line_number, canonical, stack)?;
         }
         "motdfile" => {
@@ -445,9 +445,16 @@ fn apply_global_directive(
                 state.module_defaults.exclude.push(value.to_owned());
             }
         }
-        // Note: "include" as a P_LOCAL default is not handled here because
-        // our key=value parser already claims "include" for config file
-        // inclusion (upstream uses "&include /path" which doesn't collide).
+        // upstream: daemon-parm.txt `Locals:` `include` is P_STRING/P_LOCAL
+        // (loadparm.c registers it via daemon-parm.h), NOT file inclusion -
+        // upstream reserves `&include` for pulling in another file (params.c).
+        // A bare global `include` therefore seeds every module's include-filter
+        // default, mirroring `exclude` above.
+        "include" => {
+            if !value.is_empty() {
+                state.module_defaults.include.push(value.to_owned());
+            }
+        }
         "filter" => {
             if !value.is_empty() {
                 state.module_defaults.filter.push(value.to_owned());
