@@ -19,6 +19,8 @@ use super::super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
 use super::super::super::error::{
     ClientError, daemon_auth_negotiation_error, daemon_error, socket_error,
 };
+#[cfg(feature = "quic")]
+use super::super::super::module_list::Transport;
 use super::super::super::module_list::{DaemonAddress, load_daemon_password};
 use crate::client::error::invalid_argument_error;
 
@@ -32,22 +34,49 @@ pub(crate) struct DaemonTransferRequest {
 }
 
 impl DaemonTransferRequest {
+    /// Default daemon port, shared by TCP (873/tcp) and QUIC (873/udp); QUIC
+    /// runs over a distinct UDP namespace so the number carries no clash
+    /// (design: `docs/design/quic-transport-policy.md`, Decision D).
+    const DEFAULT_PORT: u16 = 873;
+
     /// Parses an rsync:// URL into a transfer request.
     ///
     /// Format: `rsync://[user@]host[:port]/module/path`
     pub(crate) fn parse_rsync_url(url: &str) -> Result<Self, ClientError> {
-        use super::super::super::module_list::parse_host_port;
-
         let rest = url
             .strip_prefix("rsync://")
             .or_else(|| url.strip_prefix("RSYNC://"))
             .ok_or_else(|| invalid_argument_error(&format!("not an rsync:// URL: {url}"), 1))?;
 
+        Self::from_url_authority(rest, url, "rsync")
+    }
+
+    /// Parses a quic:// URL into a transfer request, tagging the address with
+    /// the QUIC transport (oc extension, `quic` feature only).
+    ///
+    /// Format: `quic://[user@]host[:port]/module/path`. The grammar is
+    /// identical to `rsync://`; only the selected transport differs (QUIC-8b).
+    #[cfg(feature = "quic")]
+    pub(crate) fn parse_quic_url(url: &str) -> Result<Self, ClientError> {
+        let rest = url
+            .strip_prefix("quic://")
+            .or_else(|| url.strip_prefix("QUIC://"))
+            .ok_or_else(|| invalid_argument_error(&format!("not a quic:// URL: {url}"), 1))?;
+
+        Ok(Self::from_url_authority(rest, url, "quic")?.with_transport(Transport::Quic))
+    }
+
+    /// Parses the shared daemon-URL body (`[user@]host[:port]/module/path`)
+    /// after the scheme prefix has been stripped. `scheme` names the origin
+    /// scheme for the "must specify a module" diagnostic.
+    fn from_url_authority(rest: &str, url: &str, scheme: &str) -> Result<Self, ClientError> {
+        use super::super::super::module_list::parse_host_port;
+
         let mut parts = rest.splitn(2, '/');
         let host_port = parts.next().unwrap_or("");
         let path_part = parts.next().unwrap_or("");
 
-        let target = parse_host_port(host_port, 873)?;
+        let target = parse_host_port(host_port, Self::DEFAULT_PORT)?;
 
         let mut path_parts = path_part.splitn(2, '/');
         let module = path_parts.next().unwrap_or("").to_owned();
@@ -55,7 +84,7 @@ impl DaemonTransferRequest {
 
         if module.is_empty() {
             return Err(invalid_argument_error(
-                &format!("rsync:// URL must specify a module: {url}"),
+                &format!("{scheme}:// URL must specify a module: {url}"),
                 1,
             ));
         }
@@ -66,6 +95,16 @@ impl DaemonTransferRequest {
             path: file_path,
             username: target.username,
         })
+    }
+
+    /// Returns this request with its daemon address re-tagged to the given
+    /// transport, used by the `--quic` modifier to upgrade a `rsync://` /
+    /// `host::` target to QUIC (QUIC-8c).
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub(crate) fn with_transport(mut self, transport: Transport) -> Self {
+        self.address = self.address.with_transport(transport);
+        self
     }
 
     /// Parses a double-colon daemon operand into a transfer request.
@@ -80,7 +119,7 @@ impl DaemonTransferRequest {
             invalid_argument_error(&format!("not a daemon operand: {operand}"), 1)
         })?;
 
-        let target = parse_host_port(host_part, 873)?;
+        let target = parse_host_port(host_part, Self::DEFAULT_PORT)?;
 
         let mut path_parts = module_path.splitn(2, '/');
         let module = path_parts.next().unwrap_or("").to_owned();

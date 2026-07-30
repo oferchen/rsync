@@ -211,6 +211,8 @@ mod parse_args_recognises_port_tests;
 mod parse_args_recognises_preallocate_tests;
 #[path = "parse_args_recognises_prune.rs"]
 mod parse_args_recognises_prune_tests;
+#[path = "parse_args_recognises_quic.rs"]
+mod parse_args_recognises_quic_tests;
 #[path = "parse_args_recognises_recursive.rs"]
 mod parse_args_recognises_recursive_tests;
 #[path = "parse_args_recognises_relative.rs"]
