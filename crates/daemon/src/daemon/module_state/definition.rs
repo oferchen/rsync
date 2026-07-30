@@ -321,14 +321,16 @@ impl ModuleDefinition {
         !self.auth_users.is_empty()
     }
 
-    /// Returns the AuthUser if the username is authorized for this module.
+    /// Returns the authorizing match if the username is authorized for this
+    /// module, including the concrete group name for an `@group` match.
     ///
     /// Delegates to [`authorize_auth_user`], which evaluates `auth users`
-    /// tokens in configuration order (wildcard match for plain tokens, group
-    /// membership for `@group` tokens), first match wins.
+    /// tokens in configuration order (wildcard match for plain tokens; wildcard
+    /// match against the user's own groups for `@group` tokens), first match
+    /// wins.
     ///
-    /// upstream: authenticate.c:276 `auth_server()`.
-    pub(crate) fn get_auth_user(&self, username: &str) -> Option<&AuthUser> {
+    /// upstream: authenticate.c:274-304 `auth_server()`.
+    pub(crate) fn get_auth_user(&self, username: &str) -> Option<super::AuthMatch<'_>> {
         super::authorize_auth_user(&self.auth_users, username, &super::SystemGroupMembership)
     }
 
