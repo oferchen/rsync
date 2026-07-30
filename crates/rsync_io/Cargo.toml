@@ -29,6 +29,10 @@ quinn-proto = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 
 [features]
 default = ["ssh-config-parse"]
@@ -39,7 +43,16 @@ embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep
 # exposes one bidirectional stream as blocking `Read`/`Write`. Not wired into
 # any CLI, daemon, or config surface. Concurrency-model decision:
 # docs/design/quic-transport-concurrency-model.md.
-quic = ["dep:quinn-proto", "dep:bytes", "dep:rustls", "dep:rcgen"]
+quic = [
+    "dep:quinn-proto",
+    "dep:bytes",
+    "dep:rustls",
+    "dep:rcgen",
+    "dep:rustls-native-certs",
+    "dep:sha2",
+    "dep:base64",
+    "dep:tempfile",
+]
 # Async SSH transport: opt-in tokio-process backing for `SshConnection`.
 # See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
 async-ssh = ["dep:tokio"]

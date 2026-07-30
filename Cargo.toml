@@ -261,6 +261,13 @@ bytes = "1.12"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # Self-signed certificate generation for QUIC loopback tests
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+# System trust-store loader for the QUIC client verification ladder (policy B,
+# system-roots default). Reads the live platform CA store at runtime, mirroring
+# the openssl/stunnel trust behaviour upstream rsync-ssl relies on - a frozen
+# compiled-in bundle (webpki-roots) would ignore operator-added/corporate CAs.
+rustls-native-certs = "0.8"
+# SHA-256 for the QUIC TOFU known-hosts certificate fingerprint.
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
 # URL parsing for ssh:// URIs
 url = "2"
 # Secure password input from terminal
