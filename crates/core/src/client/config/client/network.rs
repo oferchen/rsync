@@ -154,13 +154,15 @@ impl ClientConfig {
     /// shell, preserving the pre-3.0 behaviour where spaces in a remote path
     /// cause `eval` to split them into separate arguments.
     ///
-    /// `Some(false)` explicitly disables old-args. `None` uses the default
-    /// behaviour (disabled unless `RSYNC_OLD_ARGS` is set in the environment).
+    /// Returns the `old_style_args` level: `Some(1)` skips filename escaping,
+    /// `Some(2)` skips every safe_arg escape, `Some(0)` explicitly disables
+    /// old-args, and `None` uses the default (disabled unless `RSYNC_OLD_ARGS`
+    /// is set in the environment).
     ///
-    /// upstream: options.c - `old_style_args`, `RSYNC_OLD_ARGS` env var.
+    /// upstream: options.c:1642 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
     #[doc(alias = "--old-args")]
     #[doc(alias = "--no-old-args")]
-    pub const fn old_args(&self) -> Option<bool> {
+    pub const fn old_args(&self) -> Option<u8> {
         self.old_args
     }
 

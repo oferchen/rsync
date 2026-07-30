@@ -74,7 +74,11 @@ pub struct ParsedArgs {
     pub protect_args: Option<bool>,
 
     /// `--old-args` / `--no-old-args` - pre-3.0 argument passing.
-    pub old_args: Option<bool>,
+    ///
+    /// Encodes the `old_style_args` level: `None` when unset, `Some(0)` for an
+    /// explicit `--no-old-args`, and `Some(1)`/`Some(2)` for the counted
+    /// `--old-args` (doubled reaches level 2). upstream: options.c:1642.
+    pub old_args: Option<u8>,
 
     /// `--ipv4`, `-4` / `--ipv6`, `-6` - address family preference.
     pub address_mode: AddressMode,

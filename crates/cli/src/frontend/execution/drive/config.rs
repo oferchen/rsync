@@ -194,7 +194,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) early_input: Option<PathBuf>,
     pub(crate) prefer_aes_gcm: Option<bool>,
     pub(crate) protect_args: Option<bool>,
-    pub(crate) old_args: Option<bool>,
+    pub(crate) old_args: Option<u8>,
     pub(crate) jump_hosts: Option<OsString>,
     pub(crate) batch_config: Option<BatchConfig>,
     pub(crate) no_motd: bool,

@@ -176,7 +176,9 @@ where
     } else {
         env_protect_args_default()
     };
-    let old_args = tri_state_flag_negative_first(&matches, "old-args", "no-old-args");
+    // upstream: options.c:1642 OPT_OLD_ARGS increments `old_style_args`; the
+    // level (1 vs doubled 2) selects how much safe_arg escaping is skipped.
+    let old_args = leveled_flag_pair(&matches, "old-args", "no-old-args");
     let address_mode = if matches.get_flag("ipv4") {
         AddressMode::Ipv4
     } else if matches.get_flag("ipv6") {

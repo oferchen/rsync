@@ -79,7 +79,10 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
             Arg::new("old-args")
                 .long("old-args")
                 .help("Use old-style argument handling (pre-3.2.4 behavior).")
-                .action(ArgAction::SetTrue)
+                // upstream: options.c:1642 OPT_OLD_ARGS - each `--old-args`
+                // increments `old_style_args` (level 1 = skip filename escaping,
+                // level 2 = skip all safe_arg escaping), so this is a counter.
+                .action(ArgAction::Count)
                 .overrides_with("no-old-args"),
         )
         .arg(

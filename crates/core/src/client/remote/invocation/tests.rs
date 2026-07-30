@@ -3875,6 +3875,52 @@ fn shell_safe_escaping_in_normal_mode() {
     );
 }
 
+#[test]
+fn old_args_level_one_skips_filename_escaping() {
+    // upstream: options.c:2551 safe_arg() - for a filename arg the escape gate
+    // is `!protect_args && old_style_args == 0`, so a single `--old-args`
+    // (level 1) already passes the path through unescaped and the remote
+    // shell's `eval` performs the pre-3.0 word-splitting the user asked for.
+    let config = ClientConfig::builder()
+        .protect_args(None)
+        .old_args(Some(1))
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+
+    assert!(
+        secluded
+            .command_line_args
+            .iter()
+            .any(|a| a.to_string_lossy() == "/path/A weird)name/"),
+        "level 1 must leave the path unescaped: {:?}",
+        secluded.command_line_args
+    );
+}
+
+#[test]
+fn old_args_level_two_skips_filename_escaping() {
+    // upstream: options.c:2551 - the doubled `--old-args` (level 2) is the
+    // terminal state where the `old_style_args < 2` gate drops every remaining
+    // safe_arg escape. A boolean flag could never reach it; the doubled counter
+    // must still leave filename args verbatim (never re-escaping at level 2).
+    let config = ClientConfig::builder()
+        .protect_args(None)
+        .old_args(Some(2))
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+
+    assert!(
+        secluded
+            .command_line_args
+            .iter()
+            .any(|a| a.to_string_lossy() == "/path/A weird)name/"),
+        "level 2 must leave the path unescaped: {:?}",
+        secluded.command_line_args
+    );
+}
+
 // --usermap / --groupmap forwarding tests
 
 #[cfg(unix)]

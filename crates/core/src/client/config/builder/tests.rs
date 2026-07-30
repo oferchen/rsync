@@ -1219,7 +1219,7 @@ fn validate_old_args_with_secluded_args_conflicts() {
     // (`--protect-args`) are mutually exclusive and abort with this exact
     // wording, which differs from the generic "cannot be used with" template:
     // the message names --secluded-args first and ends with a period.
-    let b = builder().old_args(Some(true)).protect_args(Some(true));
+    let b = builder().old_args(Some(1)).protect_args(Some(true));
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "old-args");
     assert_eq!(err.option2, "secluded-args");

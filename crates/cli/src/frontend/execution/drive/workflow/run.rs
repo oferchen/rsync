@@ -1118,30 +1118,61 @@ where
     )
 }
 
-/// Resolves the effective `--old-args` setting from the CLI flag and env var.
+/// Resolves the effective `old_style_args` level from the CLI counter and env.
 ///
-/// upstream: options.c:1952-1964 - when `old_style_args` is not explicitly set
-/// (`None`), check `RSYNC_OLD_ARGS` env var. The env var is only honoured when
-/// protect_args is not active (upstream: `protect_args <= 0`). When both
-/// `--old-args` and `--protect-args` are explicitly set, upstream rejects the
-/// combination, but we silently give protect_args precedence (old_args becomes
-/// inactive) since the conflict is validated at the CLI layer.
-fn resolve_old_args(explicit: Option<bool>, protect_args: Option<bool>) -> Option<bool> {
-    if let Some(value) = explicit {
-        return Some(value);
+/// upstream: options.c:1968-1974 - when `old_style_args` is still unset
+/// (`old_style_args < 0`, modelled here as `None`), check `RSYNC_OLD_ARGS` and
+/// set the level with `old_style_args = atoi(arg)`. The env var is only honoured
+/// when protect_args is not active (upstream: `protect_args <= 0`). An explicit
+/// `--old-args`/`--no-old-args` (`Some(level)`) suppresses the env lookup, just
+/// as upstream skips the `< 0` branch once the flag has set the level.
+///
+/// When both `--old-args` and `--protect-args` are explicitly set, upstream
+/// rejects the combination (options.c:1975); we silently give protect_args
+/// precedence since the conflict is validated at the CLI layer.
+fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<u8> {
+    if let Some(level) = explicit {
+        return Some(level);
     }
-    // upstream: options.c:1953 - only check env when !am_server && protect_args <= 0
+    // upstream: options.c:1969 - only check env when !am_server && protect_args <= 0
     if protect_args.unwrap_or(false) {
         return None;
     }
     match std::env::var("RSYNC_OLD_ARGS") {
+        // upstream: options.c:1971 old_style_args = atoi(arg). `atoi` reads a
+        // leading integer, so "2"/"2 " -> 2 and non-numeric -> 0. The level is
+        // capped at 2, the highest state safe_arg distinguishes.
         Ok(val) if !val.is_empty() => {
-            // upstream: old_style_args = atoi(arg) - any non-zero value enables
-            let level: i32 = val.parse().unwrap_or(0);
-            if level > 0 { Some(true) } else { None }
+            let level = atoi_leading(&val).clamp(0, 2) as u8;
+            if level > 0 { Some(level) } else { None }
         }
         _ => None,
     }
+}
+
+/// Parses a leading base-10 integer like C's `atoi`, ignoring leading
+/// whitespace and any trailing non-digit suffix. Returns 0 when no digits lead.
+fn atoi_leading(s: &str) -> i32 {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let mut sign = 1i32;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        if bytes[i] == b'-' {
+            sign = -1;
+        }
+        i += 1;
+    }
+    let mut value = 0i32;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((bytes[i] - b'0') as i32);
+        i += 1;
+    }
+    sign * value
 }
 
 /// Returns the explicit checksum seed to record in a batch header, or `None`
@@ -1187,7 +1218,87 @@ fn open_log_file(path: &PathBuf) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_batch_seed, explicit_batch_seed};
+    use super::{atoi_leading, derive_batch_seed, explicit_batch_seed, resolve_old_args};
+    use platform::env::EnvGuard;
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    /// Serialises the `RSYNC_OLD_ARGS` env mutations so the resolver tests never
+    /// race on the process environment even under a threaded test runner.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// `atoi_leading` mirrors C `atoi`: it reads a leading integer and ignores a
+    /// trailing non-digit suffix, which is exactly how upstream parses
+    /// `RSYNC_OLD_ARGS` (options.c:1971 `old_style_args = atoi(arg)`).
+    #[test]
+    fn atoi_leading_matches_c_atoi() {
+        assert_eq!(atoi_leading("2"), 2);
+        assert_eq!(atoi_leading("1"), 1);
+        assert_eq!(atoi_leading("  2"), 2);
+        assert_eq!(atoi_leading("2 "), 2);
+        assert_eq!(atoi_leading("2abc"), 2);
+        assert_eq!(atoi_leading("10"), 10);
+        assert_eq!(atoi_leading("yes"), 0);
+        assert_eq!(atoi_leading(""), 0);
+    }
+
+    /// An explicit `--old-args` counter must flow through unchanged and suppress
+    /// the env lookup, mirroring upstream skipping the `old_style_args < 0`
+    /// branch once the flag has set the level (options.c:1968).
+    #[test]
+    fn explicit_level_passes_through_and_ignores_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new("2"));
+        assert_eq!(resolve_old_args(Some(2), None), Some(2));
+        assert_eq!(resolve_old_args(Some(1), None), Some(1));
+        // An explicit `--no-old-args` (level 0) wins over the env's level 2.
+        assert_eq!(resolve_old_args(Some(0), None), Some(0));
+    }
+
+    /// upstream: options.c:1971 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
+    /// must reach level 2, the state where safe_arg disables all escaping. This
+    /// is the env path that a boolean model collapsed to level 1, silently
+    /// dropping the option-arg escaping upstream keeps only below level 2.
+    #[test]
+    fn env_sets_the_level_as_an_integer() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        {
+            let _g = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new("2"));
+            assert_eq!(resolve_old_args(None, None), Some(2));
+        }
+        {
+            let _g = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new("1"));
+            assert_eq!(resolve_old_args(None, None), Some(1));
+        }
+        {
+            // upstream: atoi("yes") == 0, so a non-numeric value is inactive.
+            let _g = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new("yes"));
+            assert_eq!(resolve_old_args(None, None), None);
+        }
+        {
+            let _g = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new(""));
+            assert_eq!(resolve_old_args(None, None), None);
+        }
+    }
+
+    /// upstream: options.c:1969 - the env var is only consulted when
+    /// `protect_args <= 0`. With protect_args active the level stays unset even
+    /// if `RSYNC_OLD_ARGS` is present, since the two options are exclusive.
+    #[test]
+    fn env_ignored_when_protect_args_active() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set("RSYNC_OLD_ARGS", OsStr::new("2"));
+        assert_eq!(resolve_old_args(None, Some(true)), None);
+    }
+
+    /// With no flag and no env the level is unset, so downstream escaping stays
+    /// on (the modern default).
+    #[test]
+    fn unset_when_no_flag_and_no_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::remove("RSYNC_OLD_ARGS");
+        assert_eq!(resolve_old_args(None, None), None);
+    }
 
     /// An explicit non-zero `--checksum-seed=N` must be recorded in the batch
     /// header verbatim so `--read-batch` replays with the identical seed.

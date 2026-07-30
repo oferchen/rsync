@@ -260,10 +260,11 @@ pub struct ClientConfig {
     pub(super) protect_args: Option<bool>,
     /// `--old-args` / `--no-old-args` - pre-3.0 argument passing.
     ///
-    /// When `Some(true)`, filename arguments are passed unescaped to the remote
-    /// shell, allowing space-separated paths to be split by `eval`.
-    /// upstream: options.c - `old_style_args`, `RSYNC_OLD_ARGS` env var.
-    pub(super) old_args: Option<bool>,
+    /// The resolved `old_style_args` level. `Some(1)` passes filename arguments
+    /// unescaped to the remote shell (space-separated paths split by `eval`);
+    /// `Some(2)` disables every safe_arg escape; `Some(0)`/`None` are inactive.
+    /// upstream: options.c:1642 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
+    pub(super) old_args: Option<u8>,
     pub(super) jump_hosts: Option<OsString>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     pub(super) files_from: FilesFromSource,
