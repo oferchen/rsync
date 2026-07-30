@@ -54,7 +54,7 @@ fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -131,7 +131,7 @@ fn daemon_munge_symlinks_without_munged_dir_proceeds_to_ok() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
