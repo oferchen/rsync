@@ -705,13 +705,15 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     // SAFETY: `c_path` is a valid NUL-terminated C string, `attrlist` is
     // zeroed and then configured with valid bitmap values, and `buf` is a
     // repr(C) struct with the exact layout expected by `setattrlist(2)`.
+    // upstream: syscall.c:do_setattrlist_crtime passes FSOPT_NOFOLLOW so a
+    // final-component symlink's own crtime is set, never its target's.
     let ret = unsafe {
         libc::setattrlist(
             c_path.as_ptr(),
             &attrlist as *const _ as *mut _,
             &buf as *const _ as *mut libc::c_void,
             std::mem::size_of::<AttrBuf>(),
-            0,
+            libc::FSOPT_NOFOLLOW,
         )
     };
 
@@ -1029,5 +1031,61 @@ mod crtime_macos_tests {
             let after = std::fs::metadata(path).expect("metadata after");
             assert_eq!(after.ino(), meta.ino());
         }
+    }
+
+    #[test]
+    fn setting_crtime_on_a_symlink_targets_the_link_not_its_target() {
+        // Why: upstream syscall.c:do_setattrlist_crtime passes FSOPT_NOFOLLOW so
+        // that a final-component symlink receives its OWN crtime and the file it
+        // points at is left untouched. Without that flag, setattrlist follows the
+        // link and silently rewrites the target's creation time - a metadata
+        // corruption invisible to a same-second quick check. This test proves the
+        // link is retargeted, not its referent, by driving crtime onto the link
+        // and asserting the target's crtime never moves.
+        use std::os::unix::fs::symlink;
+
+        fn crtime_secs(path: &std::path::Path) -> Option<i64> {
+            std::fs::symlink_metadata(path)
+                .ok()?
+                .created()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs() as i64)
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("target.txt");
+        let link = dir.path().join("link");
+        std::fs::write(&target, b"payload").expect("write target");
+        symlink(&target, &link).expect("create symlink");
+
+        // A distinct historical value (2000-01-01 UTC) that cannot coincide with
+        // either freshly created crtime, so the quick-check cannot skip the write.
+        let new_secs: i64 = 946_684_800;
+
+        let target_before = crtime_secs(&target);
+        // Filesystems without birthtime support cannot exercise this invariant.
+        let Some(target_before) = target_before else {
+            return;
+        };
+        assert_ne!(
+            target_before, new_secs,
+            "test precondition: target crtime must differ from the value we set"
+        );
+
+        set_crtime(&link, new_secs).expect("set crtime on symlink succeeds");
+
+        let link_after = crtime_secs(&link).expect("link crtime readable after set");
+        let target_after = crtime_secs(&target).expect("target crtime readable after set");
+
+        assert_eq!(
+            link_after, new_secs,
+            "the symlink's own crtime must reflect the value written to it"
+        );
+        assert_eq!(
+            target_after, target_before,
+            "FSOPT_NOFOLLOW must leave the target's crtime unchanged"
+        );
     }
 }
