@@ -516,9 +516,15 @@ impl ReceiverContext {
                         .as_ref()
                         .map(|set| move |name: &str| set.xattr_name_allowed(name));
                     let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-                    if let Err(e) =
-                        metadata::apply_xattrs_from_list(&dir_path, xattr_list, true, filter_ref)
-                    {
+                    // upstream: rsync_xal_set resolves an abbreviated value
+                    // against fnamecmp; a directory is its own basis.
+                    if let Err(e) = metadata::apply_xattrs_from_list(
+                        &dir_path,
+                        xattr_list,
+                        true,
+                        Some(&dir_path),
+                        filter_ref,
+                    ) {
                         return Some((dir_path, e.to_string()));
                     }
                 }
@@ -880,8 +886,15 @@ impl ReceiverContext {
                 .xattr_name_filter()
                 .map(|set| move |name: &str| set.xattr_name_allowed(name));
             let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-            if let Err(e) = metadata::apply_xattrs_from_list(dir_path, xattr_list, true, filter_ref)
-            {
+            // upstream: rsync_xal_set resolves an abbreviated value against
+            // fnamecmp; a directory is its own basis.
+            if let Err(e) = metadata::apply_xattrs_from_list(
+                dir_path,
+                xattr_list,
+                true,
+                Some(dir_path),
+                filter_ref,
+            ) {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Misc,

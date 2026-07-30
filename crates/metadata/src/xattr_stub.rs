@@ -74,6 +74,7 @@ pub fn apply_xattrs_from_list(
     _destination: &Path,
     _xattr_list: &XattrList,
     _follow_symlinks: bool,
+    _basis: Option<&Path>,
     _filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
@@ -128,7 +129,7 @@ mod tests {
     fn apply_xattrs_from_list_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, false, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, false, None, None);
         assert!(result.is_ok());
     }
 
@@ -136,7 +137,7 @@ mod tests {
     fn apply_xattrs_from_list_follow_symlinks_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, true, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, true, None, None);
         assert!(result.is_ok());
     }
 }

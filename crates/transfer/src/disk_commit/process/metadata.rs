@@ -53,15 +53,44 @@ pub(super) fn apply_file_metadata(
         };
         apply_metadata_acls_and_xattrs(
             target_path,
-            file_entry,
-            config.metadata_opts.as_ref(),
-            config.acl_cache.as_deref(),
-            config.acl_id_map.as_deref(),
-            begin.xattr_list.as_ref(),
-            config.xattr_filter.as_deref(),
-            pre_transfer_meta,
+            MetadataApplyInputs {
+                file_entry,
+                metadata_opts: config.metadata_opts.as_ref(),
+                acl_cache: config.acl_cache.as_deref(),
+                acl_id_map: config.acl_id_map.as_deref(),
+                xattr_list: begin.xattr_list.as_ref(),
+                xattr_filter: config.xattr_filter.as_deref(),
+                pre_transfer_meta,
+                // upstream: fnamecmp is the pre-transfer destination. Metadata
+                // is applied to the temp file before rename, so the final path
+                // still holds the basis file whose xattrs an abbreviated entry
+                // references.
+                basis_path: &begin.file_path,
+            },
         )
     }
+}
+
+/// Cohesive inputs for [`apply_metadata_acls_and_xattrs`], sourced from the
+/// receiver's caches and the begin message. Grouped into one struct so the
+/// apply entry point stays within a sensible argument count.
+struct MetadataApplyInputs<'a> {
+    /// Flist entry describing the desired metadata, if resolvable.
+    file_entry: Option<&'a protocol::flist::FileEntry>,
+    /// Permission/ownership/timestamp options.
+    metadata_opts: Option<&'a metadata::MetadataOptions>,
+    /// Cached ACLs to apply after permissions.
+    acl_cache: Option<&'a AclCache>,
+    /// Cross-host id remapper for named ACL entries.
+    acl_id_map: Option<&'a AclIdMapper>,
+    /// Received xattr list to apply last.
+    xattr_list: Option<&'a protocol::xattr::XattrList>,
+    /// `x`-modifier xattr name filter.
+    xattr_filter: Option<&'a filters::FilterSet>,
+    /// Pre-transfer destination stat feeding `dest_mode()`.
+    pre_transfer_meta: Option<std::fs::Metadata>,
+    /// fnamecmp basis file for abbreviated xattr resolution.
+    basis_path: &'a Path,
 }
 
 /// Applies file metadata, ACLs, and xattrs from the receiver's caches.
@@ -75,14 +104,19 @@ pub(super) fn apply_file_metadata(
 /// no metadata/entry is available.
 fn apply_metadata_acls_and_xattrs(
     file_path: &Path,
-    file_entry: Option<&protocol::flist::FileEntry>,
-    metadata_opts: Option<&metadata::MetadataOptions>,
-    acl_cache: Option<&AclCache>,
-    acl_id_map: Option<&AclIdMapper>,
-    xattr_list: Option<&protocol::xattr::XattrList>,
-    xattr_filter: Option<&filters::FilterSet>,
-    pre_transfer_meta: Option<std::fs::Metadata>,
+    inputs: MetadataApplyInputs<'_>,
 ) -> Option<(PathBuf, String)> {
+    let MetadataApplyInputs {
+        file_entry,
+        metadata_opts,
+        acl_cache,
+        acl_id_map,
+        xattr_list,
+        xattr_filter,
+        pre_transfer_meta,
+        basis_path,
+    } = inputs;
+
     let (opts, entry) = match (metadata_opts, file_entry) {
         (Some(o), Some(e)) => (o, e),
         _ => return None,
@@ -140,7 +174,16 @@ fn apply_metadata_acls_and_xattrs(
     if let Some(xattr_list) = xattr_list {
         let filter = xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
         let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-        if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true, filter_ref) {
+        // upstream: rsync_xal_set(fname, ..., fnamecmp) resolves an abbreviated
+        // value against the basis file - the pre-transfer destination, which
+        // still holds its old attributes while we stage the temp file.
+        if let Err(e) = metadata::apply_xattrs_from_list(
+            file_path,
+            xattr_list,
+            true,
+            Some(basis_path),
+            filter_ref,
+        ) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }
     }

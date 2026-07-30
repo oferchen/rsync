@@ -1215,9 +1215,15 @@ impl ReceiverContext {
                     .xattr_name_filter()
                     .map(|set| move |name: &str| set.xattr_name_allowed(name));
                 let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-                if let Err(e) =
-                    metadata::apply_xattrs_from_list(file_path, xattr_list, true, filter_ref)
-                {
+                // upstream: rsync_xal_set resolves an abbreviated value against
+                // fnamecmp; the file is its own basis for the in-place case.
+                if let Err(e) = metadata::apply_xattrs_from_list(
+                    file_path,
+                    xattr_list,
+                    true,
+                    Some(file_path),
+                    filter_ref,
+                ) {
                     metadata_errors.push((file_path.to_path_buf(), e.to_string()));
                 }
             }
@@ -1639,7 +1645,7 @@ mod itemize_order_tests {
             b"user.itemize".to_vec(),
             b"v".to_vec(),
         )]);
-        if metadata::apply_xattrs_from_list(&path, &list, true, None).is_err() {
+        if metadata::apply_xattrs_from_list(&path, &list, true, None, None).is_err() {
             // A filesystem without user-namespace xattr support cannot
             // exercise the comparison; skip rather than assert a false pass.
             return;
