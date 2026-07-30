@@ -177,6 +177,12 @@ pub(crate) struct MultiplexReader<R> {
     /// Set once a received `MSG_IO_TIMEOUT` violated the upstream `msg_bytes == 4`
     /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
     io_timeout_invalid: bool,
+    /// Set once a fixed-size control message (`MSG_IO_ERROR`, `MSG_REDO`,
+    /// `MSG_NO_SEND`, `MSG_SUCCESS`) arrived with a payload whose size does not
+    /// match upstream's expectation. Upstream treats this as fatal
+    /// (`goto invalid_msg` -> `exit_cleanup(RERR_STREAMIO)`); oc surfaces it via
+    /// [`MultiplexReader::check_control_msg`]. upstream: io.c:read_a_msg invalid_msg.
+    invalid_control_msg: bool,
     /// Client-sender rendering state for `MSG_DELETED` frames. `Some` only on
     /// the client side of a push, where the remote receiver runs `--delete`;
     /// every other reader leaves it `None` so the frame is dropped like upstream
@@ -262,6 +268,7 @@ impl<R> MultiplexReader<R> {
             io_timeout: None,
             io_timeout_reapply: None,
             io_timeout_invalid: false,
+            invalid_control_msg: false,
             deleted_render: None,
         }
     }
@@ -418,52 +425,78 @@ impl<R> MultiplexReader<R> {
         }
     }
 
+    /// Validates that a fixed-size control-message payload matches one of the
+    /// sizes upstream accepts. Returns `true` when valid; on mismatch it records
+    /// the stream-integrity violation and returns `false` so the caller skips its
+    /// side effect. The read loop then aborts via
+    /// [`MultiplexReader::check_control_msg`].
+    ///
+    /// A wrong-sized control frame is a protocol-stream violation, not a
+    /// recoverable event: silently dropping it would lose the redo / no-send /
+    /// success / io-error state the frame carries and leave the two peers
+    /// desynchronised on the multiplex stream.
+    /// upstream: io.c:read_a_msg invalid_msg -> exit_cleanup(RERR_STREAMIO).
+    fn require_payload_len(&mut self, allowed: &[usize]) -> bool {
+        if allowed.contains(&self.buffer.len()) {
+            true
+        } else {
+            self.invalid_control_msg = true;
+            false
+        }
+    }
+
     /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
     ///
-    /// The payload must be exactly 4 bytes (little-endian `i32`).
-    /// upstream: io.c:1543-1547
+    /// The payload must be exactly 4 bytes (little-endian `i32`); any other size
+    /// is a fatal invalid message.
+    /// upstream: io.c:1542-1547 (`if (msg_bytes != 4) goto invalid_msg;`)
     fn handle_io_error_msg(&mut self) {
-        if self.buffer.len() == 4 {
-            let val = i32::from_le_bytes([
-                self.buffer[0],
-                self.buffer[1],
-                self.buffer[2],
-                self.buffer[3],
-            ]);
-            self.io_error |= val;
+        if !self.require_payload_len(&[4]) {
+            return;
         }
+        let val = i32::from_le_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]);
+        self.io_error |= val;
     }
 
     /// Handles a `MSG_REDO` payload by recording the file index.
     ///
-    /// The payload must be exactly 4 bytes (little-endian `i32` file index).
-    /// upstream: io.c:1535-1540
+    /// The payload must be exactly 4 bytes (little-endian `i32` file index); any
+    /// other size is a fatal invalid message.
+    /// upstream: io.c:1535-1540 (`if (msg_bytes != 4 || !am_generator) goto invalid_msg;`)
     fn handle_redo_msg(&mut self) {
-        if self.buffer.len() == 4 {
-            let ndx = i32::from_le_bytes([
-                self.buffer[0],
-                self.buffer[1],
-                self.buffer[2],
-                self.buffer[3],
-            ]);
-            self.redo_indices.push(ndx);
+        if !self.require_payload_len(&[4]) {
+            return;
         }
+        let ndx = i32::from_le_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]);
+        self.redo_indices.push(ndx);
     }
 
     /// Handles a `MSG_NO_SEND` payload by recording the file index.
     ///
-    /// The payload must be exactly 4 bytes (little-endian `i32` file index).
-    /// upstream: io.c:1618-1627
+    /// The payload must be exactly 4 bytes (little-endian `i32` file index); any
+    /// other size is a fatal invalid message.
+    /// upstream: io.c:1639-1647 (`if (msg_bytes != 4) goto invalid_msg;`)
     fn handle_no_send_msg(&mut self) {
-        if self.buffer.len() == 4 {
-            let ndx = i32::from_le_bytes([
-                self.buffer[0],
-                self.buffer[1],
-                self.buffer[2],
-                self.buffer[3],
-            ]);
-            self.no_send_indices.push(ndx);
+        if !self.require_payload_len(&[4]) {
+            return;
         }
+        let ndx = i32::from_le_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]);
+        self.no_send_indices.push(ndx);
     }
 
     /// Handles a `MSG_SUCCESS` payload by recording the confirmed file index.
@@ -477,17 +510,25 @@ impl<R> MultiplexReader<R> {
     /// dev/ino guard. oc's wire sender is never `local_server` (same-host
     /// copies take the engine path), so only the leading 4-byte index is read.
     ///
-    /// upstream: io.c:1071-1086 `send_msg_success()`, io.c:1623-1637 handler.
+    /// The payload must be exactly 4 bytes: upstream validates
+    /// `msg_bytes != (local_server ? 4+8+8 : 4)`, and oc's wire reader is never
+    /// `local_server` (same-host copies take the engine path), so only the bare
+    /// 4-byte index form is valid on the wire. Any other size is a fatal invalid
+    /// message.
+    ///
+    /// upstream: io.c:1071-1086 `send_msg_success()`, io.c:1623-1637 handler
+    /// (`if (msg_bytes != (local_server ? 4+8+8 : 4)) goto invalid_msg;`).
     fn handle_success_msg(&mut self) {
-        if self.buffer.len() >= 4 {
-            let ndx = i32::from_le_bytes([
-                self.buffer[0],
-                self.buffer[1],
-                self.buffer[2],
-                self.buffer[3],
-            ]);
-            self.success_indices.push(ndx);
+        if !self.require_payload_len(&[4]) {
+            return;
         }
+        let ndx = i32::from_le_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]);
+        self.success_indices.push(ndx);
     }
 
     /// Handles a received `MSG_IO_TIMEOUT` (a daemon's advertised `--timeout`).
@@ -558,6 +599,22 @@ impl<R> MultiplexReader<R> {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid MSG_IO_TIMEOUT message from peer",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns an error if a fixed-size control message arrived malformed.
+    ///
+    /// upstream: io.c `invalid_msg` label - a wrong `msg_bytes` for a fixed-size
+    /// control frame (`MSG_IO_ERROR`/`MSG_REDO`/`MSG_NO_SEND`/`MSG_SUCCESS`) is
+    /// fatal (`exit_cleanup(RERR_STREAMIO)`); oc surfaces it as an `InvalidData`
+    /// error so the read loop aborts the transfer instead of dropping the frame.
+    fn check_control_msg(&self) -> io::Result<()> {
+        if self.invalid_control_msg {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid multiplex control-message payload from peer",
             ));
         }
         Ok(())
@@ -730,6 +787,7 @@ impl<R: Read> MultiplexReader<R> {
                 }
                 self.check_error_exit()?;
                 self.check_io_timeout()?;
+                self.check_control_msg()?;
             }
         }
 
@@ -828,6 +886,7 @@ impl<R: Read> Read for MultiplexReader<R> {
             }
             self.check_error_exit()?;
             self.check_io_timeout()?;
+            self.check_control_msg()?;
         }
     }
 }
@@ -1103,6 +1162,46 @@ mod success_dispatch_tests {
             reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
         }
         assert_eq!(reader.take_success_indices(), vec![1, 5, 9]);
+    }
+
+    /// A wrong-sized MSG_SUCCESS payload is a stream-integrity violation, not a
+    /// recoverable event: upstream jumps to invalid_msg and
+    /// exit_cleanup(RERR_STREAMIO) (exit 12). Silently dropping it would lose the
+    /// committed file index that drives the sender's deferred
+    /// `--remove-source-files` unlink, so the read loop must abort. This test
+    /// fails against the previous `if len >= 4` accept-and-truncate behaviour,
+    /// which happily read a malformed frame's first 4 bytes.
+    ///
+    /// upstream: io.c:1624 `if (msg_bytes != (local_server ? 4+8+8 : 4)) goto invalid_msg;`
+    #[test]
+    fn msg_success_wrong_payload_length_aborts() {
+        let mut reader = MultiplexReader::new(io::empty());
+        // 3 bytes: neither the 4-byte wire form nor the 20-byte local_server form.
+        reader.buffer = vec![1, 0, 0];
+        let is_data = reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
+        assert!(!is_data, "MSG_SUCCESS is a control frame, not MSG_DATA");
+        assert!(
+            reader.take_success_indices().is_empty(),
+            "no index may be captured from a malformed frame"
+        );
+        let err = reader
+            .check_control_msg()
+            .expect_err("a malformed MSG_SUCCESS frame must abort the stream");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// The well-formed 4-byte path must stay valid so a correct peer never trips
+    /// the abort - guards against an interop regression.
+    #[test]
+    fn msg_success_well_formed_payload_does_not_abort() {
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.buffer = 7i32.to_le_bytes().to_vec();
+        reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
+        assert!(
+            reader.check_control_msg().is_ok(),
+            "a valid frame must not abort"
+        );
+        assert_eq!(reader.take_success_indices(), vec![7]);
     }
 }
 

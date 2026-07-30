@@ -262,7 +262,11 @@ fn multiplex_reader_accumulates_msg_io_error() {
 }
 
 #[test]
-fn multiplex_reader_io_error_wrong_payload_length_ignored() {
+fn multiplex_reader_io_error_wrong_payload_length_aborts() {
+    // A wrong-sized MSG_IO_ERROR is a stream-integrity violation: upstream jumps
+    // to invalid_msg and exit_cleanup(RERR_STREAMIO) (exit 12). Silently dropping
+    // it would lose the io_error flags the frame carries and desynchronise the
+    // demultiplexer, so the read must abort rather than deliver later data.
     // upstream: io.c:1543 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
@@ -272,11 +276,14 @@ fn multiplex_reader_io_error_wrong_payload_length_ignored() {
 
     let mut mux = MultiplexReader::new(Cursor::new(stream));
     let mut buf = [0u8; 2];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 2);
-    assert_eq!(&buf, b"ok");
-
-    assert_eq!(mux.io_error, 0);
+    let err = mux
+        .read(&mut buf)
+        .expect_err("a malformed MSG_IO_ERROR frame must abort the stream");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        mux.io_error, 0,
+        "no io_error may be accumulated from a bad frame"
+    );
 }
 
 #[test]
@@ -470,7 +477,10 @@ fn multiplex_reader_accumulates_msg_no_send() {
 }
 
 #[test]
-fn multiplex_reader_no_send_wrong_payload_length_ignored() {
+fn multiplex_reader_no_send_wrong_payload_length_aborts() {
+    // A wrong-sized MSG_NO_SEND is fatal upstream (invalid_msg ->
+    // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the no-send file index
+    // the generator needs, so the read must abort instead of continuing.
     // upstream: io.c:1640 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
@@ -480,10 +490,10 @@ fn multiplex_reader_no_send_wrong_payload_length_ignored() {
 
     let mut mux = MultiplexReader::new(Cursor::new(stream));
     let mut buf = [0u8; 2];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 2);
-    assert_eq!(&buf, b"ok");
-
+    let err = mux
+        .read(&mut buf)
+        .expect_err("a malformed MSG_NO_SEND frame must abort the stream");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(mux.no_send_indices.is_empty());
 }
 
@@ -566,8 +576,11 @@ fn multiplex_reader_accumulates_msg_redo() {
 }
 
 #[test]
-fn multiplex_reader_redo_wrong_payload_length_ignored() {
-    // upstream: io.c:1537 reads exactly 4 bytes for val
+fn multiplex_reader_redo_wrong_payload_length_aborts() {
+    // A wrong-sized MSG_REDO is fatal upstream (invalid_msg ->
+    // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the redo file index
+    // the generator must reprocess, so the read must abort instead of continuing.
+    // upstream: io.c:1536 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();
@@ -576,10 +589,10 @@ fn multiplex_reader_redo_wrong_payload_length_ignored() {
 
     let mut mux = MultiplexReader::new(Cursor::new(stream));
     let mut buf = [0u8; 2];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 2);
-    assert_eq!(&buf, b"ok");
-
+    let err = mux
+        .read(&mut buf)
+        .expect_err("a malformed MSG_REDO frame must abort the stream");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(mux.redo_indices.is_empty());
 }
 
