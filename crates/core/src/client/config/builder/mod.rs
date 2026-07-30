@@ -305,22 +305,6 @@ impl ClientConfigBuilder {
     /// - `--append` conflicts with `--whole-file`
     ///   (upstream: options.c:2400 `if (append_mode) { if (whole_file > 0) ... }`)
     pub fn validate(&self) -> Result<(), ConfigConflict> {
-        self.validate_with_capabilities(protocol::CompatibilityFlags::EMPTY)
-    }
-
-    /// Checks for mutually exclusive option combinations, relaxing checks that
-    /// upstream peers negotiate away through capability bits.
-    ///
-    /// Currently `CF_INPLACE_PARTIAL_DIR` (bit 6, introduced at protocol 30)
-    /// permits `--inplace`/`--append` to coexist with `--partial-dir`: the
-    /// receiver writes the in-place output but treats a basis file located in
-    /// `partial_dir` as an inplace target as well.
-    ///
-    /// upstream: compat.c CF_INPLACE_PARTIAL_DIR
-    pub fn validate_with_capabilities(
-        &self,
-        caps: protocol::CompatibilityFlags,
-    ) -> Result<(), ConfigConflict> {
         // upstream: options.c:1974-1977 - --old-args conflicts with --protect-args.
         // Any active level (>= 1) triggers the conflict, matching upstream's
         // `else if (old_style_args)` truthiness test.
@@ -352,13 +336,14 @@ impl ClientConfigBuilder {
                 });
             }
 
-            // upstream: compat.c:777-778 - when CF_INPLACE_PARTIAL_DIR is
-            // negotiated, the receiver enables per-file inplace for basis
-            // files retrieved from the partial directory, allowing the
-            // otherwise-conflicting pair.
-            let inplace_partial_allowed =
-                caps.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR);
-            if self.partial_dir.is_some() && !inplace_partial_allowed {
+            // upstream: options.c:2424-2432 - `--inplace`/`--append` cannot be
+            // used with `--partial-dir`. Upstream rejects this pair
+            // unconditionally, before any capability negotiation. The
+            // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:777-778,
+            // receiver.c:910) only enables the receiver's internal one_inplace
+            // optimization for a basis file found in the partial directory; it
+            // never relaxes this user-facing option conflict.
+            if self.partial_dir.is_some() {
                 return Err(ConfigConflict {
                     option1: mode,
                     option2: "partial-dir",
