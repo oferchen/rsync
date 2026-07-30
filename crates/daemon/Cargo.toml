@@ -51,6 +51,12 @@ daemon-seccomp = ["dep:seccompiler"]
 # a no-op that still degrades to the plain writer. See
 # docs/design/iouring-send-zc.md for the buffer-lifetime contract.
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
+# QUIC daemon transport (default-off, opt-in oc extension). At this stage the
+# feature only gates parsing and storage of the `quic cert file` / `quic key
+# file` global directives; the listener and certificate loading land under
+# later QUIC build-out tasks. Kept dependency-free so default builds are
+# byte-identical. See docs/design/quic-transport-policy.md (decision A).
+quic = []
 # macOS-only, default-off: source accepted connections in the daemon accept
 # loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
 # engines' per-listener `poll(2)` park, giving a single kernel wait over all
