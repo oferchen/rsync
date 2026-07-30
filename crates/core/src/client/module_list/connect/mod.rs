@@ -9,7 +9,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use super::super::{AddressMode, ClientError, TcpFastOpenMode, TransferTimeout};
-use super::DaemonAddress;
+use super::{DaemonAddress, Transport};
 pub(crate) use direct::{connect_direct, resolve_daemon_addresses};
 pub(crate) use program::ConnectProgramConfig;
 use program::ConnectProgramStream;
@@ -246,14 +246,58 @@ pub(crate) fn register_shutdown_wake(
     }))
 }
 
-/// Opens a plain TCP connection to a daemon.
+/// Opens a stream to a daemon, dispatching on the address's [`Transport`].
 ///
-/// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
-/// variables. `sockopts` (`--sockopts`), when given, is applied to the
-/// connecting socket before `connect(2)` for both the direct and proxied
-/// paths; it has no effect on a connect program, matching upstream (a
-/// connect program bypasses `open_socket_out()` entirely).
+/// This is the single connect-selection point shared by module listing and
+/// daemon transfers. The transport is read off [`DaemonAddress::transport`];
+/// `Transport::Tcp` (the default) establishes a plain TCP connection.
 pub(crate) fn open_daemon_stream(
+    addr: &DaemonAddress,
+    connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
+    address_mode: AddressMode,
+    connect_program: Option<&OsStr>,
+    bind_address: Option<SocketAddr>,
+    tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
+) -> Result<DaemonStream, ClientError> {
+    // Transport-selection point: the transport rides on `DaemonAddress` from
+    // target parsing. QUIC (feature `quic`, default off) dials via
+    // `rsync_io::quic` in a follow-up; until then every selection establishes
+    // the TCP daemon stream, so the default build is byte-for-byte unchanged.
+    match addr.transport() {
+        Transport::Tcp => open_tcp_daemon_stream(
+            addr,
+            connect_timeout,
+            io_timeout,
+            address_mode,
+            connect_program,
+            bind_address,
+            tfo,
+            sockopts,
+        ),
+        #[cfg(feature = "quic")]
+        Transport::Quic => open_tcp_daemon_stream(
+            addr,
+            connect_timeout,
+            io_timeout,
+            address_mode,
+            connect_program,
+            bind_address,
+            tfo,
+            sockopts,
+        ),
+    }
+}
+
+/// Opens a plain TCP connection to a daemon (the [`Transport::Tcp`] path).
+///
+/// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment variables.
+/// `sockopts` (`--sockopts`), when given, is applied to the connecting socket
+/// before `connect(2)` for both the direct and proxied paths; it has no effect
+/// on a connect program, matching upstream (a connect program bypasses
+/// `open_socket_out()` entirely).
+fn open_tcp_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
