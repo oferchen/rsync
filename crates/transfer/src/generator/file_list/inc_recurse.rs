@@ -95,7 +95,16 @@ impl GeneratorContext {
             let is_top_level = parent.is_empty() || parent == ".";
 
             if is_top_level {
-                let node_id = if entry.is_dir() && name != "." {
+                // upstream: flist.c:2162-2168 send_extra_file_list() - a
+                // FLAG_DUPLICATE sibling dir is batched into the surviving dir's
+                // sub-list and its FLAG_CONTENT_DIR is cleared so it is never
+                // scanned again. It still occupies a `dir_flist` index on both
+                // peers (the receiver tombstones it but keeps the slot), so it
+                // must be counted in the wire dir_ndx sequence yet own no
+                // sub-list. Give it no node_id (no segment, no tree node) and do
+                // NOT overwrite `dir_map`, so its children stay attached to the
+                // earlier survivor's segment and its own sub-list is empty.
+                let node_id = if entry.is_dir() && name != "." && !entry.duplicate() {
                     let id = node_id_counter;
                     node_id_counter += 1;
                     let tree_handle = tree.add_directory(id, name.to_string(), None);
