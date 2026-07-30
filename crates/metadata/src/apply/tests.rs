@@ -721,6 +721,49 @@ fn apply_metadata_from_file_entry_with_timestamps() {
     );
 }
 
+/// upstream: rsync.c:632 `set_times()` runs before rsync.c:658 `do_chmod_at()`,
+/// so timestamps are applied ahead of the (possibly read-only) target mode. This
+/// test drives the full `apply_metadata_with_attrs_flags_and_pre_transfer` path
+/// with both `-p` and `-t` and a read-only target mode: the resulting file must
+/// carry BOTH the requested mtime AND the read-only mode. If the chmod preceded
+/// the time set (the pre-fix order), a mode that forbids owner-write would leave
+/// the mtime unset on any platform that requires write access for utimes - so
+/// the surviving mtime encodes the upstream times-before-chmod ordering.
+#[cfg(unix)]
+#[test]
+fn apply_metadata_sets_times_before_readonly_chmod() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("times-then-chmod.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    // Start writable so the failure mode is solely about the apply ordering.
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o644)).expect("seed dest perms");
+
+    let mut entry = FileEntry::new_file("times-then-chmod.txt".into(), 4, 0o444);
+    entry.set_mtime(1_700_000_000, 123_456_789);
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    // The mtime must have been written even though the final mode is read-only.
+    assert_eq!(
+        FileTime::from_last_modification_time(&dest_meta),
+        FileTime::from_unix_time(1_700_000_000, 123_456_789),
+        "mtime must survive: times are set before the read-only chmod"
+    );
+    // And the read-only mode must be the final on-disk state.
+    assert_eq!(
+        current_mode(&dest) & 0o777,
+        0o444,
+        "read-only target mode must be applied after the times"
+    );
+}
+
 #[test]
 fn apply_metadata_from_file_entry_no_times() {
     use protocol::flist::FileEntry;

@@ -670,13 +670,11 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         cached_meta
     };
 
-    permissions::apply_permissions_from_entry(
-        destination,
-        entry,
-        options,
-        cached_meta.as_ref(),
-        pre_transfer_meta.as_ref(),
-    )?;
+    // upstream: rsync.c:632 `set_times()` runs BEFORE rsync.c:658 `do_chmod_at()`,
+    // so timestamps are applied ahead of the permission change. This ordering is
+    // observable (upstream sets the mtime/atime, then the mode) and it also keeps
+    // a read-only target mode from blocking the utimes call that would otherwise
+    // follow it.
 
     // upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
     if options.times() && !attrs_flags.skip_mtime() {
@@ -698,6 +696,16 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     if options.crtimes() && entry.crtime() != 0 && !attrs_flags.skip_crtime() {
         timestamps::apply_crtime_from_entry(destination, entry)?;
     }
+
+    // upstream: rsync.c:658 - `do_chmod_at()` is the last attribute upstream
+    // applies, after times (and after ACLs, which oc applies in the caller).
+    permissions::apply_permissions_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+        pre_transfer_meta.as_ref(),
+    )?;
 
     Ok(())
 }
