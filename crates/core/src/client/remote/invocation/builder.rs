@@ -287,10 +287,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         args.push(OsString::from("."));
 
-        // upstream: options.c:2533 safe_arg() - when old_style_args >= 1,
-        // filename arguments (is_filename_arg=true) skip shell escaping so
-        // the remote shell's eval naturally splits space-separated paths.
-        let old_args_active = self.config.old_args().unwrap_or(false);
+        // upstream: options.c:2551 safe_arg() - for a filename arg the escape
+        // gate reduces to `!protect_args && old_style_args == 0`, because the
+        // `(!old_style_args || (!is_filename_arg && ...))` factor is only true at
+        // level 0. So a single `--old-args` (level 1) already stops escaping
+        // filenames, and the doubled level 2 (which upstream's `< 2` gate uses to
+        // also drop option-value escaping) leaves filenames unescaped as well.
+        let old_style_args = self.config.old_args().unwrap_or(0);
 
         // upstream: options.c:2553-2558 escape_leading_tilde is set only when
         // local is NOT the sender (a pull, so the remote paths are the source)
@@ -300,7 +303,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         let escape_tilde_role = !am_sender && !self.config.trust_sender();
 
         for path in remote_paths {
-            if escape_for_shell && !old_args_active {
+            if escape_for_shell && old_style_args == 0 {
                 // upstream: main.c:622 safe_arg(NULL, *remote_argv++)
                 // upstream: options.c:2555-2557 - escape a leading ~ for a
                 // relative path without a `/./` pivot, or a path with no `/`.
@@ -1204,8 +1207,10 @@ const WILD_CHARS: &str = "*?[]";
 /// - A leading `-` is prefixed with `./` to prevent the remote server from
 ///   interpreting the path as an option.
 ///
-/// This escaping is applied when `protect_args` is not active, matching the
-/// upstream condition `!protect_args && old_style_args < 2`.
+/// This escaping is applied only when `protect_args` is not active and
+/// `old_style_args == 0`; the caller (`build_args_without_program`) evaluates
+/// that gate (upstream `options.c:2551`, where the filename branch reduces to
+/// `!protect_args && old_style_args == 0`) and calls this only when it holds.
 pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
     shell_safe_filename_arg_with_tilde(arg, false)
 }
