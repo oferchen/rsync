@@ -120,9 +120,12 @@ fn allocate_test_port() -> io::Result<u16> {
 /// from a genuine startup failure it must propagate rather than mask.
 #[allow(dead_code)]
 pub fn is_addr_in_use(err: &io::Error) -> bool {
-    err.to_string()
-        .to_ascii_lowercase()
-        .contains("address already in use")
+    // The daemon logs the OS strerror ("Address already in use"), which is the
+    // form that reaches the retry via the readiness-timeout message. A raw
+    // EADDRINUSE `io::Error` renders as the shorter "address in use"; match both
+    // so the classifier is robust to either representation.
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("address already in use") || msg.contains("address in use")
 }
 
 /// A managed rsync daemon instance for testing.
