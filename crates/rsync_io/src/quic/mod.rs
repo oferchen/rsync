@@ -47,6 +47,7 @@
 //! time and exposes its DER encoding so a connector can pin it.
 
 mod driver;
+mod trust;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -63,6 +64,11 @@ pub use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
+
+pub use trust::{
+    Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
+    default_known_hosts_path, resolve, system_roots, tofu, tofu_file,
+};
 
 /// ALPN protocol identifier advertised on every QUIC connection.
 pub const ALPN_RSYNC: &[u8] = b"rsync";
