@@ -627,6 +627,8 @@ impl ReceiverContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
+        dest_dir: &std::path::Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> std::io::Result<()>
     where
         W: std::io::Write + ?Sized,
@@ -643,14 +645,20 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        // Leader group index -> transfer-relative name, so each follower can name
-        // its leader in the xname the peer renders after "=>".
-        let mut leader_names: std::collections::HashMap<u32, &str> =
+        // The dev/ino up-to-date check is Unix-only; on other platforms every
+        // follower is forwarded, matching the pre-existing behaviour.
+        #[cfg(not(unix))]
+        let _ = dest_dir;
+
+        // Leader group index -> leader entry, so each follower can name its
+        // leader in the xname the peer renders after "=>" and so its destination
+        // path is known for the up-to-date dev/ino check below.
+        let mut leaders: std::collections::HashMap<u32, &protocol::flist::FileEntry> =
             std::collections::HashMap::new();
         for entry in &self.file_list {
             if entry.hlink_first() {
                 if let Some(gnum) = entry.hardlink_idx() {
-                    leader_names.entry(gnum).or_insert_with(|| entry.name());
+                    leaders.entry(gnum).or_insert(entry);
                 }
             }
         }
@@ -663,9 +671,23 @@ impl ReceiverContext {
             let Some(gnum) = entry.hardlink_idx() else {
                 continue;
             };
-            let Some(leader_name) = leader_names.get(&gnum).copied() else {
+            let Some(leader) = leaders.get(&gnum).copied() else {
                 continue;
             };
+            let leader_name = leader.name();
+
+            // upstream: hlink.c:215-227 maybe_hard_link - an up-to-date follower
+            // (destination already shares the leader's dev/ino) itemizes with
+            // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS and an EMPTY xname. Neither
+            // flag is in SIGNIFICANT_ITEM_FLAGS (rsync.h:258-259) and the xname
+            // is empty, so the generator.c:582 emit gate is false and NOTHING is
+            // written to the wire for it. Only a new follower (statret != 0 or a
+            // dev/ino mismatch, the atomic_create path at hlink.c:230-237)
+            // carries a non-empty xname and crosses the wire with ITEM_IS_NEW.
+            #[cfg(unix)]
+            if self.hardlink_follower_up_to_date(dest_dir, sandbox, entry.path(), leader.path()) {
+                continue;
+            }
 
             let ndx = self.flat_to_wire_ndx(flat_idx);
             ndx_codec.write_ndx(writer, ndx)?;
@@ -692,6 +714,38 @@ impl ReceiverContext {
                 .set(self.hardlink_follower_echoes.get() + emitted);
         }
         Ok(())
+    }
+
+    /// Returns whether the follower's destination already hard-links to its
+    /// leader (destination dev/ino match), mirroring upstream
+    /// `hlink.c:215-217` maybe_hard_link's `statret == 0 && st_dev/st_ino`
+    /// comparison. Such an up-to-date follower is written NOTHING on the wire
+    /// (its itemize xname is empty and its flags are not significant), so the
+    /// caller skips it. A missing follower or leader on disk reads as "not yet
+    /// linked", so the follower is treated as new and forwarded.
+    #[cfg(unix)]
+    fn hardlink_follower_up_to_date(
+        &self,
+        dest_dir: &std::path::Path,
+        sandbox: Option<&fast_io::DirSandbox>,
+        follower_rel: &std::path::Path,
+        leader_rel: &std::path::Path,
+    ) -> bool {
+        use std::os::unix::fs::MetadataExt;
+
+        let follower_path = dest_dir.join(follower_rel);
+        let leader_path = dest_dir.join(leader_rel);
+        // SEC-1.f: route the follower lstat through the sandbox dirfd when the
+        // relative path is a single component, matching create_hardlinks.
+        let Ok(follower_meta) =
+            fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, follower_rel, &follower_path)
+        else {
+            return false;
+        };
+        let Ok(leader_meta) = std::fs::symlink_metadata(&leader_path) else {
+            return false;
+        };
+        follower_meta.dev() == leader_meta.dev() && follower_meta.ino() == leader_meta.ino()
     }
 
     /// Records a metadata-only itemize record a server-mode receiver must
