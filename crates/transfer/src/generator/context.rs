@@ -195,6 +195,15 @@ pub struct GeneratorContext {
     /// [`Self::wire_write_counter`] at the `handle_stats` point. `None` in unit
     /// tests, where the logical fallback is used.
     pub(crate) wire_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Whether the RECEIVING peer can set symlink timestamps (upstream's
+    /// `receiver_symlink_times`, compat.c:92). Computed once at construction from
+    /// the receiver's advertised capability - the client's `'L'` letter when we
+    /// are the server, else the negotiated `CF_SYMLINK_TIMES` flag - and consulted
+    /// only by [`Self::itemize_context`] to pick the position-4 `t`/`T` glyph for
+    /// a symlink. Distinct from this process's own platform capability: a Unix
+    /// server-sender must not itemize a symlink time a non-Unix receiver cannot
+    /// apply (upstream compat.c:755-759).
+    pub(crate) receiver_symlink_times: bool,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -260,6 +269,29 @@ impl GeneratorContext {
         let mut config = config;
         config.promote_append_mode_for_protocol(handshake.protocol);
 
+        // upstream: compat.c:755-759 - on the sender, `receiver_symlink_times`
+        // reflects the RECEIVER's capability, not our own platform. When we are
+        // the server the receiver is the client, whose `'L'` letter rides
+        // `client_info` (the `-e` string in `client_args` for daemon mode, or the
+        // compact `flag_string` for SSH mode). When we are a client sender it is
+        // the negotiated `CF_SYMLINK_TIMES` flag. Computed once here so
+        // `itemize_context` renders the position-4 `t`/`T` symlink glyph
+        // correctly even when a non-Unix receiver pulls from this Unix server.
+        let am_server = !config.connection.client_mode;
+        let client_info = if am_server {
+            crate::setup::resolve_server_client_info(
+                handshake.client_args.as_deref(),
+                &config.flag_string,
+            )
+        } else {
+            std::borrow::Cow::Borrowed("")
+        };
+        let receiver_symlink_times = crate::setup::sender_receiver_symlink_times(
+            am_server,
+            &client_info,
+            handshake.compat_flags,
+        );
+
         Self {
             protocol: handshake.protocol,
             config,
@@ -286,6 +318,7 @@ impl GeneratorContext {
             batch_stats_sink: None,
             wire_write_counter: None,
             wire_read_counter: None,
+            receiver_symlink_times,
         }
     }
 
@@ -431,8 +464,9 @@ impl GeneratorContext {
     /// Builds the display context for itemize time-position rendering.
     ///
     /// Captures `preserve_mtimes` (from `--times` flag) and `receiver_symlink_times`
-    /// (from `CF_SYMLINK_TIMES` compat flag) so `format_iflags` can correctly
-    /// distinguish `t` from `T` at position 4.
+    /// (the RECEIVER's advertised symlink-time capability, resolved once in
+    /// [`Self::new`] per upstream compat.c:755-759) so `format_iflags` can
+    /// correctly distinguish `t` from `T` at position 4.
     ///
     /// # Upstream Reference
     ///
@@ -441,9 +475,7 @@ impl GeneratorContext {
     pub(crate) fn itemize_context(&self) -> itemize::ItemizeContext {
         itemize::ItemizeContext {
             preserve_mtimes: self.config.flags.times,
-            receiver_symlink_times: self
-                .compat_flags
-                .is_some_and(|f| f.contains(CompatibilityFlags::SYMLINK_TIMES)),
+            receiver_symlink_times: self.receiver_symlink_times,
         }
     }
 
