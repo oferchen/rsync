@@ -293,7 +293,15 @@ pub(crate) fn parse_modifiers<'a>(
                 }
                 mods.word_split = true;
             }
-            'C' => mods.cvs_mode = true,
+            // upstream: exclude.c:parse_rule_tok - `C` is invalid when the rule
+            // already set FILTRULE_NO_PREFIXES (a preceding `-`/`+`) or the
+            // prefix binds a side (H/S/P/R), i.e. `prefix_specifies_side`.
+            'C' => {
+                if mods.no_prefixes || prefix_specifies_side {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.cvs_mode = true;
+            }
             // upstream: exclude.c:1215-1216 - `/` sets FILTRULE_ABS_PATH.
             '/' => mods.abs_path = true,
             // upstream: exclude.c:1197-1213 - `-`/`+` set FILTRULE_NO_PREFIXES

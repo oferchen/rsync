@@ -945,6 +945,34 @@ fn parse_rejects_side_modifier_with_word_split_on_side_prefix() {
     assert!(err.message.contains("invalid modifier 's'"));
 }
 
+#[test]
+fn parse_rejects_c_modifier_on_side_specific_prefix() {
+    // upstream: exclude.c:parse_rule_tok - `C` is rejected when the prefix binds
+    // a side (H/S/P/R sets `prefix_specifies_side`), the same incompatibility
+    // that rejects `s`/`r` on those prefixes.
+    for line in ["HC foo", "SC foo", "PC foo", "RC foo"] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert!(
+            err.message.contains("invalid modifier 'C'"),
+            "expected rejection for `{line}`, got `{}`",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn parse_rejects_c_modifier_after_no_prefixes() {
+    // upstream: exclude.c:parse_rule_tok - `C` is rejected once FILTRULE_NO_PREFIXES
+    // is set by a preceding `-`/`+`, mirroring upstream's prefix/no-prefix
+    // incompatibility rather than silently accepting the nonsensical combination.
+    let err = parse_rules(":-C", Path::new("test")).unwrap_err();
+    assert!(
+        err.message.contains("invalid modifier 'C'"),
+        "expected rejection for `:-C`, got `{}`",
+        err.message
+    );
+}
+
 // upstream: exclude.c:1404-1408 - merge / dir-merge with the `C`
 // (CVS-ignore) modifier and an empty pattern defaults to `.cvsignore`.
 #[test]
