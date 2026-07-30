@@ -191,6 +191,25 @@ impl ProtocolVersion {
         self.as_u8() >= 30
     }
 
+    /// Returns `true` when forwarded `--files-from` names ride the socket
+    /// un-multiplexed, i.e. NOT wrapped in `MSG_DATA` frames (protocol < 31).
+    ///
+    /// A receiver with a local `--files-from` list forwards the names to the
+    /// sender while it reads back the incoming file list. Below protocol 31
+    /// upstream temporarily switches the outgoing stream to raw buffered I/O
+    /// (`MPLX_TO_BUFFERED`) for the duration of that forward, so the names are
+    /// sent without multiplex framing; at protocol >= 31 they stay multiplexed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1230` `start_filesfrom_forwarding` -
+    ///   `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches the output to
+    ///   `MPLX_TO_BUFFERED` before forwarding.
+    #[must_use]
+    pub const fn forwards_files_from_unmultiplexed(self) -> bool {
+        self.as_u8() < 31
+    }
+
     /// Returns `true` if this protocol version uses the extended 3-way goodbye
     /// exchange.
     ///

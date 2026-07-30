@@ -868,8 +868,19 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // generator reads filenames from the protocol stream.
     if config.connection.client_mode && config.role == ServerRole::Receiver {
         if let Some(data) = config.connection.files_from_data.take() {
-            writer.write_all(&data)?;
-            writer.flush()?;
+            // upstream: io.c:1228 start_filesfrom_forwarding - below protocol 31
+            // the client-receiver forwards its files-from names un-multiplexed
+            // (MPLX_TO_BUFFERED). At protocol 30 the client's output IS
+            // multiplexed (need_messages_from_generator, main.c:1362-1363), so
+            // without this bypass the names would be MSG_DATA-framed while a
+            // real upstream sender reads them raw. At protocol >= 31 they stay
+            // framed; below 30 the stream is already plain so both paths match.
+            if handshake.protocol.forwards_files_from_unmultiplexed() && writer.is_multiplexed() {
+                writer.write_raw(&data)?;
+            } else {
+                writer.write_all(&data)?;
+                writer.flush()?;
+            }
         }
     }
 
