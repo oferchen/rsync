@@ -525,7 +525,7 @@ fn make_backup_backup_dir_subdir_inherits_source_mode() {
     };
     let disk_config = DiskCommitConfig {
         metadata_opts: Some(
-            metadata::MetadataOptions::new()
+            ::metadata::MetadataOptions::new()
                 .preserve_permissions(true)
                 .preserve_times(true),
         ),
@@ -580,7 +580,7 @@ fn make_backup_backup_dir_clears_nondir_obstruction() {
         suffix: OsString::new(),
     };
     let disk_config = DiskCommitConfig {
-        metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
+        metadata_opts: Some(::metadata::MetadataOptions::new().preserve_permissions(true)),
         ..DiskCommitConfig::default()
     };
 
