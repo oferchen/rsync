@@ -25,7 +25,8 @@ use super::super::delta::{
 use super::super::item_flags::ItemFlags;
 use super::super::protocol_io::NdxAttrs;
 use super::super::{
-    GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count, is_early_close_error,
+    GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, flush_with_count,
+    is_early_close_error,
 };
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::reader::BufferedInputHint;
@@ -107,6 +108,23 @@ fn is_protocol_violation(error: &io::Error) -> bool {
     error
         .get_ref()
         .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+}
+
+/// Whether `error` is a tagged [`SenderFstatError`] - a failed `fstat(2)` on the
+/// just-opened source fd that upstream aborts with `exit_cleanup(RERR_FILEIO)` -
+/// rather than an ordinary per-file open failure the sender records with
+/// `MSG_NO_SEND` and skips.
+///
+/// Used to route the fstat abort surfaced by
+/// [`GeneratorContext::open_source_unbuffered`] to a fatal return (mapping to
+/// `RERR_FILEIO`, exit 11) instead of [`GeneratorContext::record_open_failure`].
+///
+/// upstream: `sender.c` `do_fstat` - `if (do_fstat(fd, &st) != 0) { ...
+/// exit_cleanup(RERR_FILEIO); }`.
+fn is_sender_fstat_error(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<SenderFstatError>())
 }
 
 /// Minimum source size before the opt-in parallel delta scan is considered.
@@ -803,6 +821,10 @@ impl GeneratorContext {
                     // upstream: sender.c:407-409 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
                     Err(e) if is_protocol_violation(&e) => return Err(e),
+                    // upstream: sender.c do_fstat - a failed fstat on the opened
+                    // fd aborts fatally with exit_cleanup(RERR_FILEIO), never a
+                    // MSG_NO_SEND skip.
+                    Err(e) if is_sender_fstat_error(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
@@ -1021,6 +1043,10 @@ impl GeneratorContext {
                     // upstream: sender.c:407-409 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
                     Err(e) if is_protocol_violation(&e) => return Err(e),
+                    // upstream: sender.c do_fstat - a failed fstat on the opened
+                    // fd aborts fatally with exit_cleanup(RERR_FILEIO), never a
+                    // MSG_NO_SEND skip.
+                    Err(e) if is_sender_fstat_error(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
@@ -1559,6 +1585,73 @@ mod parallel_delta_gate_tests {
     #[test]
     fn min_chunk_floor_is_one_mib() {
         assert_eq!(PARALLEL_DELTA_MIN_CHUNK_BYTES, 1024 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod sender_fstat_error_routing_tests {
+    //! The sender fstats the just-opened source fd; upstream `sender.c`
+    //! `do_fstat` exits `exit_cleanup(RERR_FILEIO)` (exit 11) when that fstat
+    //! fails - a fatal abort, NOT the per-file `MSG_NO_SEND` skip used for an
+    //! *open* failure. These tests pin the classification the transfer loop
+    //! relies on to route the abort fatally with the correct exit code.
+    use super::{is_protocol_violation, is_sender_fstat_error};
+    use crate::generator::sender_fstat_error;
+    use std::io;
+
+    #[test]
+    fn fstat_failure_is_routed_to_a_fatal_return() {
+        // WHY: a regression that dropped the tag would send this error down the
+        // `record_open_failure` skip arm (MSG_NO_SEND, at most exit 23) instead
+        // of aborting - diverging from upstream's fatal RERR_FILEIO exit.
+        let tagged = sender_fstat_error(&io::Error::from_raw_os_error(9)); // EBADF
+        assert!(
+            is_sender_fstat_error(&tagged),
+            "an fstat failure must be recognised so the loop aborts, not skips"
+        );
+    }
+
+    #[test]
+    fn fstat_failure_pins_the_fileio_exit_code() {
+        // WHY: observable exit-code fidelity. The tagged error carries
+        // ErrorKind::Other and no ProtocolViolation tag, which is exactly what
+        // the core exit-code mapper needs to yield RERR_FILEIO (11): the raw
+        // errno alone (e.g. EACCES) would otherwise map to RERR_FILESELECT (3),
+        // and a ProtocolViolation tag would map to RERR_PROTOCOL (2).
+        let tagged = sender_fstat_error(&io::Error::from_raw_os_error(13)); // EACCES
+        assert_eq!(tagged.kind(), io::ErrorKind::Other);
+        assert!(
+            !is_protocol_violation(&tagged),
+            "the fstat abort maps to RERR_FILEIO, never RERR_PROTOCOL"
+        );
+    }
+
+    #[test]
+    fn ordinary_open_failure_is_not_treated_as_an_fstat_abort() {
+        // WHY: an open() failure (vanished/permission) must keep the
+        // MSG_NO_SEND skip semantics; only a genuine fstat failure aborts.
+        let open_err = io::Error::from_raw_os_error(2); // ENOENT
+        assert!(!is_sender_fstat_error(&open_err));
+    }
+
+    #[test]
+    fn device_guard_abort_is_not_treated_as_an_fstat_abort() {
+        // WHY: the device-guard abort (RERR_PROTOCOL) and the fstat abort
+        // (RERR_FILEIO) both return fatally but must stay distinct so each keeps
+        // its own exit code; the classifiers must not cross-detect.
+        let protocol_err = protocol::protocol_violation("attempt to copy device contents");
+        assert!(!is_sender_fstat_error(&protocol_err));
+        assert!(is_protocol_violation(&protocol_err));
+    }
+
+    #[test]
+    fn diagnostic_carries_the_sender_role_trailer() {
+        // WHY: the fatal error surfaces to the client; it must mirror upstream's
+        // "fstat failed" wording and carry oc's [sender] role trailer.
+        let tagged = sender_fstat_error(&io::Error::from_raw_os_error(9));
+        let text = tagged.to_string();
+        assert!(text.contains("fstat failed"), "unexpected message: {text}");
+        assert!(text.contains("[sender"), "missing role trailer: {text}");
     }
 }
 

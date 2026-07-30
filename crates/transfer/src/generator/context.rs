@@ -992,13 +992,25 @@ impl GeneratorContext {
     /// 0-length device with `--copy-devices` has its real size resolved by
     /// seeking to the end. Every other source reports its fstat length.
     ///
+    /// A failed `File::metadata` (the `fstat(2)` on the just-opened fd) is fatal
+    /// and tagged as a [`SenderFstatError`]: upstream aborts the whole transfer
+    /// with `exit_cleanup(RERR_FILEIO)`, never the per-file `MSG_NO_SEND` skip
+    /// used for an *open* failure. The transfer loop routes a tagged error to a
+    /// fatal return, and its [`std::io::ErrorKind::Other`] maps to `RERR_FILEIO`
+    /// (11) via the core exit-code mapper's catch-all.
+    ///
     /// # Upstream Reference
     ///
     /// - `sender.c:404-419` - `do_fstat` (exit `RERR_FILEIO` on failure),
     ///   `IS_DEVICE(st.st_mode)` guard (`RERR_PROTOCOL`), and
     ///   `st.st_size = get_device_size(fd, fname)` for a 0-length device.
     fn fstat_source_guard(&self, file: &mut std::fs::File) -> std::io::Result<u64> {
-        let metadata = file.metadata()?;
+        // upstream: sender.c do_fstat - `if (do_fstat(fd, &st) != 0) { io_error
+        // |= IOERR_GENERAL; rsyserr(FERROR_XFER, errno, "fstat failed"); ...
+        // exit_cleanup(RERR_FILEIO); }`. A do_fstat failure aborts fatally, so
+        // the metadata() error is tagged rather than propagated as a plain open
+        // failure the sender would skip with MSG_NO_SEND.
+        let metadata = file.metadata().map_err(|e| sender_fstat_error(&e))?;
         #[cfg(unix)]
         let size = match source_device_guard(&metadata, self.config.flags.copy_devices)? {
             Some(size) => size,
@@ -1114,6 +1126,54 @@ fn join_source_path(base: &Path, name: &Path) -> PathBuf {
     let mut path = base.to_path_buf();
     path.extend(name.components());
     path
+}
+
+/// Inner marker identifying an [`std::io::Error`] as a fatal sender fstat
+/// failure - the `fstat(2)` on the just-opened source fd itself failing.
+///
+/// Upstream's `send_files` fstats the fd and, on failure, calls
+/// `exit_cleanup(RERR_FILEIO)`: a fatal abort (exit 11), not the per-file
+/// `MSG_NO_SEND` skip used for an *open* failure. oc reaches the same
+/// classification by tagging the `File::metadata` error with this marker so the
+/// transfer loop routes it to a fatal return instead of
+/// [`GeneratorContext::record_open_failure`], while its
+/// [`std::io::ErrorKind::Other`] maps to `RERR_FILEIO` via the core exit-code
+/// mapper's catch-all arm (an untagged errno such as `EACCES` would otherwise
+/// mis-map to `RERR_FILESELECT`).
+///
+/// # Upstream Reference
+///
+/// - `sender.c` `do_fstat` - `if (do_fstat(fd, &st) != 0) { io_error |=
+///   IOERR_GENERAL; rsyserr(FERROR_XFER, errno, "fstat failed"); free_sums(s);
+///   close(fd); exit_cleanup(RERR_FILEIO); }`.
+#[derive(Debug)]
+pub(crate) struct SenderFstatError(String);
+
+impl std::fmt::Display for SenderFstatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SenderFstatError {}
+
+/// Wraps a failed source-fd `fstat` (`File::metadata`) as a fatal `RERR_FILEIO`
+/// abort tagged with [`SenderFstatError`].
+///
+/// The message mirrors upstream's `rsyserr(FERROR_XFER, errno, "fstat failed")`
+/// and carries oc's location + `[sender]` role trailer. The error's
+/// [`std::io::ErrorKind::Other`] pins the exit-code mapping to `RERR_FILEIO`
+/// regardless of the underlying errno.
+///
+/// # Upstream Reference
+///
+/// - `sender.c` `do_fstat` - `exit_cleanup(RERR_FILEIO)` on `do_fstat` failure.
+pub(crate) fn sender_fstat_error(source: &std::io::Error) -> std::io::Error {
+    std::io::Error::other(SenderFstatError(format!(
+        "fstat failed: {source} {}{}",
+        crate::role_trailer::error_location!(),
+        crate::role_trailer::sender()
+    )))
 }
 
 /// Applies the sender's device guard to an fstat'd source and reports the
