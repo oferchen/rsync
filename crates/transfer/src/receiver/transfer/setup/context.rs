@@ -793,7 +793,7 @@ impl ReceiverContext {
     /// - `main.c:1191-1198` - `start_filesfrom_forwarding(filesfrom_fd)`
     /// - `io.c:370-381` - `forward_filesfrom_data()` core loop
     /// - `options.c:2944-2956` - server-side `--files-from <path>` arg form
-    fn forward_files_from_to_sender<W: io::Write + ?Sized>(
+    fn forward_files_from_to_sender<W: io::Write + crate::writer::MsgInfoSender + ?Sized>(
         &self,
         writer: &mut W,
     ) -> io::Result<()> {
@@ -831,7 +831,17 @@ impl ReceiverContext {
         let from0 = self.config.file_selection.from0;
         let mut staged = Vec::with_capacity(4096);
         protocol::forward_files_from(&mut reader, &mut staged, from0, None)?;
-        writer.write_all(&staged)?;
+
+        // upstream: io.c:1228 start_filesfrom_forwarding - below protocol 31 the
+        // names are forwarded un-multiplexed (MPLX_TO_BUFFERED), so on a
+        // multiplexed server stream we bypass MSG_DATA framing to match the
+        // wire a real upstream sender expects; at protocol >= 31 they stay
+        // framed like any other multiplexed write.
+        if self.protocol.forwards_files_from_unmultiplexed() && writer.is_output_multiplexed() {
+            writer.write_files_from_unframed(&staged)?;
+        } else {
+            writer.write_all(&staged)?;
+        }
         writer.flush()?;
 
         debug_log!(
@@ -1025,5 +1035,153 @@ mod created_directory_notice_tests {
         logging::init(VerbosityConfig::from_verbose_level(1));
         let ctx = server_ctx(false, false);
         assert!(run(&ctx, "dst/").is_empty());
+    }
+}
+
+/// A server-mode receiver forwarding a local `--files-from` list to the sender
+/// must reproduce upstream's `start_filesfrom_forwarding` framing decision: the
+/// names ride the socket un-multiplexed (raw) below protocol 31 and MSG_DATA
+/// framed at protocol >= 31.
+///
+/// upstream: io.c:1230 `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches
+/// the output stream to `MPLX_TO_BUFFERED` for the forwarding window.
+#[cfg(test)]
+mod files_from_forwarding_framing_tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use protocol::ProtocolVersion;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `MSG_DATA` tag byte: `MPLEX_BASE (7) + MSG_DATA (0)` in the header's high
+    /// byte. A framed payload of length `L` is `[L, L>>8, L>>16, 7] ++ payload`.
+    const MSG_DATA_TAG: u8 = 7;
+
+    /// A capturing `Write` sink shared with the caller so the test can inspect
+    /// the exact wire bytes the multiplexed writer emitted.
+    #[derive(Clone, Default)]
+    struct SharedSink(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SharedSink {
+        fn bytes(&self) -> Vec<u8> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn handshake(proto: u8) -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(proto).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds a server-mode receiver whose local `--files-from` points at
+    /// `path`, then forwards it through a freshly multiplexed [`ServerWriter`],
+    /// returning the captured wire bytes.
+    fn forward(proto: u8, path: &str) -> Vec<u8> {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(proto).unwrap(),
+            flags: ParsedServerFlags::default(),
+            ..Default::default()
+        };
+        // Server-side receiver with a real local files-from path (not "-").
+        config.connection.client_mode = false;
+        config.file_selection.files_from_path = Some(path.to_owned());
+
+        let hs = handshake(proto);
+        let ctx = ReceiverContext::new_for_test(&hs, config);
+
+        let sink = SharedSink::default();
+        // Upstream multiplexes the server-receiver's output for protocol >= 23
+        // (start_server -> io_start_multiplex_out); reproduce that here.
+        let mut writer = ServerWriter::new_plain(sink.clone())
+            .activate_multiplex()
+            .expect("activate multiplex");
+        ctx.forward_files_from_to_sender(&mut writer)
+            .expect("forward files-from");
+        sink.bytes()
+    }
+
+    /// Writes a two-name newline-delimited files-from list and returns the raw
+    /// payload the forwarder stages (what upstream would place on the wire).
+    fn write_list(dir: &std::path::Path) -> (String, Vec<u8>) {
+        let path = dir.join("list");
+        std::fs::write(&path, b"alpha\nbeta\n").expect("write list");
+        let mut expected = Vec::new();
+        let file = std::fs::File::open(&path).expect("open list");
+        protocol::forward_files_from(&mut io::BufReader::new(file), &mut expected, false, None)
+            .expect("stage payload");
+        (path.to_string_lossy().into_owned(), expected)
+    }
+
+    /// upstream: io.c:1230 - at protocol 29 (< 31) the forwarded names are sent
+    /// raw, with no `MSG_DATA` framing, so a real upstream sender's `read_line`
+    /// consumes the bytes verbatim.
+    #[test]
+    fn proto29_forwards_names_raw() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (path, expected) = write_list(dir.path());
+        let bytes = forward(29, &path);
+        assert_eq!(
+            bytes, expected,
+            "protocol 29 must forward files-from names un-multiplexed (raw)"
+        );
+    }
+
+    /// upstream: io.c:1230 - at protocol 30 (< 31) the stream is still switched
+    /// to buffered, so the names remain raw even though the server output is
+    /// multiplexed.
+    #[test]
+    fn proto30_forwards_names_raw() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (path, expected) = write_list(dir.path());
+        let bytes = forward(30, &path);
+        assert_eq!(
+            bytes, expected,
+            "protocol 30 must forward files-from names un-multiplexed (raw)"
+        );
+    }
+
+    /// upstream: io.c:1230 - at protocol 31+ the stream stays multiplexed, so
+    /// the forwarded names are wrapped in a single `MSG_DATA` frame.
+    #[test]
+    fn proto31_forwards_names_framed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (path, expected) = write_list(dir.path());
+        let bytes = forward(31, &path);
+
+        assert_ne!(bytes, expected, "protocol 31 must MSG_DATA-frame the names");
+        assert_eq!(
+            bytes.len(),
+            expected.len() + 4,
+            "expected one MSG_DATA header (4 bytes) plus the payload"
+        );
+        let len = u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16);
+        assert_eq!(len as usize, expected.len(), "framed length mismatch");
+        assert_eq!(bytes[3], MSG_DATA_TAG, "high byte must be the MSG_DATA tag");
+        assert_eq!(&bytes[4..], expected.as_slice(), "framed payload mismatch");
     }
 }
