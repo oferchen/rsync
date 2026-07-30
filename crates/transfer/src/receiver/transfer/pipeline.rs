@@ -43,6 +43,21 @@ type PipelineResult = (
     Vec<(PathBuf, PathBuf)>,
 );
 
+/// Whether sparse writing is active for this pass.
+///
+/// Mirrors upstream's sparse negation on the redo pass: on entering the redo
+/// after an append transfer, `recv_files` runs `if (append_mode) sparse_files =
+/// -sparse_files;`, and every downstream write path gates on `sparse_files > 0`
+/// (receiver.c:330,482; fileio.c:155,196). The redo rewrites the file from
+/// scratch, so the append+sparse interaction no longer holds and sparse must be
+/// disabled for the resend. A non-redo pass, or a redo that was not append mode,
+/// keeps sparse as configured.
+///
+/// upstream: receiver.c:recv_files
+fn sparse_enabled_for_pass(sparse: bool, append: bool, is_redo_pass: bool) -> bool {
+    sparse && !(is_redo_pass && append)
+}
+
 impl ReceiverContext {
     /// Emits `MSG_SUCCESS(ndx)` to the sender for every file whose commit was
     /// confirmed since the last drain, when `--remove-source-files` is active.
@@ -146,6 +161,18 @@ impl ReceiverContext {
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
+        // upstream: receiver.c:recv_files - on entering the redo pass after an
+        // append transfer, `if (append_mode) sparse_files = -sparse_files;`
+        // negates sparse_files, and every downstream write path only enables
+        // sparse when `sparse_files > 0`. The redo rewrites the file from
+        // scratch, so the append+sparse interaction no longer applies; sparse
+        // writing must be disabled for the resend.
+        let use_sparse = sparse_enabled_for_pass(
+            self.config.flags.sparse,
+            self.config.flags.append,
+            is_redo_pass,
+        );
+
         let request_config = RequestConfig {
             protocol: self.protocol,
             write_iflags: self.protocol.supports_iflags(),
@@ -154,7 +181,9 @@ impl ReceiverContext {
             negotiated_algorithms: self.negotiated_algorithms.as_ref(),
             compat_flags: self.compat_flags.as_ref(),
             checksum_seed: self.checksum_seed,
-            use_sparse: self.config.flags.sparse,
+            // upstream: receiver.c:recv_files negates sparse_files on an
+            // append-triggered redo (see use_sparse computation above).
+            use_sparse,
             do_fsync: self.config.write.fsync,
             temp_dir: self.config.temp_dir.as_deref(),
             write_devices: self.config.write.write_devices,
@@ -218,7 +247,9 @@ impl ReceiverContext {
         };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
-            use_sparse: self.config.flags.sparse,
+            // upstream: receiver.c:recv_files negates sparse_files on an
+            // append-triggered redo (see use_sparse computation above).
+            use_sparse,
             preallocate: self.config.flags.preallocate,
             dest_dir: Some(setup.dest_dir.clone()),
             #[cfg(unix)]
@@ -976,5 +1007,45 @@ impl ReceiverContext {
 
         writer.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sparse_enabled_for_pass;
+
+    // upstream: receiver.c:recv_files negates sparse_files on the redo pass only
+    // when append_mode was set, because the redo rewrites the file from scratch
+    // and the append+sparse interaction no longer applies. These cases pin that
+    // negation so a regression re-enabling sparse on an append-triggered redo
+    // (which would diverge from upstream's `sparse_files > 0` write gating)
+    // fails the build rather than silently producing a wrong destination file.
+
+    #[test]
+    fn append_triggered_redo_disables_sparse() {
+        // --append + --sparse, redo pass: upstream negates sparse_files.
+        assert!(!sparse_enabled_for_pass(true, true, true));
+    }
+
+    #[test]
+    fn normal_pass_keeps_sparse_per_config() {
+        // Non-redo transfer with --sparse: sparse stays enabled regardless of
+        // whether --append was requested.
+        assert!(sparse_enabled_for_pass(true, false, false));
+        assert!(sparse_enabled_for_pass(true, true, false));
+    }
+
+    #[test]
+    fn redo_without_append_keeps_sparse_per_config() {
+        // A redo that was not append mode does not negate sparse_files upstream,
+        // so sparse follows the configured flag.
+        assert!(sparse_enabled_for_pass(true, false, true));
+    }
+
+    #[test]
+    fn sparse_disabled_stays_disabled() {
+        // Without --sparse there is nothing to negate in any pass.
+        assert!(!sparse_enabled_for_pass(false, true, true));
+        assert!(!sparse_enabled_for_pass(false, false, false));
     }
 }
