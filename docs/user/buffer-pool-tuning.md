@@ -38,10 +38,13 @@ sizing creates large buffers (up to 1 MiB for files >= 256 MiB). Without
 it, a handful of large-file transfers could leave 1 MiB buffers in the
 pool that accumulate past a reasonable memory budget.
 
-The **memory cap** (when configured via `--max-alloc`) is a hard ceiling on
-outstanding (checked-out) memory. When the cap is reached, acquires block
-until a buffer is returned. This provides backpressure for memory-constrained
-environments.
+The **memory cap** (off by default, enabled via
+`OC_RSYNC_BUFFER_POOL_MEMORY_CAP`) is a hard ceiling on outstanding
+(checked-out) memory. When the cap would be exceeded, acquires block until
+a buffer is returned. This provides backpressure for memory-constrained
+environments, and is the only path that can block an acquire. Note that
+`--max-alloc` and `OC_RSYNC_BYTE_BUDGET` set the soft byte budget above,
+not this hard cap.
 
 ## Sizing rationale: static, hardware-scaled, no auto-scaling
 
