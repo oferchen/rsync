@@ -114,6 +114,12 @@ openssl-vendored = ["checksums/openssl-vendored"]
 # external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`.
 embedded-ssh = ["core/embedded-ssh"]
 
+# Native QUIC daemon transport (oc extension, off by default). Forwards through
+# `cli`/`core` to `rsync_io/quic`; only makes the `Transport::Quic` selection
+# representable - no default build is affected. Design:
+# docs/design/quic-transport-policy.md.
+quic = ["cli/quic", "core/quic"]
+
 # ============================================================================
 # Runtime and Debugging Features
 # ============================================================================
