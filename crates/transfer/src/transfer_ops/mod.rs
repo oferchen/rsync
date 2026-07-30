@@ -178,7 +178,7 @@ impl RequestConfig<'_> {
     /// underlying compressed-token decoder fails to initialize.
     pub fn create_token_reader(&self) -> std::io::Result<TokenReader> {
         let compression = self.negotiated_algorithms.map(|n| n.compression);
-        TokenReader::new(compression)
+        TokenReader::new(compression, u32::from(self.protocol.as_u8()))
     }
 }
 

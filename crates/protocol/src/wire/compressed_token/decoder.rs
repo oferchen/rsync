@@ -147,6 +147,25 @@ impl CompressedTokenDecoder {
         }
     }
 
+    /// Sets the negotiated protocol version for this decoder.
+    ///
+    /// Only the zlib codec observes it: at protocol < 31 [`Self::see_token`]
+    /// does NOT advance its read pointer between 0xffff chunks, matching
+    /// upstream `token.c:see_deflate_token()` so the receiver's inflate
+    /// dictionary stays synchronized with an older peer's sender. No-op for
+    /// zstd and lz4. Must be set before the first `see_token`.
+    ///
+    /// upstream: token.c:710 `if (protocol_version >= 31) buf += blklen;`
+    pub fn set_protocol_version(&mut self, protocol_version: u32) {
+        match &mut self.inner {
+            DecoderInner::Zlib(dec) => dec.set_protocol_version(protocol_version),
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(_) => {}
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(_) => {}
+        }
+    }
+
     /// Returns whether the decoder has been initialized (received first token).
     #[must_use]
     pub fn initialized(&self) -> bool {

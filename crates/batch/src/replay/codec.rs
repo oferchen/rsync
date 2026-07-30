@@ -55,10 +55,15 @@ pub(super) enum CompressionCodec {
 /// upstream: token.c:see_deflate_token() - feeds block data into inflate dictionary
 pub(super) fn create_compressed_decoder(
     codec: CompressionCodec,
+    protocol_version: u32,
 ) -> BatchResult<CompressedTokenDecoder> {
     match codec {
         CompressionCodec::Zlib => {
             let mut decoder = CompressedTokenDecoder::new();
+            // Batch was recorded at this protocol version; gate see_token's
+            // dictionary advance to match the sender that produced the batch.
+            // upstream: token.c:710 see_deflate_token() `buf += blklen`.
+            decoder.set_protocol_version(protocol_version);
             decoder.set_zlibx(false);
             Ok(decoder)
         }
