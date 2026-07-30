@@ -48,6 +48,64 @@ fn read_address_family_env_override() -> Option<AddressFamilyOverride> {
         .and_then(parse_address_family_env)
 }
 
+/// Resolves the ordered list of wildcard bind addresses for the daemon
+/// listener from the address-family inputs.
+///
+/// This is the single source of truth for the daemon's IP-assignment
+/// policy so the TCP accept loop and any future datagram listener bind the
+/// identical set of addresses in the identical order. The precedence, from
+/// highest to lowest, is:
+///
+/// 1. `bind_address_overridden` - an explicit `address =` / `--address`
+///    was given, so bind exactly that one address.
+/// 2. `env_family` - the `OC_RSYNC_DAEMON_ADDRESS_FAMILY` runtime override
+///    (used by CI/test fixtures to force a family without rebuilding).
+/// 3. `dual_stack` - bind both families, IPv6 first.
+/// 4. `address_family` - the `--ipv4`/`--ipv6` flag, or its absence.
+///
+/// The default (no override, no env, no flag) is dual-stack with IPv6
+/// first, IPv4 second. Mirrors upstream's `default_af_hint = 0` (AF_UNSPEC)
+/// which lets `getaddrinfo(NULL, port, AI_PASSIVE, ...)` return every
+/// available family - on glibc that is `::` then `0.0.0.0`.
+///
+/// upstream: socket.c:402-499 (`open_socket_in`) walks every getaddrinfo
+/// result, binds one socket per family, and only returns NULL when zero
+/// sockets bound.
+fn resolve_bind_addresses(
+    bind_address: IpAddr,
+    bind_address_overridden: bool,
+    address_family: Option<AddressFamily>,
+    dual_stack: bool,
+    env_family: Option<AddressFamilyOverride>,
+) -> Vec<IpAddr> {
+    if bind_address_overridden {
+        vec![bind_address]
+    } else if let Some(env) = env_family {
+        match env {
+            AddressFamilyOverride::Ipv4 => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
+            AddressFamilyOverride::Ipv6 => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
+            AddressFamilyOverride::Both => vec![
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ],
+        }
+    } else if dual_stack {
+        vec![
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        ]
+    } else {
+        match address_family {
+            Some(AddressFamily::Ipv4) => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
+            Some(AddressFamily::Ipv6) => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
+            None => vec![
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ],
+        }
+    }
+}
+
 /// Logs a systemd notification failure if a log sink is available.
 fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io::Error) {
     if let Some(sink) = log {
