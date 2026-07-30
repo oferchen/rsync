@@ -55,6 +55,7 @@ pub const UPSTREAM_3_4_4: &str = concat!(
 );
 
 /// Selects which daemon binary to launch.
+#[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub enum DaemonBinary {
     /// Upstream rsync binary at a specific path.
@@ -94,14 +95,37 @@ impl DaemonBinary {
 
 /// Allocate a free TCP port using OS ephemeral port assignment.
 ///
-/// Binds to port 0, reads the assigned port, then drops the listener.
-/// The brief window between drop and daemon bind is acceptable for tests
-/// since each test gets a unique port from the OS.
+/// Binds to port 0, reads the assigned port, then drops the listener so the
+/// daemon can bind it. This is a TOCTOU window: between the drop here and the
+/// daemon's bind, another process can claim the port under parallel load. The
+/// port is not reserved once returned - callers that need a guaranteed bind
+/// (see [`TestDaemon::start`]) must retry on a fresh port when the daemon loses
+/// the race.
 fn allocate_test_port() -> io::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     drop(listener);
     Ok(port)
+}
+
+/// Whether a [`TestDaemon::start_on_port`] failure was the daemon losing the
+/// allocate-then-bind race for its port.
+///
+/// [`allocate_test_port`] hands back a port the OS just freed, so under
+/// parallel load another process can grab it in the drop->bind window. When
+/// that happens the daemon logs `Address already in use` and never accepts
+/// connections, so the readiness probe times out; that timeout error embeds
+/// the daemon log verbatim (`wait_ready`). Matching the message is how the
+/// retry loop tells a losable port race - safe to retry on a fresh port - apart
+/// from a genuine startup failure it must propagate rather than mask.
+#[allow(dead_code)]
+pub fn is_addr_in_use(err: &io::Error) -> bool {
+    // The daemon logs the OS strerror ("Address already in use"), which is the
+    // form that reaches the retry via the readiness-timeout message. A raw
+    // EADDRINUSE `io::Error` renders as the shorter "address in use"; match both
+    // so the classifier is robust to either representation.
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("address already in use") || msg.contains("address in use")
 }
 
 /// A managed rsync daemon instance for testing.
@@ -125,10 +149,32 @@ impl TestDaemon {
     ///
     /// The daemon is verified ready (accepting TCP connections) before returning.
     /// Eliminates both hardcoded ports and sleep-based synchronization.
+    ///
+    /// [`allocate_test_port`] cannot reserve the port it returns, so under
+    /// parallel load the daemon can lose the allocate-then-bind race (TOCTOU)
+    /// and fail readiness with `Address already in use`. Retry on a fresh port
+    /// up to a small bound; a failed attempt's child is already killed and
+    /// reaped by [`start_on_port`]'s `Drop` before the error propagates here.
+    /// Any non-bind-conflict error is propagated immediately so a real startup
+    /// bug is never masked by the retry.
     #[allow(dead_code)]
     pub fn start(binary: DaemonBinary) -> io::Result<Self> {
-        let port = allocate_test_port()?;
-        Self::start_on_port(binary, port)
+        const MAX_ATTEMPTS: usize = 5;
+        let mut last_err: Option<io::Error> = None;
+        for _ in 0..MAX_ATTEMPTS {
+            let port = allocate_test_port()?;
+            match Self::start_on_port(binary, port) {
+                Ok(daemon) => return Ok(daemon),
+                Err(err) if is_addr_in_use(&err) => last_err = Some(err),
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "daemon failed to bind a free port after retries",
+            )
+        }))
     }
 
     /// Start a daemon on a specific port (for tests that need port control).
