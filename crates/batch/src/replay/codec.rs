@@ -8,10 +8,10 @@
 //! compressed payload to handle both cases correctly.
 
 #[cfg(feature = "zstd")]
-use std::fs::File;
-#[cfg(feature = "zstd")]
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 
+#[cfg(feature = "zstd")]
+use crate::reader::BatchStream;
 use protocol::wire::CompressedTokenDecoder;
 
 #[cfg(feature = "zstd")]
@@ -92,7 +92,7 @@ pub(super) fn create_compressed_decoder(
 /// upstream: token.c:recv_deflated_token() - DEFLATED_DATA flag = 0x40
 /// zstd spec: frames start with magic 0xFD2FB528 (LE bytes: 28 B5 2F FD)
 #[cfg(feature = "zstd")]
-pub(super) fn detect_compression_codec(reader: &mut BufReader<File>) -> CompressionCodec {
+pub(super) fn detect_compression_codec(reader: &mut BatchStream) -> CompressionCodec {
     let start_pos = match reader.stream_position() {
         Ok(pos) => pos,
         Err(_) => return CompressionCodec::Zlib,
@@ -114,7 +114,7 @@ pub(super) fn detect_compression_codec(reader: &mut BufReader<File>) -> Compress
 ///
 /// Returns `None` if no DEFLATED_DATA block is found before EOF or on error.
 #[cfg(feature = "zstd")]
-fn peek_for_codec(reader: &mut BufReader<File>) -> Option<CompressionCodec> {
+fn peek_for_codec(reader: &mut BatchStream) -> Option<CompressionCodec> {
     // Scan for the first DEFLATED_DATA flag byte. The compressed token stream
     // starts with flag bytes that can be END_FLAG (0x00), TOKEN_LONG (0x20),
     // TOKENRUN_LONG (0x21), DEFLATED_DATA (0x40-0x7F), TOKEN_REL (0x80-0xBF),
