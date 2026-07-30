@@ -204,6 +204,35 @@ impl SumHead {
         Ok(())
     }
 
+    /// Rejects a head whose per-block strong sum is wider than the negotiated
+    /// transfer digest `xfer_sum_len`.
+    ///
+    /// [`check`](Self::check) only bounds `s2length` by the static
+    /// [`MAX_STRONG_SUM_LEN`] ceiling (SHA-1, the widest negotiable digest).
+    /// A peer that negotiated a narrower transfer checksum (XXH64 / XXH3-64 =
+    /// 8 bytes) can still advertise a legal-looking `s2length` up to 20; the
+    /// reader would then consume `4 + s2length` bytes per block while the
+    /// generator only wrote `4 + xfer_sum_len`, desyncing the signature-block
+    /// stream. Gating on the negotiated width closes that gap while leaving a
+    /// well-behaved header - whose `s2length` never exceeds `xfer_sum_len` -
+    /// untouched.
+    ///
+    /// upstream: io.c:read_sum_head - `if (sum->s2length < 0 ||
+    /// sum->s2length > xfer_sum_len) exit_cleanup(RERR_PROTOCOL)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SumHeadError::InvalidStrongSumLength`] when `s2length`
+    /// exceeds `xfer_sum_len`.
+    pub const fn ensure_s2length_within(self, xfer_sum_len: u32) -> Result<Self, SumHeadError> {
+        if self.s2length > xfer_sum_len {
+            return Err(SumHeadError::InvalidStrongSumLength {
+                s2length: self.s2length as i32,
+            });
+        }
+        Ok(self)
+    }
+
     /// Number of basis blocks a match token may reference.
     #[inline]
     #[must_use]
@@ -496,6 +525,35 @@ mod tests {
         assert_eq!(
             SumHead::with_blocks(1, 700, 2, 701),
             Err(SumHeadError::InvalidRemainder { remainder: 701 })
+        );
+    }
+
+    /// A header whose `s2length` exceeds the negotiated transfer digest width
+    /// must be rejected: the block reader would consume `4 + s2length` bytes
+    /// per block while the generator only wrote `4 + xfer_sum_len`, desyncing
+    /// the signature-block stream. A width equal to or below the negotiated
+    /// digest is the only geometry a well-behaved peer emits, so both are
+    /// accepted unchanged.
+    #[test]
+    fn s2length_wider_than_negotiated_digest_is_rejected() {
+        // XXH64 negotiates an 8-byte transfer digest; a header claiming a
+        // 16-byte strong sum passes the static SHA-1 ceiling but must not pass
+        // the negotiated one.
+        let head = SumHead::with_blocks(4, 512, 16, 0).expect("valid geometry");
+        assert_eq!(
+            head.ensure_s2length_within(8),
+            Err(SumHeadError::InvalidStrongSumLength { s2length: 16 })
+        );
+        // s2length == negotiated width is the widest a generator writes.
+        assert_eq!(head.ensure_s2length_within(16), Ok(head));
+        // s2length < negotiated width (e.g. a phase-1 short sum) is accepted.
+        assert_eq!(head.ensure_s2length_within(20), Ok(head));
+
+        let narrow = SumHead::with_blocks(4, 512, 8, 0).expect("valid geometry");
+        assert_eq!(narrow.ensure_s2length_within(8), Ok(narrow));
+        assert_eq!(
+            narrow.ensure_s2length_within(4),
+            Err(SumHeadError::InvalidStrongSumLength { s2length: 8 })
         );
     }
 

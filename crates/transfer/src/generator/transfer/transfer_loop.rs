@@ -664,8 +664,16 @@ impl GeneratorContext {
                 continue;
             }
 
-            // upstream: sender.c:120 - receive_sums()
-            let sum_head = SumHead::read(&mut *reader)?;
+            // upstream: sender.c:120 - receive_sums(), which calls
+            // io.c:read_sum_head(). That reader rejects an s2length wider than
+            // the negotiated transfer digest (`xfer_sum_len`): the block loop
+            // below consumes `4 + s2length` bytes per block, so a strong sum
+            // wider than the checksum the generator wrote would desync the
+            // stream. get_checksum_algorithm() yields the negotiated (or
+            // protocol-default) transfer checksum, whose digest_len is upstream's
+            // xfer_sum_len (checksum.c:214 csum_len_for_type()).
+            let xfer_sum_len = self.get_checksum_algorithm().digest_len() as u32;
+            let sum_head = SumHead::read_negotiated(&mut *reader, xfer_sum_len)?;
             self.timing.total_bytes_read += 16;
 
             self.validate_file_index(ndx)?;

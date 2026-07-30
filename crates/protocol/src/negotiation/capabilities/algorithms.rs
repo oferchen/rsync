@@ -142,6 +142,26 @@ impl ChecksumAlgorithm {
             )),
         }
     }
+
+    /// Returns the transfer digest width in bytes (`xfer_sum_len`).
+    ///
+    /// This is the number of strong-sum bytes a block signature carries and a
+    /// whole-file checksum spans for the negotiated algorithm. It bounds the
+    /// `s2length` a `sum_head` may advertise: a peer that claims a wider strong
+    /// sum than this would make the reader consume more bytes per block than
+    /// were written, desyncing the signature-block stream.
+    ///
+    /// upstream: checksum.c:214 `csum_len_for_type()` (non-flist form).
+    #[must_use]
+    pub const fn digest_len(self) -> usize {
+        match self {
+            Self::None => 1,
+            Self::MD4 | Self::MD5 => 16,
+            Self::SHA1 => 20,
+            Self::XXH64 | Self::XXH3 => 8,
+            Self::XXH128 => 16,
+        }
+    }
 }
 
 /// Compression algorithm negotiated between rsync peers.
