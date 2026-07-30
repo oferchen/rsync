@@ -110,17 +110,29 @@ pub(super) fn quick_check_matches(
     }
 }
 
-/// Returns `true` when the destination file's mtime is strictly newer than the source.
+/// Returns `true` when the destination file's mtime counts as newer than the
+/// source's, tolerating `--modify-window` seconds of whole-second drift.
 ///
-/// Used by `--update` (`-u`) to skip files where the destination is already newer.
+/// Used by `--update` (`-u`) to skip files where the destination is already
+/// newer. With `modify_window == 0` (the default) this is a strict
+/// `dest_mtime > source_mtime`; with `modify_window > 0` a destination up to
+/// `modify_window - 1` seconds *older* than the source still counts as newer
+/// and is skipped, matching FAT/NTFS second-granularity tolerance.
 ///
-/// upstream: generator.c:1722 - `file->modtime - sx.st.st_mtime < modify_window`
-/// with modify_window=0, this simplifies to `dest_mtime > source_mtime`.
-pub(super) fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntry) -> bool {
+/// upstream: generator.c:recv_generator - `file->modtime - sx.st.st_mtime <
+/// modify_window`. Both operands are whole-second `time_t` values, so a purely
+/// sub-second difference never makes the destination newer.
+pub(super) fn dest_mtime_newer(
+    dest_meta: &fs::Metadata,
+    source_entry: &FileEntry,
+    modify_window: ModifyWindow,
+) -> bool {
+    let window_secs = modify_window.as_secs();
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        dest_meta.mtime() > source_entry.mtime()
+        // upstream: generator.c:recv_generator - file->modtime - st_mtime < window
+        source_entry.mtime() - dest_meta.mtime() < window_secs
     }
     #[cfg(not(unix))]
     {
@@ -128,7 +140,9 @@ pub(super) fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntr
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(false, |d| (d.as_secs() as i64) > source_entry.mtime())
+            .map_or(false, |d| {
+                source_entry.mtime() - (d.as_secs() as i64) < window_secs
+            })
     }
 }
 
@@ -1402,6 +1416,105 @@ mod modify_window_tests {
         assert!(
             run_window_nsec(base, 500_000_000, base, 0, ModifyWindow::from_secs(0)),
             "sub-second drift is ignored at window 0"
+        );
+    }
+}
+
+/// Regression tests pinning `--modify-window` in the `--update` (`-u`) skip on
+/// the remote/daemon receiver path.
+///
+/// upstream: generator.c:1721-1722 - the "%s is newer" skip is guarded by
+/// `file->modtime - sx.st.st_mtime < modify_window` (source mtime minus dest
+/// mtime, strict `<`). With `--modify-window` the destination is still treated
+/// as newer (and the transfer skipped) even when its whole-second mtime is up to
+/// `window - 1` seconds *older* than the source.
+///
+/// These tests encode WHY: coarse-granularity filesystems (FAT rounds mtimes to
+/// 2-second boundaries, and cross-filesystem copies routinely truncate the
+/// sub-second component) make a byte-identical file's recorded mtime drift by a
+/// second or two from the source. Without the window, `--update` would keep
+/// re-sending such a file forever; with it the drift is tolerated. Before this
+/// fix the remote/daemon receiver used a strict `dest > source` compare that
+/// ignored the window entirely, diverging from both upstream and oc's own
+/// local-copy path (`comparison.rs::destination_is_newer`).
+#[cfg(unix)]
+#[cfg(test)]
+mod update_modify_window_tests {
+    use std::fs;
+
+    use filetime::{FileTime, set_file_mtime};
+    use protocol::flist::FileEntry;
+
+    use super::{ModifyWindow, dest_mtime_newer};
+
+    /// Builds a same-sized dest at `dest_secs` and a source entry at `src_secs`,
+    /// then runs the `--update` newer-dest gate at the given `window`. Returns
+    /// `true` when the destination counts as newer (the `-u` skip fires).
+    fn skips(src_secs: i64, dest_secs: i64, window: ModifyWindow) -> bool {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest_path = dir.path().join("payload.bin");
+        fs::write(&dest_path, b"content").expect("write dest");
+        set_file_mtime(&dest_path, FileTime::from_unix_time(dest_secs, 0)).expect("set dest mtime");
+        let dest_meta = fs::metadata(&dest_path).expect("dest meta");
+
+        let mut entry = FileEntry::new_file("payload.bin".into(), b"content".len() as u64, 0o644);
+        entry.set_mtime(src_secs, 0);
+
+        dest_mtime_newer(&dest_meta, &entry, window)
+    }
+
+    /// With `--modify-window=0` the gate is the strict upstream default: the
+    /// destination must be at least one whole second newer than the source to
+    /// skip, and a source that is newer always transfers.
+    #[test]
+    fn window_zero_is_strict() {
+        let base = 1_700_000_000;
+        let zero = ModifyWindow::from_secs(0);
+        assert!(skips(base, base + 1, zero), "dest 1s newer -> -u skips");
+        assert!(!skips(base, base, zero), "equal mtimes -> transfer");
+        assert!(
+            !skips(base + 1, base, zero),
+            "source 1s newer than dest -> transfer (dest is not newer)"
+        );
+    }
+
+    /// The core fix: a source that is slightly newer than a within-window
+    /// destination is still SKIPPED, so a file that only drifted by the
+    /// filesystem's timestamp granularity is not needlessly re-sent. At
+    /// `window=0` the very same pair transfers, proving the window is what
+    /// changes the outcome (and that the remote path now honours it).
+    #[test]
+    fn source_within_window_is_skipped() {
+        let base = 1_700_000_000;
+        // Source 1s newer than dest: transfers strictly, skips at window >= 2.
+        assert!(
+            !skips(base + 1, base, ModifyWindow::from_secs(0)),
+            "strict mode re-sends the 1s-drifted file"
+        );
+        assert!(
+            skips(base + 1, base, ModifyWindow::from_secs(2)),
+            "within a 2s window the 1s-newer source is treated as up-to-date -> skip"
+        );
+        // A dest that is itself newer stays skipped regardless of window.
+        assert!(
+            skips(base, base + 1, ModifyWindow::from_secs(2)),
+            "dest 1s newer than source -> skip"
+        );
+    }
+
+    /// The boundary is strict `<`, mirroring upstream's `< modify_window` (not
+    /// `<=`): a source exactly `window` seconds newer than the destination
+    /// transfers, while one second less skips.
+    #[test]
+    fn boundary_is_strict_less_than() {
+        let base = 1_700_000_000;
+        assert!(
+            !skips(base + 2, base, ModifyWindow::from_secs(2)),
+            "source exactly window (2s) newer -> transfer, not skip"
+        );
+        assert!(
+            skips(base + 1, base, ModifyWindow::from_secs(2)),
+            "source 1s newer, inside a 2s window -> skip"
         );
     }
 }
