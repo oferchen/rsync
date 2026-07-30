@@ -126,51 +126,26 @@ fn serve_connections(
         ));
     }
 
-    // Determine bind addresses based on address_family, dual_stack, and the
-    // `OC_RSYNC_DAEMON_ADDRESS_FAMILY` runtime override (used by CI/test
-    // fixtures to force a specific family without rebuilding the CLI).
+    // Determine bind addresses from address_family, dual_stack, the explicit
+    // `address =` override, and the `OC_RSYNC_DAEMON_ADDRESS_FAMILY` runtime
+    // override. `resolve_bind_addresses` is the single source of truth for
+    // this IP-assignment policy (see its rustdoc for the precedence and the
+    // upstream `open_socket_in` citation), shared so any future datagram
+    // listener binds the identical ordered set.
     //
-    // Default (no flag, no env, no explicit bind address): dual-stack with
-    // IPv6 first, IPv4 second. Mirrors upstream's `default_af_hint = 0`
-    // (AF_UNSPEC) which lets `getaddrinfo(NULL, port, AI_PASSIVE, ...)`
-    // return every available family - on glibc that is `::` then `0.0.0.0`.
-    // `bind_listeners_per_family` walks the list in order, logs a warning
-    // for any per-family bind failure, and only fails the daemon when zero
-    // sockets bound. GitHub Actions Linux runners that have IPv6 partially
-    // configured (where `bind(2)` to `[::]:port` returns `EADDRNOTAVAIL`)
-    // cleanly fall back to the IPv4 listener instead of exiting 10 with a
-    // silent dual-stack misconfiguration.
-    //
-    // upstream: socket.c:402-499 (`open_socket_in`) walks every
-    // getaddrinfo result, binds one socket per family, and only returns
-    // NULL when zero sockets bound.
-    let env_family = read_address_family_env_override();
-    let bind_addresses: Vec<IpAddr> = if bind_address_overridden {
-        vec![bind_address]
-    } else if let Some(env) = env_family {
-        match env {
-            AddressFamilyOverride::Ipv4 => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
-            AddressFamilyOverride::Ipv6 => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
-            AddressFamilyOverride::Both => vec![
-                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            ],
-        }
-    } else if dual_stack {
-        vec![
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        ]
-    } else {
-        match address_family {
-            Some(AddressFamily::Ipv4) => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
-            Some(AddressFamily::Ipv6) => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
-            None => vec![
-                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            ],
-        }
-    };
+    // `bind_listeners_per_family` then walks the returned list in order, logs
+    // a warning for any per-family bind failure, and only fails the daemon
+    // when zero sockets bound. GitHub Actions Linux runners that have IPv6
+    // partially configured (where `bind(2)` to `[::]:port` returns
+    // `EADDRNOTAVAIL`) cleanly fall back to the IPv4 listener instead of
+    // exiting 10 with a silent dual-stack misconfiguration.
+    let bind_addresses = resolve_bind_addresses(
+        bind_address,
+        bind_address_overridden,
+        address_family,
+        dual_stack,
+        read_address_family_env_override(),
+    );
 
     // upstream: socket.c:set_socket_options() - the `socket options =` /
     // `--sockopts` string is parsed once up front so it can be applied to

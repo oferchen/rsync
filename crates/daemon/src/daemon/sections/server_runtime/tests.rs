@@ -1608,6 +1608,130 @@ fn parse_address_family_env_rejects_unknown() {
     }
 }
 
+// Shorthands for the wildcard addresses `resolve_bind_addresses` returns.
+const V4_ANY: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+const V6_ANY: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+
+#[test]
+fn resolve_bind_addresses_honours_explicit_override() {
+    // An explicit `address =` / `--address` binds exactly that one address,
+    // regardless of family flags, dual-stack, or the env override.
+    let ipv4: IpAddr = "192.0.2.7".parse().unwrap();
+    assert_eq!(
+        resolve_bind_addresses(ipv4, true, None, false, None),
+        vec![ipv4],
+        "explicit IPv4 override must bind that single address"
+    );
+    let ipv6: IpAddr = "2001:db8::1".parse().unwrap();
+    assert_eq!(
+        resolve_bind_addresses(ipv6, true, None, false, None),
+        vec![ipv6],
+        "explicit IPv6 override must bind that single address"
+    );
+}
+
+#[test]
+fn resolve_bind_addresses_maps_env_override() {
+    // The `OC_RSYNC_DAEMON_ADDRESS_FAMILY` override selects the family list;
+    // `Both` yields IPv6 first, then IPv4.
+    assert_eq!(
+        resolve_bind_addresses(
+            V4_ANY,
+            false,
+            None,
+            false,
+            Some(AddressFamilyOverride::Ipv4)
+        ),
+        vec![V4_ANY],
+        "env Ipv4 must bind a single IPv4 wildcard"
+    );
+    assert_eq!(
+        resolve_bind_addresses(
+            V4_ANY,
+            false,
+            None,
+            false,
+            Some(AddressFamilyOverride::Ipv6)
+        ),
+        vec![V6_ANY],
+        "env Ipv6 must bind a single IPv6 wildcard"
+    );
+    assert_eq!(
+        resolve_bind_addresses(
+            V4_ANY,
+            false,
+            None,
+            false,
+            Some(AddressFamilyOverride::Both)
+        ),
+        vec![V6_ANY, V4_ANY],
+        "env Both must bind IPv6 first, then IPv4"
+    );
+}
+
+#[test]
+fn resolve_bind_addresses_dual_stack_binds_both_ipv6_first() {
+    assert_eq!(
+        resolve_bind_addresses(V4_ANY, false, None, true, None),
+        vec![V6_ANY, V4_ANY],
+        "dual-stack must bind IPv6 first, then IPv4"
+    );
+}
+
+#[test]
+fn resolve_bind_addresses_selects_family_flag() {
+    assert_eq!(
+        resolve_bind_addresses(V4_ANY, false, Some(AddressFamily::Ipv4), false, None),
+        vec![V4_ANY],
+        "--ipv4 must bind a single IPv4 wildcard"
+    );
+    assert_eq!(
+        resolve_bind_addresses(V4_ANY, false, Some(AddressFamily::Ipv6), false, None),
+        vec![V6_ANY],
+        "--ipv6 must bind a single IPv6 wildcard"
+    );
+    assert_eq!(
+        resolve_bind_addresses(V4_ANY, false, None, false, None),
+        vec![V6_ANY, V4_ANY],
+        "default (no flag) must bind dual-stack, IPv6 first"
+    );
+}
+
+#[test]
+fn resolve_bind_addresses_precedence() {
+    // Override wins over env, dual_stack, and family flag.
+    let explicit: IpAddr = "198.51.100.9".parse().unwrap();
+    assert_eq!(
+        resolve_bind_addresses(
+            explicit,
+            true,
+            Some(AddressFamily::Ipv6),
+            true,
+            Some(AddressFamilyOverride::Both)
+        ),
+        vec![explicit],
+        "explicit override must win over env, dual_stack, and family"
+    );
+    // Env wins over dual_stack and family flag.
+    assert_eq!(
+        resolve_bind_addresses(
+            V4_ANY,
+            false,
+            Some(AddressFamily::Ipv6),
+            true,
+            Some(AddressFamilyOverride::Ipv4)
+        ),
+        vec![V4_ANY],
+        "env override must win over dual_stack and family flag"
+    );
+    // Dual-stack wins over the family flag.
+    assert_eq!(
+        resolve_bind_addresses(V4_ANY, false, Some(AddressFamily::Ipv4), true, None),
+        vec![V6_ANY, V4_ANY],
+        "dual_stack must win over the family flag"
+    );
+}
+
 #[test]
 fn warn_per_family_accept_failure_labels_ipv6() {
     // The dual-stack accept loop must produce an identifiable diagnostic
