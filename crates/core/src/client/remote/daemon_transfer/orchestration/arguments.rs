@@ -10,7 +10,8 @@ use protocol::ProtocolVersion;
 use transfer::setup::build_capability_string_suffix;
 
 use crate::client::config::{
-    ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, TransferTimeout,
+    ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, StrongChecksumAlgorithm,
+    TransferTimeout,
 };
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
@@ -245,10 +246,20 @@ pub(super) fn build_full_daemon_args(
     // (a PULL), so upstream's `am_sender` corresponds to `!is_sender`.
     let we_are_sender = !is_sender;
 
-    // upstream: options.c:2815-2816
+    // upstream: options.c:2815-2816 server_options() forwards the RAW
+    // --checksum-choice string verbatim - both comma components - gated only on
+    // `checksum_choice` being non-null. That pointer is nulled solely for the
+    // fully-auto forms (options.c:1997-2003), so forward the full choice
+    // whenever it is not fully-auto, mirroring the SSH path (invocation builder)
+    // rather than collapsing to the transfer component alone.
     let checksum_choice = config.checksum_choice();
-    if let Some(override_algo) = checksum_choice.transfer_protocol_override() {
-        args.push(format!("--checksum-choice={}", override_algo.as_str()));
+    if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
+        || checksum_choice.file() != StrongChecksumAlgorithm::Auto
+    {
+        args.push(format!(
+            "--checksum-choice={}",
+            checksum_choice.to_argument()
+        ));
     }
 
     // upstream: options.c:2612-2731 - single-character flag string (e.g., "-logDtprzc").
@@ -1182,6 +1193,7 @@ pub(super) mod tests {
 mod server_option_fidelity_tests {
     use super::build_full_daemon_args;
     use crate::client::ClientConfig;
+    use crate::client::config::StrongChecksumChoice;
     use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
     use protocol::ProtocolVersion;
 
@@ -1700,6 +1712,53 @@ mod server_option_fidelity_tests {
     fn open_noatime_forwarded() {
         let config = ClientConfig::builder().open_noatime(true).build();
         assert!(args(&config, false).iter().any(|a| a == "--open-noatime"));
+    }
+
+    // upstream: options.c:2815-2816 - server_options() forwards the RAW
+    // --checksum-choice string with BOTH comma components. WHY: a daemon
+    // receiver parses the transfer AND file sums from this string
+    // (checksum.c:178-189); dropping the second component - as the old
+    // transfer-only override did - silently desyncs the file-sum algorithm
+    // between client and daemon.
+    #[test]
+    fn daemon_forwards_both_checksum_choice_components() {
+        let config = ClientConfig::builder()
+            .checksum_choice(StrongChecksumChoice::parse("md5,xxh3").unwrap())
+            .build();
+        let pull = args(&config, true);
+        assert!(
+            pull.iter().any(|a| a == "--checksum-choice=md5,xxh3"),
+            "daemon must forward both checksum-choice components: {pull:?}"
+        );
+    }
+
+    // upstream: options.c:1997-2003 - "auto,md5" is NOT nulled (only bare
+    // "auto"/"auto,auto" are), so options.c:2815 forwards the full string. WHY:
+    // the transfer-only override returned None for a leading auto and forwarded
+    // nothing, leaving the daemon to negotiate a checksum the client never
+    // resolved.
+    #[test]
+    fn daemon_forwards_full_string_for_auto_md5() {
+        let config = ClientConfig::builder()
+            .checksum_choice(StrongChecksumChoice::parse("auto,md5").unwrap())
+            .build();
+        let pull = args(&config, true);
+        assert!(
+            pull.iter().any(|a| a == "--checksum-choice=auto,md5"),
+            "daemon must forward the full auto,md5 string: {pull:?}"
+        );
+    }
+
+    // upstream: options.c:1997-2003 + 2815 - the fully-auto forms null
+    // checksum_choice, so nothing is forwarded and the daemon negotiates.
+    #[test]
+    fn daemon_omits_checksum_choice_when_fully_auto() {
+        let config = ClientConfig::builder().build();
+        let pull = args(&config, true);
+        assert!(
+            !pull.iter().any(|a| a.starts_with("--checksum-choice")),
+            "fully-auto must not forward --checksum-choice: {pull:?}"
+        );
     }
 }
 
