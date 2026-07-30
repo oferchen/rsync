@@ -5,7 +5,7 @@ use super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
 /// Adds network, remote shell, and connection flags to the command.
 pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
-    command
+    let command = command
         .arg(
             Arg::new("rsh")
                 .long("rsh")
@@ -124,5 +124,18 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 )
                 .num_args(1)
                 .value_parser(OsStringValueParser::new()),
-        )
+        );
+
+    // The `--quic` modifier (oc extension) upgrades a daemon target to the QUIC
+    // transport; it exists only when the `quic` feature is compiled in, so a
+    // default build rejects it as an unknown argument.
+    #[cfg(feature = "quic")]
+    let command = command.arg(
+        Arg::new("quic")
+            .long("quic")
+            .help("Carry the rsync daemon protocol over QUIC (873/udp); hard-fails if QUIC cannot be established.")
+            .action(ArgAction::SetTrue),
+    );
+
+    command
 }

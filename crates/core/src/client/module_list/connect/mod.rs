@@ -262,9 +262,9 @@ pub(crate) fn open_daemon_stream(
     sockopts: Option<&OsStr>,
 ) -> Result<DaemonStream, ClientError> {
     // Transport-selection point: the transport rides on `DaemonAddress` from
-    // target parsing. QUIC (feature `quic`, default off) dials via
-    // `rsync_io::quic` in a follow-up; until then every selection establishes
-    // the TCP daemon stream, so the default build is byte-for-byte unchanged.
+    // target parsing. `Transport::Tcp` (the default, and the only variant in a
+    // default build) establishes the plain TCP daemon stream, so default builds
+    // are byte-for-byte unchanged.
     match addr.transport() {
         Transport::Tcp => open_tcp_daemon_stream(
             addr,
@@ -276,18 +276,33 @@ pub(crate) fn open_daemon_stream(
             tfo,
             sockopts,
         ),
+        // QUIC hard-fails here rather than dialing plain TCP: silently falling
+        // back would downgrade an explicitly-requested encrypted transport to
+        // plaintext (a downgrade attack, and a violation of the user's intent).
+        // The QUIC dial itself (`rsync_io::quic`) lands in a follow-up; until
+        // then a QUIC selection exits non-zero and never touches TCP 873
+        // (design: `docs/design/quic-transport-policy.md`, Decision D, "No
+        // silent downgrade").
         #[cfg(feature = "quic")]
-        Transport::Quic => open_tcp_daemon_stream(
-            addr,
-            connect_timeout,
-            io_timeout,
-            address_mode,
-            connect_program,
-            bind_address,
-            tfo,
-            sockopts,
-        ),
+        Transport::Quic => Err(quic_transport_unavailable_error()),
     }
+}
+
+/// Builds the hard-failure error for a QUIC-selected daemon connection.
+///
+/// The QUIC connector is not yet wired (QUIC-5), so any QUIC selection fails
+/// loudly with `RERR_STARTCLIENT` (exit 5). Crucially this is an error, not a
+/// TCP fallback: the selection never silently downgrades to plaintext.
+#[cfg(feature = "quic")]
+fn quic_transport_unavailable_error() -> ClientError {
+    use super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
+    use super::super::daemon_error;
+
+    daemon_error(
+        "QUIC transport was requested but the QUIC connector is not available \
+         in this build; refusing to fall back to plaintext TCP",
+        CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+    )
 }
 
 /// Opens a plain TCP connection to a daemon (the [`Transport::Tcp`] path).
@@ -493,6 +508,43 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.flush(),
             Self::Program(stream) => stream.flush(),
+        }
+    }
+}
+
+#[cfg(all(test, feature = "quic"))]
+mod quic_hard_fail_tests {
+    use super::*;
+    use crate::client::AddressMode;
+    use crate::client::TcpFastOpenMode;
+
+    #[test]
+    fn quic_selection_hard_fails_without_tcp_fallback() {
+        // WHY (QUIC-8d): a QUIC-selected daemon connection must exit non-zero
+        // rather than silently dial plaintext TCP. We point the address at a
+        // discard port; if any TCP fallback existed it would attempt a connect,
+        // but the QUIC arm short-circuits to an error before any I/O.
+        let addr = DaemonAddress::new("127.0.0.1".to_owned(), 9)
+            .expect("addr")
+            .with_transport(Transport::Quic);
+
+        let result = open_daemon_stream(
+            &addr,
+            None,
+            None,
+            AddressMode::Default,
+            None,
+            None,
+            TcpFastOpenMode::Auto,
+            None,
+        );
+
+        // `DaemonStream` (the Ok type) is not `Debug`, so match rather than
+        // `expect_err`. upstream RERR_STARTCLIENT (5): the explicit encrypted
+        // transport could not be established and no downgrade is permitted.
+        match result {
+            Ok(_) => panic!("QUIC selection must not fall back to TCP"),
+            Err(err) => assert_eq!(err.exit_code(), 5),
         }
     }
 }
