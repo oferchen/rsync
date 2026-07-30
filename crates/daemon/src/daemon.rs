@@ -263,6 +263,8 @@ include!("daemon/runtime_options/setters.rs");
 include!("daemon/runtime_options/config.rs");
 include!("daemon/runtime_options/accessors.rs");
 include!("daemon/runtime_options/resolve.rs");
+#[cfg(feature = "quic")]
+include!("daemon/runtime_options/quic_identity.rs");
 include!("daemon/runtime_options/tests.rs");
 
 include!("daemon/sections/config_paths.rs");
