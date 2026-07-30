@@ -97,6 +97,9 @@ mod transfer;
 
 pub(crate) use self::context::BatchStatsSink;
 pub use self::context::GeneratorContext;
+pub(crate) use self::context::SenderFstatError;
+#[cfg(test)]
+pub(crate) use self::context::sender_fstat_error;
 pub use self::delta::{generate_delta_from_signature, generate_delta_from_signature_chunked};
 pub use self::diagnostics::{
     flush_rate_totals, ndx_convert_totals, prepare_acl_totals, segment_dispatch_totals,
