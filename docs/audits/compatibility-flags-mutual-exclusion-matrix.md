@@ -241,15 +241,17 @@ Footnote validation sites:
   `options.c:2415-2421`, `keep_partial = 0`). The pair is accepted.
   oc-rsync accepts the pair by absence of any check
   (`crates/core/src/client/config/builder/mod.rs:276-296`).
-- [d] Upstream rejects `--inplace --partial-dir` unless
-  `CF_INPLACE_PARTIAL_DIR` is negotiated. The conflict is detected at
-  `options.c:2406-2414`. oc-rsync now exposes
-  `ClientConfigBuilder::validate_with_capabilities` (see
-  `crates/core/src/client/config/builder/mod.rs`), which permits the
-  pair when the negotiated bitfield contains
-  `CompatibilityFlags::INPLACE_PARTIAL_DIR`. `validate()` keeps the
-  strict default for callers that have not yet seen the negotiated
-  bits, matching upstream's parse-time refusal. Gap G2 is resolved.
+- [d] Upstream rejects `--inplace --partial-dir` unconditionally at
+  parse time, before any capability negotiation
+  (`options.c:2424-2432`, exit 1). `CF_INPLACE_PARTIAL_DIR`
+  (`compat.c:727,778`) does not relax this option conflict; it only
+  enables the receiver's internal `one_inplace` optimization for a
+  basis file located in the partial directory (`receiver.c:910`).
+  oc-rsync mirrors upstream: `ClientConfigBuilder::validate()` rejects
+  the pair unconditionally
+  (`crates/core/src/client/config/builder/mod.rs`), and the negotiated
+  `INPLACE_PARTIAL_DIR` bit drives only the receiver optimization in
+  `crates/transfer` (`config::inplace_partial`), never this validator.
 - [e] Upstream rejects `--inplace --delay-updates` at
   `options.c:2406-2414` (the `partial_dir` message string covers both
   paths because `delay_updates` synthesises a `partial_dir` upstream).
@@ -339,22 +341,26 @@ PR cited in each heading and in the **Status** bullet.
   `crates/cli/tests/option_combinations_flags.rs`
   (`test_checksum_choice_none_parses`).
 
-### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR` (FIXED, PR #4064)
+### G2 - `--inplace --partial-dir` is a user-facing conflict, not a negotiable option (RESOLVED)
 
-- **Upstream behaviour.** `compat.c:777-778` enables `inplace_partial`
-  when both peers negotiate `CF_INPLACE_PARTIAL_DIR` (bit 6,
-  introduced at protocol 30). With that bit set, upstream's
-  `options.c:2406-2414` rejection is bypassed at the receiver and the
-  pair runs successfully.
-- **oc-rsync behaviour.** `ClientConfigBuilder` now exposes
-  `validate_with_capabilities(caps)` alongside the strict default
-  `validate()`. When `caps` contains
-  `CompatibilityFlags::INPLACE_PARTIAL_DIR`, the
-  `--inplace`/`--append` + `--partial-dir` combination is accepted;
-  otherwise the upstream parse-time rejection is preserved.
-- **Status.** FIXED in PR #4064. The strict `validate()`
-  default remains so callers without negotiated capability bits still
-  match upstream's `options.c:2406-2414` behaviour.
+- **Upstream behaviour.** `options.c:2424-2432` rejects
+  `--inplace`/`--append` + `--partial-dir` unconditionally at parse
+  time (exit 1), before any capability exchange.
+  `CF_INPLACE_PARTIAL_DIR` (`compat.c:727,778`, bit 6, protocol 30)
+  does **not** bypass this rejection; it only sets `inplace_partial`,
+  which drives the receiver's internal `one_inplace` optimization for
+  a basis file found in the partial directory (`receiver.c:910`). The
+  option conflict and the wire capability are independent concerns.
+- **oc-rsync behaviour.** `ClientConfigBuilder::validate()` rejects the
+  pair unconditionally, matching upstream's parse-time refusal. The
+  negotiated `INPLACE_PARTIAL_DIR` bit is applied only where upstream
+  applies it - the receiver's `one_inplace` path in `crates/transfer`
+  (`config::inplace_partial`, `transfer_ops`, `generator/delta.rs`) -
+  and never relaxes the option-conflict validator.
+- **Status.** RESOLVED. An earlier capability-gated relaxation in the
+  validator was removed: it would have made oc-rsync silently accept
+  (exit 0) a combination upstream refuses (exit 1) had negotiated
+  capabilities ever been wired into live validation.
 
 ### G3 - `--append --whole-file` accepted instead of rejected (FIXED, PR #4049)
 
@@ -405,7 +411,7 @@ below records the resolving PR for each row:
 | Gap | Summary | Resolving PR |
 |-----|---------|--------------|
 | G1 | `--checksum-choice=none` promotes `whole_file = 1` | #4066 |
-| G2 | `--inplace --partial-dir` gated on `CF_INPLACE_PARTIAL_DIR` | #4064 |
+| G2 | `--inplace --partial-dir` rejected unconditionally (matches upstream parse-time refusal) | #4064 |
 | G3 | `--append --whole-file` rejected at config build time | #4049 |
 | G4 | `--delay-updates` partial_dir promotion centralised in the builder | #4050 |
 
