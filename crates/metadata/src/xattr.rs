@@ -445,6 +445,14 @@ pub fn apply_xattrs_from_list(
         }
     }
 
+    // upstream: xattrs.c:set_xattr - a non-root receiver targeting a file that
+    // lacks owner write permission temporarily adds S_IWUSR so the following
+    // xattr set/remove syscalls do not fail with EACCES/EPERM. The guard
+    // restores the original mode when it drops, covering both the write loop
+    // and the stale-attr removal loop below, including their error paths.
+    #[cfg(unix)]
+    let _temp_write_perm = TempWritePermission::grant(destination);
+
     for entry in xattr_list.iter() {
         // Skip abbreviated entries - they only contain a checksum, not the actual value
         if entry.is_abbreviated() {
@@ -494,6 +502,69 @@ pub fn apply_xattrs_from_list(
     }
 
     Ok(())
+}
+
+/// RAII guard that temporarily grants owner write permission on a file so its
+/// extended attributes can be modified, restoring the original mode on drop.
+///
+/// upstream: xattrs.c:set_xattr - `lsetxattr`/`lremovexattr` fail with
+/// `EACCES`/`EPERM` when a non-root caller targets a file it owns but that
+/// lacks `S_IWUSR`. Upstream adds `S_IWUSR` via `do_chmod_at` before the set
+/// and restores the original mode afterwards; this guard mirrors that dance and
+/// makes restoration exception-safe by tying it to `Drop`.
+#[cfg(unix)]
+struct TempWritePermission {
+    path: std::path::PathBuf,
+    /// Original permission bits (masked to `CHMOD_BITS`) to restore on drop.
+    original_bits: u32,
+}
+
+#[cfg(unix)]
+impl TempWritePermission {
+    /// Owner write bit (`S_IWUSR`).
+    const S_IWUSR: u32 = 0o200;
+    /// Permission bits chmod may set: setuid/setgid/sticky plus rwx for all
+    /// (upstream `rsync.h:CHMOD_BITS = S_ISUID|S_ISGID|S_ISVTX|ACCESSPERMS`).
+    const CHMOD_BITS: u32 = 0o7777;
+
+    /// Adds `S_IWUSR` when required, returning a guard only if the mode was
+    /// actually changed. Returns `None` (a no-op) when running as root, when the
+    /// target is a symlink (no meaningful owner-write bit; upstream guards with
+    /// `!S_ISLNK`), when the file is already owner-writable, or when the
+    /// permission change cannot be applied - matching upstream, which then just
+    /// attempts the xattr operation directly.
+    fn grant(path: &Path) -> Option<Self> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if crate::am_root() {
+            return None;
+        }
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+        let original_bits = meta.mode() & Self::CHMOD_BITS;
+        if original_bits & Self::S_IWUSR != 0 {
+            return None;
+        }
+        let relaxed = original_bits | Self::S_IWUSR;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(relaxed)).ok()?;
+        Some(Self {
+            path: path.to_path_buf(),
+            original_bits,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TempWritePermission {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            &self.path,
+            std::fs::Permissions::from_mode(self.original_bits),
+        );
+    }
 }
 
 /// Reserved xattr name carrying the Windows SDDL fidelity payload.
@@ -1407,6 +1478,60 @@ mod tests {
                 .expect("read")
                 .expect("attr2"),
             b"value2"
+        );
+    }
+
+    // A read-only file (mode 0o444) must still receive its xattrs: setting a
+    // user xattr on a file lacking owner write permission fails EACCES/EPERM for
+    // a non-root caller, so the apply path temporarily grants S_IWUSR. WHY it
+    // matters: callers must not be forced to pre-relax permissions, and the file
+    // must not be left writable afterwards - the original mode is restored.
+    // upstream: xattrs.c:set_xattr.
+    #[cfg(unix)]
+    #[test]
+    fn apply_xattrs_from_list_grants_and_restores_write_perm_on_readonly_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Running as root bypasses the permission check entirely (root can set
+        // xattrs on a read-only file), so this test cannot exercise the guard.
+        if crate::am_root() {
+            eprintln!("running as root, skipping read-only xattr test");
+            return;
+        }
+
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("readonly.txt");
+        fs::write(&file, "content").expect("write file");
+
+        // Probe support while the file is still writable.
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).expect("chmod 0o444");
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(test_xattr_name("ro"), b"value".to_vec()));
+
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs on read-only file");
+
+        let name = test_xattr_name("ro");
+        assert_eq!(
+            read_attribute(&file, &name, false)
+                .expect("read")
+                .expect("xattr present"),
+            b"value"
+        );
+
+        let restored = fs::symlink_metadata(&file)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(
+            restored, 0o444,
+            "original read-only mode must be restored after applying xattrs"
         );
     }
 
