@@ -2634,3 +2634,91 @@ fn backup_dir_clears_nondir_obstruction() {
     assert!(backup.exists(), "backup missing at {}", backup.display());
     assert_eq!(fs::read(&backup).expect("read backup"), b"old contents");
 }
+
+/// A plain `--backup` (no `--backup-dir`) implies omit-dir-times, so an empty
+/// directory keeps its wall-clock mtime rather than the source mtime.
+///
+/// upstream: options.c:2342-2343 - `if (make_backups && !backup_dir)
+/// omit_dir_times = -1;` feeds rsync.c:583, which adds `ATTRS_SKIP_MTIME` for
+/// directories. The implication is receiver/local-side only and is never
+/// advertised as the sender `-O` letter (options.c:2646 gates that on
+/// `omit_dir_times > 0`).
+#[cfg(unix)]
+#[test]
+fn backup_without_backup_dir_omits_directory_mtime() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let empty = source_root.join("e");
+    fs::create_dir_all(&empty).expect("create empty source subdir");
+
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&empty, dir_mtime).expect("set source subdir mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // `-a -b`: archive (recursive + times) plus a plain `--backup`.
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_empty = dest_root.join("source").join("e");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_empty).expect("dest subdir meta"));
+    assert_ne!(
+        dest_mtime, dir_mtime,
+        "a plain --backup must imply omit-dir-times, leaving the empty dir's mtime unpreserved"
+    );
+}
+
+/// With `--backup-dir` the omit-dir-times implication does NOT apply, so the
+/// source directory mtime is preserved as usual.
+///
+/// upstream: options.c:2342 - the implication is gated on `!backup_dir`, so a
+/// `--backup-dir` transfer preserves directory mtimes (generator.c:2271
+/// `need_retouch_dir_times = preserve_mtimes && !omit_dir_times`).
+#[cfg(unix)]
+#[test]
+fn backup_dir_preserves_directory_mtime() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let empty = source_root.join("e");
+    fs::create_dir_all(&empty).expect("create empty source subdir");
+
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&empty, dir_mtime).expect("set source subdir mtime");
+
+    let dest_root = temp.path().join("dest");
+    let backup_dir = temp.path().join("bak");
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .with_backup_directory(Some(backup_dir));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_empty = dest_root.join("source").join("e");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_empty).expect("dest subdir meta"));
+    assert_eq!(
+        dest_mtime, dir_mtime,
+        "with --backup-dir the implication does not apply, so the source dir mtime is preserved"
+    );
+}

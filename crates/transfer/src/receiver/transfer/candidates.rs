@@ -747,7 +747,7 @@ impl ReceiverContext {
         // reach the receiver's flag set (core sets them on the embedded-SSH and
         // daemon pull paths); an older comment here claimed otherwise.
         let keep_time = self.config.flags.times
-            && !(entry.is_dir() && self.config.flags.omit_dir_times)
+            && !(entry.is_dir() && self.config.effective_omit_dir_times())
             && !(entry.is_symlink() && self.config.flags.omit_link_times);
         let report_time = if keep_time {
             // upstream: generator.c:396-401 - `mtime_differs()` is

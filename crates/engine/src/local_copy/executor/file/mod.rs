@@ -12,7 +12,7 @@ mod paths;
 mod preallocate;
 mod sparse;
 
-pub use backup::compute_backup_path;
+pub use backup::{compute_backup_path, create_backup_dir_parents};
 pub(crate) use backup::{copy_entry_to_backup, create_backup_parents};
 pub use backup_trace::{
     trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,

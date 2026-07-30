@@ -11,8 +11,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    CleanupManager, compute_backup_path, trace_make_backup_copy, trace_make_backup_hlink,
-    trace_make_backup_rename,
+    CleanupManager, compute_backup_path, create_backup_dir_parents, trace_make_backup_copy,
+    trace_make_backup_hlink, trace_make_backup_rename,
 };
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
@@ -650,6 +650,37 @@ fn backup_hardlink_tier(config: &DiskCommitConfig, old_path: &Path, new_path: &P
     }
 }
 
+/// Creates the parent directories of a backup path.
+///
+/// With `--backup-dir`, each freshly-created subdirectory inherits its
+/// corresponding destination directory's attributes and any non-directory
+/// obstruction is removed, mirroring upstream `copy_valid_path`
+/// (backup.c:61-154) via the shared [`create_backup_dir_parents`] helper; the
+/// leaf `mkdir` stays SEC-1.j sandbox-anchored through the injected
+/// [`create_dir_all_sandboxed`]. Without `--backup-dir` the backup lands
+/// alongside the destination, whose parent already exists, so upstream runs no
+/// `copy_valid_path` (backup.c:159) and a plain create suffices.
+fn create_backup_path_parents(
+    parent: &Path,
+    backup_config: &BackupConfig,
+    config: &DiskCommitConfig,
+) -> io::Result<()> {
+    match backup_config.backup_dir.as_deref() {
+        Some(backup_dir) => {
+            let metadata_opts = config.metadata_opts.clone().unwrap_or_default();
+            create_backup_dir_parents(
+                &backup_config.dest_dir,
+                backup_dir,
+                parent,
+                &metadata_opts,
+                |path| create_dir_all_sandboxed(config, path),
+            )
+        }
+        None if parent.exists() => Ok(()),
+        None => create_dir_all_sandboxed(config, parent),
+    }
+}
+
 /// SEC-1.j: create the `--backup-dir` parent, dirfd-anchoring the leaf `mkdir`
 /// against the receiver's destination sandbox when possible.
 ///
@@ -719,9 +750,7 @@ pub(super) fn make_backup(
     );
 
     if let Some(parent) = backup_path.parent() {
-        if !parent.exists() {
-            create_dir_all_sandboxed(config, parent)?;
-        }
+        create_backup_path_parents(parent, backup_config, config)?;
     }
 
     // upstream: backup.c:191-207 - `prefer_rename` is False here (rsync.c:739),
@@ -812,9 +841,7 @@ pub(super) fn make_backup_copy(
     );
 
     if let Some(parent) = backup_path.parent() {
-        if !parent.exists() {
-            create_dir_all_sandboxed(config, parent)?;
-        }
+        create_backup_path_parents(parent, backup_config, config)?;
     }
 
     // upstream: generator.c:1866 copy_file() - duplicate the pre-transfer bytes
