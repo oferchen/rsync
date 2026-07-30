@@ -22,6 +22,14 @@ pub(crate) struct ParsedConfigModules {
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC listener certificate path from the `quic cert file` global
+    /// directive (oc extension, feature-gated). The paired private key lives in
+    /// `quic_key_file`. Identity is per-listener, so both are global-only.
+    #[cfg(feature = "quic")]
+    quic_cert_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC listener private-key path from the `quic key file` global directive.
+    #[cfg(feature = "quic")]
+    quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,

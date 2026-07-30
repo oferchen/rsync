@@ -444,6 +444,29 @@ fn apply_module_directive(
                 builder.set_syslog_facility(value.to_owned());
             }
         }
+        // oc extension (docs/design/quic-transport-policy.md, decision A): the
+        // QUIC listener presents one certificate on a socket shared by every
+        // module, so a per-module `quic cert file` / `quic key file` cannot be
+        // honoured. Unlike upstream's P_GLOBAL directives - which loadparm.c
+        // merely reports and ignores in a module section - a misplaced identity
+        // directive is a hard config error: silently dropping it would leave the
+        // operator believing a certificate they named is in force. Reuse the
+        // shared `config_parse_error` surface every other directive uses.
+        #[cfg(feature = "quic")]
+        "quiccertfile" | "quickeyfile" => {
+            let directive = if key == "quiccertfile" {
+                "quic cert file"
+            } else {
+                "quic key file"
+            };
+            return Err(config_parse_error(
+                path,
+                line_number,
+                format!(
+                    "'{directive}' is a global-only directive and cannot appear in a module section"
+                ),
+            ));
+        }
         _ if is_global_only_directive(key) => {
             // upstream: loadparm.c:do_parameter - a known P_GLOBAL parameter
             // that appears inside a module section is reported and ignored,

@@ -383,6 +383,8 @@ include!("tests/chunks/runtime_options_parse_motd_sources.rs");
 include!("tests/chunks/runtime_options_parse_no_bwlimit_argument.rs");
 include!("tests/chunks/runtime_options_parse_pid_file_argument.rs");
 include!("tests/chunks/runtime_options_per_module_max_connections_overrides_global.rs");
+#[cfg(feature = "quic")]
+include!("tests/chunks/runtime_options_quic_cert_key_pairing.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_lock_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");
