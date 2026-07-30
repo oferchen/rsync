@@ -30,9 +30,10 @@ pub(crate) fn implied_source_args_for_pull(
     source_paths: &[String],
     files_from_data: Option<&[u8]>,
 ) -> Vec<String> {
-    // upstream: options.c:2513 - old_style_args sets trust_sender_args, so
-    // add_implied_include() returns early and the implied list stays empty.
-    if config.old_args() == Some(true) {
+    // upstream: options.c:2513 - a non-zero old_style_args sets
+    // trust_sender_args, so add_implied_include() returns early and the implied
+    // list stays empty. Any active level (>= 1) qualifies.
+    if config.old_args().unwrap_or(0) >= 1 {
         return Vec::new();
     }
 
@@ -67,7 +68,7 @@ mod tests {
     use super::{files_from_entries, implied_source_args_for_pull};
     use crate::client::config::{ClientConfig, FilesFromSource};
 
-    fn config_with(old_args: Option<bool>, files_from: FilesFromSource) -> ClientConfig {
+    fn config_with(old_args: Option<u8>, files_from: FilesFromSource) -> ClientConfig {
         ClientConfig::builder()
             .old_args(old_args)
             .files_from(files_from)
@@ -86,8 +87,8 @@ mod tests {
 
     #[test]
     fn old_args_disables_the_mechanism() {
-        // upstream: options.c:2513 - old_style_args sets trust_sender_args.
-        let config = config_with(Some(true), FilesFromSource::None);
+        // upstream: options.c:2513 - a non-zero old_style_args sets trust_sender_args.
+        let config = config_with(Some(1), FilesFromSource::None);
         assert!(implied_source_args_for_pull(&config, &["dir".to_owned()], None).is_empty());
     }
 

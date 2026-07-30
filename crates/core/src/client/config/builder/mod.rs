@@ -274,7 +274,7 @@ pub struct ClientConfigBuilder {
     early_input: Option<PathBuf>,
     prefer_aes_gcm: Option<bool>,
     protect_args: Option<bool>,
-    old_args: Option<bool>,
+    old_args: Option<u8>,
     jump_hosts: Option<OsString>,
     batch_config: Option<engine::batch::BatchConfig>,
     files_from: FilesFromSource,
@@ -322,7 +322,9 @@ impl ClientConfigBuilder {
         caps: protocol::CompatibilityFlags,
     ) -> Result<(), ConfigConflict> {
         // upstream: options.c:1974-1977 - --old-args conflicts with --protect-args.
-        if self.old_args == Some(true) && self.protect_args == Some(true) {
+        // Any active level (>= 1) triggers the conflict, matching upstream's
+        // `else if (old_style_args)` truthiness test.
+        if self.old_args.unwrap_or(0) >= 1 && self.protect_args == Some(true) {
             return Err(ConfigConflict {
                 option1: "old-args",
                 option2: "secluded-args",

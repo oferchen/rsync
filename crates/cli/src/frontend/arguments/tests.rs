@@ -2235,14 +2235,34 @@ mod old_args_tests {
 
     #[test]
     fn old_args_flag() {
+        // upstream: options.c:1642 OPT_OLD_ARGS - a single `--old-args` sets
+        // `old_style_args` to level 1 (skip filename escaping).
         let parsed = parse_test_args(["--old-args", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.old_args, Some(true));
+        assert_eq!(parsed.old_args, Some(1));
+    }
+
+    #[test]
+    fn old_args_doubled_reaches_level_two() {
+        // upstream: options.c:1646 - a second `--old-args` does `old_style_args++`
+        // to level 2, the state where safe_arg (options.c:2551, `old_style_args
+        // < 2`) drops all remaining escaping. A boolean flag could never reach it.
+        let parsed = parse_test_args(["--old-args", "--old-args", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.old_args, Some(2));
+    }
+
+    #[test]
+    fn old_args_triple_caps_at_level_two() {
+        // Level 2 is the highest state safe_arg distinguishes, so further
+        // repeats saturate rather than overshoot.
+        let parsed = parse_test_args(["--old-args", "--old-args", "--old-args", "src/", "dst/"])
+            .expect("parse");
+        assert_eq!(parsed.old_args, Some(2));
     }
 
     #[test]
     fn no_old_args_flag() {
         let parsed = parse_test_args(["--no-old-args", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.old_args, Some(false));
+        assert_eq!(parsed.old_args, Some(0));
     }
 }
 
