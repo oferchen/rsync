@@ -733,3 +733,92 @@ fn commit_rename_without_sandbox_uses_path_fallback() {
     assert!(final_path.exists());
     assert_eq!(fs::read(&final_path).unwrap(), b"fallback content");
 }
+
+/// Builds a minimal [`BeginMessage`] carrying only the fields
+/// `truncate_for_whole_file_sparse` inspects (`append_offset`).
+fn begin_with_append_offset(path: &Path, append_offset: u64) -> BeginMessage {
+    BeginMessage {
+        file_path: path.to_path_buf(),
+        target_size: 0,
+        file_entry_index: 0,
+        checksum_verifier: None,
+        is_device_target: false,
+        is_inplace: true,
+        append_offset,
+        xattr_list: None,
+    }
+}
+
+/// A coalesced whole-file rewrite of an existing in-place destination must start
+/// the file empty so the sparse writer *seeks* over interior zero runs instead
+/// of issuing a `PUNCH_HOLE` syscall per run into the soon-to-be-discarded basis
+/// extent. Observable proof (no syscall counting): the destination is physically
+/// truncated to zero and the returned `preallocated_len` is 0, which is what
+/// drives the sparse writer down the seek path. upstream: receiver.c:receive_data
+/// `do_ftruncate(fd, 0); preallocated_len = 0`.
+#[test]
+fn truncate_for_whole_file_sparse_zeroes_existing_inplace_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inplace_basis.bin");
+    fs::write(&path, vec![0xAB_u8; 4096]).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+
+    // basis_preallocated_len == 4096: the pre-existing in-place basis length that
+    // maybe_preallocate would hand a sparse+inplace whole-file write.
+    let preallocated_len =
+        truncate_for_whole_file_sparse(&file, &begin_with_append_offset(&path, 0), 4096);
+
+    assert_eq!(
+        preallocated_len, 0,
+        "whole-file inplace sparse rewrite must seek over zero runs, so preallocated_len drops to 0"
+    );
+    assert_eq!(
+        file.metadata().unwrap().len(),
+        0,
+        "destination must be truncated to zero before the whole-file rewrite"
+    );
+}
+
+/// Append mode must never truncate: the existing prefix is exactly what the tail
+/// is appended to. Upstream forbids `--append` with `--whole-file`
+/// (options.c:2400), so the `do_ftruncate(fd, 0)` branch is unreachable there;
+/// this guards against it explicitly by keeping the basis length (stale interior
+/// zero runs are punched, never seeked, when the prefix is retained).
+#[test]
+fn truncate_for_whole_file_sparse_preserves_append_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("append_basis.bin");
+    fs::write(&path, vec![0xCD_u8; 4096]).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+
+    let preallocated_len =
+        truncate_for_whole_file_sparse(&file, &begin_with_append_offset(&path, 1024), 4096);
+
+    assert_eq!(
+        preallocated_len, 4096,
+        "append mode keeps the basis length so stale zero runs are punched, not seeked"
+    );
+    assert_eq!(
+        file.metadata().unwrap().len(),
+        4096,
+        "append prefix must be preserved, never truncated"
+    );
+}
+
+/// A fresh temp/direct target, or any non-sparse / non-inplace write, reaches
+/// this helper with `preallocated_len == 0` (maybe_preallocate returns 0 for all
+/// of those): there is nothing to truncate and the value passes through unchanged
+/// so the seek-vs-punch decision is untouched on paths the optimization does not
+/// apply to.
+#[test]
+fn truncate_for_whole_file_sparse_noop_when_no_basis() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fresh.bin");
+    let file = fs::File::create(&path).unwrap();
+
+    let preallocated_len =
+        truncate_for_whole_file_sparse(&file, &begin_with_append_offset(&path, 0), 0);
+
+    assert_eq!(preallocated_len, 0);
+    assert_eq!(file.metadata().unwrap().len(), 0);
+}
