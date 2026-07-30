@@ -87,6 +87,10 @@ impl TokenReader {
     /// # Arguments
     ///
     /// * `compression` - The negotiated compression algorithm, if any
+    /// * `protocol_version` - The negotiated protocol version. For plain zlib
+    ///   (`Zlib`) it gates the `see_token` dictionary-feed advance at protocol
+    ///   < 31, mirroring upstream `token.c:see_deflate_token()`. Ignored by the
+    ///   plain, zlibx, zstd, and lz4 paths.
     ///
     /// # Errors
     ///
@@ -94,10 +98,14 @@ impl TokenReader {
     /// fails to initialize. The zstd decoder constructor only fails on
     /// OOM-class conditions; surfacing it as a typed error lets the receiver
     /// abort the transfer instead of taking down the process.
-    pub fn new(compression: Option<CompressionAlgorithm>) -> io::Result<Self> {
+    pub fn new(
+        compression: Option<CompressionAlgorithm>,
+        protocol_version: u32,
+    ) -> io::Result<Self> {
         match compression {
             Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX) => {
                 let mut decoder = CompressedTokenDecoder::new();
+                decoder.set_protocol_version(protocol_version);
                 if matches!(compression, Some(CompressionAlgorithm::ZlibX)) {
                     decoder.set_zlibx(true);
                 }
@@ -220,7 +228,7 @@ mod tests {
 
     #[test]
     fn plain_reader_literal_token() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         // token = 5 means 5 bytes of literal data follow
         let data = 5_i32.to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -238,7 +246,7 @@ mod tests {
         // simple_recv_token guard (token.c:299-305): otherwise a peer could
         // force a multi-gigabyte allocation with four wire bytes.
         let oversized = (protocol::wire::delta::CHUNK_SIZE as i32 + 1).to_le_bytes();
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         let mut cursor = Cursor::new(oversized.to_vec());
         let err = reader.read_token(&mut cursor).unwrap_err();
         assert!(
@@ -252,7 +260,7 @@ mod tests {
     fn plain_reader_accepts_max_literal_token() {
         // Exactly CHUNK_SIZE is the largest a compliant sender emits.
         let max = (protocol::wire::delta::CHUNK_SIZE as i32).to_le_bytes();
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         let mut cursor = Cursor::new(max.to_vec());
         match reader.read_token(&mut cursor).unwrap() {
             DeltaToken::Literal(LiteralData::Pending(len)) => {
@@ -264,7 +272,7 @@ mod tests {
 
     #[test]
     fn plain_reader_block_ref_token() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         // token = -1 means block ref at index 0 (-((-1)+1) = 0)
         let data = (-1_i32).to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -277,7 +285,7 @@ mod tests {
 
     #[test]
     fn plain_reader_end_token() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         let data = 0_i32.to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
 
@@ -289,7 +297,7 @@ mod tests {
 
     #[test]
     fn plain_reader_block_ref_index_mapping() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         // token = -6 means block index 5 (-((-6)+1) = 5)
         let data = (-6_i32).to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -310,7 +318,7 @@ mod tests {
         encoder.finish(&mut encoded).unwrap();
 
         // Decode with TokenReader
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib), 31).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut decoded = Vec::new();
 
@@ -334,7 +342,7 @@ mod tests {
         encoder.send_block_match(&mut encoded, 3).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib), 31).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut blocks = Vec::new();
 
@@ -361,7 +369,7 @@ mod tests {
         encoder.send_literal(&mut encoded, literal2).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX)).unwrap();
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX), 31).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut literals = Vec::new();
         let mut blocks = Vec::new();
@@ -384,50 +392,50 @@ mod tests {
 
     #[test]
     fn new_returns_plain_for_none() {
-        let reader = TokenReader::new(None).unwrap();
+        let reader = TokenReader::new(None, 31).unwrap();
         assert!(!reader.is_compressed());
     }
 
     #[test]
     fn new_returns_plain_for_compression_none() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::None)).unwrap();
+        let reader = TokenReader::new(Some(CompressionAlgorithm::None), 31).unwrap();
         assert!(!reader.is_compressed());
     }
 
     #[test]
     fn new_returns_compressed_for_zlib() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
+        let reader = TokenReader::new(Some(CompressionAlgorithm::Zlib), 31).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn new_returns_compressed_for_zlibx() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX)).unwrap();
+        let reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX), 31).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn see_token_noop_for_plain() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         reader.see_token(b"block data").unwrap();
     }
 
     #[test]
     fn reset_noop_for_plain() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         reader.reset();
     }
 
     #[test]
     fn reset_clears_compressed_state() {
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib), 31).unwrap();
         reader.reset();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn plain_reader_eof_returns_error() {
-        let mut reader = TokenReader::new(None).unwrap();
+        let mut reader = TokenReader::new(None, 31).unwrap();
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let result = reader.read_token(&mut cursor);
         assert!(result.is_err());
@@ -436,14 +444,14 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn new_returns_compressed_for_zstd() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::Zstd)).unwrap();
+        let reader = TokenReader::new(Some(CompressionAlgorithm::Zstd), 31).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[cfg(feature = "lz4")]
     #[test]
     fn new_returns_compressed_for_lz4() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::LZ4)).unwrap();
+        let reader = TokenReader::new(Some(CompressionAlgorithm::LZ4), 31).unwrap();
         assert!(reader.is_compressed());
     }
 
@@ -454,9 +462,10 @@ mod tests {
     /// zstd OOM-class branch, which is not reachable from a unit test.
     #[test]
     fn new_returns_io_result() {
-        let result: io::Result<TokenReader> = TokenReader::new(None);
+        let result: io::Result<TokenReader> = TokenReader::new(None, 31);
         assert!(result.is_ok());
-        let result: io::Result<TokenReader> = TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let result: io::Result<TokenReader> =
+            TokenReader::new(Some(CompressionAlgorithm::Zlib), 31);
         assert!(result.is_ok());
     }
 }

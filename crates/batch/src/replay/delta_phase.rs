@@ -42,7 +42,7 @@ pub(super) fn apply_delta_phase(
     verbosity: i32,
 ) -> BatchResult<()> {
     let proto = reader.config().protocol_version;
-    let mut codec_state = CodecState::new(flags)?;
+    let mut codec_state = CodecState::new(flags, proto as u32)?;
     let mut flist_segments = init_flist_segments(reader, entries.len())?;
     let mut ndx_codec = reader
         .take_ndx_codec()
@@ -114,10 +114,16 @@ struct CodecState {
     /// True when the active codec is CPRES_ZLIB, requiring `see_token()`
     /// dictionary sync between block-match tokens.
     cpres_zlib: bool,
+    /// Negotiated protocol version of the recorded batch, retained so a late
+    /// zstd fallback rebuilds its decoder with the same value. Only the zstd
+    /// auto-detection path reads it; without that feature the codec is always
+    /// zlib and the version is applied at construction.
+    #[cfg(feature = "zstd")]
+    protocol_version: u32,
 }
 
 impl CodecState {
-    fn new(flags: &BatchFlags) -> BatchResult<Self> {
+    fn new(flags: &BatchFlags, protocol_version: u32) -> BatchResult<Self> {
         // upstream: batch.c:check_batch_flags() - when the batch stream flags
         // include do_compression (bit 8), the token data in the batch file
         // uses compressed format (DEFLATED_DATA headers).
@@ -129,7 +135,10 @@ impl CodecState {
         // hypothetical zstd-compressed batch files from patched or future
         // upstream versions.
         let decoder = if flags.do_compression {
-            Some(create_compressed_decoder(CompressionCodec::Zlib)?)
+            Some(create_compressed_decoder(
+                CompressionCodec::Zlib,
+                protocol_version,
+            )?)
         } else {
             None
         };
@@ -143,6 +152,8 @@ impl CodecState {
                 None
             },
             cpres_zlib,
+            #[cfg(feature = "zstd")]
+            protocol_version,
         })
     }
 
@@ -166,7 +177,10 @@ impl CodecState {
             self.cpres_zlib = false;
             // Replace the zlib decoder with a fresh zstd one. Subsequent
             // files reuse this decoder across iterations.
-            self.decoder = Some(create_compressed_decoder(CompressionCodec::Zstd)?);
+            self.decoder = Some(create_compressed_decoder(
+                CompressionCodec::Zstd,
+                self.protocol_version,
+            )?);
         }
         Ok(())
     }

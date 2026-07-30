@@ -126,7 +126,7 @@ fn aligned_copy_token_at_offset_zero_matches_basis_block() {
     wire.extend_from_slice(&copy_token(0));
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
-    let mut token_reader = TokenReader::new(None).expect("plain token reader");
+    let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
 
     apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
         .expect("apply delta stream");
@@ -177,7 +177,7 @@ fn sequential_aligned_copy_tokens_reconstruct_full_basis() {
     }
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
-    let mut token_reader = TokenReader::new(None).expect("plain token reader");
+    let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
 
     apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
         .expect("apply delta stream");
@@ -223,7 +223,7 @@ fn literal_then_copy_falls_through_alignment_guard() {
     wire.extend_from_slice(&copy_token(0));
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
-    let mut token_reader = TokenReader::new(None).expect("plain token reader");
+    let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
 
     apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
         .expect("apply delta stream");

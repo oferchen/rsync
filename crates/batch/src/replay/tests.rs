@@ -156,7 +156,7 @@ fn write_literals_ignores_copy_ops() {
 
 #[test]
 fn compressed_decoder_created_for_zlib() {
-    let decoder = create_compressed_decoder(CompressionCodec::Zlib).unwrap();
+    let decoder = create_compressed_decoder(CompressionCodec::Zlib, 31).unwrap();
     assert!(
         !decoder.initialized(),
         "fresh zlib decoder should not be initialized"
@@ -166,7 +166,7 @@ fn compressed_decoder_created_for_zlib() {
 #[cfg(feature = "zstd")]
 #[test]
 fn compressed_decoder_created_for_zstd() {
-    let decoder = create_compressed_decoder(CompressionCodec::Zstd).unwrap();
+    let decoder = create_compressed_decoder(CompressionCodec::Zstd, 31).unwrap();
     assert!(
         !decoder.initialized(),
         "fresh zstd decoder should not be initialized"
