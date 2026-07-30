@@ -67,19 +67,19 @@ impl ClientConfigBuilder {
         #[doc(alias = "-s")]
         protect_args: Option<bool>,
 
-        /// Enables or disables old-style argument passing for remote shells.
+        /// Sets the `old_style_args` level for remote shells.
         ///
-        /// When `Some(true)`, filename arguments are not shell-escaped before
-        /// being passed to the remote shell, preserving pre-3.0 behaviour where
-        /// spaces in a remote path are split by `eval` into separate args.
-        /// When `Some(false)`, old-args is explicitly disabled.
-        /// When `None`, the default behavior applies (disabled unless
+        /// `Some(1)` (a single `--old-args`) stops shell-escaping filename
+        /// arguments, preserving pre-3.0 behaviour where spaces in a remote path
+        /// are split by `eval`. `Some(2)` (doubled `--old-args`) additionally
+        /// disables every safe_arg escape. `Some(0)` explicitly disables old-args
+        /// (`--no-old-args`); `None` uses the default (disabled unless
         /// `RSYNC_OLD_ARGS` is set).
         ///
-        /// upstream: options.c - `old_style_args`, `RSYNC_OLD_ARGS`.
+        /// upstream: options.c:1642 OPT_OLD_ARGS, options.c:2551 safe_arg.
         #[doc(alias = "--old-args")]
         #[doc(alias = "--no-old-args")]
-        old_args: Option<bool>,
+        old_args: Option<u8>,
     }
 
     /// Configures the embedded SSH transport options.
