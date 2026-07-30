@@ -140,6 +140,31 @@ impl RuntimeOptions {
             options.port = DEFAULT_PORT;
         }
 
+        // QUIC listener identity is a certificate/key pair: the listener needs
+        // both to present an identity, and upstream rsync-ssl keeps
+        // RSYNC_SSL_CERT / RSYNC_SSL_KEY distinct (docs/design/quic-transport-
+        // policy.md, decision A). Enforce both-or-neither once, after CLI, env,
+        // and every config file have merged, so a key split across sources still
+        // validates. Fail loudly rather than silently binding an unexpected
+        // self-signed identity when only half the pair is named.
+        #[cfg(feature = "quic")]
+        match (
+            options.quic_cert_file.is_some(),
+            options.quic_key_file.is_some(),
+        ) {
+            (true, false) => {
+                return Err(config_error(
+                    "'quic cert file' requires 'quic key file' to be set as well".to_owned(),
+                ));
+            }
+            (false, true) => {
+                return Err(config_error(
+                    "'quic key file' requires 'quic cert file' to be set as well".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+
         Ok(options)
     }
 }

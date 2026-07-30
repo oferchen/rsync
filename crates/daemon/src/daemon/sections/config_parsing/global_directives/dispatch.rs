@@ -222,6 +222,42 @@ fn apply_global_directive(
             let resolved = resolve_config_relative_path(path, trimmed);
             store_global_directive(&mut state.lock_file, resolved, canonical, line_number);
         }
+        // oc extension (no upstream counterpart - upstream terminates no TLS in
+        // the daemon). `quic cert file` / `quic key file` name the certificate
+        // and private key the QUIC listener presents. They describe the shared
+        // per-listener identity, so they are global-only; a module section that
+        // sets one is rejected in `apply_module_directive`. Path handling mirrors
+        // `pid file` / `lock file` exactly (config-relative resolution, with any
+        // `%` token left verbatim for expansion at listener-bind time).
+        // See docs/design/quic-transport-policy.md (decision A).
+        #[cfg(feature = "quic")]
+        "quiccertfile" => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'quic cert file' directive must not be empty",
+                ));
+            }
+
+            let resolved = resolve_config_relative_path(path, trimmed);
+            store_global_directive(&mut state.quic_cert_file, resolved, canonical, line_number);
+        }
+        #[cfg(feature = "quic")]
+        "quickeyfile" => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'quic key file' directive must not be empty",
+                ));
+            }
+
+            let resolved = resolve_config_relative_path(path, trimmed);
+            store_global_directive(&mut state.quic_key_file, resolved, canonical, line_number);
+        }
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
         "usechroot" => {

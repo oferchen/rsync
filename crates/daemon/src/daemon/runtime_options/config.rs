@@ -31,6 +31,20 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
+        // QUIC listener identity (oc extension). Directive parsing already
+        // resolved the paths config-relative and rejected any module-scoped use;
+        // a later occurrence overwrites an earlier one, matching the last-wins
+        // policy of the other global path directives. Both-or-neither is
+        // enforced once, after all config sources are merged, in parse_with_brand.
+        #[cfg(feature = "quic")]
+        if let Some((cert, _origin)) = parsed.quic_cert_file {
+            self.quic_cert_file = Some(cert);
+        }
+        #[cfg(feature = "quic")]
+        if let Some((key, _origin)) = parsed.quic_key_file {
+            self.quic_key_file = Some(key);
+        }
+
         if let Some((components, _origin)) = parsed.global_bandwidth_limit
             && !self.bandwidth_limit_configured
         {
