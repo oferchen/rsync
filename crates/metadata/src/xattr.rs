@@ -404,8 +404,9 @@ pub fn sync_xattrs(
 ///
 /// The function performs a full synchronization:
 /// - Sets each non-abbreviated entry from the list on the destination.
+/// - Resolves each abbreviated entry (checksum-only) against the `basis` file,
+///   applying the basis value when its length and digest match the reference.
 /// - Removes destination xattrs not present in the source list.
-/// - Skips abbreviated entries (checksum-only) that lack full values.
 /// - Respects platform namespace filtering via privilege checks.
 ///
 /// # Arguments
@@ -413,21 +414,31 @@ pub fn sync_xattrs(
 /// * `destination` - Path to apply xattrs to.
 /// * `xattr_list` - Parsed xattr name-value pairs from the wire protocol.
 /// * `follow_symlinks` - Whether to follow symlinks when setting xattrs.
+/// * `basis` - The fnamecmp (basis) file whose existing attributes an
+///   abbreviated entry references. `None` disables resolution, leaving any
+///   abbreviated entry's existing destination value in place (its name is still
+///   protected from the removal sweep, matching upstream's `still_abbrev`).
 /// * `filter` - Optional `x`-modifier filter predicate. When present, a name for
 ///   which it returns `false` is neither applied to the destination nor removed
 ///   from it, mirroring upstream's `saw_xattr_filter` screening.
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `xattrs.c:set_xattr()` - applies received xattr data to destination
-/// files. The `filter` argument mirrors the receive-side screening upstream
-/// performs in `receive_xattr()` (xattrs.c:822, drop an excluded received name)
-/// and `rsync_xal_set()` (xattrs.c:1026, keep an excluded destination name),
-/// both gated on `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`.
+/// Mirrors `xattrs.c:rsync_xal_set()` - applies received xattr data to
+/// destination files. For an abbreviated entry (`XATTR_ABBREV`, a value longer
+/// than `MAX_FULL_DATUM` carried only as a digest), upstream re-reads the value
+/// from `fnamecmp` via `get_xattr_data()` and confirms the length and
+/// `xattr_sum_nni` digest match before applying it; a mismatch takes the
+/// `still_abbrev` path (xattrs.c:964-1009). The `filter` argument mirrors the
+/// receive-side screening upstream performs in `receive_xattr()` (xattrs.c:822,
+/// drop an excluded received name) and `rsync_xal_set()` (xattrs.c:1026, keep an
+/// excluded destination name), both gated on `name_is_excluded(name,
+/// NAME_IS_XATTR, ALL_FILTERS)`.
 pub fn apply_xattrs_from_list(
     destination: &Path,
     xattr_list: &XattrList,
     follow_symlinks: bool,
+    basis: Option<&Path>,
     filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
     let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
@@ -454,11 +465,6 @@ pub fn apply_xattrs_from_list(
     let _temp_write_perm = TempWritePermission::grant(destination);
 
     for entry in xattr_list.iter() {
-        // Skip abbreviated entries - they only contain a checksum, not the actual value
-        if entry.is_abbreviated() {
-            continue;
-        }
-
         let name_str = entry.name_str();
         if !is_xattr_permitted(&name_str, receiver_user_only()) {
             continue;
@@ -480,6 +486,36 @@ pub fn apply_xattrs_from_list(
         }
 
         let name_bytes = entry.name().to_vec();
+
+        // upstream: xattrs.c:964-1009 rsync_xal_set() - an abbreviated entry
+        // carries only a digest of a value the sender expects the receiver to
+        // already hold on the basis (fnamecmp) file. Resolve the full value
+        // locally by re-reading the basis attribute and confirming its length
+        // and digest match the reference; on a match apply the resolved value.
+        // The name stays in `applied_names` whether or not it resolves, so an
+        // existing destination value survives the removal sweep exactly as
+        // upstream's `still_abbrev` leaves `rxas[i].name` in the kept set.
+        if entry.is_abbreviated() {
+            applied_names.insert(name_bytes.clone());
+            // upstream: get_xattr_data(fnamecmp, name, &len, 1) returning NULL -
+            // a missing basis file or absent attribute - takes the still_abbrev
+            // path (continue), never a fatal error, so a read failure here is
+            // swallowed rather than propagated.
+            if let Some(basis_path) = basis
+                && let Ok(Some(value)) = read_attribute(basis_path, &name_bytes, follow_symlinks)
+                && value.len() == entry.datum_len()
+                // upstream: sum_end()/memcmp against rxas[i].datum+1; oc stores
+                // the bare digest, so compare against `entry.datum()`. The seed
+                // is ignored by the MD5 default (proto 30-32), see
+                // protocol::xattr::wire::compute_xattr_checksum.
+                && protocol::xattr::checksum_matches(entry.datum(), &value, 0)
+            {
+                // upstream: sys_lsetxattr(fname, name, ptr, len). Applying the
+                // resolved basis value is idempotent when destination == basis.
+                write_attribute(destination, &name_bytes, &value, follow_symlinks)?;
+            }
+            continue;
+        }
 
         write_attribute(destination, &name_bytes, entry.datum(), follow_symlinks)?;
         applied_names.insert(name_bytes);
@@ -1462,7 +1498,7 @@ mod tests {
             b"value2".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
 
         let attr1 = test_xattr_name("attr1");
         let attr2 = test_xattr_name("attr2");
@@ -1514,7 +1550,8 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("ro"), b"value".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs on read-only file");
+        apply_xattrs_from_list(&file, &list, false, None, None)
+            .expect("apply xattrs on read-only file");
 
         let name = test_xattr_name("ro");
         assert_eq!(
@@ -1561,7 +1598,7 @@ mod tests {
         // Exclude any name containing "skip" (matches on the local xattr name,
         // which carries the `user.` prefix on Linux and is bare elsewhere).
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, Some(&filter)).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter)).expect("apply xattrs");
 
         // The allowed attr is applied.
         assert_eq!(
@@ -1605,7 +1642,7 @@ mod tests {
         list.push(XattrEntry::new(test_xattr_name("keep"), b"kept".to_vec()));
 
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, Some(&filter)).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter)).expect("apply xattrs");
 
         // Excluded destination attr is preserved.
         assert_eq!(
@@ -1651,7 +1688,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
 
         // Stale attr should be removed
         assert!(
@@ -1670,8 +1707,13 @@ mod tests {
         );
     }
 
+    /// Without a basis file an abbreviated entry cannot be resolved, so its
+    /// value is not written - but a full entry in the same list still applies.
+    /// upstream: xattrs.c:970-975 rsync_xal_set() takes the `still_abbrev` path
+    /// when it cannot recover the value; a receiver with no local copy keeps the
+    /// attribute unset rather than writing a checksum as if it were the datum.
     #[test]
-    fn apply_xattrs_from_list_skips_abbreviated_entries() {
+    fn apply_xattrs_from_list_no_basis_leaves_abbreviated_unset() {
         let dir = tempdir().expect("create temp dir");
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
@@ -1682,35 +1724,107 @@ mod tests {
         }
 
         let mut list = XattrList::new();
-        // Abbreviated entry - only has checksum, not full value
+        // Abbreviated entry - only carries a checksum, not the full value.
         list.push(XattrEntry::abbreviated(
             test_xattr_name("abbrev"),
             vec![0xAA; 16],
             100,
         ));
-        // Full entry
         list.push(XattrEntry::new(
             test_xattr_name("full"),
             b"full_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
 
-        // Abbreviated entry should not be set
-        let abbrev = test_xattr_name("abbrev");
         assert!(
-            read_attribute(&file, &abbrev, false)
+            read_attribute(&file, &test_xattr_name("abbrev"), false)
                 .expect("read")
-                .is_none()
+                .is_none(),
+            "an abbreviated value must never be written as its raw checksum"
         );
-
-        // Full entry should be set
-        let full = test_xattr_name("full");
         assert_eq!(
-            read_attribute(&file, &full, false)
+            read_attribute(&file, &test_xattr_name("full"), false)
                 .expect("read")
                 .expect("full"),
             b"full_value"
+        );
+    }
+
+    /// An abbreviated entry references a large value the sender expects the
+    /// receiver to already hold on the basis (fnamecmp) file. The receiver must
+    /// re-read that value and, when its length and digest match the reference,
+    /// apply the full value to the destination - byte-identical to a transfer
+    /// that carried the value in full. Losing this resolution silently drops
+    /// every large (>32-byte) xattr on interop with an upstream sender that
+    /// abbreviates it. upstream: xattrs.c:964-1009 rsync_xal_set().
+    #[test]
+    fn apply_xattrs_from_list_resolves_abbreviated_against_basis() {
+        use protocol::xattr::compute_xattr_checksum;
+
+        let dir = tempdir().expect("create temp dir");
+        let basis = dir.path().join("basis.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&basis, "basis-content").expect("write basis");
+        fs::write(&dest, "dest-content").expect("write dest");
+
+        if !xattrs_supported(&basis) || !xattrs_supported(&dest) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // A value longer than MAX_FULL_DATUM (32) is what upstream abbreviates.
+        let name = test_xattr_name("large");
+        let value = vec![0x5Au8; 100];
+        write_attribute(&basis, &name, &value, false).expect("seed basis xattr");
+
+        // Build the abbreviated wire entry exactly as the sender would: the
+        // digest is the (unseeded, proto 30-32) MD5 of the full value and
+        // datum_len records the original length.
+        let digest = compute_xattr_checksum(&value, 0).to_vec();
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated(name.clone(), digest, value.len()));
+
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None).expect("apply xattrs");
+
+        // The destination must carry the fully resolved value, identical to a
+        // full-list transfer.
+        assert_eq!(
+            read_attribute(&dest, &name, false)
+                .expect("read")
+                .expect("resolved large xattr"),
+            value
+        );
+    }
+
+    /// A digest that matches no basis value must not be applied: a wrong length
+    /// or a mismatched checksum takes upstream's `still_abbrev` path, leaving the
+    /// destination unchanged rather than copying an unrelated basis value.
+    #[test]
+    fn apply_xattrs_from_list_abbreviated_mismatch_not_applied() {
+        let dir = tempdir().expect("create temp dir");
+        let basis = dir.path().join("basis.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&basis, "basis-content").expect("write basis");
+        fs::write(&dest, "dest-content").expect("write dest");
+
+        if !xattrs_supported(&basis) || !xattrs_supported(&dest) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let name = test_xattr_name("large");
+        // The basis holds a value whose digest will NOT match the reference.
+        write_attribute(&basis, &name, &[0x11u8; 100], false).expect("seed basis xattr");
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated(name.clone(), vec![0xAAu8; 16], 100));
+
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None).expect("apply xattrs");
+
+        assert!(
+            read_attribute(&dest, &name, false).expect("read").is_none(),
+            "a digest mismatch must not copy an unrelated basis value"
         );
     }
 
@@ -1730,7 +1844,7 @@ mod tests {
         write_attribute(&file, &attr, b"value", false).expect("write existing");
 
         let list = XattrList::new();
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply empty list");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply empty list");
 
         // All permitted xattrs should be removed
         assert!(read_attribute(&file, &attr, false).expect("read").is_none());
@@ -1756,7 +1870,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
 
         assert_eq!(
             read_attribute(&file, &attr, false)
@@ -1780,7 +1894,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("empty_val"), b"".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
 
         let attr = test_xattr_name("empty_val");
         let value = read_attribute(&file, &attr, false)

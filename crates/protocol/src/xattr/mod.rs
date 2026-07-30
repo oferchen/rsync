@@ -47,9 +47,9 @@ pub use prefix::{
     wire_to_local,
 };
 pub use wire::{
-    RecvXattrResult, XattrDefinition, XattrSet, checksum_matches, read_xattr_definitions,
-    recv_xattr, recv_xattr_request, recv_xattr_values, send_sender_xattr_response, send_xattr,
-    send_xattr_request, send_xattr_values,
+    RecvXattrResult, XattrDefinition, XattrSet, checksum_matches, compute_xattr_checksum,
+    read_xattr_definitions, recv_xattr, recv_xattr_request, recv_xattr_values,
+    send_sender_xattr_response, send_xattr, send_xattr_request, send_xattr_values,
 };
 
 /// Maximum size for a full xattr value transmission.
