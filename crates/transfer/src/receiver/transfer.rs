@@ -273,6 +273,21 @@ impl ReceiverContext {
     where
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     {
+        use crate::generator::io_error_flags::IOERR_GENERAL;
+
+        // upstream: generator.c:298-305 delete_in_dir() - if the sender hit a
+        // general I/O error while scanning the source, its file list may be
+        // incomplete, so deleting dest files that merely never got listed would
+        // lose data. Skip the entire delete pass (both phases) and print the
+        // notice once, unless `--ignore-errors` was given.
+        if stats.io_error & IOERR_GENERAL != 0 && !self.config.deletion.ignore_errors {
+            if !self.io_error_delete_warning_emitted {
+                self.io_error_delete_warning_emitted = true;
+                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+            }
+            return Ok(());
+        }
+
         // `--delete-delay` (`delete_during == 2`): late_delete without the
         // `delete_after` decision-deferral. Deferrable only on the parallel path.
         let delay = self.config.deletion.late_delete && !self.config.deletion.delete_after;
