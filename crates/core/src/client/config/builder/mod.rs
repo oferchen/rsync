@@ -387,6 +387,9 @@ impl ClientConfigBuilder {
         if self.checksum_choice.transfer_is_none() {
             self.whole_file = Some(true);
         }
+        // upstream: options.c:2336-2339 - inject `P *<suffix>` so files saved
+        // as backups beside the destination are protected from the delete pass.
+        self.push_backup_protect_filter();
         // upstream: compat.c:791-797 - append the implicit `--partial-dir`
         // exclude at the tail of the filter list, after every CLI rule.
         self.push_implicit_partial_dir_filter();

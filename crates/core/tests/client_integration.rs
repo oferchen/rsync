@@ -139,6 +139,105 @@ fn run_client_copies_with_delete_and_filters() {
     });
 }
 
+/// upstream: options.c:2336-2339 - `rsync -a --delete --backup` (no
+/// `--backup-dir`) injects a `P *~` protect rule so files matching the backup
+/// suffix are NOT candidates for deletion. Backups are written beside the
+/// destination as `name~`; without the protect rule the delete pass would
+/// remove the very files just saved as backups. This exercises the real
+/// local-copy delete path end to end (the same `config.filter_rules()` chain
+/// feeds the remote receiver via `build_wire_format_rules`). WHY this matters:
+/// deleting a pre-existing `*~` here is silent user-data loss plus a wrong
+/// `deleted_files` stat and a spurious `*deleting` line.
+#[test]
+fn backup_with_delete_protects_suffix_files_from_deletion() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
+
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
+
+        touch(&source_root.join("keep.txt"), b"keep");
+        // Pre-existing extraneous entries in the destination.
+        touch(&dest_root.join("old.txt~"), b"backup contents");
+        touch(&dest_root.join("gone.txt"), b"obsolete");
+
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .recursive(true)
+            .backup(true)
+            .delete(true)
+            .stats(true)
+            .build();
+
+        let summary = run_client(config).expect("run client");
+
+        assert_eq!(fs::read(dest_root.join("keep.txt")).unwrap(), b"keep");
+        assert!(
+            dest_root.join("old.txt~").exists(),
+            "backup-suffix file must survive --delete under --backup"
+        );
+        assert_eq!(
+            fs::read(dest_root.join("old.txt~")).unwrap(),
+            b"backup contents",
+            "protected backup file must be left untouched"
+        );
+        assert!(
+            !dest_root.join("gone.txt").exists(),
+            "a normal extraneous entry is still deleted"
+        );
+        // Only gone.txt is deleted; old.txt~ is protected, so it must not be
+        // counted in the deletion stat.
+        assert_eq!(
+            summary.items_deleted(),
+            1,
+            "protected backup file must be excluded from the deleted-files stat"
+        );
+    });
+}
+
+/// upstream: options.c:2336 guard `!delete_excluded` - `--delete-excluded`
+/// suppresses the backup protect rule, so a pre-existing `*~` again becomes a
+/// deletion candidate. Control for `backup_with_delete_protects_suffix_files_from_deletion`:
+/// proves the survival there is the injected rule, not some unrelated skip.
+#[test]
+fn backup_with_delete_excluded_still_deletes_suffix_files() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
+
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
+
+        touch(&source_root.join("keep.txt"), b"keep");
+        touch(&dest_root.join("old.txt~"), b"backup contents");
+
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .recursive(true)
+            .backup(true)
+            .delete(true)
+            .delete_excluded(true)
+            .stats(true)
+            .build();
+
+        run_client(config).expect("run client");
+
+        assert!(
+            !dest_root.join("old.txt~").exists(),
+            "--delete-excluded suppresses the protect rule, so the *~ is deleted"
+        );
+    });
+}
+
 #[derive(Default)]
 struct RecordingObserver {
     updates: Vec<(PathBuf, ClientEventKind, bool, Option<u64>, u64)>,

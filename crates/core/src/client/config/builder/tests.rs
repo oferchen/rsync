@@ -1010,6 +1010,94 @@ fn implicit_partial_dir_filter_skips_absolute_dir() {
     assert!(config.filter_rules().is_empty());
 }
 
+/// upstream: options.c:2336-2339 - `--backup` (no `--backup-dir`) combined with
+/// `--delete` (and without `--delete-excluded`) injects a receiver-side
+/// `P *<suffix>` protect rule. Backups are written beside the destination as
+/// `name~`, so without this rule the delete pass would remove the very files
+/// just saved as backups. WHY this matters: it is the difference between
+/// preserving and destroying user data under `rsync -a --delete --backup`.
+#[test]
+fn backup_with_delete_injects_default_protect_rule() {
+    let config = builder().backup(true).delete(true).build();
+    let rule = config
+        .filter_rules()
+        .last()
+        .expect("backup + delete must inject the protect rule");
+    assert_eq!(rule.kind(), FilterRuleKind::Protect);
+    assert_eq!(rule.pattern(), "*~");
+    // Protect is receiver-side only, matching upstream's `P` rule with no
+    // FILTRULES_SIDES bit set (it governs deletion, never the flist).
+    assert!(!rule.applies_to_sender());
+    assert!(rule.applies_to_receiver());
+    // upstream uses rule_template(0): not perishable.
+    assert!(!rule.is_perishable());
+}
+
+/// upstream: options.c:2337-2338 `"P *%s", backup_suffix` - an explicit
+/// `--suffix` is reflected in the injected protect pattern.
+#[test]
+fn backup_with_delete_uses_explicit_suffix() {
+    let config = builder()
+        .backup(true)
+        .delete(true)
+        .backup_suffix(Some(".bak"))
+        .build();
+    let rule = config
+        .filter_rules()
+        .last()
+        .expect("explicit suffix must inject a matching protect rule");
+    assert_eq!(rule.kind(), FilterRuleKind::Protect);
+    assert_eq!(rule.pattern(), "*.bak");
+}
+
+/// upstream: options.c:2336 guard `!delete_excluded` - `--delete-excluded`
+/// suppresses the protect rule so backup-suffix files remain deletion
+/// candidates. WHY: the guard is what lets `--delete-excluded` reach files the
+/// backup protect rule would otherwise shield.
+#[test]
+fn backup_with_delete_excluded_omits_protect_rule() {
+    let config = builder()
+        .backup(true)
+        .delete(true)
+        .delete_excluded(true)
+        .build();
+    assert!(
+        config
+            .filter_rules()
+            .iter()
+            .all(|rule| rule.kind() != FilterRuleKind::Protect),
+        "--delete-excluded must not inject the backup protect rule"
+    );
+}
+
+/// upstream: options.c:2328-2329 `if (backup_dir) { /* No need for ... a protect
+/// rule. */ }` - a `--backup-dir` stores backups in a separate tree, so no
+/// protect rule is injected.
+#[test]
+fn backup_dir_omits_protect_rule() {
+    let config = builder()
+        .backup_directory(Some("/backups"))
+        .delete(true)
+        .build();
+    assert!(
+        config
+            .filter_rules()
+            .iter()
+            .all(|rule| rule.kind() != FilterRuleKind::Protect),
+        "--backup-dir must not inject the backup protect rule"
+    );
+}
+
+/// upstream: options.c:2336 guard `make_backups && delete_mode` - the protect
+/// rule requires BOTH `--backup` and `--delete`; neither alone injects it.
+#[test]
+fn backup_without_delete_omits_protect_rule() {
+    let config = builder().backup(true).build();
+    assert!(config.filter_rules().is_empty());
+    let config = builder().delete(true).build();
+    assert!(config.filter_rules().is_empty());
+}
+
 /// The implicit rule is appended after every user rule (upstream adds it in
 /// `setup_protocol`, after argument parsing), so it carries the lowest
 /// precedence under first-match evaluation.
