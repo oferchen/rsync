@@ -44,6 +44,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("tcp-fastopen")
                 .long("tcp-fastopen")
+                .help_heading("oc-rsync extensions")
                 .value_name("MODE")
                 .help(
                     "Enable TCP Fast Open on daemon and client sockets (auto, on, off). \
@@ -152,6 +153,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("aes")
                 .long("aes")
+                .help_heading("oc-rsync extensions")
                 .help("Force AES-GCM ciphers for SSH even without hardware AES detection.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("no-aes"),
@@ -159,6 +161,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("no-aes")
                 .long("no-aes")
+                .help_heading("oc-rsync extensions")
                 .help("Disable automatic AES-GCM cipher selection for SSH.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("aes"),
@@ -220,6 +223,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-cipher")
                 .long("ssh-cipher")
+                .help_heading("oc-rsync extensions")
                 .value_name("CIPHERS")
                 .help("Comma-separated cipher preference list for embedded SSH.")
                 .num_args(1)
@@ -229,6 +233,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-connect-timeout")
                 .long("ssh-connect-timeout")
+                .help_heading("oc-rsync extensions")
                 .value_name("SECS")
                 .help("Connection timeout in seconds for embedded SSH.")
                 .num_args(1)
@@ -238,6 +243,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-keepalive")
                 .long("ssh-keepalive")
+                .help_heading("oc-rsync extensions")
                 .value_name("SECS")
                 .help("Keepalive interval in seconds for embedded SSH (0 = disable).")
                 .num_args(1)
@@ -247,6 +253,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-identity")
                 .long("ssh-identity")
+                .help_heading("oc-rsync extensions")
                 .value_name("FILE")
                 .help("Identity file for embedded SSH (repeatable).")
                 .action(ArgAction::Append)
@@ -255,12 +262,14 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-no-agent")
                 .long("ssh-no-agent")
+                .help_heading("oc-rsync extensions")
                 .help("Disable SSH agent authentication for embedded SSH.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("ssh-strict-host-key-checking")
                 .long("ssh-strict-host-key-checking")
+                .help_heading("oc-rsync extensions")
                 .value_name("MODE")
                 .help("Host key verification policy for embedded SSH (yes, no, ask).")
                 .num_args(1)
@@ -270,12 +279,14 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("ssh-ipv6")
                 .long("ssh-ipv6")
+                .help_heading("oc-rsync extensions")
                 .help("Prefer IPv6 for embedded SSH connections.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("ssh-port")
                 .long("ssh-port")
+                .help_heading("oc-rsync extensions")
                 .value_name("PORT")
                 .help("Port override for embedded SSH connections.")
                 .num_args(1)
@@ -285,6 +296,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("jump-host")
                 .long("jump-host")
+                .help_heading("oc-rsync extensions")
                 .value_name("[user@]HOST[:PORT][,...]")
                 .help("Comma-separated proxy-jump hosts (forwarded as ssh -J).")
                 .num_args(1)

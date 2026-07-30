@@ -146,6 +146,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("io-uring")
                     .long("io-uring")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Force io_uring for file I/O (policy=enabled); \
                          error if unavailable. Default policy is auto: \
@@ -157,6 +158,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-io-uring")
                     .long("no-io-uring")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Disable io_uring (policy=disabled); always use \
                          standard buffered I/O even when the kernel \
@@ -169,6 +171,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-io-uring-sqpoll")
                     .long("no-io-uring-sqpoll")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Keep io_uring on but suppress IORING_SETUP_SQPOLL \
                          (policy=sqpoll-off). All other io_uring features \
@@ -184,6 +187,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("io-uring-depth")
                     .long("io-uring-depth")
+                    .help_heading("oc-rsync extensions")
                     .value_name("N")
                     .help(
                         "Override the io_uring submission queue depth (default 64). \
@@ -195,6 +199,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("io-uring-status")
                     .long("io-uring-status")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Print the io_uring capability matrix (kernel version, \
                          availability, restriction detection, supported opcodes, \
@@ -205,6 +210,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("lsm-status")
                     .long("lsm-status")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Print the Linux Security Module diagnostic \
                          (active LSMs, Landlock support, seccomp state, \
@@ -216,6 +222,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("simd")
                     .long("simd")
+                    .help_heading("oc-rsync extensions")
                     .value_name("LEVEL")
                     .help(
                         "Force the SIMD level used by checksum dispatch. \
@@ -230,6 +237,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("cow")
                     .long("cow")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Allow copy-on-write reflinks for whole-file copies \
                          (default). Uses FICLONE/copy_file_range on Linux, \
@@ -243,6 +251,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-cow")
                     .long("no-cow")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Disable copy-on-write reflinks; always use the \
                          portable std::fs::copy fallback for whole-file \
@@ -255,6 +264,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("reflink")
                     .long("reflink")
+                    .help_heading("oc-rsync extensions")
                     .value_name("MODE")
                     .help(
                         "Copy-on-write reflink policy for whole-file copies. \
@@ -271,6 +281,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("zero-copy")
                     .long("zero-copy")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Allow I/O-level zero-copy syscalls (sendfile, \
                          splice, copy_file_range) when supported by the \
@@ -287,6 +298,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-zero-copy")
                     .long("no-zero-copy")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Disable I/O-level zero-copy (policy=disabled); \
                          route through portable userspace read/write loops \
@@ -299,6 +311,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("parallel-delta-scan")
                     .long("parallel-delta-scan")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Opt-in: scan a large file's delta across multiple \
                          cores (sender side). Only engages for large, \
@@ -434,6 +447,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("rayon-threads")
                     .long("rayon-threads")
+                    .help_heading("oc-rsync extensions")
                     .value_name("N")
                     .help("Cap the rayon worker pool to N threads (1-1024).")
                     .num_args(1)
@@ -442,6 +456,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("checksum-threads")
                     .long("checksum-threads")
+                    .help_heading("oc-rsync extensions")
                     .value_name("N")
                     .help(
                         "Parallelise basis-signature checksum hashing. \
@@ -456,6 +471,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("tokio-threads")
                     .long("tokio-threads")
+                    .help_heading("oc-rsync extensions")
                     .value_name("N")
                     .help(
                         "Cap the async (tokio) runtime to N threads (1-1024); requires async features.",
@@ -467,7 +483,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("spill-dir")
                     .long("spill-dir")
                     .value_name("PATH")
-                    .help_heading("Advanced (spill)")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Override the reorder-buffer spill directory. Takes \
                          precedence over OC_RSYNC_SPILL_DIR and SpillPolicy \
@@ -482,7 +498,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("spill-threshold-bytes")
                     .long("spill-threshold-bytes")
                     .value_name("BYTES")
-                    .help_heading("Advanced (spill)")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Override the reorder-buffer spill byte threshold. \
                          Accepts a positive integer with an optional \
@@ -497,7 +513,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-spill")
                     .long("no-spill")
-                    .help_heading("Advanced (spill)")
+                    .help_heading("oc-rsync extensions")
                     .help(
                         "Disable disk-based spilling for the reorder buffer. \
                          When set, the buffer returns an error instead of \
@@ -613,6 +629,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("apple-double-skip")
                     .long("apple-double-skip")
+                    .help_heading("oc-rsync extensions")
                     .help("Skip macOS AppleDouble (._foo) sidecar files.")
                     .action(ArgAction::SetTrue),
             )
@@ -652,6 +669,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("password-command")
                     .long("password-command")
+                    .help_heading("oc-rsync extensions")
                     .value_name("COMMAND")
                     .help("Run COMMAND via the system shell and read daemon password from its stdout.")
                     .value_parser(OsStringValueParser::new())

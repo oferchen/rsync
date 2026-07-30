@@ -28,6 +28,7 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
         .arg(
             Arg::new("connect-program")
                 .long("connect-program")
+                .help_heading("oc-rsync extensions")
                 .value_name("COMMAND")
                 .help(
                     "Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).",

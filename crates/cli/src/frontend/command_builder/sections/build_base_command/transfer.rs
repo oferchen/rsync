@@ -214,6 +214,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
         .arg(
             Arg::new("sparse-detect")
                 .long("sparse-detect")
+                .help_heading("oc-rsync extensions")
                 .value_name("STRATEGY")
                 .help(
                     "Choose how source files are scanned for holes when --sparse is active. \

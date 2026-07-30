@@ -29,7 +29,10 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--chown, --usermap, --groupmap, --chmod, --executability/-E, --perms/-p, --no-perms, --times/-t, --no-times, ",
     "--atimes/-U, --no-atimes, --crtimes/-N, --no-crtimes, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, ",
     "--acls/-A, --no-acls, --xattrs/-X, --no-xattrs, ",
-    "--numeric-ids, --no-numeric-ids, --rayon-threads, --checksum-threads, --tokio-threads"
+    "--numeric-ids, --no-numeric-ids, --rayon-threads, --checksum-threads, --tokio-threads, ",
+    "--aes, --no-aes, --ssh-cipher, --ssh-connect-timeout, --ssh-keepalive, --ssh-identity, ",
+    "--ssh-no-agent, --ssh-strict-host-key-checking, --ssh-ipv6, --ssh-port, --jump-host, ",
+    "--spill-dir, --spill-threshold-bytes, --no-spill"
 );
 
 /// Format string used for `--itemize-changes` output.
