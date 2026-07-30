@@ -98,7 +98,12 @@ where
 {
     for token in tokens {
         let trimmed = token.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        // upstream: exclude.c:parse_filter_file word_split - the CVS ignore
+        // sources are parsed in word_split mode, so line 1514's comment check
+        // (`word_split || (*line != ';' && *line != '#')`) short-circuits: only
+        // empty tokens are skipped. A '#'-prefixed token is a LITERAL exclude of
+        // a file named '#foo', never a comment.
+        if trimmed.is_empty() {
             continue;
         }
 
@@ -188,10 +193,20 @@ mod tests {
     }
 
     #[test]
-    fn append_cvsignore_tokens_skips_hash_comments() {
+    fn append_cvsignore_tokens_hash_is_literal_not_comment() {
+        // upstream: exclude.c:parse_filter_file word_split - CVS ignore sources
+        // parse in word_split mode, so line 1514's `word_split ||` short-circuits
+        // the comment check and '#' is NEVER a comment leader there. A "#foo"
+        // token is a literal exclude of a file named "#foo"; only empty tokens
+        // are dropped. Treating '#' as a comment (as line-parsed filter files do)
+        // would silently drop valid CVS excludes.
         let mut rules = Vec::new();
-        append_cvsignore_tokens(&mut rules, ["*.o", "# comment", "*.a"].iter().copied());
-        assert_eq!(rules.len(), 2);
+        append_cvsignore_tokens(&mut rules, ["*.o", "#foo", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].kind(), FilterRuleKind::Exclude);
+        assert_eq!(rules[1].pattern(), "#foo");
+        assert_eq!(rules[2].pattern(), "*.a");
     }
 
     #[test]
