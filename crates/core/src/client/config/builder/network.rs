@@ -17,6 +17,21 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Selects the transport that carries the daemon protocol.
+    ///
+    /// [`Transport::Quic`](crate::client::Transport::Quic) is chosen by `--quic`
+    /// or a `quic://` target and hard-fails if the QUIC connection cannot be
+    /// established (never falling back to TCP). The default is
+    /// [`Transport::Tcp`](crate::client::Transport::Tcp). Available only under
+    /// the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic")]
+    pub const fn daemon_transport(mut self, transport: crate::client::Transport) -> Self {
+        self.daemon_transport = transport;
+        self
+    }
+
     /// Configures the TCP Fast Open mode applied to daemon and client sockets.
     ///
     /// `auto` (the default) enables TFO opportunistically on platforms that

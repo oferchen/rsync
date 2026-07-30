@@ -251,6 +251,11 @@ pub struct ClientConfig {
     pub(super) bind_address: Option<BindAddress>,
     pub(super) sockopts: Option<OsString>,
     pub(super) tcp_fastopen: TcpFastOpenMode,
+    /// Transport carrying the daemon protocol (`--quic` / `quic://`). QUIC is an
+    /// opt-in oc extension compiled only under the `quic` feature; a default
+    /// build always uses TCP, so the field is absent there.
+    #[cfg(feature = "quic")]
+    pub(super) daemon_transport: crate::client::Transport,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
@@ -468,6 +473,8 @@ impl Default for ClientConfig {
             bind_address: None,
             sockopts: None,
             tcp_fastopen: TcpFastOpenMode::Auto,
+            #[cfg(feature = "quic")]
+            daemon_transport: crate::client::Transport::Tcp,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
             remote_shell: None,

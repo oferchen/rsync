@@ -16,6 +16,9 @@ pub(super) struct ModuleListingInputs<'a> {
     pub file_list_operands: &'a [OsString],
     pub remainder: &'a [OsString],
     pub daemon_port: Option<u16>,
+    /// `--quic` - upgrade the daemon listing target to the QUIC transport.
+    #[cfg(feature = "quic")]
+    pub quic: bool,
     pub desired_protocol: Option<ProtocolVersion>,
     pub password_override: Option<Vec<u8>>,
     pub no_motd: bool,
@@ -47,6 +50,8 @@ where
         file_list_operands,
         remainder,
         daemon_port,
+        #[cfg(feature = "quic")]
+        quic,
         desired_protocol,
         password_override,
         no_motd,
@@ -80,6 +85,16 @@ where
 
     let request = if let Some(protocol) = desired_protocol {
         request.with_protocol(protocol)
+    } else {
+        request
+    };
+
+    // `--quic` upgrades an `rsync://` / `host::` listing target to QUIC; a
+    // `quic://` target already carries the transport (QUIC-8c). The QUIC dial
+    // hard-fails with no TCP fallback at the connect-selection point.
+    #[cfg(feature = "quic")]
+    let request = if quic {
+        request.with_transport(core::client::Transport::Quic)
     } else {
         request
     };

@@ -28,6 +28,9 @@ pub(crate) struct ConfigInputs {
     pub(crate) bind_address: Option<core::client::BindAddress>,
     pub(crate) sockopts: Option<OsString>,
     pub(crate) tcp_fastopen: TcpFastOpenMode,
+    /// `--quic` - select the QUIC daemon transport (873/udp).
+    #[cfg(feature = "quic")]
+    pub(crate) quic: bool,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
@@ -326,6 +329,16 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .mkpath(inputs.mkpath)
         .prune_empty_dirs(inputs.prune_empty_dirs)
         .qsort(inputs.qsort);
+    // `--quic` selects the QUIC daemon transport; without it the default TCP
+    // transport is preserved byte-for-byte (QUIC-8c/8d).
+    #[cfg(feature = "quic")]
+    {
+        builder = builder.daemon_transport(if inputs.quic {
+            core::client::Transport::Quic
+        } else {
+            core::client::Transport::Tcp
+        });
+    }
     // Only override the builder's upstream default when the user supplied
     // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream
     // `compat.c:720 set_allow_inc_recurse()`.

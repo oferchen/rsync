@@ -58,6 +58,8 @@ where
         remote_shell: _,
         connect_program,
         daemon_port,
+        #[cfg(feature = "quic")]
+        quic,
         remote_options,
         rsync_path: _,
         protect_args,
@@ -533,6 +535,8 @@ where
             file_list_operands: &file_list_operands,
             remainder: &remainder,
             daemon_port,
+            #[cfg(feature = "quic")]
+            quic,
             desired_protocol,
             password_override: password_override.clone(),
             no_motd,
@@ -891,6 +895,8 @@ where
         bind_address,
         sockopts: sockopts.clone(),
         tcp_fastopen,
+        #[cfg(feature = "quic")]
+        quic,
         blocking_io,
         dry_run,
         list_only,

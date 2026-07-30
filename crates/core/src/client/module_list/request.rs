@@ -12,6 +12,8 @@ use protocol::ProtocolVersion;
 use super::super::{AddressMode, ClientError, TcpFastOpenMode};
 use super::parsing::{parse_host_port, split_daemon_host_module, strip_prefix_ignore_ascii_case};
 use super::types::DaemonAddress;
+#[cfg(feature = "quic")]
+use super::types::Transport;
 
 /// Specification describing a daemon module listing request parsed from CLI operands.
 ///
@@ -50,8 +52,18 @@ impl ModuleListRequest {
     fn from_operand(operand: &OsString, default_port: u16) -> Result<Option<Self>, ClientError> {
         let text = operand.to_string_lossy();
 
+        // The `quic://` scheme (oc extension, `quic` feature only) is parsed
+        // exactly beside `rsync://`; it selects the QUIC transport but reuses
+        // the identical authority/module grammar. Recognised only when the
+        // feature is compiled in - a default build treats `quic://...` as an
+        // ordinary (non-daemon) operand, so the scheme is absent when off.
+        #[cfg(feature = "quic")]
+        if let Some(rest) = strip_prefix_ignore_ascii_case(&text, "quic://") {
+            return Self::parse_daemon_url(rest, default_port, Transport::Quic);
+        }
+
         if let Some(rest) = strip_prefix_ignore_ascii_case(&text, "rsync://") {
-            return Self::parse_rsync_url(rest, default_port);
+            return Self::parse_daemon_url(rest, default_port, super::types::Transport::default());
         }
 
         if let Some((host_part, module_part)) = split_daemon_host_module(&text)? {
@@ -65,7 +77,15 @@ impl ModuleListRequest {
         Ok(None)
     }
 
-    fn parse_rsync_url(rest: &str, default_port: u16) -> Result<Option<Self>, ClientError> {
+    /// Parses the authority (`[user@]host[:port]`) of a daemon URL after its
+    /// scheme prefix has been stripped, tagging the resulting address with the
+    /// scheme's [`Transport`]. A non-empty path segment is not a module listing
+    /// (that is a transfer target), so it yields `Ok(None)`.
+    fn parse_daemon_url(
+        rest: &str,
+        default_port: u16,
+        transport: super::types::Transport,
+    ) -> Result<Option<Self>, ClientError> {
         let mut parts = rest.splitn(2, '/');
         let host_port = parts.next().unwrap_or("");
         let remainder = parts.next();
@@ -75,7 +95,10 @@ impl ModuleListRequest {
         }
 
         let target = parse_host_port(host_port, default_port)?;
-        Ok(Some(Self::new(target.address, target.username)))
+        Ok(Some(Self::new(
+            target.address.with_transport(transport),
+            target.username,
+        )))
     }
 
     const fn new(address: DaemonAddress, username: Option<String>) -> Self {
@@ -121,6 +144,20 @@ impl ModuleListRequest {
     #[must_use]
     pub const fn with_protocol(mut self, protocol: ProtocolVersion) -> Self {
         self.protocol = protocol;
+        self
+    }
+
+    /// Returns a new request whose daemon address carries the given transport.
+    ///
+    /// The `--quic` modifier upgrades an otherwise ordinary `rsync://` /
+    /// `host::` daemon target to QUIC without touching its syntax (design:
+    /// `docs/design/quic-transport-policy.md`, Decision D). A `quic://` target
+    /// already carries [`Transport::Quic`] from the scheme, so re-applying it
+    /// is idempotent.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub fn with_transport(mut self, transport: Transport) -> Self {
+        self.address = self.address.with_transport(transport);
         self
     }
 }
@@ -284,5 +321,96 @@ impl ModuleListOptions {
 impl Default for ModuleListOptions {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::super::types::Transport;
+    use super::*;
+
+    fn operands(target: &str) -> Vec<OsString> {
+        vec![OsString::from(target)]
+    }
+
+    #[test]
+    fn rsync_scheme_selects_tcp_transport() {
+        // WHY: the default daemon scheme must stay TCP so a default build - and
+        // a `quic`-enabled build that was not asked for QUIC - behaves exactly
+        // like upstream.
+        let request = ModuleListRequest::from_operands(&operands("rsync://host/"))
+            .expect("parse")
+            .expect("daemon target");
+        assert_eq!(request.address().transport(), Transport::Tcp);
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn double_colon_selects_tcp_transport() {
+        let request = ModuleListRequest::from_operands(&operands("host::"))
+            .expect("parse")
+            .expect("daemon target");
+        assert_eq!(request.address().transport(), Transport::Tcp);
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn quic_scheme_selects_quic_transport_default_port() {
+        // WHY: `quic://` is parsed beside `rsync://` and yields the QUIC
+        // transport with the shared default daemon port 873 (873/udp; policy D).
+        let request = ModuleListRequest::from_operands(&operands("quic://host/"))
+            .expect("parse")
+            .expect("daemon target");
+        assert_eq!(request.address().transport(), Transport::Quic);
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn quic_scheme_honours_explicit_port() {
+        // WHY: an explicit `:port` in the authority overrides the 873 default,
+        // exactly as it does for `rsync://`.
+        let request = ModuleListRequest::from_operands(&operands("quic://host:1234/"))
+            .expect("parse")
+            .expect("daemon target");
+        assert_eq!(request.address().transport(), Transport::Quic);
+        assert_eq!(request.address().port(), 1234);
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn quic_scheme_honours_port_override() {
+        // WHY: `--port` (threaded as the default port) overrides 873 when the
+        // authority omits an explicit port.
+        let request = ModuleListRequest::from_operands_with_port(&operands("quic://host/"), 9999)
+            .expect("parse")
+            .expect("daemon target");
+        assert_eq!(request.address().port(), 9999);
+        assert_eq!(request.address().transport(), Transport::Quic);
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn with_transport_upgrades_double_colon_to_quic() {
+        // WHY: the `--quic` modifier upgrades an ordinary `host::` target to
+        // QUIC without changing its syntax (QUIC-8c).
+        let request = ModuleListRequest::from_operands(&operands("host::"))
+            .expect("parse")
+            .expect("daemon target")
+            .with_transport(Transport::Quic);
+        assert_eq!(request.address().transport(), Transport::Quic);
+    }
+
+    #[cfg(not(feature = "quic"))]
+    #[test]
+    fn quic_scheme_absent_when_feature_off() {
+        // WHY: with the feature compiled out the `quic://` scheme must be
+        // absent - not accepted as a daemon target - so no code path can select
+        // an unbuilt transport.
+        let parsed = ModuleListRequest::from_operands(&operands("quic://host/")).expect("parse");
+        assert!(
+            parsed.is_none(),
+            "quic:// must not parse as a daemon target"
+        );
     }
 }

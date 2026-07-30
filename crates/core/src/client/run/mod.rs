@@ -230,7 +230,18 @@ fn run_client_internal(
     );
 
     let has_daemon_url = config.transfer_args().iter().any(|arg| {
-        arg.to_string_lossy().starts_with("rsync://") || arg.to_string_lossy().contains("::")
+        let s = arg.to_string_lossy();
+        if s.starts_with("rsync://") || s.contains("::") {
+            return true;
+        }
+        // A `quic://` target speaks the same daemon protocol over QUIC, so it
+        // routes to the daemon path (not the SSH path). Recognised only under
+        // the `quic` feature; absent from a default build.
+        #[cfg(feature = "quic")]
+        if s.starts_with("quic://") || s.starts_with("QUIC://") {
+            return true;
+        }
+        false
     });
 
     if has_daemon_url {

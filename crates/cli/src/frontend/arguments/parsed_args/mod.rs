@@ -102,6 +102,14 @@ pub struct ParsedArgs {
     /// `--port` - TCP port for daemon connections (default 873).
     pub daemon_port: Option<u16>,
 
+    /// `--quic` - carry the daemon protocol over QUIC (873/udp) instead of TCP.
+    ///
+    /// Upgrades an `rsync://` / `host::` daemon target to the QUIC transport;
+    /// `quic://` targets select it directly. Available only under the `quic`
+    /// feature, so a default build never sees the flag.
+    #[cfg(feature = "quic")]
+    pub quic: bool,
+
     /// `--protocol` - force a specific protocol version (28-32).
     pub protocol: Option<OsString>,
 
