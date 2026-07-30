@@ -557,6 +557,10 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: receiver.c:319-336 - preallocate the destination before writing
     // when --preallocate is set (see process_file).
     let preallocated_len = maybe_preallocate(&file, config, &begin, basis_len);
+    // upstream: receiver.c:receive_data - a coalesced whole-file rewrite starts
+    // the in-place destination empty so the sparse writer seeks over interior
+    // zero runs instead of punching holes (see truncate_for_whole_file_sparse).
+    let preallocated_len = truncate_for_whole_file_sparse(&file, &begin, preallocated_len);
 
     let mut output = make_writer(
         file,
@@ -881,6 +885,41 @@ fn maybe_preallocate(
             );
             fallback_preallocated_len
         }
+    }
+}
+
+/// Truncates a coalesced whole-file sparse in-place destination to zero and
+/// returns the sparse writer's `preallocated_len`.
+///
+/// The pipelined receiver only emits a `WholeFile` message when the file has no
+/// delta basis (`streaming.rs` gates it on `basis_map.is_none()`), so the entire
+/// content is rewritten from offset 0 - upstream's `whole_file` condition. When
+/// the in-place destination already holds bytes, starting it empty lets the
+/// sparse writer seek over interior zero runs instead of punching holes into the
+/// pre-existing extent that is about to be discarded. The on-disk result is
+/// identical; the truncate just replaces a `PUNCH_HOLE` syscall per zero run with
+/// a cheap seek over never-written space.
+///
+/// A non-zero `preallocated_len` here is exactly the in-place basis length:
+/// [`maybe_preallocate`] returns 0 whenever `--preallocate` reserved the blocks
+/// (those must stay punched, not seeked) and for every non-sparse or non-inplace
+/// target, so `preallocated_len > 0` uniquely identifies upstream's `else if
+/// (inplace_sizing)` branch that the `do_ftruncate(fd, 0)` is nested in. Skipped
+/// in append mode (`append_offset > 0`), which must keep the existing prefix and
+/// which upstream forbids together with `--whole-file` (`options.c:2400`). The
+/// truncate is best-effort: on failure the caller keeps the basis length and
+/// falls back to punching, which is equally correct.
+// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
+// fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
+pub(super) fn truncate_for_whole_file_sparse(
+    file: &fs::File,
+    begin: &BeginMessage,
+    preallocated_len: u64,
+) -> u64 {
+    if begin.append_offset == 0 && preallocated_len > 0 && file.set_len(0).is_ok() {
+        0
+    } else {
+        preallocated_len
     }
 }
 

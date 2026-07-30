@@ -502,7 +502,18 @@ pub(in crate::local_copy) fn execute_transfer(
     // (`total_size > size_r`), leaving preallocated_len at do_fallocate()'s 0 so the
     // reserved tail is seeked, not punched - don't overwrite it. Otherwise the
     // existing destination extent is already allocated, so an interior zero run must
-    // be punched. A whole-file inplace copy truncates to zero first (0).
+    // be punched.
+    //
+    // The `!whole_file_enabled` guard keeps this to the delta case. A whole-file
+    // inplace copy is upstream's `sparse_files > 0 && whole_file` leg: it starts
+    // the destination empty (`do_ftruncate(fd, 0)`) and keeps `preallocated_len = 0`
+    // so interior zero runs are seeked over as genuine holes rather than punched.
+    // `open_destination_writer` realises that truncation at open time by opening
+    // the inplace destination with `O_TRUNC` whenever there is no delta basis
+    // (`should_truncate = delta_signature.is_none()`, which is exactly the
+    // whole-file case), so preallocated_len must stay 0 here.
+    // upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
+    // fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
     if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
         if let Some(existing) = existing_metadata {
             let size_r = existing.len();

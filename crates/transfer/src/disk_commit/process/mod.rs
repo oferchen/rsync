@@ -39,6 +39,10 @@ use self::commit::{
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
 #[cfg(test)]
+use self::file_ops::truncate_for_whole_file_sparse;
+#[cfg(test)]
 use super::config::{BackupConfig, DiskCommitConfig};
 #[cfg(all(test, target_os = "macos"))]
 use super::writer::Writer;
+#[cfg(test)]
+use crate::pipeline::messages::BeginMessage;
