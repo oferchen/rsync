@@ -274,6 +274,37 @@ pub fn supplementary_gids_for_uid(uid: RawUid) -> Result<Vec<u32>, io::Error> {
     group_list_for(&name, user.gid.as_raw())
 }
 
+/// Returns the names of every group the named user belongs to, primary group
+/// first, then supplementary groups.
+///
+/// Resolves the user's uid with `getpwnam`, enumerates the full group set with
+/// `getgrouplist` (via [`supplementary_gids_for_uid`]), then maps each gid to
+/// its group name with `getgrgid`. A gid without a name entry is skipped, just
+/// as upstream drops a NULL `gid_to_group()` result. A user with no passwd
+/// entry yields an empty list rather than an error, mirroring upstream's
+/// `user_to_uid()` failure path (which treats the user as having no groups).
+///
+/// Used by the rsync daemon to authorize an `auth users = @group` token: the
+/// token (minus the `@`) is `wildmatch`ed against each returned group name.
+///
+/// upstream: authenticate.c:283-295 `auth_server()` - `user_to_uid()` then
+/// `getallgroups()` then `gid_to_group()` for each gid.
+pub fn groups_for_user(username: &str) -> Result<Vec<String>, io::Error> {
+    let Some(uid) = lookup_user_by_name(username.as_bytes())? else {
+        return Ok(Vec::new());
+    };
+    let gids = supplementary_gids_for_uid(uid)?;
+    let mut names = Vec::with_capacity(gids.len());
+    for gid in gids {
+        if let Some(name) = lookup_group_name(gid)? {
+            if let Ok(name) = String::from_utf8(name) {
+                names.push(name);
+            }
+        }
+    }
+    Ok(names)
+}
+
 /// Group-list lookup on platforms where `nix` exposes `getgrouplist`
 /// (Linux and friends).
 #[cfg(not(target_vendor = "apple"))]

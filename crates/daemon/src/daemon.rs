@@ -273,8 +273,6 @@ include!("daemon/sections/module_definition.rs");
 
 include!("daemon/sections/config_helpers.rs");
 
-include!("daemon/sections/group_expansion.rs");
-
 /// Runs the daemon orchestration using the provided configuration.
 ///
 /// Parses runtime options from the `DaemonConfig` arguments, loads
