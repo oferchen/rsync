@@ -488,6 +488,116 @@ fn make_backup_missing_file_is_noop() {
     assert!(notice.is_none(), "no notice when nothing was backed up");
 }
 
+/// Verifies the network `--backup-dir` path materialises each new backup
+/// subdirectory with the corresponding destination directory's attributes,
+/// not the umask default.
+///
+/// Before this wiring the network receiver used a bare `create_dir_all`,
+/// skipping the attribute inheritance the local path performs. upstream:
+/// backup.c:115-138 `copy_valid_path` re-`x_stat`s the source-tree dir and
+/// runs `set_file_attrs` on each freshly created backup subdirectory, so
+/// `/bak/sub` mirrors the mode of the destination `sub/` it is displacing.
+#[cfg(unix)]
+#[test]
+fn make_backup_backup_dir_subdir_inherits_source_mode() {
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dest_dir = dir.path().join("dst");
+    let sub = dest_dir.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    // The corresponding destination directory carries a restrictive 0700; the
+    // backup subdirectory must inherit *this* mode, proving it is copied from
+    // the destination tree rather than left at the umask default.
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let file_path = sub.join("payload.bin");
+    fs::write(&file_path, b"pre-image").unwrap();
+
+    let backup_dir = dir.path().join("bak");
+    let config = BackupConfig {
+        dest_dir: dest_dir.clone(),
+        backup_dir: Some(backup_dir.clone()),
+        // upstream: options.c:2296-2297 - the default suffix is empty when a
+        // backup directory is set.
+        suffix: OsString::new(),
+    };
+    let disk_config = DiskCommitConfig {
+        metadata_opts: Some(
+            metadata::MetadataOptions::new()
+                .preserve_permissions(true)
+                .preserve_times(true),
+        ),
+        ..DiskCommitConfig::default()
+    };
+
+    make_backup(&file_path, &config, &disk_config)
+        .expect("make_backup succeeds")
+        .expect("notice produced for the backed-up file");
+
+    let backup_sub = backup_dir.join("sub");
+    assert!(backup_sub.is_dir(), "backup subdirectory must be created");
+    let mode = fs::metadata(&backup_sub).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "backup subdir must inherit the destination dir's 0700, got {mode:o}"
+    );
+    assert!(
+        backup_sub.join("payload.bin").exists(),
+        "backup file must be placed under the inherited subdirectory"
+    );
+}
+
+/// Verifies the network `--backup-dir` path removes a non-directory obstruction
+/// (a pre-existing file) sitting where a backup subdirectory must go, then
+/// recreates it as a directory - rather than failing with `NotADirectory`.
+///
+/// upstream: backup.c:48-53 `validate_backup_dir` deletes a non-directory in
+/// the way (`delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`) so the element can be
+/// recreated as a directory by `copy_valid_path`.
+#[cfg(unix)]
+#[test]
+fn make_backup_backup_dir_clears_nondir_obstruction() {
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dest_dir = dir.path().join("dst");
+    let sub = dest_dir.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let file_path = sub.join("payload.bin");
+    fs::write(&file_path, b"pre-image").unwrap();
+
+    let backup_dir = dir.path().join("bak");
+    fs::create_dir_all(&backup_dir).unwrap();
+    // A stale FILE sits exactly where the `sub/` backup directory must go.
+    let obstruction = backup_dir.join("sub");
+    fs::write(&obstruction, b"stale file").unwrap();
+
+    let config = BackupConfig {
+        dest_dir: dest_dir.clone(),
+        backup_dir: Some(backup_dir.clone()),
+        suffix: OsString::new(),
+    };
+    let disk_config = DiskCommitConfig {
+        metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
+        ..DiskCommitConfig::default()
+    };
+
+    make_backup(&file_path, &config, &disk_config)
+        .expect("make_backup must succeed after clearing the obstruction")
+        .expect("notice produced for the backed-up file");
+
+    assert!(
+        obstruction.is_dir(),
+        "the obstructing file must be replaced by a directory"
+    );
+    assert!(
+        obstruction.join("payload.bin").exists(),
+        "backup file must land inside the recreated directory"
+    );
+}
+
 /// Verifies `make_backup_copy` (the `--inplace --backup` path) DUPLICATES the
 /// original to the backup and LEAVES the original in place, unlike `make_backup`
 /// which renames it away. Preserving the original is the whole point: under

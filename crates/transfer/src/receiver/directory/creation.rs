@@ -418,11 +418,14 @@ impl ReceiverContext {
         // Build owned data for parallel metadata application, skipping failed dirs.
         // upstream: rsync.c:583 - `omit_dir_times && S_ISDIR(...)` adds
         // ATTRS_SKIP_MTIME, so a directory's mtime is never applied under -O.
-        // On a pull the local client IS the receiver and -O rides no wire bit
-        // (options.c:2646-2647 gates 'O' on am_sender), so clear preserve_times
-        // for the directory apply here, mirroring the local executor's
-        // apply_final_directory_metadata.
-        let metadata_opts_clone = if self.config.flags.omit_dir_times {
+        // `effective_omit_dir_times` also folds in the implicit
+        // `--backup`-without-`--backup-dir` rule (options.c:2342-2343), so an
+        // empty backed-up directory keeps its wall-clock mtime rather than the
+        // source mtime. On a pull the local client IS the receiver and -O rides
+        // no wire bit (options.c:2646-2647 gates 'O' on am_sender), so clear
+        // preserve_times for the directory apply here, mirroring the local
+        // executor's apply_final_directory_metadata.
+        let metadata_opts_clone = if self.config.effective_omit_dir_times() {
             metadata_opts.clone().preserve_times(false)
         } else {
             metadata_opts.clone()
@@ -951,11 +954,11 @@ impl ReceiverContext {
         }
 
         // upstream: generator.c:2271 - need_retouch_dir_times =
-        // preserve_mtimes && !omit_dir_times. The backup skip (generator.c:2101)
-        // only concerns the mtime repair (backup file creation moves mtimes).
-        let retouch_times = self.config.flags.times
-            && !self.config.flags.omit_dir_times
-            && !(self.config.flags.backup && self.config.backup_dir.is_none());
+        // preserve_mtimes && !omit_dir_times. `effective_omit_dir_times` folds
+        // in the implicit `--backup`-without-`--backup-dir` rule
+        // (options.c:2342-2343, generator.c:2101), so the same predicate governs
+        // both this retouch pass and the creation-time apply above.
+        let retouch_times = self.config.flags.times && !self.config.effective_omit_dir_times();
 
         // upstream: generator.c:2122 - fix_dir_perms = !am_root && !(mode &
         // S_IWUSR); only meaningful when we preserve perms (otherwise the

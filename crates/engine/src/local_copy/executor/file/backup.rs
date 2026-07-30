@@ -7,6 +7,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::LocalCopyError;
@@ -114,12 +115,56 @@ pub(crate) fn create_backup_parents(
             .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
     };
 
-    // Root of the backup tree. Only the relative portion *below* this root is
-    // validated and created element-by-element - mirroring upstream, which
-    // walks `rel = backup_dir_buf + backup_dir_len` (backup.c:67) and never
-    // re-validates the pre-existing path above backup_dir. Walking from the
-    // filesystem root instead would misread symlinked ancestors (e.g. macOS
-    // `/var` -> `/private/var`) as obstructions.
+    // Delegate the `--backup-dir` subtree to the shared helper, using a plain
+    // recursive create for each element (the local path has no receiver
+    // sandbox to anchor against).
+    create_backup_dir_parents(
+        destination_root,
+        backup_dir,
+        parent,
+        metadata_options,
+        |path| fs::create_dir_all(path),
+    )
+    .map_err(|error| LocalCopyError::io("create backup directory", parent, error))
+}
+
+/// Creates the `--backup-dir` parent tree for a backup path, inheriting each
+/// freshly-created subdirectory's attributes from the corresponding
+/// destination directory and clearing any non-directory obstruction.
+///
+/// Mirrors upstream `copy_valid_path` (backup.c:61-154) plus
+/// `validate_backup_dir` (backup.c:48-53): the backup root is ensured first
+/// (backup.c:165 `make_path`), then only the relative portion *below* the root
+/// is validated element-by-element (backup.c:67 walks
+/// `rel = backup_dir_buf + backup_dir_len`, never re-validating the path above
+/// `backup_dir`). Pre-existing directories are skipped (backup.c:102-105
+/// `EEXIST`/`validate_backup_dir`); a non-directory obstruction (including a
+/// symlink) is removed so the element can be recreated as a directory
+/// (backup.c:48-53 `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`); and each new
+/// directory inherits the corresponding destination directory's attributes
+/// (backup.c:115-138 `x_stat` + `make_file` + `set_file_attrs`).
+///
+/// Directory creation is delegated to `mkdir` so the network receiver commit
+/// path can anchor the leaf `mkdir` through its destination sandbox dirfd
+/// (SEC-1.j) while the local path uses a plain `create_dir_all`. `mkdir` must
+/// be idempotent for an already-existing directory, matching upstream's
+/// `EEXIST` skip. Shared by the local-copy executor and the network receiver
+/// so a `--backup-dir` subtree gets identical attribute inheritance and
+/// obstruction handling regardless of transport.
+///
+/// Walking from `backup_dir` (rather than the filesystem root) avoids
+/// misreading symlinked ancestors (e.g. macOS `/var` -> `/private/var`) as
+/// obstructions.
+pub fn create_backup_dir_parents<F>(
+    destination_root: &Path,
+    backup_dir: &Path,
+    parent: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+    mut mkdir: F,
+) -> io::Result<()>
+where
+    F: FnMut(&Path) -> io::Result<()>,
+{
     let backup_root = if backup_dir.is_absolute() {
         backup_dir.to_path_buf()
     } else {
@@ -127,15 +172,13 @@ pub(crate) fn create_backup_parents(
     };
 
     // upstream: backup.c:165 make_path(backup_dir_buf, 0) - ensure the backup
-    // directory root exists (with default perms) before validating subdirs.
-    fs::create_dir_all(&backup_root)
-        .map_err(|error| LocalCopyError::io("create backup directory", &backup_root, error))?;
+    // directory root exists before validating subdirs.
+    mkdir(&backup_root)?;
 
     let Ok(rel) = parent.strip_prefix(&backup_root) else {
         // parent is not under backup_root (unexpected path shape); fall back to
         // a plain create so the backup still lands somewhere valid.
-        return fs::create_dir_all(parent)
-            .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
+        return mkdir(parent);
     };
 
     let mut current = backup_root.clone();
@@ -144,36 +187,21 @@ pub(crate) fn create_backup_parents(
         match fs::symlink_metadata(&current) {
             Ok(meta) if meta.is_dir() => continue,
             // upstream: backup.c:48-53 - a non-directory (including a symlink) in
-            // the way is removed so it can be recreated as a directory.
-            Ok(_) => remove_backup_obstruction(&current)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "stat backup directory",
-                    current.as_path(),
-                    error,
-                ));
-            }
+            // the way is removed so it can be recreated as a directory. A
+            // non-directory is never a recursive tree, so a plain unlink mirrors
+            // `delete_item` for this case (backup.c:50); `remove_file` drops a
+            // symlink without following it, matching the `lstat`-based check.
+            Ok(_) => fs::remove_file(&current)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
 
-        fs::create_dir(&current).map_err(|error| {
-            LocalCopyError::io("create backup directory", current.as_path(), error)
-        })?;
+        mkdir(&current)?;
 
         apply_backup_dir_attrs(destination_root, &backup_root, &current, metadata_options);
     }
 
     Ok(())
-}
-
-/// Removes a non-directory that obstructs a backup directory element.
-///
-/// A non-directory is never a recursive tree, so a plain unlink mirrors
-/// upstream's `delete_item` for this case (backup.c:50). `remove_file` also
-/// removes a symlink without following it, matching the `lstat`-based check.
-fn remove_backup_obstruction(path: &Path) -> Result<(), LocalCopyError> {
-    fs::remove_file(path)
-        .map_err(|error| LocalCopyError::io("remove backup directory obstruction", path, error))
 }
 
 /// Copies a freshly-created backup subdirectory's attributes from the

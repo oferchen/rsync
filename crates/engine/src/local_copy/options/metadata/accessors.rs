@@ -86,10 +86,19 @@ impl LocalCopyOptions {
         self.preserve_crtimes
     }
 
-    /// Reports whether directory modification times should be skipped during metadata preservation.
+    /// Reports whether directory modification times should be skipped during
+    /// metadata preservation.
+    ///
+    /// A plain `--backup` without `--backup-dir` implies omit-dir-times so a
+    /// directory's mtime is never applied - upstream `options.c:2342-2343`
+    /// (`if (make_backups && !backup_dir) omit_dir_times = -1;`) feeding
+    /// `rsync.c:583` (`ATTRS_SKIP_MTIME` for directories). The implication is
+    /// receiver/local-side only; it is never advertised as the sender `-O`
+    /// letter, which stays gated on the explicit flag (`options.c:2646`,
+    /// `omit_dir_times > 0`).
     #[must_use]
     pub const fn omit_dir_times_enabled(&self) -> bool {
-        self.omit_dir_times
+        self.omit_dir_times || (self.backup && self.backup_dir.is_none())
     }
 
     /// Returns whether symbolic link timestamps should be skipped.
