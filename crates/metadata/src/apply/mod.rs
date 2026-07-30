@@ -16,6 +16,7 @@ pub use ownership::group_is_settable;
 mod tests;
 
 use crate::error::MetadataError;
+use crate::modify_window::ModifyWindow;
 use crate::options::{AttrsFlags, MetadataOptions};
 use std::fs;
 #[cfg(unix)]
@@ -290,11 +291,19 @@ pub fn apply_file_metadata_with_fd_if_changed(
 ///   when `unchanged_attrs` would fail (implicit - upstream always calls
 ///   `set_file_attrs` but its internal guards skip every syscall when nothing
 ///   differs)
+///
+/// `modify_window` carries the `--modify-window` tolerance so the mtime leg
+/// matches upstream `mtime_differs()` -> `same_time()` (util1.c:1478) exactly:
+/// the default zero window keeps whole-second equality, a positive window
+/// tolerates that many seconds of drift, and a negative window compares
+/// nanoseconds too. Passing the same `ModifyWindow` the quick-check used keeps
+/// the "content matches" and "attributes match" verdicts consistent.
 #[inline]
 pub fn metadata_unchanged(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: &fs::Metadata,
+    modify_window: ModifyWindow,
 ) -> bool {
     #[cfg(unix)]
     {
@@ -335,11 +344,17 @@ pub fn metadata_unchanged(
         }
 
         // upstream: generator.c:492-493 - any_time_differs(sxp, file, fname)
-        // Compare raw seconds + nanoseconds directly instead of constructing
-        // FileTime structs on the hot path.
+        // -> mtime_differs() -> same_time(), so the `--modify-window` tolerance
+        // governs this leg. Pass the sub-second component from both sides; a
+        // negative window compares it (util1.c:1482) while the default zero
+        // window reduces to whole-second equality.
         if options.times()
-            && (cached_meta.mtime() != entry.mtime()
-                || cached_meta.mtime_nsec() as u32 != entry.mtime_nsec())
+            && !modify_window.same_time(
+                cached_meta.mtime(),
+                cached_meta.mtime_nsec() as u32,
+                entry.mtime(),
+                entry.mtime_nsec(),
+            )
         {
             return false;
         }
@@ -357,8 +372,14 @@ pub fn metadata_unchanged(
     {
         if options.times() {
             let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-            let entry_mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
-            if current_mtime != entry_mtime {
+            // upstream: util1.c:1478 same_time() - apply the `--modify-window`
+            // tolerance rather than an exact FileTime compare.
+            if !modify_window.same_time(
+                current_mtime.unix_seconds(),
+                current_mtime.nanoseconds(),
+                entry.mtime(),
+                entry.mtime_nsec(),
+            ) {
                 return false;
             }
         }

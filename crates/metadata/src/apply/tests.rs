@@ -1615,7 +1615,7 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
         .preserve_group(true);
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return true when all attributes match"
     );
 }
@@ -1648,7 +1648,7 @@ fn metadata_unchanged_returns_false_on_permission_mismatch() {
         .preserve_group(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return false when permissions differ"
     );
 }
@@ -1677,8 +1677,58 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
         .preserve_group(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return false when mtime differs"
+    );
+}
+
+/// upstream: generator.c:396 `mtime_differs()` -> util1.c:1478 `same_time()` -
+/// `unchanged_attrs()` must treat two mtimes within `--modify-window` as equal.
+/// Before threading the window, oc compared the mtime exactly, so a
+/// within-window destination was mis-classified as changed and its metadata was
+/// re-applied even though upstream would skip it. The default zero window keeps
+/// the whole-second exact comparison.
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_honors_modify_window() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("window.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let base = meta.mtime();
+
+    let mut entry = FileEntry::new_file("window.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    // Source mtime 1s newer than the destination: inside a 2s window it is
+    // "the same" (upstream same_time returns 1), so nothing changed.
+    entry.set_mtime(base + 1, 0);
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::from_secs(2)),
+        "mtime delta (1s) <= window (2s) must be unchanged, mirroring same_time()"
+    );
+    // The default zero window keeps the exact whole-second comparison, so the
+    // same 1s drift is reported as changed.
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        "window 0 must stay exact: a 1s drift is a change"
+    );
+
+    // A drift larger than the window is a change regardless of tolerance.
+    entry.set_mtime(base + 3, 0);
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::from_secs(2)),
+        "mtime delta (3s) > window (2s) must be changed"
     );
 }
 
@@ -1707,7 +1757,7 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
         .preserve_group(true);
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return true when perms differ but preservation is off"
     );
 }
@@ -1743,7 +1793,7 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
         .preserve_times(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "executable source vs non-executable dest must force the attr pass"
     );
 
@@ -1753,7 +1803,7 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).expect("chmod dest");
     let meta = fs::metadata(&dest).expect("metadata");
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "non-executable source vs executable dest must force the attr pass"
     );
 }
@@ -1785,7 +1835,7 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     let mut entry = FileEntry::new_file("exec-match.txt".into(), 4, 0o700);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "matching exec presence must not force the attr pass"
     );
 
@@ -1798,7 +1848,7 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     let mut dir_entry = FileEntry::new_directory("subdir".into(), 0o755);
     dir_entry.set_mtime(dir_mtime.unix_seconds(), dir_mtime.nanoseconds());
     assert!(
-        metadata_unchanged(&dir_entry, &opts, &dir_meta),
+        metadata_unchanged(&dir_entry, &opts, &dir_meta, crate::ModifyWindow::ZERO),
         "-E never applies to directories"
     );
 }
@@ -1821,7 +1871,7 @@ fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
     let opts = MetadataOptions::new().with_chmod(Some(chmod));
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return false when chmod would change mode"
     );
 }
@@ -1855,7 +1905,7 @@ fn metadata_unchanged_returns_true_when_chmod_is_noop() {
         .with_chmod(Some(chmod));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return true when chmod modifier does not change mode"
     );
 }
@@ -1884,7 +1934,7 @@ fn metadata_unchanged_returns_true_when_owner_override_matches() {
         .with_owner_override(Some(meta.uid()));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return true when owner override matches current uid"
     );
 }
@@ -1913,7 +1963,7 @@ fn metadata_unchanged_returns_false_when_owner_override_differs() {
         .with_owner_override(Some(meta.uid() + 1));
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta),
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return false when owner override differs from current uid"
     );
 }
@@ -1942,7 +1992,7 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
         .with_group_override(Some(meta.gid()));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta),
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
         "should return true when group override matches current gid"
     );
 }
