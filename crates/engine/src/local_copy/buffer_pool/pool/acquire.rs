@@ -381,9 +381,8 @@ impl<A: BufferAllocator> BufferPool<A> {
     ///
     /// Uses the lock-free [`ArrayQueue::pop`](crossbeam_queue::ArrayQueue::pop) hot path. The accompanying
     /// `central_count` counter is decremented on success so future returns
-    /// can re-admit buffers up to the soft capacity. When adaptive resizing
-    /// is enabled, records hit/miss statistics and triggers periodic resize
-    /// evaluations (every 64 operations).
+    /// can re-admit buffers up to the soft capacity. Records hit/miss
+    /// statistics for telemetry.
     fn pop_buffer(&self) -> Vec<u8> {
         match self.buffers.pop() {
             Some(buffer) => {
@@ -392,18 +391,10 @@ impl<A: BufferAllocator> BufferPool<A> {
                     budget.release(buffer.capacity());
                 }
                 self.total_hits.fetch_add(1, Ordering::Relaxed);
-                if let Some(pressure) = &self.pressure {
-                    pressure.record_hit();
-                    self.maybe_resize(pressure);
-                }
                 buffer
             }
             None => {
                 self.total_misses.fetch_add(1, Ordering::Relaxed);
-                if let Some(pressure) = &self.pressure {
-                    pressure.record_miss();
-                    self.maybe_resize(pressure);
-                }
                 self.allocator.allocate(self.buffer_size)
             }
         }
