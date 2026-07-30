@@ -431,8 +431,24 @@ impl ReceiverContext {
                     std::ffi::OsStr::new(self.config.effective_backup_suffix()),
                 );
                 if let Some(parent) = backup_path.parent() {
-                    if !parent.exists() {
-                        fs::create_dir_all(parent)?;
+                    match self.config.backup_dir.as_ref().map(std::path::Path::new) {
+                        // upstream: backup.c:159,copy_valid_path - with
+                        // --backup-dir each new subdirectory inherits its source
+                        // dir's attrs and any non-directory obstruction is
+                        // cleared before it is recreated as a directory.
+                        Some(backup_dir) => {
+                            engine::create_backup_dir_parents(
+                                &dest_dir,
+                                backup_dir,
+                                parent,
+                                &metadata_opts,
+                                |path| fs::create_dir_all(path),
+                            )?;
+                        }
+                        // Without --backup-dir the parent already exists next to
+                        // the destination; upstream runs no copy_valid_path.
+                        None if parent.exists() => {}
+                        None => fs::create_dir_all(parent)?,
                     }
                 }
                 // SEC-1.j: route the backup rename through the sandbox dirfd

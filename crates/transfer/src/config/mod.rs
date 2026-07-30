@@ -665,6 +665,27 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
+    /// Reports whether directory modification times should be omitted, folding
+    /// in upstream's implicit `--backup`-without-`--backup-dir` rule.
+    ///
+    /// A plain `--backup` (no `--backup-dir`) implies omit-dir-times so a
+    /// directory's mtime is never applied at creation, and the final retouch
+    /// pass never re-sets it. Receiver-side only; the implication is never
+    /// advertised as the sender `-O` letter (that stays gated on the explicit
+    /// flag).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2342-2343`: `if (make_backups && !backup_dir)
+    ///   omit_dir_times = -1;`
+    /// - `rsync.c:583`: `omit_dir_times && S_ISDIR(...)` adds `ATTRS_SKIP_MTIME`.
+    /// - `generator.c:2271`: `need_retouch_dir_times = preserve_mtimes &&
+    ///   !omit_dir_times`.
+    #[must_use]
+    pub fn effective_omit_dir_times(&self) -> bool {
+        self.flags.omit_dir_times || (self.flags.backup && self.backup_dir.is_none())
+    }
+
     /// Returns the effective backup suffix, matching upstream rsync defaults.
     ///
     /// When `backup_suffix` is explicitly set, returns that value. Otherwise,
@@ -918,6 +939,45 @@ mod tests {
     fn effective_backup_suffix_defaults_to_tilde() {
         let config = ServerConfig::default();
         assert_eq!(config.effective_backup_suffix(), "~");
+    }
+
+    #[test]
+    fn effective_omit_dir_times_implied_by_plain_backup() {
+        // upstream: options.c:2342-2343 - make_backups && !backup_dir => -1.
+        let config = ServerConfig {
+            flags: ParsedServerFlags {
+                backup: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.effective_omit_dir_times());
+    }
+
+    #[test]
+    fn effective_omit_dir_times_not_implied_with_backup_dir() {
+        // upstream: options.c:2342 - the implication is gated on `!backup_dir`.
+        let config = ServerConfig {
+            flags: ParsedServerFlags {
+                backup: true,
+                ..Default::default()
+            },
+            backup_dir: Some(".backups".to_owned()),
+            ..Default::default()
+        };
+        assert!(!config.effective_omit_dir_times());
+    }
+
+    #[test]
+    fn effective_omit_dir_times_honors_explicit_flag() {
+        let config = ServerConfig {
+            flags: ParsedServerFlags {
+                omit_dir_times: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.effective_omit_dir_times());
     }
 
     #[test]
