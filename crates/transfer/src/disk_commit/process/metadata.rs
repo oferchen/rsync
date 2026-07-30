@@ -60,6 +60,10 @@ pub(super) fn apply_file_metadata(
             begin.xattr_list.as_ref(),
             config.xattr_filter.as_deref(),
             pre_transfer_meta,
+            // upstream: fnamecmp is the pre-transfer destination. Metadata is
+            // applied to the temp file before rename, so the final path still
+            // holds the basis file whose xattrs an abbreviated entry references.
+            &begin.file_path,
         )
     }
 }
@@ -82,6 +86,7 @@ fn apply_metadata_acls_and_xattrs(
     xattr_list: Option<&protocol::xattr::XattrList>,
     xattr_filter: Option<&filters::FilterSet>,
     pre_transfer_meta: Option<std::fs::Metadata>,
+    basis_path: &Path,
 ) -> Option<(PathBuf, String)> {
     let (opts, entry) = match (metadata_opts, file_entry) {
         (Some(o), Some(e)) => (o, e),
@@ -140,7 +145,16 @@ fn apply_metadata_acls_and_xattrs(
     if let Some(xattr_list) = xattr_list {
         let filter = xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
         let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-        if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true, filter_ref) {
+        // upstream: rsync_xal_set(fname, ..., fnamecmp) resolves an abbreviated
+        // value against the basis file - the pre-transfer destination, which
+        // still holds its old attributes while we stage the temp file.
+        if let Err(e) = metadata::apply_xattrs_from_list(
+            file_path,
+            xattr_list,
+            true,
+            Some(basis_path),
+            filter_ref,
+        ) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }
     }
