@@ -280,6 +280,117 @@ fn late_delete_pass_with_dest_rsync_filter_protects_bak() {
     assert!(dest.join("source.txt").exists(), "listed file must survive");
 }
 
+/// DATA-LOSS GUARD: when the sender reports a general I/O error while scanning
+/// the source (`stats.io_error & IOERR_GENERAL`), its file list may be
+/// incomplete, so a destination file that merely never got listed would be
+/// deleted as "extraneous" - silent data loss. Upstream's `delete_in_dir()`
+/// returns early (printing the notice once) in exactly this case, and only when
+/// `--ignore-errors` was not given. This test pins that the receiver skips the
+/// whole delete pass and keeps the un-listed dest file, emitting the notice once
+/// even across both (early + late) delete-pass sites.
+///
+/// upstream: generator.c:298-305 - `io_error & IOERR_GENERAL && !ignore_errors`.
+#[test]
+fn delete_pass_skipped_when_sender_flist_had_io_error() {
+    use super::super::super::stats::TransferStats;
+    use super::super::super::transfer::DeletePassPhase;
+    use crate::generator::io_error_flags::IOERR_GENERAL;
+    use logging::{DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let handshake = test_handshake();
+
+    // Destination carries an extraneous `stale.txt` that is NOT in the file
+    // list, making it a delete candidate under `--delete`.
+    let build = |dest: &std::path::Path| {
+        std::fs::write(dest.join("stale.txt"), b"extraneous").unwrap();
+        let mut config = test_config();
+        config.flags.delete = true;
+        // --delete-during: immediate early sweep, the mode most exposed to the
+        // incomplete-flist hazard (it deletes before the transfer lands).
+        config.deletion.delete_after = false;
+        config.deletion.late_delete = false;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        config
+    };
+
+    let notice = "IO error encountered -- skipping file deletion";
+    let count_notice = |events: Vec<DiagnosticEvent>| {
+        events
+            .into_iter()
+            .filter(
+                |event| matches!(event, DiagnosticEvent::Info { message, .. } if message == notice),
+            )
+            .count()
+    };
+
+    // Case 1: IOERR_GENERAL set, no --ignore-errors => skip the pass entirely.
+    let guarded_dir = tempfile::TempDir::new().unwrap();
+    let dest = guarded_dir.path();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, build(dest));
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    let mut stats = TransferStats::default();
+    stats.io_error |= IOERR_GENERAL;
+    let mut writer = TestDeletionWriter;
+
+    // Both delete-pass sites run in a real transfer; the guard must fire once.
+    for phase in [DeletePassPhase::Early, DeletePassPhase::Late] {
+        ctx.run_receiver_delete_pass(
+            phase,
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+            &mut stats,
+        )
+        .unwrap();
+    }
+    assert!(
+        dest.join("stale.txt").exists(),
+        "an un-listed dest file must survive when the sender's flist had an IO error"
+    );
+    assert_eq!(
+        count_notice(drain_events()),
+        1,
+        "the skip notice must be emitted exactly once across both delete sites"
+    );
+
+    // Case 2: same IO error, but --ignore-errors re-enables deletion and
+    // suppresses the notice - matching upstream, where the flag does both.
+    let ignore_dir = tempfile::TempDir::new().unwrap();
+    let dest = ignore_dir.path();
+    let mut config = build(dest);
+    config.deletion.ignore_errors = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    let mut stats = TransferStats::default();
+    stats.io_error |= IOERR_GENERAL;
+    let mut writer = TestDeletionWriter;
+
+    ctx.run_receiver_delete_pass(
+        DeletePassPhase::Early,
+        dest,
+        #[cfg(unix)]
+        None,
+        &mut writer,
+        &mut stats,
+    )
+    .unwrap();
+    assert!(
+        !dest.join("stale.txt").exists(),
+        "--ignore-errors must let the delete pass proceed despite the IO error"
+    );
+    assert_eq!(
+        count_notice(drain_events()),
+        0,
+        "--ignore-errors must suppress the skip notice"
+    );
+}
+
 /// TIMING CONTRAST: the very same sweep, run while the destination
 /// `.rsync-filter` is NOT yet present (the state at an early, pre-transfer
 /// sweep), deletes the `.bak` files - there is no on-disk merge file to load,
