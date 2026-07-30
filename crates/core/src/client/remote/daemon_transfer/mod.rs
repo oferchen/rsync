@@ -32,6 +32,8 @@ use engine::batch::BatchWriter;
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, socket_error};
+#[cfg(feature = "quic")]
+use super::super::module_list::Transport;
 use super::super::module_list::{
     RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
@@ -42,6 +44,22 @@ use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
+
+/// Returns whether an operand carries a daemon URL scheme.
+///
+/// Always recognises `rsync://` (case-insensitive on the prefix upstream
+/// accepts); `quic://` is recognised only when the `quic` feature is compiled
+/// in, so the scheme is absent from a default build.
+fn is_daemon_url(operand: &str) -> bool {
+    if operand.starts_with("rsync://") || operand.starts_with("RSYNC://") {
+        return true;
+    }
+    #[cfg(feature = "quic")]
+    if operand.starts_with("quic://") || operand.starts_with("QUIC://") {
+        return true;
+    }
+    false
+}
 
 /// Executes a transfer over daemon protocol (rsync://).
 ///
@@ -105,18 +123,38 @@ pub fn run_daemon_transfer(
         .iter()
         .find(|arg| {
             let s = arg.to_string_lossy();
-            s.starts_with("rsync://") || s.starts_with("RSYNC://") || s.contains("::")
+            is_daemon_url(&s) || s.contains("::")
         })
         .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
 
     let daemon_operand_str = daemon_operand.to_string_lossy();
-    let request = if daemon_operand_str.starts_with("rsync://")
+    #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
+    let mut request = if daemon_operand_str.starts_with("rsync://")
         || daemon_operand_str.starts_with("RSYNC://")
     {
         DaemonTransferRequest::parse_rsync_url(&daemon_operand_str)?
     } else {
+        // A `quic://` operand is dispatched to the QUIC parser under the
+        // feature; without it `is_daemon_url` never matches `quic://`, so this
+        // branch only sees `host::module` targets.
+        #[cfg(feature = "quic")]
+        if daemon_operand_str.starts_with("quic://") || daemon_operand_str.starts_with("QUIC://") {
+            DaemonTransferRequest::parse_quic_url(&daemon_operand_str)?
+        } else {
+            DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?
+        }
+        #[cfg(not(feature = "quic"))]
         DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?
     };
+
+    // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
+    // QUIC; a `quic://` target already carries the transport, so this is
+    // idempotent (QUIC-8c). Hard failure with no TCP fallback happens at the
+    // connect-selection point (`open_daemon_stream`), never here.
+    #[cfg(feature = "quic")]
+    if config.daemon_transport() == Transport::Quic {
+        request = request.with_transport(Transport::Quic);
+    }
 
     // upstream: socket.c:274-277 - open_socket_out() bounds connect(2) only when
     // --contimeout is set; --timeout never bounds the connect phase.

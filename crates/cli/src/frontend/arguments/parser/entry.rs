@@ -165,6 +165,8 @@ where
         .remove_one::<OsString>("connect-program")
         .filter(|value| !value.is_empty());
     let daemon_port = matches.remove_one::<u16>("port");
+    #[cfg(feature = "quic")]
+    let quic = matches.get_flag("quic");
     let remote_options = matches
         .remove_many::<OsString>("remote-option")
         .map(Iterator::collect)
@@ -1189,6 +1191,8 @@ where
         stop_at: stop_at_option,
         out_format,
         daemon_port,
+        #[cfg(feature = "quic")]
+        quic,
         dparam,
         no_iconv,
         executability,

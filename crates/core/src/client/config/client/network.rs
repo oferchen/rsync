@@ -9,6 +9,19 @@ impl ClientConfig {
         self.address_mode
     }
 
+    /// Returns the transport that carries the daemon protocol.
+    ///
+    /// [`Transport::Quic`](crate::client::Transport::Quic) is selected by
+    /// `--quic` or a `quic://` target; the default is
+    /// [`Transport::Tcp`](crate::client::Transport::Tcp). Available only under
+    /// the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic")]
+    pub const fn daemon_transport(&self) -> crate::client::Transport {
+        self.daemon_transport
+    }
+
     /// Returns the configured connect program, if any.
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {
