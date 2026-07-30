@@ -379,7 +379,7 @@ impl ReceiverContext {
                 }
                 if update_only
                     && dest_type_matches_source(&file_path, entry)
-                    && dest_mtime_newer(meta, entry)
+                    && dest_mtime_newer(meta, entry, modify_window)
                 {
                     // upstream: generator.c:1721 - the `-u` skip is guarded by
                     // `stype == ftype`, so a newer destination only suppresses
