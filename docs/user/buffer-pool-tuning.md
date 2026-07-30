@@ -43,6 +43,38 @@ outstanding (checked-out) memory. When the cap is reached, acquires block
 until a buffer is returned. This provides backpressure for memory-constrained
 environments.
 
+## Sizing rationale: static, hardware-scaled, no auto-scaling
+
+The default pool size is a static heuristic, not a dynamically tuned
+value. It is deliberately pinned to `std::thread::available_parallelism()`
+buffers, so it already scales with the hardware it runs on: more cores
+yield a larger pool, fewer cores a smaller one, with no runtime feedback
+loop involved. The 32 MiB soft byte budget caps retention on top of that.
+
+This is intentional, and dynamic auto-scaling is deliberately declined:
+
+- **The default is the right heuristic.** One buffer per hardware thread
+  matches the degree of parallelism the engine actually schedules, so the
+  common case needs no tuning.
+- **Under-provisioning is never a correctness or availability problem.**
+  An acquire is satisfied from a per-thread cache (one buffer per thread),
+  then a lock-free central queue, then a fresh allocation on miss. It never
+  blocks and never fails by default. A pool that is too small costs only a
+  higher allocation rate - throughput, not correctness. The per-thread
+  cache absorbs the steady-state acquire/return pattern, so real churn
+  appears only when the worker count far exceeds the CPU count or a unit of
+  work holds more than one buffer at a time.
+- **A grow/shrink feedback loop is not worth its complexity.** Auto-scaling
+  would reintroduce a control-loop that churns pool memory up and down in
+  response to load, for a benefit that has not been quantified against the
+  static default. The static default plus the env-var escape hatch already
+  covers the extreme workloads that would motivate it.
+
+The escape hatch for those extreme cases is `OC_RSYNC_BUFFER_POOL_SIZE`
+(pool size) and `OC_RSYNC_BYTE_BUDGET` / `OC_RSYNC_BUFFER_POOL_MEMORY_CAP`
+(memory bounds); see the environment variables section below and
+`docs/oc-extension-env-reference.md`.
+
 ## Adaptive buffer sizing
 
 The pool selects buffer sizes based on file size to balance memory
