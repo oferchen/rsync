@@ -40,7 +40,7 @@ pub use listing::{
     run_module_list_with_password, run_module_list_with_password_and_options,
 };
 pub use request::{ModuleListOptions, ModuleListRequest};
-pub use types::DaemonAddress;
+pub use types::{DaemonAddress, Transport};
 
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};

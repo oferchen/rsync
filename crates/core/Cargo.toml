@@ -97,6 +97,12 @@ async = ["dep:tokio", "engine/async"]
 # var until the CLI flag lands (#1806).
 async-ssh = ["dep:tokio", "rsync_io/async-ssh"]
 
+# Native QUIC daemon transport (oc extension, off by default). Makes the
+# `Transport::Quic` selection representable on a daemon target and pulls in the
+# `rsync_io::quic` primitive it dials in a follow-up. Default builds are
+# unaffected. Design: docs/design/quic-transport-policy.md.
+quic = ["rsync_io/quic"]
+
 # systemd sd-notify integration
 sd-notify = []
 

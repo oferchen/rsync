@@ -116,7 +116,7 @@ pub use self::error::{
     connection_unexpectedly_closed_error,
 };
 pub use self::module_list::{
-    DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest,
+    DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest, Transport,
     run_module_list, run_module_list_with_options, run_module_list_with_password,
     run_module_list_with_password_and_options,
 };

@@ -51,6 +51,14 @@ parallel = ["engine/lazy-metadata", "checksums/parallel"]
 # concurrency benchmark.
 async-daemon = ["daemon/async-daemon"]
 
+# ============================================================================
+# Transport Features
+# ============================================================================
+# Native QUIC daemon transport (oc extension, off by default). Threads the
+# `core` selector through; the `quic://` scheme and `--quic` modifier land in a
+# follow-up. Default builds are unaffected.
+quic = ["core/quic"]
+
 
 [dependencies]
 bandwidth = { path = "../bandwidth" }
