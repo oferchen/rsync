@@ -801,6 +801,100 @@ fn includes_inplace_long_arg() {
 }
 
 #[test]
+fn no_w_emitted_for_inplace_sparse_push() {
+    // upstream: options.c:server_options - `else if (inplace) { --inplace; if
+    // (sparse_files && !whole_file && am_sender) --no-W }`. On a PUSH the
+    // remote receiver is an older-rsync workaround target: --inplace --sparse
+    // must be paired with --no-W so the remote does a delta (not whole-file)
+    // transfer. WHY: without --no-W an older remote silently switches to
+    // whole-file mode for --inplace --sparse, defeating the delta the client
+    // asked for.
+    let config = ClientConfig::builder().inplace(true).sparse(true).build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+
+    assert!(
+        args.iter().any(|a| a == "--inplace"),
+        "expected --inplace in args: {args:?}"
+    );
+    assert!(
+        args.iter().any(|a| a == "--no-W"),
+        "expected --no-W for inplace+sparse push: {args:?}"
+    );
+}
+
+#[test]
+fn no_w_suppressed_on_pull_and_without_sparse_or_whole_file() {
+    // upstream: options.c:server_options - the --no-W guard is
+    // `sparse_files && !whole_file && am_sender`. Each missing conjunct
+    // suppresses it: a PULL (remote is the sender, !am_sender), no --sparse,
+    // and an explicit --whole-file (`whole_file == 1`) each drop the flag.
+    // WHY: --no-W only patches a receiver-side whole-file bug, so it is
+    // meaningless on a pull, without sparse, or when whole-file is intended.
+
+    // PULL with inplace+sparse: remote is the sender, no --no-W.
+    let pull = ClientConfig::builder().inplace(true).sparse(true).build();
+    let pull_args = RemoteInvocationBuilder::new(&pull, RemoteRole::Receiver).build("/path");
+    assert!(
+        !pull_args.iter().any(|a| a == "--no-W"),
+        "--no-W must not be sent on a pull: {pull_args:?}"
+    );
+
+    // PUSH with inplace but no sparse: no --no-W.
+    let no_sparse = ClientConfig::builder().inplace(true).build();
+    let no_sparse_args =
+        RemoteInvocationBuilder::new(&no_sparse, RemoteRole::Sender).build("/path");
+    assert!(
+        !no_sparse_args.iter().any(|a| a == "--no-W"),
+        "--no-W must not be sent without --sparse: {no_sparse_args:?}"
+    );
+
+    // PUSH with inplace+sparse but explicit --whole-file: no --no-W.
+    let whole = ClientConfig::builder()
+        .inplace(true)
+        .sparse(true)
+        .whole_file_option(Some(true))
+        .build();
+    let whole_args = RemoteInvocationBuilder::new(&whole, RemoteRole::Sender).build("/path");
+    assert!(
+        !whole_args.iter().any(|a| a == "--no-W"),
+        "--no-W must not be sent when whole-file is explicitly requested: {whole_args:?}"
+    );
+}
+
+#[test]
+fn ignore_missing_args_is_pull_only_delete_missing_is_both() {
+    // upstream: options.c:2866-2871 - "--delete-missing-args needs the
+    // cooperation of both sides, but the sender can handle
+    // --ignore-missing-args by itself." WHY: forwarding --ignore-missing-args
+    // on a PUSH would steer the remote receiver for a decision the local
+    // sender already makes, so it is emitted only on a PULL (!am_sender);
+    // --delete-missing-args always goes both directions.
+    let ignore = ClientConfig::builder().ignore_missing_args(true).build();
+    let pull = RemoteInvocationBuilder::new(&ignore, RemoteRole::Receiver).build("/path");
+    assert!(
+        pull.iter().any(|a| a == "--ignore-missing-args"),
+        "--ignore-missing-args must be forwarded on a pull: {pull:?}"
+    );
+    let push = RemoteInvocationBuilder::new(&ignore, RemoteRole::Sender).build("/path");
+    assert!(
+        !push.iter().any(|a| a == "--ignore-missing-args"),
+        "--ignore-missing-args must NOT be forwarded on a push: {push:?}"
+    );
+
+    let delete = ClientConfig::builder().delete_missing_args(true).build();
+    let del_pull = RemoteInvocationBuilder::new(&delete, RemoteRole::Receiver).build("/path");
+    let del_push = RemoteInvocationBuilder::new(&delete, RemoteRole::Sender).build("/path");
+    assert!(
+        del_pull.iter().any(|a| a == "--delete-missing-args"),
+        "--delete-missing-args must be forwarded on a pull: {del_pull:?}"
+    );
+    assert!(
+        del_push.iter().any(|a| a == "--delete-missing-args"),
+        "--delete-missing-args must be forwarded on a push: {del_push:?}"
+    );
+}
+
+#[test]
 fn includes_partial_dir_long_arg() {
     let config = ClientConfig::builder()
         .partial_directory(Some(".rsync-partial"))
