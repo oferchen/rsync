@@ -359,7 +359,7 @@ fn assert_equivalent_plain(ops: &[Op], payload: &[u8], use_basis: bool) {
     // Live reference.
     let ref_out = dir.path().join("ref.bin");
     let mut server = Cursor::new(wire.clone());
-    let mut ref_reader = TokenReader::new(None).expect("plain reader");
+    let mut ref_reader = TokenReader::new(None, 31).expect("plain reader");
     let ref_res = reference_apply(
         &mut server,
         &ref_out,
@@ -375,7 +375,7 @@ fn assert_equivalent_plain(ops: &[Op], payload: &[u8], use_basis: bool) {
 
     // DeltaApplicator.
     let app_out = dir.path().join("app.bin");
-    let mut app_reader = TokenReader::new(None).expect("plain reader");
+    let mut app_reader = TokenReader::new(None, 31).expect("plain reader");
     let app_res = applicator_apply(
         &app_out,
         false,
@@ -471,7 +471,7 @@ fn equivalence_compressed_mixed_literal_and_copy() {
     let ref_out = dir.path().join("ref.bin");
     let mut server = Cursor::new(wire.clone());
     let mut ref_reader =
-        TokenReader::new(Some(protocol::CompressionAlgorithm::Zlib)).expect("zlib");
+        TokenReader::new(Some(protocol::CompressionAlgorithm::Zlib), 31).expect("zlib");
     let ref_res = reference_apply(
         &mut server,
         &ref_out,
@@ -487,7 +487,7 @@ fn equivalence_compressed_mixed_literal_and_copy() {
 
     let app_out = dir.path().join("app.bin");
     let mut app_reader =
-        TokenReader::new(Some(protocol::CompressionAlgorithm::Zlib)).expect("zlib");
+        TokenReader::new(Some(protocol::CompressionAlgorithm::Zlib), 31).expect("zlib");
     let app_res = applicator_apply(
         &app_out,
         false,
@@ -539,7 +539,7 @@ fn equivalence_sparse_size_check() {
     // final_pos == expected_size.
     let ref_out = dir.path().join("ref.bin");
     let mut server = Cursor::new(wire.clone());
-    let mut ref_reader = TokenReader::new(None).expect("plain");
+    let mut ref_reader = TokenReader::new(None, 31).expect("plain");
     let ref_res = reference_apply(
         &mut server,
         &ref_out,
@@ -556,7 +556,7 @@ fn equivalence_sparse_size_check() {
 
     // DeltaApplicator (sparse) with correct expected size: passes.
     let app_out = dir.path().join("app.bin");
-    let mut app_reader = TokenReader::new(None).expect("plain");
+    let mut app_reader = TokenReader::new(None, 31).expect("plain");
     let app_res = applicator_apply(
         &app_out,
         true,
@@ -575,7 +575,7 @@ fn equivalence_sparse_size_check() {
 
     // DeltaApplicator with a WRONG expected size: GAP-2 check fires.
     let app_out2 = dir.path().join("app2.bin");
-    let mut app_reader2 = TokenReader::new(None).expect("plain");
+    let mut app_reader2 = TokenReader::new(None, 31).expect("plain");
     let err = applicator_apply(
         &app_out2,
         true,
@@ -609,7 +609,7 @@ fn equivalence_checksum_mismatch_both_invalid() {
 
     let ref_out = dir.path().join("ref.bin");
     let mut server = Cursor::new(wire.clone());
-    let mut ref_reader = TokenReader::new(None).expect("plain");
+    let mut ref_reader = TokenReader::new(None, 31).expect("plain");
     let ref_err = reference_apply(
         &mut server,
         &ref_out,
@@ -625,7 +625,7 @@ fn equivalence_checksum_mismatch_both_invalid() {
     assert_eq!(ref_err.kind(), std::io::ErrorKind::InvalidData);
 
     let app_out = dir.path().join("app.bin");
-    let mut app_reader = TokenReader::new(None).expect("plain");
+    let mut app_reader = TokenReader::new(None, 31).expect("plain");
     let app_err = applicator_apply(
         &app_out,
         false,

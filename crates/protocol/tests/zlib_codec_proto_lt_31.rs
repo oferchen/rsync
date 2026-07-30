@@ -69,7 +69,11 @@
 //! gate (e.g. by always advancing the offset, or never advancing it), the
 //! third assertion fires immediately.
 
-use protocol::wire::{CompressedTokenEncoder, DEFLATED_DATA, END_FLAG};
+use std::io::Cursor;
+
+use protocol::wire::{
+    CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA, END_FLAG,
+};
 
 use compress::zlib::CompressionLevel;
 
@@ -222,4 +226,137 @@ fn rp28i_zlib_codec_all_pre_31_protocols_diverge_from_modern() {
              >0xFFFF path (pre-31 data-duplicating bug, upstream token.c:473)"
         );
     }
+}
+
+/// Length (in bytes) of the trailing basis chunk re-fed at protocol < 31, and
+/// of the literal that copies it. Small enough to fit in a single deflate
+/// back-reference (<= 258, the max match length) and to sit well inside the
+/// 32 KiB sliding window.
+const TAIL: usize = 200;
+
+/// Deterministic, NON-periodic basis bytes via a small LCG.
+///
+/// Periodicity is fatal to this test: with `basis[i] = i & 0xff` the re-fed
+/// prefix (protocol < 31) and the true suffix (protocol >= 31) expose the SAME
+/// repeating window content, so a desynced dictionary still decodes the right
+/// bytes and the bug hides. Pseudo-random bytes make the prefix and suffix
+/// genuinely different, so a wrong dictionary decodes to wrong bytes.
+fn pseudo_random(len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut state: u32 = 0x1234_5678;
+    for _ in 0..len {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        out.push((state >> 24) as u8);
+    }
+    out
+}
+
+/// Encodes a block-match followed by a literal, feeding the matched block into
+/// the compressor's dictionary via `see_token` - exactly the sender flow after
+/// a block match. The block is `0xFFFF + TAIL` bytes so `see_token` iterates
+/// twice and the `protocol_version >= 31` gate governs the second chunk.
+fn encode_block_then_literal(protocol_version: u32, basis: &[u8], literal: &[u8]) -> Vec<u8> {
+    let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, protocol_version);
+    let mut wire = Vec::new();
+    encoder.send_block_match(&mut wire, 0).unwrap();
+    encoder.see_token(basis).unwrap();
+    encoder.send_literal(&mut wire, literal).unwrap();
+    encoder.finish(&mut wire).unwrap();
+    wire
+}
+
+/// Decodes a stream produced by [`encode_block_then_literal`] with a decoder
+/// pinned to `protocol_version`, mirroring the receiver: on the block-match
+/// token it feeds the identical basis block through its own `see_token` before
+/// the literal that references it is inflated. Returns the reconstructed
+/// literal bytes.
+fn decode_block_then_literal(protocol_version: u32, basis: &[u8], wire: &[u8]) -> Vec<u8> {
+    let mut decoder = CompressedTokenDecoder::new();
+    decoder.set_protocol_version(protocol_version);
+    let mut cursor = Cursor::new(wire);
+    let mut literal = Vec::new();
+    let mut saw_block = false;
+    loop {
+        match decoder.recv_token(&mut cursor).unwrap() {
+            CompressedToken::Literal(chunk) => literal.extend_from_slice(&chunk),
+            CompressedToken::BlockMatch(idx) => {
+                assert_eq!(idx, 0, "single matched block must decode as index 0");
+                saw_block = true;
+                decoder.see_token(basis).unwrap();
+            }
+            CompressedToken::End => break,
+        }
+    }
+    assert!(saw_block, "decoder must observe the block-match token");
+    literal
+}
+
+/// Builds a fixture whose literal is guaranteed to back-reference the
+/// protocol-gate-governed dictionary tail: the literal is a verbatim copy of
+/// `basis[0..TAIL]`, which at protocol < 31 the sender re-feeds as the window
+/// tail at distance `TAIL`.
+fn dictionary_fixture() -> (Vec<u8>, Vec<u8>) {
+    let basis = pseudo_random(0xFFFF + TAIL);
+    let literal = basis[..TAIL].to_vec();
+    (basis, literal)
+}
+
+/// Plain-zlib (`-z`) round-trip at protocol 29: the pre-31 non-advance path on
+/// both sides. The decoder must reconstruct the literal exactly, proving the
+/// receiver's `see_token` dictionary stays in lockstep with the sender's when
+/// neither advances between 0xFFFF chunks.
+#[test]
+fn proto_29_decoder_roundtrip_stays_in_sync() {
+    let (basis, literal) = dictionary_fixture();
+    let wire = encode_block_then_literal(29, &basis, &literal);
+    let decoded = decode_block_then_literal(29, &basis, &wire);
+    assert_eq!(
+        decoded, literal,
+        "protocol 29 round-trip must reconstruct the literal byte-for-byte; \
+         both sides leave the dictionary cursor unadvanced (upstream token.c \
+         data-duplicating bug), so their dictionaries stay identical"
+    );
+}
+
+/// Same round-trip at protocol 31: the modern advance-on-both-sides path.
+/// Confirms the fix leaves proto >= 31 behaviour intact.
+#[test]
+fn proto_31_decoder_roundtrip_stays_in_sync() {
+    let (basis, literal) = dictionary_fixture();
+    let wire = encode_block_then_literal(31, &basis, &literal);
+    let decoded = decode_block_then_literal(31, &basis, &wire);
+    assert_eq!(
+        decoded, literal,
+        "protocol 31 round-trip must reconstruct the literal byte-for-byte"
+    );
+}
+
+/// Rule-9 regression guard: the decoder's protocol gate is LOAD-BEARING.
+///
+/// A protocol-29 stream whose literal back-references the pre-31 re-fed
+/// dictionary tail decodes correctly ONLY with a protocol-29 decoder. Decoding
+/// the identical bytes with a decoder that advances the cursor (protocol >= 31
+/// behaviour, i.e. the pre-fix bug or any regression that drops the gate)
+/// leaves different content at that back-reference distance, so it reconstructs
+/// the WRONG literal. This is exactly the silent dictionary desync that would
+/// corrupt `-z` transfers against real rsync 3.0.x/3.1.x peers. If the decoder
+/// ever stops honouring `set_protocol_version`, the `assert_ne!` below fires.
+#[test]
+fn proto_29_stream_decoded_with_modern_gate_desyncs() {
+    let (basis, literal) = dictionary_fixture();
+    let wire = encode_block_then_literal(29, &basis, &literal);
+
+    let synced = decode_block_then_literal(29, &basis, &wire);
+    assert_eq!(
+        synced, literal,
+        "the matched protocol-29 decoder must stay in sync"
+    );
+
+    let desynced = decode_block_then_literal(31, &basis, &wire);
+    assert_ne!(
+        desynced, literal,
+        "a decoder that advances the cursor (proto >= 31 gate) must desync from \
+         a protocol-29 sender and corrupt the literal - if this ever matches, \
+         the decoder's protocol gate has stopped mattering"
+    );
 }

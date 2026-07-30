@@ -301,7 +301,12 @@ impl GeneratorContext {
             .map(|algo| {
                 let level =
                     whole_stream_compression_level(dont_compress_match_all, algo, configured_level);
-                create_token_encoder(algo, level, compression_threads)
+                create_token_encoder(
+                    algo,
+                    level,
+                    compression_threads,
+                    u32::from(self.protocol.as_u8()),
+                )
             })
             .transpose()?
             .flatten();

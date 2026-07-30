@@ -417,6 +417,29 @@ impl DeflateSink for ZlibDeflate {
             }
         }
 
+        // upstream: token.c:recv_deflated_token:638 - after draining a run the
+        // decompressor must be at a Z_SYNC_FLUSH sync point, which upstream
+        // checks with `if (!inflateSyncPoint(&rx_strm)) { rprintf(FERROR,
+        // "decompressor lost sync!"); exit_cleanup(RERR_STREAMIO); }`. flate2
+        // exposes no inflateSyncPoint(), so we check the observable equivalent:
+        // the four-byte 00 00 FF FF sync trailer we just fed was fully consumed
+        // by the inflate stream. A dictionary that has desynced from the sender
+        // cannot cleanly absorb the trailer, leaving bytes unconsumed here - the
+        // early symptom of a lost sync. Surfaced as an io::Error, not a panic,
+        // mirroring upstream's graceful RERR_STREAMIO exit and preserving this
+        // decoder's "never panic on untrusted wire bytes" contract. No wire
+        // impact: a valid stream always consumes the trailer, so this only fires
+        // on an already-corrupt or desynced stream.
+        if !input.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "zlib token decompressor lost sync: {} sync-trailer byte(s) unconsumed",
+                    input.len()
+                ),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -437,6 +460,10 @@ pub(super) struct ZlibTokenDecoder {
     core: TokenDecodeCore,
     deflate: ZlibDeflate,
     is_zlibx: bool,
+    /// Negotiated protocol version. Gates the `buf += blklen` advance in
+    /// [`see_token`](Self::see_token) exactly as upstream does, keeping the
+    /// receiver's inflate dictionary symmetric with the sender's encoder.
+    protocol_version: u32,
 }
 
 impl Default for ZlibTokenDecoder {
@@ -451,6 +478,10 @@ impl ZlibTokenDecoder {
             core: TokenDecodeCore::new(true),
             deflate: ZlibDeflate::new(),
             is_zlibx: false,
+            // Default to the modern protocol (>= 31, the data-non-duplicating
+            // path). Receivers negotiating an older peer override this via
+            // [`set_protocol_version`](Self::set_protocol_version).
+            protocol_version: 31,
         }
     }
 
@@ -498,12 +529,27 @@ impl ZlibTokenDecoder {
         if self.is_zlibx {
             return Ok(());
         }
-        let mut remaining = data;
+        // upstream: token.c:see_deflate_token() lines 694-714 - the `len`
+        // counter always decrements by `blklen`, but the read pointer `buf`
+        // only advances (`buf += blklen`) when protocol_version >= 31. At
+        // proto < 31 the pointer deliberately stays put, so every 0xffff chunk
+        // re-feeds the SAME leading bytes of the matched block - a
+        // data-duplicating bug that upstream faithfully replicates on BOTH
+        // sides. The matching send side gates its own `offset += n1` the same
+        // way (token.c:482, ZlibTokenEncoder::see_token). Advancing here
+        // unconditionally would feed the receiver's inflate dictionary
+        // different bytes than an old (proto 28-30) peer's sender inserted,
+        // desyncing the dictionary and corrupting decompression. So this gate
+        // is a correctness requirement for interop with rsync 3.0.x/3.1.x, not
+        // an optimization. Blocks <= 0xffff take a single chunk, so the gate is
+        // observable only for matched blocks larger than 64 KiB - 1.
+        let mut offset = 0usize;
+        let mut len = data.len();
         let mut combined = Vec::new();
 
-        while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(0xFFFF);
-            let chunk = &remaining[..chunk_len];
+        while len != 0 {
+            let chunk_len = len.min(0xFFFF);
+            let chunk = &data[offset..offset + chunk_len];
 
             let len_lo = (chunk_len & 0xFF) as u8;
             let len_hi = ((chunk_len >> 8) & 0xFF) as u8;
@@ -539,12 +585,25 @@ impl ZlibTokenDecoder {
                 }
             }
 
-            remaining = &remaining[chunk_len..];
+            // upstream: token.c:710-712 - `if (protocol_version >= 31) buf +=
+            // blklen;` then `len -= blklen;`. `len` always shrinks; `buf` (our
+            // `offset`) only advances on the modern protocol.
+            if self.protocol_version >= 31 {
+                offset += chunk_len;
+            }
+            len -= chunk_len;
         }
         Ok(())
     }
 
     pub(super) fn set_zlibx(&mut self, zlibx: bool) {
         self.is_zlibx = zlibx;
+    }
+
+    /// Sets the negotiated protocol version that gates the `see_token` buffer
+    /// advance. Must be called before the first `see_token` so the receiver's
+    /// dictionary stays symmetric with the sender's encoder.
+    pub(super) fn set_protocol_version(&mut self, protocol_version: u32) {
+        self.protocol_version = protocol_version;
     }
 }

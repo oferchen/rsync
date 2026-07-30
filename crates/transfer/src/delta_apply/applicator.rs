@@ -1372,7 +1372,7 @@ mod tests {
         wire.extend_from_slice(&sentinel);
 
         let mut cursor = io::Cursor::new(wire);
-        let mut token_reader = TokenReader::new(None).expect("plain reader");
+        let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
         discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
 
@@ -1398,7 +1398,7 @@ mod tests {
         // Deliberately omit the trailing checksum bytes.
 
         let mut cursor = io::Cursor::new(wire);
-        let mut token_reader = TokenReader::new(None).expect("plain reader");
+        let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
         let err = discard_delta_stream(&mut cursor, &mut token_reader, digest_len)
             .expect_err("truncated frame must error");
@@ -1419,7 +1419,7 @@ mod tests {
         let digest_len = 16;
         let frame = plain_delta_with_match(digest_len);
         let mut cursor = io::Cursor::new(frame.clone());
-        let mut token_reader = TokenReader::new(None).expect("plain reader");
+        let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
         // Draining must succeed (no crash, no propagated open error).
         discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
