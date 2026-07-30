@@ -45,6 +45,17 @@ pub(crate) struct RuntimeOptions {
     reverse_lookup_configured: bool,
     lock_file: Option<PathBuf>,
     lock_file_from_config: bool,
+    /// Resolved certificate/key paths the QUIC listener presents, from the
+    /// `quic cert file` / `quic key file` global directives (oc extension).
+    ///
+    /// Per-listener identity, so both are global-only (a module-scoped use is a
+    /// config error). Stored here for the later QUIC listener build-out; the
+    /// listener and certificate loading are not wired at this stage. See
+    /// docs/design/quic-transport-policy.md (decision A).
+    #[cfg(feature = "quic")]
+    quic_cert_file: Option<PathBuf>,
+    #[cfg(feature = "quic")]
+    quic_key_file: Option<PathBuf>,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
     syslog_facility: Option<String>,
@@ -144,6 +155,10 @@ impl Default for RuntimeOptions {
             reverse_lookup_configured: false,
             lock_file: None,
             lock_file_from_config: false,
+            #[cfg(feature = "quic")]
+            quic_cert_file: None,
+            #[cfg(feature = "quic")]
+            quic_key_file: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
             syslog_facility: None,

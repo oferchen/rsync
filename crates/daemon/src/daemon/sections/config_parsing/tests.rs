@@ -3571,4 +3571,101 @@ mod config_parsing_tests {
 
         assert_eq!(result.motd_lines, vec!["two".to_owned()]);
     }
+
+    // The QUIC listener presents ONE certificate on a UDP socket shared by every
+    // module, so its identity is a property of the listener, not of any module.
+    // These tests pin that: the directives store on the global config, resolve
+    // their paths exactly like the other global path directives, and are refused
+    // inside a module section where a per-module certificate could not be served.
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_cert_and_key_files_into_global_config() {
+        let config = format!(
+            "quic cert file = {}\nquic key file = {}\n",
+            abs("/etc/oc-rsync/quic/server.pem"),
+            abs("/etc/oc-rsync/quic/server.key"),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let (cert, _) = result.quic_cert_file.expect("quic cert file stored");
+        let (key, _) = result.quic_key_file.expect("quic key file stored");
+        assert_eq!(cert, PathBuf::from(abs("/etc/oc-rsync/quic/server.pem")));
+        assert_eq!(key, PathBuf::from(abs("/etc/oc-rsync/quic/server.key")));
+    }
+
+    // Whitespace between the words is folded, so the spaced directive matches the
+    // same parameter as `pid file` / `secrets file` do - the naming convention the
+    // design note requires (docs/design/quic-transport-policy.md, decision A).
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_directives_fold_internal_whitespace() {
+        let config = format!(
+            "quic  cert\tfile = {}\nquic\tkey  file = {}\n",
+            abs("/srv/cert.pem"),
+            abs("/srv/key.pem"),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert!(result.quic_cert_file.is_some());
+        assert!(result.quic_key_file.is_some());
+    }
+
+    // A relative path resolves against the config file's directory, exactly like
+    // `pid file` / `lock file`; the shared `resolve_config_relative_path` is reused.
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_cert_file_resolves_relative_to_config_dir() {
+        let dir = TempDir::new().expect("create temp dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        std::fs::write(&config_path, "quic cert file = quic/server.pem\n")
+            .expect("write config");
+
+        let result = parse_config_modules(&config_path).expect("parse succeeds");
+        let (cert, _) = result.quic_cert_file.expect("quic cert file stored");
+        assert_eq!(cert, dir.path().join("quic/server.pem"));
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_cert_file_in_module_scope_is_config_error() {
+        let config = format!(
+            "[data]\npath = {}\nquic cert file = {}\n",
+            abs("/srv/data"),
+            abs("/etc/oc-rsync/quic/server.pem"),
+        );
+        let file = write_config(&config);
+        let error = parse_config_modules(file.path())
+            .expect_err("module-scoped quic cert file is a config error");
+        assert!(
+            error.to_string().contains("global-only"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_key_file_in_module_scope_is_config_error() {
+        let config = format!(
+            "[data]\npath = {}\nquic key file = {}\n",
+            abs("/srv/data"),
+            abs("/etc/oc-rsync/quic/server.key"),
+        );
+        let file = write_config(&config);
+        let error = parse_config_modules(file.path())
+            .expect_err("module-scoped quic key file is a config error");
+        assert!(
+            error.to_string().contains("global-only"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_cert_file_empty_value_is_config_error() {
+        let file = write_config("quic cert file =\n");
+        parse_config_modules(file.path())
+            .expect_err("empty quic cert file directive is a config error");
+    }
 }

@@ -14,6 +14,12 @@ struct GlobalParseState {
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC listener certificate/key paths from the `quic cert file` /
+    /// `quic key file` global directives (oc extension, feature-gated).
+    #[cfg(feature = "quic")]
+    quic_cert_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    #[cfg(feature = "quic")]
+    quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
@@ -56,6 +62,10 @@ impl GlobalParseState {
             pid_file: None,
             reverse_lookup: None,
             lock_file: None,
+            #[cfg(feature = "quic")]
+            quic_cert_file: None,
+            #[cfg(feature = "quic")]
+            quic_key_file: None,
             global_bwlimit: None,
             global_secrets_file: None,
             global_incoming_chmod: None,
@@ -130,6 +140,10 @@ impl GlobalParseState {
             pid_file: self.pid_file,
             reverse_lookup: self.reverse_lookup,
             lock_file: self.lock_file,
+            #[cfg(feature = "quic")]
+            quic_cert_file: self.quic_cert_file,
+            #[cfg(feature = "quic")]
+            quic_key_file: self.quic_key_file,
             global_bandwidth_limit: self.global_bwlimit,
             global_secrets_file: self.global_secrets_file,
             global_incoming_chmod: self.global_incoming_chmod,
