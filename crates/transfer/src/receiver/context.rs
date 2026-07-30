@@ -416,6 +416,16 @@ pub struct ReceiverContext {
     /// [`execute_delayed_deletions`]: Self::execute_delayed_deletions
     pub(in crate::receiver) delayed_delete_victims:
         Vec<crate::receiver::directory::deletion::DeletedEntry>,
+    /// Guards the one-shot "IO error encountered -- skipping file deletion"
+    /// notice so the whole delete pass is skipped exactly once when the sender's
+    /// file list was built after a general I/O error and `--ignore-errors` was
+    /// not given. Mirrors upstream's static `already_warned` in
+    /// `delete_in_dir()`; skipping protects destination files that merely never
+    /// made it into an incomplete file list from being unlinked as extraneous.
+    ///
+    /// upstream: generator.c:298-305 - `delete_in_dir()` returns early (printing
+    /// once) whenever `io_error & IOERR_GENERAL && !ignore_errors`.
+    pub(in crate::receiver) io_error_delete_warning_emitted: bool,
 }
 
 impl ReceiverContext {
@@ -500,6 +510,7 @@ impl ReceiverContext {
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),
+            io_error_delete_warning_emitted: false,
         }
     }
 
