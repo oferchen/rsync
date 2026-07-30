@@ -65,6 +65,63 @@ mod reader_creation_tests {
     }
 }
 
+mod stdin_source_tests {
+    use super::*;
+
+    /// Drain every remaining data byte from a reader after its header is read.
+    fn drain_data(reader: &mut BatchReader) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 64];
+        loop {
+            let n = reader.read_data(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+        out
+    }
+
+    /// upstream: batch.c:open_batch_files treats a `-` argument as stdin
+    /// (STDIN_FILENO). Replaying a batch from stdin must therefore decode
+    /// byte-for-byte identically to replaying the same batch from a file: the
+    /// input source is the only thing that differs, so any divergence would be
+    /// a bug in the source abstraction, not the wire format.
+    #[test]
+    fn read_batch_dash_reads_from_stdin_like_a_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("dash.batch");
+        create_test_batch(&batch_path);
+        let image = std::fs::read(&batch_path).unwrap();
+
+        let file_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            30,
+        );
+        let mut file_reader = BatchReader::new(file_config).unwrap();
+        let file_flags = file_reader.read_header().unwrap();
+        let file_data = drain_data(&mut file_reader);
+
+        // The `-` path buffers stdin into memory exactly as this constructor
+        // does, so it stands in for `--read-batch=-` without a real stdin fd.
+        let stdin_config = BatchConfig::new(BatchMode::Read, "-".to_owned(), 30);
+        let mut stdin_reader = BatchReader::from_stdin_bytes(stdin_config, image);
+        let stdin_flags = stdin_reader.read_header().unwrap();
+        let stdin_data = drain_data(&mut stdin_reader);
+
+        assert_eq!(
+            stdin_flags.recurse, file_flags.recurse,
+            "stdin batch header must match the file batch header"
+        );
+        assert_eq!(
+            stdin_data, file_data,
+            "stdin batch data must match the file batch data"
+        );
+        assert_eq!(stdin_data, b"test data here");
+    }
+}
+
 mod header_tests {
     use super::*;
 

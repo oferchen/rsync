@@ -203,7 +203,9 @@ fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().join("stream");
     fs::write(&path, [0xAA, 0xBB]).expect("write stream");
-    let mut stream = std::io::BufReader::new(fs::File::open(&path).expect("open stream"));
+    let mut stream = std::io::BufReader::new(crate::reader::BatchSource::File(
+        fs::File::open(&path).expect("open stream"),
+    ));
 
     for proto in [28, 27, 20] {
         let iflags = super::dispatch::read_iflags_and_skip_meta(&mut stream, proto)
@@ -230,7 +232,9 @@ fn read_iflags_proto_29_reads_shortint() {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().join("stream");
     fs::write(&path, [0x00, 0x80]).expect("write stream");
-    let mut stream = std::io::BufReader::new(fs::File::open(&path).expect("open stream"));
+    let mut stream = std::io::BufReader::new(crate::reader::BatchSource::File(
+        fs::File::open(&path).expect("open stream"),
+    ));
 
     let iflags = super::dispatch::read_iflags_and_skip_meta(&mut stream, 29).expect("read iflags");
     assert_eq!(iflags, 1 << 15);

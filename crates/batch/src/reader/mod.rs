@@ -21,7 +21,48 @@ use crate::format::{BatchFlags, BatchHeader};
 use protocol::codec::NdxCodecEnum;
 use protocol::flist::FileListReader;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
+use std::path::Path;
+
+/// Input source for a batch reader.
+///
+/// A `--read-batch` argument of `-` selects standard input, mirroring upstream
+/// `batch.c:open_batch_files` (`strcmp(batch_name, "-") == 0` opens
+/// `STDIN_FILENO`). Upstream reads the batch fd purely sequentially, but stdin
+/// is not seekable, so the `Stdin` variant buffers the stream into memory:
+/// oc-rsync's compression-codec auto-detection (see [`crate::replay`]) peeks
+/// ahead and restores the position via `Seek`, which the in-memory `Cursor`
+/// supports while a raw stdin fd would not. Both variants are therefore
+/// `Read + Seek`.
+/// upstream: batch.c:open_batch_files
+pub(crate) enum BatchSource {
+    /// A batch file opened from a filesystem path.
+    File(File),
+    /// Standard input buffered into memory (the `--read-batch=-` path).
+    Stdin(Cursor<Vec<u8>>),
+}
+
+impl Read for BatchSource {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::File(f) => f.read(buf),
+            Self::Stdin(c) => c.read(buf),
+        }
+    }
+}
+
+impl Seek for BatchSource {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::File(f) => f.seek(pos),
+            Self::Stdin(c) => c.seek(pos),
+        }
+    }
+}
+
+/// Buffered reader over a [`BatchSource`], the concrete stream type threaded
+/// through header, file-list, delta, and replay decoding.
+pub(crate) type BatchStream = BufReader<BatchSource>;
 
 /// Reader for batch mode operations.
 ///
@@ -30,8 +71,8 @@ use std::io::{self, BufReader, Read};
 pub struct BatchReader {
     /// Configuration for this batch operation.
     config: BatchConfig,
-    /// Reader for the binary batch file.
-    batch_file: Option<BufReader<File>>,
+    /// Reader for the binary batch stream (file or buffered stdin).
+    batch_file: Option<BatchStream>,
     /// The header read from the file.
     header: Option<BatchHeader>,
     /// Accumulated I/O error code from the file list sender.
@@ -62,28 +103,61 @@ pub struct BatchReader {
 
 impl BatchReader {
     /// Create a new batch reader.
+    ///
+    /// A batch path of `-` reads from standard input instead of opening a
+    /// file, mirroring upstream `batch.c:open_batch_files`.
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
-        let batch_path = config.batch_file_path();
-        let file = File::open(batch_path).map_err(|e| {
-            BatchError::Io(io::Error::new(
-                e.kind(),
-                format!(
-                    "Failed to open batch file '{}': {}",
-                    batch_path.display(),
-                    e
-                ),
-            ))
-        })?;
+        let source = Self::open_source(config.batch_file_path())?;
+        Ok(Self::from_source(config, source))
+    }
 
-        Ok(Self {
+    /// Open the batch input source described by `path`.
+    ///
+    /// A path of `-` selects standard input, matching upstream
+    /// `batch.c:open_batch_files` (`strcmp(batch_name, "-") == 0` uses
+    /// `STDIN_FILENO`). stdin is buffered into memory because oc-rsync's
+    /// codec auto-detection seeks the stream; see [`BatchSource`].
+    /// upstream: batch.c:open_batch_files
+    fn open_source(path: &Path) -> BatchResult<BatchSource> {
+        if path.as_os_str() == "-" {
+            let mut buf = Vec::new();
+            io::stdin().lock().read_to_end(&mut buf).map_err(|e| {
+                BatchError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read batch file from stdin: {e}"),
+                ))
+            })?;
+            Ok(BatchSource::Stdin(Cursor::new(buf)))
+        } else {
+            let file = File::open(path).map_err(|e| {
+                BatchError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to open batch file '{}': {}", path.display(), e),
+                ))
+            })?;
+            Ok(BatchSource::File(file))
+        }
+    }
+
+    /// Construct a reader over an in-memory batch image, exactly as the
+    /// `--read-batch=-` path buffers standard input. Exercises the stdin
+    /// source deterministically without touching the process-wide stdin fd.
+    #[cfg(test)]
+    pub(crate) fn from_stdin_bytes(config: BatchConfig, bytes: Vec<u8>) -> Self {
+        Self::from_source(config, BatchSource::Stdin(Cursor::new(bytes)))
+    }
+
+    /// Build a reader over an already-opened [`BatchSource`].
+    fn from_source(config: BatchConfig, source: BatchSource) -> Self {
+        Self {
             config,
-            batch_file: Some(BufReader::new(file)),
+            batch_file: Some(BufReader::new(source)),
             header: None,
             io_error: 0,
             ndx_codec: None,
             flist_reader: None,
             flist_next_ndx_start: 0,
-        })
+        }
     }
 
     /// Read and validate the batch header.
@@ -208,7 +282,7 @@ impl BatchReader {
     /// example to pass it to protocol-level decoders like `read_delta`.
     ///
     /// Returns `None` if the batch file has not been opened or has been closed.
-    pub fn inner_reader(&mut self) -> Option<&mut BufReader<File>> {
+    pub(crate) fn inner_reader(&mut self) -> Option<&mut BatchStream> {
         self.batch_file.as_mut()
     }
 

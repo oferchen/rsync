@@ -11,13 +11,14 @@
 //! - [`apply_file_delta`] applies a decoded delta sequence to a destination
 //!   path, using a temp file + rename for the basis-present path.
 
-use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use protocol::wire::{CompressedToken, CompressedTokenDecoder};
 
 use crate::error::{BatchError, BatchResult};
+use crate::reader::BatchStream;
 
 use super::delta::{apply_delta_ops, block_index_as_i32, write_literals_to_file};
 
@@ -41,10 +42,7 @@ pub(super) const ITEM_TRANSFER: u16 = 1 << 15;
 /// upstream: rsync.c:403-418 - consume optional trailing fields after iflags.
 /// `ITEM_BASIS_TYPE_FOLLOWS` (0x0800): 1 byte fnamecmp_type.
 /// `ITEM_XNAME_FOLLOWS` (0x1000): vstring (1-2 byte length + data).
-pub(super) fn read_iflags_and_skip_meta(
-    stream: &mut BufReader<File>,
-    proto: i32,
-) -> BatchResult<u16> {
+pub(super) fn read_iflags_and_skip_meta(stream: &mut BatchStream, proto: i32) -> BatchResult<u16> {
     let iflags = if proto >= 29 {
         let mut buf = [0u8; 2];
         stream.read_exact(&mut buf).map_err(|e| {
@@ -114,7 +112,7 @@ pub(super) fn read_iflags_and_skip_meta(
 /// [`protocol::wire::SumHead`] applies those same rules, and every copy token
 /// in the body is later resolved through the returned geometry, so a header
 /// that does not match its body is refused instead of guessed at.
-pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<protocol::wire::SumHead> {
+pub(super) fn read_sum_head(stream: &mut BatchStream) -> BatchResult<protocol::wire::SumHead> {
     protocol::wire::SumHead::read(stream).map_err(|e| {
         BatchError::Io(std::io::Error::new(
             e.kind(),
@@ -131,7 +129,7 @@ pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<protoco
 /// default xfer checksum is XXH3-128 or MD5 - both 16 bytes. For protocol
 /// 28-31 it is MD4 or MD5 - also 16 bytes.
 pub(super) fn read_and_discard_file_checksum(
-    stream: &mut BufReader<File>,
+    stream: &mut BatchStream,
     xfer_sum_len: usize,
 ) -> BatchResult<()> {
     let mut checksum_buf = vec![0u8; xfer_sum_len];
@@ -153,7 +151,7 @@ pub(super) fn read_and_discard_file_checksum(
 /// upstream: receiver.c:receive_data() + token.c:see_deflate_token()
 pub(super) fn read_compressed_deltas_streaming(
     decoder: &mut CompressedTokenDecoder,
-    stream: &mut BufReader<File>,
+    stream: &mut BatchStream,
     basis_data: &[u8],
     entry_name: &str,
     sum_head: protocol::wire::SumHead,
