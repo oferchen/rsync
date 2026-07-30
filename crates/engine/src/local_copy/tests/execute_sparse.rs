@@ -196,6 +196,88 @@ fn execute_inplace_sparse_punches_hole() {
     );
 }
 
+/// `--inplace --sparse` with `--whole-file` (the local-copy default) rewrites
+/// the whole file from offset 0, so the destination is truncated to zero first
+/// and interior zero runs become genuine holes that are *seeked* over - never
+/// left holding the pre-existing dense basis bytes.
+///
+/// This is upstream's `sparse_files > 0 && whole_file` leg of `receive_data`:
+/// `do_ftruncate(fd, 0)` then `preallocated_len = 0`. oc realises the truncation
+/// by opening the inplace destination with `O_TRUNC` when there is no delta basis
+/// (whole-file), keeping `preallocated_len = 0`. The decisive, syscall-count-free
+/// proof is the hole region: without the zeroing truncate a seek would leave the
+/// old `0xCC` bytes in place, so reading them back as zeros shows the whole-file
+/// rewrite started from an empty file.
+// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
+// fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
+#[cfg(unix)]
+#[test]
+fn execute_inplace_sparse_whole_file_seeks_over_stale_basis() {
+    let temp = tempdir().expect("tempdir");
+
+    // Source: 4 KiB data, a 2 MiB zero run (> the 32 KiB sparse threshold), then
+    // 4 KiB data. Written as real bytes so it is a normal (dense) source file.
+    let source = temp.path().join("wf-source.bin");
+    let mut src = Vec::with_capacity(2 * 1024 * 1024 + 8192);
+    src.extend(std::iter::repeat_n(0x11u8, 4096));
+    src.extend(std::iter::repeat_n(0x00u8, 2 * 1024 * 1024));
+    src.extend(std::iter::repeat_n(0x22u8, 4096));
+    fs::write(&source, &src).expect("write source");
+    set_file_mtime(&source, FileTime::from_unix_time(2_000_000, 0)).expect("source mtime");
+
+    // Destination pre-exists as a fully dense file of DIFFERENT bytes (0xCC),
+    // larger than the source, so a missing truncate would leave 0xCC in both the
+    // hole region and past the new EOF.
+    let dest = temp.path().join("wf-dest.bin");
+    fs::write(&dest, vec![0xCCu8; src.len() + 512 * 1024]).expect("write dense destination");
+    // Backdate so rsync's quick-check treats the destination as stale.
+    set_file_mtime(&dest, FileTime::from_unix_time(1_000_000, 0)).expect("destination mtime");
+
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        // whole_file defaults to true for local copies; set it explicitly to
+        // pin the whole-file rewrite path this optimization targets.
+        LocalCopyOptions::default()
+            .sparse(true)
+            .inplace(true)
+            .whole_file(true),
+    )
+    .expect("inplace sparse whole-file copy succeeds");
+
+    // Length matches the source: the larger pre-existing tail was discarded.
+    let meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(meta.len(), src.len() as u64, "destination truncated to source length");
+
+    // Content is byte-for-byte the source. Critically the 2 MiB middle reads as
+    // zeros, not the pre-existing 0xCC: the whole-file rewrite truncated to zero
+    // so the seeked-over run is a genuine hole, not stale basis data.
+    let readback = fs::read(&dest).expect("read destination");
+    assert_eq!(readback, src, "whole-file inplace sparse content must equal the source");
+    assert!(
+        readback[4096..4096 + 2 * 1024 * 1024].iter().all(|&b| b == 0),
+        "seeked hole must read as zeros, proving the destination was truncated to zero first"
+    );
+
+    // On Linux/ext4 the hole is deallocated, so the file allocates less than its
+    // apparent size (platform-dependent - skipped where st_blocks does not expose
+    // sparse allocation, e.g. macOS/APFS).
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert!(
+            meta.blocks() * 512 < meta.len(),
+            "whole-file sparse rewrite should leave a hole (allocated {}, size {})",
+            meta.blocks() * 512,
+            meta.len(),
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn execute_with_sparse_enabled_counts_literal_data() {
