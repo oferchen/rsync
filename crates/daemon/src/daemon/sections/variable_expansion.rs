@@ -26,10 +26,14 @@ struct VarExpansionContext<'a> {
 /// - `%RSYNC_MODULE_PATH%` - the module's configured path
 /// - `%ADDR%` - the client's IP address
 /// - `%%` - literal `%`
-/// - Unknown `%FOO%` tokens are left as-is
+/// - Any other all-uppercase `%NAME%` token is looked up in the process
+///   environment (upstream `loadparm.c:expand_vars` calls `getenv`); a set
+///   variable is substituted, an unset one is left as-is
+/// - Any remaining `%FOO%` token is left as-is
 ///
-/// upstream: `loadparm.c` - `lp_string()` calls `alloc_sub_advanced()` which
-/// walks the format string replacing `%`-delimited variable names.
+/// upstream: `loadparm.c:expand_vars()` walks the string and, for every
+/// `%UPPERCASE...%` token, calls `getenv()` on the name between the percents,
+/// substituting the value when set and leaving the raw token unchanged when not.
 fn expand_config_vars(template: &str, ctx: &VarExpansionContext<'_>) -> String {
     let mut result = String::with_capacity(template.len());
     let mut rest = template;
@@ -49,11 +53,14 @@ fn expand_config_vars(template: &str, ctx: &VarExpansionContext<'_>) -> String {
                 let var_name = &rest[..end];
                 match resolve_variable(var_name, ctx) {
                     Some(value) => result.push_str(value),
-                    None => {
-                        result.push('%');
-                        result.push_str(var_name);
-                        result.push('%');
-                    }
+                    None => match env_expansion(var_name) {
+                        Some(value) => result.push_str(&value),
+                        None => {
+                            result.push('%');
+                            result.push_str(var_name);
+                            result.push('%');
+                        }
+                    },
                 }
                 rest = &rest[end + 1..];
             }
@@ -74,8 +81,9 @@ fn find_closing_percent(s: &str) -> Option<usize> {
 
 /// Maps a variable name to its substitution value.
 ///
-/// Returns `None` for unrecognized variable names, which causes the
-/// caller to preserve the original `%NAME%` token verbatim.
+/// Returns `None` for names that are not built-in connection variables; the
+/// caller then falls back to an environment lookup (`env_expansion`) and, only
+/// if that also misses, preserves the original `%NAME%` token verbatim.
 fn resolve_variable<'a>(name: &str, ctx: &VarExpansionContext<'a>) -> Option<&'a str> {
     match name {
         "DIFFHOST" => Some(ctx.client_host),
@@ -84,6 +92,26 @@ fn resolve_variable<'a>(name: &str, ctx: &VarExpansionContext<'a>) -> Option<&'a
         "ADDR" => Some(ctx.client_addr),
         _ => None,
     }
+}
+
+/// Looks up an all-uppercase `%NAME%` token in the process environment.
+///
+/// Returns the environment value when `name` is a non-empty run of
+/// `[A-Z0-9_]` and the variable is set, otherwise `None` so the caller leaves
+/// the literal `%NAME%` token unchanged.
+///
+/// upstream: `loadparm.c:expand_vars` (~185) calls `getenv()` on every
+/// `%UPPERCASE...%` token that is not a built-in name; an unset variable leaves
+/// the raw token in place.
+fn env_expansion(name: &str) -> Option<String> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return None;
+    }
+    std::env::var(name).ok()
 }
 
 /// Applies `%`-variable expansion to all path-type fields of a module definition.
@@ -314,11 +342,48 @@ mod variable_expansion_tests {
 
 
     #[test]
-    fn expand_unknown_variable_preserved() {
+    fn expand_unset_env_variable_preserved() {
+        // upstream: loadparm.c:expand_vars - an all-uppercase token that is not
+        // a built-in name and is unset in the environment leaves the literal
+        // `%TOKEN%` in place (getenv returns NULL, so the raw chars pass
+        // through). WHY: a config author's `%FOO%` must not silently vanish when
+        // FOO is undefined.
+        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_EXPAND_UNSET");
         let ctx = sample_ctx();
         assert_eq!(
-            expand_config_vars("/data/%UNKNOWN%/files", &ctx),
-            "/data/%UNKNOWN%/files"
+            expand_config_vars("/data/%OC_RSYNC_TEST_EXPAND_UNSET%/files", &ctx),
+            "/data/%OC_RSYNC_TEST_EXPAND_UNSET%/files"
+        );
+    }
+
+    #[test]
+    fn expand_env_variable_from_process_environment() {
+        // upstream: loadparm.c:expand_vars (~185) calls getenv() on any
+        // %UPPERCASE% token that is not a built-in name and substitutes the
+        // value when set. WHY: rsyncd.conf paths like `path = %HOME%/rsync` must
+        // resolve against the daemon's environment exactly as upstream does.
+        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::set(
+            "OC_RSYNC_TEST_EXPAND_VAR",
+            std::ffi::OsStr::new("/srv/env"),
+        );
+        let ctx = sample_ctx();
+        assert_eq!(
+            expand_config_vars("%OC_RSYNC_TEST_EXPAND_VAR%/rsync", &ctx),
+            "/srv/env/rsync"
+        );
+    }
+
+    #[test]
+    fn expand_lowercase_token_not_env_expanded() {
+        // A non-uppercase token is not an environment variable name and is left
+        // literal even if a same-named var were set, matching upstream's
+        // isUpper() gate in expand_vars.
+        let ctx = sample_ctx();
+        assert_eq!(
+            expand_config_vars("/data/%path%/files", &ctx),
+            "/data/%path%/files"
         );
     }
 

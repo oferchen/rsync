@@ -313,6 +313,7 @@ include!("tests/chunks/runtime_options_config_pid_file_respects_cli_override.rs"
 include!("tests/chunks/runtime_options_default_enables_reverse_lookup.rs");
 include!("tests/chunks/runtime_options_global_bwlimit_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_global_directives_apply_as_module_defaults.rs");
+include!("tests/chunks/runtime_options_global_include_filter_default_inherited.rs");
 include!(
     "tests/chunks/runtime_options_global_only_directive_after_module_stays_in_module_scope.rs"
 );

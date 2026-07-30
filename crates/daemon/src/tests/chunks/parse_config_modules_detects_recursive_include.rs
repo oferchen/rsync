@@ -4,14 +4,17 @@ fn parse_config_modules_detects_recursive_include() {
     let first = dir.path().join("first.conf");
     let second = dir.path().join("second.conf");
 
+    // File inclusion is `&include` (params.c); a bare `include` is only a
+    // filter default and never opens a file, so recursion detection must be
+    // exercised through the amp form.
     writeln!(
         File::create(&first).expect("create first"),
-        "include = second.conf\n"
+        "&include second.conf\n"
     )
     .expect("write first");
     writeln!(
         File::create(&second).expect("create second"),
-        "include = first.conf\n"
+        "&include first.conf\n"
     )
     .expect("write second");
 
