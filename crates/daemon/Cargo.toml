@@ -53,12 +53,12 @@ daemon-seccomp = ["dep:seccompiler"]
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
 # QUIC daemon transport (default-off, opt-in oc extension). At this stage the
 # feature gates parsing and storage of the `quic cert file` / `quic key file`
-# global directives plus the persisted self-signed identity default (rcgen
-# generates and persists a stable cert/key under the daemon state dir when the
-# operator sets neither directive); the listener itself lands under later QUIC
-# build-out tasks. rcgen is optional so default builds stay dependency-free and
-# byte-identical. See docs/design/quic-transport-policy.md (decision A).
-quic = ["dep:rcgen"]
+# global directives and resolving the listener identity (operator-supplied files
+# vs. an ephemeral in-memory self-signed cert generated at bind time); the
+# listener itself lands under later QUIC build-out tasks. Kept dependency-free so
+# default builds are byte-identical. See docs/design/quic-transport-policy.md
+# (decision A).
+quic = []
 # macOS-only, default-off: source accepted connections in the daemon accept
 # loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
 # engines' per-listener `poll(2)` park, giving a single kernel wait over all
@@ -85,11 +85,6 @@ tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "rt-multi-thread", "time", "macros"] }
 dashmap = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
-# QUIC self-signed identity generation (persisted default, decision A). Optional
-# and pulled in only by the `quic` feature so default builds stay dependency-free.
-# The `pem` feature adds PEM serialization for the persisted cert/key files
-# (the workspace default disables it); it is additive and harmless elsewhere.
-rcgen = { workspace = true, optional = true, features = ["pem"] }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }

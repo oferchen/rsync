@@ -43,7 +43,7 @@ opt-in addition, off by default, compiled only under the `quic` cargo feature
 
 | # | Decision | Recommendation |
 |---|----------|----------------|
-| A | Server identity | `quic cert file` / `quic key file` global directives; zero-config default is a persisted self-signed cert under the daemon state dir (stable identity across restarts) |
+| A | Server identity | `quic cert file` / `quic key file` global directives; zero-config default is an ephemeral per-start self-signed cert generated in memory at bind time (not persisted; rotates each restart) |
 | B | Client verification | System roots by default; `--quic-ca <pem>` for private CAs; **TOFU known-hosts** (`quic_known_hosts`) as the primary self-signed path, mirroring SSH; **no** blanket insecure flag |
 | C | ALPN | Single fixed token `rsync` (bytes `0x05 r s y n c`); mismatch = TLS-layer connection refusal mapped to exit 5 |
 | D | Scheme/flag | New `quic://host[:port]/module` scheme **and** `--quic` modifier on a daemon target; hard failure (never silent TCP fallback) on a non-QUIC endpoint; default `873/udp` |
@@ -81,43 +81,39 @@ form.
 ### Zero-config LAN default
 
 When neither directive is set, the daemon generates a self-signed certificate
-via `rcgen` (the QUIC-1 skeleton already does this at bind time) and
-**persists** it, so the identity is stable across restarts.
+via `rcgen` **in memory at bind time** (exactly as the QUIC-1 skeleton's
+`QuicAcceptor::bind` already does) and never writes it to disk. The certificate
+is **ephemeral**: it is regenerated on every start, so the daemon's identity
+rotates each restart.
 
-Persistence location follows the daemon's existing path conventions. The daemon
-already resolves operator-controlled paths with `%`-expansion (`pid file`,
-`lock file`, e.g. `/var/run/rsync.%p.lock`) but has no single "state dir"
-constant today. The proposal, in priority order:
+Identity resolution, in priority order:
 
 1. If `quic cert file` / `quic key file` are set, use them verbatim (operator
-   owns identity; no generation).
-2. Else persist the generated pair beside the config file, in a
-   `quic/` subdirectory of the directory containing `oc-rsyncd.conf`
-   (e.g. `/etc/oc-rsync/quic/self-signed.{pem,key}`), created `0700`, key
-   `0600`. This is where an operator already looks for daemon state and keeps
-   identity co-located with the config that enables it.
-3. If that directory is not writable (read-only `/etc`, containerised daemon),
-   fall back to an **ephemeral per-boot** self-signed cert and emit a
-   one-time warning naming the consequence.
+   owns identity; nothing is generated). This is the path an operator picks for
+   a stable, persistent identity - a Let's Encrypt pair, a private-CA-signed
+   cert, or a hand-generated self-signed cert kept on disk.
+2. Else the listener mints a fresh in-memory self-signed cert at bind. No state
+   directory is created, no files are written, and the key never touches disk.
 
-The honest tradeoff on the fallback: an ephemeral per-boot identity means every
-daemon restart looks like a new host to a TOFU client, forcing a re-pin. A
-persisted identity is strictly better for TOFU UX (the whole point of TOFU is
-that the key is stable), so persistence is the default and ephemeral is only
-the last-resort degradation. We warn loudly rather than silently rotating,
-because silent rotation would train users to click through key-changed warnings
-- the exact habit that defeats TOFU.
+**The tradeoff, stated plainly:** an ephemeral per-start identity means every
+daemon restart presents a new certificate. A TOFU client (Decision B,
+`quic_known_hosts`) that pinned the previous fingerprint will therefore see a
+changed fingerprint after a restart and refuse to connect until the operator
+clears the stale pin. Operators who want a stable TOFU identity **must** set
+`quic cert file` / `quic key file` so the certificate survives restarts; the
+zero-config default trades that stability for a genuinely zero-state daemon that
+writes nothing to disk. This keeps the zero-config path simple and side-effect
+free (no directory to create, permission-check, secure, or clean up) at the cost
+of TOFU stability, which the explicit-cert path recovers.
 
-*Alternative considered - always ephemeral, never persist.* Rejected: it makes
-the zero-config path actively hostile to the TOFU client in Decision B (every
-restart is a MITM-shaped warning). Persistence is what makes zero-config and
-TOFU compose.
-
-*Alternative considered - a fixed system path (`/var/lib/oc-rsync/`).*
-Rejected as the default because the daemon has no such directory convention
-today and inventing one is a larger change than this feature should carry;
-co-locating with the config is the minimal, convention-respecting choice. A
-future `quic state dir` directive can override it if operators ask.
+*Alternative considered - persist the generated pair under a `quic/`
+subdirectory of the config directory (`/etc/oc-rsync/quic/self-signed.{pem,key}`,
+`0700`/`0600`).* Rejected as the default: it makes the zero-config daemon write
+private-key state to disk (with the attendant permission, read-only-filesystem,
+and cleanup concerns) purely to smooth TOFU. An operator who values a stable
+identity can express it directly and unambiguously with the two directives,
+which also documents the intent in the config. Keeping the default ephemeral
+means the daemon has no hidden on-disk identity to reason about.
 
 ## 3. Decision B - Client verification ladder
 

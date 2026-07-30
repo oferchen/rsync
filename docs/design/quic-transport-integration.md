@@ -24,7 +24,7 @@ the off-by-default `quic` cargo feature:
   with `finish()` / `close()` teardown barriers.
 
 Not yet wired (this note's scope): CLI `--quic` / `quic://`, the daemon
-`quic cert file` / `quic key file` directives and persisted default, client
+`quic cert file` / `quic key file` directives and ephemeral default, client
 trust (`--quic-ca`, TOFU `quic_known_hosts`), the bootstrap that hands a
 `QuicStream` to the `@RSYNCD:` handshake, and the quinn-proto error ->
 exit-code mapping. `QuicConnector`/`QuicAcceptor` are referenced only from the
@@ -89,7 +89,8 @@ handshake code does not learn it is on QUIC.
   accept a verifier/roots source; keep the pin form for tests).
 
 Daemon listener (daemon): build a `QuicAcceptor` from `quic cert file` /
-`quic key file` (or the persisted self-signed default, policy A), `accept()`
+`quic key file` (or the ephemeral in-memory self-signed default, policy A),
+`accept()`
 -> `QuicStream` -> existing daemon session (`@RSYNCD:` greeting, module select,
 auth, transfer) with no protocol changes. The QUIC listener runs alongside the
 TCP listener; enabling it is a config/opt-in, not a replacement.
@@ -136,7 +137,7 @@ tested against forced failures (bad cert, unreachable port, mid-stream kill).
    connect yet; parse + config only, unit-tested).
 2. QUIC-5: client trust resolution + `QuicConnector` connect -> handshake;
    `--quic-ca`, then TOFU `quic_known_hosts`.
-3. QUIC-6: daemon `quic cert file`/`key file` directives + persisted default +
+3. QUIC-6: daemon `quic cert file`/`key file` directives + ephemeral default +
    `QuicAcceptor` listener -> daemon session.
 4. QUIC-9: error -> exit-code classifier + failure tests.
 5. QUIC-7: differential-oracle interop cell (QUIC transcript == TCP transcript).

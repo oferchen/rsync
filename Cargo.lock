@@ -260,12 +260,6 @@ checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
 
 [[package]]
 name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
-name = "base64"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
@@ -674,7 +668,7 @@ dependencies = [
  "apple-fs",
  "assert_cmd",
  "bandwidth",
- "base64 0.23.0",
+ "base64",
  "checksums",
  "clap",
  "compress",
@@ -749,7 +743,7 @@ name = "core"
 version = "0.6.4"
 dependencies = [
  "bandwidth",
- "base64 0.23.0",
+ "base64",
  "branding",
  "checksums",
  "compress",
@@ -1022,7 +1016,7 @@ name = "daemon"
 version = "0.6.4"
 dependencies = [
  "bandwidth",
- "base64 0.23.0",
+ "base64",
  "caps",
  "checksums",
  "clap",
@@ -1043,7 +1037,6 @@ dependencies = [
  "nix",
  "platform",
  "protocol",
- "rcgen",
  "sd-notify",
  "seccompiler",
  "socket2",
@@ -2621,16 +2614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
-]
-
-[[package]]
 name = "pem-rfc7468"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3047,7 +3030,6 @@ version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57f6d249aad744e274e682777a50283a225a32705394ee6d5fcc01efa25e4055"
 dependencies = [
- "pem",
  "ring",
  "rustls-pki-types",
  "time",
