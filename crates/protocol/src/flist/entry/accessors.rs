@@ -481,6 +481,33 @@ impl FileEntry {
         }
     }
 
+    /// Returns whether this directory is a sender-side duplicate.
+    ///
+    /// Set on a later same-named directory the sender keeps alive under
+    /// INC_RECURSE. Internal to the file-list build; never encoded on the wire.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3073` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
+    #[inline]
+    #[must_use]
+    pub const fn duplicate(&self) -> bool {
+        self.present & super::core::PRESENT_DUPLICATE != 0
+    }
+
+    /// Marks (or clears) this directory as a sender-side duplicate.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3073` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
+    pub const fn set_duplicate(&mut self, dup: bool) {
+        if dup {
+            self.present |= super::core::PRESENT_DUPLICATE;
+        } else {
+            self.present &= !super::core::PRESENT_DUPLICATE;
+        }
+    }
+
     /// Returns the hardlink device number (for protocol < 30).
     #[inline]
     pub fn hardlink_dev(&self) -> Option<i64> {

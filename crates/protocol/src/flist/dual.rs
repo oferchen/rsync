@@ -165,10 +165,21 @@ impl DualFileList {
     /// that case, leaving the list (and `parallel`) untouched.
     ///
     /// Under INC_RECURSE the pass still runs (upstream's `!am_sender ||
-    /// inc_recurse` branch): each sub-list is cleaned so its numbering matches
-    /// the receiver's identical pass. It reuses
-    /// `resolve_duplicate` for an identical
-    /// keep/drop tie-break.
+    /// inc_recurse` branch). Two rules apply, both mirroring the sender side of
+    /// `flist_sort_and_clean()`:
+    ///
+    /// - **Top-level duplicates are kept alive.** Upstream gates `clear_file()`
+    ///   on `!am_sender` (flist.c:3083-3090), so the sender never removes a
+    ///   duplicate; a repeated top-level source arg (e.g. `rsync -r foo foo
+    ///   dest`) stays on the wire and the receiver tombstones it, keeping both
+    ///   sides' NDX aligned. A duplicate top-level directory is additionally
+    ///   marked FLAG_DUPLICATE (flist.c:3073) so the sub-list scheduler batches
+    ///   the same-named dirs into one sub-list.
+    /// - **Nested duplicates are collapsed.** oc walks the whole tree eagerly, so
+    ///   a repeated source dir yields duplicate *nested* entries that upstream -
+    ///   scanning each physical dir once - never produces. Those are collapsed
+    ///   via [`resolve_duplicate`](super::sort::resolve_duplicate)'s keep/drop
+    ///   tie-break, leaving the wire byte-identical to upstream's single scan.
     ///
     /// # Panics
     ///
@@ -213,6 +224,37 @@ impl DualFileList {
                 if w != r {
                     self.legacy.swap(w, r);
                     parallel.swap(w, r);
+                }
+                r += 1;
+                continue;
+            }
+
+            // upstream: flist.c:3072-3090 - `clear_file()` is gated on
+            // `!am_sender`, so the sender NEVER removes a duplicate; a duplicate
+            // top-level source arg stays alive and the receiver's own clean pass
+            // tombstones it, keeping both sides' NDX aligned. Under INC_RECURSE a
+            // duplicate directory is additionally marked FLAG_DUPLICATE so the
+            // sub-list scheduler batches the same-named dirs into one sub-list
+            // (flist.c:2162-2168). oc walks the whole tree eagerly, so a repeated
+            // source dir also yields duplicate *nested* entries that upstream -
+            // which scans each physical dir once - never produces; those nested
+            // duplicates are collapsed below. Only top-level duplicates (the
+            // genuine repeated source args) are kept, matching upstream's wire
+            // entry count and NDX numbering.
+            let top_level = !self.legacy[r].name().contains('/');
+            if am_sender && top_level {
+                let both_dirs = self.legacy[w].is_dir() && self.legacy[r].is_dir();
+                w += 1;
+                if w != r {
+                    self.legacy.swap(w, r);
+                    parallel.swap(w, r);
+                }
+                // upstream: flist.c:3072-3073 - FLAG_DUPLICATE marks the later
+                // directory (only when both entries are dirs) so
+                // `send_extra_file_list()` batches the duplicate-named dirs into a
+                // single sub-list. The later entry now sits at index `w`.
+                if both_dirs {
+                    self.legacy[w].set_duplicate(true);
                 }
                 r += 1;
                 continue;
@@ -501,30 +543,65 @@ mod tests {
     }
 
     #[test]
-    fn dedup_with_parallel_removes_dup_and_keeps_base_aligned() {
-        // WHY: when a duplicate is dropped (INC_RECURSE sender clean), the
-        // survivor's parallel source_base must travel with it so file_list[i]
-        // still maps to source_bases[i].
+    fn dedup_with_parallel_sender_inc_keeps_top_level_dups_alive() {
+        // WHY: upstream gates clear_file() on !am_sender (flist.c:3083-3090), so
+        // a sender NEVER removes a duplicate - even under INC_RECURSE. A repeated
+        // top-level source arg stays on the wire; the receiver's own clean pass
+        // tombstones it, keeping both sides' NDX numbering aligned. Truncating it
+        // (the old behaviour) made oc send one fewer entry than upstream and
+        // shifted every following NDX, desyncing an upstream receiver.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("z".into(), 0, 0o644));
         let mut bases = vec!["first", "second", "zbase"];
         let stats = list.dedup_with_parallel(&mut bases, true, true);
-        assert_eq!(stats.duplicates_removed, 1);
+        assert_eq!(stats.duplicates_removed, 0);
         let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
-        assert_eq!(names, ["dup", "z"]);
-        // The first "dup" survives (keep-first), so its base leads; z stays put.
-        assert_eq!(bases, ["first", "zbase"]);
+        assert_eq!(names, ["dup", "dup", "z"]);
+        // Bases stay aligned 1:1 with the (unremoved) entries.
+        assert_eq!(bases, ["first", "second", "zbase"]);
+        // Plain files are never marked FLAG_DUPLICATE - only dirs, for sub-list
+        // batching (flist.c:3072-3073 sets it inside the both-dirs branch).
+        assert!(!list[1].duplicate());
+    }
+
+    #[test]
+    fn dedup_with_parallel_sender_inc_keeps_top_level_dir_dup_flagged() {
+        // WHY: `rsync -r foo foo dest` under INC_RECURSE. Upstream keeps BOTH
+        // top-level `foo` dirs (clear_file gated on !am_sender) and marks the
+        // later FLAG_DUPLICATE so send_extra_file_list batches them into one
+        // sub-list (flist.c:3073, 2162-2168). oc walks the tree eagerly, so
+        // `foo`'s children appear twice; those NESTED duplicates are collapsed
+        // (upstream scans each physical dir once), but the two top-level `foo`
+        // entries stay - matching upstream's wire entry count and NDX numbering
+        // so an upstream receiver stays in sync.
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_directory("foo".into(), 0o755));
+        list.push(FileEntry::new_directory("foo".into(), 0o755));
+        list.push(FileEntry::new_file("foo/a".into(), 0, 0o644));
+        list.push(FileEntry::new_file("foo/a".into(), 0, 0o644));
+        let mut bases = vec!["b0", "b1", "b2", "b3"];
+        list.dedup_with_parallel(&mut bases, true, true);
+        let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
+        assert_eq!(names, ["foo", "foo", "foo/a"]);
+        assert!(
+            !list[0].duplicate(),
+            "the earlier survivor is not a duplicate"
+        );
+        assert!(list[1].duplicate(), "the later foo carries FLAG_DUPLICATE");
     }
 
     #[test]
     fn dedup_with_parallel_keeps_directory_over_file() {
-        // WHY: a dir must win over a same-named file "because it might have
-        // contents in the list" (flist.c:3065); its base must travel with it.
+        // WHY: a NESTED same-named dir must win over a same-named file "because
+        // it might have contents in the list" (flist.c:3065); its base must
+        // travel with it. Nested duplicates are oc double-walk artifacts
+        // (upstream scans each physical dir once) and ARE collapsed, unlike the
+        // top-level source-arg dups kept above.
         let mut list = DualFileList::new();
-        list.push(FileEntry::new_file("item".into(), 0, 0o644));
-        list.push(FileEntry::new_directory("item".into(), 0o755));
+        list.push(FileEntry::new_file("sub/item".into(), 0, 0o644));
+        list.push(FileEntry::new_directory("sub/item".into(), 0o755));
         let mut bases = vec!["file_base", "dir_base"];
         let stats = list.dedup_with_parallel(&mut bases, true, true);
         assert_eq!(stats.duplicates_removed, 1);
