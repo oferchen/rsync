@@ -169,9 +169,28 @@ impl StrongChecksumChoice {
     }
 
     /// Resolves the file checksum algorithm into a [`SignatureAlgorithm`].
+    ///
+    /// upstream: checksum.c:178-189 parse_checksum_choice - `file_sum_nni`
+    /// comes from the second comma component. An `auto` sub-component resolves
+    /// via `parse_csum_name` to the implied checksum, which is md5 at proto>=30
+    /// (checksum.c:118-122), but ONLY when the choice is "set". The fully-auto
+    /// forms (`auto` / `auto,auto`) null `checksum_choice` (options.c:1997-2003)
+    /// and negotiate the strongest mutually supported checksum instead, which
+    /// for a modern local copy is xxh128. Mirror that split: resolve a lone
+    /// `auto` file sub-component to md5 on the suppressed path, and fall back to
+    /// the negotiated xxh128 only when both components are auto.
     #[must_use]
     pub const fn file_signature_algorithm(self) -> SignatureAlgorithm {
-        self.file.to_signature_algorithm()
+        use checksums::strong::Md5Seed;
+        match (self.transfer, self.file) {
+            (StrongChecksumAlgorithm::Auto, StrongChecksumAlgorithm::Auto) => {
+                SignatureAlgorithm::Xxh3_128 { seed: 0 }
+            }
+            (_, StrongChecksumAlgorithm::Auto) => SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::none(),
+            },
+            (_, file) => file.to_signature_algorithm(),
+        }
     }
 
     /// Renders the selection into the canonical argument form accepted by `--checksum-choice`.
@@ -198,13 +217,26 @@ impl StrongChecksumChoice {
         matches!(self.transfer, StrongChecksumAlgorithm::None)
     }
 
-    /// Returns the transfer algorithm as a protocol-layer override for negotiation.
+    /// Returns the transfer-checksum override that drives protocol 30+
+    /// negotiation, mirroring upstream's send-gate and `auto` resolution.
     ///
-    /// When the transfer algorithm is [`Auto`](StrongChecksumAlgorithm::Auto), returns
-    /// `None` to allow automatic negotiation. Otherwise returns the corresponding
-    /// [`ChecksumAlgorithm`](protocol::ChecksumAlgorithm) to force during negotiation.
+    /// upstream: options.c:1997-2003 nulls `checksum_choice` only when the raw
+    /// string is exactly `auto` or `auto,auto`; any other value stays set and
+    /// suppresses the vstring exchange (compat.c:541 `if (!checksum_choice)`).
+    /// On that suppressed path `parse_checksum_choice` resolves the transfer
+    /// (first) component with `parse_csum_name`, where `auto` becomes the
+    /// implied md5 at proto>=30 (checksum.c:118-122). Returns `None` only for
+    /// the fully-auto choice so the negotiator's `send_checksum` gate
+    /// (`checksum_override.is_none()`) stays true and the exchange picks the
+    /// strongest mutual checksum (xxh128 for a modern peer). Every set choice
+    /// returns `Some`, suppressing the exchange and forcing the resolved
+    /// transfer checksum.
     pub const fn transfer_protocol_override(self) -> Option<protocol::ChecksumAlgorithm> {
-        self.transfer.to_protocol_algorithm()
+        match (self.transfer, self.file) {
+            (StrongChecksumAlgorithm::Auto, StrongChecksumAlgorithm::Auto) => None,
+            (StrongChecksumAlgorithm::Auto, _) => Some(protocol::ChecksumAlgorithm::MD5),
+            (transfer, _) => transfer.to_protocol_algorithm(),
+        }
     }
 }
 
@@ -419,6 +451,73 @@ mod tests {
                     seed_config: checksums::strong::Md5Seed::none(),
                 }
             );
+        }
+
+        // upstream: options.c:1997-2003 + compat.c:541 - "auto,md5" keeps
+        // checksum_choice non-null, so the vstring exchange is SUPPRESSED
+        // (send_checksum = checksum_override.is_none() in negotiate.rs). The
+        // transfer "auto" resolves to implied md5 (checksum.c:118-122) and the
+        // file component is the explicit md5. WHY: returning None here would
+        // re-enable the vstring and desync against an upstream peer that sends
+        // nothing; resolving to xxh128 would compute the wrong whole-file sum.
+        #[test]
+        fn auto_md5_suppresses_negotiation_and_resolves_both_to_md5() {
+            let choice = StrongChecksumChoice::parse("auto,md5").unwrap();
+            assert_eq!(
+                choice.transfer_protocol_override(),
+                Some(protocol::ChecksumAlgorithm::MD5),
+                "auto,md5 must force md5 and suppress the vstring (override.is_some())",
+            );
+            assert_eq!(
+                choice.file_signature_algorithm(),
+                SignatureAlgorithm::Md5 {
+                    seed_config: checksums::strong::Md5Seed::none(),
+                },
+                "auto,md5 file sum is the explicit md5, not xxh128",
+            );
+        }
+
+        // upstream: checksum.c:178-189 - the SECOND component of "md5,auto" is
+        // parsed with parse_csum_name("auto"), which is implied md5 at proto>=30
+        // (checksum.c:118-122), NOT the negotiated xxh128. WHY: the choice is
+        // "set" (checksum_choice non-null), so the file sum follows the
+        // suppressed-path resolution, not the fully-auto negotiated one.
+        #[test]
+        fn md5_auto_resolves_file_component_to_md5() {
+            let choice = StrongChecksumChoice::parse("md5,auto").unwrap();
+            assert_eq!(
+                choice.transfer_protocol_override(),
+                Some(protocol::ChecksumAlgorithm::MD5),
+            );
+            assert_eq!(
+                choice.file_signature_algorithm(),
+                SignatureAlgorithm::Md5 {
+                    seed_config: checksums::strong::Md5Seed::none(),
+                },
+                "a lone auto file sub-component on a set choice resolves to md5, not xxh128",
+            );
+        }
+
+        // upstream: options.c:1997-2003 - ONLY "auto" and "auto,auto" null
+        // checksum_choice, leaving send_checksum true so negotiate_the_strings
+        // exchanges lists and picks the strongest mutual checksum (xxh128 for a
+        // modern local copy). WHY: these two forms must keep override == None,
+        // or the negotiation the transfer relies on never runs.
+        #[test]
+        fn fully_auto_forms_still_negotiate() {
+            for text in ["auto", "auto,auto"] {
+                let choice = StrongChecksumChoice::parse(text).unwrap();
+                assert_eq!(
+                    choice.transfer_protocol_override(),
+                    None,
+                    "{text} must negotiate (override None => send_checksum true)",
+                );
+                assert_eq!(
+                    choice.file_signature_algorithm(),
+                    SignatureAlgorithm::Xxh3_128 { seed: 0 },
+                    "{text} file sum is the negotiated xxh128",
+                );
+            }
         }
     }
 }
