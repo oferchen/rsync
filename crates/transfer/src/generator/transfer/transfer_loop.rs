@@ -96,6 +96,19 @@ const fn sent_bytes(counted: u64, diverted: bool) -> u64 {
     if diverted { 0 } else { counted }
 }
 
+/// Whether `error` is a tagged [`protocol::ProtocolViolation`] - an abort that
+/// upstream maps to `exit_cleanup(RERR_PROTOCOL)` - rather than an ordinary
+/// per-file open failure that the sender records with `MSG_NO_SEND` and skips.
+///
+/// Used to route the device-guard abort (`sender.c:407-409`) surfaced by
+/// [`GeneratorContext::open_source_unbuffered`] to a fatal return instead of
+/// [`GeneratorContext::record_open_failure`].
+fn is_protocol_violation(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+}
+
 /// Minimum source size before the opt-in parallel delta scan is considered.
 ///
 /// Below this a single core already scans the file faster than the rayon
@@ -137,8 +150,15 @@ fn should_parallel_delta(file_size: u64, block_length: u32, cores: usize) -> boo
 /// procfs, or a zero-length file on some platforms); the caller treats that as
 /// a signal to fall back to the streaming sequential reader, so wire output is
 /// unaffected.
-fn open_source_mmap(path: &std::path::Path, use_noatime: bool) -> io::Result<fast_io::MmapReader> {
-    let file = super::super::open_source::open_source_with_noatime(path, use_noatime)?;
+fn open_source_mmap(
+    path: &std::path::Path,
+    source_open: &super::super::open_source::SourceOpen,
+) -> io::Result<fast_io::MmapReader> {
+    // The mmap reader wraps the fd opened under the sender's symlink-race
+    // policy (confined / O_NOFOLLOW), so the parallel-delta scan reads the
+    // same protected inode as the sequential path. upstream: sender.c maps
+    // the fd returned by secure_relative_open / do_open_checklinks.
+    let file = source_open.open(path)?;
     fast_io::MmapReader::from_file(file)
 }
 
@@ -692,6 +712,13 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
+            // The sender's per-connection source-open policy (confinement for
+            // a non-chroot daemon, O_NOFOLLOW otherwise). Threaded into the
+            // free-function read paths (mmap scan, inline-checksum re-read) so
+            // every open of this source applies the same symlink-race defence.
+            // upstream: sender.c:359-383.
+            let source_open = self.source_open();
+
             // upstream: sender.c:325-341 - when a file arrives again on the redo
             // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
             // append_mode and make_backups so the resend is a full-content
@@ -769,10 +796,13 @@ impl GeneratorContext {
                 // upstream: match.c:371-390 - append mode streams only the tail
                 // past the existing prefix; the sum_head's count/blength encode
                 // that flength. No block matching, no signature blocks.
-                let (source, _src_fd): (Box<dyn Read>, Option<_>) = match self
+                let (source, _src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match self
                     .open_source_unbuffered(&source_path, file_size)
                 {
-                    Ok(pair) => pair,
+                    Ok(triple) => triple,
+                    // upstream: sender.c:407-409 - a device source without
+                    // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
+                    Err(e) if is_protocol_violation(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
@@ -844,7 +874,7 @@ impl GeneratorContext {
                 let want_parallel = self.config.flags.parallel_delta_scan
                     && should_parallel_delta(file_size, block_length, cores);
                 let source_mmap = if want_parallel {
-                    open_source_mmap(&source_path, self.config.write.open_noatime).ok()
+                    open_source_mmap(&source_path, &source_open).ok()
                 } else {
                     None
                 };
@@ -929,7 +959,6 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let use_noatime = self.config.write.open_noatime;
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
                 let is_zlib = matches!(
                     negotiated_compression,
@@ -962,7 +991,7 @@ impl GeneratorContext {
                         },
                         is_zlib,
                         &source_path,
-                        use_noatime,
+                        &source_open,
                         checksum_algorithm,
                         self.checksum_seed,
                         self.protocol,
@@ -985,10 +1014,13 @@ impl GeneratorContext {
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
-                let (source, src_fd): (Box<dyn Read>, Option<_>) = match self
+                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match self
                     .open_source_unbuffered(&source_path, file_size)
                 {
-                    Ok(pair) => pair,
+                    Ok(triple) => triple,
+                    // upstream: sender.c:407-409 - a device source without
+                    // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
+                    Err(e) if is_protocol_violation(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
