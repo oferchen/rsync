@@ -79,6 +79,10 @@ use crate::daemon::{
     single_session_exit,
 };
 
+// QUIC listener identity enum, only present under the `quic` feature.
+#[cfg(feature = "quic")]
+use crate::daemon::QuicIdentity;
+
 // Only the unix-only post-xfer-exec abort test references this constant, so
 // keep the import unix-gated to avoid an unused-import error on Windows.
 #[cfg(unix)]
@@ -385,6 +389,8 @@ include!("tests/chunks/runtime_options_parse_pid_file_argument.rs");
 include!("tests/chunks/runtime_options_per_module_max_connections_overrides_global.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_cert_key_pairing.rs");
+#[cfg(feature = "quic")]
+include!("tests/chunks/runtime_options_quic_identity_resolution.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_lock_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");
