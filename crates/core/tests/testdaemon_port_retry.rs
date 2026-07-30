@@ -12,11 +12,10 @@
 //! line, so its correctness is the load-bearing invariant these tests pin.
 
 use std::io;
-use std::path::Path;
 
 mod common;
 
-use common::{DaemonBinary, TestDaemon, is_addr_in_use};
+use common::is_addr_in_use;
 
 /// The daemon-log line an rsync daemon emits when it loses the port race, as it
 /// appears embedded in the readiness-timeout error (`wait_ready`). WHY it must
@@ -90,9 +89,16 @@ fn matching_is_case_insensitive() {
 /// `TestDaemon::start` returns a daemon that is actually accepting connections.
 /// This exercises the loop's success arm end-to-end. Skips gracefully when the
 /// binary has not been built (local Mac runs), per the harness's degrade-not-
-/// fail convention.
+/// fail convention. Unix-only: daemon mode is unsupported on Windows
+/// (`daemon.rs`: "daemon mode is not supported on this platform"), so this
+/// cannot run there; the classifier tests above stay cross-platform.
+#[cfg(unix)]
 #[test]
 fn start_yields_a_ready_daemon() {
+    use std::path::Path;
+
+    use common::{DaemonBinary, TestDaemon};
+
     let bin = test_support::oc_rsync_bin();
     if !Path::new(&bin).exists() {
         eprintln!("skipping: oc-rsync binary not built at {}", bin.display());
