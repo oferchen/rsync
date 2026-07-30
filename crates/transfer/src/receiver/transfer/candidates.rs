@@ -1123,7 +1123,7 @@ impl ReceiverContext {
             } else {
                 " (file change)"
             }
-        } else if !metadata_unchanged(entry, metadata_opts, dest_meta) {
+        } else if !metadata_unchanged(entry, metadata_opts, dest_meta, modify_window) {
             " (attr change)"
         } else {
             " (uptodate)"
@@ -1176,7 +1176,14 @@ impl ReceiverContext {
         // already match. Skip entirely when no preservation flags are active.
         // On a no-change scan this eliminates ownership mapping, permission
         // comparison, and timestamp construction for every file.
-        if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, stat_meta) {
+        if needs_metadata_apply
+            && !metadata_unchanged(
+                entry,
+                metadata_opts,
+                stat_meta,
+                self.config.file_selection.modify_window,
+            )
+        {
             if let Err(e) = apply_metadata_with_cached_stat(
                 file_path,
                 entry,
