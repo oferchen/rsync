@@ -82,6 +82,12 @@
 
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
+/// Sender-side confined source open beneath a module root.
+///
+/// Unix-only: mirrors upstream `secure_relative_open` so a non-chroot
+/// daemon sender cannot be redirected outside its module by a swapped
+/// directory symlink (TOCTOU escape).
+pub mod confined_open;
 /// Rootless container / user-namespace detection for SQPOLL gating.
 pub mod container;
 /// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
@@ -347,6 +353,8 @@ pub use traits::{FileReader, FileWriter};
 #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
 pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
+#[cfg(unix)]
+pub use confined_open::open_source_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
