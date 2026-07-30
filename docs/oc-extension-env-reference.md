@@ -40,9 +40,17 @@ commit, and parallel checksum paths (`crates/engine/src/local_copy/buffer_pool/`
 
 Maximum number of buffers the global pool retains. Positive integer.
 Default: the detected hardware parallelism (one buffer per hardware
-thread). Zero, negative, or non-numeric values are ignored.
-Intentionally env-only: the default covers the common case and the knob is
-rarely tuned (`docs/design/cli-tunability-flags.md` section 8).
+thread), each 128 KiB wide, retained under the 32 MiB soft byte budget.
+Zero, negative, or non-numeric values are ignored.
+Because the default already scales with the CPU count, reach for the
+override only under extreme concurrency where the active worker count far
+exceeds `available_parallelism()`, or where a unit of work holds more than
+one buffer at a time - the point where the per-thread cache stops absorbing
+the acquire/return churn. Under-provisioning never blocks or fails an
+acquire; it only raises the allocation rate (a throughput cost, not a
+correctness one). Intentionally env-only: the default covers the common
+case and the knob is rarely tuned (see `docs/user/buffer-pool-tuning.md`
+and `docs/design/cli-tunability-flags.md` section 8).
 
 ### OC_RSYNC_BYTE_BUDGET
 
