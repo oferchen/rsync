@@ -162,6 +162,52 @@ the full feature matrix below.
 |----------------------|---------------------------|-------|-------|-------|
 | Itemize changes      | `-avi`                    | Known limitation | Known limitation | Known limitation |
 
+#### `--files-from` message interleaving (proto < 31): `negate_output_levels` not needed
+
+Upstream sign-flips every info and debug level for the duration of the
+server-receiver's `--files-from` window when
+`filesfrom_fd >= 0 && msgs2stderr != 1 && protocol_version < 31`, then restores
+them once the file list has been received (`options.c:579-588`
+`negate_output_levels`, called at `main.c:1154-1160` and reversed at
+`main.c:1208-1210`). The suppression exists because at protocol < 31 the
+files-from names are forwarded to the sender **un-multiplexed**: upstream
+temporarily switches the server's already-multiplexed output stream
+(`main.c:1265-1266` `io_start_multiplex_out` at protocol >= 23) back to raw
+buffered writes for the duration of the forward (`io.c:1228-1239`
+`start_filesfrom_forwarding`, `MPLX_TO_BUFFERED`, which also clears
+`iobuf.msg` "to be extra sure no messages go out"). During that raw window an
+`rprintf(FINFO, ...)` would otherwise land as raw bytes on the shared socket
+and corrupt the files-from stream the sender is reading.
+
+oc-rsync deliberately omits `negate_output_levels`, and no equivalent is
+required, because oc-rsync decouples diagnostic **generation** from wire
+**emission**:
+
+- `info_log!` / `debug_log!` expand to `emit_info` / `emit_debug`
+  (`crates/logging/src/macros.rs`), which only append a `DiagnosticEvent` to a
+  thread-local buffer (`crates/logging/src/thread_local.rs`, `EVENTS`). They
+  never touch a file descriptor; the buffer is drained by the CLI after the
+  transfer completes. An info/debug line fired anywhere inside the files-from
+  window therefore produces zero bytes on the socket.
+- The only path that turns a message into wire bytes is an explicit
+  `writer.send_msg_info` / `send_msg_*` call, and every one of those is a no-op
+  unless the writer is multiplexed
+  (`crates/transfer/src/writer/msg_info.rs`, `is_multiplexed()` guard). None of
+  them is invoked during the files-from forward.
+- oc-rsync forwards the entire files-from file as a single pre-staged
+  `write_all` + `flush` **before** it reads the file list
+  (`crates/transfer/src/receiver/transfer/setup/context.rs`,
+  `forward_files_from_to_sender`), rather than interleaving the forward with
+  `recv_file_list` through a shared `select()` loop. The forwarded payload and
+  the file-list read never share a live window with any message emission.
+
+Because generation cannot reach the socket and the only wire-emitting calls are
+gated on multiplex state and never fire inside the window, there is no
+interleaving for `negate_output_levels` to prevent. The omission is intentional
+and observably neutral. Upstream references: `options.c:579-588`,
+`main.c:1154-1210`, `main.c:1265-1266`, `io.c:965-971` (`send_msg` returns 0
+when `!OUT_MULTIPLEXED`), `io.c:1228-1239`, `log.c:329-346`.
+
 ### Protocol Forcing
 
 | Feature              | Flags                     | 3.4.4 |
