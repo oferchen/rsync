@@ -96,6 +96,19 @@ const fn sent_bytes(counted: u64, diverted: bool) -> u64 {
     if diverted { 0 } else { counted }
 }
 
+/// Whether `error` is a tagged [`protocol::ProtocolViolation`] - an abort that
+/// upstream maps to `exit_cleanup(RERR_PROTOCOL)` - rather than an ordinary
+/// per-file open failure that the sender records with `MSG_NO_SEND` and skips.
+///
+/// Used to route the device-guard abort (`sender.c:407-409`) surfaced by
+/// [`GeneratorContext::open_source_unbuffered`] to a fatal return instead of
+/// [`GeneratorContext::record_open_failure`].
+fn is_protocol_violation(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+}
+
 /// Minimum source size before the opt-in parallel delta scan is considered.
 ///
 /// Below this a single core already scans the file faster than the rayon
@@ -770,10 +783,13 @@ impl GeneratorContext {
                 // upstream: match.c:371-390 - append mode streams only the tail
                 // past the existing prefix; the sum_head's count/blength encode
                 // that flength. No block matching, no signature blocks.
-                let (source, _src_fd): (Box<dyn Read>, Option<_>) = match self
+                let (source, _src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match self
                     .open_source_unbuffered(&source_path, file_size)
                 {
-                    Ok(pair) => pair,
+                    Ok(triple) => triple,
+                    // upstream: sender.c:407-409 - a device source without
+                    // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
+                    Err(e) if is_protocol_violation(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
@@ -985,10 +1001,13 @@ impl GeneratorContext {
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
-                let (source, src_fd): (Box<dyn Read>, Option<_>) = match self
+                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match self
                     .open_source_unbuffered(&source_path, file_size)
                 {
-                    Ok(pair) => pair,
+                    Ok(triple) => triple,
+                    // upstream: sender.c:407-409 - a device source without
+                    // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
+                    Err(e) if is_protocol_violation(&e) => return Err(e),
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
