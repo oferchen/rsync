@@ -1550,7 +1550,8 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("ro"), b"value".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs on read-only file");
+        apply_xattrs_from_list(&file, &list, false, None, None)
+            .expect("apply xattrs on read-only file");
 
         let name = test_xattr_name("ro");
         assert_eq!(
