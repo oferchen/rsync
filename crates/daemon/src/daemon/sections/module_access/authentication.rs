@@ -132,20 +132,23 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied);
     }
 
-    let auth_user = match module.get_auth_user(username) {
-        Some(user) => user,
+    let auth_match = match module.get_auth_user(username) {
+        Some(matched) => matched,
         None => {
             send_auth_failed(reader.get_mut(), module, limiter)?;
             return Ok(AuthenticationStatus::Denied);
         }
     };
+    let auth_user = auth_match.user;
 
     // upstream: authenticate.c:318 - check_secret() receives the group name only
     // when the client was authorized via a matching `@group` token in
     // `auth users` (`group_match >= 0 ? auth_uid_groups[group_match] : NULL`).
     // A plain-username authorization passes NULL, so `@group:` secret lines
-    // never match. The matched entry's verbatim token carries that group.
-    let auth_group = auth_user.username.strip_prefix('@');
+    // never match. This is the concrete resolved group name (e.g. the
+    // `administrators` that a `@admin*` token matched), not the token itself,
+    // because upstream keys the `@group:` secrets lookup off the real group.
+    let auth_group = auth_match.group.as_deref();
 
     if !verify_secret_response(module, username, auth_group, &challenge, response_digest, digest)? {
         send_auth_failed(reader.get_mut(), module, limiter)?;
