@@ -223,6 +223,38 @@ fn process_approved_module(
         return Ok(());
     }
 
+    // upstream: clientserver.c:rsync_module (998-1009) - once munge_symlinks is
+    // resolved and the daemon has entered the module root, a pre-existing
+    // `rsyncd-munged` directory (SYMLINK_PREFIX without its trailing slash)
+    // would let an attacker plant real paths through which munged
+    // `/rsyncd-munged/...` symlinks resolve, defeating the munging. This runs
+    // after path validation and before the privilege drop and `@RSYNCD: OK`,
+    // mirroring upstream's abort with `@ERROR: daemon security issue --
+    // contact admin` and exit_cleanup(RERR_UNSUPPORTED).
+    if module.effective_munge_symlinks() {
+        let munged_dir = module.path.join("rsyncd-munged");
+        let is_dir = std::fs::metadata(&munged_dir)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
+        if is_dir {
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                "@ERROR: daemon security issue -- contact admin",
+            )?;
+            let host_owned = ctx.effective_host().map(str::to_owned);
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                host_owned.as_deref(),
+                auth_user.as_deref(),
+                &[],
+                RERR_UNSUPPORTED_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    }
+
     // Split into separate steps so each failure sends the correct upstream
     // error message: `@ERROR: chroot failed` vs `@ERROR: setgid failed` etc.
     // After chroot the effective module path becomes the post-chroot inner
