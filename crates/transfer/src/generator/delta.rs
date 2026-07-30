@@ -858,7 +858,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
     source_path: &Path,
-    use_noatime: bool,
+    source_open: &super::open_source::SourceOpen,
 ) -> io::Result<()> {
     match encoder {
         Some(encoder) => {
@@ -869,9 +869,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
             let needs_dict_sync =
                 is_zlib && ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
             let mut source_file = if needs_dict_sync {
-                Some(io::BufReader::new(
-                    super::open_source::open_source_with_noatime(source_path, use_noatime)?,
-                ))
+                Some(io::BufReader::new(source_open.open(source_path)?))
             } else {
                 None
             };
@@ -952,7 +950,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
     source_path: &Path,
-    use_noatime: bool,
+    source_open: &super::open_source::SourceOpen,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
     protocol: protocol::ProtocolVersion,
@@ -968,9 +966,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     // A single file handle serves both checksum and dictionary sync.
     let has_copies = ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
     let mut source_file = if has_copies {
-        Some(io::BufReader::new(
-            super::open_source::open_source_with_noatime(source_path, use_noatime)?,
-        ))
+        Some(io::BufReader::new(source_open.open(source_path)?))
     } else {
         None
     };
@@ -1367,7 +1363,7 @@ mod tests {
             None,
             false,
             &source_path,
-            false,
+            &crate::generator::open_source::SourceOpen::new(None, false, false),
             ChecksumAlgorithm::MD5,
             0,
             proto(31),
@@ -1961,7 +1957,7 @@ mod tests {
             None,
             false,
             temp.path(),
-            false,
+            &crate::generator::open_source::SourceOpen::new(None, false, false),
             ChecksumAlgorithm::MD5,
             0,
             proto(31),

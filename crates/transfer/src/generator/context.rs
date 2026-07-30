@@ -597,6 +597,54 @@ impl GeneratorContext {
         join_source_path(&self.source_bases[ndx], self.file_list[ndx].path())
     }
 
+    /// Builds the per-connection source-open policy the sender applies to
+    /// every source file.
+    ///
+    /// Mirrors the branch upstream `sender.c` takes before reading a file:
+    /// a non-chroot daemon (`use_secure_symlinks = am_daemon && !am_chrooted`;
+    /// oc never chroots, so it is simply `is_daemon_connection`) confines the
+    /// open beneath the module root; otherwise `do_open_checklinks` opens with
+    /// `O_NOFOLLOW` unless `--copy-links` / `--copy-unsafe-links` follows the
+    /// symlink.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon && !am_chrooted`
+    /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
+    pub(crate) fn source_open(&self) -> open_source::SourceOpen {
+        let confine_root = if self.config.connection.is_daemon_connection {
+            self.config.connection.daemon_module_root.clone()
+        } else {
+            None
+        };
+        let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
+        open_source::SourceOpen::new(
+            confine_root,
+            follow_symlinks,
+            self.config.write.open_noatime,
+        )
+    }
+
+    /// Whether the source open must apply confinement or `O_NOFOLLOW`, which
+    /// the path-based io_uring / IOCP fast readers cannot express (they follow
+    /// symlinks). Only a non-daemon transfer that already follows symlinks
+    /// (`--copy-links` / `--copy-unsafe-links`) may take the fast path.
+    ///
+    /// Non-Unix targets apply no symlink-race defence here (`O_NOFOLLOW` is a
+    /// Unix concept), so the fast path is always available.
+    pub(crate) fn requires_protected_source_open(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let follows = !self.config.connection.is_daemon_connection
+                && (self.config.flags.copy_links || self.config.flags.copy_unsafe_links);
+            !follows
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// Returns the full source path for entry `ndx` for the `%f` out-format
     /// placeholder, mirroring upstream `log.c` `pathjoin(F_PATHNAME(file),
     /// f_name(file))`.
@@ -786,6 +834,7 @@ impl GeneratorContext {
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
+            && !self.requires_protected_source_open()
         {
             // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
             // IOCP reader mirrors the disk-commit writer's dispatch: runtime
@@ -814,7 +863,7 @@ impl GeneratorContext {
             }
         }
 
-        let f = open_source::open_source_with_noatime(path, use_noatime)?;
+        let f = self.source_open().open(path)?;
         Ok(Box::new(std::io::BufReader::with_capacity(
             adaptive_buffer_size(file_size),
             f,
@@ -881,6 +930,7 @@ impl GeneratorContext {
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
+            && !self.requires_protected_source_open()
         {
             // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
             // IOCP reader mirrors the disk-commit writer's dispatch: runtime
@@ -909,7 +959,7 @@ impl GeneratorContext {
             }
         }
 
-        let f = open_source::open_source_with_noatime(path, use_noatime)?;
+        let f = self.source_open().open(path)?;
         #[cfg(unix)]
         let src_fd = Some(std::os::fd::AsRawFd::as_raw_fd(&f));
         #[cfg(not(unix))]

@@ -137,8 +137,15 @@ fn should_parallel_delta(file_size: u64, block_length: u32, cores: usize) -> boo
 /// procfs, or a zero-length file on some platforms); the caller treats that as
 /// a signal to fall back to the streaming sequential reader, so wire output is
 /// unaffected.
-fn open_source_mmap(path: &std::path::Path, use_noatime: bool) -> io::Result<fast_io::MmapReader> {
-    let file = super::super::open_source::open_source_with_noatime(path, use_noatime)?;
+fn open_source_mmap(
+    path: &std::path::Path,
+    source_open: &super::super::open_source::SourceOpen,
+) -> io::Result<fast_io::MmapReader> {
+    // The mmap reader wraps the fd opened under the sender's symlink-race
+    // policy (confined / O_NOFOLLOW), so the parallel-delta scan reads the
+    // same protected inode as the sequential path. upstream: sender.c maps
+    // the fd returned by secure_relative_open / do_open_checklinks.
+    let file = source_open.open(path)?;
     fast_io::MmapReader::from_file(file)
 }
 
@@ -679,6 +686,13 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
+            // The sender's per-connection source-open policy (confinement for
+            // a non-chroot daemon, O_NOFOLLOW otherwise). Threaded into the
+            // free-function read paths (mmap scan, inline-checksum re-read) so
+            // every open of this source applies the same symlink-race defence.
+            // upstream: sender.c:359-383.
+            let source_open = self.source_open();
+
             // upstream: sender.c:325-341 - when a file arrives again on the redo
             // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
             // append_mode and make_backups so the resend is a full-content
@@ -831,7 +845,7 @@ impl GeneratorContext {
                 let want_parallel = self.config.flags.parallel_delta_scan
                     && should_parallel_delta(file_size, block_length, cores);
                 let source_mmap = if want_parallel {
-                    open_source_mmap(&source_path, self.config.write.open_noatime).ok()
+                    open_source_mmap(&source_path, &source_open).ok()
                 } else {
                     None
                 };
@@ -916,7 +930,6 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let use_noatime = self.config.write.open_noatime;
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
                 let is_zlib = matches!(
                     negotiated_compression,
@@ -949,7 +962,7 @@ impl GeneratorContext {
                         },
                         is_zlib,
                         &source_path,
-                        use_noatime,
+                        &source_open,
                         checksum_algorithm,
                         self.checksum_seed,
                         self.protocol,
