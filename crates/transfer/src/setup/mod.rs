@@ -43,6 +43,7 @@ pub(crate) use capability::CAPABILITY_MAPPINGS;
 pub(crate) use capability::{
     build_compat_flags_from_client_info, client_has_pre_release_v_flag, parse_client_info,
 };
+pub(crate) use capability::{resolve_server_client_info, sender_receiver_symlink_times};
 #[cfg(test)]
 pub(crate) use compat::write_compat_flags;
 pub(crate) use protocol::CompatibilityFlags;
