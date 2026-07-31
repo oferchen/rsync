@@ -61,11 +61,14 @@ pub(super) fn apply_file_metadata(
                 xattr_list: begin.xattr_list.as_ref(),
                 xattr_filter: config.xattr_filter.as_deref(),
                 pre_transfer_meta,
-                // upstream: fnamecmp is the pre-transfer destination. Metadata
-                // is applied to the temp file before rename, so the final path
-                // still holds the basis file whose xattrs an abbreviated entry
-                // references.
-                basis_path: &begin.file_path,
+                // upstream: xattrs.c:944 rsync_xal_set(fname, ..., fnamecmp) -
+                // an abbreviated entry the generator left unrequested resolves
+                // against the basis (fnamecmp) actually used. `xattr_basis`
+                // carries the --fuzzy / --link-dest / --compare-dest /
+                // --partial-dir basis when it differs from the destination;
+                // absent that (fnamecmp == fname), the pre-transfer destination
+                // still holds the referenced value, so fall back to file_path.
+                basis_path: begin.xattr_basis.as_deref().unwrap_or(&begin.file_path),
             },
         )
     }
