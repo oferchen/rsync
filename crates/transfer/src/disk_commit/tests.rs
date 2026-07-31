@@ -2836,6 +2836,81 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
     );
 }
 
+/// WHY: a NON-signal whole-file verify FAILURE that keeps the partial (plain
+/// `--partial`, no `--partial-dir`) must leave the retained stub's recent
+/// temp-creation mtime intact - it must NOT be reset to the epoch. Upstream
+/// separates the two retention paths: the signal/abort cleanup
+/// (`cleanup.c:174-180`) zeros the modtime, but the ordinary failed-verify keep
+/// (`receiver.c:1047`) calls `finish_transfer(..., recv_ok, ...)` with
+/// `recv_ok == 0`, which maps to `ATTRS_SKIP_MTIME` (`rsync.c:748-749`) and so
+/// keeps the temp mtime. Stamping the epoch here (as oc previously did) is an
+/// observable divergence: after a verify failure a `stat` shows 1970 vs
+/// upstream's recent time, visible if the run aborts between the phase-1 failure
+/// and the phase-2 redo, or on a final phase-2 verify failure. The epoch stamp
+/// is asserted separately by the abort/disconnect/shutdown tests above.
+#[test]
+fn verify_failure_keeps_recent_mtime_on_plain_partial() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("verify_fail_partial.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    let before = filetime::FileTime::now();
+
+    let data = b"corrupt partial payload";
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: data.len() as u64,
+                file_entry_index: 0,
+                checksum_verifier: Some(md5_verifier()),
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: data.to_vec(),
+            // Sender's sum is for different bytes: forces a verify mismatch.
+            expected_checksum: expected_md5(b"the good bytes"),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert!(
+        result.computed_checksum.is_some(),
+        "disk thread must still report the computed digest for redo bookkeeping"
+    );
+    assert!(
+        result.delayed_path.is_none(),
+        "a verification failure is never staged for the delay-updates sweep"
+    );
+    assert!(
+        file_path.exists(),
+        "plain --partial must retain the failed-verify stub at the destination"
+    );
+
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
+    assert_ne!(
+        mtime, unix_epoch,
+        "failed-verify keep must NOT reset the stub mtime to the epoch \
+         (receiver.c:1047 ok_to_set_time=0 -> ATTRS_SKIP_MTIME keeps the temp mtime)"
+    );
+    assert!(
+        mtime.unix_seconds() >= before.unix_seconds() - 5,
+        "retained stub must keep a recent temp-creation mtime ({mtime:?}), not an old time"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
 /// Verifies that when a transfer with `delay_updates` is interrupted via
 /// Shutdown after some files have been committed, already-staged files remain
 /// in `.~tmp~/` and are NOT renamed to their final destinations.
