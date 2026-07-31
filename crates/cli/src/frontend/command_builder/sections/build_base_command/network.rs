@@ -31,7 +31,7 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .help_heading("oc-rsync extensions")
                 .value_name("COMMAND")
                 .help(
-                    "Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).",
+                    "CLI equivalent of the RSYNC_CONNECT_PROG environment variable, which oc-rsync also honors (%H = host, %P = port). Not a remote shell - use -e/--rsh for shell transfers.",
                 )
                 .num_args(1)
                 .action(ArgAction::Set)

@@ -671,7 +671,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .long("password-command")
                     .help_heading("oc-rsync extensions")
                     .value_name("COMMAND")
-                    .help("Run COMMAND via the system shell and read daemon password from its stdout.")
+                    .help("Alternative to --password-file and the RSYNC_PASSWORD environment variable (both honored); use when the daemon password must come from a command.")
                     .value_parser(OsStringValueParser::new())
                     .action(ArgAction::Set),
             )
