@@ -306,6 +306,42 @@ fn build_server_config(
             // window once the original CVE-2026-29518 fix landed.
             cfg.connection.is_daemon_connection = true;
 
+            // upstream: options.c:2390-2397 - the daemon sender paces its own
+            // outbound socket writes (io.c:846,861) at the client's forwarded
+            // `--bwlimit` capped by the effective module/global bwlimit.
+            // `ctx.limiter` already holds that daemon-side cap (computed by
+            // apply_module_bandwidth_limit before the transfer), and it is the
+            // SAME limiter that throttles the pre-transfer `@RSYNCD:` text phase
+            // (session_runtime.rs `write_limited`); the bulk phase runs on the
+            // separate `run_server_with_handshake` writer stack, so carrying the
+            // rate here installs one limiter per phase with no double-throttle.
+            // A receiver ignores this (main.c:1068), so it is set unconditionally.
+            {
+                let client_rate = client_args.iter().find_map(|arg| {
+                    arg.strip_prefix("--bwlimit=")
+                        .and_then(|value| parse_bandwidth_limit(value).ok())
+                        .and_then(|components| components.rate())
+                });
+                let daemon_cap = ctx.limiter.as_ref().map(BandwidthLimiter::limit_bytes);
+                let daemon_burst = ctx.limiter.as_ref().and_then(BandwidthLimiter::burst_bytes);
+                // upstream: options.c:2390 `if (daemon_bwlimit && (!bwlimit ||
+                // bwlimit > daemon_bwlimit)) bwlimit = daemon_bwlimit;`
+                let effective = match (client_rate, daemon_cap) {
+                    (Some(client), Some(cap)) => Some(client.min(cap)),
+                    (Some(client), None) => Some(client),
+                    (None, Some(cap)) => Some(cap),
+                    (None, None) => None,
+                };
+                cfg.connection.bwlimit = effective.map(|rate| {
+                    let burst = if daemon_cap == Some(rate) {
+                        daemon_burst
+                    } else {
+                        None
+                    };
+                    BandwidthLimitComponents::new(Some(rate), burst)
+                });
+            }
+
             // upstream: clientserver.c:1120-1121 - `fake super = yes` on the
             // daemon module demotes the receiver's am_root and forces fake-super
             // semantics regardless of whether the client requested --fake-super.

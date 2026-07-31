@@ -670,6 +670,14 @@ fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
+    // upstream: io.c:834-862 / main.c:1068 - on a push the local client IS the
+    // sender, so it paces its own outbound socket writes. Carry the parsed
+    // `--bwlimit` rate/burst onto the in-process generator config; the remote
+    // receiver ignores its forwarded copy (main.c:1068).
+    server_config.connection.bwlimit = config
+        .bandwidth_limit()
+        .map(|limit| limit.into_components());
+
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();

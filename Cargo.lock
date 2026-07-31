@@ -4227,6 +4227,7 @@ name = "transfer"
 version = "0.6.4"
 dependencies = [
  "apple-fs",
+ "bandwidth",
  "checksums",
  "compress",
  "criterion",
