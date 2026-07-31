@@ -1403,6 +1403,7 @@ dependencies = [
  "logging",
  "memmap2",
  "permutation",
+ "proptest",
  "rayon",
  "rustix",
  "tempfile",

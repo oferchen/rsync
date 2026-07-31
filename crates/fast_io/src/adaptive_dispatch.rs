@@ -20,7 +20,8 @@
 //! wall-clock duration. The module maintains an exponentially-weighted
 //! moving average of bytes-per-second per backend with `alpha = 0.2`
 //! per sample (the new sample contributes 20%, the running estimate
-//! contributes 80%). [`crate::adaptive_dispatch::pick`] then compares the two EWMAs and returns
+//! contributes 80%), folded through the shared [`crate::ewma::Ewma`]
+//! primitive. [`crate::adaptive_dispatch::pick`] then compares the two EWMAs and returns
 //! the faster backend, or falls back to the static size-threshold
 //! heuristic from Option 2 ([`crate::adaptive_dispatch::size_threshold_pick`]) when one or both
 //! backends has no recorded history.
@@ -33,6 +34,7 @@
 //! the size-threshold path so the operator can revert to the static
 //! Option 2 behaviour without rebuilding.
 
+use crate::ewma::Ewma;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -62,8 +64,16 @@ pub enum BasisReadBackend {
 /// per host via the SMR-3b wiring once that ships.
 pub const DEFAULT_SIZE_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Smoothing factor for the per-backend EWMA. New samples weigh 20%;
-/// the prior estimate weighs 80%. Bounded in `(0.0, 1.0]`.
+/// Smoothing factor for the per-backend EWMA, fed to the shared
+/// [`Ewma`] primitive. New samples weigh 20%; the prior estimate weighs
+/// 80%. Bounded in `(0.0, 1.0]`.
+///
+/// 0.2 is the working-document recommendation in
+/// `docs/design/mmap-vs-sqpoll-conflict-resolution.md`: it is slow enough
+/// that one anomalous read (a cold-cache mmap fault, a stalled SQPOLL
+/// submit) cannot flip the backend choice on its own, yet fast enough that
+/// a genuine throughput regime change converges within a handful of files
+/// transferred in a single session.
 const EWMA_ALPHA: f64 = 0.2;
 
 /// Process-wide tracker that maintains an exponentially-weighted moving
@@ -139,12 +149,12 @@ impl ThroughputTracker {
             BasisReadBackend::IoUring => &self.iouring_ewma_bytes_per_sec,
         };
         let prev_bits = slot.load(Ordering::Acquire);
-        let updated = if prev_bits == 0 {
-            sample
+        let seed = if prev_bits == 0 {
+            None
         } else {
-            let prev = f64::from_bits(prev_bits);
-            EWMA_ALPHA * sample + (1.0 - EWMA_ALPHA) * prev
+            Some(f64::from_bits(prev_bits))
         };
+        let updated = Ewma::with_seed(EWMA_ALPHA, seed).update(sample);
         slot.store(updated.to_bits(), Ordering::Release);
 
         if let Ok(mut guard) = self.last_sample_ts.lock() {
