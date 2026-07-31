@@ -429,6 +429,32 @@ pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: Serv
     recursive && !qsort && role == ServerRole::Generator
 }
 
+/// Builds the sender-side bandwidth limiter for this server transfer.
+///
+/// Returns `Some` only when the local role is the sender
+/// ([`ServerRole::Generator`], i.e. an SSH `--server --sender`, a client push,
+/// or a daemon-sender on a pull) and a non-zero `--bwlimit` is in effect. The
+/// receiver always returns `None`: upstream `main.c:1068` sets
+/// `bwlimit_writemax = 0` on the receiver, so it never paces its own writes. A
+/// `None` result makes the sender's socket writer a zero-overhead passthrough.
+///
+/// # Upstream Reference
+///
+/// - `main.c:1068` - the receiver disables its own bwlimit.
+/// - `io.c:846,861` / `options.c:2394-2397` - the sender clamps each write to
+///   `bwlimit_writemax` then `sleep_for_bwlimit(n)`.
+fn sender_bandwidth_limiter(config: &ServerConfig) -> Option<bandwidth::BandwidthLimiter> {
+    if config.role != ServerRole::Generator {
+        return None;
+    }
+    let components = config.connection.bwlimit?;
+    let rate = components.rate()?;
+    Some(bandwidth::BandwidthLimiter::with_burst(
+        rate,
+        components.burst(),
+    ))
+}
+
 /// Executes the native server entry point over standard I/O.
 ///
 /// The implementation performs the protocol handshake before dispatching to the
@@ -775,12 +801,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         });
     }
 
+    // upstream: main.c:1068 - only the sender paces its outbound writes; the
+    // receiver sets `bwlimit_writemax = 0`. On this server body that is the
+    // Generator role (SSH `--server --sender`, a client push, or a daemon-sender
+    // on a pull). Install the limiter at the bottom of the writer stack so it
+    // paces the exact wire bytes the descriptor accepts (io.c:846,861), below
+    // the multiplex framer.
+    let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
+
     // upstream: io.c:859 - stats.total_written counts every byte the raw
     // descriptor accepts, multiplex frame headers included, in perform_io().
     // Wrap the transport below the multiplex framer so the shared counter
     // mirrors that raw wire total; the sender samples it at its handle_stats
     // point (main.c:979-980) and reports it as "Total bytes sent".
-    let counting_stdout = writer::CountingWriter::new_shared(stdout);
+    let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
     let bytes_sent_counter = counting_stdout.counter();
 
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).

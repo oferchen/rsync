@@ -46,6 +46,13 @@ pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
 pub(super) struct ServerLongFlags {
     pub(super) is_sender: bool,
     pub(super) is_receiver: bool,
+    /// Bandwidth limit forwarded by the client as whole KiB per second.
+    ///
+    /// upstream: options.c:2799 - `server_options()` emits `--bwlimit=%d` where
+    /// `%d` is the rate in whole KiB (options.c:1718). Only the sender-role
+    /// server (`--sender`) acts on it; a receiver disables its own throttle
+    /// (main.c:1068). Captured raw here and parsed when building the config.
+    pub(super) bwlimit: Option<String>,
     pub(super) ignore_errors: bool,
     pub(super) fsync: bool,
     pub(super) io_uring_policy: fast_io::IoUringPolicy,
@@ -375,6 +382,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
     let mut flags = ServerLongFlags {
         is_sender: false,
         is_receiver: false,
+        bwlimit: None,
         ignore_errors: false,
         fsync: false,
         io_uring_policy: fast_io::IoUringPolicy::Auto,
@@ -730,6 +738,9 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.max_size = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-alloc=") {
         flags.max_alloc = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--bwlimit=") {
+        // upstream: options.c:2799 - client forwards `--bwlimit=%d` in whole KiB.
+        flags.bwlimit = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-at=") {
         flags.stop_at = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-after=") {
