@@ -21,6 +21,7 @@ engine = { path = "../engine", default-features = false }
 signature = { path = "../signature" }
 filters = { path = "../filters" }
 compress = { path = "../compress" }
+bandwidth = { path = "../bandwidth" }
 logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
 crossbeam-queue = { workspace = true }

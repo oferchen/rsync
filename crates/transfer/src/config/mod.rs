@@ -10,6 +10,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use bandwidth::BandwidthLimitComponents;
 use compress::zlib::CompressionLevel;
 use metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use protocol::FilenameConverter;
@@ -288,6 +289,25 @@ pub struct ConnectionConfig {
     /// [`implied_source_args`]: Self::implied_source_args
     /// [`files_from_data`]: Self::files_from_data
     pub implied_skip_daemon_module: bool,
+    /// Effective `--bwlimit` rate (and optional burst) applied to the sender's
+    /// outbound socket writes.
+    ///
+    /// `Some` only when the local process is the sender (`am_sender`) and a
+    /// non-zero limit is in effect: a client push, an SSH `--server --sender`,
+    /// or a daemon-sender on a pull. The receiver leaves this `None`, mirroring
+    /// upstream `main.c:1068` where the receiver sets `bwlimit_writemax = 0`.
+    /// A `None` value (or a zero rate) is a no-op passthrough on the wire.
+    ///
+    /// The live [`bandwidth::BandwidthLimiter`] is constructed from these
+    /// components at transfer start and installed on the sender's socket writer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:846,861` - clamp each write to `bwlimit_writemax`, then
+    ///   `sleep_for_bwlimit(n)`.
+    /// - `options.c:2394-2397` - `bwlimit_writemax = bwlimit * 128`, min 512.
+    /// - `main.c:1068` - the receiver disables its own bwlimit.
+    pub bwlimit: Option<BandwidthLimitComponents>,
 }
 
 /// File selection and filtering options for transfer candidates.
