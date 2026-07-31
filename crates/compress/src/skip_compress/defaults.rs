@@ -10,10 +10,6 @@
 //! `strrchr(fname, '.')`, i.e. the last suffix only - there is no compound
 //! `.tar.gz` handling).
 
-use std::collections::HashSet;
-
-use super::Suffix;
-
 /// Upstream default suffixes that skip compression.
 ///
 /// This is the exact set from upstream `default-dont-compress.h`
@@ -34,29 +30,18 @@ pub const DEFAULT_SKIP_COMPRESS_SUFFIXES: &[&str] = &[
     "webp", "xz", "z", "zip", "zst",
 ];
 
-/// Returns the complete default set of skip-compress suffixes.
-///
-/// Each entry is a `Suffix` in canonical lowercase form. The list is the exact
-/// upstream `DEFAULT_DONT_COMPRESS` set.
-#[must_use]
-pub fn default_skip_extensions() -> HashSet<Suffix> {
-    let mut set = HashSet::with_capacity(DEFAULT_SKIP_COMPRESS_SUFFIXES.len());
-    for ext in DEFAULT_SKIP_COMPRESS_SUFFIXES {
-        set.insert(Suffix::new(ext));
-    }
-    set
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// The default set must contain exactly the upstream `DEFAULT_DONT_COMPRESS`
-    /// suffixes. A count drift here means the list diverged from upstream, which
-    /// changes which files get compressed on the wire vs upstream rsync.
+    /// suffixes with no duplicates. A count drift here means the list diverged
+    /// from upstream, which changes which files get compressed on the wire vs
+    /// upstream rsync.
     #[test]
     fn default_set_matches_upstream_count() {
-        let exts = default_skip_extensions();
+        let exts: HashSet<&str> = DEFAULT_SKIP_COMPRESS_SUFFIXES.iter().copied().collect();
         assert_eq!(
             exts.len(),
             DEFAULT_SKIP_COMPRESS_SUFFIXES.len(),
@@ -69,7 +54,7 @@ mod tests {
     /// suffix upstream skips (which would compress an already-compressed file).
     #[test]
     fn default_set_contains_every_upstream_suffix() {
-        let exts = default_skip_extensions();
+        let exts: HashSet<&str> = DEFAULT_SKIP_COMPRESS_SUFFIXES.iter().copied().collect();
         for expected in DEFAULT_SKIP_COMPRESS_SUFFIXES {
             assert!(
                 exts.contains(*expected),
@@ -83,7 +68,7 @@ mod tests {
     /// upstream compresses; skipping them diverges from upstream on the wire.
     #[test]
     fn default_set_excludes_non_upstream_suffixes() {
-        let exts = default_skip_extensions();
+        let exts: HashSet<&str> = DEFAULT_SKIP_COMPRESS_SUFFIXES.iter().copied().collect();
         for unexpected in &[
             "pdf", "docx", "xlsx", "pptx", "epub", "heic", "heif", "avif", "tiff", "bmp", "wav",
             "wma", "aiff", "gzip", "bzip2", "img", "vhd", "vmdk", "qcow2", "cab", "whl", "gem",
