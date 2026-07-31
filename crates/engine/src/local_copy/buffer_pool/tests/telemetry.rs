@@ -1,4 +1,4 @@
-//! Hit / miss counters and the BufferPoolStats snapshot.
+//! Hit / miss / growth counters and the BufferPoolStats snapshot.
 
 use super::super::*;
 use std::sync::Arc;
@@ -97,6 +97,16 @@ fn telemetry_concurrent_counting() {
 }
 
 #[test]
+fn telemetry_with_adaptive_resizing() {
+    // Telemetry counters work independently of adaptive resizing.
+    let pool = Arc::new(BufferPool::new(4).with_adaptive_resizing());
+    for _ in 0..100 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    assert_eq!(pool.total_acquires(), 100);
+}
+
+#[test]
 fn telemetry_try_acquire_counts_hits() {
     let pool = BufferPool::with_buffer_size(4, 1024).with_memory_cap(4096);
     // First acquire: miss.
@@ -141,7 +151,46 @@ fn stats_returns_snapshot() {
     assert_eq!(stats.total_acquires(), 2);
     assert_eq!(stats.total_misses, 1);
     assert_eq!(stats.total_hits, 1);
+    assert_eq!(stats.total_growths, 0);
     assert!((stats.hit_rate() - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+fn stats_growths_zero_without_adaptive() {
+    let pool = Arc::new(BufferPool::new(2));
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+    assert_eq!(pool.total_growths(), 0);
+    assert_eq!(pool.stats().total_growths, 0);
+    drop(held);
+}
+
+#[test]
+fn stats_growths_incremented_on_adaptive_grow() {
+    let pool = Arc::new(BufferPool::with_buffer_size(2, 1024).with_adaptive_resizing());
+    let initial = pool.max_buffers();
+
+    // Hold many buffers to force misses and trigger growth.
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+
+    let new_capacity = pool.max_buffers();
+    if new_capacity > initial {
+        assert!(
+            pool.total_growths() >= 1,
+            "expected at least 1 growth event, got {}",
+            pool.total_growths()
+        );
+        assert!(
+            pool.stats().total_growths >= 1,
+            "stats().total_growths should match total_growths()"
+        );
+    }
+    drop(held);
 }
 
 #[test]
@@ -149,6 +198,7 @@ fn stats_hit_rate_empty() {
     let stats = BufferPoolStats {
         total_hits: 0,
         total_misses: 0,
+        total_growths: 0,
         total_byte_overflows: 0,
     };
     assert_eq!(stats.hit_rate(), 0.0);
@@ -160,6 +210,7 @@ fn stats_hit_rate_all_hits() {
     let stats = BufferPoolStats {
         total_hits: 100,
         total_misses: 0,
+        total_growths: 0,
         total_byte_overflows: 0,
     };
     assert!((stats.hit_rate() - 1.0).abs() < f64::EPSILON);
@@ -170,6 +221,7 @@ fn stats_hit_rate_all_misses() {
     let stats = BufferPoolStats {
         total_hits: 0,
         total_misses: 50,
+        total_growths: 0,
         total_byte_overflows: 0,
     };
     assert_eq!(stats.hit_rate(), 0.0);
@@ -181,6 +233,7 @@ fn stats_debug_and_clone() {
     let stats = BufferPoolStats {
         total_hits: 10,
         total_misses: 5,
+        total_growths: 1,
         total_byte_overflows: 2,
     };
     let cloned = stats;
@@ -188,5 +241,6 @@ fn stats_debug_and_clone() {
     let debug = format!("{stats:?}");
     assert!(debug.contains("total_hits"));
     assert!(debug.contains("total_misses"));
+    assert!(debug.contains("total_growths"));
     assert!(debug.contains("total_byte_overflows"));
 }
