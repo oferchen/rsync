@@ -107,10 +107,10 @@ pub struct GlobalBufferPoolConfig {
 
 /// Default byte budget for pool retention (32 MiB).
 ///
-/// Matches the maximum pooled memory at the central queue's ceiling:
+/// Matches the maximum pooled memory at the adaptive resizer's ceiling:
 /// 256 buffers at 128 KiB each = 32 MiB. This provides a consistent
-/// upper bound on memory the pool retains, including when large-file
-/// transfers use individually larger buffers (adaptive buffer sizing).
+/// upper bound whether the pool grows by count (adaptive resizing) or
+/// by individual buffer size (adaptive buffer sizing for large files).
 ///
 /// Overridden by `--max-alloc`, `OC_RSYNC_BYTE_BUDGET`, or programmatic
 /// configuration via [`GlobalBufferPoolConfig`].

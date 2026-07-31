@@ -11,6 +11,7 @@
 //!
 //! - [`acquire`] - the acquire/return hot path plus `admit_or_deallocate` and
 //!   `pop_buffer`.
+//! - [`resize`] - adaptive soft-capacity grow/shrink.
 //! - [`memory`] - memory-cap reservation helpers.
 //! - [`stats`] - telemetry snapshot ([`BufferPoolStats`]) and accessors.
 //!
@@ -19,6 +20,7 @@
 
 mod acquire;
 mod memory;
+mod resize;
 mod stats;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize};
@@ -30,6 +32,7 @@ use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::buffer_controller::{AdaptiveBufferController, ControllerConfig};
 use super::byte_budget::ByteBudget;
 use super::memory_cap::MemoryCap;
+use super::pressure::PressureTracker;
 use super::throughput::ThroughputTracker;
 
 pub use stats::BufferPoolStats;
@@ -38,11 +41,12 @@ pub use stats::BufferPoolStats;
 ///
 /// `ArrayQueue` requires a fixed capacity at construction time, so the
 /// queue is sized to the larger of the caller-requested `max_buffers`
-/// and this default. This headroom keeps the queue from having to
-/// reallocate when `max_buffers` is small.
+/// and this default. This headroom allows the adaptive resizer to grow
+/// the soft capacity without having to reallocate the queue.
 ///
-/// At 128 KiB per buffer (`COPY_BUFFER_SIZE`), 256 buffers = 32 MiB of
-/// pooled memory at the queue's maximum fill.
+/// Matches the upper bound enforced by the adaptive resizer (`MAX_CAPACITY`
+/// in `pressure.rs`). At 128 KiB per buffer (`COPY_BUFFER_SIZE`), 256
+/// buffers = 32 MiB of pooled memory at the resizer's maximum soft cap.
 const DEFAULT_QUEUE_CAPACITY: usize = 256;
 
 /// Computes the fixed [`ArrayQueue`] capacity for a given soft maximum.
@@ -130,8 +134,9 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     central_count: AtomicUsize,
     /// Soft maximum number of buffers to retain in the central pool.
     ///
-    /// Read atomically on every return to enforce the soft cap.
-    /// Thread-local cached buffers are not counted against this limit.
+    /// Read atomically on every return to enforce the soft cap and on
+    /// every adaptive-resize evaluation. Thread-local cached buffers are
+    /// not counted against this limit.
     soft_capacity: AtomicUsize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
@@ -156,6 +161,12 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// The tracker is only allocated when explicitly enabled via
     /// [`with_throughput_tracking`](Self::with_throughput_tracking).
     throughput: Option<ThroughputTracker>,
+    /// Optional pressure tracker for adaptive pool resizing.
+    ///
+    /// When present, tracks hit/miss rates and periodically adjusts the
+    /// pool's soft capacity to match demand. Enabled via
+    /// [`with_adaptive_resizing`](Self::with_adaptive_resizing).
+    pressure: Option<PressureTracker>,
     /// Optional PID-style buffer-size controller.
     ///
     /// When present, dynamically adjusts the recommended buffer size based
@@ -166,18 +177,28 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// [`with_buffer_controller`](Self::with_buffer_controller).
     ///
     /// The controller affects individual buffer sizes (the manipulated
-    /// variable) without touching the pool's slot count.
+    /// variable), while the pressure tracker affects the pool's slot count.
+    /// The two loops observe orthogonal signals and compose without
+    /// interference.
     buffer_controller: Option<AdaptiveBufferController>,
     /// Cumulative count of acquire operations that found a buffer in the
     /// thread-local cache or central pool (no fresh allocation needed).
     ///
+    /// Always active regardless of whether adaptive resizing is enabled.
     /// Uses `Relaxed` ordering since exact precision is not required for
     /// telemetry - small counting errors under concurrent access are
     /// acceptable.
     total_hits: AtomicU64,
     /// Cumulative count of acquire operations that required a fresh
     /// allocation because no pooled buffer was available.
+    ///
+    /// Always active regardless of whether adaptive resizing is enabled.
     total_misses: AtomicU64,
+    /// Cumulative count of pool capacity growth events.
+    ///
+    /// Incremented each time the adaptive resizer increases the soft
+    /// capacity. Always zero when adaptive resizing is not enabled.
+    total_growths: AtomicU64,
 }
 
 impl BufferPool {
@@ -207,9 +228,11 @@ impl BufferPool {
             memory_cap: None,
             byte_budget: None,
             throughput: None,
+            pressure: None,
             buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 
@@ -232,9 +255,11 @@ impl BufferPool {
             memory_cap: None,
             byte_budget: None,
             throughput: None,
+            pressure: None,
             buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 }
@@ -262,9 +287,11 @@ impl<A: BufferAllocator> BufferPool<A> {
             memory_cap: None,
             byte_budget: None,
             throughput: None,
+            pressure: None,
             buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 
@@ -347,6 +374,27 @@ impl<A: BufferAllocator> BufferPool<A> {
         self
     }
 
+    /// Enables adaptive resizing based on allocation pressure.
+    ///
+    /// When enabled, the pool tracks hit/miss rates using atomic counters
+    /// and periodically adjusts its soft capacity:
+    ///
+    /// - **Grow**: When the miss rate exceeds 20% (too many fresh allocations),
+    ///   the capacity is doubled (up to 256).
+    /// - **Shrink**: When pool utilization drops below 30% and miss rate is
+    ///   low, the capacity is halved (down to 2).
+    ///
+    /// Pressure evaluation occurs every 64 acquire operations, amortizing
+    /// the cost. Between checks, only two `Relaxed` atomic increments are
+    /// performed per acquire - negligible overhead on the hot path.
+    ///
+    /// Adaptive resizing is zero-cost when not enabled.
+    #[must_use]
+    pub fn with_adaptive_resizing(mut self) -> Self {
+        self.pressure = Some(PressureTracker::new());
+        self
+    }
+
     /// Enables PID-style buffer-size control based on throughput feedback.
     ///
     /// When enabled, the controller dynamically adjusts the recommended
@@ -356,9 +404,11 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// (the setpoint) using proportional, integral, and derivative terms,
     /// which eliminates steady-state offset and damps overshoot.
     ///
-    /// This feature is orthogonal to throughput tracking (which provides the
-    /// EMA estimate). The controller consumes throughput data and emits a
-    /// buffer-size recommendation without touching pool capacity.
+    /// This feature is orthogonal to adaptive resizing (which adjusts pool
+    /// slot count) and throughput tracking (which provides the EMA estimate).
+    /// The controller consumes throughput data and emits a buffer-size
+    /// recommendation; the existing grow/shrink loop continues to manage
+    /// pool capacity independently.
     ///
     /// Throughput tracking is automatically enabled when a buffer controller
     /// is configured, since the controller requires throughput samples.
@@ -476,9 +526,10 @@ impl<A: BufferAllocator> Drop for BufferPool<A> {
         if std::env::var("OC_RSYNC_BUFFER_POOL_STATS").as_deref() == Ok("1") {
             let stats = self.stats();
             eprintln!(
-                "BufferPool stats: reuses={} allocations={} byte_overflows={} hit_rate={:.1}%",
+                "BufferPool stats: reuses={} allocations={} growths={} byte_overflows={} hit_rate={:.1}%",
                 stats.total_hits,
                 stats.total_misses,
+                stats.total_growths,
                 stats.total_byte_overflows,
                 self.hit_rate() * 100.0,
             );

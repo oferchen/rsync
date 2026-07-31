@@ -26,6 +26,9 @@ impl<A: BufferAllocator> BufferPool<A> {
     ///
     /// Thread-local cached buffers are additional (at most one per thread).
     /// Returns `0` for a zero-capacity pool (never retains buffers).
+    ///
+    /// When adaptive resizing is enabled, this value may change over time
+    /// as the pool adjusts to allocation pressure.
     #[must_use]
     pub fn max_buffers(&self) -> usize {
         self.soft_capacity.load(Ordering::Relaxed)
@@ -87,6 +90,12 @@ impl<A: BufferAllocator> BufferPool<A> {
             .unwrap_or(0)
     }
 
+    /// Returns `true` if adaptive resizing is enabled.
+    #[must_use]
+    pub fn is_adaptive(&self) -> bool {
+        self.pressure.is_some()
+    }
+
     /// Returns the cumulative number of acquire operations that found a
     /// buffer in the thread-local cache or central pool (no fresh
     /// allocation needed).
@@ -122,6 +131,15 @@ impl<A: BufferAllocator> BufferPool<A> {
         self.total_hits() as f64 / total as f64
     }
 
+    /// Returns the cumulative number of pool capacity growth events.
+    ///
+    /// Incremented each time adaptive resizing increases the soft capacity.
+    /// Always zero when adaptive resizing is not enabled.
+    #[must_use]
+    pub fn total_growths(&self) -> u64 {
+        self.total_growths.load(Ordering::Relaxed)
+    }
+
     /// Returns a snapshot of all telemetry counters.
     ///
     /// The returned [`BufferPoolStats`] captures the current values of all
@@ -134,6 +152,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         BufferPoolStats {
             total_hits: self.total_hits(),
             total_misses: self.total_misses(),
+            total_growths: self.total_growths(),
             total_byte_overflows: self.total_byte_overflows(),
         }
     }
@@ -151,6 +170,9 @@ pub struct BufferPoolStats {
     /// Number of acquire operations that required a fresh allocation
     /// because no pooled buffer was available.
     pub total_misses: u64,
+    /// Number of times the adaptive resizer increased the pool's soft
+    /// capacity. Zero when adaptive resizing is not enabled.
+    pub total_growths: u64,
     /// Number of admission rejections due to the byte budget being full
     /// on return. Each rejection means the returning buffer was
     /// deallocated rather than retained. Zero when no byte budget is set.
