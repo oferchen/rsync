@@ -148,6 +148,13 @@ pub mod zero_detect;
 #[cfg(feature = "adaptive-basis-dispatch")]
 pub mod adaptive_dispatch;
 
+/// Shared exponentially-weighted moving average primitive. One implementation
+/// with two call sites: [`adaptive_dispatch`]'s per-backend throughput
+/// tracker consumes it now, and the throughput governor's per-stage telemetry
+/// will consume it later. Always compiled - unlike [`adaptive_dispatch`] it is
+/// not feature-gated, so both consumers share the same smoothing rule.
+pub mod ewma;
+
 /// Linux `FICLONERANGE` partial-reflink wrapper for the delta-apply COPY-token
 /// fast path. Returns `Ok(true)` on metadata-only clone, `Ok(false)` when the
 /// platform / filesystem / alignment is unsuitable so the caller can fall
