@@ -99,7 +99,6 @@ mod guard;
 mod memory_cap;
 mod page_aligned;
 mod pool;
-mod pressure;
 mod thread_local_cache;
 #[cfg(feature = "thread-slab-pool")]
 mod thread_slab;
