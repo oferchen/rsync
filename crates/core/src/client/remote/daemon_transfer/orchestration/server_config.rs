@@ -171,6 +171,14 @@ pub(crate) fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
+    // upstream: io.c:834-862 / main.c:1068 - on an rsync:// push the local
+    // client IS the sender and paces its own outbound socket writes. Carry the
+    // parsed `--bwlimit` rate/burst onto the in-process generator config; the
+    // daemon receiver ignores its forwarded copy (main.c:1068).
+    server_config.connection.bwlimit = config
+        .bandwidth_limit()
+        .map(|limit| limit.into_components());
+
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
