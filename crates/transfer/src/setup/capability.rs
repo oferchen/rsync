@@ -409,3 +409,65 @@ pub(crate) fn build_compat_flags_from_client_info(
 pub(crate) fn client_has_pre_release_v_flag(client_info: &str) -> bool {
     client_info.contains('V')
 }
+
+/// Resolves the peer's capability string (`client_info`) on the server side of a
+/// transfer, mirroring the server branch of `build_our_flags`.
+///
+/// In daemon server mode the client's `-e` capabilities ride `client_args`; in
+/// SSH server mode they are embedded in the compact `flag_string`
+/// (`client_info = shell_cmd`, upstream compat.c:163-164). Returns an empty
+/// string when neither carries an `-e.<...>` capability list. Both branches
+/// scan via [`parse_client_info`], so this stays consistent with the flag-build
+/// path even though the two consumers keep separate call sites.
+pub(crate) fn resolve_server_client_info<'a>(
+    client_args: Option<&'a [String]>,
+    flag_string: &str,
+) -> Cow<'a, str> {
+    if let Some(args) = client_args {
+        parse_client_info(args)
+    } else if !flag_string.is_empty() {
+        // Wrap the flag string in a slice so parse_client_info can scan it for
+        // the embedded `-e.xxx` capability chars (matches build_our_flags).
+        let args = [flag_string.to_owned()];
+        Cow::Owned(parse_client_info(&args).into_owned())
+    } else {
+        Cow::Borrowed("")
+    }
+}
+
+/// Derives the sender's `receiver_symlink_times`, mirroring upstream
+/// compat.c:755-759.
+///
+/// The value reflects the RECEIVER's ability to set symlink times, which is not
+/// necessarily this process's own platform capability. When we are the server
+/// the receiver is the client, whose capability is advertised as the `'L'`
+/// letter in `client_info` - so a Unix server-sender must honour a receiver
+/// (e.g. a Windows client) that omits `'L'` and not itemize a symlink time it
+/// cannot apply. When we are a client sender the receiver's capability is the
+/// negotiated `CF_SYMLINK_TIMES` flag. Only the sender consults this (upstream
+/// sets it under `if (am_sender)`); it drives the position-4 `t`/`T` itemize
+/// glyph for symlinks (log.c:713-715).
+///
+/// # Upstream reference
+///
+/// `compat.c:755-759`:
+/// ```c
+/// if (am_sender) {
+///     receiver_symlink_times = am_server
+///         ? strchr(client_info, 'L') != NULL
+///         : !!(compat_flags & CF_SYMLINK_TIMES);
+/// }
+/// ```
+pub(crate) fn sender_receiver_symlink_times(
+    am_server: bool,
+    client_info: &str,
+    compat_flags: Option<CompatibilityFlags>,
+) -> bool {
+    if am_server {
+        // upstream compat.c:756-757 - strchr(client_info, 'L') != NULL
+        client_info.contains('L')
+    } else {
+        // upstream compat.c:758 - !!(compat_flags & CF_SYMLINK_TIMES)
+        compat_flags.is_some_and(|f| f.contains(CompatibilityFlags::SYMLINK_TIMES))
+    }
+}
