@@ -11,16 +11,19 @@
 //! - `multiplex` - Buffered writer that frames output in `MSG_DATA` multiplex frames.
 //! - `msg_info` - Trait for sending `MSG_INFO` protocol messages through multiplexed streams.
 //! - `counting` - Byte-counting writer wrapper for transfer statistics.
+//! - `throttle` - Bandwidth-limiting writer decorator for the sender socket.
 
 mod counting;
 mod msg_info;
 pub(crate) mod multiplex;
 mod server;
+mod throttle;
 
 pub use self::counting::CountingWriter;
 pub use self::msg_info::MsgInfoSender;
 pub use self::multiplex::BatchRoute;
 pub use self::server::{ServerWriter, shutdown_send_side};
+pub use self::throttle::ThrottlingWriter;
 
 #[cfg(test)]
 mod tests;

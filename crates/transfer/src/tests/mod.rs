@@ -1,6 +1,7 @@
 //! Tests for server module.
 
 mod allow_inc_recurse;
+mod bwlimit_wiring;
 mod config;
 mod filter_list_gate;
 mod multiplex_protocol_version;
