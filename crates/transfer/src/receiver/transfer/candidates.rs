@@ -959,7 +959,32 @@ impl ReceiverContext {
         let filter = self
             .xattr_name_filter()
             .map(|set| move |name: &str| set.xattr_name_allowed(name));
-        let opts = metadata::XattrSendOptions {
+        let opts = self.generator_xattr_opts(filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool));
+        let sender = self.resolve_xattr_list(entry).unwrap_or_default();
+        match path {
+            Some(path) => metadata::dest_xattrs_differ(&sender, path, &opts),
+            // upstream: xattrs.c:555-561 - a NULL `sxp` yields `rec_cnt = 0`,
+            // so the count test at :574 already decides the answer.
+            None => protocol::xattr::xattr_diff(
+                &sender,
+                &protocol::xattr::XattrList::default(),
+                self.checksum_seed,
+            ),
+        }
+    }
+
+    /// Builds the generator-side [`metadata::XattrSendOptions`] used to read the
+    /// destination/basis attributes for both the itemize diff and the
+    /// abbreviated-value request round-trip.
+    ///
+    /// Shared by [`Self::dest_xattrs_differ`] and [`Self::build_xattr_request`]
+    /// so both read the destination through the identical namespace/filter
+    /// screen upstream applies in `get_xattr` (`xattrs.c:237-267`).
+    fn generator_xattr_opts<'f>(
+        &self,
+        filter: Option<&'f dyn Fn(&str) -> bool>,
+    ) -> metadata::XattrSendOptions<'f> {
+        metadata::XattrSendOptions {
             role: metadata::XattrRole::Generator,
             follow_symlinks: false,
             // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`,
@@ -973,19 +998,66 @@ impl ReceiverContext {
             // the generator keeps rsync.%FOO at either level.
             preserve_xattrs: self.config.flags.xattrs_level,
             fake_super: self.config.fake_super,
-            filter: filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+            filter,
             checksum_seed: self.checksum_seed,
-        };
-        let sender = self.resolve_xattr_list(entry).unwrap_or_default();
-        match path {
-            Some(path) => metadata::dest_xattrs_differ(&sender, path, &opts),
-            // upstream: xattrs.c:555-561 - a NULL `sxp` yields `rec_cnt = 0`,
-            // so the count test at :574 already decides the answer.
-            None => protocol::xattr::xattr_diff(
-                &sender,
-                &protocol::xattr::XattrList::default(),
-                self.checksum_seed,
-            ),
+        }
+    }
+
+    /// Builds the abbreviated-xattr request list for a file about to be
+    /// requested from the sender, marking every large value the local basis
+    /// cannot satisfy as [`XattrState::Todo`](protocol::xattr::XattrState::Todo).
+    ///
+    /// Returns `Some(list)` only when at least one entry needs the round-trip;
+    /// the caller then sends the request via
+    /// [`send_file_request_xattr`](crate::transfer_ops::send_file_request_xattr)
+    /// so the sender replies with the full values. Returns `None` when `-X` is
+    /// off, the file carries no xattrs, or every abbreviated value already
+    /// matches the basis (resolved locally at apply time, exactly as upstream's
+    /// `xattr_diff` returning 0 leaves the entry `XSTATE_ABBREV`).
+    ///
+    /// `basis_path` is the same basis the delta request selected
+    /// (`find_basis_file_with_config`), so the diff honours `--fuzzy`,
+    /// `--link-dest`, `--compare-dest`, and `--partial-dir` bases in upstream's
+    /// priority order. `None` (a brand-new file) compares against an empty list,
+    /// marking every abbreviated entry TODO like `xattr_diff(file, NULL, 1)`
+    /// (`generator.c:575`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:569`,`generator.c:575` - `xattr_diff(file, sxp, 1)` marks
+    ///   `XSTATE_TODO`; `generator.c:598` `send_xattr_request()` emits them.
+    pub(in crate::receiver) fn build_xattr_request(
+        &self,
+        entry: &FileEntry,
+        basis_path: Option<&Path>,
+    ) -> Option<protocol::xattr::XattrList> {
+        if !self.config.flags.xattrs {
+            return None;
+        }
+        let mut sender = self.resolve_xattr_list(entry)?;
+        // A short-value-only or empty list can never abbreviate, so it never
+        // needs a request; skip the basis read entirely.
+        if !sender.has_abbreviated() {
+            return None;
+        }
+
+        let filter = self
+            .xattr_name_filter()
+            .map(|set| move |name: &str| set.xattr_name_allowed(name));
+        let opts = self.generator_xattr_opts(filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool));
+
+        // upstream: xattrs.c:967 get_xattr_data(fnamecmp, ...) - the diff reads
+        // the basis (fnamecmp) file. A missing basis or a read error yields an
+        // empty list, so every abbreviated entry is not-same and lands in TODO
+        // (the new-file path), never a fatal error.
+        let basis = basis_path
+            .and_then(|p| metadata::read_xattrs_for_wire(p, &opts).ok())
+            .unwrap_or_default();
+
+        if protocol::xattr::mark_xattr_requests(&mut sender, &basis, self.checksum_seed) {
+            Some(sender)
+        } else {
+            None
         }
     }
 

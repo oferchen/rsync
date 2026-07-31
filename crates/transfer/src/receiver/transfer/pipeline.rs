@@ -26,6 +26,7 @@ use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::{PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
+    send_file_request_xattr,
 };
 
 /// Result type for the pipelined transfer closure:
@@ -404,7 +405,18 @@ impl ReceiverContext {
                                 )?;
                                 continue;
                             }
-                            let pending = send_file_request(
+                            // upstream: generator.c:569,598 - before requesting
+                            // the file the generator diffs the sender's xattrs
+                            // against the basis (fnamecmp) and requests every
+                            // abbreviated value it cannot resolve locally. Use
+                            // the same basis the delta selected so --fuzzy /
+                            // --link-dest / --compare-dest / --partial-dir bases
+                            // drive the resolution in upstream's priority order.
+                            let xattr_request = self.build_xattr_request(
+                                file_entry,
+                                basis_result.basis_path.as_deref(),
+                            );
+                            let pending = send_file_request_xattr(
                                 writer,
                                 &mut ndx_write_codec,
                                 self.flat_to_wire_ndx(file_idx),
@@ -416,6 +428,7 @@ impl ReceiverContext {
                                 file_entry.size(),
                                 base_iflags,
                                 &request_config,
+                                xattr_request.as_ref(),
                             )?;
 
                             pipeline.push(pending);
@@ -442,7 +455,13 @@ impl ReceiverContext {
                                 )?;
                                 continue;
                             }
-                            let pending = send_file_request(
+                            // upstream: generator.c:575,598 - with no basis the
+                            // xattr diff runs against an empty list, so every
+                            // abbreviated value is requested. This keeps a large
+                            // xattr on a new or redo'd file from being dropped
+                            // for lack of a local copy to resolve it against.
+                            let xattr_request = self.build_xattr_request(file_entry, None);
+                            let pending = send_file_request_xattr(
                                 writer,
                                 &mut ndx_write_codec,
                                 self.flat_to_wire_ndx(file_idx),
@@ -454,6 +473,7 @@ impl ReceiverContext {
                                 file_entry.size(),
                                 base_iflags,
                                 &request_config,
+                                xattr_request.as_ref(),
                             )?;
 
                             pipeline.push(pending);

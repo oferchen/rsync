@@ -95,11 +95,79 @@ pub fn xattr_diff(sender: &XattrList, receiver: &XattrList, checksum_seed: i32) 
     ri < rec.len()
 }
 
+/// Marks every abbreviated sender entry the receiver cannot satisfy locally as
+/// [`XattrState::Todo`](crate::xattr::XattrState::Todo), returning whether any
+/// were marked.
+///
+/// This is the `find_all` arm of upstream `xattrs.c:xattr_diff()`
+/// (`xattrs.c:547-616`). The generator calls `xattr_diff(file, sxp, 1)` before
+/// itemizing (`generator.c:569`,`generator.c:575`); for every abbreviated value
+/// (`datum_len > MAX_FULL_DATUM`) whose digest does not match the receiver's
+/// on-disk copy it flips `snd_rxa->datum[0]` from `XSTATE_ABBREV` to
+/// `XSTATE_TODO` (`xattrs.c:589-590`). `send_xattr_request()` then transmits
+/// exactly those `num`s to the sender, which replies with the full values.
+///
+/// `sender` is the flist xattr list as received - large values carry only a
+/// digest. `receiver` holds the basis (`fnamecmp`) file's current attributes
+/// with full values (read via `metadata::read_xattrs_for_wire`); pass an empty
+/// list when there is no basis, which lands every abbreviated entry in TODO
+/// exactly as upstream's `rec_cnt == 0` path does for a brand-new file
+/// (`generator.c:575` calls `xattr_diff(file, NULL, 1)`).
+///
+/// Both lists must be sorted by name. Only abbreviated entries are ever marked:
+/// a value carried in full arrived complete in the flist and needs no request,
+/// mirroring upstream which only reaches the `datum[0]` assignment inside the
+/// `snd_rxa->datum_len > MAX_FULL_DATUM` branch.
+#[must_use]
+pub fn mark_xattr_requests(
+    sender: &mut XattrList,
+    receiver: &XattrList,
+    checksum_seed: i32,
+) -> bool {
+    let rec = receiver.entries().to_vec();
+    let mut ri = 0usize;
+    let mut any = false;
+
+    for s in sender.entries_mut() {
+        // upstream: xattrs.c:581 strcmp(snd_rxa->name, rec_rxa->name). Walk the
+        // sorted receiver forward past every name that sorts before this sender
+        // name; what remains either matches or the receiver lacks the name.
+        while ri < rec.len() && rec[ri].name() < s.name() {
+            ri += 1;
+        }
+        let matched = ri < rec.len() && rec[ri].name() == s.name();
+
+        // upstream: xattrs.c:584 - the abbreviation split keys on the sender
+        // entry carrying only a digest, not on length alone (oc keeps a locally
+        // read long value in full, which must not be hashed here).
+        if s.is_abbreviated() {
+            // upstream: xattrs.c:585-587 - an abbreviated value is "same" only
+            // when the names match, the datum lengths agree, and the receiver's
+            // locally computed digest equals the sender's `datum + 1`.
+            let same = matched
+                && s.datum_len() == rec[ri].datum_len()
+                && checksum_matches(s.datum(), rec[ri].datum(), checksum_seed);
+            // upstream: xattrs.c:589-590 - `if (!same && find_all && datum[0]
+            // == XSTATE_ABBREV) datum[0] = XSTATE_TODO`.
+            if !same {
+                s.mark_todo();
+                any = true;
+            }
+        }
+
+        if matched {
+            ri += 1;
+        }
+    }
+
+    any
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::xattr::wire::compute_xattr_checksum;
-    use crate::xattr::{MAX_FULL_DATUM, XattrEntry, XattrList};
+    use crate::xattr::{MAX_FULL_DATUM, XattrEntry, XattrList, XattrState};
 
     fn list(entries: Vec<XattrEntry>) -> XattrList {
         XattrList::with_entries(entries)
@@ -107,6 +175,67 @@ mod tests {
 
     fn full(name: &str, value: &[u8]) -> XattrEntry {
         XattrEntry::new(name.as_bytes().to_vec(), value.to_vec())
+    }
+
+    fn abbrev(name: &str, value: &[u8]) -> XattrEntry {
+        let checksum = compute_xattr_checksum(value, 0).to_vec();
+        XattrEntry::abbreviated(name.as_bytes().to_vec(), checksum, value.len())
+    }
+
+    // upstream: xattrs.c:575 - generator.c:575 calls xattr_diff(file, NULL, 1)
+    // for a brand-new file, so rec_cnt == 0 and every abbreviated sender entry
+    // is not-same and lands in XSTATE_TODO. Without this the receiver never
+    // requests the value and a large xattr on a new file is silently dropped.
+    #[test]
+    fn no_basis_marks_every_abbreviated_entry_todo() {
+        let big = vec![7u8; MAX_FULL_DATUM + 40];
+        let mut sender = list(vec![abbrev("user.big", &big), full("user.small", b"x")]);
+        let any = mark_xattr_requests(&mut sender, &list(vec![]), 0);
+        assert!(any);
+        assert_eq!(sender.entries()[0].state(), XattrState::Todo);
+        // A short value ships in full in the flist, so it is never requested.
+        assert_eq!(sender.entries()[1].state(), XattrState::Done);
+    }
+
+    // upstream: xattrs.c:585-590 - an abbreviated value whose digest matches the
+    // basis stays XSTATE_ABBREV (resolved locally from fnamecmp), never TODO.
+    #[test]
+    fn matching_basis_leaves_abbreviated_entry_unrequested() {
+        let big = vec![7u8; MAX_FULL_DATUM + 40];
+        let mut sender = list(vec![abbrev("user.big", &big)]);
+        let receiver = list(vec![full("user.big", &big)]);
+        let any = mark_xattr_requests(&mut sender, &receiver, 0);
+        assert!(!any);
+        assert_eq!(sender.entries()[0].state(), XattrState::Abbrev);
+    }
+
+    // upstream: xattrs.c:585-590 - a digest mismatch against the basis marks the
+    // entry TODO so the sender is asked for the current value.
+    #[test]
+    fn mismatched_basis_marks_abbreviated_entry_todo() {
+        let sender_val = vec![7u8; MAX_FULL_DATUM + 40];
+        let basis_val = vec![9u8; MAX_FULL_DATUM + 40];
+        let mut sender = list(vec![abbrev("user.big", &sender_val)]);
+        let receiver = list(vec![full("user.big", &basis_val)]);
+        let any = mark_xattr_requests(&mut sender, &receiver, 0);
+        assert!(any);
+        assert_eq!(sender.entries()[0].state(), XattrState::Todo);
+    }
+
+    // upstream: xattrs.c:581 - a name the basis lacks (cmp > 0 / rec exhausted)
+    // is not-same, so an abbreviated value with no basis counterpart is TODO
+    // while an unrelated basis name is skipped without disturbing the walk.
+    #[test]
+    fn partial_basis_marks_only_the_missing_abbreviated_entry() {
+        let a = vec![1u8; MAX_FULL_DATUM + 8];
+        let b = vec![2u8; MAX_FULL_DATUM + 8];
+        let mut sender = list(vec![abbrev("user.a", &a), abbrev("user.b", &b)]);
+        // Basis holds only user.a (identical); user.b is absent.
+        let receiver = list(vec![full("user.a", &a)]);
+        let any = mark_xattr_requests(&mut sender, &receiver, 0);
+        assert!(any);
+        assert_eq!(sender.entries()[0].state(), XattrState::Abbrev);
+        assert_eq!(sender.entries()[1].state(), XattrState::Todo);
     }
 
     #[test]

@@ -133,6 +133,12 @@ pub fn process_file_response_streaming<R: Read>(
         is_inplace: header.use_inplace,
         append_offset: header.append_offset,
         xattr_list,
+        // upstream: xattrs.c:944 rsync_xal_set(fname, ..., fnamecmp, ...) - the
+        // abbreviated-value resolution re-reads the basis actually used, which
+        // for a --fuzzy / --link-dest / --compare-dest / --partial-dir transfer
+        // is not the primary destination. Carry that basis so an entry the
+        // generator left abbreviated (it matched the basis) still resolves.
+        xattr_basis: header.basis_path.clone(),
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {

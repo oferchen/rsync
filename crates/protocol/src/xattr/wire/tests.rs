@@ -885,6 +885,70 @@ fn sender_response_round_trip_with_todo_entries() {
     assert_eq!(sender_list.entries()[2].state(), XattrState::Done);
 }
 
+/// Golden-byte fidelity for the full abbreviated-xattr request round-trip.
+///
+/// Pins the exact wire bytes upstream emits so an oc<->upstream transfer that
+/// requires the round-trip is byte-identical:
+///
+/// - Generator -> sender request (`send_xattr_request`, `fname == NULL`):
+///   upstream writes `write_varint(f_out, rxa->num - prior_req)` for each
+///   requested entry then `write_byte(f_out, 0)` (`xattrs.c:653`,`xattrs.c:674`).
+///   Requesting the 1st and 3rd entries (0-based 0 and 2, 1-based num 1 and 3)
+///   yields deltas 1 and 2 then the 0 terminator: `[0x01, 0x02, 0x00]`.
+/// - Sender -> receiver response (`send_sender_xattr_response`, sender path):
+///   upstream writes, per TODO entry, `write_varint(num - prior_req)`,
+///   `write_varint(len)`, `write_bigbuf(ptr, len)`, then `write_byte(0)`
+///   (`xattrs.c:653-674`). num 1 with `b"abc"` and num 3 with `b"de"` give
+///   `[0x01,0x03,'a','b','c', 0x02,0x02,'d','e', 0x00]`.
+///
+/// All values are < 0x80 so each varint is a single byte, making the golden
+/// vector exact and protocol-independent (the request/response framing does not
+/// vary across protocol 30-32).
+#[test]
+fn abbreviated_request_response_wire_is_golden() {
+    // Generator -> sender: request entries 0 and 2 (1-based num 1 and 3).
+    let mut req = Vec::new();
+    send_xattr_request(&mut req, &[0, 2]).unwrap();
+    assert_eq!(req, vec![0x01, 0x02, 0x00], "generator request bytes");
+
+    // recv side (sender) parses it back to the same 0-based indices and flags
+    // exactly those entries XSTATE_TODO. upstream: xattrs.c:681 recv_xattr_request.
+    let mut list = XattrList::new();
+    for i in 1..=3u32 {
+        let mut e = XattrEntry::abbreviated(
+            format!("user.a{i}").into_bytes(),
+            vec![0u8; MAX_XATTR_DIGEST_LEN],
+            100,
+        );
+        e.set_num(i);
+        list.push(e);
+    }
+    let indices = recv_xattr_request(&mut Cursor::new(req), &mut list).unwrap();
+    assert_eq!(indices, vec![0, 2]);
+
+    // Sender -> receiver: full values for the two TODO entries, in num order.
+    let mut resp_list = XattrList::new();
+    let mut a = XattrEntry::new(b"user.a1".to_vec(), b"abc".to_vec());
+    a.set_num(1);
+    a.mark_todo();
+    resp_list.push(a);
+    let mut b = XattrEntry::new(b"user.a2".to_vec(), vec![0u8; 10]);
+    b.set_num(2); // not requested: stays out of the response
+    resp_list.push(b);
+    let mut c = XattrEntry::new(b"user.a3".to_vec(), b"de".to_vec());
+    c.set_num(3);
+    c.mark_todo();
+    resp_list.push(c);
+
+    let mut resp = Vec::new();
+    send_sender_xattr_response(&mut resp, &mut resp_list).unwrap();
+    assert_eq!(
+        resp,
+        vec![0x01, 0x03, b'a', b'b', b'c', 0x02, 0x02, b'd', b'e', 0x00],
+        "sender response bytes",
+    );
+}
+
 #[test]
 fn checksum_length_mismatch_returns_false() {
     let value = b"test value";
