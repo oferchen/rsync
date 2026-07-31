@@ -2917,6 +2917,7 @@ fn verify_failure_keeps_recent_mtime_on_plain_partial() {
                 is_inplace: false,
                 append_offset: 0,
                 xattr_list: None,
+                xattr_basis: None,
             }),
             data: data.to_vec(),
             // Sender's sum is for different bytes: forces a verify mismatch.
