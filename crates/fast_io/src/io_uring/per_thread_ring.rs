@@ -72,7 +72,7 @@ use super::config::IoUringConfig;
 /// Default submission queue depth for per-thread rings.
 ///
 /// Re-exported from the single source of truth in
-/// [`crate::io_uring_depth::DEFAULT_IO_URING_DEPTH`] so the real ring and its
+/// `crate::io_uring_depth::DEFAULT_IO_URING_DEPTH` so the real ring and its
 /// non-Linux stub cannot drift. See that constant for the sizing rationale.
 pub const DEFAULT_RING_DEPTH: u32 = crate::io_uring_depth::DEFAULT_IO_URING_DEPTH;
 
