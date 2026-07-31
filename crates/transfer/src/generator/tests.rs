@@ -6097,3 +6097,82 @@ fn server_mode_prints_no_sending_banner() {
     logging::init(logging::VerbosityConfig::from_verbose_level(1));
     assert!(!banner_ctx(false, true).should_announce_incremental_flist());
 }
+
+/// Renders the position-4 time glyph of a transferred symlink through a
+/// server-sender's `itemize_context`, so the assertion exercises the real
+/// `GeneratorContext::new` -> `itemize_context` -> `format_iflags` path.
+fn server_sender_symlink_time_glyph(
+    client_args: Option<Vec<String>>,
+    compat_flags: Option<protocol::CompatibilityFlags>,
+) -> char {
+    let mut handshake = test_handshake();
+    handshake.client_args = client_args;
+    handshake.compat_flags = compat_flags;
+
+    let mut config = test_config();
+    // Server (not client): am_server = !client_mode. `--times` is on so the
+    // glyph is t/T rather than a collapsed '.'.
+    config.connection.client_mode = false;
+    config.flags.times = true;
+
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    let iflags = super::item_flags::ItemFlags::from_raw(
+        super::item_flags::ItemFlags::ITEM_TRANSFER
+            | super::item_flags::ItemFlags::ITEM_REPORT_TIME,
+    );
+    let entry =
+        protocol::flist::FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("dst"));
+    let row = super::itemize::format_iflags(&iflags, &entry, true, &ctx.itemize_context());
+    // "<L..t......" - position 4 is the time glyph.
+    row.chars().nth(4).unwrap()
+}
+
+/// WHY: upstream compat.c:755-759 derives a server-sender's
+/// `receiver_symlink_times` from the RECEIVER's advertised `'L'` capability
+/// (`strchr(client_info, 'L')`), NOT from the server's own
+/// `CAN_SET_SYMLINK_TIMES` platform capability (which is what the negotiated
+/// `CF_SYMLINK_TIMES` flag reflects on the server side). A Unix server-sender
+/// must therefore itemize a symlink's time as `T` when a receiver that cannot
+/// set symlink times (e.g. a Windows client) omits `'L'` - even though the
+/// server's own `CF_SYMLINK_TIMES` is set. Before the fix the server read the
+/// flag and always showed `t`.
+#[test]
+fn server_sender_symlink_time_follows_receiver_l_capability_not_own_flag() {
+    use protocol::CompatibilityFlags;
+
+    // The server's own capability flag is set (Unix server), yet the receiver
+    // did NOT advertise 'L': the receiver cannot set symlink times, so the glyph
+    // must be 'T'. This is the divergence the fix corrects.
+    let no_l = Some(vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "-e.sfxCIvu".to_owned(),
+    ]);
+    assert_eq!(
+        server_sender_symlink_time_glyph(no_l, Some(CompatibilityFlags::SYMLINK_TIMES)),
+        'T',
+        "receiver without 'L' must itemize symlink time as 'T', ignoring the server's own CF_SYMLINK_TIMES",
+    );
+
+    // The receiver advertised 'L': it can set symlink times, so the glyph is 't'.
+    let with_l = Some(vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "-e.LsfxCIvu".to_owned(),
+    ]);
+    assert_eq!(
+        server_sender_symlink_time_glyph(with_l, Some(CompatibilityFlags::SYMLINK_TIMES)),
+        't',
+        "receiver advertising 'L' must itemize symlink time as 't'",
+    );
+
+    // Symmetry check: even when the server's own flag is cleared, a receiver
+    // that advertised 'L' still yields 't' - the value tracks the client letter.
+    let with_l_no_flag = Some(vec!["-e.LsfxCIvu".to_owned()]);
+    assert_eq!(
+        server_sender_symlink_time_glyph(with_l_no_flag, None),
+        't',
+        "server-sender tracks the receiver's 'L', independent of its own flag",
+    );
+}
