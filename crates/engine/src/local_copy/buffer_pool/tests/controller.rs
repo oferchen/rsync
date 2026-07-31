@@ -41,8 +41,10 @@ fn buffer_controller_preserves_existing_throughput_tracker() {
 fn buffer_controller_with_builder_chain() {
     let pool = BufferPool::with_buffer_size(4, 1024)
         .with_memory_cap(8192)
+        .with_adaptive_resizing()
         .with_buffer_controller(ControllerConfig::new(50 * 1024 * 1024));
     assert!(pool.has_buffer_controller());
+    assert!(pool.is_adaptive());
     assert_eq!(pool.memory_cap(), Some(8192));
     assert_eq!(pool.buffer_size(), 1024);
 }
