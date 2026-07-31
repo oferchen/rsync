@@ -217,6 +217,14 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
+    // upstream: io.c:834-862 / main.c:1068 - on a push the local client IS the
+    // sender and paces its own outbound socket writes. Carry the parsed
+    // `--bwlimit` rate/burst onto the in-process generator config; the remote
+    // receiver ignores its forwarded copy (main.c:1068).
+    server_config.connection.bwlimit = config
+        .bandwidth_limit()
+        .map(|limit| limit.into_components());
+
     // Propagate long-form-only flags that aren't part of the compact flag string.
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
