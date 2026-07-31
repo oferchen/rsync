@@ -154,11 +154,19 @@ fn verify_whole_file_checksum(
 /// destination. The computed digest is still reported so the receiver queues a
 /// redo (phase 1) or logs the error (phase 2).
 ///
+/// The retained stub keeps its recent temp-creation mtime (not the epoch):
+/// upstream `receiver.c:1047` passes `ok_to_set_time = recv_ok`, and a failed
+/// verify has `recv_ok == 0`, which maps to `ATTRS_SKIP_MTIME` (rsync.c:748).
+/// The epoch stamp is reserved for the signal/abort cleanup path (cleanup.c:
+/// 174-180), so `retain_partial_file` is called here with `zero_mtime = false`.
+///
 /// # Upstream Reference
 ///
 /// - `receiver.c:1039-1056` - on `recv_ok == 0` the temp goes to the partial dir
 ///   (`handle_partial_dir(PDIR_CREATE)`) or is unlinked (`do_unlink_at`);
 ///   `finish_transfer()` - the destination rename - is skipped.
+/// - `receiver.c:1047` / `rsync.c:748-749` - `ok_to_set_time = recv_ok` (0 here)
+///   -> `ATTRS_SKIP_MTIME`, so the kept stub retains its temp-creation mtime.
 fn withhold_failed_commit(
     config: &DiskCommitConfig,
     mut cleanup_guard: TempFileGuard,
@@ -166,7 +174,7 @@ fn withhold_failed_commit(
     bytes_written: u64,
     computed_checksum: Option<ComputedChecksum>,
 ) -> CommitResult {
-    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
+    retain_partial_file(config, &mut cleanup_guard, &begin.file_path, false);
     drop(cleanup_guard);
     CommitResult {
         bytes_written,
@@ -297,7 +305,9 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
+                    // Interrupt path (cleanup.c:174-180): zero the mtime so an
+                    // aborted partial stands out and --update will not skip it.
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -466,7 +476,9 @@ pub(in crate::disk_commit) fn process_file(
                 // if any data was written, the transfer made progress worth
                 // retaining for later resume.
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
+                    // Interrupt path (cleanup.c:174-180): zero the mtime so an
+                    // aborted partial stands out and --update will not skip it.
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::other(reason));
@@ -480,7 +492,9 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
+                    // Interrupt path (cleanup.c:174-180): zero the mtime so an
+                    // aborted partial stands out and --update will not skip it.
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
