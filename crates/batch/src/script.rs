@@ -335,22 +335,44 @@ fn write_replay_options(
     Ok(())
 }
 
-/// Quote a string for safe shell usage.
+/// Quote an argument for the generated `.sh` batch wrapper, byte-matching
+/// upstream rsync's `write_arg` (batch.c:164-190).
 ///
-/// Returns the string unchanged when it only contains shell-safe characters
-/// (alphanumerics plus `-_/.:=`); otherwise wraps it in single quotes and
-/// escapes embedded single quotes using the `'\''` idiom.
+/// A leading `-opt=value` token has its `-opt=` prefix written bare and only
+/// the value quote-processed (batch.c:169-172). Quoting engages only when the
+/// remaining argument contains one of upstream's special characters
+/// (`strpbrk(arg, " \"'&;|[]()$#!*?^\\")`, batch.c:174); otherwise the argument
+/// is emitted verbatim, so `,` `+` `@` `~` `%` `{` `}` `<` `>` stay bare.
+/// Embedded single quotes are closed rather than escaped (`''`,
+/// batch.c:176-179), reproducing upstream's byte output for `.sh` fidelity.
 fn shell_quote(s: &str) -> String {
-    if s.chars().all(|c| {
-        c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == ':' || c == '='
-    }) {
-        return s.to_owned();
+    // upstream: batch.c:174 special-character set for strpbrk().
+    const SPECIAL: &[char] = &[
+        ' ', '"', '\'', '&', ';', '|', '[', ']', '(', ')', '$', '#', '!', '*', '?', '^', '\\',
+    ];
+
+    let mut result = String::new();
+    let mut arg = s;
+
+    // upstream: batch.c:169-172 — a leading "-opt=" prefix is written unquoted,
+    // then only the value that follows the first '=' is quote-processed.
+    if let Some(eq) = arg.strip_prefix('-').and(arg.find('=')) {
+        result.push_str(&arg[..=eq]);
+        arg = &arg[eq + 1..];
     }
 
-    let mut result = String::from("'");
-    for ch in s.chars() {
+    // upstream: batch.c:174 — quote only when a special character is present.
+    if !arg.contains(SPECIAL) {
+        result.push_str(arg);
+        return result;
+    }
+
+    // upstream: batch.c:175-182 — single-quote wrap; an embedded single quote
+    // closes the quote (`''`) instead of being backslash-escaped.
+    result.push('\'');
+    for ch in arg.chars() {
         if ch == '\'' {
-            result.push_str("'\\''");
+            result.push_str("''");
         } else {
             result.push(ch);
         }
@@ -495,8 +517,53 @@ mod tests {
         assert_eq!(shell_quote("with-dash"), "with-dash");
         assert_eq!(shell_quote("/path/to/file"), "/path/to/file");
         assert_eq!(shell_quote("needs quoting"), "'needs quoting'");
-        assert_eq!(shell_quote("has'quote"), "'has'\\''quote'");
+        // upstream closes the quote (`''`) instead of `'\''` (batch.c:176-179).
+        assert_eq!(shell_quote("has'quote"), "'has''quote'");
         assert_eq!(shell_quote("$special"), "'$special'");
+    }
+
+    /// Golden byte parity with upstream `write_arg` (batch.c:164-190).
+    #[test]
+    fn test_shell_quote_matches_upstream_write_arg() {
+        // Characters upstream never quotes (outside its strpbrk set) stay bare,
+        // even though oc's old whitelist would have single-quoted them.
+        for bare in [
+            "a,b",
+            "a+b",
+            "user@host",
+            "~/dir",
+            "50%",
+            "a{b}c",
+            "a<b>c",
+            "=val",
+            "x:y=z",
+        ] {
+            assert_eq!(shell_quote(bare), bare, "{bare:?} must stay bare");
+        }
+
+        // Each character in upstream's special set (batch.c:174) triggers
+        // single-quote wrapping.
+        for c in [
+            ' ', '"', '&', ';', '|', '[', ']', '(', ')', '$', '#', '!', '*', '?', '^', '\\',
+        ] {
+            let arg = format!("a{c}b");
+            assert_eq!(shell_quote(&arg), format!("'{arg}'"), "{c:?} must quote");
+        }
+
+        // Embedded single quote: upstream emits `''` (drops the quote on eval),
+        // not the POSIX `'\''` idiom.
+        assert_eq!(shell_quote("'"), "''''");
+        assert_eq!(shell_quote("a'b"), "'a''b'");
+        assert_eq!(shell_quote("a'b'c"), "'a''b''c'");
+
+        // Leading "-opt=" prefix is written bare; only the value is quoted
+        // (batch.c:169-172).
+        assert_eq!(shell_quote("--filter=- *.tmp"), "--filter='- *.tmp'");
+        assert_eq!(shell_quote("--rsh=ssh -p 22"), "--rsh='ssh -p 22'");
+        // Value with no special char stays bare after the split.
+        assert_eq!(shell_quote("--opt=a,b+c"), "--opt=a,b+c");
+        // Non-option token with '=' is not split.
+        assert_eq!(shell_quote("a=b c"), "'a=b c'");
     }
 
     #[test]
