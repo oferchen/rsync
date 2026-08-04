@@ -265,33 +265,15 @@ impl ReceiverContext {
     ///
     /// `file_count` is the raw count returned by the file-list receive path
     /// (initial plus INC_RECURSE sub-lists) before sanitization.
-    fn build_pipeline_setup(&mut self, file_count: usize) -> io::Result<(usize, PipelineSetup)> {
-        let removed = self.sanitize_file_list();
-        let file_count = file_count - removed;
-
-        // upstream: flist.c:1019-1030 recv_file_entry() re-runs each received
-        // name through the receiver's own filter list and aborts with
-        // RERR_UNSUPPORTED if the sender sent a name the receiver excludes. This
-        // runs after sanitize (which mirrors clean_fname) so the paths are
-        // already cleaned, matching upstream's per-entry ordering.
-        self.recheck_received_filter()?;
-
-        // upstream: flist.c:1026-1029 recv_file_entry() also validates each
-        // received name against the implied-include list built from the
-        // client's requested source args, aborting with RERR_UNSUPPORTED if the
-        // sender injected a name that was never requested (CVE-2022-29154).
-        self.recheck_received_implied_includes()?;
-
-        let checksum_factory = ChecksumFactory::from_negotiation(
-            self.negotiated_algorithms.as_ref(),
-            self.protocol,
-            self.checksum_seed,
-            self.compat_flags.as_ref(),
-        );
-        let checksum_algorithm = checksum_factory.signature_algorithm();
-        let checksum_length = PHASE1_CHECKSUM_LENGTH;
-
-        let metadata_opts = MetadataOptions::new()
+    /// Builds the receiver's [`MetadataOptions`] from the resolved transfer
+    /// config, the single source of the metadata-preservation policy applied to
+    /// every file, directory, and `--backup-dir` subdirectory the receiver
+    /// writes. Shared by [`build_pipeline_setup`](Self::build_pipeline_setup)
+    /// and the backup-parent creation paths so a `--backup-dir` subtree inherits
+    /// its source directory's attributes identically regardless of caller
+    /// (upstream `copy_valid_path` -> `set_file_attrs`, backup.c:115-138).
+    pub(in crate::receiver) fn build_metadata_options(&self) -> MetadataOptions {
+        MetadataOptions::new()
             .preserve_permissions(self.config.flags.perms)
             // upstream: options.c:2692-2693 packs the compact 'E' into
             // server_options only inside `else if (preserve_executability &&
@@ -350,7 +332,36 @@ impl ReceiverContext {
             // spec `--groupmap=*:GID` from the client is silently dropped on
             // daemon uploads (upstream regression #829 / daemon-groupmap-wild).
             .with_user_mapping(self.config.user_mapping.clone())
-            .with_group_mapping(self.config.group_mapping.clone());
+            .with_group_mapping(self.config.group_mapping.clone())
+    }
+
+    fn build_pipeline_setup(&mut self, file_count: usize) -> io::Result<(usize, PipelineSetup)> {
+        let removed = self.sanitize_file_list();
+        let file_count = file_count - removed;
+
+        // upstream: flist.c:1019-1030 recv_file_entry() re-runs each received
+        // name through the receiver's own filter list and aborts with
+        // RERR_UNSUPPORTED if the sender sent a name the receiver excludes. This
+        // runs after sanitize (which mirrors clean_fname) so the paths are
+        // already cleaned, matching upstream's per-entry ordering.
+        self.recheck_received_filter()?;
+
+        // upstream: flist.c:1026-1029 recv_file_entry() also validates each
+        // received name against the implied-include list built from the
+        // client's requested source args, aborting with RERR_UNSUPPORTED if the
+        // sender injected a name that was never requested (CVE-2022-29154).
+        self.recheck_received_implied_includes()?;
+
+        let checksum_factory = ChecksumFactory::from_negotiation(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let checksum_algorithm = checksum_factory.signature_algorithm();
+        let checksum_length = PHASE1_CHECKSUM_LENGTH;
+
+        let metadata_opts = self.build_metadata_options();
 
         let dest_arg = self.config.args.first();
         let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
