@@ -44,11 +44,6 @@ pub(crate) struct ModuleDefinition {
     pub(crate) hosts_deny: Vec<HostPattern>,
     pub(crate) auth_users: Vec<AuthUser>,
     pub(crate) secrets_file: Option<PathBuf>,
-    pub(crate) bandwidth_limit: Option<NonZeroU64>,
-    pub(crate) bandwidth_limit_specified: bool,
-    pub(crate) bandwidth_burst: Option<NonZeroU64>,
-    pub(crate) bandwidth_burst_specified: bool,
-    pub(crate) bandwidth_limit_configured: bool,
     pub(crate) refuse_options: Vec<String>,
     pub(crate) read_only: bool,
     pub(crate) write_only: bool,
@@ -337,31 +332,6 @@ impl ModuleDefinition {
     /// Returns the configured `max connections` setting.
     pub(crate) const fn max_connections(&self) -> MaxConnections {
         self.max_connections
-    }
-
-    /// Returns the configured bandwidth limit in bytes per second.
-    pub(crate) const fn bandwidth_limit(&self) -> Option<NonZeroU64> {
-        self.bandwidth_limit
-    }
-
-    /// Returns whether the bandwidth limit was explicitly specified.
-    pub(crate) const fn bandwidth_limit_specified(&self) -> bool {
-        self.bandwidth_limit_specified
-    }
-
-    /// Returns the configured bandwidth burst in bytes.
-    pub(crate) const fn bandwidth_burst(&self) -> Option<NonZeroU64> {
-        self.bandwidth_burst
-    }
-
-    /// Returns whether the bandwidth burst was explicitly specified.
-    pub(crate) const fn bandwidth_burst_specified(&self) -> bool {
-        self.bandwidth_burst_specified
-    }
-
-    /// Returns whether any bandwidth limit is configured for this module.
-    pub(in crate::daemon) const fn bandwidth_limit_configured(&self) -> bool {
-        self.bandwidth_limit_configured
     }
 
     /// Inherits refuse options from the global config if none are set locally.

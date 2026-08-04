@@ -271,118 +271,6 @@ mod rate_change_scenarios {
         let total = session.total_duration();
         assert!(total > Duration::ZERO);
     }
-
-    #[test]
-    fn burst_change_during_transfer() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let mut limiter = BandwidthLimiter::new(nz(10_000)); // 10 KB/s
-
-        // Transfer without burst
-        let _ = limiter.register(5000); // 500ms
-
-        // Add burst limit
-        limiter.update_configuration(nz(1000), Some(nz(500)));
-
-        // Transfer with burst limit - sleep should be capped
-        let sleep = limiter.register(5000);
-        assert!(sleep.requested() <= Duration::from_millis(500));
-    }
-
-    #[test]
-    fn remove_burst_during_transfer() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(200)));
-
-        // Transfer with burst - sleep capped
-        let sleep1 = limiter.register(5000);
-        assert!(sleep1.requested() <= Duration::from_millis(200));
-
-        // Remove burst
-        limiter.update_configuration(nz(1000), None);
-
-        // Transfer without burst - full sleep
-        let sleep2 = limiter.register(5000);
-        assert_eq!(sleep2.requested(), Duration::from_secs(5));
-    }
-}
-
-mod burst_scenarios {
-    use super::*;
-
-    #[test]
-    fn burst_allows_initial_fast_transfer() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        // Slow rate but large burst
-        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(5000)));
-
-        // First transfer within burst
-        let sleep1 = limiter.register(3000);
-        // Sleep = 3000/1000 = 3 seconds (within burst, no extra clamping)
-        assert_eq!(sleep1.requested(), Duration::from_secs(3));
-    }
-
-    #[test]
-    fn burst_clamps_after_exceeding() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(2000)));
-
-        // Transfer exceeds burst
-        let sleep = limiter.register(10000);
-
-        // Sleep should be clamped to burst/rate = 2000/1000 = 2s
-        assert_eq!(sleep.requested(), Duration::from_secs(2));
-    }
-
-    #[test]
-    fn burst_sustained_transfers() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
-
-        // Multiple sustained transfers
-        for _ in 0..10 {
-            let sleep = limiter.register(1000);
-            // Each sleep capped to 500/100 = 5 seconds max
-            assert!(sleep.requested() <= Duration::from_secs(5));
-        }
-    }
-
-    #[test]
-    fn tiny_burst_limits_severely() {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(10)));
-
-        // Large transfer with tiny burst
-        let sleep = limiter.register(100000);
-
-        // Sleep capped to 10/1000 = 0.01s = 10ms
-        assert!(sleep.requested() <= Duration::from_millis(20));
-    }
-
-    #[test]
-    fn burst_from_parsing() {
-        let components = parse_bandwidth_limit("100K:32K").expect("parse succeeds");
-
-        let rate = components.rate().unwrap();
-        let burst = components.burst().unwrap();
-
-        let limiter = BandwidthLimiter::with_burst(rate, Some(burst));
-
-        // Verify configuration
-        assert_eq!(limiter.limit_bytes().get(), 100 * 1024);
-        assert_eq!(limiter.burst_bytes().unwrap().get(), 32 * 1024);
-    }
 }
 
 mod real_usage_edge_cases {
@@ -413,15 +301,6 @@ mod real_usage_edge_cases {
         // rsync --bwlimit=0 means unlimited
         let limit = parse_bandwidth_argument("0").expect("parse succeeds");
         assert!(limit.is_none());
-    }
-
-    #[test]
-    fn rsync_burst_syntax() {
-        // rsync --bwlimit=1m:256k
-        let components = parse_bandwidth_limit("1m:256k").expect("parse succeeds");
-
-        assert_eq!(components.rate().unwrap().get(), 1024 * 1024);
-        assert_eq!(components.burst().unwrap().get(), 256 * 1024);
     }
 
     #[test]
@@ -614,7 +493,7 @@ mod apply_effective_limit_scenarios {
     fn enable_new_limiter() {
         let mut limiter: Option<BandwidthLimiter> = None;
 
-        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true);
 
         assert_eq!(change, LimiterChange::Enabled);
         assert!(limiter.is_some());
@@ -622,21 +501,10 @@ mod apply_effective_limit_scenarios {
     }
 
     #[test]
-    fn enable_with_burst() {
-        let mut limiter: Option<BandwidthLimiter> = None;
-
-        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(500)), true);
-
-        assert_eq!(change, LimiterChange::Enabled);
-        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
-        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 500);
-    }
-
-    #[test]
     fn disable_existing_limiter() {
         let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
 
-        let change = apply_effective_limit(&mut limiter, None, true, None, false);
+        let change = apply_effective_limit(&mut limiter, None, true);
 
         assert_eq!(change, LimiterChange::Disabled);
         assert!(limiter.is_none());
@@ -646,7 +514,7 @@ mod apply_effective_limit_scenarios {
     fn update_to_lower_limit() {
         let mut limiter = Some(BandwidthLimiter::new(nz(2000)));
 
-        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true);
 
         assert_eq!(change, LimiterChange::Updated);
         assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
@@ -656,27 +524,17 @@ mod apply_effective_limit_scenarios {
     fn unchanged_higher_limit() {
         let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
 
-        let change = apply_effective_limit(&mut limiter, Some(nz(2000)), true, None, false);
+        let change = apply_effective_limit(&mut limiter, Some(nz(2000)), true);
 
         assert_eq!(change, LimiterChange::Unchanged);
         assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
     }
 
     #[test]
-    fn update_burst_only() {
-        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
-
-        let change = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
-
-        assert_eq!(change, LimiterChange::Updated);
-        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 500);
-    }
-
-    #[test]
     fn unchanged_when_nothing_specified() {
         let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
 
-        let change = apply_effective_limit(&mut limiter, None, false, None, false);
+        let change = apply_effective_limit(&mut limiter, None, false);
 
         assert_eq!(change, LimiterChange::Unchanged);
     }
@@ -686,19 +544,15 @@ mod apply_effective_limit_scenarios {
         let mut limiter: Option<BandwidthLimiter> = None;
 
         // Enable
-        let c1 = apply_effective_limit(&mut limiter, Some(nz(2000)), true, None, false);
+        let c1 = apply_effective_limit(&mut limiter, Some(nz(2000)), true);
         assert_eq!(c1, LimiterChange::Enabled);
 
         // Update lower
-        let c2 = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        let c2 = apply_effective_limit(&mut limiter, Some(nz(1000)), true);
         assert_eq!(c2, LimiterChange::Updated);
 
-        // Add burst
-        let c3 = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
-        assert_eq!(c3, LimiterChange::Updated);
-
         // Disable
-        let c4 = apply_effective_limit(&mut limiter, None, true, None, false);
+        let c4 = apply_effective_limit(&mut limiter, None, true);
         assert_eq!(c4, LimiterChange::Disabled);
     }
 }
@@ -730,15 +584,6 @@ mod write_max_scenarios {
 
         assert!(medium.write_max_bytes() >= slow.write_max_bytes());
         assert!(fast.write_max_bytes() >= medium.write_max_bytes());
-    }
-
-    #[test]
-    fn write_max_with_burst_override() {
-        let without_burst = BandwidthLimiter::new(nz(1024 * 1024));
-        let with_small_burst = BandwidthLimiter::with_burst(nz(1024 * 1024), Some(nz(4096)));
-
-        assert_eq!(with_small_burst.write_max_bytes(), 4096);
-        assert!(without_burst.write_max_bytes() > with_small_burst.write_max_bytes());
     }
 
     #[test]
@@ -832,15 +677,12 @@ mod parsing_edge_cases {
     }
 
     #[test]
-    fn parse_burst_syntax_variations() {
-        // Valid burst syntax
-        let _ = parse_bandwidth_limit("1m:256k").unwrap();
-        let _ = parse_bandwidth_limit("100:50").unwrap();
-        let _ = parse_bandwidth_limit("1G:1M").unwrap();
-
-        // Zero burst
-        let zero_burst = parse_bandwidth_limit("1m:0").unwrap();
-        assert!(zero_burst.burst().is_none());
+    fn parse_colon_component_rejected() {
+        // A `RATE:BURST` argument is not a valid size - the colon is rejected.
+        assert!(parse_bandwidth_limit("1m:256k").is_err());
+        assert!(parse_bandwidth_limit("100:50").is_err());
+        assert!(parse_bandwidth_limit("1G:1M").is_err());
+        assert!(parse_bandwidth_limit("1m:0").is_err());
     }
 }
 
@@ -900,24 +742,6 @@ mod stress_tests {
 
         for i in 1..=50 {
             limiter.update_limit(nz(i as u64 * 10_000));
-            let _ = limiter.register(1000); // Small writes
-        }
-
-        // No panics
-    }
-
-    #[test]
-    fn stress_burst_changes() {
-        // Fast rate to avoid slow tests
-        let mut limiter = BandwidthLimiter::new(nz(100_000)); // 100 KB/s
-
-        for i in 1..=30 {
-            let burst = if i % 2 == 0 {
-                Some(nz(i as u64 * 1000))
-            } else {
-                None
-            };
-            limiter.update_configuration(nz(100_000), burst);
             let _ = limiter.register(1000); // Small writes
         }
 

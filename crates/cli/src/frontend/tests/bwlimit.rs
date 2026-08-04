@@ -43,15 +43,13 @@ fn bwlimit_accepts_decimal_base_specifier() {
 }
 
 #[test]
-fn bwlimit_accepts_burst_component() {
-    let limit = parse_bandwidth_limit(OsStr::new("4M:32K"))
-        .expect("parse succeeds")
-        .expect("limit available");
-    assert_eq!(limit.bytes_per_second().get(), 4_194_304);
-    assert_eq!(
-        limit.burst_bytes().map(std::num::NonZeroU64::get),
-        Some(32 * 1024)
-    );
+fn bwlimit_rejects_burst_component() {
+    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', ...) - the client
+    // --bwlimit is a bare size; a `:BURST` suffix is not valid size syntax.
+    let error = parse_bandwidth_limit(OsStr::new("4M:32K"))
+        .expect_err("a colon/burst component must be rejected");
+    let rendered = format!("{error}");
+    assert!(rendered.contains("--bwlimit=4M:32K is invalid"));
 }
 
 #[test]

@@ -6,50 +6,6 @@
 // sanitization, human-readable bandwidth formatting, and daemon-side
 // filter rule construction from module config directives.
 
-/// Applies the module-specific bandwidth directives to the active limiter.
-///
-/// The helper mirrors upstream rsync's precedence rules: a module `bwlimit`
-/// directive overrides the daemon-wide limit with the strictest rate while
-/// honouring explicitly configured bursts. When a module omits the directive
-/// the limiter remains in the state established by the daemon scope, ensuring
-/// clients observe inherited throttling exactly as the C implementation does.
-/// The function returns the [`LimiterChange`] reported by
-/// [`apply_effective_limit`], allowing callers and tests to verify whether the
-/// limiter configuration changed as a result of the module overrides.
-pub(crate) fn apply_module_bandwidth_limit(
-    limiter: &mut Option<BandwidthLimiter>,
-    module_limit: Option<NonZeroU64>,
-    module_limit_specified: bool,
-    module_limit_configured: bool,
-    module_burst: Option<NonZeroU64>,
-    module_burst_specified: bool,
-) -> LimiterChange {
-    if module_limit_configured && module_limit.is_none() {
-        let burst_only_override =
-            module_burst_specified && module_burst.is_some() && limiter.is_some();
-        if !burst_only_override {
-            return if limiter.take().is_some() {
-                LimiterChange::Disabled
-            } else {
-                LimiterChange::Unchanged
-            };
-        }
-    }
-
-    let limit_specified =
-        module_limit_specified || (module_limit_configured && module_limit.is_some());
-    let burst_specified =
-        module_burst_specified && (module_limit_configured || module_limit_specified);
-
-    BandwidthLimitComponents::new_with_flags(
-        module_limit,
-        module_burst,
-        limit_specified,
-        burst_specified,
-    )
-    .apply_to_limiter(limiter)
-}
-
 /// Opens or creates a log file and wraps it in a shared message sink.
 ///
 /// The log file is opened in append mode, creating it if it doesn't exist.
@@ -184,38 +140,6 @@ pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(sanitized)
-}
-
-/// Formats a bandwidth rate in human-readable units (bytes/s, KiB/s, etc.).
-///
-/// Chooses the largest unit that divides evenly into the rate, falling back
-/// to raw bytes/s for values that don't align to a power-of-1024 boundary.
-pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    const GIB: u64 = MIB * 1024;
-    const TIB: u64 = GIB * 1024;
-    const PIB: u64 = TIB * 1024;
-
-    let bytes = value.get();
-    if bytes.is_multiple_of(PIB) {
-        let rate = bytes / PIB;
-        format!("{rate} PiB/s")
-    } else if bytes.is_multiple_of(TIB) {
-        let rate = bytes / TIB;
-        format!("{rate} TiB/s")
-    } else if bytes.is_multiple_of(GIB) {
-        let rate = bytes / GIB;
-        format!("{rate} GiB/s")
-    } else if bytes.is_multiple_of(MIB) {
-        let rate = bytes / MIB;
-        format!("{rate} MiB/s")
-    } else if bytes.is_multiple_of(KIB) {
-        let rate = bytes / KIB;
-        format!("{rate} KiB/s")
-    } else {
-        format!("{bytes} bytes/s")
-    }
 }
 
 /// Reports whether a daemon `dont compress` value collapses to the whole-stream

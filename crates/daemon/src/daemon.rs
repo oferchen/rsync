@@ -41,8 +41,7 @@ use core::{
         verify_daemon_auth_response,
     },
     bandwidth::{
-        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
-        parse_bandwidth_limit,
+        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
     exit_code::ExitCode,
@@ -385,7 +384,6 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
-        bandwidth_burst,
         log_file,
         reverse_lookup,
         ..
@@ -455,7 +453,6 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: bandwidth_limit,
-            daemon_burst: bandwidth_burst,
             log_sink,
             peer_host,
             reverse_lookup,
@@ -519,7 +516,6 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
-        bandwidth_burst,
         log_file,
         reverse_lookup,
         lock_file,
@@ -600,7 +596,6 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         log_sink,
         client_socket_options,
         bandwidth_limit,
-        bandwidth_burst,
         reverse_lookup,
         proxy_protocol,
     );

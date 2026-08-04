@@ -53,7 +53,6 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
-        bandwidth_burst,
         log_file,
         reverse_lookup,
         ..
@@ -129,7 +128,6 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: bandwidth_limit,
-            daemon_burst: bandwidth_burst,
             log_sink,
             peer_host,
             reverse_lookup,

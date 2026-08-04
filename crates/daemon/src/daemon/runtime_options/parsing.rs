@@ -61,10 +61,10 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-line")? {
                 options.push_motd_line(value);
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
-                let components = parse_runtime_bwlimit(&value)?;
-                options.set_bandwidth_limit(components.rate(), components.burst())?;
+                let rate = parse_runtime_bwlimit(&value)?;
+                options.set_bandwidth_limit(rate)?;
             } else if argument == "--no-bwlimit" {
-                options.set_bandwidth_limit(None, None)?;
+                options.set_bandwidth_limit(None)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).expect("1 is nonzero"))?;
             } else if argument == "--no-detach" {

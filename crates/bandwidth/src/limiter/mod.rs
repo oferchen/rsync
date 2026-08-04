@@ -3,9 +3,7 @@
 //! The module implements the pacing algorithm described in upstream
 //! `io.c:sleep_for_bwlimit()`. A caller registers completed writes via
 //! [`BandwidthLimiter::register`]; the limiter accumulates debt and sleeps
-//! when the transfer exceeds the configured byte-per-second rate. An optional
-//! burst parameter caps the maximum outstanding debt, preventing long stalls
-//! after idle periods.
+//! when the transfer exceeds the configured byte-per-second rate.
 //!
 //! Configuration updates and daemon-module override logic live in
 //! `change`, while sleep recording for deterministic tests lives in

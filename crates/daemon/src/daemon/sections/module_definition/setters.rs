@@ -129,24 +129,6 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
-    /// Stores the parsed `bwlimit` components.
-    ///
-    /// Unlike the generated setters this one writes several fields, including
-    /// the `bandwidth_limit_set` flag `finish` reports as
-    /// `bandwidth_limit_configured`.
-    fn set_bandwidth_limit(
-        &mut self,
-        limit: Option<NonZeroU64>,
-        burst: Option<NonZeroU64>,
-        burst_specified: bool,
-    ) {
-        self.bandwidth_limit = limit;
-        self.bandwidth_burst = burst;
-        self.bandwidth_burst_specified = burst_specified;
-        self.bandwidth_limit_specified = true;
-        self.bandwidth_limit_set = true;
-    }
-
     /// Stores the `refuse options` list, rejecting an empty one.
     ///
     /// upstream: options.c:parse_refuse_options - the daemon builds its refusal

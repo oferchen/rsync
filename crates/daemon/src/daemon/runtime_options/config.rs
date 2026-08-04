@@ -57,7 +57,6 @@ impl RuntimeOptions {
             && !self.bandwidth_limit_configured
         {
             self.bandwidth_limit = components.rate();
-            self.bandwidth_burst = components.burst();
             self.bandwidth_limit_configured = true;
         }
 

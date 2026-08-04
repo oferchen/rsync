@@ -41,7 +41,6 @@ mod runtime_options_tests {
     fn default_has_no_bandwidth_limit() {
         let options = RuntimeOptions::default();
         assert!(options.bandwidth_limit().is_none());
-        assert!(options.bandwidth_burst().is_none());
         assert!(!options.bandwidth_limit_configured());
     }
 

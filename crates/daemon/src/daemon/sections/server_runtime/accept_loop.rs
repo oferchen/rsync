@@ -46,7 +46,6 @@ fn serve_connections(
         modules,
         motd_lines,
         bandwidth_limit,
-        bandwidth_burst,
         log_file,
         pid_file,
         reverse_lookup,
@@ -336,7 +335,6 @@ fn serve_connections(
         notifier: &notifier,
         client_socket_options,
         bandwidth_limit,
-        bandwidth_burst,
         reverse_lookup,
         proxy_protocol,
     };

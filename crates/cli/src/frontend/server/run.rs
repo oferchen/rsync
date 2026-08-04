@@ -730,8 +730,9 @@ fn apply_value_flags<Err: Write>(
     // upstream: options.c:2799 - the client forwards `--bwlimit=%d` (whole KiB)
     // to the server. When this server is the sender (`--sender`), it paces its
     // own outbound socket writes (io.c:846,861); a receiver ignores it
-    // (main.c:1068). Parse with the `--bwlimit` KiB default suffix and carry the
-    // rate/burst onto the connection so the transfer body installs the limiter.
+    // (main.c:1068). Parse with the `--bwlimit` KiB default suffix
+    // (options.c:1714) and carry the rate onto the connection so the transfer
+    // body installs the limiter.
     if let Some(bwlimit_str) = &long_flags.bwlimit {
         match bandwidth::parse_bandwidth_limit(bwlimit_str) {
             Ok(components) => {

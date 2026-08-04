@@ -35,8 +35,6 @@ use crate::daemon::{
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
     advertised_capability_lines,
-    // From sections/module_access.rs
-    apply_module_bandwidth_limit,
     // From daemon.rs apply_verbosity helper
     apply_verbosity,
     cached_legacy_daemon_greeting,
@@ -45,7 +43,6 @@ use crate::daemon::{
     default_secrets_path_if_present,
     // From sections/config_paths.rs
     first_existing_config_path,
-    format_bandwidth_rate,
     // From sections/server_runtime.rs
     format_connection_status,
     // From sections/greeting.rs
@@ -53,7 +50,6 @@ use crate::daemon::{
     legacy_daemon_greeting_for_protocol,
     log_list_request,
     log_module_auth_failure,
-    log_module_bandwidth_change,
     log_module_denied,
     log_module_limit,
     log_module_request,
@@ -90,7 +86,6 @@ use crate::daemon::MODULE_ABORT_EXIT_CODE;
 
 use core::{
     auth::DaemonAuthDigest,
-    bandwidth::{BandwidthLimiter, LimiterChange},
     branding::{self, Brand},
     exit_code::ExitCode,
 };
@@ -130,7 +125,6 @@ include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
 include!("tests/chunks/first_existing_config_path_falls_back_to_legacy_candidate.rs");
 include!("tests/chunks/first_existing_config_path_prefers_primary_candidate.rs");
 include!("tests/chunks/first_existing_config_path_returns_none_when_absent.rs");
-include!("tests/chunks/format_bandwidth_rate_prefers_largest_whole_unit.rs");
 include!("tests/chunks/help_flag_renders_static_help_snapshot.rs");
 include!("tests/chunks/cached_legacy_daemon_greeting_matches_per_call_bytes.rs");
 include!("tests/chunks/legacy_daemon_greeting_digest_list_is_protocol_independent.rs");
@@ -138,26 +132,7 @@ include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
 include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
 include!("tests/chunks/log_bodies_match_upstream_wording.rs");
 include!("tests/chunks/log_file_open_failure_returns_message_io.rs");
-include!("tests/chunks/log_module_bandwidth_change_ignores_unchanged.rs");
-include!("tests/chunks/log_module_bandwidth_change_logs_disable.rs");
-include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
 include!("tests/chunks/log_module_limit_logs_cap_reached.rs");
-include!("tests/chunks/module_bwlimit_burst_does_not_raise_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_can_lower_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_cannot_raise_daemon_cap.rs");
-include!(
-    "tests/chunks/module_bwlimit_configured_unlimited_with_burst_override_clears_daemon_cap.rs"
-);
-include!(
-    "tests/chunks/module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap.rs"
-);
-include!("tests/chunks/module_bwlimit_configures_unlimited_daemon.rs");
-include!("tests/chunks/module_bwlimit_unlimited_clears_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_unlimited_is_noop_when_no_cap.rs");
-include!("tests/chunks/module_bwlimit_unlimited_with_burst_override_clears_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_unlimited_with_explicit_burst_preserves_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_updates_burst_without_lowering_limit.rs");
-include!("tests/chunks/module_bwlimit_zero_burst_clears_existing_burst.rs");
 include!("tests/chunks/module_definition_empty_acls_allow_all.rs");
 include!("tests/chunks/module_definition_hostname_allow_matches_exact.rs");
 include!("tests/chunks/module_definition_hostname_deny_takes_precedence.rs");
@@ -197,8 +172,6 @@ include!("tests/chunks/module_peer_hostname_missing_resolution_denies_hostname_o
 include!("tests/chunks/module_peer_hostname_resolution_before_chroot_denies_unknown.rs");
 include!("tests/chunks/module_peer_hostname_skips_lookup_when_disabled.rs");
 include!("tests/chunks/module_peer_hostname_uses_override.rs");
-include!("tests/chunks/module_without_bwlimit_inherits_daemon_cap.rs");
-include!("tests/chunks/module_without_bwlimit_preserves_daemon_cap.rs");
 include!("tests/chunks/msg_error_exit_payload_uses_little_endian_encoding.rs");
 include!("tests/chunks/oc_help_flag_renders_branded_snapshot.rs");
 include!("tests/chunks/oc_version_flag_renders_report.rs");
@@ -330,8 +303,6 @@ include!("tests/chunks/runtime_options_ipv6_rejects_ipv4_bind_address.rs");
 include!("tests/chunks/runtime_options_ipv6_sets_default_bind_address.rs");
 include!("tests/chunks/runtime_options_load_modules_from_config_file.rs");
 include!("tests/chunks/runtime_options_loads_boolean_and_id_directives_from_config.rs");
-include!("tests/chunks/runtime_options_loads_bwlimit_burst_from_config.rs");
-include!("tests/chunks/runtime_options_loads_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_config_from_branded_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_config_from_legacy_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_global_bwlimit_from_config.rs");
@@ -355,7 +326,6 @@ include!("tests/chunks/runtime_options_loads_syslog_tag_from_config.rs");
 include!("tests/chunks/runtime_options_syslog_defaults.rs");
 include!("tests/chunks/runtime_options_module_directive_does_not_leak_to_sibling.rs");
 include!("tests/chunks/runtime_options_module_overrides_chmod_directives.rs");
-include!("tests/chunks/runtime_options_module_definition_parses_inline_bwlimit_burst.rs");
 include!("tests/chunks/runtime_options_module_definition_parses_inline_options.rs");
 include!("tests/chunks/runtime_options_module_definition_preserves_escaped_backslash.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_duplicate_inline_option.rs");
@@ -366,7 +336,6 @@ include!(
 include!("tests/chunks/runtime_options_module_definition_supports_escaped_commas.rs");
 include!("tests/chunks/runtime_options_inline_module_inherits_chmod.rs");
 include!("tests/chunks/runtime_options_inline_module_overrides_chmod.rs");
-include!("tests/chunks/runtime_options_last_wins_config_bwlimit.rs");
 include!("tests/chunks/runtime_options_last_wins_global_bwlimit.rs");
 include!("tests/chunks/runtime_options_last_wins_global_chmod.rs");
 include!("tests/chunks/runtime_options_last_wins_global_refuse_options.rs");
@@ -375,9 +344,9 @@ include!("tests/chunks/runtime_options_last_wins_reverse_lookup.rs");
 include!("tests/chunks/runtime_options_last_wins_use_chroot.rs");
 include!("tests/chunks/runtime_options_parse_auth_users_and_secrets_file.rs");
 include!("tests/chunks/runtime_options_parse_bwlimit_argument.rs");
-include!("tests/chunks/runtime_options_parse_bwlimit_argument_with_burst.rs");
 include!("tests/chunks/runtime_options_parse_bwlimit_unlimited.rs");
-include!("tests/chunks/runtime_options_parse_bwlimit_unlimited_ignores_burst.rs");
+include!("tests/chunks/runtime_options_parse_bwlimit_rejects_suffix_and_burst.rs");
+include!("tests/chunks/runtime_options_module_bwlimit_directive_is_unknown.rs");
 include!("tests/chunks/runtime_options_parse_hostname_patterns.rs");
 include!("tests/chunks/runtime_options_parse_hosts_allow_and_deny.rs");
 include!("tests/chunks/runtime_options_parse_lock_file_argument.rs");

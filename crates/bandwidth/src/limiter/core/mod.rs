@@ -1,7 +1,7 @@
 //! Token-bucket bandwidth limiter split into focused submodules.
 //!
 //! - `limiter` - the `BandwidthLimiter` struct, construction, configuration, and rate enforcement
-//! - `write_max` - chunk-size calculation from rate and burst parameters
+//! - `write_max` - chunk-size calculation from the rate parameter
 
 mod limiter;
 mod write_max;

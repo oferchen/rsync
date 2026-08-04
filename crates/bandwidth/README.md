@@ -11,7 +11,7 @@ daemon share identical validation and throttling behaviour.
   binary/decimal suffixes, fractional values, leading signs, and optional
   `+1` / `-1` adjustments.
 - Token-bucket pacing that mirrors upstream rsync's shape, including
-  burst-handling and minimum sleep intervals.
+  minimum sleep intervals.
 - Deterministic testing support that records requested sleep durations in lieu
   of touching the system clock, keeping unit tests fast and reproducible.
 
@@ -26,24 +26,20 @@ helper trims ASCII whitespace, validates suffixes, applies the `+1` / `-1`
 adjustments accepted by upstream rsync, and rounds to the nearest 1024 bytes per
 second as the C implementation does.
 
-[`crate::parse::parse_bandwidth_limit`] extends the
-behaviour to parse daemon-style `RATE[:BURST]` combinations. The returned
-[`crate::parse::BandwidthLimitComponents`] struct can
-be converted into a [`crate::BandwidthLimiter`] or stored for
+[`crate::parse::parse_bandwidth_limit`] wraps that
+behaviour and returns a [`crate::parse::BandwidthLimitComponents`]
+struct, which can be converted into a [`crate::BandwidthLimiter`] or stored for
 later negotiation.
 
 ### Pacing helpers
 
 [`crate::BandwidthLimiter`] implements the token-bucket
 scheduler used by the transfer engine and daemon. It tracks accumulated debt,
-limits write sizes, and sleeps long enough to honour the configured rate. When
-the optional burst parameter is supplied the limiter caps the debt to the burst
-size, mirroring upstream behaviour.
+limits write sizes, and sleeps long enough to honour the configured rate.
 
 `apply_effective_limit` merges daemon-imposed caps with pre-existing limiter
 configuration. The helper ensures precedence rules match upstream rsync by
-keeping the strictest rate while allowing burst overrides when explicitly
-requested, and returns a [`crate::LimiterChange`] describing
+keeping the strictest rate, and returns a [`crate::LimiterChange`] describing
 whether throttling was enabled, updated, disabled, or left untouched.
 
 ### Test support

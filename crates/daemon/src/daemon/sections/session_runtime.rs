@@ -7,7 +7,6 @@ struct SessionParams<'a> {
     modules: &'a [ModuleRuntime],
     motd_lines: &'a [String],
     daemon_limit: Option<NonZeroU64>,
-    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
     proxy_protocol: bool,
@@ -25,7 +24,6 @@ struct LegacySessionParams<'a> {
     modules: &'a [ModuleRuntime],
     motd_lines: &'a [String],
     daemon_limit: Option<NonZeroU64>,
-    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     peer_host: Option<String>,
     reverse_lookup: bool,
@@ -50,7 +48,6 @@ fn handle_session(
         modules,
         motd_lines,
         daemon_limit,
-        daemon_burst,
         log_sink,
         reverse_lookup,
         proxy_protocol,
@@ -107,7 +104,7 @@ fn handle_session(
     }
 
     match style {
-        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, daemon_burst, log_sink),
+        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, log_sink),
         SessionStyle::Legacy => {
             // upstream: clientserver.c - the per-connection child owns its own
             // `exit_cleanup()`, so a session-fatal refusal never reaches the
@@ -120,7 +117,6 @@ fn handle_session(
                     modules,
                     motd_lines,
                     daemon_limit,
-                    daemon_burst,
                     log_sink,
                     peer_host,
                     reverse_lookup,
@@ -265,13 +261,12 @@ fn handle_legacy_session(
         modules,
         motd_lines,
         daemon_limit,
-        daemon_burst,
         log_sink,
         peer_host,
         reverse_lookup,
     } = params;
     let mut reader = BufReader::new(stream);
-    let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
+    let mut limiter = BandwidthLimitComponents::new(daemon_limit).into_limiter();
     // DIS-4.a R3: borrow the process-wide cache instead of rebuilding the
     // `@RSYNCD: OK\n` / `@RSYNCD: EXIT\n` boxes per accepted connection.
     let messages = LegacyMessageCache::shared();
@@ -488,19 +483,17 @@ fn read_early_input(line: &str, reader: &mut impl Read) -> io::Result<Option<Vec
 fn handle_binary_session(
     stream: DaemonStream,
     daemon_limit: Option<NonZeroU64>,
-    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
-    handle_binary_session_internal(stream, daemon_limit, daemon_burst, log_sink)
+    handle_binary_session_internal(stream, daemon_limit, log_sink)
 }
 
 fn handle_binary_session_internal(
     mut stream: DaemonStream,
     daemon_limit: Option<NonZeroU64>,
-    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
-    let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
+    let mut limiter = BandwidthLimitComponents::new(daemon_limit).into_limiter();
 
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
@@ -581,7 +574,6 @@ mod session_runtime_tests {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: None,
-            daemon_burst: None,
             log_sink: None,
             reverse_lookup: false,
             proxy_protocol: false,
@@ -598,18 +590,15 @@ mod session_runtime_tests {
         let modules: Vec<ModuleRuntime> = vec![];
         let motd_lines: Vec<String> = vec![];
         let limit = NonZeroU64::new(1000);
-        let burst = NonZeroU64::new(2000);
         let params = SessionParams {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: limit,
-            daemon_burst: burst,
             log_sink: None,
             reverse_lookup: true,
             proxy_protocol: false,
         };
         assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
-        assert_eq!(params.daemon_burst, NonZeroU64::new(2000));
         assert!(params.reverse_lookup);
     }
 
@@ -621,7 +610,6 @@ mod session_runtime_tests {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: None,
-            daemon_burst: None,
             log_sink: None,
             peer_host: None,
             reverse_lookup: false,
@@ -638,7 +626,6 @@ mod session_runtime_tests {
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: None,
-            daemon_burst: None,
             log_sink: None,
             peer_host: Some("example.com".to_owned()),
             reverse_lookup: true,

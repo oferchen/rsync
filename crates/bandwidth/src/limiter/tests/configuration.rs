@@ -1,4 +1,4 @@
-use super::{BandwidthLimiter, LimiterChange, MINIMUM_SLEEP_MICROS, recorded_sleep_session};
+use super::{BandwidthLimiter, LimiterChange, recorded_sleep_session};
 use std::cmp::Ordering;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -34,37 +34,6 @@ fn limiter_update_limit_resets_internal_state() {
 }
 
 #[test]
-fn limiter_update_configuration_resets_state_and_updates_burst() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let initial_limit = NonZeroU64::new(1024).unwrap();
-    let initial_burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(initial_limit, Some(initial_burst));
-    let _ = limiter.register(8192);
-    assert!(limiter.accumulated_debt_for_testing() > 0);
-
-    let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
-    let new_burst = NonZeroU64::new(2048).unwrap();
-    limiter.update_configuration(new_limit, Some(new_burst));
-
-    assert_eq!(limiter.limit_bytes(), new_limit);
-    assert_eq!(limiter.burst_bytes(), Some(new_burst));
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-
-    session.clear();
-    let sleep = limiter.register(1024);
-    let recorded = session.take();
-    assert!(
-        recorded.is_empty()
-            || recorded
-                .iter()
-                .all(|duration| duration.as_micros() <= MINIMUM_SLEEP_MICROS)
-    );
-    assert!(sleep.requested() <= Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
-}
-
-#[test]
 fn limiter_reset_clears_state_and_preserves_configuration() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -84,7 +53,6 @@ fn limiter_reset_clears_state_and_preserves_configuration() {
 
     limiter.reset();
     assert_eq!(limiter.limit_bytes(), limit);
-    assert_eq!(limiter.burst_bytes(), None);
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 
     let sleep = limiter.register(4096);
@@ -244,82 +212,6 @@ fn limiter_write_max_scales_with_limit() {
 }
 
 #[test]
-fn limiter_write_max_uses_burst_override() {
-    let limit = NonZeroU64::new(1024 * 1024).unwrap();
-    let burst = NonZeroU64::new(2048).unwrap();
-    let limiter = BandwidthLimiter::with_burst(limit, Some(burst));
-
-    assert_eq!(limiter.write_max_bytes(), burst.get() as usize);
-    assert_eq!(
-        limiter.recommended_read_size(usize::MAX),
-        burst.get() as usize
-    );
-}
-
-#[test]
-fn limiter_write_max_honours_minimum_when_burst_is_small() {
-    let limit = NonZeroU64::new(8 * 1024).unwrap();
-    let burst = NonZeroU64::new(128).unwrap();
-    let limiter = BandwidthLimiter::with_burst(limit, Some(burst));
-
-    assert_eq!(limiter.write_max_bytes(), 512);
-    assert_eq!(limiter.recommended_read_size(1024), 512);
-}
-
-#[test]
-fn update_limit_preserves_burst_setting() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
-
-    // Update only the limit
-    limiter.update_limit(NonZeroU64::new(2048).unwrap());
-
-    // Burst should be preserved
-    assert_eq!(limiter.burst_bytes(), Some(burst));
-    assert_eq!(limiter.limit_bytes().get(), 2048);
-}
-
-#[test]
-fn update_configuration_with_none_burst_clears_burst() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(NonZeroU64::new(4096).unwrap()),
-    );
-
-    // Update configuration with None burst
-    limiter.update_configuration(NonZeroU64::new(2048).unwrap(), None);
-
-    assert!(limiter.burst_bytes().is_none());
-    assert_eq!(limiter.limit_bytes().get(), 2048);
-}
-
-#[test]
-fn update_configuration_with_same_values_still_resets() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let limit = NonZeroU64::new(1024).unwrap();
-    let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(limit, Some(burst));
-
-    // Accumulate debt
-    let _ = limiter.register(10000);
-    assert!(limiter.accumulated_debt_for_testing() > 0);
-
-    // Update with same values
-    limiter.update_configuration(limit, Some(burst));
-
-    // Debt should still be cleared
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
 fn multiple_sequential_updates() {
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
 
@@ -438,19 +330,6 @@ fn reset_clears_all_mutable_state() {
 }
 
 #[test]
-fn reset_preserves_burst_configuration() {
-    let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
-
-    // Accumulate debt and reset
-    let _ = limiter.register(10000);
-    limiter.reset();
-
-    // Burst should be preserved
-    assert_eq!(limiter.burst_bytes(), Some(burst));
-}
-
-#[test]
 fn reset_after_update_limit() {
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
     limiter.update_limit(NonZeroU64::new(2048).unwrap());
@@ -465,14 +344,10 @@ fn reset_after_update_limit() {
 
 #[test]
 fn cloned_limiter_has_same_configuration() {
-    let original = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(NonZeroU64::new(4096).unwrap()),
-    );
+    let original = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
     let cloned = original.clone();
 
     assert_eq!(original.limit_bytes(), cloned.limit_bytes());
-    assert_eq!(original.burst_bytes(), cloned.burst_bytes());
     assert_eq!(original.write_max_bytes(), cloned.write_max_bytes());
 }
 
@@ -509,18 +384,6 @@ fn write_max_scales_with_limit_at_boundaries() {
 }
 
 #[test]
-fn write_max_capped_at_burst() {
-    // Large limit with small burst
-    let limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024 * 1024 * 1024).unwrap(),
-        Some(NonZeroU64::new(1024).unwrap()),
-    );
-
-    // write_max should be capped to max(burst, MIN_WRITE_MAX)
-    assert!(limiter.write_max_bytes() <= 1024);
-}
-
-#[test]
 fn limit_bytes_consistent_after_operations() {
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
     let initial = limiter.limit_bytes();
@@ -531,21 +394,4 @@ fn limit_bytes_consistent_after_operations() {
 
     limiter.reset();
     assert_eq!(limiter.limit_bytes(), initial);
-}
-
-#[test]
-fn burst_bytes_consistent_after_operations() {
-    let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
-
-    // Various operations shouldn't change burst_bytes
-    let _ = limiter.register(1000);
-    assert_eq!(limiter.burst_bytes(), Some(burst));
-
-    limiter.reset();
-    assert_eq!(limiter.burst_bytes(), Some(burst));
-
-    // Only explicit update should change it
-    limiter.update_configuration(NonZeroU64::new(1024).unwrap(), None);
-    assert!(limiter.burst_bytes().is_none());
 }

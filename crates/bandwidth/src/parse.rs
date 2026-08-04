@@ -5,8 +5,6 @@
 //! suffixes (`K`, `M`, `G`, `T`, `P`, `B`, `iB`), fractional values with
 //! dot or comma separators, leading `+`/`-` signs, and optional `+1`/`-1`
 //! adjustment modifiers. Scientific notation is rejected, matching upstream.
-//! A colon-separated burst component (`RATE:BURST`) is also handled for daemon
-//! configurations.
 
 use std::num::NonZeroU64;
 
@@ -111,14 +109,14 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         .map(Some)
 }
 
-/// Parses a bandwidth limit containing an optional burst component.
+/// Parses a bandwidth limit into a [`BandwidthLimitComponents`].
 ///
-/// Accepts the `RATE[:BURST]` syntax used in daemon module configuration.
-/// Both the rate and burst segments follow the same suffix and multiplier
-/// rules as [`parse_bandwidth_argument`]. A rate of `0` produces an
-/// unlimited configuration. Surrounding whitespace is rejected to match
-/// upstream rsync's strict parsing.
-// upstream: options.c:server_options() - bwlimit with optional burst
+/// The rate follows the same suffix and multiplier rules as
+/// [`parse_bandwidth_argument`]. A rate of `0` produces an unlimited
+/// configuration. Surrounding whitespace is rejected to match upstream rsync's
+/// strict parsing. Upstream has no `:BURST` component, so a colon is rejected as
+/// invalid size syntax.
+// upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
@@ -127,24 +125,10 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
         return Err(BandwidthParseError::Invalid);
     }
 
-    if let Some((rate_text, burst_text)) = trimmed.split_once(':') {
-        let rate = parse_bandwidth_argument(rate_text)?;
-        if rate.is_none() {
-            return Ok(BandwidthLimitComponents::with_internal_flags(
-                None, None, true, false,
-            ));
-        }
-
-        let burst = parse_bandwidth_argument(burst_text)?;
-        Ok(BandwidthLimitComponents::with_internal_flags(
-            rate, burst, true, true,
-        ))
-    } else {
-        parse_bandwidth_argument(trimmed).map(|rate| match rate {
-            Some(rate) => BandwidthLimitComponents::new(Some(rate), None),
-            None => BandwidthLimitComponents::with_internal_flags(None, None, true, false),
-        })
-    }
+    parse_bandwidth_argument(trimmed).map(|rate| match rate {
+        Some(rate) => BandwidthLimitComponents::new(Some(rate)),
+        None => BandwidthLimitComponents::with_internal_flags(None, true),
+    })
 }
 
 #[cfg(test)]

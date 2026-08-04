@@ -58,13 +58,6 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
-    /// Sets the bandwidth burst limit in bytes.
-    #[must_use]
-    pub fn bandwidth_burst(mut self, burst: Option<NonZeroU64>) -> Self {
-        self.bandwidth_burst = burst;
-        self
-    }
-
     /// Enables or disables compression.
     #[must_use]
     pub fn compress(mut self, enabled: bool) -> Self {

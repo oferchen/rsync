@@ -8,9 +8,8 @@ impl<'a> CopyContext<'a> {
         observer: Option<&'a mut dyn LocalCopyRecordHandler>,
         destination_root: PathBuf,
     ) -> Self {
-        let burst = options.bandwidth_burst_bytes();
         let limiter =
-            BandwidthLimitComponents::new(options.bandwidth_limit_bytes(), burst).into_limiter();
+            BandwidthLimitComponents::new(options.bandwidth_limit_bytes()).into_limiter();
         let collect_events = options.events_enabled();
         let stop_at_wallclock = options.stop_at();
         let stop_deadline = stop_at_wallclock.map(|deadline| {

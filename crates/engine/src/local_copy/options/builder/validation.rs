@@ -118,7 +118,6 @@ impl LocalCopyOptionsBuilder {
             preallocate: self.preallocate,
             fsync: self.fsync,
             bandwidth_limit: self.bandwidth_limit,
-            bandwidth_burst: self.bandwidth_burst,
             compress: self.compress,
             compression_algorithm: self.compression_algorithm,
             compression_level_override: self.compression_level_override,

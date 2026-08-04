@@ -5,7 +5,6 @@
 //! 2. Various units (K, M, G, B) work correctly
 //! 3. Small and large files are handled correctly
 //! 4. Rate accuracy within tolerance
-//! 5. Interaction with burst configuration
 //!
 //! Note: Tests use the test-support feature to record sleep requests
 //! instead of actually sleeping, enabling fast deterministic testing.
@@ -359,76 +358,9 @@ fn bwlimit_accuracy_double_rate() {
 }
 
 #[test]
-fn bwlimit_burst_clamps_debt() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    // 1 KB/s rate with 2 KB burst
-    let mut limiter = BandwidthLimiter::with_burst(nz(1024), Some(nz(2048)));
-
-    // Transfer 10 KB - debt should be clamped to burst (2 KB)
-    let sleep = limiter.register(10 * 1024);
-
-    // With debt clamped to 2 KB at 1 KB/s, sleep should be 2 seconds
-    assert_eq!(
-        sleep.requested(),
-        Duration::from_secs(2),
-        "With 2 KB burst cap, sleep should be 2 seconds max"
-    );
-}
-
-#[test]
-fn bwlimit_burst_allows_initial_burst() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    // Slow rate but large burst
-    let mut limiter = BandwidthLimiter::with_burst(nz(512), Some(nz(4096)));
-
-    // Transfer 2 KB - debt should be clamped to burst (4 KB)
-    let sleep = limiter.register(2048);
-
-    // Debt is 2048, at 512 B/s = 4 seconds max
-    assert!(
-        sleep.requested() <= Duration::from_secs(4),
-        "Sleep {:?} should be at most 4 seconds",
-        sleep.requested()
-    );
-}
-
-#[test]
-fn bwlimit_burst_repeated_writes_stay_clamped() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
-
-    // Multiple large writes - debt should stay clamped
-    for _ in 0..5 {
-        let sleep = limiter.register(2000);
-        // Each write's debt clamped to 500 bytes at 1000 B/s = 0.5 seconds
-        assert!(
-            sleep.requested() <= Duration::from_millis(500),
-            "Sleep {:?} should be at most 500ms",
-            sleep.requested()
-        );
-    }
-}
-
-#[test]
-fn bwlimit_burst_parsing_with_limit() {
-    let components = parse_bandwidth_limit("4M:32K").expect("parse succeeds");
-
-    assert_eq!(components.rate().unwrap().get(), 4 * 1024 * 1024);
-    assert_eq!(components.burst().map(|b| b.get()), Some(32 * 1024));
-}
-
-#[test]
-fn bwlimit_burst_parsing_without_burst() {
-    let components = parse_bandwidth_limit("2M").expect("parse succeeds");
-
-    assert_eq!(components.rate().unwrap().get(), 2 * 1024 * 1024);
-    assert!(components.burst().is_none());
+fn bwlimit_rejects_colon_burst_component() {
+    // upstream: a `RATE:BURST` argument is not a size - the colon is invalid.
+    assert!(parse_bandwidth_limit("4M:32K").is_err());
 }
 
 #[test]
@@ -457,18 +389,6 @@ fn bwlimit_recommended_read_size_respects_write_max() {
 
     // Buffer smaller than write_max should return buffer size
     assert_eq!(limiter.recommended_read_size(100), 100);
-}
-
-#[test]
-fn bwlimit_burst_affects_write_max() {
-    // Same rate, different bursts
-    let no_burst = BandwidthLimiter::new(nz(10 * 1024 * 1024));
-    let small_burst = BandwidthLimiter::with_burst(nz(10 * 1024 * 1024), Some(nz(2048)));
-
-    assert!(
-        small_burst.write_max_bytes() <= no_burst.write_max_bytes(),
-        "Burst should cap write_max"
-    );
 }
 
 #[test]
@@ -698,15 +618,6 @@ fn bwlimit_behavior_matches_upstream_semantics_minimum_512() {
 
     let below_min = parse_bandwidth_argument("511b");
     assert!(below_min.is_err());
-}
-
-#[test]
-fn bwlimit_behavior_matches_upstream_semantics_burst() {
-    // Upstream rsync: RATE:BURST syntax
-    let components = parse_bandwidth_limit("1M:32K").expect("parse succeeds");
-
-    assert_eq!(components.rate().unwrap().get(), 1024 * 1024);
-    assert_eq!(components.burst().unwrap().get(), 32 * 1024);
 }
 
 #[test]

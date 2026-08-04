@@ -21,17 +21,12 @@ impl RuntimeOptions {
         self.tcp_fastopen = mode;
     }
 
-    fn set_bandwidth_limit(
-        &mut self,
-        limit: Option<NonZeroU64>,
-        burst: Option<NonZeroU64>,
-    ) -> Result<(), DaemonError> {
+    fn set_bandwidth_limit(&mut self, limit: Option<NonZeroU64>) -> Result<(), DaemonError> {
         if self.bandwidth_limit_configured {
             return Err(duplicate_argument("--bwlimit"));
         }
 
         self.bandwidth_limit = limit;
-        self.bandwidth_burst = burst;
         self.bandwidth_limit_configured = true;
         Ok(())
     }

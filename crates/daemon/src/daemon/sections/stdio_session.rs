@@ -83,7 +83,6 @@ pub fn run_stdio_session(
         modules,
         motd_lines,
         bandwidth_limit,
-        bandwidth_burst,
         log_file,
         reverse_lookup,
         ..
@@ -118,7 +117,6 @@ pub fn run_stdio_session(
             modules: &modules,
             motd_lines: &motd_lines,
             daemon_limit: bandwidth_limit,
-            daemon_burst: bandwidth_burst,
             log_sink,
             peer_host: Some("localhost".to_owned()),
             reverse_lookup,

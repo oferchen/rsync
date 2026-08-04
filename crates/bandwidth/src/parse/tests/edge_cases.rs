@@ -161,21 +161,9 @@ mod rate_formats {
     }
 
     #[test]
-    fn rate_with_burst_component() {
-        // Rate with burst: "rate:burst" format
-        let components = parse_bandwidth_limit("1M:64K").expect("parse succeeds");
-        assert_eq!(components.rate(), NonZeroU64::new(1024 * 1024));
-        assert_eq!(components.burst(), NonZeroU64::new(64 * 1024));
-        assert!(components.burst_specified());
-    }
-
-    #[test]
-    fn rate_without_burst_component() {
-        // Rate without burst
+    fn rate_component_parses() {
         let components = parse_bandwidth_limit("1M").expect("parse succeeds");
         assert_eq!(components.rate(), NonZeroU64::new(1024 * 1024));
-        assert!(components.burst().is_none());
-        assert!(!components.burst_specified());
     }
 }
 
@@ -206,24 +194,6 @@ mod zero_value {
         let components = parse_bandwidth_limit("0").expect("parse succeeds");
         assert!(components.is_unlimited());
         assert!(components.limit_specified());
-    }
-
-    #[test]
-    fn zero_rate_ignores_burst() {
-        // When rate is zero, burst is ignored
-        let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
-        assert!(components.is_unlimited());
-        assert!(components.burst().is_none());
-        assert!(components.limit_specified());
-    }
-
-    #[test]
-    fn zero_burst_is_valid() {
-        // Zero burst with valid rate
-        let components = parse_bandwidth_limit("1M:0").expect("parse succeeds");
-        assert_eq!(components.rate(), NonZeroU64::new(1024 * 1024));
-        assert!(components.burst().is_none());
-        assert!(components.burst_specified());
     }
 
     #[test]
@@ -260,12 +230,6 @@ mod negative_values {
     #[test]
     fn negative_fractional_values_are_rejected() {
         let error = parse_bandwidth_argument("-0.5M").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-    }
-
-    #[test]
-    fn negative_burst_is_rejected() {
-        let error = parse_bandwidth_limit("1M:-64K").unwrap_err();
         assert_eq!(error, BandwidthParseError::Invalid);
     }
 
@@ -382,18 +346,6 @@ mod empty_and_whitespace {
         assert_eq!(error, BandwidthParseError::Invalid);
 
         let error = parse_bandwidth_argument("100 K").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-    }
-
-    #[test]
-    fn whitespace_around_burst_separator_is_rejected() {
-        let error = parse_bandwidth_limit("1M : 64K").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-
-        let error = parse_bandwidth_limit("1M :64K").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-
-        let error = parse_bandwidth_limit("1M: 64K").unwrap_err();
         assert_eq!(error, BandwidthParseError::Invalid);
     }
 
@@ -531,14 +483,9 @@ mod invalid_formats {
     }
 
     #[test]
-    fn missing_burst_value_rejected() {
-        let error = parse_bandwidth_limit("1M:").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-    }
-
-    #[test]
-    fn invalid_burst_rejected() {
-        let error = parse_bandwidth_limit("1M:abc").unwrap_err();
+    fn colon_rejected() {
+        // A colon is not valid size syntax; RATE:BURST is no longer accepted.
+        let error = parse_bandwidth_limit("1M:64K").unwrap_err();
         assert_eq!(error, BandwidthParseError::Invalid);
     }
 
@@ -869,43 +816,6 @@ mod rounding {
         let with_adj = parse_bandwidth_argument("1K+1").expect("parse succeeds");
         // Both round to 1024
         assert_eq!(without_adj, with_adj);
-    }
-}
-
-mod burst_component {
-    use super::*;
-
-    #[test]
-    fn burst_component_with_various_suffixes() {
-        let components = parse_bandwidth_limit("1M:32K").expect("parse succeeds");
-        assert_eq!(components.burst(), NonZeroU64::new(32 * 1024));
-
-        let components = parse_bandwidth_limit("1G:1M").expect("parse succeeds");
-        assert_eq!(components.burst(), NonZeroU64::new(1024 * 1024));
-
-        let components = parse_bandwidth_limit("100K:8K").expect("parse succeeds");
-        assert_eq!(components.burst(), NonZeroU64::new(8 * 1024));
-    }
-
-    #[test]
-    fn burst_with_decimal_values() {
-        // 0.5K = 512 bytes, but rounds to 1024 due to alignment
-        let components = parse_bandwidth_limit("1M:0.5K").expect("parse succeeds");
-        assert_eq!(components.burst(), NonZeroU64::new(1024));
-    }
-
-    #[test]
-    fn multiple_colons_rejected() {
-        // Only one colon allowed
-        let error = parse_bandwidth_limit("1M:64K:32K").unwrap_err();
-        assert_eq!(error, BandwidthParseError::Invalid);
-    }
-
-    #[test]
-    fn burst_inherits_limit_specified() {
-        let components = parse_bandwidth_limit("1M:64K").expect("parse succeeds");
-        assert!(components.limit_specified());
-        assert!(components.burst_specified());
     }
 }
 

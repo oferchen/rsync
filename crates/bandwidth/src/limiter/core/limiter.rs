@@ -4,8 +4,7 @@
 //! call to [`BandwidthLimiter::register`] accumulates byte debt, subtracts
 //! the time-based allowance elapsed since the previous call, and sleeps when
 //! the outstanding debt exceeds the minimum sleep threshold
-//! (`MINIMUM_SLEEP_MICROS`). An optional burst cap prevents excessive debt
-//! accumulation after idle periods.
+//! (`MINIMUM_SLEEP_MICROS`).
 
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
@@ -21,8 +20,7 @@ use super::write_max::calculate_write_max;
 /// subtracts a time-based allowance (proportional to the configured rate) for
 /// the wall-clock time elapsed since the previous call. When outstanding debt
 /// exceeds a minimum threshold, the limiter sleeps to keep the transfer at or
-/// below the target byte-per-second rate. An optional burst cap prevents
-/// excessive debt accumulation after idle periods.
+/// below the target byte-per-second rate.
 ///
 /// The chunk size returned by [`write_max_bytes`](Self::write_max_bytes) scales
 /// linearly with the rate so that pacing sleeps remain short and responsive,
@@ -34,7 +32,6 @@ use super::write_max::calculate_write_max;
 pub struct BandwidthLimiter {
     limit_bytes: NonZeroU64,
     write_max: usize,
-    burst_bytes: Option<NonZeroU64>,
     total_written: u128,
     last_instant: Option<Instant>,
     simulated_elapsed_us: u128,
@@ -42,30 +39,14 @@ pub struct BandwidthLimiter {
 
 impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
-    ///
-    /// The burst cap is left unconstrained so debt can grow freely between
-    /// calls. Use [`with_burst`](Self::with_burst) to cap debt accumulation.
     // upstream: io.c:sleep_for_bwlimit() - initial setup
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
-        Self::with_burst(limit, None)
-    }
-
-    /// Constructs a new limiter from the supplied rate and optional burst size.
-    ///
-    /// When `burst` is `Some`, outstanding debt is clamped to that many bytes
-    /// after every [`register`](Self::register) call, preventing long stalls
-    /// that would otherwise occur after idle periods. When `burst` is `None`,
-    /// debt grows without bound.
-    // upstream: io.c:sleep_for_bwlimit() - burst cap logic
-    #[must_use]
-    pub fn with_burst(limit: NonZeroU64, burst: Option<NonZeroU64>) -> Self {
-        let write_max = calculate_write_max(limit, burst);
+        let write_max = calculate_write_max(limit);
 
         Self {
             limit_bytes: limit,
             write_max,
-            burst_bytes: burst,
             total_written: 0,
             last_instant: None,
             simulated_elapsed_us: 0,
@@ -74,26 +55,18 @@ impl BandwidthLimiter {
 
     /// Updates the limiter so a new byte-per-second limit takes effect.
     ///
-    /// The burst cap is preserved from the current configuration. Accumulated
-    /// debt and timing state are reset so the new rate applies immediately
-    /// without carryover from the previous period.
-    pub fn update_limit(&mut self, limit: NonZeroU64) {
-        self.update_configuration(limit, self.burst_bytes);
-    }
-
-    /// Updates the limiter so both the rate and burst configuration take effect.
-    ///
     /// Recalculates the write-max chunk size for the new rate and resets all
-    /// internal accounting (debt, timing, simulated elapsed time). This is
-    /// used when a daemon module overrides the client-supplied `--bwlimit`.
+    /// internal accounting (debt, timing, simulated elapsed time) so the new
+    /// rate applies immediately without carryover from the previous period.
+    /// This is also used when a daemon module overrides the client-supplied
+    /// `--bwlimit`.
     // upstream: options.c:2392 - daemon_bwlimit override reconfiguration
     #[doc(alias = "--bwlimit")]
-    pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
-        let write_max = calculate_write_max(limit, burst);
+    pub fn update_limit(&mut self, limit: NonZeroU64) {
+        let write_max = calculate_write_max(limit);
 
         self.limit_bytes = limit;
         self.write_max = write_max;
-        self.burst_bytes = burst;
         self.total_written = 0;
         self.last_instant = None;
         self.simulated_elapsed_us = 0;
@@ -103,24 +76,11 @@ impl BandwidthLimiter {
     ///
     /// Clears accumulated debt and timing state so the next
     /// [`register`](Self::register) call starts a fresh accounting period.
-    /// The rate and burst settings are preserved.
+    /// The rate setting is preserved.
     pub const fn reset(&mut self) {
         self.total_written = 0;
         self.last_instant = None;
         self.simulated_elapsed_us = 0;
-    }
-
-    /// Caps outstanding debt at the configured burst size, if any.
-    ///
-    /// With no burst configured, debt is left unbounded so long idle periods
-    /// can accumulate arbitrary allowance. When a burst cap is set, this bounds
-    /// the debt (and therefore the maximum single sleep) to `burst` bytes.
-    #[inline]
-    fn clamp_debt_to_burst(&mut self) {
-        if let Some(burst) = self.burst_bytes {
-            let limit = u128::from(burst.get());
-            self.total_written = self.total_written.min(limit);
-        }
     }
 
     /// Configured bytes-per-second transfer cap.
@@ -128,16 +88,6 @@ impl BandwidthLimiter {
     #[must_use]
     pub const fn limit_bytes(&self) -> NonZeroU64 {
         self.limit_bytes
-    }
-
-    /// Optional burst allowance above the steady-state limit.
-    ///
-    /// When set, the limiter clamps outstanding debt to this value after
-    /// each [`register`](Self::register) call. Returns `None` when debt is
-    /// unconstrained.
-    #[inline]
-    pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
-        self.burst_bytes
     }
 
     /// Maximum bytes permitted in a single I/O operation.
@@ -169,8 +119,8 @@ impl BandwidthLimiter {
     ///
     /// The method adds `bytes` to the outstanding debt, subtracts the
     /// time-based allowance for the wall-clock time since the previous call,
-    /// clamps debt to the burst cap when configured, and sleeps if the
-    /// resulting debt represents at least 100 ms of transfer time. Returns a
+    /// and sleeps if the resulting debt represents at least 100 ms of transfer
+    /// time. Returns a
     /// [`LimiterSleep`](super::super::LimiterSleep) describing the requested
     /// and actual sleep durations.
     ///
@@ -182,7 +132,6 @@ impl BandwidthLimiter {
         }
 
         self.total_written = self.total_written.saturating_add(bytes as u128);
-        self.clamp_debt_to_burst();
 
         let start = Instant::now();
         let bytes_per_second = u128::from(self.limit_bytes.get());
@@ -202,8 +151,6 @@ impl BandwidthLimiter {
                 self.total_written -= allowed;
             }
         }
-
-        self.clamp_debt_to_burst();
 
         let sleep_us = self.total_written.saturating_mul(MICROS_PER_SECOND) / bytes_per_second;
 
@@ -231,7 +178,6 @@ impl BandwidthLimiter {
         let leftover = remaining_us.saturating_mul(bytes_per_second) / MICROS_PER_SECOND;
 
         self.total_written = leftover;
-        self.clamp_debt_to_burst();
         self.last_instant = Some(end);
         let actual = Duration::from_micros(elapsed_us as u64);
         super::super::LimiterSleep::new(requested, actual)

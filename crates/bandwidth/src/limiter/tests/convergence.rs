@@ -209,83 +209,6 @@ fn step_response_multiple_rate_changes_settle() {
 }
 
 #[test]
-fn burst_capped_limiter_recovers_to_target_rate() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 1000_u64;
-    let burst = 500_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Large burst well above the burst cap
-    let _ = limiter.register(10_000);
-
-    // Debt must be clamped to burst
-    assert!(
-        limiter.accumulated_debt_for_testing() <= u128::from(burst),
-        "debt {} exceeds burst {burst}",
-        limiter.accumulated_debt_for_testing()
-    );
-
-    // After burst, subsequent steady-state writes should converge
-    let chunk = (rate / 4) as usize;
-    let _ = run_pacing(&mut limiter, 2, chunk); // warm-up post-burst
-    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "post-burst: observed {obs:.2} deviates {deviation:.3}% from {rate}"
-    );
-}
-
-#[test]
-fn burst_limits_maximum_sleep_duration() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 100_u64;
-    let burst = 500_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Write 10x the burst - debt should be clamped
-    let sleep = limiter.register(5000);
-
-    // Maximum sleep: burst / rate = 500 / 100 = 5 seconds
-    assert!(
-        sleep.requested() <= Duration::from_secs(5),
-        "sleep {:?} exceeds max burst/rate = 5s",
-        sleep.requested()
-    );
-}
-
-#[test]
-fn burst_repeated_large_writes_stay_clamped() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 500_u64;
-    let burst = 1000_u64;
-    let max_sleep = Duration::from_secs(burst / rate);
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    for i in 0..10 {
-        let sleep = limiter.register(5000);
-        assert!(
-            sleep.requested() <= max_sleep,
-            "iteration {i}: sleep {:?} exceeds max {max_sleep:?}",
-            sleep.requested()
-        );
-        assert!(
-            limiter.accumulated_debt_for_testing() <= u128::from(burst),
-            "iteration {i}: debt {} exceeds burst {burst}",
-            limiter.accumulated_debt_for_testing()
-        );
-    }
-}
-
-#[test]
 fn multi_stream_independent_limiters_converge_individually() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -547,14 +470,12 @@ fn zero_crossing_update_from_minimum_to_original() {
 #[test]
 fn zero_crossing_reset_preserves_configuration() {
     let rate = 5000_u64;
-    let burst = 2000_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+    let mut limiter = BandwidthLimiter::new(nz(rate));
 
     let _ = limiter.register(10_000);
     limiter.reset();
 
     assert_eq!(limiter.limit_bytes().get(), rate);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), burst);
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
@@ -636,21 +557,6 @@ fn minimum_granularity_no_u128_overflow_at_extreme_values() {
 }
 
 #[test]
-fn minimum_granularity_with_burst_cap() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 1_u64;
-    let burst = 10_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Write 1000 bytes - debt clamped to 10
-    let sleep = limiter.register(1000);
-    assert_eq!(sleep.requested(), Duration::from_secs(10));
-    assert!(limiter.accumulated_debt_for_testing() <= u128::from(burst));
-}
-
-#[test]
 fn realistic_file_transfer_with_rate_change_mid_transfer() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -677,38 +583,6 @@ fn realistic_file_transfer_with_rate_change_mid_transfer() {
     let obs2 = observed_rate(bytes2, sleep2);
     let dev2 = (obs2 - boosted_rate as f64).abs() / boosted_rate as f64 * 100.0;
     assert!(dev2 <= 5.0, "phase 2: {dev2:.3}%");
-}
-
-#[test]
-fn configuration_change_with_burst_converges_correctly() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 2000_u64;
-    let mut limiter = BandwidthLimiter::new(nz(rate));
-
-    // Add burst mid-transfer
-    let burst = 1000_u64;
-    limiter.update_configuration(nz(rate), Some(nz(burst)));
-
-    // Large write should be clamped
-    let sleep = limiter.register(5000);
-    assert!(
-        sleep.requested() <= Duration::from_millis(500),
-        "burst-clamped sleep {:?} exceeds 500 ms",
-        sleep.requested()
-    );
-
-    // Steady-state after burst add
-    let chunk = (rate / 4) as usize;
-    let _ = run_pacing(&mut limiter, 2, chunk);
-    let (bytes, sleep_dur) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep_dur);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "post-burst-config: observed {obs:.2} deviates {deviation:.3}%"
-    );
 }
 
 #[test]
@@ -886,35 +760,6 @@ fn idle_recovery_reset_then_resume_converges() {
     assert!(
         dev2 <= 5.0,
         "post-idle: observed {obs2:.2} deviates {dev2:.3}% from {rate}"
-    );
-}
-
-#[test]
-fn idle_recovery_burst_capped_limiter_no_stale_debt() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 5000_u64;
-    let burst = 2500_u64;
-    let chunk = (rate / 4) as usize;
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Drive to steady-state
-    let _ = run_pacing(&mut limiter, 4, chunk);
-
-    // Simulate idle by resetting
-    limiter.reset();
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-
-    // Resume - should converge cleanly without burst-induced penalty
-    let _ = run_pacing(&mut limiter, 2, chunk);
-    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "idle recovery with burst: {obs:.2} deviates {deviation:.3}%"
     );
 }
 
@@ -1155,28 +1000,6 @@ fn bursty_traffic_alternating_burst_and_trickle() {
 }
 
 #[test]
-fn bursty_traffic_burst_cap_prevents_excessive_back_pressure() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 1000_u64;
-    let burst = 2000_u64;
-    let max_sleep = Duration::from_secs(burst / rate); // 2 seconds
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Repeated bursts should always be bounded by burst/rate
-    for i in 0..5 {
-        let sleep = limiter.register(rate as usize * 20);
-        assert!(
-            sleep.requested() <= max_sleep,
-            "burst {i}: sleep {:?} exceeds max {max_sleep:?}",
-            sleep.requested()
-        );
-    }
-}
-
-#[test]
 fn convergence_across_three_decades_of_rates() {
     let rates = [100_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
 
@@ -1329,37 +1152,6 @@ fn overshoot_trajectory_settles_monotonically() {
 }
 
 #[test]
-fn overshoot_with_burst_cap_limits_initial_penalty() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 2000_u64;
-    let burst = 4000_u64;
-    let chunk = (rate / 4) as usize;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Massive burst - debt clamped to burst
-    let burst_sleep = limiter.register(rate as usize * 20);
-    let max_burst_sleep = Duration::from_secs(burst / rate);
-    assert!(
-        burst_sleep.requested() <= max_burst_sleep,
-        "burst sleep {:?} exceeds max {:?}",
-        burst_sleep.requested(),
-        max_burst_sleep
-    );
-
-    // Verify the very next steady-state chunk converges
-    let _ = run_pacing(&mut limiter, 2, chunk);
-    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "post-overshoot with burst cap: {obs:.2} deviates {deviation:.3}%"
-    );
-}
-
-#[test]
 fn zero_byte_registration_preserves_limiter_state() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -1410,83 +1202,6 @@ fn zero_byte_registration_does_not_advance_timing() {
         limiter.accumulated_debt_for_testing(),
         debt_before,
         "zero-byte register must not alter debt"
-    );
-}
-
-#[test]
-fn zero_byte_registration_with_burst_cap() {
-    let rate = 1000_u64;
-    let burst = 500_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Build some debt
-    let _ = limiter.register(2000);
-    let debt_after_write = limiter.accumulated_debt_for_testing();
-    assert!(debt_after_write <= u128::from(burst));
-
-    // Zero-byte register must not change anything
-    let sleep = limiter.register(0);
-    assert!(sleep.is_noop());
-    assert_eq!(limiter.accumulated_debt_for_testing(), debt_after_write);
-}
-
-#[test]
-fn add_burst_mid_stream_clamps_existing_debt() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 2000_u64;
-    let chunk = (rate / 4) as usize;
-    let mut limiter = BandwidthLimiter::new(nz(rate));
-
-    // Drive without burst - accumulate large debt via big write
-    let _ = limiter.register(rate as usize * 10);
-
-    // Now add a burst cap - this resets state via update_configuration
-    let burst = 1000_u64;
-    limiter.update_configuration(nz(rate), Some(nz(burst)));
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-
-    // Steady-state should converge at the same rate
-    let _ = run_pacing(&mut limiter, 2, chunk);
-    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "post-burst-add: {obs:.2} deviates {deviation:.3}%"
-    );
-}
-
-#[test]
-fn remove_burst_mid_stream_allows_unbounded_debt() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let rate = 1000_u64;
-    let burst = 500_u64;
-    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-    // Warm up with burst
-    let _ = run_pacing(&mut limiter, 4, (rate / 4) as usize);
-
-    // Remove burst
-    limiter.update_configuration(nz(rate), None);
-    assert!(limiter.burst_bytes().is_none());
-
-    // A large write should now accumulate unbounded debt
-    let sleep = limiter.register(5000);
-    assert_eq!(sleep.requested(), Duration::from_secs(5));
-
-    // Verify convergence resumes at the correct rate after removing burst
-    let chunk = (rate / 4) as usize;
-    let _ = run_pacing(&mut limiter, 2, chunk);
-    let (bytes, sleep_dur) = run_pacing(&mut limiter, 8, chunk);
-    let obs = observed_rate(bytes, sleep_dur);
-    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
-    assert!(
-        deviation <= 5.0,
-        "post-burst-removal: {obs:.2} deviates {deviation:.3}%"
     );
 }
 

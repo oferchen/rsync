@@ -56,7 +56,6 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) preallocate: bool,
     pub(super) fsync: bool,
     pub(super) bandwidth_limit: Option<NonZeroU64>,
-    pub(super) bandwidth_burst: Option<NonZeroU64>,
 
     pub(super) compress: bool,
     pub(super) compression_algorithm: CompressionAlgorithm,
@@ -192,7 +191,6 @@ impl LocalCopyOptionsBuilder {
             preallocate: false,
             fsync: false,
             bandwidth_limit: None,
-            bandwidth_burst: None,
             compress: false,
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
             compression_level_override: None,
