@@ -41,6 +41,27 @@ cargo nextest run -p <crate> --all-features -E 'test(<pattern>)'
 Use `cargo-nextest` rather than `cargo test`; configuration lives in
 `.config/nextest.toml`.
 
+### Optional all-platform pre-push cross-check
+
+`cargo run -p xtask -- cross-check` runs the exact required-CI cross-platform
+gates in sequence (one cargo invocation at a time, sharing the workspace build
+lock) and prints a per-target pass/fail/skip summary, so cross-platform breaks
+are caught before CI:
+
+1. `cargo clippy --locked --workspace --all-targets --all-features --no-deps -- -D warnings`
+2. `cargo check  --locked --workspace --target x86_64-pc-windows-gnu`
+3. `cargo check  --locked --workspace --target x86_64-unknown-linux-musl`
+
+A target whose rustup target or cross toolchain (mingw-w64 for windows-gnu,
+musl for linux-musl) is absent is skipped with an actionable hint
+(`rustup target add ...`, install mingw-w64 / musl) rather than a raw linker
+error, and is never silently reported as passing. windows-MSVC is intentionally
+excluded: it cannot be cross-compiled from a non-Windows host (no
+`cl.exe` / `lib.exe`); the CI msvc runner is authoritative and windows-gnu
+covers the same `cfg(windows)` code paths. This command is opt-in - it takes
+the full workspace build lock, so do not run it concurrently with other cargo
+invocations.
+
 ---
 
 ## Adding a new optional dependency
