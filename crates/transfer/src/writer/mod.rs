@@ -12,14 +12,17 @@
 //! - `msg_info` - Trait for sending `MSG_INFO` protocol messages through multiplexed streams.
 //! - `counting` - Byte-counting writer wrapper for transfer statistics.
 //! - `throttle` - Bandwidth-limiting writer decorator for the sender socket.
+//! - `discard` - Dead-end sink for the batch local-replay receiver (no live peer).
 
 mod counting;
+mod discard;
 mod msg_info;
 pub(crate) mod multiplex;
 mod server;
 mod throttle;
 
 pub use self::counting::CountingWriter;
+pub use self::discard::DiscardSink;
 pub use self::msg_info::MsgInfoSender;
 pub use self::multiplex::BatchRoute;
 pub use self::server::{ServerWriter, shutdown_send_side};

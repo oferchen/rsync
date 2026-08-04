@@ -426,6 +426,16 @@ pub struct ReceiverContext {
     /// upstream: generator.c:298-305 - `delete_in_dir()` returns early (printing
     /// once) whenever `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(in crate::receiver) io_error_delete_warning_emitted: bool,
+    /// True when this receiver is applying a recorded batch (`--read-batch`)
+    /// rather than talking to a live peer. Mirrors upstream's `read_batch`
+    /// global as seen by the receiving client: the batch file is fed straight
+    /// in as `f_in` and the generator's `f_out` has no live consumer
+    /// (`main.c:635-651`). The flag gates the `!read_batch` decisions the
+    /// receive path shares with the network path - today only keeping the
+    /// batch `f_in` unmultiplexed (`main.c:1359-1366`). Always `false` on every
+    /// network transfer, so the wire path is byte-identical; set only by
+    /// [`run_local_replay`](Self::run_local_replay).
+    pub(in crate::receiver) local_replay: bool,
 }
 
 impl ReceiverContext {
@@ -511,6 +521,8 @@ impl ReceiverContext {
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),
             io_error_delete_warning_emitted: false,
+            // upstream: read_batch defaults off; the network path never sets it.
+            local_replay: false,
         }
     }
 
@@ -900,8 +912,19 @@ impl ReceiverContext {
     /// **Server mode** (daemon/SSH receiver - `main.c:1185-1186` `do_recv`):
     /// - `if (protocol_version >= 30) io_start_multiplex_in(f_in);`
     /// - Protocol < 30 uses `io_start_buffering_in()` instead (no multiplex).
+    ///
+    /// **Local replay** (`--read-batch`): never. Upstream gates every
+    /// `io_start_multiplex_in(f_in)` on `!read_batch` (`main.c:1359-1366`),
+    /// because the batch file is a raw, one-way recorded stream that was never
+    /// framed. [`local_replay`](Self::local_replay) mirrors that gate so a
+    /// batch-fed `f_in` stays in `Plain` (undemuxed) mode.
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
+        if self.local_replay {
+            // upstream: main.c:1359 `if (!read_batch)` - the recorded batch
+            // stream is never multiplexed, so keep the reader Plain.
+            return false;
+        }
         if self.config.connection.client_mode {
             // Client mode: >= 23 (upstream main.c:1342-1343)
             self.protocol.supports_multiplex_io()
