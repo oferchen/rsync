@@ -385,8 +385,12 @@ pub fn system_roots() -> io::Result<QuicTrust> {
 /// certificate at all each returns a distinct error naming `path`. Callers map
 /// the [`io::Error`] to the appropriate exit code at the CLI boundary.
 pub fn load_private_ca(path: &Path) -> io::Result<RootCertStore> {
-    let pem = fs::read(path)
-        .map_err(|err| io_err(format!("quic: reading --quic-ca file {}: {err}", path.display())))?;
+    let pem = fs::read(path).map_err(|err| {
+        io_err(format!(
+            "quic: reading --quic-ca file {}: {err}",
+            path.display()
+        ))
+    })?;
     let mut roots = RootCertStore::empty();
     let mut added = 0usize;
     for (index, cert) in CertificateDer::pem_slice_iter(&pem).enumerate() {
@@ -776,7 +780,11 @@ mod tests {
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
 
         let roots = load_private_ca(&ca_path).expect("load private ca");
-        assert_eq!(roots.len(), 1, "one CA certificate becomes one trust anchor");
+        assert_eq!(
+            roots.len(),
+            1,
+            "one CA certificate becomes one trust anchor"
+        );
 
         let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
             Arc::new(roots),
@@ -848,7 +856,8 @@ mod tests {
         .expect("write malformed cert");
         let err = load_private_ca(&garbage).expect_err("malformed certificate must error");
         assert!(
-            err.to_string().contains("--quic-ca") && err.to_string().contains("parsing certificate"),
+            err.to_string().contains("--quic-ca")
+                && err.to_string().contains("parsing certificate"),
             "malformed-PEM error must name the flag and the parse failure: {err}"
         );
 
