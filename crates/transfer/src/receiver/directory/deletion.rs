@@ -18,6 +18,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
+use metadata::MetadataOptions;
 use protocol::flist::{FileEntry, compare_file_entries};
 use protocol::stats::DeleteStats;
 
@@ -444,6 +445,9 @@ impl ReceiverContext {
         let emit_itemize = self.should_emit_itemize();
         let server_mode = !self.config.connection.client_mode;
         let protocol = self.protocol.as_u8();
+        // upstream: backup.c:copy_valid_path - a --backup-dir victim's parent
+        // tree inherits attrs from its source dir; built once for the pass.
+        let metadata_opts = self.build_metadata_options();
         for entry in victims {
             let path = dest_dir.join(&entry.rel);
             let result = if entry.is_dir {
@@ -476,6 +480,7 @@ impl ReceiverContext {
                         &entry.rel,
                         dest_dir,
                         sandbox_ref,
+                        &metadata_opts,
                     )
                 }
                 #[cfg(not(unix))]
@@ -486,6 +491,7 @@ impl ReceiverContext {
                         self.config.effective_backup_suffix(),
                         &path,
                         dest_dir,
+                        &metadata_opts,
                     )
                 }
             };
@@ -847,6 +853,10 @@ impl ReceiverContext {
         let backup_dir_owned: Option<PathBuf> =
             self.config.backup_dir.as_deref().map(PathBuf::from);
         let backup_suffix: String = self.config.effective_backup_suffix().to_owned();
+        // upstream: backup.c:copy_valid_path - the --backup-dir parent tree
+        // inherits attrs from the source dir. Workers hold no `self`, so carry
+        // the metadata policy as an owned, shareable value.
+        let metadata_opts_owned = self.build_metadata_options();
 
         // Collect deleted relative paths for post-parallel itemize emission.
         // The writer is not Send, so MSG_INFO frames are emitted sequentially
@@ -1102,6 +1112,7 @@ impl ReceiverContext {
                                     &entry_rel,
                                     &dest_dir_owned,
                                     sandbox_ref,
+                                    &metadata_opts_owned,
                                 )
                             }
                             #[cfg(not(unix))]
@@ -1112,6 +1123,7 @@ impl ReceiverContext {
                                     &backup_suffix,
                                     &path,
                                     &dest_dir_owned,
+                                    &metadata_opts_owned,
                                 )
                             }
                         };
@@ -1289,6 +1301,7 @@ impl ReceiverContext {
             backup: self.config.flags.backup,
             backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
+            metadata_opts: self.build_metadata_options(),
             writer,
         };
 
@@ -1460,6 +1473,9 @@ struct CappedDeleteState<'w, W: ?Sized> {
     backup_dir: Option<PathBuf>,
     /// Effective backup suffix (`~` by default, `""` when `--backup-dir` is set).
     backup_suffix: String,
+    /// Metadata policy applied to `--backup-dir` parent directories created for
+    /// a victim (upstream `copy_valid_path` -> `set_file_attrs`).
+    metadata_opts: MetadataOptions,
     writer: &'w mut W,
 }
 
@@ -1665,6 +1681,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 rel,
                 self.dest_dir,
                 self.sandbox.map(|a| &**a),
+                &self.metadata_opts,
             )
         }
         #[cfg(not(unix))]
@@ -1679,6 +1696,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                     &self.backup_suffix,
                     path,
                     self.dest_dir,
+                    &self.metadata_opts,
                 )
             }
         }
