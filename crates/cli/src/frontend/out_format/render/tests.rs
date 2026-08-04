@@ -1489,6 +1489,47 @@ fn render_percent_f_falls_back_to_relative_without_source_prefix() {
     assert_eq!(render_format("%f", &event), "docs/afile.txt\n");
 }
 
+#[cfg(windows)]
+#[test]
+fn render_percent_n_normalizes_windows_separators_file() {
+    // WHY: upstream logs POSIX `/` separators regardless of host (flist.c stores
+    // `/` before logging), so a Windows-native `a\b\c` file renders as `a/b/c`.
+    let event = ClientEvent::for_test(
+        PathBuf::from(r"a\b\c"),
+        ClientEventKind::DataCopied,
+        true,
+        Some(ClientEvent::test_metadata(ClientEntryKind::File)),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(render_format("%n", &event), "a/b/c\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn render_percent_n_normalizes_windows_separators_dir_single_trailing_slash() {
+    // A Windows-native directory renders normalized with exactly one trailing
+    // slash - separator normalization must not add a second.
+    let event = ClientEvent::for_test(
+        PathBuf::from(r"a\b\c"),
+        ClientEventKind::DirectoryCreated,
+        true,
+        Some(ClientEvent::test_metadata(ClientEntryKind::Directory)),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(render_format("%n", &event), "a/b/c/\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn render_percent_f_leading_slash_strip_runs_after_normalization() {
+    // WHY: `%f` strips a single leading `/`. On Windows the source prefix arrives
+    // with `\` separators; normalization turns the leading `\` into `/`, then the
+    // strip removes it. Order matters - the strip must run on the normalized
+    // bytes, or a leading `\` would survive and diverge from upstream's `/`-form.
+    let event = remote_event_with_source_prefix("afile.txt", Some(r"\abs\docs\afile.txt"));
+    assert_eq!(render_format("%f", &event), "abs/docs/afile.txt\n");
+}
+
 #[test]
 fn render_percent_l_shows_file_length() {
     let event = make_event(

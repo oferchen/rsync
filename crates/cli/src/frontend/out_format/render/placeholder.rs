@@ -215,6 +215,49 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
     }
 }
 
+/// Rewrites Windows path separators (`\`) to POSIX `/` in already-escaped
+/// render bytes, leaving `\#ooo` octal escape sequences intact.
+///
+/// Pure and platform-independent so it is unit-testable on every host;
+/// [`escape_render_path`] invokes it only under `cfg(windows)`, where `\` is the
+/// native separator. A naive rewrite of every backslash would corrupt the
+/// leading `\` of a `\#ooo` escape - a non-ASCII name such as `café`, escaped to
+/// `caf\#303\#251` in the default (non-`-8`) mode, would become `caf/#303/#251`
+/// - so the leading backslash of a `\#` + three-digit sequence is preserved.
+///
+/// upstream: rsync stores filenames with `/` separators before logging
+/// (flist.c), so `filtered_fwrite` never sees a `\` separator; oc-rsync retains
+/// the platform-native separator in storage and normalizes only here, at the
+/// render boundary.
+#[cfg(any(windows, test))]
+fn normalize_render_separators(escaped: &[u8]) -> Vec<u8> {
+    let len = escaped.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0;
+    while i < len {
+        let byte = escaped[i];
+        if byte == b'\\' {
+            // A `\#ddd` escape sequence keeps its backslash; a bare separator
+            // backslash becomes `/`. Mirrors the escape guard in escape.rs.
+            if i + 4 < len
+                && escaped[i + 1] == b'#'
+                && escaped[i + 2].is_ascii_digit()
+                && escaped[i + 3].is_ascii_digit()
+                && escaped[i + 4].is_ascii_digit()
+            {
+                out.extend_from_slice(&escaped[i..i + 5]);
+                i += 5;
+                continue;
+            }
+            out.push(b'/');
+        } else {
+            out.push(byte);
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Escapes a path to raw output bytes, normalizing Windows separators.
 ///
 /// upstream: flist.c / log.c - itemize and out-format paths use POSIX
@@ -223,16 +266,13 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
 fn escape_render_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
     let rendered = escape_path(path, allow_8bit);
     #[cfg(windows)]
-    let rendered = {
-        let mut bytes = rendered;
-        for byte in bytes.iter_mut() {
-            if *byte == b'\\' {
-                *byte = b'/';
-            }
-        }
-        bytes
-    };
-    rendered
+    {
+        normalize_render_separators(&rendered)
+    }
+    #[cfg(not(windows))]
+    {
+        rendered
+    }
 }
 
 /// Renders `%n`: the transfer-relative name, with a trailing slash for a
@@ -361,5 +401,49 @@ mod tests {
     #[test]
     fn format_out_format_mtime_none() {
         assert_eq!(format_out_format_mtime(None), "1970/01/01-00:00:00");
+    }
+
+    // -- normalize_render_separators (pure, tested on all platforms) --
+
+    #[test]
+    fn normalize_render_separators_rewrites_backslashes() {
+        // WHY: upstream logs POSIX `/` separators regardless of host (flist.c
+        // stores `/` before logging); the Windows render path must present
+        // `a\b\c` as `a/b/c`.
+        assert_eq!(normalize_render_separators(b"a\\b\\c"), b"a/b/c".to_vec());
+    }
+
+    #[test]
+    fn normalize_render_separators_preserves_octal_escapes() {
+        // WHY: `café` in the default (non-`-8`) mode escapes to `caf\#303\#251`.
+        // A naive backslash rewrite would corrupt it to `caf/#303/#251`; the
+        // `\#ooo` escape backslash is not a separator and must survive so `%n`
+        // stays byte-faithful to upstream `filtered_fwrite`.
+        assert_eq!(
+            normalize_render_separators(b"caf\\#303\\#251"),
+            b"caf\\#303\\#251".to_vec()
+        );
+    }
+
+    #[test]
+    fn normalize_render_separators_mixed_sep_and_escape() {
+        // Real separators become `/` while an embedded octal escape is kept.
+        assert_eq!(
+            normalize_render_separators(b"dir\\caf\\#303\\#251"),
+            b"dir/caf\\#303\\#251".to_vec()
+        );
+    }
+
+    #[test]
+    fn normalize_render_separators_trailing_backslash_is_separator() {
+        // A backslash with fewer than the 4 trailing bytes of an escape
+        // sequence is a bare separator and is rewritten.
+        assert_eq!(normalize_render_separators(b"a\\"), b"a/".to_vec());
+        assert_eq!(normalize_render_separators(b"a\\#12"), b"a/#12".to_vec());
+    }
+
+    #[test]
+    fn normalize_render_separators_noop_without_backslash() {
+        assert_eq!(normalize_render_separators(b"a/b/c"), b"a/b/c".to_vec());
     }
 }

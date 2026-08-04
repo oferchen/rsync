@@ -134,10 +134,20 @@ fn escape_bytes_slow(input: &[u8], allow_8bit: bool) -> Vec<u8> {
 /// Escapes a path for display output, returning raw bytes.
 ///
 /// On Unix, operates on the raw bytes of the path to faithfully represent
-/// non-UTF-8 filenames. On other platforms, falls back to `to_string_lossy()`
-/// before escaping. The bytes are meant to be written directly to a byte sink
-/// (stdout/stderr); interpolating them through a `String` would replace lone
-/// invalid bytes with U+FFFD, diverging from upstream `filtered_fwrite`.
+/// non-UTF-8 filenames: a lone invalid byte such as `0x80` reaches the escape
+/// layer verbatim, matching upstream `filtered_fwrite` (log.c:224-245), which
+/// copies filename bytes to the output fd unmodified.
+///
+/// On non-Unix hosts (chiefly Windows) a path is an `OsStr` whose internal
+/// WTF-8 bytes are not exposed by stable std. For every well-formed Unicode
+/// path, `to_str()` yields the exact UTF-8 bytes with no substitution, so
+/// escaping them stays byte-faithful and mirrors upstream. Only a path that is
+/// ill-formed UTF-16 - a lone surrogate, which cannot round-trip through `&str`
+/// - falls back to `to_string_lossy()`, replacing the surrogate with U+FFFD.
+/// That single lossy case is a documented platform limitation, not an
+/// accidental transcode of otherwise-representable filenames: stable std offers
+/// no API to recover the raw WTF-8 bytes, so full byte-fidelity for lone
+/// surrogates is unreachable on Windows today.
 pub(crate) fn escape_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
     #[cfg(unix)]
     {
@@ -146,8 +156,10 @@ pub(crate) fn escape_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
     }
     #[cfg(not(unix))]
     {
-        let lossy = path.to_string_lossy();
-        escape_for_output(lossy.as_bytes(), allow_8bit)
+        match path.as_os_str().to_str() {
+            Some(valid) => escape_for_output(valid.as_bytes(), allow_8bit),
+            None => escape_for_output(path.to_string_lossy().as_bytes(), allow_8bit),
+        }
     }
 }
 
@@ -340,6 +352,65 @@ mod tests {
     fn escape_path_with_directory_separator() {
         let path = Path::new("foo/bar/baz.txt");
         assert_eq!(escape_path(path, false), b"foo/bar/baz.txt".to_vec());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn escape_path_non_utf8_bytes_survive_under_8bit() {
+        // WHY: a lone 0x80 is invalid UTF-8. `escape_path` must not route the
+        // path through a `String` (which would replace it with U+FFFD): under
+        // `-8` the raw byte passes verbatim to the byte sink, matching upstream
+        // `filtered_fwrite`, which copies filename bytes unmodified
+        // (log.c:224-245). This is the round-trip that `--8-bit-output` parity
+        // depends on.
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(OsStr::from_bytes(b"a\x80b"));
+        let out = escape_path(path, true);
+        assert_eq!(out, b"a\x80b".to_vec());
+        // Exactly three bytes reach the sink - no U+FFFD (ef bf bd) expansion.
+        assert_eq!(out.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn escape_path_non_utf8_byte_octal_escaped_in_default_mode() {
+        // WHY: default mode (use_isprint=1) octal-escapes the raw high byte
+        // rather than lossily transcoding it, so the escape is reversible.
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(OsStr::from_bytes(b"a\x80b"));
+        assert_eq!(escape_path(path, false), b"a\\#200b".to_vec());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn escape_path_valid_unicode_is_byte_faithful() {
+        // WHY: `to_str()` yields exact UTF-8 for a well-formed path, so `-8`
+        // keeps the original bytes (no U+FFFD), matching upstream
+        // `filtered_fwrite` byte-for-byte. `café` is bytes 63 61 66 c3 a9.
+        let path = Path::new("caf\u{e9}");
+        assert_eq!(escape_path(path, true), b"caf\xc3\xa9".to_vec());
+        assert_eq!(escape_path(path, false), b"caf\\#303\\#251".to_vec());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn escape_path_lone_surrogate_pins_documented_limitation() {
+        // Pinned behavior: a lone UTF-16 surrogate is ill-formed and cannot
+        // round-trip through `&str`, so `to_str()` returns None and the path
+        // falls back to `to_string_lossy()`, replacing the surrogate with
+        // U+FFFD (ef bf bd). Stable std exposes no API to recover the raw WTF-8
+        // bytes, so full byte-fidelity is unreachable here; this asserts the
+        // fallback is deliberate, not an accidental transcode of a
+        // representable filename.
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        // 'a', lone high surrogate 0xD800, 'b'.
+        let os = OsString::from_wide(&[0x0061, 0xD800, 0x0062]);
+        let path = Path::new(&os);
+        // Under -8 the U+FFFD bytes (all high) pass through raw.
+        assert_eq!(escape_path(path, true), b"a\xef\xbf\xbdb".to_vec());
     }
 
     // -- escape_str --
