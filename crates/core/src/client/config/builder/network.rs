@@ -32,6 +32,20 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the `--quic-ca` private CA bundle used to verify the daemon's QUIC
+    /// certificate.
+    ///
+    /// `None` (the default) verifies against the platform trust store
+    /// (system-roots). A supplied PEM bundle replaces the platform store for
+    /// the QUIC handshake (policy B). Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-ca")]
+    pub fn quic_ca(mut self, path: Option<PathBuf>) -> Self {
+        self.quic_ca = path;
+        self
+    }
+
     /// Configures the TCP Fast Open mode applied to daemon and client sockets.
     ///
     /// `auto` (the default) enables TFO opportunistically on platforms that

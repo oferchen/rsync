@@ -35,7 +35,8 @@ use super::super::error::{ClientError, invalid_argument_error, socket_error};
 #[cfg(feature = "quic")]
 use super::super::module_list::Transport;
 use super::super::module_list::{
-    RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout, spawn_rsh_daemon_stream,
+    DaemonConnectTimeouts, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
+    resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
@@ -160,15 +161,24 @@ pub fn run_daemon_transfer(
     // --contimeout is set; --timeout never bounds the connect phase.
     let connect_duration = resolve_connect_timeout(config.connect_timeout());
     let handshake_io_timeout = config.timeout().effective(DAEMON_SOCKET_TIMEOUT);
+    // QUIC trust inputs (`--quic-ca`); inert/empty when the transport is TCP or
+    // the `quic` feature is off.
+    let quic_dial = QuicDialParams {
+        #[cfg(feature = "quic")]
+        ca: config.quic_ca().map(std::path::Path::to_path_buf),
+    };
     let stream = open_daemon_stream(
         &request.address,
-        connect_duration,
-        handshake_io_timeout,
+        DaemonConnectTimeouts {
+            connect: connect_duration,
+            io: handshake_io_timeout,
+        },
         config.address_mode(),
         config.connect_program(),
         config.bind_address().map(|b| b.socket()),
         config.tcp_fastopen(),
         config.sockopts(),
+        &quic_dial,
     )?;
 
     // upstream: socket.c:279-280 - set_socket_options(s, sockopts) is applied

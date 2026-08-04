@@ -470,6 +470,35 @@ impl QuicStream {
         }
     }
 
+    /// Returns a second handle to the same bidirectional stream.
+    ///
+    /// Reads touch only the receive path and writes only the send path, so an
+    /// independent read handle and write handle over one clone pair never
+    /// contend beyond the shared lock. This is what lets a caller split the
+    /// stream into a blocking [`Read`] half and a blocking [`Write`] half - the
+    /// shape the daemon `@RSYNCD` handshake needs - without cloning a socket.
+    #[must_use]
+    pub fn try_clone(&self) -> QuicStream {
+        QuicStream {
+            io: Arc::clone(&self.io),
+        }
+    }
+
+    /// Builds a teardown guard for this connection.
+    ///
+    /// Dropping the guard finishes the send stream (flushing every buffered
+    /// byte and its FIN, then blocking until the peer acknowledges it or the
+    /// connection ends) and then closes the connection gracefully. This is the
+    /// QUIC analogue of a TCP socket flushing its send buffer as it closes:
+    /// hold the guard for the lifetime of a transfer and let it drop last, so
+    /// no trailing bytes are truncated by an abrupt close.
+    #[must_use]
+    pub fn shutdown_guard(&self) -> QuicShutdown {
+        QuicShutdown {
+            io: Arc::clone(&self.io),
+        }
+    }
+
     /// Gracefully closes the connection (application error code 0) and blocks
     /// until it has drained and the driver thread exited.
     pub fn close(self) {
@@ -584,6 +613,51 @@ impl Write for QuicStream {
 impl std::fmt::Debug for QuicStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicStream").finish_non_exhaustive()
+    }
+}
+
+/// Connection teardown guard produced by [`QuicStream::shutdown_guard`].
+///
+/// On drop it flushes the send stream and FIN, blocks until the peer has
+/// acknowledged them (or the connection ended), then closes the connection
+/// gracefully and joins the driver thread. Keeping teardown in one guard - held
+/// alongside independent read/write handles cloned from the same stream - gives
+/// those handles simple `Drop`s (a reference-count decrement) while still
+/// guaranteeing the last written bytes reach the peer before the close, exactly
+/// as a TCP socket flushes its send buffer on close.
+pub struct QuicShutdown {
+    io: Arc<Io>,
+}
+
+impl Drop for QuicShutdown {
+    fn drop(&mut self) {
+        let shared = &self.io.shared;
+        // Flush + FIN, then wait for the delivery barrier: every queued byte is
+        // drained to the send stream and acknowledged, or the connection ended.
+        {
+            let mut st = shared.lock();
+            st.send_fin = true;
+            self.io.signal(&mut st);
+            while !st.send_finished && st.terminal.is_none() && !st.drained {
+                st = shared.wait(st);
+            }
+        }
+        // Graceful close (application error code 0); wait until it has drained.
+        {
+            let mut st = shared.lock();
+            st.close_requested = true;
+            self.io.signal(&mut st);
+            while !st.drained {
+                st = shared.wait(st);
+            }
+        }
+        self.io.join();
+    }
+}
+
+impl std::fmt::Debug for QuicShutdown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuicShutdown").finish_non_exhaustive()
     }
 }
 

@@ -110,6 +110,64 @@ fn round_trip_via_roots_trust() {
     server.join().expect("server thread");
 }
 
+/// Split handles plus a teardown guard: a read handle (`try_clone`) and a
+/// write handle over one stream carry a full request/reply round trip, and the
+/// [`QuicShutdown`](rsync_io::quic) guard flushes the last write (finish + FIN)
+/// and closes the connection on drop. This is the shape the daemon `@RSYNCD`
+/// handshake needs - an independent blocking `Read` half and `Write` half whose
+/// simple drops never truncate the tail because the guard owns the flush.
+#[test]
+fn split_handles_round_trip_and_guard_flushes_on_drop() {
+    let acceptor =
+        QuicAcceptor::bind("127.0.0.1:0".parse().expect("loopback addr")).expect("bind acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let request = pattern(0x42);
+    let reply = pattern(0x24);
+
+    let expected_request = request.clone();
+    let server_reply = reply.clone();
+    let server = thread::spawn(move || {
+        let mut stream = acceptor.accept().expect("accept stream");
+        let mut got = vec![0u8; PAYLOAD_LEN];
+        stream.read_exact(&mut got).expect("read request");
+        assert_eq!(got, expected_request, "request corrupted");
+        stream.write_all(&server_reply).expect("write reply");
+        stream.finish().expect("finish reply");
+        // After the client's write handle is dropped and the guard drops, the
+        // client's FIN must arrive - proving the guard drives the flush + FIN
+        // even though the write handle was never explicitly finished.
+        let mut trailing = Vec::new();
+        stream
+            .read_to_end(&mut trailing)
+            .expect("read to client FIN");
+        assert!(trailing.is_empty(), "client sent no trailing bytes");
+    });
+
+    let connector = QuicConnector::new(&cert).expect("build connector");
+    let stream = connector.connect(addr, "localhost").expect("connect");
+
+    let guard = stream.shutdown_guard();
+    let mut read_half = stream.try_clone();
+    let mut write_half = stream;
+
+    write_half.write_all(&request).expect("write request");
+    // Drop the write handle WITHOUT finishing: the guard owns the flush + FIN.
+    drop(write_half);
+
+    let mut received = vec![0u8; PAYLOAD_LEN];
+    read_half.read_exact(&mut received).expect("read reply");
+    assert_eq!(received, reply, "reply corrupted");
+
+    drop(read_half);
+    // Dropping the guard finishes the send stream (delivering the FIN the
+    // server's read_to_end is waiting for) and closes the connection.
+    drop(guard);
+
+    server.join().expect("server thread");
+}
+
 /// Half-close semantics: after the client sends FIN, its read side keeps
 /// working - the server reads to EOF, then streams a multi-chunk reply the
 /// client receives intact.

@@ -110,6 +110,12 @@ pub struct ParsedArgs {
     #[cfg(feature = "quic")]
     pub quic: bool,
 
+    /// `--quic-ca <PATH>` - verify the QUIC daemon certificate against this PEM
+    /// CA bundle instead of the system trust store (policy B). `None` uses the
+    /// system-roots default. Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub quic_ca: Option<std::path::PathBuf>,
+
     /// `--protocol` - force a specific protocol version (28-32).
     pub protocol: Option<OsString>,
 

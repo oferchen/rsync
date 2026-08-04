@@ -131,12 +131,22 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
     // transport; it exists only when the `quic` feature is compiled in, so a
     // default build rejects it as an unknown argument.
     #[cfg(feature = "quic")]
-    let command = command.arg(
-        Arg::new("quic")
-            .long("quic")
-            .help("Carry the rsync daemon protocol over QUIC (873/udp); hard-fails if QUIC cannot be established.")
-            .action(ArgAction::SetTrue),
-    );
+    let command = command
+        .arg(
+            Arg::new("quic")
+                .long("quic")
+                .help("Carry the rsync daemon protocol over QUIC (873/udp); hard-fails if QUIC cannot be established.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("quic-ca")
+                .long("quic-ca")
+                .value_name("PATH")
+                .help("Verify the QUIC daemon certificate against the CA bundle in PATH (PEM) instead of the system trust store.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        );
 
     command
 }

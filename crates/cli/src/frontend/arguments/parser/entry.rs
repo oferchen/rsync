@@ -167,6 +167,11 @@ where
     let daemon_port = matches.remove_one::<u16>("port");
     #[cfg(feature = "quic")]
     let quic = matches.get_flag("quic");
+    #[cfg(feature = "quic")]
+    let quic_ca = matches
+        .remove_one::<OsString>("quic-ca")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
     let remote_options = matches
         .remove_many::<OsString>("remote-option")
         .map(Iterator::collect)
@@ -1193,6 +1198,8 @@ where
         daemon_port,
         #[cfg(feature = "quic")]
         quic,
+        #[cfg(feature = "quic")]
+        quic_ca,
         dparam,
         no_iconv,
         executability,
