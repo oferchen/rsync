@@ -7,7 +7,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use is_terminal::IsTerminal;
 use russh::keys::PrivateKey;
 use russh::keys::key::PrivateKeyWithHashAlg;
 
@@ -102,8 +101,8 @@ async fn try_agent_auth(
 /// Try authentication using identity files (private keys).
 ///
 /// For each path in `identity_files`, attempts to load the key and authenticate.
-/// Encrypted keys prompt for a passphrase when stdin is a TTY. Missing or
-/// unreadable files are silently skipped.
+/// Encrypted keys prompt for a passphrase on the controlling terminal. Missing
+/// or unreadable files are silently skipped.
 async fn try_identity_file_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
@@ -136,11 +135,47 @@ async fn try_identity_file_auth(
     Ok(false)
 }
 
+/// Whether an interactive passphrase/password prompt can reach the user.
+///
+/// OpenSSH prompts on the *controlling terminal* (`/dev/tty`), not on stdin:
+/// rsync always redirects stdin/stdout for its protocol pipe, so stdin is never
+/// a tty during a transfer. Gating on `stdin().is_terminal()` therefore skips
+/// the prompt on every real transfer. Mirror OpenSSH by probing `/dev/tty`
+/// instead. upstream: OpenSSH `readpass.c:read_passphrase()` opens `/dev/tty`.
+#[cfg(unix)]
+fn has_controlling_terminal() -> bool {
+    // Opening /dev/tty succeeds only when a controlling terminal exists
+    // (fails in cron/daemon/detached contexts, where we skip the prompt).
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .is_ok()
+}
+
+/// Windows has no `/dev/tty`; fall back to the console check on stdin.
+#[cfg(not(unix))]
+fn has_controlling_terminal() -> bool {
+    use is_terminal::IsTerminal;
+    std::io::stdin().is_terminal()
+}
+
+/// Number of passphrase attempts before giving up on an encrypted key.
+///
+/// Mirrors OpenSSH's default of 3 tries in `sshconnect2.c`.
+const MAX_PASSPHRASE_ATTEMPTS: usize = 3;
+
 /// Load a private key from disk, prompting for passphrase if needed.
 ///
 /// Returns `None` when the file is missing, unreadable, or the user declines
 /// to enter a passphrase for an encrypted key.
 fn load_identity_key(path: &Path) -> Option<PrivateKey> {
+    load_identity_key_with(path, has_controlling_terminal())
+}
+
+/// Inner implementation of [`load_identity_key`] with the terminal-availability
+/// decision injected, so the gate can be tested without a real `/dev/tty`.
+fn load_identity_key_with(path: &Path, terminal_available: bool) -> Option<PrivateKey> {
     if !path.is_file() {
         return None;
     }
@@ -159,40 +194,44 @@ fn load_identity_key(path: &Path) -> Option<PrivateKey> {
         }
     }
 
-    // Key is encrypted - prompt for passphrase if we have a TTY.
-    if !std::io::stdin().is_terminal() {
+    // Key is encrypted - prompt on the controlling terminal like OpenSSH, not
+    // on stdin (which rsync redirects for its protocol pipe).
+    if !terminal_available {
         logging::debug_log!(
             Io,
             1,
-            "skipping encrypted key {} (no TTY for passphrase)",
+            "skipping encrypted key {} (no controlling terminal for passphrase)",
             path.display()
         );
         return None;
     }
 
-    let prompt = format!("Enter passphrase for key '{}': ", path.display());
-    let passphrase = match rpassword::prompt_password(prompt) {
-        Ok(p) => p,
-        Err(e) => {
-            logging::debug_log!(Io, 1, "passphrase prompt failed: {}", e);
-            return None;
-        }
-    };
+    // Retry on a wrong passphrase, as OpenSSH does, up to a fixed limit.
+    for _ in 0..MAX_PASSPHRASE_ATTEMPTS {
+        let prompt = format!("Enter passphrase for key '{}': ", path.display());
+        let passphrase = match rpassword::prompt_password(prompt) {
+            Ok(p) => p,
+            Err(e) => {
+                logging::debug_log!(Io, 1, "passphrase prompt failed: {}", e);
+                return None;
+            }
+        };
 
-    match russh::keys::load_secret_key(path, Some(&passphrase)) {
-        Ok(key) => Some(key),
-        Err(e) => {
-            eprintln!("Could not load key '{}': {}", path.display(), e);
-            None
+        match russh::keys::load_secret_key(path, Some(&passphrase)) {
+            Ok(key) => return Some(key),
+            Err(e) => {
+                eprintln!("Could not load key '{}': {}", path.display(), e);
+            }
         }
     }
+    None
 }
 
 /// Try password authentication.
 ///
 /// Uses the URL-embedded password if present (with a security warning), or
-/// prompts interactively when stdin is a TTY. Returns `Ok(false)` when no
-/// password is available.
+/// prompts interactively on the controlling terminal. Returns `Ok(false)` when
+/// no password is available.
 async fn try_password_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
@@ -203,7 +242,7 @@ async fn try_password_auth(
             "Warning: password provided via URL - this is insecure and may be visible in process listings."
         );
         pw.clone()
-    } else if std::io::stdin().is_terminal() {
+    } else if has_controlling_terminal() {
         match rpassword::prompt_password(format!("{username}@{}'s password: ", config.host)) {
             Ok(pw) => pw,
             Err(e) => {
@@ -264,6 +303,60 @@ pub async fn authenticate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use is_terminal::IsTerminal;
+
+    #[test]
+    fn has_controlling_terminal_does_not_panic() {
+        // The result depends on the environment (CI has no tty), but the probe
+        // must never panic. On Unix it opens /dev/tty; on Windows it checks the
+        // stdin console handle.
+        let _ = has_controlling_terminal();
+    }
+
+    #[test]
+    fn load_identity_key_encrypted_without_terminal_is_skipped() {
+        // WHY: OpenSSH prompts for the passphrase on /dev/tty, not stdin,
+        // because rsync redirects stdin/stdout for its protocol pipe. When no
+        // controlling terminal is available (cron/daemon), the encrypted key
+        // must be skipped rather than blocking on an unreachable prompt.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("id_ed25519");
+
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let mut buf = Vec::new();
+        russh::keys::encode_pkcs8_pem_encrypted(&private, b"hunter2", 16, &mut buf)
+            .expect("encode encrypted");
+        std::fs::write(&key_path, &buf).expect("write key");
+
+        // terminal_available = false must take the skip branch, never prompting.
+        let result = load_identity_key_with(&key_path, false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_identity_key_unencrypted_loads_regardless_of_terminal() {
+        // An unencrypted key never needs a prompt, so the terminal gate must
+        // not affect it: it loads whether or not a terminal is available.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("id_ed25519");
+
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let mut buf = Vec::new();
+        russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
+        std::fs::write(&key_path, &buf).expect("write key");
+
+        assert!(load_identity_key_with(&key_path, false).is_some());
+        assert!(load_identity_key_with(&key_path, true).is_some());
+    }
+
+    #[test]
+    fn load_identity_key_missing_file_ignores_terminal() {
+        assert!(load_identity_key_with(Path::new("/nonexistent/id"), true).is_none());
+        assert!(load_identity_key_with(Path::new("/nonexistent/id"), false).is_none());
+    }
+
     #[test]
     fn effective_username_from_config() {
         let config = SshConfig {
