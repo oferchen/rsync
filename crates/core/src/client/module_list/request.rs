@@ -174,6 +174,11 @@ pub struct ModuleListOptions {
     blocking_io: Option<bool>,
     remote_shell: Option<Vec<OsString>>,
     rsync_path: Option<OsString>,
+    /// `--quic-ca <PATH>` private CA bundle for verifying a QUIC daemon's
+    /// certificate (policy B). `None` uses the system-roots default. Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_ca: Option<std::path::PathBuf>,
 }
 
 impl ModuleListOptions {
@@ -190,7 +195,28 @@ impl ModuleListOptions {
             blocking_io: None,
             remote_shell: None,
             rsync_path: None,
+            #[cfg(feature = "quic")]
+            quic_ca: None,
         }
+    }
+
+    /// Supplies the `--quic-ca` private CA bundle path for QUIC listings.
+    ///
+    /// `None` (the default) verifies the daemon's QUIC certificate against the
+    /// platform trust store. Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-ca")]
+    pub fn with_quic_ca(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.quic_ca = path;
+        self
+    }
+
+    /// Returns the configured `--quic-ca` private CA bundle path, if any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub fn quic_ca(&self) -> Option<&std::path::Path> {
+        self.quic_ca.as_deref()
     }
 
     /// Returns a new configuration that suppresses daemon MOTD lines.

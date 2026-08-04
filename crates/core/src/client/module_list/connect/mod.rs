@@ -29,6 +29,9 @@ pub(crate) enum DaemonStreamReader {
     Program(program::ProgramReader),
     #[cfg(not(unix))]
     Program(std::process::ChildStdout),
+    /// QUIC bidirectional stream read handle (blocking `Read`).
+    #[cfg(feature = "quic")]
+    Quic(rsync_io::quic::QuicStream),
 }
 
 impl Read for DaemonStreamReader {
@@ -36,6 +39,8 @@ impl Read for DaemonStreamReader {
         match self {
             Self::Tcp(stream) => stream.read(buf),
             Self::Program(reader) => reader.read(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(stream) => stream.read(buf),
         }
     }
 }
@@ -48,6 +53,8 @@ impl DaemonStreamReader {
         match self {
             Self::Tcp(stream) => stream.try_clone().ok(),
             Self::Program(_) => None,
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => None,
         }
     }
 }
@@ -150,6 +157,9 @@ pub(crate) enum DaemonStreamWriter {
     Program(program::ProgramWriter),
     #[cfg(not(unix))]
     Program(std::process::ChildStdin),
+    /// QUIC bidirectional stream write handle (blocking `Write`).
+    #[cfg(feature = "quic")]
+    Quic(rsync_io::quic::QuicStream),
 }
 
 impl Write for DaemonStreamWriter {
@@ -157,6 +167,8 @@ impl Write for DaemonStreamWriter {
         match self {
             Self::Tcp(writer) => writer.write(buf),
             Self::Program(writer) => writer.write(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(writer) => writer.write(buf),
         }
     }
 
@@ -164,6 +176,8 @@ impl Write for DaemonStreamWriter {
         match self {
             Self::Tcp(writer) => writer.write_vectored(bufs),
             Self::Program(writer) => writer.write_vectored(bufs),
+            #[cfg(feature = "quic")]
+            Self::Quic(writer) => writer.write_vectored(bufs),
         }
     }
 
@@ -171,6 +185,8 @@ impl Write for DaemonStreamWriter {
         match self {
             Self::Tcp(writer) => writer.flush(),
             Self::Program(writer) => writer.flush(),
+            #[cfg(feature = "quic")]
+            Self::Quic(writer) => writer.flush(),
         }
     }
 }
@@ -183,6 +199,8 @@ impl DaemonStreamWriter {
         match self {
             Self::Tcp(writer) => writer.stream.try_clone().ok(),
             Self::Program(_) => None,
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => None,
         }
     }
 }
@@ -246,21 +264,55 @@ pub(crate) fn register_shutdown_wake(
     }))
 }
 
+/// The connect-phase and per-I/O timeouts for a daemon connection.
+///
+/// Bundles the two timeouts that always travel together: `connect` bounds
+/// `connect(2)` (only when `--contimeout` is set) and `io` is applied as the
+/// established stream's read/write timeout.
+#[derive(Clone, Copy)]
+pub(crate) struct DaemonConnectTimeouts {
+    /// Connect-phase bound (`--contimeout`), or `None` to leave it unbounded.
+    pub(crate) connect: Option<Duration>,
+    /// Per-I/O timeout applied to the established stream.
+    pub(crate) io: Option<Duration>,
+}
+
+/// Client-side QUIC dial parameters carried to the connect-selection point.
+///
+/// Holds the trust-source inputs the QUIC ladder needs: the `--quic-ca` private
+/// CA bundle path (when supplied) selects [`QuicTrust::Roots`](rsync_io::quic::QuicTrust);
+/// otherwise the system-roots default applies. The struct is empty (a
+/// zero-sized value) and never read when the `quic` feature is disabled, so it
+/// threads through the shared connect signature without a cfg on the parameter
+/// itself.
+#[derive(Clone, Default)]
+pub(crate) struct QuicDialParams {
+    /// `--quic-ca <PATH>`: a PEM CA bundle that replaces the platform trust
+    /// store for verifying the daemon's certificate.
+    #[cfg(feature = "quic")]
+    pub(crate) ca: Option<std::path::PathBuf>,
+}
+
 /// Opens a stream to a daemon, dispatching on the address's [`Transport`].
 ///
 /// This is the single connect-selection point shared by module listing and
 /// daemon transfers. The transport is read off [`DaemonAddress::transport`];
-/// `Transport::Tcp` (the default) establishes a plain TCP connection.
+/// `Transport::Tcp` (the default) establishes a plain TCP connection, while
+/// `Transport::Quic` dials the same daemon protocol over QUIC.
 pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
-    connect_timeout: Option<Duration>,
-    io_timeout: Option<Duration>,
+    timeouts: DaemonConnectTimeouts,
     address_mode: AddressMode,
     connect_program: Option<&OsStr>,
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
+    quic: &QuicDialParams,
 ) -> Result<DaemonStream, ClientError> {
+    // The QUIC dial params are consumed only by the `Transport::Quic` arm, which
+    // is compiled out in a default (non-`quic`) build.
+    #[cfg(not(feature = "quic"))]
+    let _ = quic;
     // Transport-selection point: the transport rides on `DaemonAddress` from
     // target parsing. `Transport::Tcp` (the default, and the only variant in a
     // default build) establishes the plain TCP daemon stream, so default builds
@@ -268,39 +320,94 @@ pub(crate) fn open_daemon_stream(
     match addr.transport() {
         Transport::Tcp => open_tcp_daemon_stream(
             addr,
-            connect_timeout,
-            io_timeout,
+            timeouts.connect,
+            timeouts.io,
             address_mode,
             connect_program,
             bind_address,
             tfo,
             sockopts,
         ),
-        // QUIC hard-fails here rather than dialing plain TCP: silently falling
-        // back would downgrade an explicitly-requested encrypted transport to
-        // plaintext (a downgrade attack, and a violation of the user's intent).
-        // The QUIC dial itself (`rsync_io::quic`) lands in a follow-up; until
-        // then a QUIC selection exits non-zero and never touches TCP 873
+        // QUIC dials over UDP and hands the resulting blocking stream to the
+        // same `@RSYNCD` handshake TCP uses; the daemon-protocol bytes after the
+        // QUIC handshake are unchanged (the QUIC-7 wire-identity invariant). A
+        // failed dial hard-fails and never silently downgrades to plaintext TCP
         // (design: `docs/design/quic-transport-policy.md`, Decision D, "No
         // silent downgrade").
         #[cfg(feature = "quic")]
-        Transport::Quic => Err(quic_transport_unavailable_error()),
+        Transport::Quic => open_quic_daemon_stream(addr, address_mode, quic),
     }
 }
 
-/// Builds the hard-failure error for a QUIC-selected daemon connection.
+/// Opens a QUIC connection to a daemon (the [`Transport::Quic`] path).
 ///
-/// The QUIC connector is not yet wired (QUIC-5), so any QUIC selection fails
-/// loudly with `RERR_STARTCLIENT` (exit 5). Crucially this is an error, not a
-/// TCP fallback: the selection never silently downgrades to plaintext.
+/// Resolves the client trust source through the QUIC verification ladder
+/// (`--quic-ca` private CA > system-roots default; the TOFU backend is wired in
+/// `rsync_io::quic` and engaged by a follow-up opt-in), builds the connector
+/// with ALPN `rsync`, resolves the daemon host to `host:port` candidates
+/// (873/udp default), and dials the first that succeeds. The peer certificate
+/// is validated against the `quic://` authority (`addr.host()`) as the TLS
+/// server name.
+///
+/// Any dial or handshake failure - unreachable endpoint, certificate rejection,
+/// or ALPN mismatch - maps to `RERR_STARTCLIENT` (exit 5). This is an interim
+/// mapping; the full quinn-proto error -> exit-code schema is a separate task
+/// (#57). Crucially it is an error, never a TCP fallback.
 #[cfg(feature = "quic")]
-fn quic_transport_unavailable_error() -> ClientError {
+fn open_quic_daemon_stream(
+    addr: &DaemonAddress,
+    address_mode: AddressMode,
+    quic: &QuicDialParams,
+) -> Result<DaemonStream, ClientError> {
+    use rsync_io::quic::{QuicConnector, load_private_ca, resolve};
+
+    // Trust ladder (policy B): `--quic-ca` selects a private CA bundle;
+    // otherwise the system-roots default applies. The `resolve(ca, tofu)` seam
+    // keeps the TOFU precedence slot in place (tofu = None here).
+    let ca = match &quic.ca {
+        Some(path) => {
+            Some(load_private_ca(path).map_err(|error| quic_dial_error(addr, &error.to_string()))?)
+        }
+        None => None,
+    };
+    let trust = resolve(ca, None).map_err(|error| quic_dial_error(addr, &error.to_string()))?;
+    let connector = QuicConnector::with_trust(trust)
+        .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
+
+    let candidates = resolve_daemon_addresses(addr, address_mode)?;
+    let server_name = addr.host();
+    let mut last_error: Option<io::Error> = None;
+    for candidate in candidates {
+        match connector.connect(candidate, server_name) {
+            Ok(stream) => return Ok(DaemonStream::quic(stream)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let error = last_error
+        .expect("resolve_daemon_addresses guarantees at least one candidate")
+        .to_string();
+    Err(quic_dial_error(addr, &error))
+}
+
+/// Maps a QUIC dial/handshake failure to a [`ClientError`] with exit code
+/// `RERR_STARTCLIENT` (5).
+///
+/// Interim classifier: every failure - connection loss, certificate rejection,
+/// and ALPN mismatch (`no application protocol`) - maps to 5, matching the
+/// policy that an explicitly-requested encrypted transport that cannot be
+/// established fails loudly rather than downgrading. The full quinn-proto error
+/// taxonomy (distinguishing e.g. handshake-timeout from cert-reject) is #57;
+/// this leaves the message informative and the exit code stable.
+#[cfg(feature = "quic")]
+fn quic_dial_error(addr: &DaemonAddress, detail: &str) -> ClientError {
     use super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
     use super::super::daemon_error;
 
     daemon_error(
-        "QUIC transport was requested but the QUIC connector is not available \
-         in this build; refusing to fall back to plaintext TCP",
+        format!(
+            "QUIC connection to {} failed: {detail}; refusing to fall back to plaintext TCP",
+            addr.socket_addr_display()
+        ),
         CLIENT_SERVER_PROTOCOL_EXIT_CODE,
     )
 }
@@ -380,11 +487,19 @@ pub(crate) enum DaemonStream {
     Tcp(TcpStream),
     /// Connection via an external connect program.
     Program(ConnectProgramStream),
+    /// Native QUIC connection carrying the daemon protocol (oc extension).
+    #[cfg(feature = "quic")]
+    Quic(rsync_io::quic::QuicStream),
 }
 
 impl DaemonStream {
     const fn tcp(stream: TcpStream) -> Self {
         Self::Tcp(stream)
+    }
+
+    #[cfg(feature = "quic")]
+    const fn quic(stream: rsync_io::quic::QuicStream) -> Self {
+        Self::Quic(stream)
     }
 
     fn program(stream: ConnectProgramStream) -> Self {
@@ -411,6 +526,8 @@ impl DaemonStream {
         match self {
             Self::Tcp(stream) => Some(stream),
             Self::Program(_) => None,
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => None,
         }
     }
 
@@ -442,6 +559,20 @@ impl DaemonStream {
                     DaemonStreamReader::Program(parts.reader),
                     DaemonStreamWriter::Program(parts.writer),
                     DaemonStreamGuard::Child(parts.child),
+                ))
+            }
+            // The QUIC read and write handles are cheap clones over one
+            // bidirectional stream; the guard owns the teardown so those
+            // handles drop cheaply while the last written bytes are still
+            // flushed (finish + close) before the connection ends - the QUIC
+            // analogue of a TCP socket flushing its send buffer on close.
+            #[cfg(feature = "quic")]
+            Self::Quic(stream) => {
+                let guard = stream.shutdown_guard();
+                Ok((
+                    DaemonStreamReader::Quic(stream.try_clone()),
+                    DaemonStreamWriter::Quic(stream),
+                    DaemonStreamGuard::Quic(guard),
                 ))
             }
         }
@@ -476,13 +607,26 @@ pub(crate) enum DaemonStreamGuard {
     None,
     /// Owns a connect program child process.
     Child(std::process::Child),
+    /// Owns the QUIC connection teardown (flush + FIN + graceful close on drop).
+    #[cfg(feature = "quic")]
+    Quic(rsync_io::quic::QuicShutdown),
 }
 
 impl Drop for DaemonStreamGuard {
     fn drop(&mut self) {
-        if let Self::Child(child) = self {
-            let _ = child.kill();
-            let _ = child.wait();
+        match self {
+            Self::None => {}
+            Self::Child(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            // The QUIC teardown (flush + FIN + graceful close) runs when the
+            // held `QuicShutdown` drops right after this body; nothing to do
+            // here beyond keeping ownership until now.
+            #[cfg(feature = "quic")]
+            Self::Quic(guard) => {
+                let _ = guard;
+            }
         }
     }
 }
@@ -492,6 +636,8 @@ impl Read for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.read(buf),
             Self::Program(stream) => stream.read(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(stream) => stream.read(buf),
         }
     }
 }
@@ -501,6 +647,8 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.write(buf),
             Self::Program(stream) => stream.write(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(stream) => stream.write(buf),
         }
     }
 
@@ -508,44 +656,167 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.flush(),
             Self::Program(stream) => stream.flush(),
+            #[cfg(feature = "quic")]
+            Self::Quic(stream) => stream.flush(),
         }
     }
 }
 
 #[cfg(all(test, feature = "quic"))]
-mod quic_hard_fail_tests {
+mod quic_connect_tests {
+    use std::io::{Read, Write};
+    use std::path::PathBuf;
+    use std::thread;
+
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use rsync_io::quic::QuicAcceptor;
+    use tempfile::TempDir;
+
     use super::*;
-    use crate::client::AddressMode;
-    use crate::client::TcpFastOpenMode;
+    use crate::client::{AddressMode, TcpFastOpenMode};
 
-    #[test]
-    fn quic_selection_hard_fails_without_tcp_fallback() {
-        // WHY (QUIC-8d): a QUIC-selected daemon connection must exit non-zero
-        // rather than silently dial plaintext TCP. We point the address at a
-        // discard port; if any TCP fallback existed it would attempt a connect,
-        // but the QUIC arm short-circuits to an error before any I/O.
-        let addr = DaemonAddress::new("127.0.0.1".to_owned(), 9)
+    /// PEM-encodes a certificate DER and writes it to a `--quic-ca` bundle file,
+    /// returning the temp dir (kept alive) and the file path.
+    fn write_ca_pem(cert_der: &[u8]) -> (TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ca.pem");
+        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+        for chunk in STANDARD.encode(cert_der).as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        std::fs::write(&path, pem).expect("write ca pem");
+        (dir, path)
+    }
+
+    /// Builds a QUIC daemon address for a loopback acceptor. Uses `localhost`
+    /// (the acceptor cert's SAN) as the host so rustls hostname verification
+    /// passes, with `Ipv4` mode so it resolves to the `127.0.0.1` the acceptor
+    /// bound.
+    fn quic_addr(port: u16) -> DaemonAddress {
+        DaemonAddress::new("localhost".to_owned(), port)
             .expect("addr")
-            .with_transport(Transport::Quic);
+            .with_transport(Transport::Quic)
+    }
 
-        let result = open_daemon_stream(
-            &addr,
+    fn dial(addr: &DaemonAddress, ca: Option<PathBuf>) -> Result<DaemonStream, ClientError> {
+        let quic = QuicDialParams { ca };
+        open_daemon_stream(
+            addr,
+            DaemonConnectTimeouts {
+                connect: None,
+                io: None,
+            },
+            AddressMode::Ipv4,
             None,
             None,
-            AddressMode::Default,
+            TcpFastOpenMode::Off,
             None,
-            None,
-            TcpFastOpenMode::Auto,
-            None,
-        );
+            &quic,
+        )
+    }
 
-        // `DaemonStream` (the Ok type) is not `Debug`, so match rather than
-        // `expect_err`. upstream RERR_STARTCLIENT (5): the explicit encrypted
-        // transport could not be established and no downgrade is permitted.
-        match result {
-            Ok(_) => panic!("QUIC selection must not fall back to TCP"),
+    /// End to end over the loopback fixture: `--quic-ca` (the acceptor's
+    /// self-signed cert, used as its own trust anchor) is accepted, the dial
+    /// yields a `DaemonStream`, and that stream is a byte-transparent
+    /// `Read`+`Write` drop-in - the server reads exactly what the client wrote
+    /// and vice versa, with no framing added by the transport. This is the
+    /// QUIC-7 wire-identity invariant at the transport boundary: whatever the
+    /// `@RSYNCD` handshake writes reaches the peer unchanged.
+    #[test]
+    fn quic_ca_trust_path_dials_and_is_byte_transparent() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let port = acceptor.local_addr().expect("local addr").port();
+        let (_dir, ca_path) = write_ca_pem(acceptor.certificate().as_ref());
+
+        // The bytes a real @RSYNCD handshake would put on the wire first.
+        let request = b"@RSYNCD: 32.0\nmodule\n".to_vec();
+        let reply = b"@RSYNCD: 32.0\n@RSYNCD: OK\n".to_vec();
+
+        let expected_request = request.clone();
+        let server_reply = reply.clone();
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut got = vec![0u8; expected_request.len()];
+            stream.read_exact(&mut got).expect("server read");
+            assert_eq!(got, expected_request, "transport must not alter the bytes");
+            stream.write_all(&server_reply).expect("server write");
+            stream.finish().expect("server finish");
+        });
+
+        let addr = quic_addr(port);
+        let stream =
+            dial(&addr, Some(ca_path)).expect("quic dial succeeds with matching --quic-ca");
+        let (reader, mut writer, guard) = stream.split().expect("split");
+        let mut reader = reader;
+
+        writer.write_all(&request).expect("client write");
+        writer.flush().expect("client flush");
+
+        let mut got_reply = vec![0u8; reply.len()];
+        reader.read_exact(&mut got_reply).expect("client read");
+        assert_eq!(got_reply, reply, "reply must arrive byte-identical");
+
+        drop(writer);
+        drop(reader);
+        drop(guard);
+        server.join().expect("server thread");
+    }
+
+    /// An unrelated certificate offered as `--quic-ca` must reject the peer and
+    /// hard-fail with `RERR_STARTCLIENT` (5) - never a `DaemonStream`, never a
+    /// TCP fallback. Proves the CA bundle is actually used to verify the peer.
+    #[test]
+    fn quic_unrelated_ca_is_rejected_and_hard_fails() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let port = acceptor.local_addr().expect("local addr").port();
+
+        // A second acceptor yields a distinct self-signed cert unrelated to the
+        // one the first acceptor will present.
+        let other =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind other acceptor");
+        let (_dir, wrong_ca) = write_ca_pem(other.certificate().as_ref());
+
+        // Keep the target acceptor draining so the handshake reaches (and fails)
+        // certificate verification rather than stalling.
+        let server = thread::spawn(move || {
+            let _ = acceptor.accept();
+        });
+
+        let addr = quic_addr(port);
+        match dial(&addr, Some(wrong_ca)) {
+            Ok(_) => panic!("an unrelated --quic-ca must not authenticate the peer"),
+            Err(err) => assert_eq!(err.exit_code(), 5, "cert reject -> RERR_STARTCLIENT"),
+        }
+        drop(server);
+    }
+
+    /// A missing `--quic-ca` bundle fails loudly at trust resolution with exit 5
+    /// (no dial attempted, no TCP fallback).
+    #[test]
+    fn quic_missing_ca_bundle_hard_fails() {
+        let addr = quic_addr(1);
+        let missing = PathBuf::from("/nonexistent/oc-rsync-quic-ca.pem");
+        match dial(&addr, Some(missing)) {
+            Ok(_) => panic!("a missing --quic-ca bundle must not connect"),
             Err(err) => assert_eq!(err.exit_code(), 5),
         }
+    }
+
+    /// The interim dial-error classifier maps every QUIC failure - including an
+    /// ALPN mismatch (`no application protocol`) - to `RERR_STARTCLIENT` (5),
+    /// per policy. The full quinn-proto error taxonomy is #57.
+    #[test]
+    fn quic_alpn_mismatch_maps_to_startclient() {
+        let addr = quic_addr(873);
+        let err = quic_dial_error(&addr, "peer doesn't support any known protocol");
+        assert_eq!(err.exit_code(), 5);
+        let refused = quic_dial_error(&addr, "aborted by peer: the cryptographic handshake failed");
+        assert_eq!(refused.exit_code(), 5);
     }
 }
 

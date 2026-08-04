@@ -19,6 +19,41 @@ fn parse_args_recognises_quic_flag() {
 
 #[cfg(feature = "quic")]
 #[test]
+fn parse_args_recognises_quic_ca_flag() {
+    // WHY (#50): `--quic-ca <PATH>` is a recognised value flag under the feature
+    // and threads the private CA bundle path through to the QUIC trust ladder.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--quic-ca"),
+        OsString::from("/etc/oc-rsync/ca.pem"),
+        OsString::from("quic://host/module"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.quic_ca.as_deref(),
+        Some(std::path::Path::new("/etc/oc-rsync/ca.pem"))
+    );
+}
+
+#[cfg(feature = "quic")]
+#[test]
+fn parse_args_quic_ca_defaults_none() {
+    // WHY: without `--quic-ca` the QUIC trust source stays the system-roots
+    // default (no private CA bundle).
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("host::module"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.quic_ca.is_none());
+}
+
+#[cfg(feature = "quic")]
+#[test]
 fn parse_args_quic_defaults_off() {
     // WHY: without `--quic` the daemon transport stays TCP (default behaviour
     // preserved).

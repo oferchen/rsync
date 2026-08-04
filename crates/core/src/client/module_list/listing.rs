@@ -31,7 +31,8 @@ use super::auth::{
     normalize_motd_payload, send_daemon_auth_credentials,
 };
 use super::connect::{
-    RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout, spawn_rsh_daemon_stream,
+    DaemonConnectTimeouts, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
+    resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
 use super::request::ModuleListOptions;
@@ -215,15 +216,22 @@ pub fn run_module_list_with_password_and_options(
             address_mode,
         })?
     } else {
+        let quic_dial = QuicDialParams {
+            #[cfg(feature = "quic")]
+            ca: options.quic_ca().map(std::path::Path::to_path_buf),
+        };
         open_daemon_stream(
             addr,
-            connect_duration,
-            effective_timeout,
+            DaemonConnectTimeouts {
+                connect: connect_duration,
+                io: effective_timeout,
+            },
             address_mode,
             options.connect_program(),
             options.bind_address(),
             options.tcp_fastopen(),
             options.sockopts(),
+            &quic_dial,
         )?
     };
 
