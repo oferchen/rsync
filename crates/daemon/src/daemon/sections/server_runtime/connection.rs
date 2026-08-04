@@ -25,7 +25,6 @@ struct AcceptLoopState<'a> {
     notifier: &'a systemd::ServiceNotifier,
     client_socket_options: Arc<Vec<SocketOption>>,
     bandwidth_limit: Option<NonZeroU64>,
-    bandwidth_burst: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_protocol: bool,
 }
@@ -197,7 +196,6 @@ fn spawn_connection_worker(
         state.log_sink.as_ref().map(Arc::clone),
         Arc::clone(&state.client_socket_options),
         state.bandwidth_limit,
-        state.bandwidth_burst,
         state.reverse_lookup,
         state.proxy_protocol,
     );

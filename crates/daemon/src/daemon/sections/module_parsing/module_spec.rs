@@ -113,11 +113,6 @@ fn parse_module_definition(
         hosts_deny: Vec::new(),
         auth_users: Vec::new(),
         secrets_file: None,
-        bandwidth_limit: None,
-        bandwidth_limit_specified: false,
-        bandwidth_burst: None,
-        bandwidth_burst_specified: false,
-        bandwidth_limit_configured: false,
         refuse_options: Vec::new(),
         read_only: true,
         write_only: false,
@@ -372,19 +367,6 @@ fn apply_inline_module_options(
                 }
                 module.secrets_file = Some(PathBuf::from(unescape_module_component(value)));
             }
-            "bwlimit" => {
-                if value.is_empty() {
-                    return Err(config_error(
-                        "'bwlimit' option must not be empty".to_owned(),
-                    ));
-                }
-                let components = parse_runtime_bwlimit(&OsString::from(value))?;
-                module.bandwidth_limit = components.rate();
-                module.bandwidth_burst = components.burst();
-                module.bandwidth_burst_specified = components.burst_specified();
-                module.bandwidth_limit_specified = true;
-                module.bandwidth_limit_configured = true;
-            }
             "refuse options" | "refuse-options" => {
                 let options = parse_refuse_option_list(value).map_err(|error| {
                     config_error(format!("invalid 'refuse options' directive: {error}"))
@@ -522,19 +504,6 @@ fn apply_daemon_param_overrides(
                     ));
                 }
                 module.outgoing_chmod = Some(value.to_owned());
-            }
-            "bwlimit" => {
-                if value.is_empty() {
-                    return Err(config_error(
-                        "'bwlimit' dparam must not be empty".to_owned(),
-                    ));
-                }
-                let components = parse_runtime_bwlimit(&OsString::from(value))?;
-                module.bandwidth_limit = components.rate();
-                module.bandwidth_burst = components.burst();
-                module.bandwidth_burst_specified = components.burst_specified();
-                module.bandwidth_limit_specified = true;
-                module.bandwidth_limit_configured = true;
             }
             // Security-sensitive directives are not overridable via dparam.
             "hosts allow" | "hosts-allow" | "hosts deny" | "hosts-deny" | "auth users"

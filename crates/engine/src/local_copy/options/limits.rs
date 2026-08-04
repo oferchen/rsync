@@ -48,14 +48,6 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Applies an optional burst limit expressed in bytes per read.
-    #[must_use]
-    #[doc(alias = "--bwlimit")]
-    pub const fn bandwidth_burst(mut self, burst: Option<NonZeroU64>) -> Self {
-        self.bandwidth_burst = burst;
-        self
-    }
-
     /// Configures an optional inactivity timeout.
     #[must_use]
     #[doc(alias = "--timeout")]
@@ -100,11 +92,6 @@ impl LocalCopyOptions {
     /// Returns the configured bandwidth limit, if any, in bytes per second.
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
-    }
-
-    /// Returns the configured burst size in bytes, if any.
-    pub const fn bandwidth_burst_bytes(&self) -> Option<NonZeroU64> {
-        self.bandwidth_burst
     }
 
     /// Returns whether destination files are preallocated before writing.
@@ -204,22 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn bandwidth_burst_sets_value() {
-        let burst = NonZeroU64::new(8192).unwrap();
-        let opts = LocalCopyOptions::new().bandwidth_burst(Some(burst));
-        assert_eq!(opts.bandwidth_burst_bytes(), Some(burst));
-    }
-
-    #[test]
-    fn bandwidth_burst_none_clears() {
-        let burst = NonZeroU64::new(8192).unwrap();
-        let opts = LocalCopyOptions::new()
-            .bandwidth_burst(Some(burst))
-            .bandwidth_burst(None);
-        assert!(opts.bandwidth_burst_bytes().is_none());
-    }
-
-    #[test]
     fn with_timeout_sets_value() {
         let timeout = Duration::from_secs(60);
         let opts = LocalCopyOptions::new().with_timeout(Some(timeout));
@@ -259,7 +230,6 @@ mod tests {
         assert!(!opts.remove_source_files_enabled());
         assert!(!opts.preallocate_enabled());
         assert!(opts.bandwidth_limit_bytes().is_none());
-        assert!(opts.bandwidth_burst_bytes().is_none());
         assert!(opts.timeout().is_none());
         assert!(opts.stop_at().is_none());
     }

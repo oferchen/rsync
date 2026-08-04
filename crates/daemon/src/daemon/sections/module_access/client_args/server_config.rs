@@ -308,10 +308,9 @@ fn build_server_config(
 
             // upstream: options.c:2390-2397 - the daemon sender paces its own
             // outbound socket writes (io.c:846,861) at the client's forwarded
-            // `--bwlimit` capped by the effective module/global bwlimit.
-            // `ctx.limiter` already holds that daemon-side cap (computed by
-            // apply_module_bandwidth_limit before the transfer), and it is the
-            // SAME limiter that throttles the pre-transfer `@RSYNCD:` text phase
+            // `--bwlimit` capped by the daemon-wide bwlimit. `ctx.limiter`
+            // already holds that daemon-side cap, and it is the SAME limiter that
+            // throttles the pre-transfer `@RSYNCD:` text phase
             // (session_runtime.rs `write_limited`); the bulk phase runs on the
             // separate `run_server_with_handshake` writer stack, so carrying the
             // rate here installs one limiter per phase with no double-throttle.
@@ -323,7 +322,6 @@ fn build_server_config(
                         .and_then(|components| components.rate())
                 });
                 let daemon_cap = ctx.limiter.as_ref().map(BandwidthLimiter::limit_bytes);
-                let daemon_burst = ctx.limiter.as_ref().and_then(BandwidthLimiter::burst_bytes);
                 // upstream: options.c:2390 `if (daemon_bwlimit && (!bwlimit ||
                 // bwlimit > daemon_bwlimit)) bwlimit = daemon_bwlimit;`
                 let effective = match (client_rate, daemon_cap) {
@@ -332,14 +330,8 @@ fn build_server_config(
                     (None, Some(cap)) => Some(cap),
                     (None, None) => None,
                 };
-                cfg.connection.bwlimit = effective.map(|rate| {
-                    let burst = if daemon_cap == Some(rate) {
-                        daemon_burst
-                    } else {
-                        None
-                    };
-                    BandwidthLimitComponents::new(Some(rate), burst)
-                });
+                cfg.connection.bwlimit =
+                    effective.map(|rate| BandwidthLimitComponents::new(Some(rate)));
             }
 
             // upstream: clientserver.c:1120-1121 - `fake super = yes` on the

@@ -181,10 +181,12 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     rsync_error!(4, rendered).with_role(Role::Client)
 }
 
-/// Parses `--bwlimit=RATE[:BURST]` into an optional bandwidth limit.
+/// Parses the client `--bwlimit=RATE` into an optional bandwidth limit.
 ///
+/// The rate accepts a size suffix (`K`/`M`/`G`/...) with a default of KiB.
 /// Returns `Ok(None)` when the value disables the limit. Invalid, too-small,
 /// and too-large values are rejected with a `--bwlimit` error.
+// upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
     let text = argument.to_string_lossy();
     match BandwidthLimit::parse(&text) {

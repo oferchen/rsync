@@ -69,10 +69,11 @@ ship verbatim.
   in the tree but still misses boundary parsing.
 - **Gaps**: negative values; full suffix alphabet `b`/`k`/`K`/`m`/`M`/
   `g`/`G`/`t`/`T`; decimal/exponent edges (`1.5e9`, `.5`, `1.`);
-  RATE:BURST colon-split (only `parse_bandwidth_limit`); whitespace and
-  trailing garbage; embedded NUL; UTF-8 multibyte suffix letters.
+  a rejected colon (`RATE:...` is now invalid - no burst component);
+  whitespace and trailing garbage; embedded NUL; UTF-8 multibyte suffix
+  letters.
 - **Seeds**: `-100k` `2d 31 30 30 6b`; `1.5m:500k` `31 2e 35 6d 3a 35
-  30 30 6b`; `1g x` `31 67 20 78`.
+  30 30 6b` (now a parse error); `1g x` `31 67 20 78`.
 
 ### `capability_flags`
 

@@ -1,16 +1,13 @@
 //! Property-based tests for the `--bwlimit` token-bucket pacing algorithm.
 //!
 //! These tests exercise [`bandwidth::BandwidthLimiter`] over randomised
-//! `(rate, burst, chunk)` combinations and verify the long-run pacing
+//! `(rate, chunk)` combinations and verify the long-run pacing
 //! invariants that mirror upstream rsync's `io.c:sleep_for_bwlimit()`:
 //!
 //! 1. **Rate convergence** - after a warm-up period the cumulative bytes
 //!    divided by the cumulative requested-sleep time stays within +/-5 %
 //!    of the configured byte-per-second rate.
-//! 2. **Burst capacity** - a single registration after an idle period
-//!    produces at most `min(N, burst)` outstanding debt, so the requested
-//!    sleep duration cannot exceed `burst / rate` seconds.
-//! 3. **Zero-rate (`bwlimit=0`) is unlimited** - the parser returns
+//! 2. **Zero-rate (`bwlimit=0`) is unlimited** - the parser returns
 //!    `Ok(None)` so no limiter is constructed and pacing is bypassed.
 //!
 //! The pacing model is event-driven: the limiter samples
@@ -156,89 +153,6 @@ proptest! {
             "rate {rate} B/s, chunk {chunk_bytes} B: observed {observed:.2} B/s \
              deviates {deviation:.3}% (tolerance {RATE_TOLERANCE_PERCENT}%)",
         );
-    }
-
-    /// A single `register(bytes)` call after construction can never
-    /// request a sleep longer than `min(bytes, burst) / rate` seconds.
-    ///
-    /// Upstream's `sleep_for_bwlimit()` clamps `total_written` against
-    /// any configured burst so the steady-state debt is bounded.
-    /// Inputs are constrained so the worst-case `requested` sleep
-    /// (`burst / rate`) stays below 1 s of wall-clock time per case;
-    /// the limiter actually sleeps for the recorded duration under the
-    /// `test-support` feature.
-    #[test]
-    fn burst_capacity_caps_single_registration(
-        rate in MIN_RATE_BYTES_PER_SECOND..=MAX_RATE_BYTES_PER_SECOND,
-        // Burst is capped at rate/4 so the worst-case sleep is 250 ms.
-        burst_fraction in 4u64..=64u64,
-        // registration_multiple in [1, 8] -> register {1x..8x} burst.
-        registration_multiple in 1u64..=8u64,
-    ) {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        let burst = (rate / burst_fraction).max(MIN_RATE_BYTES_PER_SECOND);
-        let registration_bytes = burst.saturating_mul(registration_multiple);
-        let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-        let sleep = limiter.register(registration_bytes as usize);
-
-        let cap_bytes = registration_bytes.min(burst) as u128;
-        // expected_us = cap_bytes * 1_000_000 / rate, with one-microsecond
-        // ceiling tolerance for the integer division upstream performs.
-        let expected_us = cap_bytes
-            .saturating_mul(1_000_000)
-            .saturating_div(u128::from(rate))
-            .saturating_add(1);
-        let cap = Duration::from_micros(expected_us.min(u128::from(u64::MAX)) as u64);
-
-        prop_assert!(
-            sleep.requested() <= cap,
-            "rate {rate}, burst {burst}, register {registration_bytes}: \
-             requested {:?} exceeds cap {cap:?}",
-            sleep.requested(),
-        );
-    }
-
-    /// With a small burst, repeated saturating writes must keep each
-    /// individual sleep bounded by `burst / rate` because the debt is
-    /// re-clamped after every `register` call.
-    ///
-    /// `iterations` is intentionally small to keep wall-clock test
-    /// runtime bounded - the limiter actually sleeps on the recorded
-    /// chunks under the `test-support` feature, so we trade case count
-    /// for iteration count and rely on proptest to randomise rates.
-    #[test]
-    fn burst_clamps_steady_state_sleep(
-        rate in 1024u64..=131_072u64,
-        burst_fraction in 4u64..=8u64,
-    ) {
-        let mut session = recorded_sleep_session();
-        session.clear();
-
-        // Burst is between 1/8 and 1/4 of one second of traffic at the
-        // configured rate, ensuring the requested sleep stays above the
-        // 100 ms minimum-sleep threshold (so the clamp engages) while
-        // keeping per-iteration wall-clock time bounded at 250 ms.
-        let burst = (rate / burst_fraction).max(MIN_RATE_BYTES_PER_SECOND);
-        let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
-
-        let cap_us = u128::from(burst)
-            .saturating_mul(1_000_000)
-            .saturating_div(u128::from(rate))
-            .saturating_add(1);
-        let cap = Duration::from_micros(cap_us.min(u128::from(u64::MAX)) as u64);
-
-        for i in 0..4 {
-            // Always write at least the burst amount so the clamp engages.
-            let sleep = limiter.register((burst * 4) as usize);
-            prop_assert!(
-                sleep.requested() <= cap,
-                "iteration {i}: rate {rate}, burst {burst}: \
-                 requested {:?} exceeds cap {cap:?}",
-                sleep.requested(),
-            );
-        }
     }
 
     /// When the chunk-induced debt stays below the 100 ms minimum sleep

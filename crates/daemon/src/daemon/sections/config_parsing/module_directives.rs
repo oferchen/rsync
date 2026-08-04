@@ -99,21 +99,6 @@ fn apply_module_directive(
             }
             builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
         }
-        "bwlimit" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'bwlimit' directive must not be empty",
-                ));
-            }
-            let components = parse_config_bwlimit(value, path, line_number)?;
-            builder.set_bandwidth_limit(
-                components.rate(),
-                components.burst(),
-                components.burst_specified(),
-            );
-        }
         "refuseoptions" => {
             let options = parse_refuse_option_list(value).map_err(|error| {
                 config_parse_error(
