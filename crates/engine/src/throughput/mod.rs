@@ -20,11 +20,15 @@
 //! The **rope** ([`Rope`]) is the first actuator: it sizes the concurrent-delta
 //! work queue's [`AdaptiveSemaphore`](crate::concurrent_delta::work_queue::AdaptiveSemaphore)
 //! ceiling to the drum's service time, memory-bounded and clamped to a
-//! configured range. It is **opt-in**: a caller constructs it over a dynamic
-//! queue and drives it from a governor handle. Nothing wires it into the default
-//! transfer path, which keeps the static [`CapacitySource::Fixed`](crate::concurrent_delta::work_queue)
-//! bound, so the default build stays byte-identical to the pre-governor code.
-//! The remaining actuators (buffer-pool pressure, I/O depth) attach to the same
+//! configured range. The [`GovernedWorkQueue`] selector wraps it: given a
+//! governor mode it builds either the static fixed-bound queue (off, the
+//! byte-identical default) or a rope-driven dynamic queue (on) - so the weighted
+//! ceiling replaces the static `2 * thread_count` bound only when the governor
+//! is engaged. It is **opt-in**: nothing wires the governed selector into the
+//! default transfer path, which keeps the static
+//! [`CapacitySource::Fixed`](crate::concurrent_delta::work_queue) bound, so the
+//! default build stays byte-identical to the pre-governor code. The remaining
+//! actuators (buffer-pool pressure, I/O depth) attach to the same
 //! [`GovernorHandle`] facade in later steps.
 //!
 //! # Pattern composition
@@ -56,6 +60,7 @@ mod drum;
 mod governor;
 mod rope;
 mod sample;
+mod work_queue;
 
 pub use actuator::ActuatorHandle;
 pub use aggregate::{STAGE_ALPHA, StageAggregator};
@@ -72,3 +77,6 @@ pub use rope::{
     permit_weight_bytes,
 };
 pub use sample::{Constraint, StageSample};
+pub use work_queue::{
+    GOVERNED_MAX_FACTOR, GOVERNED_MIN_DEPTH, GovernedWorkQueue, governed_work_queue,
+};
