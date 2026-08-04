@@ -27,9 +27,15 @@
 //! is engaged. It is **opt-in**: nothing wires the governed selector into the
 //! default transfer path, which keeps the static
 //! [`CapacitySource::Fixed`](crate::concurrent_delta::work_queue) bound, so the
-//! default build stays byte-identical to the pre-governor code. The remaining
-//! actuators (buffer-pool pressure, I/O depth) attach to the same
-//! [`GovernorHandle`] facade in later steps.
+//! default build stays byte-identical to the pre-governor code.
+//!
+//! The **flist rope** ([`FlistRope`]) is the second actuator: a bounded,
+//! byte-weighted look-ahead window ([`FlistWindow`]) that paces the file-list
+//! producer so it cannot enumerate unboundedly ahead of the consumer, bounding
+//! flist resident memory at scale. It is off-by-default too - an off governor
+//! yields the pass-through [`FlistRope::disabled`], preserving today's exact
+//! enumeration order. The remaining actuators (buffer-pool pressure, I/O depth)
+//! attach to the same [`GovernorHandle`] facade in later steps.
 //!
 //! # Pattern composition
 //!
@@ -57,6 +63,7 @@ mod actuator;
 mod aggregate;
 mod bus;
 mod drum;
+mod flist_rope;
 mod governor;
 mod rope;
 mod sample;
@@ -68,6 +75,10 @@ pub use bus::{DEFAULT_BUS_CAPACITY, SampleSink, TelemetryBus, emit_if_enabled};
 pub use drum::{
     DrumIdentifier, HIGH_OCCUPANCY, HYSTERESIS_WINDOWS, LOW_OCCUPANCY, StageSignal, StageSignals,
     classify,
+};
+pub use flist_rope::{
+    DEFAULT_MAX_BUDGET_BYTES, DEFAULT_MIN_BUDGET_BYTES, FLIST_ENTRY_BASE_BYTES, FlistRope,
+    FlistRopeConfig, FlistRopeConfigError, FlistWindow, entry_weight_bytes,
 };
 pub use governor::{
     GOVERNOR_ENV, Governor, GovernorConfig, GovernorHandle, GovernorMode, POLL_INTERVAL,
