@@ -20,6 +20,11 @@ struct GlobalParseState {
     quic_cert_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     #[cfg(feature = "quic")]
     quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC listener port from the `quic port` global directive (oc extension,
+    /// feature-gated). Unset shares the daemon TCP `port`; a `quic port = 0` is
+    /// coerced to 873 at parse time, mirroring the TCP `port = 0` handling.
+    #[cfg(feature = "quic")]
+    quic_port: Option<(u16, ConfigDirectiveOrigin)>,
     global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
@@ -66,6 +71,8 @@ impl GlobalParseState {
             quic_cert_file: None,
             #[cfg(feature = "quic")]
             quic_key_file: None,
+            #[cfg(feature = "quic")]
+            quic_port: None,
             global_bwlimit: None,
             global_secrets_file: None,
             global_incoming_chmod: None,
@@ -144,6 +151,8 @@ impl GlobalParseState {
             quic_cert_file: self.quic_cert_file,
             #[cfg(feature = "quic")]
             quic_key_file: self.quic_key_file,
+            #[cfg(feature = "quic")]
+            quic_port: self.quic_port,
             global_bandwidth_limit: self.global_bwlimit,
             global_secrets_file: self.global_secrets_file,
             global_incoming_chmod: self.global_incoming_chmod,

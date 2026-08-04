@@ -39,4 +39,15 @@ impl RuntimeOptions {
             _ => QuicIdentity::Ephemeral,
         }
     }
+
+    /// Returns the port the QUIC listener binds.
+    ///
+    /// The `quic port` global directive overrides it independently; unset, the
+    /// QUIC listener shares the daemon TCP `port` (873 by default). A configured
+    /// `quic port = 0` was already coerced to 873 at parse time, mirroring the
+    /// TCP `port = 0` path (oc extension - decision on 2026-07-30).
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener build-out (QUIC-6c); exercised by tests now
+    pub(crate) fn effective_quic_port(&self) -> u16 {
+        self.quic_port.unwrap_or(self.port)
+    }
 }
