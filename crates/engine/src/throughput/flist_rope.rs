@@ -569,7 +569,6 @@ impl FlistRope {
 mod tests {
     use super::*;
     use std::sync::mpsc;
-    use std::time::Instant;
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
