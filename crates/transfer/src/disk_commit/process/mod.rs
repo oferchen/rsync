@@ -12,8 +12,6 @@
 /// Commit path: backup, atomic rename, inplace truncation, cross-device
 /// fallback, and partial-file retention.
 mod commit;
-/// `--delay-updates` staging and the bulk rename sweep.
-mod delayed;
 /// Per-file processing: chunked writes, whole-file writes, output file
 /// opening, and writer backend selection.
 mod file_ops;
@@ -23,7 +21,6 @@ mod metadata;
 #[cfg(test)]
 mod tests;
 
-pub use self::delayed::{DelayedUpdateEntry, delay_updates_staging_path, handle_delayed_updates};
 pub(super) use self::file_ops::{process_file, process_whole_file};
 
 // Re-exported for the in-module test suite (`use super::*`), which exercises
