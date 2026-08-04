@@ -52,6 +52,7 @@ mod trust;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -61,6 +62,7 @@ use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn_proto::{ClientConfig, ConnectionError, Endpoint, EndpointConfig, ServerConfig, VarInt};
 pub use rustls::RootCertStore;
 pub use rustls::client::danger::ServerCertVerifier;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
@@ -250,6 +252,75 @@ fn wait_stream(io: &Arc<Io>) -> io::Result<QuicStream> {
     }
 }
 
+/// The TLS identity a [`QuicAcceptor`] presents to connecting clients.
+///
+/// Mirrors the daemon's Decision A (docs/design/quic-transport-policy.md): an
+/// operator either supplies a certificate/key pair on disk, or the listener
+/// mints a fresh in-memory self-signed certificate at bind time that is never
+/// persisted and rotates on every restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QuicServerIdentity {
+    /// Generate a fresh self-signed certificate valid for `localhost` in
+    /// memory at bind time. Nothing is written to disk and the identity
+    /// changes on every bind.
+    Ephemeral,
+    /// Load the PEM-encoded certificate chain and private key from the given
+    /// paths. The chain's first certificate is the leaf presented for pinning.
+    PemFiles {
+        /// Path to the PEM certificate chain (leaf first).
+        cert: PathBuf,
+        /// Path to the PEM private key (PKCS#8, PKCS#1, or SEC1).
+        key: PathBuf,
+    },
+}
+
+impl QuicServerIdentity {
+    /// Materializes the leaf certificate, the full chain, and the private key
+    /// for this identity.
+    ///
+    /// For [`QuicServerIdentity::Ephemeral`] this generates a self-signed
+    /// certificate via `rcgen`. For [`QuicServerIdentity::PemFiles`] it reads
+    /// and parses the operator-supplied PEM files, surfacing an
+    /// [`io::Error`] when a file is missing, unreadable, or contains no
+    /// certificate.
+    fn materialize(
+        &self,
+    ) -> io::Result<(
+        CertificateDer<'static>,
+        Vec<CertificateDer<'static>>,
+        PrivateKeyDer<'static>,
+    )> {
+        match self {
+            Self::Ephemeral => {
+                let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
+                    .map_err(io_err)?;
+                let certificate = issued.cert.der().clone();
+                let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+                    issued.signing_key.serialize_der(),
+                ));
+                Ok((certificate.clone(), vec![certificate], key))
+            }
+            Self::PemFiles { cert, key } => {
+                let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert)
+                    .map_err(io_err)?
+                    .collect::<Result<_, _>>()
+                    .map_err(io_err)?;
+                let leaf = chain
+                    .first()
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("no certificate found in {}", cert.display()),
+                        )
+                    })?
+                    .clone();
+                let key = PrivateKeyDer::from_pem_file(key).map_err(io_err)?;
+                Ok((leaf, chain, key))
+            }
+        }
+    }
+}
+
 /// QUIC listener: binds a UDP socket, generates a self-signed certificate,
 /// and accepts one blocking stream for its single incoming connection.
 pub struct QuicAcceptor {
@@ -261,17 +332,34 @@ pub struct QuicAcceptor {
 impl QuicAcceptor {
     /// Binds a QUIC server endpoint on `addr` with a fresh self-signed
     /// certificate valid for `localhost`.
+    ///
+    /// Convenience wrapper over [`QuicAcceptor::from_socket`] that binds a
+    /// plain [`UdpSocket`] to `addr` and presents an ephemeral in-memory
+    /// certificate. Callers that need dual-stack isolation
+    /// (`IPV6_V6ONLY`) or an operator-supplied certificate build the socket
+    /// themselves and call [`QuicAcceptor::from_socket`].
     pub fn bind(addr: SocketAddr) -> io::Result<Self> {
-        let issued =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).map_err(io_err)?;
-        let certificate = issued.cert.der().clone();
-        let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(issued.signing_key.serialize_der()));
+        let socket = UdpSocket::bind(addr)?;
+        Self::from_socket(socket, &QuicServerIdentity::Ephemeral)
+    }
+
+    /// Wraps an already-bound `socket` in a QUIC server endpoint presenting
+    /// the certificate selected by `identity`.
+    ///
+    /// The caller owns the UDP socket, so it also owns every socket option
+    /// that must be set before `bind(2)` - notably `IPV6_V6ONLY`, which the
+    /// daemon sets on its IPv6 listener so a dual-stack QUIC bind does not
+    /// collide with the paired IPv4 socket (mirrors the TCP listener's
+    /// `set_only_v6(true)`). This crate deliberately keeps that policy in the
+    /// caller so it stays identical to the TCP path.
+    pub fn from_socket(socket: UdpSocket, identity: &QuicServerIdentity) -> io::Result<Self> {
+        let (certificate, chain, key) = identity.materialize()?;
 
         let mut server_crypto = rustls::ServerConfig::builder_with_provider(ring_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(io_err)?
             .with_no_client_auth()
-            .with_single_cert(vec![certificate.clone()], key)
+            .with_single_cert(chain, key)
             .map_err(io_err)?;
         server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
@@ -279,7 +367,6 @@ impl QuicAcceptor {
             QuicServerConfig::try_from(server_crypto).map_err(io_err)?,
         ));
 
-        let socket = UdpSocket::bind(addr)?;
         let local = socket.local_addr()?;
         // allow_mtud = false: a std UdpSocket cannot set the don't-fragment
         // bit, so MTU discovery probes could be silently fragmented.
@@ -780,5 +867,116 @@ mod tests {
         stream.close();
 
         server.join().expect("server thread");
+    }
+
+    /// Drives one `ping`/`pong` round trip against `acceptor`, pinning the
+    /// client to `cert`. Proves the acceptor's presented certificate is the
+    /// one under test and the byte pipe works end to end.
+    fn round_trip_pinned(acceptor: QuicAcceptor, cert: CertificateDer<'static>) {
+        let addr = acceptor.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut buf = [0u8; 4];
+            stream.read_exact(&mut buf).expect("read");
+            assert_eq!(&buf, b"ping");
+            stream.write_all(b"pong").expect("write");
+            stream.finish().expect("finish");
+        });
+
+        let connector = QuicConnector::new(&cert).expect("build connector");
+        let mut stream = connector.connect(addr, "localhost").expect("connect");
+        stream.write_all(b"ping").expect("write");
+        stream.finish().expect("finish");
+        let mut reply = [0u8; 4];
+        stream.read_exact(&mut reply).expect("read reply");
+        assert_eq!(&reply, b"pong");
+        stream.close();
+        server.join().expect("server thread");
+    }
+
+    /// `from_socket` with an ephemeral identity binds a caller-owned UDP socket
+    /// and serves a round trip - the identity-parameterized path is
+    /// behaviorally identical to the historical `bind` helper.
+    #[test]
+    fn from_socket_ephemeral_binds_and_round_trips() {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let acceptor = QuicAcceptor::from_socket(socket, &QuicServerIdentity::Ephemeral)
+            .expect("bind ephemeral");
+        let cert = acceptor.certificate().clone().into_owned();
+        round_trip_pinned(acceptor, cert);
+    }
+
+    /// Wraps DER bytes in a PEM block. The workspace builds `rcgen` without its
+    /// `pem` feature, so the test encodes the block itself: base64 (64-column
+    /// wrapped) between the standard `-----BEGIN/END <label>-----` markers.
+    fn der_to_pem(label: &str, der: &[u8]) -> String {
+        use base64::Engine as _;
+        let body = base64::engine::general_purpose::STANDARD.encode(der);
+        let mut out = format!("-----BEGIN {label}-----\n");
+        for chunk in body.as_bytes().chunks(64) {
+            out.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
+            out.push('\n');
+        }
+        out.push_str(&format!("-----END {label}-----\n"));
+        out
+    }
+
+    /// `from_socket` with a `PemFiles` identity presents the operator-supplied
+    /// certificate verbatim: the listener's leaf cert equals the one on disk
+    /// and a client pinned to it completes a round trip. Encodes WHY Files
+    /// identity matters - the daemon `quic cert file` / `quic key file`
+    /// directives must yield a stable, on-disk identity, not a fresh ephemeral
+    /// one.
+    #[test]
+    fn from_socket_pem_files_presents_configured_cert() {
+        let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
+            .expect("generate cert");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cert_path = dir.path().join("cert.pem");
+        let key_path = dir.path().join("key.pem");
+        std::fs::write(
+            &cert_path,
+            der_to_pem("CERTIFICATE", issued.cert.der().as_ref()),
+        )
+        .expect("write cert pem");
+        std::fs::write(
+            &key_path,
+            der_to_pem("PRIVATE KEY", &issued.signing_key.serialize_der()),
+        )
+        .expect("write key pem");
+        let expected = issued.cert.der().clone();
+
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let acceptor = QuicAcceptor::from_socket(
+            socket,
+            &QuicServerIdentity::PemFiles {
+                cert: cert_path,
+                key: key_path,
+            },
+        )
+        .expect("bind pem files");
+        assert_eq!(
+            acceptor.certificate(),
+            &expected,
+            "listener must present the configured leaf certificate"
+        );
+        round_trip_pinned(acceptor, expected);
+    }
+
+    /// A `PemFiles` identity pointing at a missing certificate surfaces the
+    /// file error instead of silently falling back to an ephemeral identity.
+    #[test]
+    fn from_socket_pem_files_missing_cert_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let err = QuicAcceptor::from_socket(
+            socket,
+            &QuicServerIdentity::PemFiles {
+                cert: dir.path().join("absent-cert.pem"),
+                key: dir.path().join("absent-key.pem"),
+            },
+        )
+        .expect_err("a missing certificate file must fail the bind");
+        let _ = err;
     }
 }
