@@ -40,6 +40,21 @@ impl RuntimeOptions {
         }
     }
 
+    /// Reports whether the daemon should bind a UDP/QUIC listener.
+    ///
+    /// The dedicated `quic = yes` enable directive from
+    /// docs/design/quic-transport-policy.md (Decision, daemon-side config) is
+    /// not yet parsed, so this interim predicate treats QUIC as enabled when
+    /// the operator configured any QUIC directive: a certificate path, a key
+    /// path, or an explicit `quic port`. A daemon with no QUIC directives never
+    /// opens the UDP socket, so a default `--all-features` build stays
+    /// TCP-only and byte-identical. When the enable directive lands, this is
+    /// the single seam to consult it instead.
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring (QUIC-6c); exercised by tests now
+    pub(crate) fn quic_listener_enabled(&self) -> bool {
+        self.quic_cert_file.is_some() || self.quic_key_file.is_some() || self.quic_port.is_some()
+    }
+
     /// Returns the port the QUIC listener binds.
     ///
     /// The `quic port` global directive overrides it independently; unset, the

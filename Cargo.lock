@@ -1047,6 +1047,7 @@ dependencies = [
  "nix",
  "platform",
  "protocol",
+ "rsync_io",
  "sd-notify",
  "seccompiler",
  "socket2",
