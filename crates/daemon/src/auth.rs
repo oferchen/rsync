@@ -416,6 +416,24 @@ impl Default for SecretsFile {
 mod tests {
     use super::*;
 
+    /// WHY (security, deliberate no-op - pinned): on Windows the secrets-file
+    /// permission check is intentionally a no-op because NTFS exposes no POSIX
+    /// mode bits to inspect, matching upstream rsync (which only calls `stat`
+    /// mode checks under Unix). This pins that the skip is a conscious decision,
+    /// not an accidental gap: a secrets file is accepted regardless of its
+    /// on-disk permissions. On Unix the same file (created without tightening)
+    /// would be rejected as other-accessible. If Windows ACL hardening is ever
+    /// added, this test must be updated deliberately, surfacing the change.
+    #[cfg(not(unix))]
+    #[test]
+    fn check_permissions_is_a_deliberate_noop_off_unix() {
+        let file = tempfile::NamedTempFile::new().expect("temp secrets file");
+        assert!(
+            SecretsFile::check_permissions(file.path()).is_ok(),
+            "Windows deliberately accepts any-permission secrets files"
+        );
+    }
+
     #[test]
     fn challenge_generator_produces_valid_base64() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
