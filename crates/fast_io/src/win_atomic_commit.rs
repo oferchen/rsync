@@ -218,6 +218,8 @@ mod imp {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -285,6 +287,19 @@ mod imp {
     /// `replace_existing` maps to `FILE_RENAME_INFO::ReplaceIfExists` (upstream
     /// `do_rename` overwrites the destination).
     ///
+    /// The pin in step 1 omits `FILE_SHARE_DELETE`, which also means two commits
+    /// racing to the *same* destination momentarily lock each other out: while
+    /// one holds its pin, the other's replace can fail with
+    /// `ERROR_SHARING_VIOLATION` (32) or `ERROR_ACCESS_DENIED` (5). That
+    /// contention is transient - the pin drops the instant the other commit
+    /// returns - so [`is_transient_rename_contention`] gates a bounded retry
+    /// loop (`MAX_RETRY_ATTEMPTS` attempts, ~1 s cap) that re-opens and
+    /// re-validates the parent on every attempt, preserving the anti-swap
+    /// invariant across retries. oc-specific robustness: upstream rsync never
+    /// commits two temp files to one destination concurrently, so this only
+    /// races in the engine's parallel `DestinationWriteGuard` path, never on the
+    /// wire.
+    ///
     /// # Errors
     ///
     /// - [`io::ErrorKind::InvalidInput`] if `dest_path` lacks a parent
@@ -294,7 +309,8 @@ mod imp {
     ///   (upstream `util1.c:robust_rename()`).
     /// - Any underlying open, validation, or rename failure. A reparse-point
     ///   swap detected in step 1 or 2 surfaces as an error, so the commit fails
-    ///   safe rather than following the redirect.
+    ///   safe rather than following the redirect. Transient same-destination
+    ///   contention that outlasts the retry budget surfaces as the last error.
     pub fn rename_no_follow(
         temp_path: &Path,
         dest_path: &Path,
@@ -307,6 +323,45 @@ mod imp {
             )
         })?;
 
+        // Bounded retry on transient same-destination contention. Each attempt
+        // re-opens and re-validates the parent, so the reparse-swap rejection
+        // still fires on every attempt (never hoisted out of the loop); the
+        // fixed 20 ms backoff caps total waiting at ~1 s.
+        let mut attempt: u32 = 0;
+        loop {
+            match try_rename_no_follow_once(temp_path, dest_dir, dest_path, replace_existing) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    attempt += 1;
+                    let transient = err
+                        .raw_os_error()
+                        .is_some_and(super::is_transient_rename_contention);
+                    if transient && attempt < MAX_RETRY_ATTEMPTS {
+                        sleep(RETRY_BACKOFF);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    /// Retry ceiling for [`rename_no_follow`]'s transient-contention loop.
+    /// `MAX_RETRY_ATTEMPTS * RETRY_BACKOFF` bounds the total wait at ~1 s.
+    const MAX_RETRY_ATTEMPTS: u32 = 50;
+    /// Fixed backoff between contention retries.
+    const RETRY_BACKOFF: Duration = Duration::from_millis(20);
+
+    /// One attempt of the anchored, reparse-hardened commit rename. Splitting
+    /// this out lets [`rename_no_follow`] retry the whole open+validate+rename
+    /// sequence on transient same-destination contention while re-running the
+    /// reparse-point checks on every attempt.
+    fn try_rename_no_follow_once(
+        temp_path: &Path,
+        dest_dir: &Path,
+        dest_path: &Path,
+        replace_existing: bool,
+    ) -> io::Result<()> {
         // (1) Open, validate, and pin the destination parent. The missing
         // FILE_SHARE_DELETE keeps the directory from being renamed/removed/
         // replaced (swapped for a junction) while this handle is held across
@@ -567,5 +622,48 @@ pub fn is_cross_device(error: &std::io::Error) -> bool {
         #[cfg(not(any(unix, windows)))]
         Some(_) => false,
         None => false,
+    }
+}
+
+/// True for the transient Win32 error numbers a concurrent commit to the *same*
+/// destination produces while another committer briefly holds the no-follow pin
+/// on the destination parent.
+///
+/// [`imp::rename_no_follow`] pins that parent without `FILE_SHARE_DELETE` (the
+/// reparse-swap hardening), so a second committer racing to replace the same
+/// destination can be denied for the moment the pin is held:
+///
+/// - `ERROR_SHARING_VIOLATION` (32)
+/// - `ERROR_ACCESS_DENIED` (5)
+///
+/// Both clear as soon as the other committer's handle drops, so the commit
+/// retries. Every other error number is terminal and must surface unchanged -
+/// notably `ERROR_NOT_SAME_DEVICE` (17, EXDEV) so the caller falls back to
+/// copy+remove, `ERROR_FILENAME_EXCED_RANGE` (206), and `ERROR_FILE_NOT_FOUND`
+/// (2).
+///
+/// oc-specific robustness: upstream rsync never commits two temp files to one
+/// destination concurrently, so this races only in the engine's parallel
+/// `DestinationWriteGuard` path, never on the wire.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_transient_rename_contention(raw_os_error: i32) -> bool {
+    // ERROR_ACCESS_DENIED = 5, ERROR_SHARING_VIOLATION = 32.
+    matches!(raw_os_error, 5 | 32)
+}
+
+#[cfg(test)]
+mod contention_tests {
+    use super::is_transient_rename_contention;
+
+    /// The two transient contention codes retry; unrelated codes - including
+    /// EXDEV (17), which must fall back to copy+remove - stay terminal.
+    #[test]
+    fn only_sharing_and_access_denied_are_transient() {
+        assert!(is_transient_rename_contention(32)); // ERROR_SHARING_VIOLATION
+        assert!(is_transient_rename_contention(5)); // ERROR_ACCESS_DENIED
+        assert!(!is_transient_rename_contention(2)); // ERROR_FILE_NOT_FOUND
+        assert!(!is_transient_rename_contention(17)); // ERROR_NOT_SAME_DEVICE (EXDEV)
+        assert!(!is_transient_rename_contention(206)); // ERROR_FILENAME_EXCED_RANGE
+        assert!(!is_transient_rename_contention(0));
     }
 }
