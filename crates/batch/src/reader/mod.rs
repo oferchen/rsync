@@ -187,8 +187,11 @@ impl BatchReader {
             // upstream: compat.c:609-613 setup_protocol()
             let max_supported = i32::from(protocol::SUPPORTED_PROTOCOL_BOUNDS.1);
             if header.protocol_version > max_supported {
+                // upstream: compat.c:610-611 rprintf(FERROR, "The protocol
+                // version in the batch file is too new (%d > %d).\n", ...) -
+                // match the diagnostic text, including the trailing period.
                 return Err(BatchError::Io(protocol::protocol_violation(format!(
-                    "The protocol version in the batch file is too new ({} > {})",
+                    "The protocol version in the batch file is too new ({} > {}).",
                     header.protocol_version, max_supported
                 ))));
             }
