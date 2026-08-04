@@ -205,6 +205,7 @@ impl DeltaConsumer {
             ReorderMode::Bare {
                 capacity: reorder_capacity,
             },
+            None,
         )
     }
 
@@ -219,7 +220,7 @@ impl DeltaConsumer {
     /// when `--delay-updates` is off and files are committed immediately.
     #[must_use]
     pub fn spawn_bypass(rx: WorkQueueReceiver) -> Self {
-        spawn_inner(rx, ReorderMode::Bypass)
+        spawn_inner(rx, ReorderMode::Bypass, None)
     }
 
     /// Spawns background threads honouring a runtime
@@ -245,7 +246,8 @@ impl DeltaConsumer {
         reorder_capacity: usize,
         cfg: ConcurrentDeltaConfig,
     ) -> Self {
-        spawn_inner(rx, ReorderMode::from_config(reorder_capacity, cfg))
+        let sink = cfg.telemetry_sink.clone();
+        spawn_inner(rx, ReorderMode::from_config(reorder_capacity, cfg), sink)
     }
 
     /// Returns a snapshot of consumer-side diagnostic counters.

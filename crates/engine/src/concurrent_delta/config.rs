@@ -26,6 +26,7 @@
 use std::path::{Path, PathBuf};
 
 use super::spill::policy::SpillPolicy;
+use crate::throughput::SampleSink;
 
 /// Tunable runtime knobs for the concurrent delta pipeline.
 ///
@@ -41,6 +42,16 @@ pub struct ConcurrentDeltaConfig {
     /// [`SpillableReorderBuffer`](super::spill::SpillableReorderBuffer)
     /// path; the other [`SpillPolicy`] knobs layer additional policy on top.
     pub spill_policy: SpillPolicy,
+
+    /// Optional throughput-governor telemetry sink.
+    ///
+    /// `None` (the default) leaves the pipeline byte-identical to the
+    /// pre-governor code: the compute workers and reorder drain skip sample
+    /// emission entirely. When `Some`, each instrumented stage publishes a
+    /// [`StageSample`](crate::throughput::StageSample) per unit of work through
+    /// this cheap, clonable handle. Emission only observes; it never alters
+    /// control flow, ordering, or output.
+    pub telemetry_sink: Option<SampleSink>,
 }
 
 impl ConcurrentDeltaConfig {
@@ -58,13 +69,17 @@ impl ConcurrentDeltaConfig {
     pub fn with_spill_threshold(threshold_bytes: u64) -> Self {
         Self {
             spill_policy: SpillPolicy::with_threshold(threshold_bytes),
+            telemetry_sink: None,
         }
     }
 
     /// Returns a configuration that wires through an explicit [`SpillPolicy`].
     #[must_use]
     pub fn with_spill_policy(spill_policy: SpillPolicy) -> Self {
-        Self { spill_policy }
+        Self {
+            spill_policy,
+            telemetry_sink: None,
+        }
     }
 
     /// Sets an explicit on-disk scratch directory for spilled items.
@@ -76,6 +91,18 @@ impl ConcurrentDeltaConfig {
     #[must_use]
     pub fn with_spill_dir(mut self, dir: PathBuf) -> Self {
         self.spill_policy.dir = Some(dir);
+        self
+    }
+
+    /// Attaches a throughput-governor telemetry sink.
+    ///
+    /// With a sink present the compute workers and reorder drain publish
+    /// [`StageSample`](crate::throughput::StageSample)s; without one they emit
+    /// nothing. The sink only observes, so enabling it never changes transfer
+    /// output.
+    #[must_use]
+    pub fn with_telemetry_sink(mut self, sink: SampleSink) -> Self {
+        self.telemetry_sink = Some(sink);
         self
     }
 
