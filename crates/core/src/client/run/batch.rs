@@ -375,6 +375,19 @@ fn replay_batch(
             engine::batch::BatchError::FlagMismatch(msg) => {
                 ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
             }
+            // upstream: compat.c:609-612 setup_protocol() - a batch recorded
+            // with a protocol newer than this build supports aborts with
+            // exit_cleanup(RERR_PROTOCOL) (exit 2), printing the bare "too new"
+            // diagnostic rather than the generic replay-failure message. The
+            // reader tags this case with protocol::ProtocolViolation; detect it
+            // and mirror the exit code and message exactly.
+            engine::batch::BatchError::Io(ref io_err)
+                if io_err
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()) =>
+            {
+                ClientError::new(2, rsync_error!(2, "{}", io_err).with_role(Role::Client))
+            }
             other => {
                 let msg = format!("batch replay failed: {other}");
                 ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
@@ -463,6 +476,139 @@ mod tests {
         let result = handle_batch_read(&batch_cfg, &config);
         assert!(result.is_some());
         assert!(result.unwrap().is_err());
+    }
+
+    /// A `--read-batch` file recorded with a protocol newer than this build
+    /// supports must abort with `RERR_PROTOCOL` (exit 2), not the generic
+    /// exit 1 replay-failure code.
+    ///
+    /// WHY: upstream compat.c:609-612 setup_protocol() prints "The protocol
+    /// version in the batch file is too new (%d > %d)." and calls
+    /// exit_cleanup(RERR_PROTOCOL). The reader tags this case as a
+    /// `protocol::ProtocolViolation`; if the dispatch map_err collapsed it to
+    /// exit 1 a caller would mistake a fundamental protocol incompatibility for
+    /// a mere usage error. This pins the RERR_PROTOCOL mapping and the bare
+    /// upstream diagnostic text.
+    #[test]
+    fn read_batch_from_newer_protocol_exits_rerr_protocol() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let batch_path = temp.path().join("too_new.batch");
+        let dest = temp.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        // Record a header stamped with protocol 33, one past the supported max.
+        let write_cfg = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().into_owned(),
+            33,
+        );
+        let mut writer = BatchWriter::new(write_cfg).unwrap();
+        writer
+            .write_header(engine::batch::BatchFlags::default())
+            .unwrap();
+        writer.finalize().unwrap();
+
+        let read_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([dest.to_string_lossy().to_string()])
+            .build();
+
+        let err = handle_batch_read(&read_cfg, &config)
+            .expect("read mode handled")
+            .expect_err("too-new batch must be rejected");
+        assert_eq!(
+            err.exit_code(),
+            2,
+            "too-new batch must exit RERR_PROTOCOL (2), got {}",
+            err.exit_code()
+        );
+        assert!(
+            err.to_string().contains("too new"),
+            "expected upstream 'too new' diagnostic, got: {err}"
+        );
+    }
+
+    /// Control: an in-range batch (protocol 32) round-trips through the same
+    /// `handle_batch_read` dispatch and succeeds. This anchors the too-new
+    /// rejection above - the RERR_PROTOCOL gate must fire ONLY when the
+    /// recorded protocol exceeds the supported maximum, never for a batch this
+    /// build can actually replay.
+    #[test]
+    fn read_batch_in_range_protocol_replays_successfully() {
+        use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
+        use protocol::CompatibilityFlags;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("src");
+        let batch_path = temp.path().join("in_range.batch");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("hello.txt"), b"in-range batch payload").unwrap();
+
+        // Record a valid protocol-32 batch via the --only-write-batch path,
+        // mirroring the production compat flags the CLI assembles.
+        let compat = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let write_cfg = BatchConfig::new(
+            BatchMode::OnlyWrite,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        )
+        .with_compat_flags(compat.bits() as i32)
+        .with_checksum_seed(1);
+        let writer = Arc::new(Mutex::new(BatchWriter::new(write_cfg).unwrap()));
+        writer
+            .lock()
+            .unwrap()
+            .write_header(engine::batch::BatchFlags {
+                recurse: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let options = LocalCopyOptions::default()
+            .recursive(true)
+            .batch_writer(Some(Arc::clone(&writer)));
+        let mut src_os = source.clone().into_os_string();
+        src_os.push("/");
+        let operands = vec![src_os, temp.path().join("write_dest").into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        plan.execute_with_options(LocalCopyExecution::DryRun, options)
+            .unwrap();
+        Arc::try_unwrap(writer)
+            .expect("writer uniquely owned")
+            .into_inner()
+            .unwrap()
+            .finalize()
+            .unwrap();
+
+        // Replay through the production dispatch entry point.
+        let replay_dest = temp.path().join("replay");
+        std::fs::create_dir_all(&replay_dest).unwrap();
+        let read_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([replay_dest.to_string_lossy().to_string()])
+            .build();
+        handle_batch_read(&read_cfg, &config)
+            .expect("read mode handled")
+            .expect("in-range batch must replay successfully");
+        assert_eq!(
+            std::fs::read(replay_dest.join("hello.txt")).unwrap(),
+            b"in-range batch payload",
+            "in-range replay must materialise the source file"
+        );
     }
 
     #[test]
