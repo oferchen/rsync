@@ -154,7 +154,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
             Arg::new("aes")
                 .long("aes")
                 .help_heading("oc-rsync extensions")
-                .help("Force AES-GCM ciphers for SSH even without hardware AES detection.")
+                .help("Force AES ciphers for oc's embedded ssh:// transport (ssh:// URL operands only) even without hardware AES detection; standard host:path SSH selects ciphers via ssh_config or the -e/--rsh remote shell.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("no-aes"),
         )
@@ -162,7 +162,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
             Arg::new("no-aes")
                 .long("no-aes")
                 .help_heading("oc-rsync extensions")
-                .help("Disable automatic AES-GCM cipher selection for SSH.")
+                .help("Disable automatic AES cipher selection for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH selects ciphers via ssh_config or the -e/--rsh remote shell.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("aes"),
         )
@@ -225,7 +225,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-cipher")
                 .help_heading("oc-rsync extensions")
                 .value_name("CIPHERS")
-                .help("Comma-separated cipher preference list for embedded SSH.")
+                .help("Comma-separated cipher preference list for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH uses ssh_config Ciphers or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -235,7 +235,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-connect-timeout")
                 .help_heading("oc-rsync extensions")
                 .value_name("SECS")
-                .help("Connection timeout in seconds for embedded SSH.")
+                .help("Connection timeout in seconds for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH uses ssh_config ConnectTimeout or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -245,7 +245,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-keepalive")
                 .help_heading("oc-rsync extensions")
                 .value_name("SECS")
-                .help("Keepalive interval in seconds for embedded SSH (0 = disable).")
+                .help("Keepalive interval in seconds for oc's embedded ssh:// transport (ssh:// URL operands only; 0 = disable); standard host:path SSH uses ssh_config ServerAliveInterval or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -255,7 +255,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-identity")
                 .help_heading("oc-rsync extensions")
                 .value_name("FILE")
-                .help("Identity file for embedded SSH (repeatable).")
+                .help("Identity file for oc's embedded ssh:// transport (ssh:// URL operands only; repeatable); standard host:path SSH uses ssh_config IdentityFile or the -e/--rsh remote shell.")
                 .action(ArgAction::Append)
                 .value_parser(OsStringValueParser::new()),
         )
@@ -263,7 +263,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
             Arg::new("ssh-no-agent")
                 .long("ssh-no-agent")
                 .help_heading("oc-rsync extensions")
-                .help("Disable SSH agent authentication for embedded SSH.")
+                .help("Disable SSH agent authentication for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH follows ssh_config or the -e/--rsh remote shell.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -271,7 +271,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-strict-host-key-checking")
                 .help_heading("oc-rsync extensions")
                 .value_name("MODE")
-                .help("Host key verification policy for embedded SSH (yes, no, ask).")
+                .help("Host key verification policy (yes, no, ask) for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH uses ssh_config StrictHostKeyChecking or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -280,7 +280,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
             Arg::new("ssh-ipv6")
                 .long("ssh-ipv6")
                 .help_heading("oc-rsync extensions")
-                .help("Prefer IPv6 for embedded SSH connections.")
+                .help("Prefer IPv6 for oc's embedded ssh:// transport (ssh:// URL operands only); rsync's own --ipv4/--ipv6 cover daemon and other transports.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -288,7 +288,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-port")
                 .help_heading("oc-rsync extensions")
                 .value_name("PORT")
-                .help("Port override for embedded SSH connections.")
+                .help("Port override for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH sets the port via ssh_config Port or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -298,7 +298,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("jump-host")
                 .help_heading("oc-rsync extensions")
                 .value_name("[user@]HOST[:PORT][,...]")
-                .help("Comma-separated proxy-jump hosts (forwarded as ssh -J).")
+                .help("Comma-separated ProxyJump hosts for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH configures ProxyJump via ssh_config or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
