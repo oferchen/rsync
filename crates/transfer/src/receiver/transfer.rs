@@ -673,6 +673,159 @@ mod tests {
         );
     }
 
+    /// Builds a client-mode receiver `ServerConfig` at `proto`, the shape a
+    /// `--read-batch` client hands to [`ReceiverContext::for_batch_replay`].
+    fn replay_config(proto: u8) -> ServerConfig {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(proto).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        config
+    }
+
+    /// [`for_batch_replay`](ReceiverContext::for_batch_replay) pins the
+    /// receiver's negotiated state from the batch header's protocol, checksum
+    /// seed, and compat varint - not from a live handshake.
+    ///
+    /// WHY: this is the A2 seam. Upstream's `--read-batch` skips negotiation and
+    /// reads the recorded protocol/compat/seed back from the batch fd
+    /// (`compat.c` `setup_protocol()` under `read_batch`; the values
+    /// `io.c:2521-2524` teed at capture). The replay receiver must run against
+    /// the SAME protocol/seed/compat the batch was recorded under or its
+    /// file-list decode and basis checksums desync. The header is round-tripped
+    /// through the batch reader's own [`BatchHeader::read_from`] so the parse is
+    /// the single source of truth, then asserted on the built context: the seed
+    /// lands in the field every basis/signature site reads
+    /// (context.rs `build_flist_reader` / `build_basis_file_config`), the
+    /// protocol is pinned, and each compat bit is applied.
+    #[test]
+    fn for_batch_replay_pins_protocol_seed_and_compat_from_header() {
+        use engine::batch::BatchHeader;
+        use protocol::CompatibilityFlags;
+
+        // A proto-32 batch recorded with two compat bits and a distinctive seed.
+        let bits =
+            CompatibilityFlags::INC_RECURSE.bits() | CompatibilityFlags::SYMLINK_TIMES.bits();
+        let seed = 0x0BAD_F00D_u32 as i32;
+        let mut written = BatchHeader::new(32, seed);
+        written.compat_flags = Some(bits as i32);
+
+        // Recorded, then parsed by the batch reader (the one source of truth).
+        let mut recorded = Vec::new();
+        written.write_to(&mut recorded).unwrap();
+        let header = BatchHeader::read_from(&mut Cursor::new(recorded)).unwrap();
+
+        let ctx = ReceiverContext::for_batch_replay(&header, replay_config(32))
+            .expect("a supported batch header must build a replay context");
+
+        assert_eq!(
+            ctx.protocol(),
+            ProtocolVersion::try_from(32u8).unwrap(),
+            "the header's protocol version must pin the receiver's protocol"
+        );
+        assert_eq!(
+            ctx.checksum_seed, seed,
+            "the header's checksum seed must seed the receiver's basis checksums"
+        );
+        let compat = ctx
+            .compat_flags()
+            .expect("proto >= 30 records a compat varint");
+        assert!(
+            compat.contains(CompatibilityFlags::INC_RECURSE)
+                && compat.contains(CompatibilityFlags::SYMLINK_TIMES),
+            "every recorded compat bit must be applied to the replay receiver"
+        );
+    }
+
+    /// A batch recorded below protocol 30 carries no compat varint, so the
+    /// replay receiver's compat state is absent - never a phantom zero.
+    ///
+    /// WHY: upstream writes the compat varint only for protocol >= 30
+    /// (`io.c:2522-2523`), and [`BatchHeader::read_from`] mirrors that by
+    /// reading it only then. `for_batch_replay` must carry that `None` through
+    /// (leaving `compat_flags()` `None`, exactly as a legacy live negotiation
+    /// would) while still pinning the recorded protocol and seed.
+    #[test]
+    fn for_batch_replay_below_protocol_30_has_no_compat() {
+        use engine::batch::BatchHeader;
+
+        let seed = 0x0051_5EED_i32;
+        let written = BatchHeader::new(29, seed);
+        assert!(
+            written.compat_flags.is_none(),
+            "a proto-29 header records no compat varint"
+        );
+
+        let mut recorded = Vec::new();
+        written.write_to(&mut recorded).unwrap();
+        let header = BatchHeader::read_from(&mut Cursor::new(recorded)).unwrap();
+
+        let ctx = ReceiverContext::for_batch_replay(&header, replay_config(29))
+            .expect("a proto-29 batch header must build a replay context");
+
+        assert_eq!(ctx.protocol(), ProtocolVersion::try_from(29u8).unwrap());
+        assert_eq!(ctx.checksum_seed, seed);
+        assert!(
+            ctx.compat_flags().is_none(),
+            "no compat varint below proto 30 must leave compat state absent"
+        );
+    }
+
+    /// A context built by `for_batch_replay` drives the real receiver to a clean
+    /// finish off the recorded stream, proving the header-seeded protocol
+    /// actually feeds a live receive - not just the accessors.
+    ///
+    /// WHY: A2 is only wired if the seeded state survives all the way through a
+    /// real drive. The header is parsed off the front of the recorded stream and
+    /// the remaining bytes (an empty file list, the minimal complete batch body)
+    /// stream straight into [`run_local_replay`](ReceiverContext::run_local_replay)
+    /// as `f_in` - exactly the A3 shape, one parse feeding both the setup and the
+    /// drive. A green empty-list finish through `finish_empty_client_flist`
+    /// confirms the pinned protocol decoded the recorded flist, unmultiplexed.
+    #[test]
+    fn for_batch_replay_drives_recorded_stream_to_completion() {
+        use engine::batch::BatchHeader;
+
+        let seed = 0x1234_5678_i32;
+        let written = BatchHeader::new(32, seed);
+
+        // Header followed by an empty recorded file list, in one stream.
+        let mut recorded = Vec::new();
+        written.write_to(&mut recorded).unwrap();
+        FileListWriter::new(ProtocolVersion::try_from(32u8).unwrap())
+            .write_end(&mut recorded, None)
+            .unwrap();
+
+        // The batch reader consumes the header; the same cursor then feeds the
+        // flist body to the receiver.
+        let mut cursor = Cursor::new(recorded);
+        let header = BatchHeader::read_from(&mut cursor).unwrap();
+        let mut ctx = ReceiverContext::for_batch_replay(&header, replay_config(32))
+            .expect("a supported batch header must build a replay context");
+
+        assert_eq!(ctx.checksum_seed, seed, "the seed must be pinned pre-drive");
+
+        let stats = ctx
+            .run_local_replay(cursor, None)
+            .expect("the header-seeded receiver must replay to completion");
+
+        assert_eq!(stats.files_listed, 0);
+        assert_eq!(stats.files_transferred, 0);
+        assert_eq!(
+            ctx.protocol(),
+            ProtocolVersion::try_from(32u8).unwrap(),
+            "the pinned protocol must survive the drive"
+        );
+        assert!(
+            !ctx.should_activate_input_multiplex(),
+            "a header-seeded batch f_in must stay Plain (upstream !read_batch)"
+        );
+    }
+
     /// Verifies the delayed rename sweep moves files from staging paths to
     /// final destinations, matching upstream `receiver.c:422-450`.
     #[test]
