@@ -30,6 +30,12 @@ pub(crate) struct ParsedConfigModules {
     /// QUIC listener private-key path from the `quic key file` global directive.
     #[cfg(feature = "quic")]
     quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC listener port from the `quic port` global directive (oc extension,
+    /// feature-gated). `None` means the QUIC listener shares the daemon TCP
+    /// `port`; a value overrides it independently. A `quic port = 0` is coerced
+    /// to 873 at parse time, mirroring the TCP `port = 0` handling.
+    #[cfg(feature = "quic")]
+    quic_port: Option<(u16, ConfigDirectiveOrigin)>,
     global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,

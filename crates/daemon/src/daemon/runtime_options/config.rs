@@ -44,6 +44,14 @@ impl RuntimeOptions {
         if let Some((key, _origin)) = parsed.quic_key_file {
             self.quic_key_file = Some(key);
         }
+        // QUIC listener port (oc extension). Unset means the QUIC listener
+        // shares the daemon TCP `port`; a value here overrides that
+        // independently. Directive parsing already coerced a `quic port = 0`
+        // to the well-known rsync port 873, mirroring the TCP `port = 0` path.
+        #[cfg(feature = "quic")]
+        if let Some((port, _origin)) = parsed.quic_port {
+            self.quic_port = Some(port);
+        }
 
         if let Some((components, _origin)) = parsed.global_bandwidth_limit
             && !self.bandwidth_limit_configured
