@@ -51,14 +51,16 @@ daemon-seccomp = ["dep:seccompiler"]
 # a no-op that still degrades to the plain writer. See
 # docs/design/iouring-send-zc.md for the buffer-lifetime contract.
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
-# QUIC daemon transport (default-off, opt-in oc extension). At this stage the
-# feature gates parsing and storage of the `quic cert file` / `quic key file`
-# global directives and resolving the listener identity (operator-supplied files
-# vs. an ephemeral in-memory self-signed cert generated at bind time); the
-# listener itself lands under later QUIC build-out tasks. Kept dependency-free so
-# default builds are byte-identical. See docs/design/quic-transport-policy.md
-# (decision A).
-quic = []
+# QUIC daemon transport (default-off, opt-in oc extension). Gates parsing and
+# storage of the `quic cert file` / `quic key file` / `quic port` global
+# directives, resolving the listener identity (operator-supplied files vs. an
+# ephemeral in-memory self-signed cert generated at bind time), and binding the
+# UDP/QUIC listener alongside the TCP one via `rsync_io`'s `QuicAcceptor`. The
+# accept()->session handoff lands under a later QUIC build-out task; this stage
+# holds the bound acceptors ready for it. Pulls `rsync_io` (with its `quic`
+# feature) only when enabled, so default builds stay dependency-free and
+# byte-identical. See docs/design/quic-transport-policy.md (decision A).
+quic = ["dep:rsync_io", "rsync_io/quic"]
 # macOS-only, default-off: source accepted connections in the daemon accept
 # loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
 # engines' per-listener `poll(2)` park, giving a single kernel wait over all
@@ -79,6 +81,8 @@ platform = { path = "../platform" }
 protocol = { path = "../protocol" }
 logging = { path = "../logging" }
 logging-sink = { path = "../logging-sink" }
+# Pulled only by the `quic` feature for `QuicAcceptor` (the UDP/QUIC listener).
+rsync_io = { path = "../rsync_io", default-features = false, optional = true }
 fs2 = "0.4"
 socket2 = { workspace = true, features = ["all"] }
 tempfile = { workspace = true }

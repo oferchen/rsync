@@ -2283,3 +2283,89 @@ fn kqueue_engine_delivers_queued_connection_without_sleep_floor() {
     engine.shutdown();
     drop(client);
 }
+
+// QUIC/UDP listener binding (QUIC-6c). The datagram sibling of the TCP
+// `bind_listeners_per_family` pipeline: it reuses `resolve_bind_addresses` and
+// mirrors the per-family tolerance. These tests pin dual-stack binding, the
+// IPv6->IPv4 fallback, single-family error propagation, the effective-port
+// wiring, and the identity mapping. Unix-only, feature-gated - the module they
+// exercise only compiles under `cfg(all(unix, feature = "quic"))`.
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_server_identity_maps_both_variants() {
+    assert_eq!(
+        quic_server_identity(&QuicIdentity::Ephemeral),
+        rsync_io::quic::QuicServerIdentity::Ephemeral,
+    );
+    let cert = std::path::PathBuf::from("/etc/oc-rsync/quic/server.pem");
+    let key = std::path::PathBuf::from("/etc/oc-rsync/quic/server.key");
+    assert_eq!(
+        quic_server_identity(&QuicIdentity::Files {
+            cert: cert.clone(),
+            key: key.clone(),
+        }),
+        rsync_io::quic::QuicServerIdentity::PemFiles { cert, key },
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn bind_quic_listeners_binds_dual_stack_loopback() {
+    // The same resolved dual-stack list TCP uses (IPv6 first, IPv4 second)
+    // yields one QUIC acceptor per family. Loopback addresses on port 0
+    // keep the test hermetic - no privileged port, no shared-port race.
+    let bind_addresses = vec![
+        IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+        IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    ];
+
+    let acceptors =
+        bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
+            .expect("dual-stack QUIC bind");
+
+    assert_eq!(acceptors.len(), 2, "both families must bind a QUIC listener");
+    let bound: Vec<SocketAddr> = acceptors
+        .iter()
+        .map(|a| a.local_addr().expect("local addr"))
+        .collect();
+    assert!(bound[0].is_ipv6(), "first acceptor must be IPv6");
+    assert!(bound[1].is_ipv4(), "second acceptor must be IPv4");
+    assert!(
+        bound.iter().all(|a| a.port() != 0),
+        "the kernel must assign an ephemeral UDP port to each acceptor"
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn bind_quic_listeners_falls_back_from_ipv6_to_ipv4() {
+    // Mirror the TCP per-family tolerance: an unreachable IPv6 documentation
+    // address (RFC 3849 2001:db8::/32) fails to bind, the helper warns and
+    // continues, and the reachable IPv4 loopback still produces a working
+    // acceptor instead of failing the whole daemon.
+    let unreachable_v6 = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1));
+    let reachable_v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let bind_addresses = vec![unreachable_v6, reachable_v4];
+
+    let acceptors =
+        bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
+            .expect("IPv4 fallback must bind when IPv6 is unreachable");
+
+    assert_eq!(acceptors.len(), 1, "only the reachable IPv4 family binds");
+    let bound = acceptors[0].local_addr().expect("local addr");
+    assert!(bound.is_ipv4(), "fallback acceptor must be IPv4, got {bound}");
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn bind_quic_listeners_single_family_propagates_error() {
+    // With only one configured address there is no family to fall back to, so a
+    // bind failure propagates verbatim - matching the TCP path and the
+    // non-dual-stack branch of the loop.
+    let bind_addresses = vec![IpAddr::V6(std::net::Ipv6Addr::new(
+        0x2001, 0x0db8, 0, 0, 0, 0, 0, 1,
+    ))];
+
+    bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
+        .expect_err("the single unreachable address must fail the QUIC bind");
+}

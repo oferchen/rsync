@@ -38,6 +38,16 @@ fn serve_connections(
     let acceptor_threads = options.acceptor_threads();
     let socket_options_str = options.socket_options().map(str::to_string);
     let tcp_fastopen_mode = options.tcp_fastopen();
+
+    // Capture the QUIC listener inputs before `options` is destructured. The
+    // UDP/QUIC listener binds the same resolved address set as TCP but only
+    // when QUIC is configured; unconfigured (the default, even under
+    // `--all-features`) leaves this `None` and no UDP socket is opened.
+    #[cfg(all(unix, feature = "quic"))]
+    let quic_bind = options
+        .quic_listener_enabled()
+        .then(|| (options.effective_quic_port(), options.resolve_quic_identity()));
+
     let RuntimeOptions {
         bind_address,
         port,
@@ -216,6 +226,42 @@ fn serve_connections(
             }
         }
     }
+
+    // QUIC/UDP listener (oc extension): bind it alongside the TCP listeners,
+    // over the identical `resolve_bind_addresses` set, while CAP_NET_BIND_SERVICE
+    // is still held (the default port 873 is privileged). The bound acceptors
+    // are held for the whole daemon lifetime; the accept()->session handoff
+    // lands under QUIC task #55, so for now they simply keep the UDP sockets
+    // reserved next to the TCP ones.
+    #[cfg(all(unix, feature = "quic"))]
+    let _quic_acceptors: Vec<QuicAcceptor> = if let Some((quic_port, quic_identity)) = &quic_bind {
+        match bind_quic_listeners_per_family(
+            &bind_addresses,
+            *quic_port,
+            quic_identity,
+            log_sink.as_ref(),
+        ) {
+            Ok(acceptors) => {
+                if let Some(log) = log_sink.as_ref() {
+                    let addrs: Vec<String> = acceptors
+                        .iter()
+                        .filter_map(|a| a.local_addr().ok())
+                        .map(|a| a.to_string())
+                        .collect();
+                    let text = format!("QUIC listener bound on {}", addrs.join(" and "));
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                acceptors
+            }
+            Err(error) => {
+                let requested_addr = SocketAddr::new(bind_addresses[0], *quic_port);
+                return Err(bind_error(requested_addr, error));
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
     // LSM-CAP.2: CAP_NET_BIND_SERVICE is no longer needed once the listener
     // has bound. Drop it from effective, permitted, and bounding sets so a
