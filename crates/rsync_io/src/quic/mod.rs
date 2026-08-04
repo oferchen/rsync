@@ -67,7 +67,8 @@ use driver::{Role, spawn_io};
 
 pub use trust::{
     Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
-    default_known_hosts_path, resolve, system_roots, tofu, tofu_file,
+    default_known_hosts_path, load_private_ca, private_ca_file, resolve, system_roots, tofu,
+    tofu_file,
 };
 
 /// ALPN protocol identifier advertised on every QUIC connection.
