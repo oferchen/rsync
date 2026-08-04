@@ -258,6 +258,22 @@ fn apply_global_directive(
             let resolved = resolve_config_relative_path(path, trimmed);
             store_global_directive(&mut state.quic_key_file, resolved, canonical, line_number);
         }
+        // oc extension (no upstream counterpart). `quic port` selects the port
+        // the QUIC listener binds; unset, the listener shares the daemon TCP
+        // `port` (873 by default). Value handling mirrors the TCP `port`
+        // directive: `parse_atoi` clamped into the u16 range, then a 0 coerced
+        // to the well-known rsync port 873, matching the `port = 0` / `--port 0`
+        // coercion in parsing.rs (upstream options.c). Global-only like the QUIC
+        // identity directives. See docs/design/quic-transport-policy.md.
+        #[cfg(feature = "quic")]
+        "quicport" => {
+            let mut parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
+            if parsed == 0 {
+                parsed = DEFAULT_PORT;
+            }
+
+            store_global_directive(&mut state.quic_port, parsed, canonical, line_number);
+        }
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
         "usechroot" => {

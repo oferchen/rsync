@@ -56,6 +56,15 @@ pub(crate) struct RuntimeOptions {
     quic_cert_file: Option<PathBuf>,
     #[cfg(feature = "quic")]
     quic_key_file: Option<PathBuf>,
+    /// QUIC listener port from the `quic port` global directive (oc extension).
+    ///
+    /// `None` means the QUIC listener shares the daemon TCP `port` (873 by
+    /// default); a value here overrides that independently. A `quic port = 0`
+    /// coerces to the well-known rsync port 873, mirroring the `--port 0` /
+    /// `port = 0` coercion in `parsing.rs`. Global-only, like the QUIC identity
+    /// directives. See docs/design/quic-transport-policy.md.
+    #[cfg(feature = "quic")]
+    quic_port: Option<u16>,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
     syslog_facility: Option<String>,
@@ -159,6 +168,8 @@ impl Default for RuntimeOptions {
             quic_cert_file: None,
             #[cfg(feature = "quic")]
             quic_key_file: None,
+            #[cfg(feature = "quic")]
+            quic_port: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
             syslog_facility: None,
