@@ -221,9 +221,9 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
 /// Pure and platform-independent so it is unit-testable on every host;
 /// [`escape_render_path`] invokes it only under `cfg(windows)`, where `\` is the
 /// native separator. A naive rewrite of every backslash would corrupt the
-/// leading `\` of a `\#ooo` escape - a non-ASCII name such as `café`, escaped to
-/// `caf\#303\#251` in the default (non-`-8`) mode, would become `caf/#303/#251`
-/// - so the leading backslash of a `\#` + three-digit sequence is preserved.
+/// leading `\` of a `\#ooo` escape (a non-ASCII name such as `café`, escaped to
+/// `caf\#303\#251` in the default non-`-8` mode, would become `caf/#303/#251`),
+/// so the leading backslash of a `\#` + three-digit sequence is preserved.
 ///
 /// upstream: rsync stores filenames with `/` separators before logging
 /// (flist.c), so `filtered_fwrite` never sees a `\` separator; oc-rsync retains

@@ -142,12 +142,12 @@ fn escape_bytes_slow(input: &[u8], allow_8bit: bool) -> Vec<u8> {
 /// WTF-8 bytes are not exposed by stable std. For every well-formed Unicode
 /// path, `to_str()` yields the exact UTF-8 bytes with no substitution, so
 /// escaping them stays byte-faithful and mirrors upstream. Only a path that is
-/// ill-formed UTF-16 - a lone surrogate, which cannot round-trip through `&str`
-/// - falls back to `to_string_lossy()`, replacing the surrogate with U+FFFD.
-/// That single lossy case is a documented platform limitation, not an
-/// accidental transcode of otherwise-representable filenames: stable std offers
-/// no API to recover the raw WTF-8 bytes, so full byte-fidelity for lone
-/// surrogates is unreachable on Windows today.
+/// ill-formed UTF-16 (a lone surrogate, which cannot round-trip through `&str`)
+/// falls back to `to_string_lossy()`, replacing the surrogate with U+FFFD. That
+/// single lossy case is a documented platform limitation, not an accidental
+/// transcode of otherwise-representable filenames: stable std offers no API to
+/// recover the raw WTF-8 bytes, so full byte-fidelity for lone surrogates is
+/// unreachable on Windows today.
 pub(crate) fn escape_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
     #[cfg(unix)]
     {
