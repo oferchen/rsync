@@ -371,6 +371,19 @@ impl Rope {
     pub fn current_ceiling(&self) -> usize {
         self.semaphore.current_cap()
     }
+
+    /// A shared handle to the admission semaphore this rope drives.
+    ///
+    /// Lets a caller observe live admission state ([`in_flight`], [`current_cap`])
+    /// or re-attach a fresh rope with a different sizing policy over the same
+    /// semaphore without disturbing in-flight permits.
+    ///
+    /// [`in_flight`]: crate::concurrent_delta::work_queue::AdaptiveSemaphore::in_flight
+    /// [`current_cap`]: crate::concurrent_delta::work_queue::AdaptiveSemaphore::current_cap
+    #[must_use]
+    pub fn semaphore_arc(&self) -> Arc<AdaptiveSemaphore> {
+        Arc::clone(&self.semaphore)
+    }
 }
 
 #[cfg(test)]
