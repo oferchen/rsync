@@ -315,6 +315,25 @@ mod tests {
         assert_eq!(password, b"stdin-file".to_vec());
     }
 
+    /// WHY (security, deliberate no-op - pinned): the `--password-file`
+    /// permission check is a `#[cfg(unix)]` block, so on Windows it is skipped
+    /// entirely (NTFS exposes no POSIX mode bits to compare against 0600),
+    /// matching upstream rsync. This pins that the skip is intentional, not an
+    /// accidental gap: a password file loads regardless of its Windows ACL.
+    /// The Unix sibling `load_password_file_rejects_group_or_world_permissions`
+    /// pins the opposite - together they lock the platform split in place.
+    #[cfg(not(unix))]
+    #[test]
+    fn load_password_file_accepts_any_permission_off_unix() {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(b"secret\n").expect("write secret");
+        let path = file.into_temp_path();
+
+        let loaded = load_password_file(path.as_ref())
+            .expect("Windows deliberately accepts any-permission password files");
+        assert_eq!(loaded, b"secret".to_vec());
+    }
+
     #[test]
     #[cfg(unix)]
     fn load_password_file_rejects_non_file_paths() {

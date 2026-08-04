@@ -15,6 +15,8 @@
 
 use std::io;
 use std::path::Path;
+#[cfg(any(not(unix), test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Applies a chroot jail to the given path.
 ///
@@ -159,9 +161,68 @@ fn set_supplementary_groups_libc(gids: &[u32]) -> io::Result<()> {
     Ok(())
 }
 
-/// No-op privilege drop on non-Unix platforms.
+/// Warning emitted once per process when a privilege drop to a numeric uid/gid
+/// is requested on a platform that has no POSIX `setuid`/`setgid`.
+///
+/// Named so its wording can be pinned by a test. Windows offers only
+/// account-name impersonation (see [`drop_privileges_windows`]), which needs an
+/// account NAME rather than a numeric id, so a daemon configured with a numeric
+/// `uid`/`gid` cannot drop here and keeps its current privileges.
+#[cfg(any(not(unix), test))]
+pub(crate) const PRIVILEGE_DROP_UNSUPPORTED_WARNING: &str = "warning: privilege drop to the configured uid/gid is NOT supported on this platform; \
+the process continues WITHOUT dropping privileges. Windows provides only account-name \
+impersonation, not POSIX setuid/setgid - configure an account to impersonate instead.";
+
+/// Reports whether a privilege drop was actually requested: a target uid, or a
+/// non-empty target group set.
+///
+/// An all-`None`/empty request is a genuine no-op on every platform (the Unix
+/// path also leaves the identity untouched for it), so it must stay silent -
+/// only a request that cannot be honored warrants a warning.
+#[cfg(any(not(unix), test))]
+#[must_use]
+fn privilege_drop_requested(uid: Option<u32>, gids: &[u32]) -> bool {
+    uid.is_some() || !gids.is_empty()
+}
+
+/// Runs `emit` at most once across every call sharing `already_warned`, and
+/// only when `should_warn` is true.
+///
+/// Extracted as a pure fn so the once-only + request-gating contract is
+/// unit-testable on any host, independent of the `#[cfg(not(unix))]` emitters
+/// that are compiled out on Unix. `Ordering::Relaxed` is sufficient: the only
+/// shared state is the boolean latch and the message carries no other data.
+#[cfg(any(not(unix), test))]
+fn warn_once_if(should_warn: bool, already_warned: &AtomicBool, emit: impl FnOnce()) {
+    if should_warn && !already_warned.swap(true, Ordering::Relaxed) {
+        emit();
+    }
+}
+
+/// Privilege-drop stub for non-Unix platforms - there is no POSIX
+/// `setuid`/`setgid` to perform.
+///
+/// # Windows privilege model
+///
+/// Windows has no POSIX uid/gid identity, so a numeric privilege drop is
+/// impossible. The only mechanism Windows offers is thread-level impersonation
+/// (`LogonUserW` + `ImpersonateLoggedOnUser`, see [`drop_privileges_windows`]),
+/// which requires an account NAME rather than a numeric uid/gid. A daemon that
+/// resolved a numeric `uid`/`gid` to drop to therefore cannot honor the request
+/// on this platform.
+///
+/// Skipping the drop *silently* is a security bug: a misconfigured Windows
+/// daemon would keep running with full privileges while the operator believes
+/// it dropped them. So when a drop was genuinely requested (a uid or a
+/// non-empty group set) this emits one loud warning per process via the shared
+/// warn-once latch, then returns `Ok(())` so the caller decides whether the
+/// condition is fatal. An empty request stays silent - a true no-op everywhere.
 #[cfg(not(unix))]
-pub fn drop_privileges(_uid: Option<u32>, _gids: &[u32]) -> io::Result<()> {
+pub fn drop_privileges(uid: Option<u32>, gids: &[u32]) -> io::Result<()> {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    warn_once_if(privilege_drop_requested(uid, gids), &WARNED, || {
+        eprintln!("{PRIVILEGE_DROP_UNSUPPORTED_WARNING}");
+    });
     Ok(())
 }
 
@@ -205,11 +266,18 @@ pub fn effective_uid() -> u32 {
 /// account names and used for impersonation on Windows.
 #[cfg(windows)]
 pub fn drop_privileges_windows(
-    _uid: Option<u32>,
-    _gid: Option<u32>,
+    uid: Option<u32>,
+    gid: Option<u32>,
     account_name: Option<&str>,
 ) -> io::Result<()> {
     let Some(name) = account_name else {
+        // No account to impersonate: Windows cannot drop to a numeric uid/gid,
+        // so warn loudly (once) when a drop was actually requested instead of
+        // returning Ok silently and leaving the process privileged.
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        warn_once_if(uid.is_some() || gid.is_some(), &WARNED, || {
+            eprintln!("{PRIVILEGE_DROP_UNSUPPORTED_WARNING}");
+        });
         return Ok(());
     };
 
@@ -226,6 +294,22 @@ pub fn drop_privileges_windows(
     Ok(())
 }
 
+/// Splits a Windows account specifier into its optional `DOMAIN` and `user`
+/// parts at the first backslash (`DOMAIN\user` -> `(Some("DOMAIN"), "user")`;
+/// a plain `user` -> `(None, "user")`).
+///
+/// Kept pure and host-agnostic so the parse is unit-testable on Linux CI,
+/// separate from the `LogonUserW` FFI it feeds - the split must happen before
+/// the two halves are widened to UTF-16 and handed to the Win32 call.
+#[cfg(any(windows, test))]
+#[must_use]
+fn split_account_name(account_name: &str) -> (Option<&str>, &str) {
+    match account_name.split_once('\\') {
+        Some((domain, user)) => (Some(domain), user),
+        None => (None, account_name),
+    }
+}
+
 /// Performs Windows user impersonation via LogonUserW + ImpersonateLoggedOnUser.
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -236,10 +320,7 @@ fn windows_impersonate(account_name: &str) -> io::Result<()> {
     };
     use windows::core::PCWSTR;
 
-    let (domain, user) = match account_name.split_once('\\') {
-        Some((d, u)) => (Some(d), u),
-        None => (None, account_name),
-    };
+    let (domain, user) = split_account_name(account_name);
 
     let user_wide: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
     let domain_wide: Option<Vec<u16>> =
@@ -449,6 +530,78 @@ mod tests {
                 err.kind()
             ),
         }
+    }
+
+    /// WHY (security): the non-Unix `drop_privileges` cannot perform a POSIX
+    /// setuid/setgid, so it is a no-op. It historically returned `Ok` SILENTLY,
+    /// meaning a Windows daemon configured to drop to a uid/gid kept running
+    /// fully privileged with no operator-visible signal - a privilege-escalation
+    /// footgun. The fix routes a requested-but-unsupported drop through the
+    /// warn-once latch. This pins that the latch fires EXACTLY once across many
+    /// connection attempts (never per-connection spam), mirroring the real fn
+    /// body `warn_once_if(privilege_drop_requested(...), &WARNED, emit)` so it
+    /// runs on Linux CI without a real setuid or a Windows host.
+    #[test]
+    fn privilege_drop_warns_exactly_once_when_requested() {
+        let warned = AtomicBool::new(false);
+        let count = std::cell::Cell::new(0u32);
+        for _ in 0..1000 {
+            warn_once_if(privilege_drop_requested(Some(1000), &[27]), &warned, || {
+                count.set(count.get() + 1)
+            });
+        }
+        assert_eq!(count.get(), 1, "a requested drop must warn exactly once");
+        assert!(warned.load(Ordering::Relaxed));
+    }
+
+    /// WHY: an empty request (no uid, no gids) is a legitimate no-op on every
+    /// platform - the Unix path also leaves the identity untouched for it. It
+    /// must NOT warn, otherwise every unprivileged daemon start would emit a
+    /// spurious scare. Pins the request-gating half of the contract.
+    #[test]
+    fn privilege_drop_stays_silent_when_nothing_requested() {
+        let warned = AtomicBool::new(false);
+        let count = std::cell::Cell::new(0u32);
+        for _ in 0..1000 {
+            warn_once_if(privilege_drop_requested(None, &[]), &warned, || {
+                count.set(count.get() + 1)
+            });
+        }
+        assert_eq!(count.get(), 0);
+        assert!(!warned.load(Ordering::Relaxed));
+    }
+
+    /// `privilege_drop_requested` is the predicate that decides whether the
+    /// non-Unix no-op is silent or loud; a uid OR any gid means a drop was asked
+    /// for.
+    #[test]
+    fn privilege_drop_requested_tracks_uid_and_gids() {
+        assert!(privilege_drop_requested(Some(1000), &[]));
+        assert!(privilege_drop_requested(None, &[27]));
+        assert!(privilege_drop_requested(Some(0), &[0]));
+        assert!(!privilege_drop_requested(None, &[]));
+    }
+
+    /// The warning must name the platform limitation and make the security
+    /// consequence unmissable, so the operator understands the process is still
+    /// privileged.
+    #[test]
+    fn privilege_drop_warning_names_platform_and_consequence() {
+        assert!(PRIVILEGE_DROP_UNSUPPORTED_WARNING.contains("privilege"));
+        assert!(PRIVILEGE_DROP_UNSUPPORTED_WARNING.contains("Windows"));
+        assert!(PRIVILEGE_DROP_UNSUPPORTED_WARNING.contains("WITHOUT"));
+    }
+
+    /// WHY: `DOMAIN\user` must be split into domain + user BEFORE the two halves
+    /// are widened to UTF-16 and passed to `LogonUserW`. Pins the pure parse on
+    /// Linux CI (the FFI itself only compiles on Windows): first backslash is
+    /// the delimiter, a plain name yields no domain, and any trailing
+    /// backslashes stay in the user part rather than being re-split.
+    #[test]
+    fn split_account_name_parses_domain_and_user() {
+        assert_eq!(split_account_name(r"DOMAIN\user"), (Some("DOMAIN"), "user"));
+        assert_eq!(split_account_name("user"), (None, "user"));
+        assert_eq!(split_account_name(r"D\a\b"), (Some("D"), r"a\b"));
     }
 
     #[cfg(unix)]
