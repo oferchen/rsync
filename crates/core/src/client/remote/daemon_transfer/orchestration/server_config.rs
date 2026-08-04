@@ -173,7 +173,7 @@ pub(crate) fn build_server_config_for_generator(
 
     // upstream: io.c:834-862 / main.c:1068 - on an rsync:// push the local
     // client IS the sender and paces its own outbound socket writes. Carry the
-    // parsed `--bwlimit` rate/burst onto the in-process generator config; the
+    // parsed `--bwlimit` rate onto the in-process generator config; the
     // daemon receiver ignores its forwarded copy (main.c:1068).
     server_config.connection.bwlimit = config
         .bandwidth_limit()

@@ -961,7 +961,6 @@ fn test_accept_loop_state<'a>(
         notifier,
         client_socket_options: Arc::new(Vec::new()),
         bandwidth_limit: None,
-        bandwidth_burst: None,
         reverse_lookup: false,
         proxy_protocol: false,
     }

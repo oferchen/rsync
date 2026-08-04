@@ -289,8 +289,8 @@ pub struct ConnectionConfig {
     /// [`implied_source_args`]: Self::implied_source_args
     /// [`files_from_data`]: Self::files_from_data
     pub implied_skip_daemon_module: bool,
-    /// Effective `--bwlimit` rate (and optional burst) applied to the sender's
-    /// outbound socket writes.
+    /// Effective `--bwlimit` rate applied to the sender's outbound socket
+    /// writes.
     ///
     /// `Some` only when the local process is the sender (`am_sender`) and a
     /// non-zero limit is in effect: a client push, an SSH `--server --sender`,

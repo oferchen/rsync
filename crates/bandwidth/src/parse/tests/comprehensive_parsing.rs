@@ -256,7 +256,6 @@ fn parse_bandwidth_argument_trailing_garbage() {
 fn parse_bandwidth_limit_simple() {
     let result = parse_bandwidth_limit("1000").unwrap();
     assert_eq!(result.rate(), Some(nz(1000 * 1024)));
-    assert!(result.burst().is_none());
 }
 
 #[test]
@@ -267,51 +266,10 @@ fn parse_bandwidth_limit_zero_unlimited() {
 }
 
 #[test]
-fn parse_bandwidth_limit_with_burst() {
-    let result = parse_bandwidth_limit("1000:500").unwrap();
-    assert_eq!(result.rate(), Some(nz(1000 * 1024)));
-    assert_eq!(result.burst(), Some(nz(500 * 1024)));
-    assert!(result.limit_specified());
-    assert!(result.burst_specified());
-}
-
-#[test]
-fn parse_bandwidth_limit_with_zero_burst() {
-    // Rate with zero burst
-    let result = parse_bandwidth_limit("1000:0").unwrap();
-    assert_eq!(result.rate(), Some(nz(1000 * 1024)));
-    assert!(result.burst().is_none()); // Zero burst means None
-}
-
-#[test]
-fn parse_bandwidth_limit_unlimited_with_burst() {
-    // "0:500" means unlimited rate, burst ignored
-    let result = parse_bandwidth_limit("0:500").unwrap();
-    assert!(result.is_unlimited());
-    assert!(result.limit_specified());
-    // Burst should be None when rate is unlimited
-}
-
-#[test]
-fn parse_bandwidth_limit_explicit_suffixes() {
-    let result = parse_bandwidth_limit("10m:5m").unwrap();
-    assert_eq!(result.rate(), Some(nz(10 * 1024 * 1024)));
-    assert_eq!(result.burst(), Some(nz(5 * 1024 * 1024)));
-}
-
-#[test]
-fn parse_bandwidth_limit_different_suffixes() {
-    let result = parse_bandwidth_limit("1g:512k").unwrap();
-    assert_eq!(result.rate(), Some(nz(1024 * 1024 * 1024)));
-    assert_eq!(result.burst(), Some(nz(512 * 1024)));
-}
-
-#[test]
-fn parse_bandwidth_limit_decimal_values() {
-    let result = parse_bandwidth_limit("1.5m:0.5m").unwrap();
-    // Values will be rounded
-    assert!(result.rate().is_some());
-    assert!(result.burst().is_some());
+fn parse_bandwidth_limit_rejects_colon() {
+    // A colon is not valid size syntax; RATE:BURST is no longer accepted.
+    let result = parse_bandwidth_limit("1000:500");
+    assert!(result.is_err());
 }
 
 #[test]
@@ -351,7 +309,7 @@ fn parse_bandwidth_limit_invalid_rate() {
 }
 
 #[test]
-fn parse_bandwidth_limit_invalid_burst() {
+fn parse_bandwidth_limit_invalid_after_colon() {
     let result = parse_bandwidth_limit("1000:invalid");
     assert!(result.is_err());
 }
@@ -365,13 +323,6 @@ fn parse_bandwidth_limit_multiple_colons() {
 #[test]
 fn parse_bandwidth_limit_rate_too_small() {
     let result = parse_bandwidth_limit("100b");
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), BandwidthParseError::TooSmall);
-}
-
-#[test]
-fn parse_bandwidth_limit_burst_too_small() {
-    let result = parse_bandwidth_limit("1000:100b");
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), BandwidthParseError::TooSmall);
 }
@@ -463,13 +414,6 @@ fn complex_all_features() {
 fn components_from_str_simple() {
     let components: BandwidthLimitComponents = "1000".parse().unwrap();
     assert_eq!(components.rate(), Some(nz(1000 * 1024)));
-}
-
-#[test]
-fn components_from_str_with_burst() {
-    let components: BandwidthLimitComponents = "1000:500".parse().unwrap();
-    assert_eq!(components.rate(), Some(nz(1000 * 1024)));
-    assert_eq!(components.burst(), Some(nz(500 * 1024)));
 }
 
 #[test]

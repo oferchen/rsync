@@ -17,7 +17,6 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - Minimum sleep threshold handling (MINIMUM_SLEEP_MICROS = 100ms)
 - Rate changes during operation (slow→fast, fast→slow)
 - Debt forgiveness over elapsed time
-- Burst clamping to prevent excessive delays
 - Edge cases: 1 B/s to u64::MAX B/s
 - Realistic file transfer simulations
 - **Coverage: Token bucket algorithm, debt accumulation, timing precision**
@@ -25,18 +24,17 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 #### Core Implementation (`limiter/core.rs` tests)
 - BandwidthLimiter construction and configuration
 - `register()` method with various write sizes
-- `update_limit()` and `update_configuration()` state transitions
+- `update_limit()` state transitions
 - `reset()` behavior preserving configuration
-- Accessor methods (limit_bytes, burst_bytes, write_max_bytes)
+- Accessor methods (limit_bytes, write_max_bytes)
 - `recommended_read_size()` boundary conditions
 - Debt saturation and overflow prevention
 - Clone and Debug trait implementations
 - **Coverage: 95%+ of core.rs**
 
 #### Configuration Management (`limiter/tests/configuration.rs`)
-- Limiter construction with/without burst
+- Limiter construction
 - Configuration updates mid-operation
-- Burst addition/removal
 - State preservation during updates
 - **Coverage: Configuration change logic**
 
@@ -45,15 +43,13 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - Disabling limiters (rate = None)
 - Updating existing limiters
 - Min() precedence for rates
-- Burst-only updates
-- Flag tracking (limit_specified, burst_specified)
-- Edge cases: very small/large limits, burst > limit
+- Flag tracking (limit_specified)
+- Edge cases: very small/large limits
 - **Coverage: 100% of apply_effective_limit function**
 
 #### Pacing Tests (`limiter/tests/pacing.rs`)
 - Chunk size recommendations
 - Sub-KiB/s rate handling
-- Burst overrides and clamping
 - Debt accumulation across small writes
 - Sleep recording accuracy
 - **Coverage: Pacing schedule generation**
@@ -99,7 +95,7 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - **Exactly minimum**: 512B → Valid
 - **Zero values**: 0, 0K, 0.0, +0 → None (unlimited)
 - **Rounding**: Alignment to 1024 or 1000 boundaries
-- **Burst limits**: "rate:burst", "0:burst", "rate:0" → Valid
+- **Colon rejection**: "rate:burst", "100:50" → Invalid
 - **Unicode/emoji**: "100０", "100📊" → Invalid
 - **Case sensitivity**: k/K, m/M, g/G → Both valid
 - **Very long input**: 100-digit numbers → TooLarge
@@ -108,8 +104,7 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - **Coverage: 95%+ of parse.rs error paths**
 
 #### Limit Parsing (`parse/tests/limit.rs`)
-- Rate:burst syntax
-- Colon handling
+- Colon rejection
 - Flag propagation
 - **Coverage: parse_bandwidth_limit() function**
 
@@ -179,7 +174,6 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - ✓ Token bucket algorithm
 - ✓ Leaky bucket behavior
 - ✓ Debt accumulation/forgiveness
-- ✓ Burst clamping
 - ✓ Sleep threshold (MINIMUM_SLEEP_MICROS)
 - ✓ Rate changes during operation
 - ✓ Elapsed time compensation
@@ -205,8 +199,6 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - ✓ Zero-byte writes
 - ✓ Minimum rate (1 B/s)
 - ✓ Maximum rate (u64::MAX)
-- ✓ Burst larger than writes
-- ✓ Burst smaller than MIN_WRITE_MAX
 - ✓ Very large writes (usize::MAX / 2)
 - ✓ Rapid succession writes
 - ✓ Configuration changes mid-transfer
@@ -272,7 +264,6 @@ Comprehensive test suite for the bandwidth limiter crate targeting 95%+ coverage
 - Realistic file transfer scenarios
 - Multi-chunk transfers
 - Varying chunk sizes
-- Burst traffic patterns
 
 ### Error Path Testing
 - All parse error types (Invalid, TooSmall, TooLarge)
@@ -338,7 +329,6 @@ Comprehensive token bucket and rate limiting algorithm tests covering:
 - Token bucket with elapsed time
 - Leaky bucket behavior
 - Rate changes during transfer
-- Burst behavior and clamping
 - Edge rates (1 B/s to u64::MAX)
 - Timing precision
 - Realistic transfer scenarios
@@ -352,7 +342,7 @@ Exhaustive parser edge case coverage:
 - Decimal point handling
 - Exponent edge cases
 - All suffix variations
-- Burst limit syntax
+- Colon rejection
 - Below minimum value handling
 - Rounding behavior
 - Default unit behavior

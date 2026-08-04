@@ -759,11 +759,6 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
                     .bandwidth_limit()
                     .map(BandwidthLimit::bytes_per_second),
             )
-            .bandwidth_burst(
-                config
-                    .bandwidth_limit()
-                    .and_then(BandwidthLimit::burst_bytes),
-            )
     }
 
     fn apply_compression(

@@ -18,14 +18,10 @@ fn runtime_options_load_modules_from_config_file() {
     assert_eq!(modules[0].name, "docs");
     assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
     assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
-    assert!(modules[0].bandwidth_limit().is_none());
-    assert!(modules[0].bandwidth_burst().is_none());
     assert!(modules[0].listable());
     assert_eq!(modules[1].name, "logs");
     assert_eq!(modules[1].path, PathBuf::from("/var/log"));
     assert!(modules[1].comment.is_none());
-    assert!(modules[1].bandwidth_limit().is_none());
-    assert!(modules[1].bandwidth_burst().is_none());
     assert!(modules[1].listable());
     assert!(modules.iter().all(ModuleDefinition::use_chroot));
 }

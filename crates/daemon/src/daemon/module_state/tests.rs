@@ -1,6 +1,6 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
@@ -262,23 +262,6 @@ fn module_definition_inherit_chmod_preserves_existing() {
     def.inherit_outgoing_chmod(Some("new"));
     assert_eq!(def.incoming_chmod.as_deref(), Some("existing"));
     assert_eq!(def.outgoing_chmod.as_deref(), Some("existing"));
-}
-
-#[test]
-fn module_definition_bandwidth_accessors() {
-    let def = ModuleDefinition {
-        bandwidth_limit: NonZeroU64::new(1000),
-        bandwidth_limit_specified: true,
-        bandwidth_burst: NonZeroU64::new(2000),
-        bandwidth_burst_specified: true,
-        bandwidth_limit_configured: true,
-        ..Default::default()
-    };
-    assert_eq!(def.bandwidth_limit(), NonZeroU64::new(1000));
-    assert!(def.bandwidth_limit_specified());
-    assert_eq!(def.bandwidth_burst(), NonZeroU64::new(2000));
-    assert!(def.bandwidth_burst_specified());
-    assert!(def.bandwidth_limit_configured());
 }
 
 #[test]

@@ -1,16 +1,39 @@
 // Bandwidth-limit parsing and daemon error constructors.
 //
-// Parses runtime and config-file `bwlimit` values and builds the `DaemonError`
+// Parses the daemon `--bwlimit` value and builds the `DaemonError`
 // instances used throughout daemon configuration parsing: config errors,
 // parse/IO errors, repeated-CLI-argument errors, module-name validation, and
 // network (bind/accept/stream) errors. Exit codes mirror upstream rsync.
 
-fn parse_runtime_bwlimit(value: &OsString) -> Result<BandwidthLimitComponents, DaemonError> {
+/// Parses the daemon `--bwlimit` value as a bare KiB integer.
+///
+/// upstream: options.c:862 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
+/// - the daemon `--bwlimit` is a plain integer number of KiB per second, unlike
+///   the client `--bwlimit` (options.c:1714) which accepts a size suffix. There is
+///   no `:BURST` component. `0` disables throttling; the returned value is the
+///   byte-per-second rate (KiB * 1024).
+fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
     let text = value.to_string_lossy();
-    match parse_bandwidth_limit(&text) {
-        Ok(components) => Ok(components),
-        Err(error) => Err(runtime_bwlimit_error(&text, error)),
+    let kib: i64 = text
+        .trim()
+        .parse()
+        .map_err(|_| runtime_bwlimit_error(&text))?;
+    if kib < 0 {
+        return Err(runtime_bwlimit_error(&text));
     }
+    if kib == 0 {
+        return Ok(None);
+    }
+    let bytes = (kib as u64)
+        .checked_mul(1024)
+        .ok_or_else(|| runtime_bwlimit_error(&text))?;
+    Ok(NonZeroU64::new(bytes))
+}
+
+fn runtime_bwlimit_error(value: &str) -> DaemonError {
+    config_error(format!(
+        "--bwlimit={value} is invalid (expected a whole number of KiB/s, or 0 for unlimited)"
+    ))
 }
 
 fn parse_config_bwlimit(
@@ -22,17 +45,6 @@ fn parse_config_bwlimit(
         Ok(components) => Ok(components),
         Err(error) => Err(config_bwlimit_error(path, line, value, error)),
     }
-}
-
-fn runtime_bwlimit_error(value: &str, error: BandwidthParseError) -> DaemonError {
-    let text = match error {
-        BandwidthParseError::Invalid => format!("--bwlimit={value} is invalid"),
-        BandwidthParseError::TooSmall => {
-            format!("--bwlimit={value} is too small (min: 512 or 0 for unlimited)")
-        }
-        BandwidthParseError::TooLarge => format!("--bwlimit={value} is too large"),
-    };
-    config_error(text)
 }
 
 fn config_bwlimit_error(

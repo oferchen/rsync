@@ -32,39 +32,6 @@ fn limiter_preserves_buffer_for_fast_rates() {
 }
 
 #[test]
-fn limiter_respects_custom_burst() {
-    let limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(8 * 1024 * 1024).unwrap(),
-        NonZeroU64::new(2048),
-    );
-    assert_eq!(limiter.recommended_read_size(8192), 2048);
-}
-
-#[test]
-fn limiter_write_max_bytes_respects_burst_override() {
-    let capped = BandwidthLimiter::with_burst(
-        NonZeroU64::new(8 * 1024 * 1024).unwrap(),
-        Some(NonZeroU64::new(2048).unwrap()),
-    );
-    assert_eq!(capped.write_max_bytes(), 2048);
-
-    let clamped = BandwidthLimiter::with_burst(
-        NonZeroU64::new(8 * 1024 * 1024).unwrap(),
-        Some(NonZeroU64::new(128).unwrap()),
-    );
-    assert_eq!(clamped.write_max_bytes(), 512);
-}
-
-#[test]
-fn limiter_clamps_small_burst_to_minimum_write_size() {
-    let limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
-    let limiter = BandwidthLimiter::with_burst(limit, NonZeroU64::new(128));
-
-    assert_eq!(limiter.recommended_read_size(16), 16);
-    assert_eq!(limiter.recommended_read_size(8192), 512);
-}
-
-#[test]
 fn limiter_records_sleep_for_large_writes() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -123,26 +90,6 @@ fn limiter_accumulates_debt_across_small_writes() {
 }
 
 #[test]
-fn limiter_clamps_debt_to_configured_burst() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let burst = NonZeroU64::new(4096).expect("non-zero burst");
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(8 * 1024 * 1024).expect("non-zero limit"),
-        Some(burst),
-    );
-
-    let sleep = limiter.register(1 << 20);
-
-    assert!(
-        limiter.accumulated_debt_for_testing() <= u128::from(burst.get()),
-        "debt exceeds configured burst"
-    );
-    assert!(sleep.requested() <= Duration::from_millis(1));
-}
-
-#[test]
 fn limiter_handles_very_slow_rate() {
     let mut session = recorded_sleep_session();
     session.clear();
@@ -169,17 +116,6 @@ fn limiter_handles_very_fast_rate() {
 
     // At 1GB/s, 1MB takes 1ms
     assert!(sleep.requested() <= Duration::from_millis(10));
-}
-
-#[test]
-fn limiter_write_max_with_large_burst() {
-    // When burst is larger than calculated write_max, use burst
-    let limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(NonZeroU64::new(1_000_000).unwrap()), // 1MB burst
-    );
-
-    assert_eq!(limiter.write_max_bytes(), 1_000_000);
 }
 
 #[test]
@@ -210,22 +146,4 @@ fn limiter_multiple_small_writes_aggregate() {
     // Should have slept approximately 1 second total
     let total = session.total_duration();
     assert!(total >= Duration::from_millis(500));
-}
-
-#[test]
-fn limiter_burst_affects_initial_allowance() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    // Small rate but large burst
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),        // 1KB/s
-        Some(NonZeroU64::new(10240).unwrap()), // 10KB burst
-    );
-
-    // First write up to burst size should be fast (debt clamped)
-    let sleep = limiter.register(5000);
-
-    // Debt is clamped to burst, so sleep should be reasonable
-    assert!(sleep.requested() <= Duration::from_secs(10));
 }

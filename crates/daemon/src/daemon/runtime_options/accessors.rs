@@ -91,10 +91,6 @@ impl RuntimeOptions {
         self.bandwidth_limit
     }
 
-    pub(super) fn bandwidth_burst(&self) -> Option<NonZeroU64> {
-        self.bandwidth_burst
-    }
-
     pub(super) fn brand(&self) -> Brand {
         self.brand
     }

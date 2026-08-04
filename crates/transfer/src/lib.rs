@@ -486,10 +486,7 @@ fn sender_bandwidth_limiter(config: &ServerConfig) -> Option<bandwidth::Bandwidt
     }
     let components = config.connection.bwlimit?;
     let rate = components.rate()?;
-    Some(bandwidth::BandwidthLimiter::with_burst(
-        rate,
-        components.burst(),
-    ))
+    Some(bandwidth::BandwidthLimiter::new(rate))
 }
 
 /// Executes the native server entry point over standard I/O.

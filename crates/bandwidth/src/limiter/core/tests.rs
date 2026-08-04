@@ -11,32 +11,20 @@ fn nz(value: u64) -> NonZeroU64 {
 
 #[test]
 fn calculate_write_max_small_limit_uses_minimum() {
-    let result = calculate_write_max(nz(100), None);
+    let result = calculate_write_max(nz(100));
     assert_eq!(result, MIN_WRITE_MAX);
 }
 
 #[test]
 fn calculate_write_max_1kb_limit() {
-    let result = calculate_write_max(nz(1024), None);
+    let result = calculate_write_max(nz(1024));
     assert_eq!(result, MIN_WRITE_MAX);
 }
 
 #[test]
 fn calculate_write_max_large_limit() {
-    let result = calculate_write_max(nz(1024 * 100), None);
+    let result = calculate_write_max(nz(1024 * 100));
     assert_eq!(result, 12800);
-}
-
-#[test]
-fn calculate_write_max_with_burst_overrides() {
-    let result = calculate_write_max(nz(1024 * 100), Some(nz(8192)));
-    assert_eq!(result, 8192);
-}
-
-#[test]
-fn calculate_write_max_with_small_burst_uses_minimum() {
-    let result = calculate_write_max(nz(1024 * 100), Some(nz(100)));
-    assert_eq!(result, MIN_WRITE_MAX);
 }
 
 #[test]
@@ -46,30 +34,9 @@ fn bandwidth_limiter_new_stores_limit() {
 }
 
 #[test]
-fn bandwidth_limiter_new_has_no_burst() {
-    let limiter = BandwidthLimiter::new(nz(10000));
-    assert!(limiter.burst_bytes().is_none());
-}
-
-#[test]
 fn bandwidth_limiter_new_initializes_counters() {
     let limiter = BandwidthLimiter::new(nz(10000));
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
-fn bandwidth_limiter_with_burst_stores_both() {
-    let limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
-    assert_eq!(limiter.limit_bytes().get(), 10000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
-}
-
-#[test]
-fn bandwidth_limiter_with_burst_none_is_same_as_new() {
-    let limiter1 = BandwidthLimiter::new(nz(10000));
-    let limiter2 = BandwidthLimiter::with_burst(nz(10000), None);
-    assert_eq!(limiter1.limit_bytes(), limiter2.limit_bytes());
-    assert_eq!(limiter1.burst_bytes(), limiter2.burst_bytes());
 }
 
 #[test]
@@ -88,36 +55,6 @@ fn update_limit_resets_counters() {
 }
 
 #[test]
-fn update_limit_preserves_burst() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
-    limiter.update_limit(nz(20000));
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
-}
-
-#[test]
-fn update_configuration_changes_both() {
-    let mut limiter = BandwidthLimiter::new(nz(10000));
-    limiter.update_configuration(nz(20000), Some(nz(8000)));
-    assert_eq!(limiter.limit_bytes().get(), 20000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 8000);
-}
-
-#[test]
-fn update_configuration_can_remove_burst() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
-    limiter.update_configuration(nz(20000), None);
-    assert!(limiter.burst_bytes().is_none());
-}
-
-#[test]
-fn update_configuration_resets_counters() {
-    let mut limiter = BandwidthLimiter::new(nz(10000));
-    let _ = limiter.register(5000);
-    limiter.update_configuration(nz(20000), None);
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
 fn reset_clears_debt() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
     let _ = limiter.register(5000);
@@ -127,29 +64,16 @@ fn reset_clears_debt() {
 
 #[test]
 fn reset_preserves_configuration() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
+    let mut limiter = BandwidthLimiter::new(nz(10000));
     let _ = limiter.register(5000);
     limiter.reset();
     assert_eq!(limiter.limit_bytes().get(), 10000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
 }
 
 #[test]
 fn limit_bytes_returns_configured_limit() {
     let limiter = BandwidthLimiter::new(nz(12345));
     assert_eq!(limiter.limit_bytes().get(), 12345);
-}
-
-#[test]
-fn burst_bytes_returns_none_when_not_set() {
-    let limiter = BandwidthLimiter::new(nz(10000));
-    assert!(limiter.burst_bytes().is_none());
-}
-
-#[test]
-fn burst_bytes_returns_some_when_set() {
-    let limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
 }
 
 #[test]
@@ -198,13 +122,6 @@ fn register_accumulates_debt() {
 }
 
 #[test]
-fn register_with_burst_clamps_debt() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(1000)));
-    let _ = limiter.register(5000);
-    assert!(limiter.accumulated_debt_for_testing() <= 1000);
-}
-
-#[test]
 fn bandwidth_limiter_clone_creates_independent_copy() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
     let _ = limiter.register(1000);
@@ -240,13 +157,6 @@ fn bandwidth_limiter_write_max_with_very_large_limit() {
 }
 
 #[test]
-fn bandwidth_limiter_burst_larger_than_write() {
-    let limiter = BandwidthLimiter::with_burst(nz(1024), Some(nz(1_000_000)));
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 1_000_000);
-    assert_eq!(limiter.write_max_bytes(), 1_000_000);
-}
-
-#[test]
 fn register_uses_saturating_add_prevents_overflow() {
     let mut limiter = BandwidthLimiter::new(nz(1));
     for _ in 0..1000 {
@@ -255,78 +165,9 @@ fn register_uses_saturating_add_prevents_overflow() {
 }
 
 #[test]
-fn debt_accumulation_with_burst_clamping() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
-    let _ = limiter.register(10000);
-    assert!(
-        limiter.accumulated_debt_for_testing() <= 500,
-        "debt {} should be <= burst 500",
-        limiter.accumulated_debt_for_testing()
-    );
-}
-
-#[test]
-fn multiple_registers_with_burst_maintains_clamp() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(2000)));
-
-    let _ = limiter.register(3000);
-    assert!(limiter.accumulated_debt_for_testing() <= 2000);
-
-    let _ = limiter.register(3000);
-    assert!(limiter.accumulated_debt_for_testing() <= 2000);
-
-    let _ = limiter.register(3000);
-    assert!(limiter.accumulated_debt_for_testing() <= 2000);
-}
-
-#[test]
-fn clamp_debt_to_burst_with_no_burst_is_noop() {
-    let mut limiter = BandwidthLimiter::new(nz(100));
-    let _ = limiter.register(1000);
-    let debt_before = limiter.accumulated_debt_for_testing();
-    let _ = debt_before;
-}
-
-#[test]
-fn clamp_debt_to_burst_clamps_at_exact_burst_value() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1), Some(nz(100)));
-
-    let _ = limiter.register(100);
-    assert!(limiter.accumulated_debt_for_testing() <= 100);
-
-    let _ = limiter.register(100);
-    assert!(limiter.accumulated_debt_for_testing() <= 100);
-}
-
-#[test]
-fn clamp_debt_to_burst_with_very_large_burst() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(u64::MAX)));
-    let _ = limiter.register(10000);
-}
-
-#[test]
 fn calculate_write_max_u64_max_limit() {
-    let result = calculate_write_max(nz(u64::MAX), None);
+    let result = calculate_write_max(nz(u64::MAX));
     assert!(result >= MIN_WRITE_MAX);
-}
-
-#[test]
-fn calculate_write_max_burst_overrides_calculated_value() {
-    let result_no_burst = calculate_write_max(nz(u64::MAX), None);
-    let result_with_burst = calculate_write_max(nz(u64::MAX), Some(nz(4096)));
-    assert!(result_with_burst <= result_no_burst.max(4096));
-}
-
-#[test]
-fn calculate_write_max_burst_at_boundary_512() {
-    let result = calculate_write_max(nz(10000), Some(nz(MIN_WRITE_MAX as u64)));
-    assert_eq!(result, MIN_WRITE_MAX);
-}
-
-#[test]
-fn calculate_write_max_burst_just_above_minimum() {
-    let result = calculate_write_max(nz(10000), Some(nz(MIN_WRITE_MAX as u64 + 1)));
-    assert_eq!(result, MIN_WRITE_MAX + 1);
 }
 
 #[test]
@@ -338,25 +179,15 @@ fn update_limit_clears_accumulated_debt() {
 }
 
 #[test]
-fn update_configuration_clears_accumulated_debt() {
-    let mut limiter = BandwidthLimiter::new(nz(100));
-    let _ = limiter.register(1000);
-    limiter.update_configuration(nz(200), Some(nz(500)));
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
 fn reset_preserves_limit_but_clears_debt() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
+    let mut limiter = BandwidthLimiter::new(nz(100));
     let _ = limiter.register(1000);
 
     let limit_before = limiter.limit_bytes().get();
-    let burst_before = limiter.burst_bytes().map(|b| b.get());
 
     limiter.reset();
 
     assert_eq!(limiter.limit_bytes().get(), limit_before);
-    assert_eq!(limiter.burst_bytes().map(|b| b.get()), burst_before);
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
@@ -408,15 +239,15 @@ fn elapsed_time_forgives_all_debt_when_slow_enough() {
 
 #[test]
 fn calculate_write_max_with_tiny_limit() {
-    let result = calculate_write_max(nz(1), None);
+    let result = calculate_write_max(nz(1));
     assert_eq!(result, MIN_WRITE_MAX);
 }
 
 #[test]
 fn calculate_write_max_progression() {
-    let small = calculate_write_max(nz(1024), None);
-    let medium = calculate_write_max(nz(1024 * 100), None);
-    let large = calculate_write_max(nz(1024 * 1000), None);
+    let small = calculate_write_max(nz(1024));
+    let medium = calculate_write_max(nz(1024 * 100));
+    let large = calculate_write_max(nz(1024 * 1000));
 
     assert!(medium >= small);
     assert!(large >= medium);
@@ -429,16 +260,6 @@ fn recommended_read_size_with_zero_write_max() {
 }
 
 #[test]
-fn limiter_debt_clamping_repeated() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
-
-    for _ in 0..10 {
-        let _ = limiter.register(1000);
-        assert!(limiter.accumulated_debt_for_testing() <= 500);
-    }
-}
-
-#[test]
 fn update_limit_changes_write_max() {
     let mut limiter = BandwidthLimiter::new(nz(1024));
     let initial_write_max = limiter.write_max_bytes();
@@ -447,18 +268,6 @@ fn update_limit_changes_write_max() {
     let new_write_max = limiter.write_max_bytes();
 
     assert!(new_write_max > initial_write_max);
-}
-
-#[test]
-fn update_configuration_changes_write_max_based_on_burst() {
-    let mut limiter = BandwidthLimiter::new(nz(1024 * 1024));
-    let initial_write_max = limiter.write_max_bytes();
-
-    limiter.update_configuration(nz(1024 * 1024), Some(nz(1024)));
-    let new_write_max = limiter.write_max_bytes();
-
-    assert!(new_write_max < initial_write_max);
-    assert_eq!(new_write_max, 1024);
 }
 
 #[test]
@@ -555,24 +364,6 @@ fn register_sleep_above_minimum_threshold() {
 }
 
 #[test]
-fn burst_clamps_sleep_duration() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
-    let sleep = limiter.register(1000);
-    assert_eq!(sleep.requested(), Duration::from_secs(5));
-}
-
-#[test]
-fn burst_clamps_after_each_register() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(200)));
-
-    let _sleep1 = limiter.register(500);
-    assert!(limiter.accumulated_debt_for_testing() <= 200);
-
-    let _sleep2 = limiter.register(500);
-    assert!(limiter.accumulated_debt_for_testing() <= 200);
-}
-
-#[test]
 fn no_burst_allows_unlimited_debt_growth() {
     let mut limiter = BandwidthLimiter::new(nz(10));
 
@@ -591,18 +382,6 @@ fn write_max_minimum_for_tiny_rate() {
 fn write_max_scales_with_rate() {
     let limiter = BandwidthLimiter::new(nz(1024 * 50));
     assert_eq!(limiter.write_max_bytes(), 6400);
-}
-
-#[test]
-fn write_max_capped_by_burst() {
-    let limiter = BandwidthLimiter::with_burst(nz(1024 * 1000), Some(nz(4096)));
-    assert_eq!(limiter.write_max_bytes(), 4096);
-}
-
-#[test]
-fn write_max_burst_respects_minimum() {
-    let limiter = BandwidthLimiter::with_burst(nz(1024 * 1000), Some(nz(100)));
-    assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
 }
 
 #[test]
@@ -677,23 +456,6 @@ fn update_limit_mid_operation_resets_state() {
 }
 
 #[test]
-fn update_configuration_mid_operation_resets_state() {
-    use super::super::recorded_sleep_session;
-
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(50)));
-
-    let _sleep1 = limiter.register(100);
-
-    limiter.update_configuration(nz(200), Some(nz(100)));
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-    assert_eq!(limiter.limit_bytes().get(), 200);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 100);
-}
-
-#[test]
 fn reset_mid_operation_clears_state() {
     use super::super::recorded_sleep_session;
 
@@ -736,11 +498,10 @@ fn register_zero_returns_noop_sleep() {
 
 #[test]
 fn clone_preserves_configuration() {
-    let limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
+    let limiter = BandwidthLimiter::new(nz(1000));
     let cloned = limiter.clone();
 
     assert_eq!(cloned.limit_bytes(), limiter.limit_bytes());
-    assert_eq!(cloned.burst_bytes(), limiter.burst_bytes());
     assert_eq!(cloned.write_max_bytes(), limiter.write_max_bytes());
 }
 
@@ -821,51 +582,6 @@ fn register_with_max_u64_limit() {
 }
 
 #[test]
-fn register_with_max_burst() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(u64::MAX)));
-    let sleep = limiter.register(5000);
-    assert_eq!(sleep.requested(), Duration::from_secs(5));
-}
-
-#[test]
-fn register_with_min_burst() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(1)));
-    let _ = limiter.register(1000);
-    assert!(limiter.accumulated_debt_for_testing() <= 1);
-}
-
-#[test]
-fn accessors_consistent_after_construction() {
-    let limiter = BandwidthLimiter::with_burst(nz(5000), Some(nz(2500)));
-
-    assert_eq!(limiter.limit_bytes().get(), 5000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 2500);
-    assert_eq!(limiter.write_max_bytes(), 2500);
-}
-
-#[test]
-fn accessors_consistent_after_update() {
-    let mut limiter = BandwidthLimiter::new(nz(1000));
-    limiter.update_configuration(nz(2000), Some(nz(1500)));
-
-    assert_eq!(limiter.limit_bytes().get(), 2000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 1500);
-    assert_eq!(limiter.write_max_bytes(), 1500);
-}
-
-#[test]
-fn accessors_consistent_after_reset() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
-    let _ = limiter.register(1000);
-    limiter.reset();
-
-    assert_eq!(limiter.limit_bytes().get(), 1000);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 500);
-    assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX.max(500));
-    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
 fn simulated_transfer_scenario() {
     use super::super::recorded_sleep_session;
 
@@ -882,22 +598,6 @@ fn simulated_transfer_scenario() {
 
     assert!(total_requested >= Duration::from_secs(9));
     assert!(total_requested <= Duration::from_secs(11));
-}
-
-#[test]
-fn simulated_bursty_transfer() {
-    use super::super::recorded_sleep_session;
-
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
-
-    let sleep1 = limiter.register(2000);
-    assert!(sleep1.requested() <= Duration::from_millis(500));
-
-    let sleep2 = limiter.register(2000);
-    assert!(sleep2.requested() <= Duration::from_millis(500));
 }
 
 #[test]
@@ -945,20 +645,6 @@ fn rate_change_updates_write_max() {
     limiter.update_limit(nz(1024 * 1024));
     let new_max = limiter.write_max_bytes();
     assert!(new_max > initial_max);
-}
-
-#[test]
-fn configuration_change_modifies_both_rate_and_burst() {
-    let mut limiter = BandwidthLimiter::new(nz(1024));
-    assert!(limiter.burst_bytes().is_none());
-
-    limiter.update_configuration(nz(2048), Some(nz(4096)));
-    assert_eq!(limiter.limit_bytes().get(), 2048);
-    assert_eq!(limiter.burst_bytes().unwrap().get(), 4096);
-
-    limiter.update_configuration(nz(1024), None);
-    assert_eq!(limiter.limit_bytes().get(), 1024);
-    assert!(limiter.burst_bytes().is_none());
 }
 
 #[test]
@@ -1011,32 +697,6 @@ fn maximum_rate_negligible_sleep_for_small_writes() {
 
     let sleep = limiter.register(1000);
     assert!(sleep.requested() < Duration::from_nanos(100));
-}
-
-#[test]
-fn burst_exactly_equals_write_amount() {
-    use super::super::recorded_sleep_session;
-
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(1000)));
-
-    let _sleep = limiter.register(1000);
-
-    assert!(limiter.accumulated_debt_for_testing() <= 1000);
-}
-
-#[test]
-fn burst_smaller_than_min_write_max_uses_min() {
-    let limiter = BandwidthLimiter::with_burst(nz(1024 * 1024), Some(nz(100)));
-    assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
-}
-
-#[test]
-fn burst_much_larger_than_calculated_write_max() {
-    let limiter = BandwidthLimiter::with_burst(nz(1024), Some(nz(1_000_000)));
-    assert_eq!(limiter.write_max_bytes(), 1_000_000);
 }
 
 #[test]
@@ -1095,20 +755,6 @@ fn limiter_sleep_tracking_accuracy() {
 }
 
 #[test]
-fn limiter_sleep_reflects_burst_clamping() {
-    use super::super::recorded_sleep_session;
-
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(200)));
-
-    let sleep = limiter.register(1000);
-
-    assert_eq!(sleep.requested(), Duration::from_secs(2));
-}
-
-#[test]
 fn realistic_file_transfer_small_file() {
     use super::super::recorded_sleep_session;
 
@@ -1132,39 +778,16 @@ fn realistic_file_transfer_small_file() {
 }
 
 #[test]
-fn realistic_streaming_with_burst() {
-    use super::super::recorded_sleep_session;
-
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    let mut limiter = BandwidthLimiter::with_burst(nz(1024), Some(nz(2048)));
-
-    let sleep1 = limiter.register(2048);
-    assert_eq!(sleep1.requested(), Duration::from_secs(2));
-
-    let sleep2 = limiter.register(2048);
-    assert!(sleep2.requested() <= Duration::from_secs(2));
-}
-
-#[test]
 fn register_does_not_panic_with_extreme_values() {
     use super::super::recorded_sleep_session;
 
     let mut session = recorded_sleep_session();
     session.clear();
 
-    let configurations: Vec<(u64, Option<u64>)> = vec![
-        (1, None),
-        (u64::MAX, None),
-        (1, Some(u64::MAX)),
-        (u64::MAX, Some(1)),
-        (1000, Some(1)),
-        (1, Some(1)),
-    ];
+    let rates: Vec<u64> = vec![1, u64::MAX, 1000];
 
-    for (rate, burst) in configurations {
-        let mut limiter = BandwidthLimiter::with_burst(nz(rate), burst.and_then(NonZeroU64::new));
+    for rate in rates {
+        let mut limiter = BandwidthLimiter::new(nz(rate));
 
         let _ = limiter.register(0);
         let _ = limiter.register(1);

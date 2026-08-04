@@ -22,7 +22,6 @@ struct ConnectionContext {
     #[cfg_attr(not(feature = "async-daemon"), allow(dead_code))]
     client_socket_options: Arc<Vec<SocketOption>>,
     bandwidth_limit: Option<NonZeroU64>,
-    bandwidth_burst: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_protocol: bool,
 }
@@ -37,7 +36,6 @@ impl ConnectionContext {
         log_sink: Option<SharedLogSink>,
         client_socket_options: Arc<Vec<SocketOption>>,
         bandwidth_limit: Option<NonZeroU64>,
-        bandwidth_burst: Option<NonZeroU64>,
         reverse_lookup: bool,
         proxy_protocol: bool,
     ) -> Self {
@@ -47,7 +45,6 @@ impl ConnectionContext {
             log_sink,
             client_socket_options,
             bandwidth_limit,
-            bandwidth_burst,
             reverse_lookup,
             proxy_protocol,
         }
@@ -84,7 +81,6 @@ impl ConnectionContext {
                     modules: self.modules.as_slice(),
                     motd_lines: self.motd_lines.as_slice(),
                     daemon_limit: self.bandwidth_limit,
-                    daemon_burst: self.bandwidth_burst,
                     log_sink: log_for_worker.clone(),
                     reverse_lookup: self.reverse_lookup,
                     proxy_protocol: self.proxy_protocol,

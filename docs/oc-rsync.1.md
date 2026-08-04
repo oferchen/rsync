@@ -860,9 +860,9 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Force protocol version *NUM* when accessing rsync daemons. Valid range:
     28-32.
 
-**--bwlimit**=*RATE*[:*BURST*]
+**--bwlimit**=*RATE*
 :   Limit I/O bandwidth in KiB/s. Supports decimal, binary, and IEC unit
-    suffixes. Optional *:BURST* caps the token bucket. 0 disables the limit.
+    suffixes. 0 disables the limit.
 
 **--no-bwlimit**
 :   Remove any configured bandwidth limit.

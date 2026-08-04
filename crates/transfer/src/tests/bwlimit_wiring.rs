@@ -26,7 +26,7 @@ fn config_with_bwlimit(
 }
 
 fn components(rate: u64) -> BandwidthLimitComponents {
-    BandwidthLimitComponents::new(NonZeroU64::new(rate), None)
+    BandwidthLimitComponents::new(NonZeroU64::new(rate))
 }
 
 /// The sender (Generator) installs a limiter when a non-zero `--bwlimit` is set.
@@ -73,20 +73,16 @@ fn generator_without_bwlimit_is_passthrough() {
     );
 }
 
-/// The configured burst is carried into the limiter for the sender.
+/// A daemon-clamped rate reaches the live sender limiter unchanged.
 ///
-/// WHY: the daemon module `bwlimit RATE:BURST` directive and the client's
-/// burst component must reach the live limiter so debt clamping matches the
-/// configured burst, not just the steady-state rate.
+/// WHY: `server_config.rs` clamps the client rate to the daemon cap
+/// (upstream: options.c:2392 min(client, daemon)) and carries the result on
+/// `ConnectionConfig::bwlimit`; the effective rate must reach the live limiter
+/// so the sender paces at exactly that rate, not the unclamped client value.
 #[test]
-fn generator_preserves_burst() {
-    let comps = BandwidthLimitComponents::new_with_specified(
-        NonZeroU64::new(64 * 1024),
-        NonZeroU64::new(8192),
-        true,
-    );
+fn generator_uses_clamped_rate() {
+    let comps = BandwidthLimitComponents::new(NonZeroU64::new(64 * 1024));
     let config = config_with_bwlimit(ServerRole::Generator, Some(comps));
     let limiter = sender_bandwidth_limiter(&config).expect("sender must throttle");
     assert_eq!(limiter.limit_bytes().get(), 64 * 1024);
-    assert_eq!(limiter.burst_bytes().map(NonZeroU64::get), Some(8192));
 }
