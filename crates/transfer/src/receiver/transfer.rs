@@ -71,6 +71,56 @@ impl ReceiverContext {
         }
     }
 
+    /// Drives the receiver off a pre-recorded batch stream instead of a live
+    /// peer, mirroring upstream's `--read-batch` receive.
+    ///
+    /// Upstream opens the batch file and hands its descriptor to the ordinary
+    /// receiving client as `f_in`, pointing the generator's `f_out` at one end
+    /// of a self-pipe whose read end is never drained (`main.c:635-651`). The
+    /// receiver then reads the recorded file list and delta stream exactly as
+    /// it would off a socket - `do_recv()` is unchanged - while its outbound
+    /// requests and signatures fall into the dead-end pipe. Because the batch
+    /// file was never framed, upstream also skips `io_start_multiplex_in()` for
+    /// it (`main.c:1359-1366`, gated on `!read_batch`).
+    ///
+    /// This is the enabling mechanism for routing `--read-batch` through the
+    /// real receiver rather than the native replay fork. It reproduces both
+    /// halves of that model:
+    ///
+    /// - `batch_input` is wrapped as an undemultiplexed (`Plain`)
+    ///   [`ServerReader`](crate::reader::ServerReader) `f_in`, and the
+    ///   [`local_replay`](Self::local_replay) flag it sets keeps it Plain by
+    ///   suppressing input-multiplex activation.
+    /// - a [`DiscardSink`](crate::writer::DiscardSink) stands in for the
+    ///   generator's consumer-less `f_out`, swallowing every request, signature
+    ///   block, and `MSG_*` frame.
+    ///
+    /// The caller supplies a `ReceiverContext` already primed from the batch
+    /// header - protocol, compat flags, and checksum seed are fed separately -
+    /// so this method owns only the drive. It never touches the network path,
+    /// which leaves `local_replay` at its `false` default and stays
+    /// byte-identical.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:635-651` - `read_batch` sets `f_in = batch_fd` and points
+    ///   `f_out` at a self-pipe with no live consumer.
+    /// - `main.c:1359-1366` - the `!read_batch` gate that leaves the batch
+    ///   `f_in` unmultiplexed.
+    /// - `main.c:1387` - `do_recv(f_in, f_out, local_name)` drives the real
+    ///   receiver over that batch `f_in`.
+    pub fn run_local_replay<R: Read>(
+        &mut self,
+        batch_input: R,
+        progress: Option<&mut dyn crate::TransferProgressCallback>,
+    ) -> io::Result<TransferStats> {
+        // upstream: main.c:1359 `!read_batch` keeps the batch f_in unmultiplexed.
+        self.local_replay = true;
+        let reader = crate::reader::ServerReader::new_plain(batch_input);
+        let mut sink = crate::writer::DiscardSink::new();
+        self.run(reader, &mut sink, progress)
+    }
+
     /// True when this receiver is a *client* that was handed an empty file
     /// list, i.e. every requested source path failed to be listed (missing
     /// source, unreadable directory, everything filtered out).
@@ -526,7 +576,102 @@ pub(in crate::receiver) fn handle_delayed_updates(
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::Cursor;
     use std::path::PathBuf;
+
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileListWriter;
+
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+
+    /// Builds a protocol-32 client-mode receiver context, the shape a
+    /// `--read-batch` client presents to `run_local_replay`.
+    fn replay_client_ctx() -> ReceiverContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        // upstream: the batch is applied by the receiving *client*, so the
+        // empty-list short-circuit (main.c:1389-1392) is reachable.
+        config.connection.client_mode = true;
+        ReceiverContext::new_for_test(&handshake, config)
+    }
+
+    /// `run_local_replay` drives the real receiver to completion off a plain,
+    /// pre-recorded (Cursor) `f_in` paired with the discard sink - no live peer,
+    /// no multiplex framing - mirroring upstream's `do_recv()` over `batch_fd`.
+    ///
+    /// WHY: this is the whole point of approach A. A recorded batch is a
+    /// one-way stream with nothing to answer the generator's requests; feeding
+    /// it as a Plain `ServerReader` and swallowing the outbound frames in a
+    /// [`DiscardSink`](crate::writer::DiscardSink) must let the ordinary
+    /// receiver run to a clean finish. A trivial empty file list exercises the
+    /// full setup path (Plain f_in, no filter read, flist decode) and returns
+    /// through `finish_empty_client_flist` without touching the disk or the
+    /// wire - so a green result proves the input mode is wired, not that a
+    /// stub returned early.
+    #[test]
+    fn run_local_replay_drives_empty_recorded_stream_to_completion() {
+        let mut ctx = replay_client_ctx();
+
+        // A recorded stream that carries only an (empty) file list - the
+        // minimal complete batch body an upstream `--write-batch` of nothing
+        // would produce.
+        let mut recorded = Vec::new();
+        let writer = FileListWriter::new(ctx.protocol());
+        writer.write_end(&mut recorded, None).unwrap();
+
+        let stats = ctx
+            .run_local_replay(Cursor::new(recorded), None)
+            .expect("empty recorded batch must replay to completion");
+
+        assert_eq!(
+            stats.files_listed, 0,
+            "an empty recorded file list yields no listed files"
+        );
+        assert_eq!(
+            stats.files_transferred, 0,
+            "no delta data is applied for an empty recorded batch"
+        );
+        // The mechanism must have kept the batch f_in unmultiplexed the whole
+        // way through (upstream main.c:1359 `!read_batch`).
+        assert!(!ctx.should_activate_input_multiplex());
+    }
+
+    /// The `local_replay` flag suppresses input-multiplex activation even at a
+    /// protocol that would otherwise demux, and leaves the network default
+    /// untouched.
+    ///
+    /// WHY: upstream gates every `io_start_multiplex_in(f_in)` on `!read_batch`
+    /// (main.c:1359-1366) because the batch file was never framed. Without the
+    /// gate the receiver would try to demux raw batch bytes as `MSG_DATA`
+    /// frames and desync immediately.
+    #[test]
+    fn local_replay_flag_keeps_f_in_plain_at_protocol_32() {
+        let mut ctx = replay_client_ctx();
+        // Default (network) path: proto-32 client activates multiplex.
+        assert!(ctx.should_activate_input_multiplex());
+        ctx.local_replay = true;
+        assert!(
+            !ctx.should_activate_input_multiplex(),
+            "a recorded batch f_in must stay Plain (upstream !read_batch)"
+        );
+    }
 
     /// Verifies the delayed rename sweep moves files from staging paths to
     /// final destinations, matching upstream `receiver.c:422-450`.
