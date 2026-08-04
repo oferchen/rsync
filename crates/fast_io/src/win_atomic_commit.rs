@@ -30,6 +30,184 @@
 //! All Win32 FFI lives here in `fast_io` (a permitted-unsafe crate); the
 //! `transfer` receiver calls the safe functions.
 
+/// Extended-length (`\\?\`) path conversion shared by the no-follow commit
+/// primitives.
+///
+/// The handle-based opens in [`imp`] all go through `OpenOptions::open`, which
+/// applies std's `maybe_verbatim` internally, so they already accept paths over
+/// the legacy 260-char `MAX_PATH`. The one Win32 call that receives a raw path
+/// string is `SetFileInformationByHandle(FileRenameInfo)` in
+/// [`imp::set_rename_info`]: its `FILE_RENAME_INFO::FileName` is passed straight
+/// to the kernel with no long-path awareness, so a deep destination fails with
+/// `ERROR_FILENAME_EXCED_RANGE` (206). [`to_verbatim_wide`] converts an
+/// already-absolute, already-normalized destination path into the `\\?\`
+/// verbatim form the way std does, restoring the long-path behaviour the prior
+/// `std::fs::rename` commit path had.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod verbatim {
+    // UTF-16 code units used to detect and build verbatim paths. All are ASCII,
+    // so casting the byte literal to `u16` is exact.
+    const SEP: u16 = b'\\' as u16;
+    const ALT_SEP: u16 = b'/' as u16;
+    const QUERY: u16 = b'?' as u16;
+    const COLON: u16 = b':' as u16;
+
+    // `\\?\`
+    const VERBATIM_PREFIX: [u16; 4] = [SEP, SEP, QUERY, SEP];
+    // `\??\` (the NT-namespace form std also leaves untouched)
+    const NT_PREFIX: [u16; 4] = [SEP, QUERY, QUERY, SEP];
+    // `\\?\UNC\`
+    const UNC_VERBATIM_PREFIX: [u16; 8] = [
+        SEP,
+        SEP,
+        QUERY,
+        SEP,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        SEP,
+    ];
+
+    /// True for an ASCII drive letter (`A`-`Z` / `a`-`z`) as a UTF-16 unit.
+    fn is_drive_letter(c: u16) -> bool {
+        (b'A' as u16..=b'Z' as u16).contains(&c) || (b'a' as u16..=b'z' as u16).contains(&c)
+    }
+
+    /// Returns the extended-length (`\\?\`) verbatim form of a UTF-16 Windows
+    /// path, or the input unchanged when it is already verbatim/NT-prefixed or
+    /// is not fully qualified.
+    ///
+    /// Operates on a UTF-16 code-unit slice (as std's `maybe_verbatim` does) so
+    /// it is unit-testable on every platform even though it is only used on
+    /// Windows. The commit path only ever hands this a fully-qualified,
+    /// already-normalized destination, so - unlike std - it does not resolve
+    /// `.`/`..` via `GetFullPathNameW`; it only rewrites the prefix:
+    ///
+    /// - Already `\\?\` or `\??\`: returned untouched.
+    /// - Drive-absolute (`X:\...` or `X:/...`): becomes `\\?\X:\...` with
+    ///   forward slashes normalized to backslashes.
+    /// - UNC (`\\server\...` or `//server/...`): becomes `\\?\UNC\server\...`.
+    /// - Anything else (relative, drive-relative like `X:foo`): returned
+    ///   untouched - a verbatim path must be fully qualified, and such paths
+    ///   never exceed `MAX_PATH` on the commit path.
+    pub(super) fn to_verbatim_wide(path: &[u16]) -> Vec<u16> {
+        if path.starts_with(&VERBATIM_PREFIX) || path.starts_with(&NT_PREFIX) {
+            return path.to_vec();
+        }
+
+        // Drive-absolute: `X:\...` / `X:/...`.
+        if path.len() >= 3
+            && is_drive_letter(path[0])
+            && path[1] == COLON
+            && (path[2] == SEP || path[2] == ALT_SEP)
+        {
+            let mut out = Vec::with_capacity(VERBATIM_PREFIX.len() + path.len());
+            out.extend_from_slice(&VERBATIM_PREFIX);
+            out.extend(path.iter().map(|&c| if c == ALT_SEP { SEP } else { c }));
+            return out;
+        }
+
+        // UNC: `\\server\...` / `//server/...`. Drop the leading two separators;
+        // the `\\?\UNC\` prefix supplies them.
+        if path.len() >= 2
+            && (path[0] == SEP || path[0] == ALT_SEP)
+            && (path[1] == SEP || path[1] == ALT_SEP)
+        {
+            let mut out = Vec::with_capacity(UNC_VERBATIM_PREFIX.len() + path.len());
+            out.extend_from_slice(&UNC_VERBATIM_PREFIX);
+            out.extend(
+                path[2..]
+                    .iter()
+                    .map(|&c| if c == ALT_SEP { SEP } else { c }),
+            );
+            return out;
+        }
+
+        path.to_vec()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Encodes an ASCII string as a UTF-16 vector, the wire form Win32 sees.
+        fn w(s: &str) -> Vec<u16> {
+            s.encode_utf16().collect()
+        }
+
+        /// A deep drive-absolute path (>260 UTF-16 units) gains the `\\?\`
+        /// prefix - the exact fix for the `ERROR_FILENAME_EXCED_RANGE` commit.
+        #[test]
+        fn long_absolute_path_gains_verbatim_prefix() {
+            let deep = format!("C:\\{}\\file.bin", "d0000000".repeat(40));
+            assert!(deep.len() > 260, "fixture must exceed MAX_PATH");
+            let got = to_verbatim_wide(&w(&deep));
+            assert_eq!(got, w(&format!("\\\\?\\{deep}")));
+        }
+
+        /// A short drive-absolute path is still prefixed (correctness does not
+        /// depend on length; the raw rename would otherwise stay short-only).
+        #[test]
+        fn short_absolute_path_gains_verbatim_prefix() {
+            assert_eq!(
+                to_verbatim_wide(&w(r"C:\dir\file.bin")),
+                w(r"\\?\C:\dir\file.bin")
+            );
+        }
+
+        /// Forward slashes in a drive-absolute path are normalized to
+        /// backslashes: the verbatim namespace does no separator translation.
+        #[test]
+        fn forward_slashes_normalized_to_backslashes() {
+            assert_eq!(
+                to_verbatim_wide(&w("C:/dir/sub/file.bin")),
+                w(r"\\?\C:\dir\sub\file.bin")
+            );
+        }
+
+        /// A UNC path maps to the `\\?\UNC\` form with the leading `\\` dropped.
+        #[test]
+        fn unc_path_maps_to_unc_verbatim() {
+            assert_eq!(
+                to_verbatim_wide(&w(r"\\server\share\dir\file.bin")),
+                w(r"\\?\UNC\server\share\dir\file.bin")
+            );
+        }
+
+        /// An already-verbatim path is returned untouched (idempotent), so a
+        /// double conversion cannot corrupt the prefix.
+        #[test]
+        fn already_verbatim_is_unchanged() {
+            let p = w(r"\\?\C:\dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// An NT-namespace (`\??\`) path is likewise left untouched.
+        #[test]
+        fn nt_prefixed_is_unchanged() {
+            let p = w(r"\??\C:\dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// A relative path is not fully qualified, so it is returned unchanged
+        /// (no prefix, no slash rewrite) - such paths never exceed MAX_PATH on
+        /// the commit path.
+        #[test]
+        fn relative_path_is_unchanged() {
+            let p = w(r"dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// A drive-relative path (`X:foo`, no separator after the colon) is also
+        /// left unchanged - prefixing it would change its meaning.
+        #[test]
+        fn drive_relative_path_is_unchanged() {
+            let p = w("C:file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::ffi::OsStr;
@@ -201,13 +379,17 @@ mod imp {
     ///
     /// `RootDirectory` is `NULL` (the only form the Win32
     /// `SetFileInformationByHandle` accepts) and `FileName` is the complete
-    /// destination path. `FILE_RENAME_INFO` is a variable-length struct whose
-    /// trailing `FileName[1]` field is a flexible array; the buffer is
-    /// allocated as a `Vec<u64>` so it is large enough for the path and aligned
-    /// to the struct's 8-byte (HANDLE) alignment. `FileNameLength` is the path
-    /// length in bytes (not UTF-16 code units).
+    /// destination path, converted to its `\\?\` verbatim form
+    /// ([`super::verbatim::to_verbatim_wide`]) because this raw Win32 call is
+    /// not long-path aware - without the prefix a destination deeper than 260
+    /// characters fails with `ERROR_FILENAME_EXCED_RANGE`. `FILE_RENAME_INFO` is
+    /// a variable-length struct whose trailing `FileName[1]` field is a flexible
+    /// array; the buffer is allocated as a `Vec<u64>` so it is large enough for
+    /// the path and aligned to the struct's 8-byte (HANDLE) alignment.
+    /// `FileNameLength` is the path length in bytes (not UTF-16 code units).
     fn set_rename_info(src: &File, dest_name: &OsStr, replace_existing: bool) -> io::Result<()> {
-        let name: Vec<u16> = dest_name.encode_wide().collect();
+        let name =
+            super::verbatim::to_verbatim_wide(&dest_name.encode_wide().collect::<Vec<u16>>());
         let name_bytes = name.len() * size_of::<u16>();
         // size_of::<FILE_RENAME_INFO>() already includes the 2-byte FileName[1]
         // stub, so header + name_bytes slightly over-allocates - harmless.
