@@ -357,3 +357,33 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{create_new_no_follow, rename_no_follow};
+
+/// Returns `true` when an I/O error represents a cross-device link (`EXDEV`).
+///
+/// This is the single source of truth for the EXDEV detection every
+/// temp->destination commit path shares. A temp file staged in a `--temp-dir`
+/// (or partial dir) that lives on a different filesystem than the destination
+/// cannot be `rename(2)`d across the mount, so the commit falls back to
+/// copy+remove (upstream `util1.c:robust_rename()`).
+///
+/// The check is keyed on the raw OS error number rather than
+/// [`std::io::ErrorKind::CrossesDevices`] so it stays robust across std
+/// releases and is byte-identical on both sides of the commit divergence it
+/// unifies (the engine local-copy guard and the transfer disk-commit path):
+///
+/// - Unix: `raw_os_error() == libc::EXDEV` (errno 18).
+/// - Windows: `raw_os_error() == 17` (`ERROR_NOT_SAME_DEVICE`).
+///
+/// Every other platform reports `false`, so callers surface the original error.
+#[must_use]
+pub fn is_cross_device(error: &std::io::Error) -> bool {
+    match error.raw_os_error() {
+        #[cfg(unix)]
+        Some(code) => code == libc::EXDEV,
+        #[cfg(windows)]
+        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
+        #[cfg(not(any(unix, windows)))]
+        Some(_) => false,
+        None => false,
+    }
+}

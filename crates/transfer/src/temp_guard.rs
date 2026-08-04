@@ -551,16 +551,11 @@ pub fn partial_dir_fname(dest_path: &Path, partial_dir: &Path) -> Option<PathBuf
 }
 
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).
+///
+/// Forwards to [`fast_io::is_cross_device`], the single source of truth shared
+/// with the engine local-copy commit guard and the disk-commit path.
 fn is_cross_device_error(e: &io::Error) -> bool {
-    match e.raw_os_error() {
-        #[cfg(unix)]
-        Some(code) => code == libc::EXDEV,
-        #[cfg(windows)]
-        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
-        #[cfg(not(any(unix, windows)))]
-        Some(_) => false,
-        None => false,
-    }
+    fast_io::is_cross_device(e)
 }
 
 /// Commits a temp file to its final destination on Windows with a
