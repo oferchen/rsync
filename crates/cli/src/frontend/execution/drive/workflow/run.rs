@@ -60,6 +60,8 @@ where
         daemon_port,
         #[cfg(feature = "quic")]
         quic,
+        #[cfg(feature = "quic")]
+        quic_ca,
         remote_options,
         rsync_path: _,
         protect_args,
@@ -537,6 +539,8 @@ where
             daemon_port,
             #[cfg(feature = "quic")]
             quic,
+            #[cfg(feature = "quic")]
+            quic_ca: quic_ca.as_deref(),
             desired_protocol,
             password_override: password_override.clone(),
             no_motd,
@@ -897,6 +901,8 @@ where
         tcp_fastopen,
         #[cfg(feature = "quic")]
         quic,
+        #[cfg(feature = "quic")]
+        quic_ca,
         blocking_io,
         dry_run,
         list_only,

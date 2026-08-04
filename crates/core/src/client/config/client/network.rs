@@ -22,6 +22,18 @@ impl ClientConfig {
         self.daemon_transport
     }
 
+    /// Returns the `--quic-ca` private CA bundle path, if one was supplied.
+    ///
+    /// When present it verifies the daemon's QUIC certificate against this PEM
+    /// bundle instead of the platform trust store (policy B). Available only
+    /// under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-ca")]
+    pub fn quic_ca(&self) -> Option<&std::path::Path> {
+        self.quic_ca.as_deref()
+    }
+
     /// Returns the configured connect program, if any.
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {

@@ -31,6 +31,10 @@ pub(crate) struct ConfigInputs {
     /// `--quic` - select the QUIC daemon transport (873/udp).
     #[cfg(feature = "quic")]
     pub(crate) quic: bool,
+    /// `--quic-ca <PATH>` - private CA bundle for verifying the QUIC daemon
+    /// certificate; `None` uses the system-roots default.
+    #[cfg(feature = "quic")]
+    pub(crate) quic_ca: Option<PathBuf>,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
@@ -338,6 +342,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         } else {
             core::client::Transport::Tcp
         });
+        // `--quic-ca` selects a private CA bundle for QUIC certificate
+        // verification; `None` keeps the system-roots default.
+        builder = builder.quic_ca(inputs.quic_ca);
     }
     // Only override the builder's upstream default when the user supplied
     // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream
