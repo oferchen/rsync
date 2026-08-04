@@ -19,7 +19,7 @@
 //! worker threads.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -27,6 +27,7 @@ use std::time::Duration;
 use super::actuator::ActuatorHandle;
 use super::aggregate::StageAggregator;
 use super::bus::{DEFAULT_BUS_CAPACITY, SampleSink, TelemetryBus};
+use super::drum::DrumIdentifier;
 use super::sample::Constraint;
 
 /// Governor operating mode selected at spawn time.
@@ -127,12 +128,15 @@ const RATE_UNSET: u64 = u64::MAX;
 #[derive(Debug)]
 struct Snapshot {
     rates: [AtomicU64; Constraint::COUNT],
+    /// Latest committed drum designation, stored as a [`Constraint::index`].
+    drum: AtomicU8,
 }
 
 impl Snapshot {
     fn new() -> Self {
         Self {
             rates: std::array::from_fn(|_| AtomicU64::new(RATE_UNSET)),
+            drum: AtomicU8::new(Constraint::Unknown.index() as u8),
         }
     }
 
@@ -145,6 +149,14 @@ impl Snapshot {
             RATE_UNSET => None,
             bits => Some(f64::from_bits(bits)),
         }
+    }
+
+    fn store_drum(&self, drum: Constraint) {
+        self.drum.store(drum.index() as u8, Ordering::Relaxed);
+    }
+
+    fn load_drum(&self) -> Constraint {
+        Constraint::from_index(self.drum.load(Ordering::Relaxed) as usize)
     }
 }
 
@@ -211,13 +223,19 @@ impl Governor {
     }
 }
 
-/// The governor sense loop: drain, fold, publish, wait, repeat.
+/// The governor sense loop: drain, fold, identify the drum, publish, wait,
+/// repeat.
 ///
 /// Runs until `shutdown` is set (and a final drain has folded any stragglers).
 /// Each iteration drains every queued sample - keeping the bus shallow so
-/// producers rarely overflow it - folds each into its stage average, and
-/// publishes the refreshed rate to `snapshot`. It then waits up to `poll` for
-/// the next window or an early wake from [`GovernorHandle::shutdown`].
+/// producers rarely overflow it - folds each into its stage average, publishes
+/// the refreshed rate to `snapshot`, then runs one drum-identification window
+/// over the folded signals and publishes the debounced drum. It waits up to
+/// `poll` for the next window or an early wake from [`GovernorHandle::shutdown`].
+///
+/// Drum identification is pure observation: it reads the aggregated telemetry
+/// and stores a designation for callers to read. In this step it drives no
+/// actuator, so the sensing remains byte-neutral on the data path.
 fn sense_loop(
     bus: &TelemetryBus,
     snapshot: &Snapshot,
@@ -226,8 +244,10 @@ fn sense_loop(
     poll: Duration,
 ) {
     let mut aggregator = StageAggregator::new();
+    let mut drum = DrumIdentifier::new();
     loop {
         drain(bus, snapshot, &mut aggregator);
+        identify_drum(snapshot, &aggregator, &mut drum);
         if shutdown.load(Ordering::Acquire) {
             break;
         }
@@ -239,6 +259,7 @@ fn sense_loop(
     // Final drain so telemetry emitted between the last poll and shutdown is
     // still folded into the estimates callers read after joining.
     drain(bus, snapshot, &mut aggregator);
+    identify_drum(snapshot, &aggregator, &mut drum);
 }
 
 /// Drains and folds every currently-queued sample.
@@ -248,6 +269,13 @@ fn drain(bus: &TelemetryBus, snapshot: &Snapshot, aggregator: &mut StageAggregat
             snapshot.store(sample.stage, rate);
         }
     }
+}
+
+/// Runs one drum-identification evaluation window over the aggregated signals
+/// and publishes the debounced designation.
+fn identify_drum(snapshot: &Snapshot, aggregator: &StageAggregator, drum: &mut DrumIdentifier) {
+    let designation = drum.observe(&aggregator.stage_signals());
+    snapshot.store_drum(designation);
 }
 
 /// Handle to a spawned governor: the only public surface after `spawn`.
@@ -313,6 +341,19 @@ impl GovernorHandle {
     #[must_use]
     pub fn throughput(&self, stage: Constraint) -> Option<f64> {
         self.snapshot.load(stage)
+    }
+
+    /// The governor's current drum designation - the identified constraint
+    /// stage.
+    ///
+    /// [`Constraint::Unknown`] until the sense loop has run enough
+    /// [hysteresis](super::drum::HYSTERESIS_WINDOWS) windows to commit a drum,
+    /// and always [`Constraint::Unknown`] when the governor is off (no sense
+    /// loop runs). The designation is debounced, so it reflects a sustained
+    /// constraint rather than a single noisy window.
+    #[must_use]
+    pub fn drum(&self) -> Constraint {
+        self.snapshot.load_drum()
     }
 
     /// Total telemetry samples dropped due to bus overflow.
@@ -432,6 +473,50 @@ mod tests {
         let rate = gov.throughput(Constraint::Compute).expect("folded");
         assert!((rate - 4_096_000.0).abs() < 1.0, "rate {rate}");
         gov.shutdown();
+    }
+
+    #[test]
+    fn off_mode_drum_is_unknown() {
+        let gov = Governor::spawn(GovernorConfig::new(GovernorMode::Off));
+        assert_eq!(
+            gov.drum(),
+            Constraint::Unknown,
+            "off governor names no drum"
+        );
+    }
+
+    #[test]
+    fn sense_loop_identifies_a_sustained_drum() {
+        // WireWrite is sampled with a full input queue while its downstream
+        // (Consumer) is never sampled - the classic constraint signature. After
+        // enough hysteresis windows the governor must commit it as the drum.
+        let mut gov = Governor::spawn(GovernorConfig {
+            mode: GovernorMode::Observe,
+            bus_capacity: 256,
+            poll_interval: Duration::from_millis(2),
+        });
+        let sink = gov.sample_sink().expect("sink");
+        // Emit continuously so successive poll windows keep classifying
+        // WireWrite as the candidate until hysteresis commits it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            sink.emit(StageSample::new(
+                Constraint::WireWrite,
+                4_096,
+                Duration::from_millis(1),
+                8, // full input queue -> high normalized occupancy
+            ));
+            if gov.drum() == Constraint::WireWrite {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "drum never committed to WireWrite"
+            );
+            std::thread::yield_now();
+        }
+        gov.shutdown();
+        assert_eq!(gov.drum(), Constraint::WireWrite);
     }
 
     #[test]
