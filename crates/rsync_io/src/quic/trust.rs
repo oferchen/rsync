@@ -14,9 +14,10 @@
 //!   fingerprint is pinned into a known-hosts file (mirroring SSH); a changed
 //!   fingerprint for a known authority aborts the handshake loudly. There is no
 //!   blanket insecure escape hatch.
-//! - **Private CA** (a caller-supplied [`RootCertStore`], `--quic-ca`) -
-//!   resolved here only as the highest-precedence [`QuicTrust::Roots`]; the flag
-//!   itself lands with the CLI wiring.
+//! - **Private CA** ([`load_private_ca`]/[`private_ca_file`], `--quic-ca`,
+//!   QUIC-5b) - a PEM CA bundle parsed into a [`RootCertStore`] and used as the
+//!   highest-precedence [`QuicTrust::Roots`], for a daemon whose chain is
+//!   anchored by an internal or corporate CA rather than the platform store.
 //!
 //! [`resolve`] selects one source per policy-B precedence so the CLI wiring
 //! (`--quic-ca` > system roots > TOFU) composes these backends without
@@ -37,6 +38,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
 use sha2::{Digest, Sha256};
@@ -368,6 +370,61 @@ pub fn system_roots() -> io::Result<QuicTrust> {
     Ok(QuicTrust::Roots(roots))
 }
 
+/// Loads a private CA bundle from the PEM file at `path` into a
+/// [`RootCertStore`] (QUIC-5b, `--quic-ca`).
+///
+/// This is the highest-precedence source of the client-verification ladder: an
+/// operator points `--quic-ca` at the certificate that anchors their daemon's
+/// chain (a corporate or internal CA), and the server chain is verified against
+/// it instead of the platform store or a TOFU pin. Only `CERTIFICATE` PEM
+/// sections are consumed; any other section kind is ignored, matching how
+/// openssl/stunnel treat a CA bundle.
+///
+/// Fails loudly rather than trusting nothing: an unreadable file, a malformed
+/// PEM certificate, a certificate rustls rejects, or a file with no
+/// certificate at all each returns a distinct error naming `path`. Callers map
+/// the [`io::Error`] to the appropriate exit code at the CLI boundary.
+pub fn load_private_ca(path: &Path) -> io::Result<RootCertStore> {
+    let pem = fs::read(path)
+        .map_err(|err| io_err(format!("quic: reading --quic-ca file {}: {err}", path.display())))?;
+    let mut roots = RootCertStore::empty();
+    let mut added = 0usize;
+    for (index, cert) in CertificateDer::pem_slice_iter(&pem).enumerate() {
+        let cert = cert.map_err(|err| {
+            io_err(format!(
+                "quic: parsing certificate #{} in --quic-ca file {}: {err}",
+                index + 1,
+                path.display()
+            ))
+        })?;
+        roots.add(cert).map_err(|err| {
+            io_err(format!(
+                "quic: certificate #{} in --quic-ca file {} is not a usable trust anchor: {err}",
+                index + 1,
+                path.display()
+            ))
+        })?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err(io_err(format!(
+            "quic: no certificates found in --quic-ca file {}",
+            path.display()
+        )));
+    }
+    Ok(roots)
+}
+
+/// Builds a private-CA trust source (QUIC-5b) from the PEM file at `path`.
+///
+/// Convenience wrapper over [`load_private_ca`] mirroring [`tofu_file`] and
+/// [`system_roots`]: it yields the [`QuicTrust::Roots`] the connector consumes,
+/// so the CLI wiring feeds `--quic-ca` through the same connect path as the
+/// system-roots default.
+pub fn private_ca_file(path: &Path) -> io::Result<QuicTrust> {
+    Ok(QuicTrust::Roots(load_private_ca(path)?))
+}
+
 /// Builds a TOFU trust source (QUIC-5d) pinning `authority` through `store`.
 #[must_use]
 pub fn tofu(authority: impl Into<String>, store: Box<dyn KnownHostsStore>) -> QuicTrust {
@@ -648,6 +705,163 @@ mod tests {
         assert!(
             matches!(both, QuicTrust::Roots(_)),
             "explicit CA outranks TOFU"
+        );
+    }
+
+    /// Encodes a DER certificate as a PEM `CERTIFICATE` block, base64 wrapped at
+    /// 64 columns - the on-disk shape `--quic-ca` is pointed at. Kept local so
+    /// the loader tests own their fixtures without pulling rcgen's optional
+    /// `pem` feature into the build.
+    fn der_to_pem(der: &CertificateDer<'_>) -> String {
+        use base64::engine::general_purpose::STANDARD;
+        let encoded = STANDARD.encode(der.as_ref());
+        let mut body = String::new();
+        for line in encoded.as_bytes().chunks(64) {
+            body.push_str(std::str::from_utf8(line).expect("base64 is ascii"));
+            body.push('\n');
+        }
+        format!("-----BEGIN CERTIFICATE-----\n{body}-----END CERTIFICATE-----\n")
+    }
+
+    /// Builds a private CA and a leaf certificate signed by it (SAN
+    /// `host.example`, `serverAuth` EKU), returning `(ca_pem, leaf_der)`. The
+    /// leaf is what a QUIC daemon behind the private CA would present; the CA
+    /// PEM is what `--quic-ca` loads to anchor it.
+    fn private_ca_and_leaf() -> (String, CertificateDer<'static>) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+            KeyUsagePurpose,
+        };
+
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params =
+            CertificateParams::new(vec!["oc-rsync test ca".to_owned()]).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::CrlSign,
+        ];
+        let ca_cert = ca_params.self_signed(&ca_key).expect("self-sign ca");
+        let ca_pem = der_to_pem(ca_cert.der());
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params =
+            CertificateParams::new(vec!["host.example".to_owned()]).expect("leaf params");
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let leaf = leaf_params
+            .signed_by(&leaf_key, &issuer)
+            .expect("sign leaf")
+            .der()
+            .clone();
+        (ca_pem, leaf)
+    }
+
+    /// The end-to-end trust property of `--quic-ca`: a certificate signed by the
+    /// loaded CA is accepted, an unrelated self-signed certificate is rejected.
+    /// Drives rustls' `WebPkiServerVerifier` over the exact [`RootCertStore`]
+    /// `load_private_ca` produces - the same store `QuicConnector::with_trust`
+    /// installs for a [`QuicTrust::Roots`] - so this asserts the connector's
+    /// trust decision, not a reimplementation of it. Encodes WHY: `--quic-ca`
+    /// is only meaningful if a chain it anchors verifies while an off-CA chain
+    /// does not; a loader that accepted anything (or nothing) would pass a
+    /// weaker test.
+    #[test]
+    fn private_ca_trusts_signed_leaf_and_rejects_unrelated() {
+        let (ca_pem, leaf) = private_ca_and_leaf();
+        let rogue = synthetic_cert();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("private-ca.pem");
+        std::fs::write(&ca_path, ca_pem).expect("write ca pem");
+
+        let roots = load_private_ca(&ca_path).expect("load private ca");
+        assert_eq!(roots.len(), 1, "one CA certificate becomes one trust anchor");
+
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            ring_provider(),
+        )
+        .build()
+        .expect("build webpki verifier");
+        let name = ServerName::try_from("host.example").expect("server name");
+
+        verifier
+            .verify_server_cert(&leaf, &[], &name, &[], UnixTime::now())
+            .expect("a leaf signed by the loaded CA must be trusted");
+        verifier
+            .verify_server_cert(&rogue, &[], &name, &[], UnixTime::now())
+            .expect_err("a certificate not signed by the CA must be rejected");
+    }
+
+    /// `--quic-ca` pointed at a private CA outranks both the system-roots
+    /// default and a TOFU target, and it arrives as the `QuicTrust::Roots` the
+    /// connector consumes. Threads the real loader through [`resolve`] so the
+    /// precedence assertion covers the actual `--quic-ca` bytes, not a stand-in
+    /// empty store.
+    #[test]
+    fn loaded_private_ca_outranks_tofu_via_resolve() {
+        let (ca_pem, _leaf) = private_ca_and_leaf();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("private-ca.pem");
+        std::fs::write(&ca_path, ca_pem).expect("write ca pem");
+        let known_hosts = dir.path().join("quic_known_hosts");
+
+        let ca = load_private_ca(&ca_path).expect("load private ca");
+        let trust = resolve(Some(ca), Some((AUTHORITY.to_owned(), Some(known_hosts))))
+            .expect("resolve with ca and tofu");
+        assert!(
+            matches!(trust, QuicTrust::Roots(_)),
+            "a loaded --quic-ca must win over a TOFU target"
+        );
+
+        let private = private_ca_file(&ca_path).expect("private_ca_file");
+        assert!(
+            matches!(private, QuicTrust::Roots(_)),
+            "private_ca_file yields a Roots trust source"
+        );
+    }
+
+    /// The loader fails loudly on each way a `--quic-ca` file can be unusable:
+    /// a missing file, a non-PEM file, and a well-formed PEM with no
+    /// certificate section. Every error names `--quic-ca` so the operator knows
+    /// which input to fix, and none silently yields an empty (trust-nothing)
+    /// store. Encodes WHY: a private-CA flag that swallowed a bad bundle would
+    /// either abort every later handshake with an opaque TLS error or, worse,
+    /// trust nothing while looking configured.
+    #[test]
+    fn load_private_ca_reports_unusable_inputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let missing = dir.path().join("absent.pem");
+        let err = load_private_ca(&missing).expect_err("missing file must error");
+        assert!(
+            err.to_string().contains("--quic-ca") && err.to_string().contains("reading"),
+            "missing-file error must name the flag and the failed read: {err}"
+        );
+
+        let garbage = dir.path().join("garbage.pem");
+        std::fs::write(
+            &garbage,
+            b"-----BEGIN CERTIFICATE-----\n@@@ not base64 @@@\n-----END CERTIFICATE-----\n",
+        )
+        .expect("write malformed cert");
+        let err = load_private_ca(&garbage).expect_err("malformed certificate must error");
+        assert!(
+            err.to_string().contains("--quic-ca") && err.to_string().contains("parsing certificate"),
+            "malformed-PEM error must name the flag and the parse failure: {err}"
+        );
+
+        let empty = dir.path().join("empty.pem");
+        std::fs::write(
+            &empty,
+            b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+        )
+        .expect("write cert-less pem");
+        let err = load_private_ca(&empty).expect_err("cert-less PEM must error");
+        assert!(
+            err.to_string().contains("no certificates found"),
+            "a PEM without a certificate must report none found: {err}"
         );
     }
 }
