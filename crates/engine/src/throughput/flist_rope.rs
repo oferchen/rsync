@@ -708,7 +708,11 @@ mod tests {
         let slow = cfg.target_budget(8_000.0);
         let fast = cfg.target_budget(100_000_000.0);
         assert_eq!(slow, 4_000);
-        assert_eq!(fast, 8 * 1024 * 1024, "a fast drum saturates the max budget");
+        assert_eq!(
+            fast,
+            8 * 1024 * 1024,
+            "a fast drum saturates the max budget"
+        );
         assert!(fast > slow);
     }
 
@@ -737,7 +741,9 @@ mod tests {
             Err(FlistRopeConfigError::MinAboveMax { min: 8, max: 4 })
         );
         assert_eq!(
-            FlistRopeConfig::new(1, 4096).unwrap().with_safety_factor(0.0),
+            FlistRopeConfig::new(1, 4096)
+                .unwrap()
+                .with_safety_factor(0.0),
             Err(FlistRopeConfigError::BadSafetyFactor)
         );
         assert_eq!(
@@ -747,11 +753,10 @@ mod tests {
             Err(FlistRopeConfigError::BadSafetyFactor)
         );
         assert_eq!(
-            FlistRopeConfig::new(4096, 1 << 20).unwrap().with_max_budget(1),
-            Err(FlistRopeConfigError::MinAboveMax {
-                min: 4096,
-                max: 1
-            })
+            FlistRopeConfig::new(4096, 1 << 20)
+                .unwrap()
+                .with_max_budget(1),
+            Err(FlistRopeConfigError::MinAboveMax { min: 4096, max: 1 })
         );
     }
 
