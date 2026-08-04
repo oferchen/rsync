@@ -47,6 +47,7 @@
 //! time and exposes its DER encoding so a connector can pin it.
 
 mod driver;
+mod error;
 mod trust;
 
 use std::collections::VecDeque;
@@ -110,8 +111,10 @@ enum Terminal {
     /// session ended cleanly, mirroring how a TCP transport treats a clean
     /// close.
     Clean,
-    /// Any other connection loss.
-    Error(String),
+    /// Any other connection loss, classified so the surfaced `io::Error`
+    /// carries the `ErrorKind`/tag `core::ExitCode::from_io_error` maps to the
+    /// parity exit code (see [`error`]).
+    Error(error::TransportFault),
 }
 
 impl Terminal {
@@ -123,7 +126,7 @@ impl Terminal {
                 Self::Clean
             }
             ConnectionError::LocallyClosed => Self::Clean,
-            other => Self::Error(other.to_string()),
+            other => Self::Error(error::connection_fault(other)),
         }
     }
 }
@@ -239,7 +242,7 @@ fn wait_stream(io: &Arc<Io>) -> io::Result<QuicStream> {
                     "connection closed before a stream was established",
                 ));
             }
-            Some(Terminal::Error(msg)) => return Err(io_err(msg.clone())),
+            Some(Terminal::Error(fault)) => return Err(fault.to_io_error()),
             None => {}
         }
         if st.drained {
@@ -506,7 +509,7 @@ impl QuicConnector {
         let mut endpoint = Endpoint::new(Arc::new(EndpointConfig::default()), None, false, None);
         let (handle, conn) = endpoint
             .connect(Instant::now(), self.config.clone(), addr, server_name)
-            .map_err(io_err)?;
+            .map_err(|e| error::connect_fault(&e))?;
         let io = spawn_io(socket, endpoint, Role::Client, Some((handle, conn)))?;
         wait_stream(&io)
     }
@@ -547,11 +550,13 @@ impl QuicStream {
             }
             match &st.terminal {
                 Some(Terminal::Clean) => return Ok(()),
-                Some(Terminal::Error(msg)) => return Err(io_err(msg.clone())),
+                Some(Terminal::Error(fault)) => return Err(fault.to_io_error()),
                 None => {}
             }
             if st.drained {
-                return Err(io_err("driver exited before the stream finished"));
+                return Err(error::driver_gone(
+                    "driver exited before the stream finished",
+                ));
             }
             st = shared.wait(st);
         }
@@ -638,11 +643,11 @@ impl Read for QuicStream {
             match &st.terminal {
                 // Clean close is end-of-session, mirroring a TCP clean close.
                 Some(Terminal::Clean) => return Ok(0),
-                Some(Terminal::Error(msg)) => return Err(io_err(msg.clone())),
+                Some(Terminal::Error(fault)) => return Err(fault.to_io_error()),
                 None => {}
             }
             if st.drained {
-                return Err(io_err("driver exited mid-stream"));
+                return Err(error::driver_gone("driver exited mid-stream"));
             }
             st = shared.wait(st);
         }
@@ -658,11 +663,16 @@ impl Write for QuicStream {
         let mut st = shared.lock();
         loop {
             if let Some(terminal) = &st.terminal {
-                let msg = match terminal {
-                    Terminal::Clean => "connection closed".to_owned(),
-                    Terminal::Error(msg) => msg.clone(),
-                };
-                return Err(io::Error::new(io::ErrorKind::BrokenPipe, msg));
+                return Err(match terminal {
+                    // A clean peer close mid-write is a broken pipe, as on TCP.
+                    Terminal::Clean => {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "connection closed")
+                    }
+                    // A faulted close keeps its classification (timeout stays a
+                    // timeout, a protocol failure stays a protocol failure)
+                    // instead of collapsing every write failure to BrokenPipe.
+                    Terminal::Error(fault) => fault.to_io_error(),
+                });
             }
             if st.send_stopped {
                 return Err(io::Error::new(
@@ -684,7 +694,7 @@ impl Write for QuicStream {
                 return Ok(take);
             }
             if st.drained {
-                return Err(io_err("driver exited mid-stream"));
+                return Err(error::driver_gone("driver exited mid-stream"));
             }
             st = shared.wait(st);
         }
