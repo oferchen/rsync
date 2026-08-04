@@ -79,7 +79,11 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// that leaves nothing above the current capacity, so the governor can never
     /// push the pool larger than local demand nor force an extra shrink beyond
     /// what the local tracker already wants.
-    fn compose_with_governor(&self, local: ResizeAction, current_capacity: usize) -> ResizeAction {
+    pub(in super::super) fn compose_with_governor(
+        &self,
+        local: ResizeAction,
+        current_capacity: usize,
+    ) -> ResizeAction {
         let Some(ceiling) = self.governor_ceiling() else {
             return local;
         };
