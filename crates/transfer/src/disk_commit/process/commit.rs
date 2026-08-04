@@ -347,6 +347,12 @@ pub(super) fn retain_partial_file(
 /// uses `copy_file()` + `do_unlink()` when `rename()` returns EXDEV. This
 /// happens when `--temp-dir` points to a different filesystem than the
 /// destination.
+///
+/// On Windows the commit rename routes through
+/// [`crate::temp_guard::commit_rename_no_follow`] and the `#[cfg(not(windows))]`
+/// arm of [`rename_config_sandboxed`] is compiled out, so this path-based
+/// helper has no non-test caller there; the tests still exercise it.
+#[cfg_attr(windows, allow(dead_code))]
 pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<bool> {
     if let Some(result) = fast_io::try_rename_via_io_uring(old_path, new_path) {
         return result.map(|()| false);
