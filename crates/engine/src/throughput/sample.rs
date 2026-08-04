@@ -57,12 +57,63 @@ impl Constraint {
         Constraint::Unknown,
     ];
 
+    /// Every schedulable pipeline stage, in data-flow order, excluding
+    /// [`Constraint::Unknown`].
+    ///
+    /// `Unknown` is the governor's initial, unclassified drum designation and
+    /// is never a real pipeline stage, so drum identification iterates this
+    /// list rather than [`Constraint::ALL`]. The order matches the physical
+    /// pipeline (`Read → Compute → Compress → WireWrite → Consumer`) so
+    /// [`Constraint::successor`] can walk it.
+    pub const REAL: [Constraint; 5] = [
+        Constraint::Read,
+        Constraint::Compute,
+        Constraint::Compress,
+        Constraint::WireWrite,
+        Constraint::Consumer,
+    ];
+
     /// Number of distinct constraint stages.
     ///
     /// Equal to `Constraint::ALL.len()`; exposed as a `const` so fixed-size
     /// per-stage arrays can be declared without referencing the array length
     /// at a non-const site.
     pub const COUNT: usize = Self::ALL.len();
+
+    /// The stage immediately downstream of `self` in the transfer pipeline, or
+    /// `None` for the terminal [`Constraint::Consumer`] and the non-stage
+    /// [`Constraint::Unknown`].
+    ///
+    /// Drum identification uses this to read a stage's *output* queue occupancy:
+    /// the successor's input queue is, by construction, this stage's output.
+    /// A stage that is piling work at its own input while its successor's input
+    /// stays empty is the classic Theory-of-Constraints bottleneck signature.
+    #[must_use]
+    pub const fn successor(self) -> Option<Constraint> {
+        match self {
+            Constraint::Read => Some(Constraint::Compute),
+            Constraint::Compute => Some(Constraint::Compress),
+            Constraint::Compress => Some(Constraint::WireWrite),
+            Constraint::WireWrite => Some(Constraint::Consumer),
+            Constraint::Consumer | Constraint::Unknown => None,
+        }
+    }
+
+    /// Reconstructs a stage from its dense [`index`](Constraint::index).
+    ///
+    /// Returns [`Constraint::Unknown`] for any value outside `[0, COUNT)`, so a
+    /// round-trip through an atomic `u8` slot can never yield an invalid stage.
+    #[must_use]
+    pub const fn from_index(index: usize) -> Constraint {
+        match index {
+            0 => Constraint::Read,
+            1 => Constraint::Compute,
+            2 => Constraint::Compress,
+            3 => Constraint::WireWrite,
+            4 => Constraint::Consumer,
+            _ => Constraint::Unknown,
+        }
+    }
 
     /// Dense array index for this stage in `[0, COUNT)`.
     ///
@@ -148,6 +199,45 @@ mod tests {
             assert_eq!(stage.index(), i, "index must match ALL position");
         }
         assert_eq!(Constraint::COUNT, 6);
+    }
+
+    #[test]
+    fn real_stages_exclude_unknown_and_stay_in_flow_order() {
+        assert_eq!(Constraint::REAL.len(), Constraint::COUNT - 1);
+        assert!(!Constraint::REAL.contains(&Constraint::Unknown));
+        // REAL is a prefix of ALL (declaration/data-flow order).
+        for (i, stage) in Constraint::REAL.iter().enumerate() {
+            assert_eq!(*stage, Constraint::ALL[i]);
+        }
+    }
+
+    #[test]
+    fn successor_walks_the_pipeline_to_a_terminal() {
+        assert_eq!(Constraint::Read.successor(), Some(Constraint::Compute));
+        assert_eq!(Constraint::Compute.successor(), Some(Constraint::Compress));
+        assert_eq!(
+            Constraint::Compress.successor(),
+            Some(Constraint::WireWrite)
+        );
+        assert_eq!(
+            Constraint::WireWrite.successor(),
+            Some(Constraint::Consumer)
+        );
+        assert_eq!(Constraint::Consumer.successor(), None);
+        assert_eq!(Constraint::Unknown.successor(), None);
+    }
+
+    #[test]
+    fn from_index_round_trips_and_saturates_to_unknown() {
+        for stage in Constraint::ALL {
+            assert_eq!(Constraint::from_index(stage.index()), stage);
+        }
+        // Out-of-range indices collapse to Unknown rather than panic.
+        assert_eq!(
+            Constraint::from_index(Constraint::COUNT),
+            Constraint::Unknown
+        );
+        assert_eq!(Constraint::from_index(usize::MAX), Constraint::Unknown);
     }
 
     #[test]
