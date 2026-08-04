@@ -460,18 +460,12 @@ pub(super) fn rename_config_sandboxed(
 
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).
 ///
-/// On Unix, `raw_os_error() == libc::EXDEV` (errno 18). On Windows,
-/// `ERROR_NOT_SAME_DEVICE` (error 17) is the equivalent.
+/// Forwards to [`fast_io::is_cross_device`], the single source of truth shared
+/// with the engine local-copy commit guard and [`crate::temp_guard`]. On Unix
+/// this is `raw_os_error() == libc::EXDEV` (errno 18); on Windows
+/// `ERROR_NOT_SAME_DEVICE` (error 17).
 pub(super) fn is_cross_device(e: &io::Error) -> bool {
-    match e.raw_os_error() {
-        #[cfg(unix)]
-        Some(code) => code == libc::EXDEV,
-        #[cfg(windows)]
-        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
-        #[cfg(not(any(unix, windows)))]
-        Some(_) => false,
-        None => false,
-    }
+    fast_io::is_cross_device(e)
 }
 
 /// Moves an existing destination file to its backup path, falling back to a

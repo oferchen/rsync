@@ -108,6 +108,121 @@ pub fn remove_incomplete_destination(destination: &Path) {
     }
 }
 
+/// Creates the staging temp file with `create_new` semantics, reparse-point
+/// hardened on Windows.
+///
+/// On Windows the create routes through `fast_io::create_new_no_follow`
+/// (`CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT`, the analog of `O_EXCL |
+/// O_NOFOLLOW`), so a symlink/junction pre-planted at the temp leaf is opened as
+/// the reparse point itself (and `CREATE_NEW` fails) rather than traversed,
+/// closing the CVE-2024-12747 residual on the temp-create side. This mirrors the
+/// transfer receiver's `temp_guard::try_create_new`. On every other platform it
+/// is the plain `create_new` open the local-copy guard has always used.
+fn create_new_temp(path: &Path) -> io::Result<fs::File> {
+    #[cfg(windows)]
+    {
+        fast_io::create_new_no_follow(path)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    }
+}
+
+/// Renames the staging temp onto the destination, reparse-point hardened on
+/// Windows and io_uring-accelerated on Linux.
+///
+/// On Windows the rename routes through `fast_io::rename_no_follow`, which
+/// validates and pins the destination parent as a real directory (not a
+/// junction/mount-point swap) and renames the temp file by handle, so a
+/// concurrent reparse-point swap on the commit parent between temp-create and
+/// rename cannot redirect the committed file outside the destination tree
+/// (CVE-2024-12747 residual). This mirrors the transfer disk-commit
+/// `temp_guard::commit_rename_no_follow`. On other platforms it prefers an
+/// `IORING_OP_RENAMEAT` SQE, falling back to `std::fs::rename`.
+///
+/// `replace_existing` is always `true`: upstream `do_rename` overwrites the
+/// destination, matching `std::fs::rename`'s replace semantics.
+fn hardened_rename(temp_path: &Path, final_path: &Path) -> io::Result<()> {
+    // Test-only fault injection: force the EXDEV boundary so the copy+remove
+    // fallback runs deterministically on a single filesystem (and on Windows CI,
+    // where a real second volume is unavailable).
+    #[cfg(test)]
+    if force_exdev_active() {
+        return Err(simulated_cross_device_error());
+    }
+    #[cfg(windows)]
+    {
+        fast_io::rename_no_follow(temp_path, final_path, true)
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(result) = fast_io::try_rename_via_io_uring(temp_path, final_path) {
+            result
+        } else {
+            fs::rename(temp_path, final_path)
+        }
+    }
+}
+
+// Test-only fault injection for the commit rename boundary. A thread-local flag
+// (nextest runs each test in its own process, and the guard is thread-scoped
+// regardless) makes `hardened_rename` report a cross-device error, driving the
+// EXDEV copy+remove fallback without a real second filesystem. Mirrors the
+// transfer disk-commit `ForceExdev` harness so both commit paths are exercised
+// identically.
+#[cfg(test)]
+thread_local! {
+    static FORCE_EXDEV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn force_exdev_active() -> bool {
+    FORCE_EXDEV.with(std::cell::Cell::get)
+}
+
+/// Builds an error [`fast_io::is_cross_device`] recognizes on the current
+/// platform: `EXDEV` (errno 18) on Unix, `ERROR_NOT_SAME_DEVICE` (17) on
+/// Windows.
+#[cfg(test)]
+fn simulated_cross_device_error() -> io::Error {
+    #[cfg(unix)]
+    {
+        io::Error::from_raw_os_error(libc::EXDEV)
+    }
+    #[cfg(windows)]
+    {
+        io::Error::from_raw_os_error(17)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        io::Error::other("simulated cross-device")
+    }
+}
+
+/// Test-only RAII guard that forces [`hardened_rename`] onto the cross-device
+/// path for its lifetime, exercising the copy+remove fallback.
+#[cfg(test)]
+struct ForceExdev;
+
+#[cfg(test)]
+impl ForceExdev {
+    fn new() -> Self {
+        FORCE_EXDEV.with(|c| c.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ForceExdev {
+    fn drop(&mut self) {
+        FORCE_EXDEV.with(|c| c.set(false));
+    }
+}
+
 /// Finalization strategy for destination writes.
 ///
 /// Named temp files use rename; anonymous temp files use `linkat(2)`.
@@ -212,11 +327,7 @@ impl DestinationWriteGuard {
         // partial only appears at its final resting place on interrupt/success.
         loop {
             let temp_path = temp_name_with_suffix(destination, temp_dir, &temp_suffix());
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_path)
-            {
+            match create_new_temp(&temp_path) {
                 Ok(file) => {
                     let final_path = destination.to_path_buf();
                     // Only --partial/--partial-dir temps need the abort-path
@@ -379,28 +490,23 @@ impl DestinationWriteGuard {
     ///
     /// upstream: `util1.c:robust_rename()` - retry up to 4 times on `ETXTBSY`.
     /// Returns `true` when commit used a cross-device copy instead of rename.
+    ///
+    /// The rename dispatch and the EXDEV detection share the transfer
+    /// disk-commit path's robust primitives: on Windows the commit routes
+    /// through `fast_io::rename_no_follow` (handle-anchored, reparse-point
+    /// hardened - CVE-2024-12747 residual) and the cross-device fallback is
+    /// keyed on [`fast_io::is_cross_device`] (raw `ERROR_NOT_SAME_DEVICE` = 17
+    /// on Windows / `EXDEV` on Unix), the single source of truth. This closes
+    /// the #7153-class divergence where this guard and the transfer commit
+    /// hardened the same operation differently.
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
         loop {
-            let rename_result = if let Some(result) =
-                fast_io::try_rename_via_io_uring(&temp_path, &self.final_path)
-            {
-                result
-            } else {
-                fs::rename(&temp_path, &self.final_path)
-            };
-            match rename_result {
+            match hardened_rename(&temp_path, &self.final_path) {
                 Ok(()) => return Ok(false),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
-                    let retry_result = if let Some(result) =
-                        fast_io::try_rename_via_io_uring(&temp_path, &self.final_path)
-                    {
-                        result
-                    } else {
-                        fs::rename(&temp_path, &self.final_path)
-                    };
-                    retry_result.map_err(|rename_error| {
+                    hardened_rename(&temp_path, &self.final_path).map_err(|rename_error| {
                         LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
                     })?;
                     return Ok(false);
@@ -417,7 +523,7 @@ impl DestinationWriteGuard {
                 // existing destination before creating a fresh file. Without
                 // this unlink, fs::copy fails with EACCES when the existing
                 // destination has restrictive permissions (e.g. mode 440).
-                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                Err(error) if fast_io::is_cross_device(&error) => {
                     remove_existing_destination(&self.final_path)?;
                     fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
                         LocalCopyError::io(
@@ -784,6 +890,103 @@ mod tests {
         assert!(staging.is_file());
 
         guard.discard();
+    }
+
+    /// #7153-class one-source-of-truth: the engine local-copy commit must share
+    /// the transfer disk-commit's EXDEV fallback. A cross-device rename (a
+    /// `--temp-dir` on a different mount) reports `EXDEV` on Unix and
+    /// `ERROR_NOT_SAME_DEVICE` (17) on Windows; both must fall back to
+    /// copy+remove (upstream `util1.c:robust_rename()`) and report the commit as
+    /// cross-device so the caller invalidates its temp-inode fd. `ForceExdev`
+    /// injects the boundary without a real second filesystem, so this runs on
+    /// the Windows engine CI job too (where errno 17 is what std would surface).
+    #[test]
+    fn commit_falls_back_to_copy_remove_on_cross_device_rename() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+        // Pre-existing destination with restrictive perms exercises the
+        // remove-before-copy that upstream's unlink_and_reopen performs.
+        fs::write(&dest, b"old content").expect("seed dest");
+
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        file.write_all(b"cross device payload").expect("write");
+        drop(file);
+        let staging = guard.staging_path().to_path_buf();
+
+        let cross = {
+            let _force = ForceExdev::new();
+            guard
+                .commit()
+                .expect("commit must succeed via copy+remove fallback")
+        };
+
+        assert!(
+            cross,
+            "a cross-device commit must report cross_device=true so the caller \
+             invalidates the temp-inode fd"
+        );
+        assert!(dest.exists(), "destination must exist after the fallback");
+        assert!(
+            !staging.exists(),
+            "the temp file must be removed after copy"
+        );
+        assert_eq!(
+            fs::read(&dest).expect("read dest"),
+            b"cross device payload",
+            "the fallback must land the exact staged content"
+        );
+    }
+
+    /// CVE-2024-12747 residual: a junction swapped onto the destination parent
+    /// between temp-create and commit must not redirect the committed file into
+    /// an attacker-controlled tree. The engine guard now anchors the commit
+    /// rename through `fast_io::rename_no_follow` (the same primitive the
+    /// transfer disk-commit path uses), which validates and pins the destination
+    /// parent as a real directory and refuses a reparse point. Junctions are
+    /// created without privilege, so this runs on unprivileged Windows CI; if
+    /// even the junction fallback is unavailable the test skips.
+    #[cfg(windows)]
+    #[test]
+    fn commit_refuses_reparse_point_destination_parent() {
+        let root = tempdir().expect("tempdir");
+        let real_dest = root.path().join("real_dest");
+        let attacker = root.path().join("attacker");
+        fs::create_dir(&real_dest).expect("real_dest");
+        fs::create_dir(&attacker).expect("attacker");
+        fs::write(attacker.join("keep.txt"), b"keep").expect("sentinel");
+
+        let dest = real_dest.join("victim.bin");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        file.write_all(b"loot").expect("write");
+        drop(file);
+
+        // Swap: move the real destination aside and plant a junction at its path
+        // pointing at the attacker tree.
+        let aside = root.path().join("real_dest.aside");
+        fs::rename(&real_dest, &aside).expect("move aside");
+        match fast_io::create_directory_symlink_or_junction(&attacker, &real_dest) {
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("skipping: cannot create reparse point ({err})");
+                return;
+            }
+        }
+
+        let result = guard.commit();
+        assert!(
+            result.is_err(),
+            "commit must refuse a reparse-point destination parent"
+        );
+        assert!(
+            !attacker.join("victim.bin").exists(),
+            "attacker tree must never receive the committed file"
+        );
+        assert!(
+            attacker.join("keep.txt").exists(),
+            "attacker sentinel must be untouched"
+        );
     }
 
     #[test]

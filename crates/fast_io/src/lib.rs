@@ -435,6 +435,7 @@ pub use temp_file_strategy::WindowsTempFileStrategy;
 pub use temp_file_strategy::{
     DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };
+pub use win_atomic_commit::is_cross_device;
 #[cfg(windows)]
 pub use win_atomic_commit::{create_new_no_follow, rename_no_follow};
 pub use win_path::to_extended_path;
