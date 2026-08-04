@@ -254,17 +254,41 @@ impl BatchFlags {
         bitmap
     }
 
-    /// Write flags to a writer, masking bits by protocol version.
+    /// Encode the full, untruncated stream-flags bitmap.
     ///
-    /// Only bits valid for the given protocol version are written.
-    /// Upstream `batch.c:write_stream_flags()` uses the negotiated
-    /// `protocol_version` to decide which bits to set.
+    /// Mirrors upstream `batch.c:97-114 write_stream_flags()`, which walks the
+    /// entire `flag_ptr[]` array and sets every active option's bit regardless
+    /// of the negotiated protocol version. Protocol-based truncation is a
+    /// read-time concern only (`batch.c:125-128 check_batch_flags()`; see
+    /// [`BatchFlags::from_bitmap`] and [`check_batch_flags`]), so the header
+    /// always carries all 15 bits on the wire.
+    fn full_bitmap(&self) -> i32 {
+        let mut bitmap = 0i32;
+        for (i, set) in flag_bits(self).into_iter().enumerate() {
+            if set {
+                bitmap |= 1 << i;
+            }
+        }
+        bitmap
+    }
+
+    /// Write the stream-flags bitmap to a writer.
+    ///
+    /// The full 15-bit bitmap is always written, independent of the negotiated
+    /// protocol version, mirroring upstream `batch.c:97-114
+    /// write_stream_flags()` (which writes `flags` unmasked). Upstream truncates
+    /// by protocol only on the read side in `batch.c:125-128 check_batch_flags()`,
+    /// so a proto < 30 batch created with `-z`/`-d` (proto 28) or `--inplace`
+    /// (proto 29) must still record those header bits for the byte layout to match
+    /// upstream. `protocol_version` is accepted for call-site symmetry with the
+    /// rest of the header writer but has no effect on the emitted bytes.
     pub fn write_to_versioned<W: Write>(
         &self,
         writer: &mut W,
         protocol_version: i32,
     ) -> io::Result<()> {
-        write_i32(writer, self.to_bitmap(protocol_version))
+        let _ = protocol_version;
+        write_i32(writer, self.full_bitmap())
     }
 
     /// Read the raw bitmap from a reader.
