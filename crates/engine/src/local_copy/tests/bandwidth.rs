@@ -265,3 +265,118 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
         "sleep {total_sleep_secs:?}s should align with compressed bytes ({expected_compressed:?}s) rather than uncompressed ({expected_uncompressed:?}s)",
     );
 }
+
+/// A delta-against-basis local copy must pace the bandwidth limiter on the
+/// emitted wire-token volume - the small literal payload for the unmatched
+/// runs - and NOT on the full source size. When the destination is a near
+/// copy of the source, almost every block is satisfied by a basis match, so
+/// only the divergent tail is written as literal data; the throttle must track
+/// that literal volume, keeping a mostly-matching large file quick under a
+/// tight limit.
+///
+/// This is why it matters: upstream `sleep_for_bwlimit(n)` accounts exactly the
+/// bytes just written to the multiplexed socket by `send_token()` - the literal
+/// data plus tiny block-reference tokens - never the whole basis-matched file.
+/// Pacing on the full literal-read or source size would over-throttle a delta
+/// transfer whose actual wire volume is small.
+///
+/// upstream: io.c:861 `sleep_for_bwlimit(n)`; token.c:`send_token()` writes the
+/// literal length + bytes and the negative block-reference tokens that `n`
+/// counts.
+#[test]
+fn delta_bandwidth_paces_wire_tokens_not_source_size() {
+    let mut recorder = bandwidth::recorded_sleep_session();
+    recorder.clear();
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    // 512 KiB source; the basis (destination) shares the first 480 KiB
+    // byte-for-byte and diverges only in the final 32 KiB. The delta matcher
+    // reuses the shared prefix as block matches and emits only the ~32 KiB
+    // tail as literal (wire-token) data.
+    const TOTAL: usize = 512 * 1024;
+    const DIVERGENT_TAIL: usize = 32 * 1024;
+    let mut source_payload = vec![0u8; TOTAL];
+    for (i, byte) in source_payload.iter_mut().enumerate() {
+        // Deterministic, non-repeating fill so blocks carry distinct checksums.
+        *byte = (i as u32).wrapping_mul(2_654_435_761).to_le_bytes()[i % 4];
+    }
+    let mut basis_payload = source_payload.clone();
+    for byte in basis_payload[TOTAL - DIVERGENT_TAIL..].iter_mut() {
+        *byte ^= 0xFF;
+    }
+
+    fs::write(&source, &source_payload).expect("write source");
+    fs::write(&destination, &basis_payload).expect("write basis");
+    // Backdate the basis so the size+mtime quick-check does not skip the copy.
+    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("backdate basis");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // 64 KiB/s: the ~32 KiB literal tail throttles for ~0.5s, whereas pacing on
+    // the full 512 KiB would stall for ~8s - a decisive separation.
+    let limit = NonZeroU64::new(64 * 1024).expect("limit");
+    let options = LocalCopyOptions::default()
+        .whole_file(false)
+        .bandwidth_limit(Some(limit));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("delta copy succeeds");
+
+    // The destination must be reconstructed byte-for-byte from basis + literals.
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        source_payload,
+        "delta copy must reconstruct the source exactly"
+    );
+
+    // Delta engaged: most of the file came from basis block matches, only the
+    // divergent tail became literal wire data. `bytes_copied` is the literal
+    // volume the limiter was fed (see `record_file`), so it must sit well below
+    // the full file size - proving this was not a whole-file re-send.
+    assert!(
+        summary.matched_bytes() > 0,
+        "expected block matches against the basis, got matched_bytes=0"
+    );
+    let literal = summary.bytes_copied();
+    assert!(
+        literal < TOTAL as u64,
+        "expected literal volume below the full file size, got {literal} of {TOTAL}"
+    );
+
+    let sleeps = recorder.take();
+    assert!(!sleeps.is_empty(), "bandwidth limiter recorded no sleeps");
+    let total_sleep_secs: f64 = sleeps.iter().map(|duration| duration.as_secs_f64()).sum();
+
+    let expected_literal_secs = literal as f64 / limit.get() as f64;
+    let expected_fullsize_secs = TOTAL as f64 / limit.get() as f64;
+
+    // Tolerance mirrors the compression pacing test: proportional slack plus a
+    // fixed floor for timer resolution and scheduling jitter.
+    let tolerance = expected_literal_secs * 0.25 + 0.25;
+    assert!(
+        (total_sleep_secs - expected_literal_secs).abs() <= tolerance,
+        "sleep {total_sleep_secs:.3}s deviates from literal expectation {expected_literal_secs:.3}s (tol {tolerance:.3}s)"
+    );
+    // The decisive fidelity check: the throttle aligns with the small literal
+    // volume, unmistakably closer to it than to the full source size.
+    assert!(
+        (total_sleep_secs - expected_literal_secs).abs()
+            < (total_sleep_secs - expected_fullsize_secs).abs(),
+        "sleep {total_sleep_secs:.3}s should track literal bytes ({expected_literal_secs:.3}s) not full size ({expected_fullsize_secs:.3}s)"
+    );
+    // The summary's own throttle accounting must match the recorded sleeps.
+    let summary_secs = summary.bandwidth_sleep().as_secs_f64();
+    assert!(
+        (summary_secs - total_sleep_secs).abs() <= tolerance,
+        "summary tracked {summary_secs:.3}s while recordings totalled {total_sleep_secs:.3}s"
+    );
+}
