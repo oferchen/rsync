@@ -445,10 +445,16 @@ where
         }
     }
 
-    let codec = compression_algorithm.unwrap_or(CompressionAlgorithm::Zlib);
-
+    // upstream: compat.c:820 parse_compress_choice(1) calls
+    // init_compression_level() (token.c:55) AFTER negotiate_the_strings()
+    // (compat.c:809). When --compress-choice fixed the codec its range is known
+    // now, so clamp against it (level 0 disables zlib/zlibx). Otherwise the
+    // negotiated codec - and whether level 0 means "off" - is unknown until
+    // negotiation, so pass `None`: the raw level is carried forward and the
+    // off_level decision deferred to the post-negotiation resolution in the
+    // transfer layer, matching upstream ordering.
     if !compress_disabled_by_choice && let Some(value) = compress_level {
-        match parse_compress_level(value.as_os_str(), codec) {
+        match parse_compress_level(value.as_os_str(), compression_algorithm) {
             Ok(setting) => compress_level_setting = Some(setting),
             Err(message) => return Err(fail_with_message(message, stderr)),
         }
@@ -667,4 +673,89 @@ where
         log_file_path: log.log_file_path,
         log_file_template: log.log_file_template,
     }))
+}
+
+#[cfg(test)]
+mod compression_defer_tests {
+    use super::*;
+
+    fn parse(
+        compress_flag: bool,
+        no_compress: bool,
+        level: Option<&str>,
+        choice: Option<&str>,
+    ) -> CompressionResult {
+        let mut stderr = MessageSink::new(Vec::<u8>::new());
+        parse_compression_settings(
+            &mut stderr,
+            compress_flag,
+            no_compress,
+            &level.map(OsString::from),
+            &choice.map(OsString::from),
+            &None,
+            &None,
+        )
+        .expect("compression settings parse")
+    }
+
+    /// `-z --compress-level=0` with no `--compress-choice` must NOT disable
+    /// compression at parse time. Upstream defers the off_level decision to the
+    /// negotiated codec: `init_compression_level()` (token.c:76-98) runs from
+    /// `parse_compress_choice(1)` (compat.c:820) only after
+    /// `negotiate_the_strings()` (compat.c:809). Even though the preliminary
+    /// arg-layer estimate collapses level 0 against zlib (`compress_flag =
+    /// false`), the authoritative parse keeps compression on, leaves the codec
+    /// unresolved, and carries the raw level (0) forward for post-negotiation
+    /// resolution.
+    #[test]
+    fn level_zero_without_choice_defers_instead_of_disabling() {
+        let result = parse(false, false, Some("0"), None);
+        assert!(
+            result.compress,
+            "level 0 without a codec must keep compression on until negotiation"
+        );
+        assert!(
+            result.compression_algorithm.is_none(),
+            "no --compress-choice means the codec stays unresolved"
+        );
+        assert!(
+            result.compression_setting.is_enabled(),
+            "the deferred setting is enabled, not disabled"
+        );
+        // Raw level 0 is carried forward (CompressionLevel::None round-trips to 0
+        // via from_signed) so it forwards as --compress-level=0 to the peer.
+        assert!(matches!(
+            result.compression_level_override,
+            Some(CompressionLevel::None | CompressionLevel::PreciseSigned(0))
+        ));
+    }
+
+    /// Control: an explicit `--compress-choice=zstd --compress-level=0` is
+    /// resolved against the known codec at parse time and must stay on at zstd's
+    /// default level (3), never deferred or disabled. upstream: token.c:75-78 -
+    /// zstd maps a literal 0 to `ZSTD_CLEVEL_DEFAULT`.
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn explicit_zstd_level_zero_resolves_to_default() {
+        let result = parse(false, false, Some("0"), Some("zstd"));
+        assert!(result.compress);
+        assert_eq!(
+            result.compression_algorithm,
+            Some(CompressionAlgorithm::Zstd)
+        );
+        assert!(matches!(
+            result.compression_level_override,
+            Some(CompressionLevel::Precise(n)) if n.get() == 3
+        ));
+    }
+
+    /// Control: an explicit `--compress-choice=zlib --compress-level=0` hits
+    /// zlib's off_level (0) at parse time and disables compression - the
+    /// explicit-codec path is unchanged. upstream: token.c:66.
+    #[test]
+    fn explicit_zlib_level_zero_disables() {
+        let result = parse(true, false, Some("0"), Some("zlib"));
+        assert!(!result.compress);
+        assert!(result.compression_setting.is_disabled());
+    }
 }
