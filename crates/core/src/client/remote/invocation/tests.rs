@@ -2581,15 +2581,22 @@ fn includes_new_compress_for_explicit_zlibx() {
 }
 
 #[test]
-fn includes_block_size_long_arg() {
+fn includes_block_size_short_arg() {
     use std::num::NonZeroU32;
     let config = ClientConfig::builder()
         .block_size_override(Some(NonZeroU32::new(8192).unwrap()))
         .build();
     let args = build_sender_args(&config);
+    // upstream: options.c:2788 - block_size forwards as the SHORT `-B%u` token,
+    // never a long `--block-size=` flag (which the server parser would leak as
+    // a positional destination path).
     assert!(
-        args.iter().any(|a| a == "--block-size=8192"),
-        "expected --block-size=8192 in args: {args:?}"
+        args.iter().any(|a| a == "-B8192"),
+        "expected -B8192 in args: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--block-size")),
+        "must not emit the non-upstream long --block-size spelling: {args:?}"
     );
 }
 
@@ -3069,8 +3076,10 @@ fn omits_block_size_when_none() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     assert!(
-        !args.iter().any(|a| a.starts_with("--block-size=")),
-        "should not emit --block-size= when none: {args:?}"
+        !args
+            .iter()
+            .any(|a| a.starts_with("-B") || a.starts_with("--block-size")),
+        "should not emit a block-size token when none: {args:?}"
     );
 }
 
@@ -3344,7 +3353,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--min-size=100",
         "--modify-window=1",
         "--compress-level=9",
-        "--block-size=4096",
         "--timeout=60",
         "--inplace",
         "--copy-unsafe-links",
@@ -3366,6 +3374,16 @@ fn all_flags_enabled_produces_valid_invocation() {
             "all-flags test: missing {expected} in args: {args:?}"
         );
     }
+
+    // upstream: options.c:2788 - block_size forwards as the SHORT `-B%u` token.
+    assert!(
+        args.iter().any(|a| a == "-B4096"),
+        "all-flags test: missing -B4096 in args: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--block-size")),
+        "all-flags test: must not emit the non-upstream long --block-size spelling: {args:?}"
+    );
 
     // upstream: `--munge-links` is absent from server_options() entirely - it is
     // applied locally where the symlink is written (options.c:2254, gated on
