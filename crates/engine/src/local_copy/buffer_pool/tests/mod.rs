@@ -11,9 +11,9 @@ mod support;
 
 mod adaptive_pool;
 mod byte_budget;
-mod governor_actuator;
 mod contention;
 mod controller;
+mod governor_actuator;
 mod memory_cap;
 mod pool_basic;
 mod telemetry;
