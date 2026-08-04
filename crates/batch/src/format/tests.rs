@@ -303,7 +303,7 @@ fn test_batch_flags_write_versioned_roundtrip() {
         ..Default::default()
     };
 
-    // Write with protocol 30 - all bits preserved
+    // Protocol 30 reads back all bits.
     let mut buf30 = Vec::new();
     flags.write_to_versioned(&mut buf30, 30).unwrap();
     let raw30 = BatchFlags::read_raw(&mut Cursor::new(&buf30)).unwrap();
@@ -311,10 +311,14 @@ fn test_batch_flags_write_versioned_roundtrip() {
     assert!(restored30.xfer_dirs);
     assert!(restored30.preserve_acls);
 
-    // Write with protocol 28 - bits 7+ masked
+    // The bitmap is written in full regardless of protocol (batch.c:97-114), so
+    // bits 7+ are present on the wire; the proto-28 READ masks them out
+    // (batch.c:125-128 / from_bitmap), leaving xfer_dirs and preserve_acls unset.
     let mut buf28 = Vec::new();
     flags.write_to_versioned(&mut buf28, 28).unwrap();
     let raw28 = BatchFlags::read_raw(&mut Cursor::new(&buf28)).unwrap();
+    assert_ne!(raw28 & (1 << 7), 0, "bit 7 written despite proto 28");
+    assert_ne!(raw28 & (1 << 10), 0, "bit 10 written despite proto 28");
     let restored28 = BatchFlags::from_bitmap(raw28, 28);
     assert!(!restored28.xfer_dirs);
     assert!(!restored28.preserve_acls);
@@ -573,27 +577,30 @@ fn test_batch_header_read_upstream_bytes() {
     assert!(header.stream_flags.always_checksum);
 }
 
-/// Verify protocol 29 header: has bits 7-8 (xfer_dirs, do_compression) but
-/// no compat_flags field.
+/// Verify protocol 29 header: the stream-flags bitmap is written in full
+/// (untruncated), and the header carries no compat_flags field.
 ///
-/// upstream: batch.c:125-128 - protocol < 29 truncates at flag_ptr[7],
-/// protocol 29 includes bits 7-8 but stops at flag_ptr[9] for protocol < 30.
+/// WHY: upstream `batch.c:97-114 write_stream_flags()` writes the whole
+/// `flag_ptr[]` bitmap regardless of protocol - bit 10 (--acls) is emitted even
+/// on a proto-29 batch. Truncation is read-only: `batch.c:125-128
+/// check_batch_flags()` nulls flag_ptr[9] below proto 30, so the reader ignores
+/// bit 10. The wire bytes must therefore include the acls bit to match upstream.
 #[test]
 fn test_batch_header_upstream_byte_layout_protocol_29() {
     let mut header = BatchHeader::new(29, 0xDEAD);
     header.stream_flags = BatchFlags {
         recurse: true,
-        xfer_dirs: true,      // bit 7: included for protocol 29
-        do_compression: true, // bit 8: included for protocol 29
-        preserve_acls: true,  // bit 10: masked out for protocol 29
+        xfer_dirs: true,      // bit 7
+        do_compression: true, // bit 8
+        preserve_acls: true,  // bit 10: still written; ignored by proto-29 read
         ..Default::default()
     };
 
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // bits 0,7,8 set = 0x0000_0181 (acls bit 10 masked by to_bitmap).
-    let expected_bitmap = 0x0000_0181_i32;
+    // bits 0,7,8,10 set = 0x0000_0581 (full untruncated write per batch.c:97-114).
+    let expected_bitmap = 0x0000_0581_i32;
     assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
     assert_eq!(&buf[4..8], &29_i32.to_le_bytes());
     // No compat_flags for protocol < 30.
@@ -608,6 +615,57 @@ fn test_batch_header_upstream_byte_layout_protocol_29() {
     assert!(restored.stream_flags.xfer_dirs);
     assert!(restored.stream_flags.do_compression);
     assert!(!restored.stream_flags.preserve_acls); // masked out
+}
+
+/// A proto-28 batch created with -z/-d must record bits 7 (--dirs) and 8
+/// (--compress) in the header, even though those bits post-date proto 28.
+///
+/// WHY: upstream `batch.c:97-114 write_stream_flags()` writes the full bitmap
+/// unconditionally; only the reader truncates by protocol (`batch.c:125-128`
+/// nulls flag_ptr[7] below proto 29). Masking these bits on write - as oc-rsync
+/// previously did - diverges byte-for-byte from upstream on the wire.
+#[test]
+fn test_proto28_dirs_compress_bits_written_full() {
+    let mut header = BatchHeader::new(28, 0xC0DE);
+    header.stream_flags = BatchFlags {
+        xfer_dirs: true,      // bit 7
+        do_compression: true, // bit 8
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // bits 7,8 = 0x0000_0180, written in full despite the proto-28 negotiation.
+    assert_eq!(&buf[0..4], &0x0000_0180_i32.to_le_bytes());
+    assert_eq!(&buf[4..8], &28_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12); // no compat_flags below proto 30
+}
+
+/// A proto-29 batch created with --inplace must record bit 12 in the header.
+///
+/// WHY: --inplace (bit 12) post-dates proto 29, yet upstream
+/// `batch.c:97-114 write_stream_flags()` still emits it; the proto-29 reader
+/// simply ignores it (`batch.c:125-128` stops at flag_ptr[9] below proto 30).
+#[test]
+fn test_proto29_inplace_bit_written_full() {
+    let mut header = BatchHeader::new(29, 0xBEEF);
+    header.stream_flags = BatchFlags {
+        inplace: true, // bit 12
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // bit 12 = 0x0000_1000, written in full despite the proto-29 negotiation.
+    assert_eq!(&buf[0..4], &0x0000_1000_i32.to_le_bytes());
+    assert_eq!(&buf[4..8], &29_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12); // no compat_flags below proto 30
+
+    // The proto-29 read masks bit 12 back out (from_bitmap only reads 0..9).
+    let restored = BatchHeader::read_from(&mut Cursor::new(buf)).unwrap();
+    assert!(!restored.stream_flags.inplace);
 }
 
 /// Verify header with all 15 stream flag bits set (protocol 30+).
