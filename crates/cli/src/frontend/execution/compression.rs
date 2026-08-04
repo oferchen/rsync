@@ -96,16 +96,29 @@ fn clamp_level(codec: CompressionAlgorithm, raw: i32) -> CompressLevelArg {
     }
 }
 
-/// Parses `--compress-level=N` and clamps it into `codec`'s range.
+/// Parses `--compress-level=N`, clamping it into `codec`'s range when the codec
+/// is known.
 ///
 /// Any integer is accepted; an out-of-range value is clamped rather than
 /// rejected. Empty or non-numeric input yields a `--compress-level` error.
+///
+/// When `codec` is `None` no `--compress-choice` fixed the algorithm, so the
+/// negotiated codec - and therefore whether level `0` means "off" - is not yet
+/// known. Upstream defers this decision: `init_compression_level()`
+/// (`token.c:55`) runs from `parse_compress_choice(1)` (`compat.c:820`) only
+/// after `negotiate_the_strings()` (`compat.c:809`) has picked the codec, so a
+/// literal `0` disables zlib/zlibx but maps to zstd/lz4's default. Mirror that
+/// by carrying the raw level forward without clamping and never disabling here;
+/// the post-negotiation resolution applies the codec's `off_level`.
 pub(crate) fn parse_compress_level(
     argument: &OsStr,
-    codec: CompressionAlgorithm,
+    codec: Option<CompressionAlgorithm>,
 ) -> Result<CompressLevelArg, Message> {
     parse_raw_level(argument)
-        .map(|raw| clamp_level(codec, raw))
+        .map(|raw| match codec {
+            Some(codec) => clamp_level(codec, raw),
+            None => CompressLevelArg::Level(CompressionLevel::from_signed(raw)),
+        })
         .map_err(CompressionLevelParseError::into_flag_message)
 }
 
@@ -271,13 +284,30 @@ mod tests {
         // maps to the default level, so compression stays on. The clamp is
         // applied against the resolved codec, mirroring upstream exactly.
         assert!(matches!(
-            parse_compress_level(OsStr::new("0"), CompressionAlgorithm::Zlib),
+            parse_compress_level(OsStr::new("0"), Some(CompressionAlgorithm::Zlib)),
             Ok(CompressLevelArg::Disable)
         ));
         #[cfg(feature = "zstd")]
         assert!(matches!(
-            parse_compress_level(OsStr::new("0"), CompressionAlgorithm::Zstd),
+            parse_compress_level(OsStr::new("0"), Some(CompressionAlgorithm::Zstd)),
             Ok(CompressLevelArg::Level(_))
+        ));
+    }
+
+    #[test]
+    fn compress_level_zero_without_codec_defers_off_level() {
+        // upstream: token.c:55 init_compression_level() runs from
+        // parse_compress_choice(1) (compat.c:820) only AFTER
+        // negotiate_the_strings() (compat.c:809). Without --compress-choice the
+        // codec is unknown at parse time, so `--compress-level=0` must NOT
+        // disable compression here - the raw level is carried forward and the
+        // off_level decision is deferred to the negotiated codec. A literal 0
+        // round-trips as CompressionLevel::None (raw 0).
+        assert!(matches!(
+            parse_compress_level(OsStr::new("0"), None),
+            Ok(CompressLevelArg::Level(
+                CompressionLevel::None | CompressionLevel::PreciseSigned(0)
+            ))
         ));
     }
 

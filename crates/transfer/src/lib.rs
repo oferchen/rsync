@@ -260,6 +260,43 @@ fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
     }
 }
 
+/// Reports whether `--compress-level` turns the negotiated codec off, mirroring
+/// the `do_compression_level == off_level` branch of `init_compression_level()`
+/// (`token.c:76-98`).
+///
+/// Upstream calls `init_compression_level()` from `parse_compress_choice(1)`
+/// (`compat.c:820`), which runs *after* `negotiate_the_strings()`
+/// (`compat.c:809`) has selected the codec. Only then is the meaning of a raw
+/// level known: zlib/zlibx have `off_level == Z_NO_COMPRESSION` (`0`), so a
+/// literal `0` sets `do_compression = CPRES_NONE`; zstd/lz4 have
+/// `off_level == CLVL_NOT_SPECIFIED` and map a literal `0` to their default
+/// level, so they never disable via `--compress-level`.
+///
+/// - `compress_choice_fixed` - true when `--compress-choice` pinned the codec.
+///   Upstream resolves that level against the known codec at parse time, so the
+///   deferred resolution here must leave the explicit-codec path untouched.
+/// - `compression_level` - the raw `do_compression_level`, `CLVL_NOT_SPECIFIED`
+///   when `--compress-level` was not supplied (nothing to resolve).
+///
+/// Returns `true` only when the level lands on the negotiated codec's
+/// `off_level`, i.e. zlib/zlibx at level `0`.
+fn negotiated_level_disables_compression(
+    compress_choice_fixed: bool,
+    compression_level: i32,
+    negotiated: protocol::CompressionAlgorithm,
+) -> bool {
+    if compress_choice_fixed || compression_level == protocol::nstr::CLVL_NOT_SPECIFIED {
+        return false;
+    }
+    // Reuse the single per-codec clamp (`token.c:59-98`): `off_level` is the only
+    // level it maps to "no compression" (`None`), which for the build-supported
+    // codecs is exactly zlib/zlibx at `0`.
+    matches!(
+        negotiated.to_compress_algorithm(),
+        Ok(Some(codec)) if codec.clamp_level(compression_level).is_none()
+    )
+}
+
 /// Reports whether the receiver wants the transfer's filter list on the wire.
 ///
 /// Upstream computes this identical predicate in both `send_filter_list()` (the
@@ -718,6 +755,32 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
     handshake.checksum_seed = setup_result.checksum_seed;
+
+    // upstream: compat.c:820 parse_compress_choice(1) -> token.c:55
+    // init_compression_level(), which runs AFTER negotiate_the_strings()
+    // (compat.c:809) and "might turn compression off". When --compress-choice
+    // fixed the codec the level was already resolved against it at CLI parse;
+    // otherwise the meaning of `--compress-level=0` depends on the negotiated
+    // codec's off_level and can only be resolved here. zlib/zlibx have
+    // off_level 0, so a literal 0 sets do_compression = CPRES_NONE and the
+    // sender frames plain tokens; zstd/lz4 have off_level CLVL_NOT_SPECIFIED and
+    // map a literal 0 to their default level, so compression stays on. Only the
+    // off case needs handling: every non-off level already reaches the encoder
+    // correctly through the negotiated codec's own clamp. This runs identically
+    // on both peers (each holds the negotiated codec and the forwarded
+    // do_compression_level, options.c:2755), so the framing decision stays
+    // symmetric.
+    if do_compression
+        && let Some(negotiated) = handshake.negotiated_algorithms.as_mut()
+        && negotiated_level_disables_compression(
+            compress_choice_algo.is_some(),
+            compression_level,
+            negotiated.compression,
+        )
+    {
+        negotiated.compression = protocol::CompressionAlgorithm::None;
+        config.connection.compression_level = None;
+    }
 
     // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
     // When the server advertises this flag and a partial directory is configured,
