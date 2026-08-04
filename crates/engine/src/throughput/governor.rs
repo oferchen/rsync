@@ -24,7 +24,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::actuator::ActuatorHandle;
+use super::actuator::{ActuatorHandle, BufferCeiling};
 use super::aggregate::StageAggregator;
 use super::bus::{DEFAULT_BUS_CAPACITY, SampleSink, TelemetryBus};
 use super::drum::DrumIdentifier;
@@ -181,12 +181,14 @@ impl Governor {
     pub fn spawn(config: GovernorConfig) -> GovernorHandle {
         let bus = TelemetryBus::new(config.bus_capacity);
         let snapshot = Arc::new(Snapshot::new());
+        let buffer_ceiling = BufferCeiling::new();
 
         match config.mode {
             GovernorMode::Off => GovernorHandle {
                 mode: GovernorMode::Off,
                 bus,
                 snapshot,
+                buffer_ceiling,
                 shutdown: Arc::new(AtomicBool::new(false)),
                 wake: None,
                 thread: None,
@@ -214,6 +216,7 @@ impl Governor {
                     mode: GovernorMode::Observe,
                     bus,
                     snapshot,
+                    buffer_ceiling,
                     shutdown,
                     wake: Some(wake_tx),
                     thread: Some(thread),
@@ -296,6 +299,8 @@ pub struct GovernorHandle {
     mode: GovernorMode,
     bus: Arc<TelemetryBus>,
     snapshot: Arc<Snapshot>,
+    /// Buffer-pool ceiling the governor publishes to buffer-pool actuators.
+    buffer_ceiling: Arc<BufferCeiling>,
     shutdown: Arc<AtomicBool>,
     wake: Option<mpsc::Sender<()>>,
     thread: Option<JoinHandle<()>>,
@@ -326,13 +331,35 @@ impl GovernorHandle {
 
     /// Subscribes to actuator signals.
     ///
-    /// In G2 this returns an inert [`ActuatorHandle`] that reports no tuning
-    /// action; the buffer-sizing, rope, and I/O-depth actuators attach to this
-    /// same subscription in later steps. Present now so callers can wire the
-    /// subscription without a later signature change.
+    /// An [`GovernorMode::Off`] governor hands out an inert
+    /// [`ActuatorHandle`] that reports no tuning action, so a subscribed
+    /// actuator keeps its static behaviour and the build stays byte-identical.
+    /// An [`GovernorMode::Observe`] governor hands out a handle backed by the
+    /// shared buffer-pool ceiling, so [`publish_buffer_pool_ceiling`] becomes
+    /// visible to every subscriber. The rope and I/O-depth actuators attach to
+    /// this same subscription in later steps.
+    ///
+    /// [`publish_buffer_pool_ceiling`]: GovernorHandle::publish_buffer_pool_ceiling
     #[must_use]
     pub fn subscribe_actuator(&self) -> ActuatorHandle {
-        ActuatorHandle::inert()
+        match self.mode {
+            GovernorMode::Off => ActuatorHandle::inert(),
+            GovernorMode::Observe => ActuatorHandle::active(Arc::clone(&self.buffer_ceiling)),
+        }
+    }
+
+    /// Publishes a buffer-pool soft-capacity ceiling to every subscribed
+    /// actuator, or clears it with `None`.
+    ///
+    /// The ceiling is an upper bound: a subscribed buffer pool composes it with
+    /// its local pressure tracker via conservative-min, so it can only restrain
+    /// growth, never force the pool larger than local demand wants. A `None`
+    /// clears the signal and reverts subscribers to local-only pressure.
+    ///
+    /// A no-op on an [`GovernorMode::Off`] governor, whose subscribers are inert
+    /// and never read the signal - the disabled path stays byte-identical.
+    pub fn publish_buffer_pool_ceiling(&self, ceiling: Option<usize>) {
+        self.buffer_ceiling.publish(ceiling);
     }
 
     /// Latest smoothed throughput (bytes/second) for `stage`, or `None` before
@@ -472,6 +499,36 @@ mod tests {
         wait_until(|| gov.throughput(Constraint::Compute).is_some());
         let rate = gov.throughput(Constraint::Compute).expect("folded");
         assert!((rate - 4_096_000.0).abs() < 1.0, "rate {rate}");
+        gov.shutdown();
+    }
+
+    #[test]
+    fn off_mode_subscribe_is_inert_and_publish_is_a_noop() {
+        let gov = Governor::spawn(GovernorConfig::new(GovernorMode::Off));
+        let actuator = gov.subscribe_actuator();
+        assert!(!actuator.is_active());
+        // Publishing on an off governor changes nothing an inert subscriber sees.
+        gov.publish_buffer_pool_ceiling(Some(64));
+        assert_eq!(actuator.buffer_pool_ceiling(), None);
+    }
+
+    #[test]
+    fn observe_mode_publishes_ceiling_to_subscribers() {
+        let mut gov = Governor::spawn(GovernorConfig::new(GovernorMode::Observe));
+        let actuator = gov.subscribe_actuator();
+        // Wired but unpublished: no guidance yet.
+        assert!(!actuator.is_active());
+        assert_eq!(actuator.buffer_pool_ceiling(), None);
+
+        gov.publish_buffer_pool_ceiling(Some(24));
+        assert!(actuator.is_active());
+        assert_eq!(actuator.buffer_pool_ceiling(), Some(24));
+
+        // A late subscriber sees the already-published ceiling.
+        assert_eq!(gov.subscribe_actuator().buffer_pool_ceiling(), Some(24));
+
+        gov.publish_buffer_pool_ceiling(None);
+        assert_eq!(actuator.buffer_pool_ceiling(), None);
         gov.shutdown();
     }
 

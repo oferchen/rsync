@@ -34,6 +34,7 @@ use super::byte_budget::ByteBudget;
 use super::memory_cap::MemoryCap;
 use super::pressure::PressureTracker;
 use super::throughput::ThroughputTracker;
+use crate::throughput::ActuatorHandle;
 
 pub use stats::BufferPoolStats;
 
@@ -181,6 +182,15 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// The two loops observe orthogonal signals and compose without
     /// interference.
     buffer_controller: Option<AdaptiveBufferController>,
+    /// Optional subscription to the throughput governor's buffer-pool ceiling.
+    ///
+    /// When present and the governor has published a ceiling, adaptive resizing
+    /// composes it with the local [`PressureTracker`] via conservative-min: the
+    /// pool never grows more aggressively than the governor permits. `None` (the
+    /// default) leaves resizing on local pressure alone, byte-identical to the
+    /// pre-governor path. Wired via
+    /// [`with_governor_actuator`](Self::with_governor_actuator).
+    governor: Option<ActuatorHandle>,
     /// Cumulative count of acquire operations that found a buffer in the
     /// thread-local cache or central pool (no fresh allocation needed).
     ///
@@ -230,6 +240,7 @@ impl BufferPool {
             throughput: None,
             pressure: None,
             buffer_controller: None,
+            governor: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -257,6 +268,7 @@ impl BufferPool {
             throughput: None,
             pressure: None,
             buffer_controller: None,
+            governor: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -289,6 +301,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             throughput: None,
             pressure: None,
             buffer_controller: None,
+            governor: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -392,6 +405,27 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_adaptive_resizing(mut self) -> Self {
         self.pressure = Some(PressureTracker::new());
+        self
+    }
+
+    /// Subscribes adaptive resizing to the throughput governor's buffer-pool
+    /// ceiling.
+    ///
+    /// Once subscribed, [`maybe_resize`](Self::maybe_resize) composes the
+    /// governor's published ceiling with the local [`PressureTracker`] via
+    /// conservative-min: the pool grows to `min(local_target, governor_ceiling)`
+    /// and so never grows more aggressively than the governor permits. When the
+    /// governor publishes no ceiling - always the case for an inert
+    /// ([`GovernorMode::Off`](crate::throughput::GovernorMode)) handle - resizing
+    /// falls back to local pressure alone, byte-identical to the unsubscribed
+    /// path.
+    ///
+    /// Independent of [`with_adaptive_resizing`](Self::with_adaptive_resizing):
+    /// the ceiling only takes effect once adaptive resizing is also enabled,
+    /// since it is the local resizer that reads it.
+    #[must_use]
+    pub fn with_governor_actuator(mut self, actuator: ActuatorHandle) -> Self {
+        self.governor = Some(actuator);
         self
     }
 
