@@ -3,7 +3,7 @@
 //! Determines whether CLI operands reference local or remote paths,
 //! and resolves `--files-from` values into their source type.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Resolves a `--files-from` CLI value into a [`FilesFromSource`].
@@ -144,100 +144,13 @@ pub(crate) fn transfer_requires_remote(
         .any(|operand| operand_is_remote(operand.as_os_str()))
 }
 
-#[cfg(windows)]
-fn operand_has_windows_prefix(path: &OsStr) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-
-    const COLON: u16 = b':' as u16;
-    const QUESTION: u16 = b'?' as u16;
-    const DOT: u16 = b'.' as u16;
-    const SLASH: u16 = b'/' as u16;
-    const BACKSLASH: u16 = b'\\' as u16;
-
-    fn is_ascii_alpha(unit: u16) -> bool {
-        (unit >= b'a' as u16 && unit <= b'z' as u16) || (unit >= b'A' as u16 && unit <= b'Z' as u16)
-    }
-
-    fn is_separator(unit: u16) -> bool {
-        unit == SLASH || unit == BACKSLASH
-    }
-
-    let units: Vec<u16> = path.encode_wide().collect();
-    if units.is_empty() {
-        return false;
-    }
-
-    if units.len() >= 4
-        && is_separator(units[0])
-        && is_separator(units[1])
-        && (units[2] == QUESTION || units[2] == DOT)
-        && is_separator(units[3])
-    {
-        return true;
-    }
-
-    if units.len() >= 2 && is_separator(units[0]) && is_separator(units[1]) {
-        return true;
-    }
-
-    if units.len() >= 2 && is_ascii_alpha(units[0]) && units[1] == COLON {
-        return true;
-    }
-
-    false
-}
-
 /// Returns `true` when an operand references a remote path.
 ///
-/// Recognises `rsync://`/`ssh://` URLs, daemon module specs (`host::module`),
-/// and SSH hostspecs (`host:path`). Local paths, including Windows drive letters
-/// (`C:\...`) and UNC prefixes, return `false`.
-pub(crate) fn operand_is_remote(path: &OsStr) -> bool {
-    let text = path.to_string_lossy();
-
-    if text.starts_with("rsync://") || text.starts_with("ssh://") {
-        return true;
-    }
-
-    if text.contains("::") {
-        return true;
-    }
-
-    if let Some(colon_index) = text.find(':') {
-        #[cfg(windows)]
-        if operand_has_windows_prefix(path) {
-            return false;
-        }
-
-        let after = &text[colon_index + 1..];
-        if after.starts_with(':') {
-            return true;
-        }
-
-        #[cfg(windows)]
-        {
-            use std::path::{Component, Path};
-
-            if Path::new(path)
-                .components()
-                .next()
-                .is_some_and(|component| matches!(component, Component::Prefix(_)))
-            {
-                return false;
-            }
-        }
-
-        let before = &text[..colon_index];
-        if before.contains('/') || before.contains('\\') {
-            return false;
-        }
-
-        if colon_index == 1 && before.chars().all(|ch| ch.is_ascii_alphabetic()) {
-            return false;
-        }
-
-        return true;
-    }
-
-    false
-}
+/// Re-exported from [`engine::operand`], the single source of truth mirroring
+/// upstream `options.c:check_for_hostspec()`. Recognises `rsync://`/`ssh://`
+/// URLs, daemon module specs (`host::module`), and SSH hostspecs (`host:path`);
+/// on Windows, native path prefixes (drive letters `C:\...`, UNC, `\\?\`,
+/// `\\.\`) are local. One shared classifier keeps this front end, the core
+/// remote-invocation planner, and the local-copy executor from ever disagreeing
+/// on an operand (a #7153-class defect that shipped the wrong operand remote).
+pub(crate) use engine::operand::operand_is_remote;
