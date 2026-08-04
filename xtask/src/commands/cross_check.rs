@@ -140,7 +140,7 @@ fn targets() -> &'static [CrossTarget] {
 ///
 /// Injecting this behind a trait lets tests exercise the skip / hint / summary
 /// logic with a mock, so the unit tests never shell out to cargo or rustup.
-trait CheckEnv {
+pub(crate) trait CheckEnv {
     /// Returns whether a rustup target triple is installed.
     fn target_installed(&self, triple: &str) -> TaskResult<bool>;
     /// Returns whether an executable is discoverable on `PATH`.
@@ -274,11 +274,27 @@ fn report(outcomes: &[(&CrossTarget, CheckOutcome)]) -> TaskResult<()> {
     Ok(())
 }
 
+/// Runs the cross-check gates against the given environment: evaluates every
+/// target and renders the summary, returning an error only when a runnable
+/// target actually failed (absent toolchains skip, never fail).
+///
+/// Shared by the `cross-check` subcommand and the `xtask validate` umbrella so
+/// there is exactly one implementation of the gate sequence and its skip/hint
+/// logic.
+pub(crate) fn run_with_env(env: &dyn CheckEnv) -> TaskResult<()> {
+    let outcomes = evaluate(env, targets());
+    report(&outcomes)
+}
+
+/// Runs the cross-check gates against the live system toolchain rooted at
+/// `workspace`.
+pub(crate) fn run(workspace: &Path) -> TaskResult<()> {
+    run_with_env(&SystemEnv { workspace })
+}
+
 /// Executes the `cross-check` command.
 pub fn execute(workspace: &Path) -> TaskResult<()> {
-    let env = SystemEnv { workspace };
-    let outcomes = evaluate(&env, targets());
-    report(&outcomes)
+    run(workspace)
 }
 
 #[cfg(test)]
@@ -519,5 +535,25 @@ mod tests {
             3,
             "one cargo invocation per target"
         );
+    }
+
+    #[test]
+    fn run_with_env_is_ok_when_cross_toolchains_absent() {
+        // A dev box lacking the mingw/musl cross toolchains: the two cross
+        // targets skip, the host clippy pass runs and succeeds - so the shared
+        // entrypoint (used by `xtask validate`) still returns Ok.
+        let env = MockEnv::new();
+        run_with_env(&env).expect("absent cross toolchains skip, they do not fail");
+    }
+
+    #[test]
+    fn run_with_env_errs_when_a_gate_fails() {
+        let clippy = find(None);
+        let env = MockEnv::new().with_run(clippy.display, MockRun::Failed);
+        let error = run_with_env(&env).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("target(s) failed")
+        ));
     }
 }

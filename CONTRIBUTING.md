@@ -62,6 +62,20 @@ covers the same `cfg(windows)` code paths. This command is opt-in - it takes
 the full workspace build lock, so do not run it concurrently with other cargo
 invocations.
 
+### Full local pre-push verification: `cargo run -p xtask -- validate`
+
+`cargo run -p xtask -- validate` is the single full local pre-push verification
+entrypoint. It runs the drop-in fidelity matrix (oc-rsync vs upstream rsync
+across every client transport) and then the cross-platform checks above (host
+`clippy -D warnings`, plus `cargo check` for `x86_64-pc-windows-gnu` and
+`x86_64-unknown-linux-musl`) via the same shared cross-check - so one command
+covers correctness, lints, and cross-platform compilation. Absent cross
+toolchains are skipped with an actionable hint (never failed), so `validate`
+still works on a dev box lacking mingw-w64 / musl; `cross-check` remains
+available on its own for a lint-and-cross-compile-only run. Run `cargo fmt
+--all` first (validate does not reformat), and note that `validate` takes the
+full workspace build lock, so do not run other cargo commands alongside it.
+
 ---
 
 ## Adding a new optional dependency

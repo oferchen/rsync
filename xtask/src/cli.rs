@@ -85,7 +85,10 @@ pub enum Command {
     /// Run the workspace test suite (prefers cargo-nextest).
     Test(TestArgs),
 
-    /// Validate drop-in fidelity vs upstream rsync across all client transports.
+    /// Full local pre-push verification: validate drop-in fidelity vs upstream
+    /// rsync across all client transports, then run the cross-platform checks
+    /// (host `clippy -D warnings`, windows-gnu and linux-musl `cargo check`).
+    /// Absent cross toolchains are skipped with a hint, never failed.
     Validate(ValidateMatrixArgs),
 }
 
@@ -672,7 +675,7 @@ impl Task for ValidateTask {
     }
 
     fn description(&self) -> &'static str {
-        "Validate drop-in fidelity vs upstream rsync across all transports"
+        "Validate drop-in fidelity vs upstream rsync across all transports, then run cross-platform checks"
     }
 
     fn explicit_duration(&self) -> Option<Duration> {
