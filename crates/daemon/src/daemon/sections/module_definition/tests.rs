@@ -21,7 +21,6 @@ fn builder_new_starts_with_all_none() {
     assert!(builder.hosts_deny.is_none());
     assert!(builder.auth_users.is_none());
     assert!(builder.secrets_file.is_none());
-    assert!(builder.bandwidth_limit.is_none());
     assert!(builder.refuse_options.is_none());
     assert!(builder.read_only.is_none());
     assert!(builder.write_only.is_none());
@@ -163,28 +162,6 @@ fn set_auth_users_last_assignment_wins() {
         builder.auth_users,
         Some(vec![AuthUser::new("bob".to_owned())])
     );
-}
-
-#[test]
-fn set_bandwidth_limit_stores_values() {
-    let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    let limit = NonZeroU64::new(1000);
-    let burst = NonZeroU64::new(2000);
-    builder.set_bandwidth_limit(limit, burst, true);
-    assert_eq!(builder.bandwidth_limit, limit);
-    assert_eq!(builder.bandwidth_burst, burst);
-    assert!(builder.bandwidth_burst_specified);
-    assert!(builder.bandwidth_limit_specified);
-    assert!(builder.bandwidth_limit_set);
-}
-
-#[test]
-fn set_bandwidth_limit_last_assignment_wins() {
-    let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_bandwidth_limit(None, None, false);
-    builder.set_bandwidth_limit(NonZeroU64::new(100), None, false);
-    assert_eq!(builder.bandwidth_limit, NonZeroU64::new(100));
-    assert!(builder.bandwidth_limit_set);
 }
 
 #[test]
@@ -710,7 +687,6 @@ fn finish_transfers_all_set_values() {
     builder.set_max_connections(MaxConnections::Limited(
         NonZeroU32::new(5).expect("non-zero"),
     ));
-    builder.set_bandwidth_limit(NonZeroU64::new(1000), NonZeroU64::new(2000), true);
 
     let result = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default());
     assert!(result.is_ok());
@@ -730,11 +706,6 @@ fn finish_transfers_all_set_values() {
         def.max_connections,
         MaxConnections::Limited(NonZeroU32::new(5).expect("non-zero"))
     );
-    assert_eq!(def.bandwidth_limit, NonZeroU64::new(1000));
-    assert_eq!(def.bandwidth_burst, NonZeroU64::new(2000));
-    assert!(def.bandwidth_burst_specified);
-    assert!(def.bandwidth_limit_specified);
-    assert!(def.bandwidth_limit_configured);
 }
 
 #[test]
@@ -759,9 +730,6 @@ fn finish_uses_default_values_for_unset_fields() {
     assert!(def.gid.is_none());
     assert!(def.timeout.is_none());
     assert_eq!(def.max_connections, MaxConnections::Unlimited);
-    assert!(def.bandwidth_limit.is_none());
-    assert!(!def.bandwidth_limit_specified);
-    assert!(!def.bandwidth_limit_configured);
     assert!(!def.fake_super); // default false
     assert!(def.munge_symlinks.is_none()); // default None (auto)
     assert_eq!(def.max_verbosity, 1); // default 1

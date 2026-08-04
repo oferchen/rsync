@@ -590,15 +590,6 @@ fn respond_with_module_request(
     let module_log_sink = reopen_module_log_sink(module, log_sink);
     let log_sink = module_log_sink.as_ref().or(log_sink);
 
-    let change = apply_module_bandwidth_limit(
-        limiter,
-        module.bandwidth_limit(),
-        module.bandwidth_limit_specified(),
-        module.bandwidth_limit_configured(),
-        module.bandwidth_burst(),
-        module.bandwidth_burst_specified(),
-    );
-
     let mut hostname_cache: Option<Option<String>> = None;
     // upstream: clientserver.c:1392 resolves the host when `lp_reverse_lookup(-1)`
     // (the global default = `reverse_lookup`) is set, then rsync_module (:723)
@@ -607,19 +598,6 @@ fn respond_with_module_request(
     let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
     let module_peer_host =
         module_peer_hostname(module, &mut hostname_cache, peer_ip, module_reverse_lookup);
-
-    if change != LimiterChange::Unchanged {
-        if let Some(log) = log_sink {
-            log_module_bandwidth_change(
-                log,
-                module_peer_host.or(session_peer_host),
-                peer_ip,
-                request,
-                limiter.as_ref(),
-                change,
-            );
-        }
-    }
 
     let mut ctx = ModuleRequestContext {
         reader,

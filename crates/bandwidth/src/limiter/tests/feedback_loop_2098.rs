@@ -112,9 +112,9 @@ fn burst_recovers_to_target_within_two_seconds() {
 
     // Emit a 4x burst in a single call. The limiter clamps debt and returns
     // a single large sleep request rather than oscillating; the requested
-    // sleep equals burst_bytes / target.
-    let burst_bytes = (target * 4) as usize;
-    let burst_sleep = limiter.register(burst_bytes).requested();
+    // sleep equals the burst size / target.
+    let burst_write = (target * 4) as usize;
+    let burst_sleep = limiter.register(burst_write).requested();
     // The burst alone must not push the requested sleep beyond a small
     // multiple of the per-second budget. 4x bytes at the target rate must
     // request ~4 seconds.

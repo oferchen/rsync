@@ -21,7 +21,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--bwlimit"),
-            OsString::from("1K"),
+            OsString::from("1"),
             OsString::from("--module"),
             OsString::from(format!("docs={module_path},{comment}")),
             OsString::from("--module"),

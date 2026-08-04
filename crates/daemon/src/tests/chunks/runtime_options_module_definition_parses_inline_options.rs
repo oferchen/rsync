@@ -3,7 +3,7 @@ fn runtime_options_module_definition_parses_inline_options() {
     let options = RuntimeOptions::parse(&[
         OsString::from("--module"),
         OsString::from(
-            "mirror=./data;use-chroot=no;read-only=yes;write-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/oc-rsyncd/oc-rsyncd.secrets;bwlimit=1m;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
+            "mirror=./data;use-chroot=no;read-only=yes;write-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/oc-rsyncd/oc-rsyncd.secrets;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
         ),
     ])
     .expect("parse module with inline options");
@@ -31,12 +31,6 @@ fn runtime_options_module_definition_parses_inline_options() {
             .map(|path| path.to_string_lossy().into_owned()),
         Some(String::from(branding::OC_DAEMON_SECRETS_PATH))
     );
-    assert_eq!(
-        module.bandwidth_limit().map(NonZeroU64::get),
-        Some(1_048_576)
-    );
-    assert!(module.bandwidth_burst().is_none());
-    assert!(!module.bandwidth_burst_specified());
     assert_eq!(module.refused_options(), [String::from("compress")]);
     assert_eq!(module.uid(), Some(1000));
     assert_eq!(module.gid(), Some(2000));

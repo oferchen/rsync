@@ -10,7 +10,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
     format!(
         concat!(
             "{program} v{version} revision #{revision}\n",
-            "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE[:BURST]] SOURCE... DEST\n",
+            "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
             "\n",
             "Options are grouped by subject. The upstream-compatible options match\n",
             "stock rsync; oc-rsync's own extensions are collected in a final section.\n",
@@ -192,9 +192,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
             "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
             "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",
-            "      --bwlimit=RATE[:BURST]  Limit I/O bandwidth (supports decimal, binary,\n",
-            "                              and IEC units; optional :BURST caps the token\n",
-            "                              bucket; 0 disables the limit).\n",
+            "      --bwlimit=RATE  Limit I/O bandwidth (supports decimal, binary, and\n",
+            "                              IEC units; 0 disables the limit).\n",
             "      --no-bwlimit    Remove any configured bandwidth limit.\n",
             "      --iconv=SPEC  Convert filenames between charsets (use '.' for locale defaults).\n",
             "      --no-iconv    Disable charset conversion.\n",

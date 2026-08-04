@@ -98,7 +98,7 @@ fn leaky_bucket_with_continuous_flow() {
 }
 
 #[test]
-fn leaky_bucket_with_bursty_traffic() {
+fn leaky_bucket_handles_traffic_bursts() {
     let mut session = recorded_sleep_session();
     session.clear();
 
@@ -112,21 +112,6 @@ fn leaky_bucket_with_bursty_traffic() {
     let total = session.total_duration();
     // 5200 bytes at 1000 B/s = ~5.2s
     assert!(total >= Duration::from_secs(4));
-}
-
-#[test]
-fn leaky_bucket_burst_clamping_prevents_excessive_delay() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    // Very slow rate with burst cap
-    let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
-
-    // Write way more than burst
-    let sleep = limiter.register(10_000);
-
-    // Debt clamped to 500, so sleep clamped to 5s (500/100)
-    assert!(sleep.requested() <= Duration::from_secs(5));
 }
 
 #[test]
@@ -181,31 +166,6 @@ fn rate_change_clears_accumulated_debt() {
     // Change rate - debt should be cleared
     limiter.update_limit(nz(1_000_000));
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
-}
-
-#[test]
-fn configuration_change_with_burst_addition() {
-    let mut limiter = BandwidthLimiter::new(nz(5000));
-
-    // No burst initially
-    assert!(limiter.burst_bytes().is_none());
-
-    // Add burst via configuration change
-    limiter.update_configuration(nz(5000), Some(nz(2000)));
-
-    assert_eq!(limiter.burst_bytes(), Some(nz(2000)));
-}
-
-#[test]
-fn configuration_change_with_burst_removal() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(5000), Some(nz(2000)));
-
-    assert_eq!(limiter.burst_bytes(), Some(nz(2000)));
-
-    // Remove burst
-    limiter.update_configuration(nz(5000), None);
-
-    assert!(limiter.burst_bytes().is_none());
 }
 
 #[test]
@@ -292,44 +252,6 @@ fn precise_millisecond_calculation() {
     let sleep = limiter.register(250_000);
 
     assert_eq!(sleep.requested(), Duration::from_millis(250));
-}
-
-#[test]
-fn burst_allows_initial_large_write() {
-    let mut session = recorded_sleep_session();
-    session.clear();
-
-    // Slow rate but large burst
-    let mut limiter = BandwidthLimiter::with_burst(nz(512), Some(nz(10240)));
-
-    // First large write should be clamped by burst
-    let sleep = limiter.register(20000);
-
-    // Debt clamped to 10240, so at 512 B/s, sleep = 10240/512 = 20s
-    assert_eq!(sleep.requested(), Duration::from_secs(20));
-}
-
-#[test]
-fn burst_zero_effectively_means_no_burst() {
-    // Burst of 1 is the minimum
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(1)));
-
-    let _ = limiter.register(1000);
-
-    // Debt should be clamped to 1
-    assert!(limiter.accumulated_debt_for_testing() <= 1);
-}
-
-#[test]
-fn burst_larger_than_writes_no_clamping() {
-    let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(10000)));
-
-    let _ = limiter.register(5000);
-
-    // Debt should not be clamped because under burst limit
-    let debt = limiter.accumulated_debt_for_testing();
-    // Exact debt depends on timing, but should be reasonable
-    assert!(debt <= 10000);
 }
 
 #[test]

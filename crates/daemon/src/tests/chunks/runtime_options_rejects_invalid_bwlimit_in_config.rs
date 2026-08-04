@@ -1,7 +1,9 @@
 #[test]
 fn runtime_options_rejects_invalid_bwlimit_in_config() {
     let mut file = NamedTempFile::new().expect("config file");
-    writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = nope\n").expect("write config");
+    // upstream: the daemon `bwlimit` config directive is a global-section
+    // parameter; a bad value is rejected at parse time.
+    writeln!(file, "bwlimit = nope\n[docs]\npath = /srv/docs\n").expect("write config");
 
     let error = RuntimeOptions::parse(&[
         OsString::from("--config"),

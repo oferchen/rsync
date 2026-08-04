@@ -18,7 +18,6 @@ pub(crate) struct RuntimeOptions {
     pub(crate) modules: Vec<ModuleDefinition>,
     motd_lines: Vec<String>,
     bandwidth_limit: Option<NonZeroU64>,
-    bandwidth_burst: Option<NonZeroU64>,
     bandwidth_limit_configured: bool,
     address_family: Option<AddressFamily>,
     /// Set when both `--ipv4` and `--ipv6` are requested on the CLI.
@@ -146,7 +145,6 @@ impl Default for RuntimeOptions {
             modules: Vec::new(),
             motd_lines: Vec::new(),
             bandwidth_limit: None,
-            bandwidth_burst: None,
             bandwidth_limit_configured: false,
             address_family: None,
             dual_stack: false,

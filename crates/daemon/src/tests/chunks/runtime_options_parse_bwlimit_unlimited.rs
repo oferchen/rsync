@@ -4,7 +4,6 @@ fn runtime_options_parse_bwlimit_unlimited() {
         .expect("parse unlimited");
 
     assert!(options.bandwidth_limit().is_none());
-    assert!(options.bandwidth_burst().is_none());
     assert!(options.bandwidth_limit_configured());
 }
 

@@ -399,40 +399,21 @@ fn parse_decimal_suffix_rounds_to_1000() {
 }
 
 #[test]
-fn parse_limit_with_burst() {
-    let result = parse_bandwidth_limit("1000:500").unwrap();
-    assert_eq!(result.rate(), Some(NonZeroU64::new(1024000).unwrap()));
-    assert_eq!(result.burst(), Some(NonZeroU64::new(512000).unwrap()));
-}
-
-#[test]
-fn parse_limit_with_zero_rate() {
-    let result = parse_bandwidth_limit("0:500").unwrap();
-    assert!(result.is_unlimited());
-}
-
-#[test]
-fn parse_limit_with_zero_burst() {
-    let result = parse_bandwidth_limit("1000:0").unwrap();
-    assert!(result.rate().is_some());
-    assert!(result.burst().is_none());
-}
-
-#[test]
-fn parse_limit_both_zero() {
-    let result = parse_bandwidth_limit("0:0").unwrap();
-    assert!(result.is_unlimited());
-}
-
-#[test]
-fn parse_limit_with_colon_but_no_burst() {
-    let result = parse_bandwidth_limit("1000:");
-    // Trailing colon with no burst value - should fail or parse as just rate
+fn parse_limit_rejects_colon() {
+    // A colon is not valid size syntax; RATE:BURST is no longer accepted.
+    let result = parse_bandwidth_limit("1000:500");
     assert!(result.is_err());
 }
 
 #[test]
-fn parse_limit_empty_rate_with_burst() {
+fn parse_limit_trailing_colon() {
+    let result = parse_bandwidth_limit("1000:");
+    // Trailing colon is not valid size syntax.
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_limit_empty_rate_before_colon() {
     let result = parse_bandwidth_limit(":500");
     assert!(result.is_err());
 }

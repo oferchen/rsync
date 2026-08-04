@@ -20,7 +20,7 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--bwlimit"),
-            OsString::from("1K"),
+            OsString::from("1"),
             OsString::from("--config"),
             file.path().as_os_str().to_os_string(),
             OsString::from("--once"),
