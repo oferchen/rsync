@@ -463,7 +463,14 @@ pub(in crate::receiver::directory) fn remove_file_victim(
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        if backup_victim(backup, backup_dir, suffix, existing, dest_dir, metadata_opts)? {
+        if backup_victim(
+            backup,
+            backup_dir,
+            suffix,
+            existing,
+            dest_dir,
+            metadata_opts,
+        )? {
             return Ok(());
         }
     }
@@ -1023,7 +1030,10 @@ mod tests {
             &opts,
         )
         .unwrap();
-        assert!(backed_up, "the victim must be preserved into the backup area");
+        assert!(
+            backed_up,
+            "the victim must be preserved into the backup area"
+        );
 
         // prefer_rename frees the original path outright (no link+unlink window).
         assert!(
