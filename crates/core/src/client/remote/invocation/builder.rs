@@ -520,8 +520,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             )));
         }
 
+        // upstream: options.c:2788 - block_size is forwarded as the SHORT
+        // `-B%u` token (e.g. `-B131072`), not a long `--block-size=` flag.
+        // Emitting the upstream spelling keeps the wire byte-identical and is
+        // recognised by the server parser's `-B<digits>` guard; the long form
+        // is absent from is_known_server_long_flag and would otherwise leak
+        // into the positional path list on an oc-to-oc SSH transfer.
         if let Some(bs) = self.config.block_size_override() {
-            args.push(OsString::from(format!("--block-size={}", bs.get())));
+            args.push(OsString::from(format!("-B{}", bs.get())));
         }
 
         if let TransferTimeout::Seconds(secs) = self.config.timeout() {

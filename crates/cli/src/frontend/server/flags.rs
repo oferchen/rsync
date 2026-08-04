@@ -912,6 +912,15 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--compare-dest=")
         || arg.starts_with("--copy-dest=")
         || arg.starts_with("--link-dest=")
+        // upstream: options.c:2807-2808 / 2926-2927 - server_options() emits
+        // `--backup-dir` / `--temp-dir` as SPLIT two-arg slots (`--flag` +
+        // safe_arg), recognised by is_two_arg_server_long_flag. oc's own
+        // forwarder (invocation/builder.rs) emits the JOINED `--flag=value`
+        // form; recognise it here too, exactly like the alt-dest flags above,
+        // so the joined value is not mistaken for a positional destination
+        // path (same allow-list-drift class as --compare/copy/link-dest).
+        || arg.starts_with("--backup-dir=")
+        || arg.starts_with("--temp-dir=")
         || arg.starts_with("--modify-window=")
         // upstream: options.c:2874 - a negative modify_window arrives as the
         // short `-@%d` token (e.g. `-@-1`) after the compact flag string, so it
@@ -923,6 +932,11 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
+        // upstream: options.c:2799-2800 - server_options() emits `--bwlimit=%d`
+        // (whole KiB) as a JOINED long flag. Recognise it so the value is not
+        // mistaken for a positional destination path; a separate pass captures
+        // the numeric value into ServerLongFlags::bwlimit.
+        || arg.starts_with("--bwlimit=")
         || arg.starts_with("--max-delete=")
         // upstream: options.c:2812-2813 / 2912-2913 / 2915-2916 / 2859-2860 -
         // server_options() emits these as joined `--flag=value` via safe_arg().
