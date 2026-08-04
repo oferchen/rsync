@@ -892,7 +892,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--existing"
             | "--ignore-non-existing"
             | "--delay-updates"
-            | "--partial-dir"
+            // NOTE: bare `--partial-dir` is POPT_ARG_STRING (value in the next
+            // argv slot) and is handled by `is_two_arg_server_long_flag`, which
+            // the operand parser consults first. Only the joined
+            // `--partial-dir=VALUE` form is matched here (via `starts_with`).
             | "--backup"
             | "--mkpath"
             | "--no-mkpath"
@@ -951,8 +954,52 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--only-write-batch=")
 }
 
+// popt argument-arity model for server-mode option tokens.
+//
+// Upstream rsync runs the SAME popt parser (`options.c` `long_options[]`) on
+// both the client and the server. Each option entry declares its arity:
+// `POPT_ARG_NONE` (boolean) or `POPT_ARG_STRING`/`POPT_ARG_INT`
+// (value-bearing). popt binds a value-bearing option's value from either the
+// same token (`--flag=v`, `-e.xxx`) or the FOLLOWING argv token
+// (`--flag v`, `-e` `.xxx`) automatically, so the value never lands in the
+// operand list. oc has no per-letter popt table - it bundles the short
+// transfer letters into one compact flag string - but the same arity rule
+// still applies: a value-bearing option whose value was emitted as a separate
+// argv slot must consume that slot, or the value leaks into `positional_args`
+// as a stray destination path. That is the recurring positional-leak class
+// (#6569, #6587, #6880, #7153). The two arms are
+// `is_two_arg_server_long_flag` (long `POPT_ARG_STRING` options) and
+// `compact_flag_string_expects_split_value` (the short `-e`).
+
+/// Short options that carry a value (popt `POPT_ARG_STRING`) and can appear as
+/// the final letter of oc's compact flag string.
+///
+/// Only `-e` qualifies. `maybe_add_e_option()` (options.c:3021) appends the
+/// `e.<caps>` capability suffix as the LAST bytes of `argstr`, and `-e` is
+/// `POPT_ARG_STRING` (options.c:823). In the joined form the `.`-payload rides
+/// inside the same token, so the compact string ends in a capability letter
+/// (never a bare `e`); only when the exec line is re-tokenized by a remote
+/// shell does the value split off, leaving the compact string ending in `e`.
+const VALUE_BEARING_COMPACT_SHORT_FLAGS: &[u8] = b"e";
+
+/// Returns `true` when the compact flag string ends in a value-bearing short
+/// option whose value was split into the following argv token.
+///
+/// See [`VALUE_BEARING_COMPACT_SHORT_FLAGS`]. In the joined form the capability
+/// suffix (`e.<caps>`, options.c:2728) rides inside the token and the string
+/// ends in a capability letter, so this returns `false` and the existing
+/// joined path is untouched. It returns `true` only for the split form
+/// (`-vve` with the `.<caps>` value as a separate token), mirroring popt
+/// binding `-e`'s `POPT_ARG_STRING` value from the next argv element.
+pub(super) fn compact_flag_string_expects_split_value(flag_string: &str) -> bool {
+    flag_string
+        .as_bytes()
+        .last()
+        .is_some_and(|byte| VALUE_BEARING_COMPACT_SHORT_FLAGS.contains(byte))
+}
+
 /// Returns `true` when the argument is a bare server-mode long flag whose
-/// value is supplied as the next positional argument.
+/// value is supplied as the next argv slot (popt `POPT_ARG_STRING` arity).
 ///
 /// Upstream `options.c::server_options()` emits a handful of path-bearing
 /// long flags as two argv slots: the flag name and the value, joined later
@@ -963,13 +1010,19 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
 /// lands the source files under `$HOME/--copy-dest/` instead of creating
 /// the dest root at `/path/to/`.
 ///
-/// `--partial-dir` is handled separately in `parse_server_long_flags`
-/// because it predates this helper and keeps its own `idx += 1` branch.
-/// All other split-form path flags route through this predicate.
+/// This is the long-option arm of the arity model documented above; the
+/// operand parser consults it BEFORE [`is_known_server_long_flag`] so the
+/// value slot is consumed rather than the flag name alone. `--partial-dir`
+/// is included here (also `POPT_ARG_STRING`), replacing its former one-off
+/// `idx += 2` special case in the operand parser. The structured
+/// `parse_server_long_flags` pass keeps its own explicit `--partial-dir` arm
+/// (it stores the value), which matches before this predicate is consulted.
 ///
 /// # Upstream Reference
 ///
+/// - `options.c:823` - `-e`/`--rsh` is `POPT_ARG_STRING` (the short arm).
 /// - `options.c:2807-2808` - `--backup-dir`
+/// - `options.c:2886-2890` - `--partial-dir`
 /// - `options.c:2926-2927` - `--temp-dir`
 /// - `options.c:2939-2940` - `--copy-dest` / `--link-dest` / `--compare-dest`
 ///   (via `alt_dest_opt(0)`)
@@ -983,5 +1036,6 @@ pub(super) fn is_two_arg_server_long_flag(arg: &str) -> bool {
             | "--backup-dir"
             | "--temp-dir"
             | "--files-from"
+            | "--partial-dir"
     )
 }
