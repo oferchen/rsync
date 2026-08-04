@@ -391,6 +391,8 @@ include!("tests/chunks/runtime_options_per_module_max_connections_overrides_glob
 include!("tests/chunks/runtime_options_quic_cert_key_pairing.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_identity_resolution.rs");
+#[cfg(feature = "quic")]
+include!("tests/chunks/runtime_options_quic_port_directive.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_lock_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");
