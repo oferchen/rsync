@@ -589,25 +589,36 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
 
-      # The ubuntu-latest image ships mingw-w64, so the apt install is normally a
-      # no-op. Skip it when the cross-linker is already present; otherwise bound
-      # each apt call and retry so a stalled mirror cannot hang the whole job to
-      # the timeout (previously apt-get would wedge past 15 minutes and cancel).
+      # Provide the x86_64-w64-mingw32-gcc C cross-compiler that the windows-gnu
+      # build scripts of zstd-sys / libz-ng-sys invoke. The ubuntu-latest image
+      # does not reliably ship it, so install it - but a transient apt mirror
+      # failure must not fail the whole required job (observed: the install step
+      # failed all retries, skipping the compile). Hardening: skip if already
+      # present; install the small gcc-mingw-w64-x86-64 (not the large mingw-w64
+      # metapackage); apt-internal Acquire::Retries plus a bounded backoff loop;
+      # and verify the binary actually landed instead of trusting apt's exit code.
       - name: Install mingw-w64
         run: |
           if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
             echo "mingw-w64 already present: $(x86_64-w64-mingw32-gcc --version | head -1)"
             exit 0
           fi
-          for attempt in 1 2 3; do
-            if timeout 180 sudo apt-get update \
-              && timeout 180 sudo apt-get install -y --no-install-recommends mingw-w64; then
-              exit 0
+          export DEBIAN_FRONTEND=noninteractive
+          for attempt in 1 2 3 4 5; do
+            if timeout 240 sudo apt-get update -o Acquire::Retries=3 \
+              && timeout 240 sudo apt-get install -y --no-install-recommends \
+                   -o Acquire::Retries=3 gcc-mingw-w64-x86-64; then
+              if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+                x86_64-w64-mingw32-gcc --version | head -1
+                exit 0
+              fi
+              echo "apt reported success but x86_64-w64-mingw32-gcc is still missing" >&2
             fi
-            echo "mingw-w64 install attempt ${attempt} failed; retrying in 15s" >&2
-            sleep 15
+            echo "mingw-w64 install attempt ${attempt} failed; retrying in $((attempt * 10))s" >&2
+            sleep "$((attempt * 10))"
           done
-          echo "mingw-w64 install failed after 3 attempts" >&2
+          echo "mingw-w64 install failed after 5 attempts; diagnostics:" >&2
+          apt-cache policy gcc-mingw-w64-x86-64 mingw-w64 2>&1 | head -30 >&2 || true
           exit 1
 
       - name: Rust cache
