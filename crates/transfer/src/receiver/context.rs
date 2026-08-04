@@ -526,6 +526,94 @@ impl ReceiverContext {
         }
     }
 
+    /// Builds a receiver context primed to replay a recorded batch file,
+    /// seeding its negotiated protocol state from the batch header instead of a
+    /// live handshake.
+    ///
+    /// Upstream's `--read-batch` never negotiates with a peer: `setup_protocol()`
+    /// reads the recorded protocol version, compat flags, and checksum seed back
+    /// from the batch fd - the same three values `start_write_batch()` teed at
+    /// capture - and pins them for the whole replay. This constructor mirrors
+    /// that by translating the already-parsed `BatchHeader`
+    /// into the negotiated state [`new`](Self::new) expects, reusing the batch
+    /// reader's single header parse as the one source of truth.
+    ///
+    /// The returned context drives via
+    /// [`run_local_replay`](Self::run_local_replay): its basis/signature
+    /// computation reuses the batch's `checksum_seed`, its file-list decode uses
+    /// the pinned protocol and compat flags, and nothing is negotiated on any
+    /// wire.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidData`](std::io::ErrorKind::InvalidData)
+    /// when the header carries a protocol version outside the supported range,
+    /// or an FSM error if the initial pipeline transition is rejected.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:604,740` - under `read_batch`, `setup_protocol()` reads
+    ///   `remote_protocol` and `compat_flags` from the batch fd rather than
+    ///   exchanging them with a peer.
+    /// - `io.c:2521-2524` - `start_write_batch()` wrote those same values
+    ///   (protocol, compat varint for proto >= 30, checksum seed) into the
+    ///   header at capture.
+    pub fn for_batch_replay(
+        header: &engine::batch::BatchHeader,
+        config: ServerConfig,
+    ) -> std::io::Result<Self> {
+        // upstream: compat.c:604 remote_protocol = read_int(f_in) - the batch
+        // pins the protocol it was recorded under; reject anything the wire
+        // types cannot represent or the negotiator does not support.
+        let protocol = u8::try_from(header.protocol_version)
+            .ok()
+            .and_then(|raw| ProtocolVersion::try_from(raw).ok())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "batch header carries unsupported protocol version {}",
+                        header.protocol_version
+                    ),
+                )
+            })?;
+
+        // upstream: compat.c:740 compat_flags = read_varint(f_in) - recorded
+        // only for protocol >= 30, which is exactly when the header carries the
+        // varint (io.c:2522-2523). `None` below 30 leaves compat state absent,
+        // matching a legacy negotiation.
+        let compat_flags = header
+            .compat_flags
+            .map(|bits| CompatibilityFlags::from_bits(bits as u32));
+
+        let handshake = HandshakeResult {
+            protocol,
+            buffered: Vec::new(),
+            // The batch already carries the recorded compat exchange; replay
+            // exchanges nothing.
+            compat_exchanged: true,
+            client_args: None,
+            io_timeout: None,
+            // Algorithm negotiation is a live-peer exchange with no recorded
+            // form; the seed alone pins the checksum family
+            // (get_checksum_algorithm falls back to the protocol default).
+            negotiated_algorithms: None,
+            compat_flags,
+            // upstream: io.c:2524 write_int(batch_fd, checksum_seed) - the seed
+            // the basis/signature checksums must reuse on replay.
+            checksum_seed: header.checksum_seed,
+        };
+
+        // Mirror the network receiver's FSM position at construction: the
+        // handshake is complete, so advance to FilterExchange (lib.rs:713-716).
+        let mut pipeline = TransferPipeline::new(crate::role::ServerRole::Receiver);
+        pipeline
+            .advance_to(crate::transfer_state::TransferPhase::FilterExchange)
+            .map_err(crate::fsm_error)?;
+
+        Ok(Self::new(&handshake, config, pipeline))
+    }
+
     /// Creates a receiver context for unit testing with a default pipeline.
     ///
     /// The pipeline is initialized at `FilterExchange`, matching the state
