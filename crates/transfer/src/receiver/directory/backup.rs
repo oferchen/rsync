@@ -31,6 +31,9 @@ use std::io;
 use std::path::Path;
 
 #[cfg(any(unix, windows))]
+use metadata::MetadataOptions;
+
+#[cfg(any(unix, windows))]
 use crate::receiver::ReceiverContext;
 
 /// Which mechanism moved the existing entry into the backup area.
@@ -71,15 +74,44 @@ enum BackupPlacement {
 /// upstream: `backup.c:200-219` - `do_link_at` then `do_rename_at`. A
 /// pre-existing backup (`EEXIST`) is removed and the link retried
 /// (`backup.c:247-256`).
+///
+/// Backup parents are created through upstream's `copy_valid_path`
+/// (backup.c:157-184 `get_backup_name` -> :61-154 `copy_valid_path`): under
+/// `--backup-dir` (`backup_dir` is `Some`) each freshly-created subdirectory
+/// inherits its source directory's attributes and any non-directory obstruction
+/// is cleared before it is recreated as a directory, via the shared
+/// [`engine::create_backup_dir_parents`] helper. Without `--backup-dir`
+/// (`backup_dir` is `None`) the backup lands alongside the destination whose
+/// parent already exists, so upstream runs no `copy_valid_path` (backup.c:159)
+/// and a plain `create_dir_all` suffices - byte-identical to the prior path.
 #[cfg(any(unix, windows))]
 fn place_existing_backup(
     existing: &Path,
     backup_path: &Path,
     prefer_rename: bool,
+    dest_dir: &Path,
+    backup_dir: Option<&Path>,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<BackupPlacement> {
     if let Some(parent) = backup_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
+        match backup_dir {
+            // upstream: backup.c:157-184 get_backup_name -> copy_valid_path -
+            // with --backup-dir every new subdirectory inherits its source
+            // dir's attrs and any non-directory obstruction is cleared before
+            // it is recreated as a directory.
+            Some(backup_dir) => {
+                engine::create_backup_dir_parents(
+                    dest_dir,
+                    backup_dir,
+                    parent,
+                    metadata_opts,
+                    |path| fs::create_dir_all(path),
+                )?;
+            }
+            // upstream: backup.c:159 - without --backup-dir the parent already
+            // exists next to the destination and no copy_valid_path runs.
+            None if parent.exists() => {}
+            None => fs::create_dir_all(parent)?,
         }
     }
 
@@ -222,6 +254,7 @@ pub(in crate::receiver::directory) fn is_backup_file(name: &OsStr, suffix: &str)
 /// upstream: `delete.c:167-170` - `make_backup(fbuf, True)` then, when the copy
 /// tier left the original in place (`ok == 2`), `robust_unlink(fbuf)`.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 fn place_report_and_clear(
     existing: &Path,
     relative_path: &Path,
@@ -230,9 +263,17 @@ fn place_report_and_clear(
     suffix: &OsStr,
     sandbox: Option<&fast_io::DirSandbox>,
     prefer_rename: bool,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
-    let placement = place_existing_backup(existing, &backup_path, prefer_rename)?;
+    let placement = place_existing_backup(
+        existing,
+        &backup_path,
+        prefer_rename,
+        dest_dir,
+        backup_dir,
+        metadata_opts,
+    )?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         // upstream: delete.c:169-170 - the hard-link tier is upstream's `ok == 2`
@@ -258,9 +299,17 @@ fn place_report_and_clear(
     backup_dir: Option<&Path>,
     suffix: &OsStr,
     prefer_rename: bool,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
-    let placement = place_existing_backup(existing, &backup_path, prefer_rename)?;
+    let placement = place_existing_backup(
+        existing,
+        &backup_path,
+        prefer_rename,
+        dest_dir,
+        backup_dir,
+        metadata_opts,
+    )?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         let _ = fs::remove_file(existing);
@@ -280,6 +329,7 @@ fn place_report_and_clear(
 /// upstream: `delete.c:165-170` - `make_backups > 0 && !(flags & DEL_FOR_BACKUP)
 /// && (backup_dir || !is_backup_file(fbuf))` guards `make_backup(fbuf, True)`.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::receiver::directory) fn backup_victim(
     backup: bool,
     backup_dir: Option<&Path>,
@@ -288,6 +338,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     relative_path: &Path,
     dest_dir: &Path,
     sandbox: Option<&fast_io::DirSandbox>,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<bool> {
     if !backup {
         return Ok(false);
@@ -318,6 +369,7 @@ pub(in crate::receiver::directory) fn backup_victim(
         OsStr::new(suffix),
         sandbox,
         true,
+        metadata_opts,
     )?;
     Ok(true)
 }
@@ -330,6 +382,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     suffix: &str,
     existing: &Path,
     dest_dir: &Path,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<bool> {
     if !backup {
         return Ok(false);
@@ -345,7 +398,14 @@ pub(in crate::receiver::directory) fn backup_victim(
         return Ok(false);
     }
     // upstream: delete.c:167 - `make_backup(fbuf, True)`, the rename-only caller.
-    place_report_and_clear(existing, dest_dir, backup_dir, OsStr::new(suffix), true)?;
+    place_report_and_clear(
+        existing,
+        dest_dir,
+        backup_dir,
+        OsStr::new(suffix),
+        true,
+        metadata_opts,
+    )?;
     Ok(true)
 }
 
@@ -358,6 +418,7 @@ pub(in crate::receiver::directory) fn backup_victim(
 ///
 /// upstream: `delete.c:165-174` - back up under the guard, otherwise unlink.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::receiver::directory) fn remove_file_victim(
     backup: bool,
     backup_dir: Option<&Path>,
@@ -366,6 +427,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     relative_path: &Path,
     dest_dir: &Path,
     sandbox: Option<&fast_io::DirSandbox>,
+    metadata_opts: &MetadataOptions,
 ) -> io::Result<()> {
     if backup_victim(
         backup,
@@ -375,6 +437,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
         relative_path,
         dest_dir,
         sandbox,
+        metadata_opts,
     )? {
         return Ok(());
     }
@@ -396,16 +459,24 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     suffix: &str,
     existing: &std::path::Path,
     dest_dir: &std::path::Path,
+    metadata_opts: &MetadataOptions,
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        if backup_victim(backup, backup_dir, suffix, existing, dest_dir)? {
+        if backup_victim(
+            backup,
+            backup_dir,
+            suffix,
+            existing,
+            dest_dir,
+            metadata_opts,
+        )? {
             return Ok(());
         }
     }
     #[cfg(not(windows))]
     {
-        let _ = (backup, backup_dir, suffix, dest_dir);
+        let _ = (backup, backup_dir, suffix, dest_dir, metadata_opts);
     }
     std::fs::remove_file(existing)
 }
@@ -444,6 +515,7 @@ impl ReceiverContext {
 
         // upstream: generator.c:2018 - `make_backup(fname, False)`, so the
         // hard-link tier runs first for a symlink/special replacement.
+        let metadata_opts = self.build_metadata_options();
         place_report_and_clear(
             existing,
             relative_path,
@@ -452,6 +524,7 @@ impl ReceiverContext {
             OsStr::new(self.config.effective_backup_suffix()),
             sandbox,
             false,
+            &metadata_opts,
         )?;
         Ok(true)
     }
@@ -473,12 +546,14 @@ impl ReceiverContext {
         }
 
         // upstream: generator.c:2018 - `make_backup(fname, False)`.
+        let metadata_opts = self.build_metadata_options();
         place_report_and_clear(
             existing,
             dest_dir,
             self.config.backup_dir.as_deref().map(Path::new),
             OsStr::new(self.config.effective_backup_suffix()),
             false,
+            &metadata_opts,
         )?;
         Ok(true)
     }
@@ -492,11 +567,15 @@ mod tests {
     //! below level 1.
 
     use super::{
-        BackupPlacement, copy_existing_cross_device, place_existing_backup, report_backup,
+        BackupPlacement, backup_victim, copy_existing_cross_device, place_existing_backup,
+        report_backup,
     };
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use metadata::MetadataOptions;
+    use std::ffi::OsStr;
     use std::fs;
-    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    use std::path::Path;
 
     fn backup_debug_messages() -> Vec<String> {
         drain_events()
@@ -527,7 +606,15 @@ mod tests {
         let backup = dir.path().join("link~");
         std::os::unix::fs::symlink("original/target", &link).unwrap();
 
-        let placement = place_existing_backup(&link, &backup, false).unwrap();
+        let placement = place_existing_backup(
+            &link,
+            &backup,
+            false,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .unwrap();
 
         // On Linux `link(2)` does not dereference a symlink source, so the
         // backup is taken via hard-link and the HLINK trace is guaranteed.
@@ -583,7 +670,15 @@ mod tests {
         // mkfifo via metadata's safe wrapper needs no privilege.
         metadata::create_fifo_node_from_parts(&fifo, 0o644, false, false).unwrap();
 
-        place_existing_backup(&fifo, &backup, false).unwrap();
+        place_existing_backup(
+            &fifo,
+            &backup,
+            false,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .unwrap();
 
         assert!(
             fs::symlink_metadata(&backup).unwrap().file_type().is_fifo(),
@@ -616,7 +711,15 @@ mod tests {
         let backup = dir.path().join("extraneous~");
         fs::write(&victim, b"victim payload").unwrap();
 
-        let placement = place_existing_backup(&victim, &backup, true).unwrap();
+        let placement = place_existing_backup(
+            &victim,
+            &backup,
+            true,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .unwrap();
 
         assert!(
             matches!(placement, BackupPlacement::Renamed),
@@ -658,7 +761,15 @@ mod tests {
         let backup = dir.path().join("regular~");
         fs::write(&file, b"pre-image").unwrap();
 
-        let placement = place_existing_backup(&file, &backup, false).unwrap();
+        let placement = place_existing_backup(
+            &file,
+            &backup,
+            false,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .unwrap();
 
         assert!(
             matches!(placement, BackupPlacement::Hardlinked),
@@ -743,12 +854,207 @@ mod tests {
         let backup = dir.path().join("l~");
         std::os::unix::fs::symlink("t", &link).unwrap();
 
-        let placement = place_existing_backup(&link, &backup, false).unwrap();
+        let placement = place_existing_backup(
+            &link,
+            &backup,
+            false,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .unwrap();
         report_backup(&placement, &link, &backup, dir.path());
 
         assert!(
             backup_debug_messages().is_empty(),
             "debug=BACKUP level 0 must suppress the mechanism trace"
+        );
+    }
+
+    /// Under `--backup-dir`, a non-regular (symlink) victim whose backup
+    /// subdirectory does not yet exist in the backup tree routes through
+    /// upstream's `copy_valid_path` (backup.c:157-184 `get_backup_name` ->
+    /// :61-154 `copy_valid_path`), so the freshly-created subdirectory inherits
+    /// the corresponding destination directory's mode rather than the umask
+    /// default. Before the fix, `place_existing_backup` created the parent with
+    /// a bare `create_dir_all`, leaving it at umask perms; this test pins the
+    /// attribute-inheritance contract.
+    ///
+    /// upstream: backup.c:115-138 - after `do_mkdir_at` each new subdir gets
+    /// `x_stat(rel) + make_file + set_file_attrs`, copying the source dir mode.
+    #[test]
+    fn backup_dir_new_subdir_inherits_dest_dir_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let sub = dest.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        // Distinctive, non-umask-default mode the backup subdir must inherit.
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o700)).unwrap();
+
+        // Backup root does not exist yet, so its "sub" element is created fresh
+        // by copy_valid_path and must inherit dest/sub's 0700.
+        let backup_root = dir.path().join("bak");
+        let victim = sub.join("link");
+        std::os::unix::fs::symlink("target", &victim).unwrap();
+
+        // upstream: backup.c:137 set_file_attrs honours the transfer's
+        // preserve-* policy; here only permissions are preserved.
+        let opts = MetadataOptions::new().preserve_permissions(true);
+        // With --backup-dir the suffix is empty (backup.c:159 vs :179).
+        let backup_path = engine::compute_backup_path(
+            &dest,
+            &victim,
+            None,
+            Some(backup_root.as_path()),
+            OsStr::new(""),
+        );
+
+        let placement = place_existing_backup(
+            &victim,
+            &backup_path,
+            false,
+            &dest,
+            Some(backup_root.as_path()),
+            &opts,
+        )
+        .unwrap();
+
+        // The symlink is preserved into the backup area (Linux hard-links it).
+        #[cfg(target_os = "linux")]
+        assert!(matches!(placement, BackupPlacement::Hardlinked));
+        let _ = &placement;
+        assert_eq!(
+            fs::read_link(&backup_path).unwrap(),
+            Path::new("target"),
+            "backup must preserve the symlink target"
+        );
+
+        let created_sub = backup_root.join("sub");
+        let mode = fs::symlink_metadata(&created_sub)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "new --backup-dir subdirectory must inherit the dest dir mode, not umask default"
+        );
+    }
+
+    /// Under `--backup-dir`, a non-directory obstruction sitting where a backup
+    /// subdirectory must go is cleared and recreated as a directory, mirroring
+    /// upstream `validate_backup_dir` (backup.c:48-53), where a non-directory
+    /// triggers `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`. Before the fix the
+    /// bare `create_dir_all` surfaced `NotADirectory` and aborted the backup.
+    ///
+    /// upstream: backup.c:48-53 / :101-113 - the obstruction is removed so the
+    /// element can be recreated via `do_mkdir_at`.
+    #[test]
+    fn backup_dir_nondir_obstruction_is_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let sub = dest.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+
+        let backup_root = dir.path().join("bak");
+        fs::create_dir_all(&backup_root).unwrap();
+        // Plant a regular file where the "sub" backup subdirectory must live.
+        fs::write(backup_root.join("sub"), b"obstruction").unwrap();
+
+        let victim = sub.join("link");
+        std::os::unix::fs::symlink("target", &victim).unwrap();
+
+        let opts = MetadataOptions::new().preserve_permissions(true);
+        let backup_path = engine::compute_backup_path(
+            &dest,
+            &victim,
+            None,
+            Some(backup_root.as_path()),
+            OsStr::new(""),
+        );
+
+        // Must not fail with NotADirectory: the obstruction is cleared first.
+        place_existing_backup(
+            &victim,
+            &backup_path,
+            false,
+            &dest,
+            Some(backup_root.as_path()),
+            &opts,
+        )
+        .unwrap();
+
+        assert!(
+            fs::symlink_metadata(backup_root.join("sub"))
+                .unwrap()
+                .is_dir(),
+            "the non-directory obstruction must be replaced by a directory"
+        );
+        assert_eq!(
+            fs::read_link(&backup_path).unwrap(),
+            Path::new("target"),
+            "backup must land inside the recreated directory"
+        );
+    }
+
+    /// The `--delete` pre-delete backup path (`backup_victim` ->
+    /// `place_report_and_clear`, upstream delete.c:167 `make_backup(fbuf, True)`)
+    /// routes a non-regular victim's `--backup-dir` parents through the same
+    /// `copy_valid_path` attribute inheritance: a freshly-created backup
+    /// subdirectory inherits the destination directory's mode, and the victim is
+    /// renamed into it (prefer_rename), freeing the original path.
+    ///
+    /// upstream: delete.c:167 -> backup.c:157-184 get_backup_name ->
+    /// copy_valid_path (backup.c:115-138 set_file_attrs).
+    #[test]
+    fn delete_backup_dir_new_subdir_inherits_dest_dir_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let sub = dest.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o750)).unwrap();
+
+        let backup_root = dir.path().join("bak");
+        let victim = sub.join("gone");
+        std::os::unix::fs::symlink("was-here", &victim).unwrap();
+
+        let opts = MetadataOptions::new().preserve_permissions(true);
+        let backed_up = backup_victim(
+            true,
+            Some(backup_root.as_path()),
+            "", // --backup-dir uses an empty suffix
+            &victim,
+            Path::new("sub/gone"),
+            &dest,
+            None,
+            &opts,
+        )
+        .unwrap();
+        assert!(
+            backed_up,
+            "the victim must be preserved into the backup area"
+        );
+
+        // prefer_rename frees the original path outright (no link+unlink window).
+        assert!(
+            fs::symlink_metadata(&victim).is_err(),
+            "the delete-pass rename must free the victim path"
+        );
+
+        let backup_path = backup_root.join("sub").join("gone");
+        assert_eq!(
+            fs::read_link(&backup_path).unwrap(),
+            Path::new("was-here"),
+            "the renamed backup must preserve the symlink target"
+        );
+        let mode = fs::symlink_metadata(backup_root.join("sub"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o750,
+            "the --delete --backup-dir subdir must inherit the dest dir mode"
         );
     }
 }
