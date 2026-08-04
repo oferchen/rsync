@@ -13,6 +13,7 @@ use std::time::Instant;
 use crate::concurrent_delta::reorder::{Metrics as ReorderMetrics, ReorderBuffer};
 use crate::concurrent_delta::spill::{SpillError, SpillableReorderBuffer};
 use crate::concurrent_delta::types::DeltaResult;
+use crate::throughput::{Constraint, SampleSink};
 
 /// Reorder loop for the bare [`ReorderBuffer`] backend (passthrough or
 /// ring-buffer mode). Mirrors the historical control flow: drain ready items
@@ -25,6 +26,7 @@ pub(super) fn run_bare_loop(
     result_tx: &mpsc::Sender<DeltaResult>,
     mut reorder: ReorderBuffer<DeltaResult>,
     metrics: &Arc<Mutex<ReorderMetrics>>,
+    sink: Option<&SampleSink>,
 ) {
     let mut last_drain_at: Option<Instant> = None;
     let publish = |reorder: &ReorderBuffer<DeltaResult>| {
@@ -35,7 +37,7 @@ pub(super) fn run_bare_loop(
 
     for result in stream_rx {
         while reorder.insert(result.sequence(), result.clone()).is_err() {
-            match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+            match drain_and_record(&mut reorder, result_tx, &mut last_drain_at, sink) {
                 DrainOutcome::Disconnected => return,
                 DrainOutcome::Empty => {
                     // Buffer full but next_expected is not buffered.
@@ -50,14 +52,14 @@ pub(super) fn run_bare_loop(
             }
         }
 
-        match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+        match drain_and_record(&mut reorder, result_tx, &mut last_drain_at, sink) {
             DrainOutcome::Disconnected => return,
             DrainOutcome::Empty => {}
             DrainOutcome::Forwarded => publish(&reorder),
         }
     }
 
-    match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+    match drain_and_record(&mut reorder, result_tx, &mut last_drain_at, sink) {
         DrainOutcome::Disconnected => return,
         DrainOutcome::Empty => {}
         DrainOutcome::Forwarded => publish(&reorder),
@@ -85,6 +87,7 @@ pub(super) fn run_spillable_loop(
     mut reorder: SpillableReorderBuffer<DeltaResult>,
     spill_events: &Arc<AtomicU64>,
     spill_activations: &Arc<AtomicU64>,
+    sink: Option<&SampleSink>,
 ) {
     let mut prev_spill = reorder.spill_stats().spill_events;
     let mut prev_activations = reorder.spill_stats().spill_activations;
@@ -164,12 +167,22 @@ pub(super) fn run_spillable_loop(
         publish_spill_events(&reorder, spill_events, &mut prev_spill);
         publish_spill_activations(&reorder, spill_activations, &mut prev_activations);
 
+        let drain_start = Instant::now();
         match reorder.drain_ready() {
             Ok(items) => {
+                let mut bytes = 0u64;
                 for ready in items {
+                    bytes = bytes.saturating_add(ready.bytes_written());
                     if result_tx.send(ready).is_err() {
                         return;
                     }
+                }
+                if bytes > 0 {
+                    // Spillable occupancy lives behind the spill layer's own
+                    // counters (published above); report `0` here since the
+                    // in-memory ring depth is not exposed. The WireWrite rate
+                    // is still the governor's drain-throughput signal.
+                    emit_wire_write(sink, bytes, drain_start);
                 }
             }
             Err(e) => {
@@ -239,6 +252,18 @@ fn publish_spill_activations(
     }
 }
 
+/// Publishes a [`Constraint::WireWrite`] sample for a spillable-loop drain of
+/// `bytes` bytes that began at `drain_start`, with occupancy `0`.
+///
+/// A no-op when `sink` is `None`. Kept separate from [`drain_and_record`]
+/// because the spillable loop drains through the spill layer rather than the
+/// bare ring and has no in-memory occupancy accessor to report.
+fn emit_wire_write(sink: Option<&SampleSink>, bytes: u64, drain_start: Instant) {
+    if let Some(sink) = sink {
+        sink.emit_stage(Constraint::WireWrite, bytes, drain_start.elapsed(), 0);
+    }
+}
+
 /// Outcome of one [`drain_and_record`] call.
 enum DrainOutcome {
     /// No items were ready to drain.
@@ -255,13 +280,25 @@ enum DrainOutcome {
 ///
 /// Bypasses the metrics path on empty drains so the histograms reflect only
 /// the work actually performed by the consumer thread.
+///
+/// When a throughput-governor `sink` is present, each non-empty drain also
+/// publishes a [`Constraint::WireWrite`] sample: the bytes forwarded over the
+/// drain's wall-clock span, tagged with the reorder buffer's residual
+/// occupancy. Occupancy is the drum-detection signal the governor watches - a
+/// persistently full reorder buffer means the consumer, not the workers, is
+/// the constraint. Emission is pure observation and never changes what or when
+/// items are forwarded.
 fn drain_and_record(
     reorder: &mut ReorderBuffer<DeltaResult>,
     result_tx: &mpsc::Sender<DeltaResult>,
     last_drain_at: &mut Option<Instant>,
+    sink: Option<&SampleSink>,
 ) -> DrainOutcome {
+    let drain_start = Instant::now();
     let mut count = 0usize;
+    let mut bytes = 0u64;
     while let Some(ready) = reorder.next_in_order() {
+        bytes = bytes.saturating_add(ready.bytes_written());
         if result_tx.send(ready).is_err() {
             return DrainOutcome::Disconnected;
         }
@@ -276,5 +313,13 @@ fn drain_and_record(
     }
     reorder.record_drain_batch(count);
     *last_drain_at = Some(now);
+    if let Some(sink) = sink {
+        sink.emit_stage(
+            Constraint::WireWrite,
+            bytes,
+            now.saturating_duration_since(drain_start),
+            reorder.buffered_count(),
+        );
+    }
     DrainOutcome::Forwarded
 }
