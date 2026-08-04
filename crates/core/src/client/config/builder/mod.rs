@@ -269,6 +269,8 @@ pub struct ClientConfigBuilder {
     tcp_fastopen: TcpFastOpenMode,
     #[cfg(feature = "quic")]
     daemon_transport: crate::client::Transport,
+    #[cfg(feature = "quic")]
+    quic_ca: Option<PathBuf>,
     blocking_io: Option<bool>,
     iconv: IconvSetting,
     remote_shell: Option<Vec<OsString>>,
@@ -512,6 +514,8 @@ impl ClientConfigBuilder {
             tcp_fastopen: self.tcp_fastopen,
             #[cfg(feature = "quic")]
             daemon_transport: self.daemon_transport,
+            #[cfg(feature = "quic")]
+            quic_ca: self.quic_ca,
             blocking_io: self.blocking_io,
             iconv: self.iconv,
             remote_shell: self.remote_shell,

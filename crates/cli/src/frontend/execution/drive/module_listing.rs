@@ -19,6 +19,10 @@ pub(super) struct ModuleListingInputs<'a> {
     /// `--quic` - upgrade the daemon listing target to the QUIC transport.
     #[cfg(feature = "quic")]
     pub quic: bool,
+    /// `--quic-ca <PATH>` - private CA bundle for verifying the QUIC daemon
+    /// certificate; `None` uses the system-roots default.
+    #[cfg(feature = "quic")]
+    pub quic_ca: Option<&'a std::path::Path>,
     pub desired_protocol: Option<ProtocolVersion>,
     pub password_override: Option<Vec<u8>>,
     pub no_motd: bool,
@@ -52,6 +56,8 @@ where
         daemon_port,
         #[cfg(feature = "quic")]
         quic,
+        #[cfg(feature = "quic")]
+        quic_ca,
         desired_protocol,
         password_override,
         no_motd,
@@ -105,7 +111,8 @@ where
     // malformed spec is ignored, matching the transfer path's lenient handling.
     let remote_shell_args = remote_shell.and_then(|spec| ssh::parse_remote_shell(spec).ok());
 
-    let list_options = ModuleListOptions::default()
+    #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
+    let mut list_options = ModuleListOptions::default()
         .suppress_motd(no_motd)
         .with_address_mode(address_mode)
         .with_bind_address(bind_address.map(|addr| addr.socket()))
@@ -115,6 +122,10 @@ where
         .with_sockopts(sockopts.cloned())
         .with_tcp_fastopen(tcp_fastopen)
         .with_blocking_io(blocking_io);
+    #[cfg(feature = "quic")]
+    {
+        list_options = list_options.with_quic_ca(quic_ca.map(std::path::Path::to_path_buf));
+    }
 
     match run_module_list_with_password_and_options(
         request,

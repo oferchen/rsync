@@ -256,6 +256,11 @@ pub struct ClientConfig {
     /// build always uses TCP, so the field is absent there.
     #[cfg(feature = "quic")]
     pub(super) daemon_transport: crate::client::Transport,
+    /// `--quic-ca <PATH>` - private CA PEM bundle used to verify the daemon's
+    /// QUIC certificate (policy B). `None` uses the system-roots default. Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_ca: Option<PathBuf>,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
@@ -475,6 +480,8 @@ impl Default for ClientConfig {
             tcp_fastopen: TcpFastOpenMode::Auto,
             #[cfg(feature = "quic")]
             daemon_transport: crate::client::Transport::Tcp,
+            #[cfg(feature = "quic")]
+            quic_ca: None,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
             remote_shell: None,

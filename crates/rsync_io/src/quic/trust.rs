@@ -560,6 +560,19 @@ mod tests {
         Box::new(KnownHostsFile::new(path.to_path_buf()))
     }
 
+    /// PEM-encodes a certificate DER (`-----BEGIN CERTIFICATE-----` framing,
+    /// standard base64 wrapped at 64 columns).
+    fn cert_to_pem(der: &CertificateDer<'_>) -> String {
+        use base64::engine::general_purpose::STANDARD;
+        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+        for chunk in STANDARD.encode(der.as_ref()).as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        pem
+    }
+
     fn verify(cert: &CertificateDer<'_>, path: &Path) -> Result<ServerCertVerified, TlsError> {
         let verifier = TofuVerifier::new(AUTHORITY, store_at(path));
         verifier.verify_server_cert(
@@ -684,6 +697,38 @@ mod tests {
                 .expect("unknown authority")
                 .is_none(),
             "an unrelated authority must not match"
+        );
+    }
+
+    /// `load_private_ca` parses a PEM bundle into a usable root store the
+    /// connector accepts, and fails loudly on a missing file or one with no
+    /// certificate - a mistyped or empty `--quic-ca` must never silently
+    /// degrade trust.
+    #[test]
+    fn load_private_ca_reads_pem_and_rejects_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let issued =
+            rcgen::generate_simple_self_signed(vec!["ca.example".to_owned()]).expect("gen cert");
+        let pem_path = dir.path().join("ca.pem");
+        std::fs::write(&pem_path, cert_to_pem(issued.cert.der())).expect("write pem");
+
+        let roots = load_private_ca(&pem_path).expect("load ca bundle");
+        assert!(!roots.is_empty(), "the bundle must yield a trust anchor");
+        super::super::QuicConnector::with_trust(QuicTrust::Roots(roots))
+            .expect("connector accepts the loaded CA");
+
+        let missing = dir.path().join("does-not-exist.pem");
+        assert!(
+            load_private_ca(&missing).is_err(),
+            "missing file must error"
+        );
+
+        let empty = dir.path().join("empty.pem");
+        std::fs::write(&empty, b"not a certificate\n").expect("write empty");
+        assert!(
+            load_private_ca(&empty).is_err(),
+            "a bundle with no certificate must error"
         );
     }
 
