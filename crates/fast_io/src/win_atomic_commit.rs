@@ -30,6 +30,184 @@
 //! All Win32 FFI lives here in `fast_io` (a permitted-unsafe crate); the
 //! `transfer` receiver calls the safe functions.
 
+/// Extended-length (`\\?\`) path conversion shared by the no-follow commit
+/// primitives.
+///
+/// The handle-based opens in [`imp`] all go through `OpenOptions::open`, which
+/// applies std's `maybe_verbatim` internally, so they already accept paths over
+/// the legacy 260-char `MAX_PATH`. The one Win32 call that receives a raw path
+/// string is `SetFileInformationByHandle(FileRenameInfo)` in
+/// [`imp::set_rename_info`]: its `FILE_RENAME_INFO::FileName` is passed straight
+/// to the kernel with no long-path awareness, so a deep destination fails with
+/// `ERROR_FILENAME_EXCED_RANGE` (206). [`to_verbatim_wide`] converts an
+/// already-absolute, already-normalized destination path into the `\\?\`
+/// verbatim form the way std does, restoring the long-path behaviour the prior
+/// `std::fs::rename` commit path had.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod verbatim {
+    // UTF-16 code units used to detect and build verbatim paths. All are ASCII,
+    // so casting the byte literal to `u16` is exact.
+    const SEP: u16 = b'\\' as u16;
+    const ALT_SEP: u16 = b'/' as u16;
+    const QUERY: u16 = b'?' as u16;
+    const COLON: u16 = b':' as u16;
+
+    // `\\?\`
+    const VERBATIM_PREFIX: [u16; 4] = [SEP, SEP, QUERY, SEP];
+    // `\??\` (the NT-namespace form std also leaves untouched)
+    const NT_PREFIX: [u16; 4] = [SEP, QUERY, QUERY, SEP];
+    // `\\?\UNC\`
+    const UNC_VERBATIM_PREFIX: [u16; 8] = [
+        SEP,
+        SEP,
+        QUERY,
+        SEP,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        SEP,
+    ];
+
+    /// True for an ASCII drive letter (`A`-`Z` / `a`-`z`) as a UTF-16 unit.
+    fn is_drive_letter(c: u16) -> bool {
+        (b'A' as u16..=b'Z' as u16).contains(&c) || (b'a' as u16..=b'z' as u16).contains(&c)
+    }
+
+    /// Returns the extended-length (`\\?\`) verbatim form of a UTF-16 Windows
+    /// path, or the input unchanged when it is already verbatim/NT-prefixed or
+    /// is not fully qualified.
+    ///
+    /// Operates on a UTF-16 code-unit slice (as std's `maybe_verbatim` does) so
+    /// it is unit-testable on every platform even though it is only used on
+    /// Windows. The commit path only ever hands this a fully-qualified,
+    /// already-normalized destination, so - unlike std - it does not resolve
+    /// `.`/`..` via `GetFullPathNameW`; it only rewrites the prefix:
+    ///
+    /// - Already `\\?\` or `\??\`: returned untouched.
+    /// - Drive-absolute (`X:\...` or `X:/...`): becomes `\\?\X:\...` with
+    ///   forward slashes normalized to backslashes.
+    /// - UNC (`\\server\...` or `//server/...`): becomes `\\?\UNC\server\...`.
+    /// - Anything else (relative, drive-relative like `X:foo`): returned
+    ///   untouched - a verbatim path must be fully qualified, and such paths
+    ///   never exceed `MAX_PATH` on the commit path.
+    pub(super) fn to_verbatim_wide(path: &[u16]) -> Vec<u16> {
+        if path.starts_with(&VERBATIM_PREFIX) || path.starts_with(&NT_PREFIX) {
+            return path.to_vec();
+        }
+
+        // Drive-absolute: `X:\...` / `X:/...`.
+        if path.len() >= 3
+            && is_drive_letter(path[0])
+            && path[1] == COLON
+            && (path[2] == SEP || path[2] == ALT_SEP)
+        {
+            let mut out = Vec::with_capacity(VERBATIM_PREFIX.len() + path.len());
+            out.extend_from_slice(&VERBATIM_PREFIX);
+            out.extend(path.iter().map(|&c| if c == ALT_SEP { SEP } else { c }));
+            return out;
+        }
+
+        // UNC: `\\server\...` / `//server/...`. Drop the leading two separators;
+        // the `\\?\UNC\` prefix supplies them.
+        if path.len() >= 2
+            && (path[0] == SEP || path[0] == ALT_SEP)
+            && (path[1] == SEP || path[1] == ALT_SEP)
+        {
+            let mut out = Vec::with_capacity(UNC_VERBATIM_PREFIX.len() + path.len());
+            out.extend_from_slice(&UNC_VERBATIM_PREFIX);
+            out.extend(
+                path[2..]
+                    .iter()
+                    .map(|&c| if c == ALT_SEP { SEP } else { c }),
+            );
+            return out;
+        }
+
+        path.to_vec()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Encodes an ASCII string as a UTF-16 vector, the wire form Win32 sees.
+        fn w(s: &str) -> Vec<u16> {
+            s.encode_utf16().collect()
+        }
+
+        /// A deep drive-absolute path (>260 UTF-16 units) gains the `\\?\`
+        /// prefix - the exact fix for the `ERROR_FILENAME_EXCED_RANGE` commit.
+        #[test]
+        fn long_absolute_path_gains_verbatim_prefix() {
+            let deep = format!("C:\\{}\\file.bin", "d0000000".repeat(40));
+            assert!(deep.len() > 260, "fixture must exceed MAX_PATH");
+            let got = to_verbatim_wide(&w(&deep));
+            assert_eq!(got, w(&format!("\\\\?\\{deep}")));
+        }
+
+        /// A short drive-absolute path is still prefixed (correctness does not
+        /// depend on length; the raw rename would otherwise stay short-only).
+        #[test]
+        fn short_absolute_path_gains_verbatim_prefix() {
+            assert_eq!(
+                to_verbatim_wide(&w(r"C:\dir\file.bin")),
+                w(r"\\?\C:\dir\file.bin")
+            );
+        }
+
+        /// Forward slashes in a drive-absolute path are normalized to
+        /// backslashes: the verbatim namespace does no separator translation.
+        #[test]
+        fn forward_slashes_normalized_to_backslashes() {
+            assert_eq!(
+                to_verbatim_wide(&w("C:/dir/sub/file.bin")),
+                w(r"\\?\C:\dir\sub\file.bin")
+            );
+        }
+
+        /// A UNC path maps to the `\\?\UNC\` form with the leading `\\` dropped.
+        #[test]
+        fn unc_path_maps_to_unc_verbatim() {
+            assert_eq!(
+                to_verbatim_wide(&w(r"\\server\share\dir\file.bin")),
+                w(r"\\?\UNC\server\share\dir\file.bin")
+            );
+        }
+
+        /// An already-verbatim path is returned untouched (idempotent), so a
+        /// double conversion cannot corrupt the prefix.
+        #[test]
+        fn already_verbatim_is_unchanged() {
+            let p = w(r"\\?\C:\dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// An NT-namespace (`\??\`) path is likewise left untouched.
+        #[test]
+        fn nt_prefixed_is_unchanged() {
+            let p = w(r"\??\C:\dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// A relative path is not fully qualified, so it is returned unchanged
+        /// (no prefix, no slash rewrite) - such paths never exceed MAX_PATH on
+        /// the commit path.
+        #[test]
+        fn relative_path_is_unchanged() {
+            let p = w(r"dir\file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+
+        /// A drive-relative path (`X:foo`, no separator after the colon) is also
+        /// left unchanged - prefixing it would change its meaning.
+        #[test]
+        fn drive_relative_path_is_unchanged() {
+            let p = w("C:file.bin");
+            assert_eq!(to_verbatim_wide(&p), p);
+        }
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::ffi::OsStr;
@@ -40,6 +218,8 @@ mod imp {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -107,6 +287,19 @@ mod imp {
     /// `replace_existing` maps to `FILE_RENAME_INFO::ReplaceIfExists` (upstream
     /// `do_rename` overwrites the destination).
     ///
+    /// The pin in step 1 omits `FILE_SHARE_DELETE`, which also means two commits
+    /// racing to the *same* destination momentarily lock each other out: while
+    /// one holds its pin, the other's replace can fail with
+    /// `ERROR_SHARING_VIOLATION` (32) or `ERROR_ACCESS_DENIED` (5). That
+    /// contention is transient - the pin drops the instant the other commit
+    /// returns - so [`is_transient_rename_contention`] gates a bounded retry
+    /// loop (`MAX_RETRY_ATTEMPTS` attempts, ~1 s cap) that re-opens and
+    /// re-validates the parent on every attempt, preserving the anti-swap
+    /// invariant across retries. oc-specific robustness: upstream rsync never
+    /// commits two temp files to one destination concurrently, so this only
+    /// races in the engine's parallel `DestinationWriteGuard` path, never on the
+    /// wire.
+    ///
     /// # Errors
     ///
     /// - [`io::ErrorKind::InvalidInput`] if `dest_path` lacks a parent
@@ -116,7 +309,8 @@ mod imp {
     ///   (upstream `util1.c:robust_rename()`).
     /// - Any underlying open, validation, or rename failure. A reparse-point
     ///   swap detected in step 1 or 2 surfaces as an error, so the commit fails
-    ///   safe rather than following the redirect.
+    ///   safe rather than following the redirect. Transient same-destination
+    ///   contention that outlasts the retry budget surfaces as the last error.
     pub fn rename_no_follow(
         temp_path: &Path,
         dest_path: &Path,
@@ -129,6 +323,45 @@ mod imp {
             )
         })?;
 
+        // Bounded retry on transient same-destination contention. Each attempt
+        // re-opens and re-validates the parent, so the reparse-swap rejection
+        // still fires on every attempt (never hoisted out of the loop); the
+        // fixed 20 ms backoff caps total waiting at ~1 s.
+        let mut attempt: u32 = 0;
+        loop {
+            match try_rename_no_follow_once(temp_path, dest_dir, dest_path, replace_existing) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    attempt += 1;
+                    let transient = err
+                        .raw_os_error()
+                        .is_some_and(super::is_transient_rename_contention);
+                    if transient && attempt < MAX_RETRY_ATTEMPTS {
+                        sleep(RETRY_BACKOFF);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    /// Retry ceiling for [`rename_no_follow`]'s transient-contention loop.
+    /// `MAX_RETRY_ATTEMPTS * RETRY_BACKOFF` bounds the total wait at ~1 s.
+    const MAX_RETRY_ATTEMPTS: u32 = 50;
+    /// Fixed backoff between contention retries.
+    const RETRY_BACKOFF: Duration = Duration::from_millis(20);
+
+    /// One attempt of the anchored, reparse-hardened commit rename. Splitting
+    /// this out lets [`rename_no_follow`] retry the whole open+validate+rename
+    /// sequence on transient same-destination contention while re-running the
+    /// reparse-point checks on every attempt.
+    fn try_rename_no_follow_once(
+        temp_path: &Path,
+        dest_dir: &Path,
+        dest_path: &Path,
+        replace_existing: bool,
+    ) -> io::Result<()> {
         // (1) Open, validate, and pin the destination parent. The missing
         // FILE_SHARE_DELETE keeps the directory from being renamed/removed/
         // replaced (swapped for a junction) while this handle is held across
@@ -201,13 +434,17 @@ mod imp {
     ///
     /// `RootDirectory` is `NULL` (the only form the Win32
     /// `SetFileInformationByHandle` accepts) and `FileName` is the complete
-    /// destination path. `FILE_RENAME_INFO` is a variable-length struct whose
-    /// trailing `FileName[1]` field is a flexible array; the buffer is
-    /// allocated as a `Vec<u64>` so it is large enough for the path and aligned
-    /// to the struct's 8-byte (HANDLE) alignment. `FileNameLength` is the path
-    /// length in bytes (not UTF-16 code units).
+    /// destination path, converted to its `\\?\` verbatim form
+    /// ([`super::verbatim::to_verbatim_wide`]) because this raw Win32 call is
+    /// not long-path aware - without the prefix a destination deeper than 260
+    /// characters fails with `ERROR_FILENAME_EXCED_RANGE`. `FILE_RENAME_INFO` is
+    /// a variable-length struct whose trailing `FileName[1]` field is a flexible
+    /// array; the buffer is allocated as a `Vec<u64>` so it is large enough for
+    /// the path and aligned to the struct's 8-byte (HANDLE) alignment.
+    /// `FileNameLength` is the path length in bytes (not UTF-16 code units).
     fn set_rename_info(src: &File, dest_name: &OsStr, replace_existing: bool) -> io::Result<()> {
-        let name: Vec<u16> = dest_name.encode_wide().collect();
+        let name =
+            super::verbatim::to_verbatim_wide(&dest_name.encode_wide().collect::<Vec<u16>>());
         let name_bytes = name.len() * size_of::<u16>();
         // size_of::<FILE_RENAME_INFO>() already includes the 2-byte FileName[1]
         // stub, so header + name_bytes slightly over-allocates - harmless.
@@ -357,3 +594,76 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{create_new_no_follow, rename_no_follow};
+
+/// Returns `true` when an I/O error represents a cross-device link (`EXDEV`).
+///
+/// This is the single source of truth for the EXDEV detection every
+/// temp->destination commit path shares. A temp file staged in a `--temp-dir`
+/// (or partial dir) that lives on a different filesystem than the destination
+/// cannot be `rename(2)`d across the mount, so the commit falls back to
+/// copy+remove (upstream `util1.c:robust_rename()`).
+///
+/// The check is keyed on the raw OS error number rather than
+/// [`std::io::ErrorKind::CrossesDevices`] so it stays robust across std
+/// releases and is byte-identical on both sides of the commit divergence it
+/// unifies (the engine local-copy guard and the transfer disk-commit path):
+///
+/// - Unix: `raw_os_error() == libc::EXDEV` (errno 18).
+/// - Windows: `raw_os_error() == 17` (`ERROR_NOT_SAME_DEVICE`).
+///
+/// Every other platform reports `false`, so callers surface the original error.
+#[must_use]
+pub fn is_cross_device(error: &std::io::Error) -> bool {
+    match error.raw_os_error() {
+        #[cfg(unix)]
+        Some(code) => code == libc::EXDEV,
+        #[cfg(windows)]
+        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
+        #[cfg(not(any(unix, windows)))]
+        Some(_) => false,
+        None => false,
+    }
+}
+
+/// True for the transient Win32 error numbers a concurrent commit to the *same*
+/// destination produces while another committer briefly holds the no-follow pin
+/// on the destination parent.
+///
+/// [`imp::rename_no_follow`] pins that parent without `FILE_SHARE_DELETE` (the
+/// reparse-swap hardening), so a second committer racing to replace the same
+/// destination can be denied for the moment the pin is held:
+///
+/// - `ERROR_SHARING_VIOLATION` (32)
+/// - `ERROR_ACCESS_DENIED` (5)
+///
+/// Both clear as soon as the other committer's handle drops, so the commit
+/// retries. Every other error number is terminal and must surface unchanged -
+/// notably `ERROR_NOT_SAME_DEVICE` (17, EXDEV) so the caller falls back to
+/// copy+remove, `ERROR_FILENAME_EXCED_RANGE` (206), and `ERROR_FILE_NOT_FOUND`
+/// (2).
+///
+/// oc-specific robustness: upstream rsync never commits two temp files to one
+/// destination concurrently, so this races only in the engine's parallel
+/// `DestinationWriteGuard` path, never on the wire.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_transient_rename_contention(raw_os_error: i32) -> bool {
+    // ERROR_ACCESS_DENIED = 5, ERROR_SHARING_VIOLATION = 32.
+    matches!(raw_os_error, 5 | 32)
+}
+
+#[cfg(test)]
+mod contention_tests {
+    use super::is_transient_rename_contention;
+
+    /// The two transient contention codes retry; unrelated codes - including
+    /// EXDEV (17), which must fall back to copy+remove - stay terminal.
+    #[test]
+    fn only_sharing_and_access_denied_are_transient() {
+        assert!(is_transient_rename_contention(32)); // ERROR_SHARING_VIOLATION
+        assert!(is_transient_rename_contention(5)); // ERROR_ACCESS_DENIED
+        assert!(!is_transient_rename_contention(2)); // ERROR_FILE_NOT_FOUND
+        assert!(!is_transient_rename_contention(17)); // ERROR_NOT_SAME_DEVICE (EXDEV)
+        assert!(!is_transient_rename_contention(206)); // ERROR_FILENAME_EXCED_RANGE
+        assert!(!is_transient_rename_contention(0));
+    }
+}
