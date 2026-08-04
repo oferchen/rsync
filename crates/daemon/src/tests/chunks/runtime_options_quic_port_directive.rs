@@ -3,6 +3,11 @@
 // the QUIC listener shares the daemon `port` (873 by default). A `quic port = 0`
 // coerces to the well-known rsync port 873, mirroring the TCP `port = 0` path.
 // Decision on 2026-07-30: QUIC binds the SAME port as TCP by default.
+//
+// These tests read only the crate-visible accessors (`effective_quic_port`,
+// `rsync_port`); the private `port` field and module-private `DEFAULT_PORT` are
+// out of reach from this `tests` submodule, so the well-known port is spelled
+// as the literal 873.
 
 #[test]
 fn quic_port_unset_shares_daemon_port() {
@@ -16,9 +21,8 @@ fn quic_port_unset_shares_daemon_port() {
     ])
     .expect("parse config");
 
-    // With the directive unset the QUIC listener binds the daemon TCP port.
-    assert_eq!(options.effective_quic_port(), options.port);
-    assert_eq!(options.effective_quic_port(), DEFAULT_PORT);
+    // With the directive unset the QUIC listener binds the default daemon port.
+    assert_eq!(options.effective_quic_port(), 873);
 }
 
 #[test]
@@ -33,8 +37,9 @@ fn quic_port_unset_tracks_overridden_daemon_port() {
     ])
     .expect("parse config");
 
-    // A non-default daemon port with no `quic port` still shares it.
-    assert_eq!(options.port, 9999);
+    // A non-default daemon port with no `quic port` still shares it: the
+    // effective QUIC port follows `quic_port.unwrap_or(port)`.
+    assert_eq!(options.rsync_port(), Some(9999));
     assert_eq!(options.effective_quic_port(), 9999);
 }
 
@@ -51,7 +56,7 @@ fn quic_port_directive_overrides_daemon_port_independently() {
     .expect("parse config");
 
     // `quic port` is independent of the TCP `port`.
-    assert_eq!(options.port, 8022);
+    assert_eq!(options.rsync_port(), Some(8022));
     assert_eq!(options.effective_quic_port(), 8873);
 }
 
@@ -71,7 +76,7 @@ fn quic_port_zero_coerces_to_well_known_rsync_port() {
     // coercion - not the daemon TCP port, and not a kernel-assigned ephemeral.
     assert_eq!(
         options.effective_quic_port(),
-        DEFAULT_PORT,
+        873,
         "quic port = 0 must coerce to the well-known rsync port 873"
     );
 }
