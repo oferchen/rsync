@@ -2149,3 +2149,419 @@ fn parse_server_args_skips_task291_long_flags() {
         "task #291 long flags must not leak into positional args: {pos_args:?}",
     );
 }
+
+// ===========================================================================
+// popt arg-arity model: split `-e` capability value (issue #7153) and the
+// client-emit -> server-decode round-trip guard.
+//
+// Upstream runs the SAME popt parser (`options.c` `long_options[]`) on the
+// server; `-e`/`--rsh` is POPT_ARG_STRING (options.c:823), so popt binds its
+// capability value whether it arrives inside the compact flag string
+// (`-...e.<caps>`, the joined form the oc client emits) or as the FOLLOWING
+// argv token (the split form a remote shell - e.g. Windows OpenSSH - produces
+// when it re-tokenizes the exec line). Either way the value is consumed and
+// never surfaces as a positional path. Before the fix the split form leaked
+// the `.<caps>` token into `positional_args` (push wrote to `.<caps>/...`; a
+// sender exited 23 on `link_stat ".<caps>"`) AND lost compat negotiation
+// (the `-e` value never reached `ParsedServerFlags`).
+// ===========================================================================
+
+use core::client::ClientConfig;
+use core::client::remote::{RemoteInvocationBuilder, RemoteRole};
+use core::server::{ParsedServerFlags, ServerConfig, ServerRole};
+
+/// Decodes a server argv (program name already stripped) exactly as
+/// `run.rs` does: extract the compact flag string + operands, then decode the
+/// flag string into structured `ParsedServerFlags`.
+fn decode_server_argv(
+    argv: &[OsString],
+    role: ServerRole,
+) -> (String, Vec<OsString>, ParsedServerFlags) {
+    let (flag_string, operands) = parse_server_flag_string_and_args(argv);
+    let config =
+        ServerConfig::from_flag_string_and_args(role, flag_string.clone(), operands.clone())
+            .expect("server flag string must decode");
+    (flag_string, operands, config.flags)
+}
+
+/// Splits a joined compact flag string token (`-...e.<caps>`) into the two
+/// tokens a remote shell produces when it re-tokenizes the exec line: the
+/// transfer-letter run ending in `e`, and the `.<caps>` capability value.
+/// Returns `None` when the token carries no `e.<caps>` suffix (protocol < 30).
+fn split_capability_token(argv: &[OsString]) -> Option<Vec<OsString>> {
+    let idx = argv.iter().position(|a| {
+        let s = a.to_string_lossy();
+        s.starts_with('-') && !s.starts_with("--") && s.contains("e.")
+    })?;
+    let token = argv[idx].to_string_lossy().into_owned();
+    let cut = token.find("e.")? + 1; // keep `e` on the left, `.` starts the value
+    let (head, value) = token.split_at(cut);
+    let mut split = argv.to_vec();
+    split.splice(idx..=idx, [OsString::from(head), OsString::from(value)]);
+    Some(split)
+}
+
+/// Regression #7153 (push): the split `.<caps>` capability token must be bound
+/// to `-e`, not leaked as a destination path, and the caps must still parse.
+#[test]
+fn parse_server_split_e_value_push_no_leak() {
+    // A remote shell delivered `-vve.isfxCIvu` as two tokens: `-vve` `.isfxCIvu`.
+    let split = vec![
+        OsString::from("--server"),
+        OsString::from("-vve"),
+        OsString::from(".isfxCIvu"),
+        OsString::from("."),
+        OsString::from("dst"),
+    ];
+    let (flag_string, operands, flags) = decode_server_argv(&split, ServerRole::Receiver);
+
+    // popt binds the `.<caps>` value onto `-e`; the reconstructed flag string
+    // is byte-identical to the never-split joined form.
+    assert_eq!(flag_string, "-vve.isfxCIvu");
+    assert_eq!(
+        operands,
+        vec![OsString::from("dst")],
+        "the `.<caps>` value must never leak into operands: {operands:?}",
+    );
+
+    // Compat negotiation is NOT silently lost: the capability letters parse
+    // exactly as they do for the joined delivery.
+    let joined = vec![
+        OsString::from("--server"),
+        OsString::from("-vve.isfxCIvu"),
+        OsString::from("."),
+        OsString::from("dst"),
+    ];
+    let (_, _, joined_flags) = decode_server_argv(&joined, ServerRole::Receiver);
+    assert_eq!(
+        flags, joined_flags,
+        "split delivery must decode to the same caps as the joined form",
+    );
+    assert!(flags.rsh, "`e` must set rsh");
+    assert!(
+        flags.info_flags.flist,
+        "`f` capability must parse from split value"
+    );
+}
+
+/// Regression #7153 (pull): same as above with `--sender` present. Without the
+/// fix the sender parsed `.sfxCIvu` as a source operand and exited 23 on
+/// `link_stat ".sfxCIvu"`.
+#[test]
+fn parse_server_split_e_value_pull_no_leak() {
+    let split = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre"),
+        OsString::from(".sfxCIvu"),
+        OsString::from("."),
+        OsString::from("src"),
+    ];
+    let (flag_string, operands, flags) = decode_server_argv(&split, ServerRole::Generator);
+
+    assert_eq!(flag_string, "-logDtpre.sfxCIvu");
+    assert_eq!(
+        operands,
+        vec![OsString::from("src")],
+        "the `.<caps>` value must never leak into operands on a pull: {operands:?}",
+    );
+    assert!(flags.rsh);
+    assert!(flags.info_flags.flist);
+    assert!(
+        flags.info_flags.stats,
+        "`s` capability must parse from split value"
+    );
+}
+
+/// The joined form must stay byte-identical: a compact flag string that ends
+/// in a capability letter (never a bare `e`) must NOT consume the following
+/// `.` separator as a value.
+#[test]
+fn parse_server_joined_e_value_unchanged() {
+    let joined = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("."),
+        OsString::from("dst"),
+    ];
+    let (flag_string, operands, flags) = decode_server_argv(&joined, ServerRole::Receiver);
+    assert_eq!(flag_string, "-logDtpre.iLsfxCIvu");
+    assert_eq!(operands, vec![OsString::from("dst")]);
+    assert!(flags.info_flags.itemize, "`i` (inc_recurse) must parse");
+}
+
+/// A bare compact flag string with no capability suffix and a following `.`
+/// separator (protocol < 30 shape) must leave the `.` as the separator, not
+/// bind it: only a string ending in a value-bearing short letter binds.
+#[test]
+fn parse_server_no_suffix_does_not_bind_dot_separator() {
+    let argv = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("dst"),
+    ];
+    let (flag_string, operands) = parse_server_flag_string_and_args(&argv);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(operands, vec![OsString::from("dst")]);
+    assert!(!super::flags::compact_flag_string_expects_split_value(
+        "-logDtpr"
+    ));
+    assert!(super::flags::compact_flag_string_expects_split_value(
+        "-vve"
+    ));
+}
+
+/// Golden table over every delivery shape: joined, split, `-e` as the final
+/// cluster letter binding the next token, `--sender`, `--` handling, and
+/// secluded-args (`-s`). Each row asserts the reconstructed flag string, the
+/// operands, and that the joined and split deliveries decode identically.
+#[test]
+fn parse_server_arg_arity_golden_table() {
+    struct Case {
+        name: &'static str,
+        argv: Vec<OsString>,
+        role: ServerRole,
+        expect_flags: &'static str,
+        expect_operands: Vec<OsString>,
+    }
+    let os = |s: &str| OsString::from(s);
+    let cases = vec![
+        Case {
+            name: "joined push -e.LsfxCIvu",
+            argv: vec![os("--server"), os("-e.LsfxCIvu"), os("."), os("dst")],
+            role: ServerRole::Receiver,
+            expect_flags: "-e.LsfxCIvu",
+            expect_operands: vec![os("dst")],
+        },
+        Case {
+            name: "joined push -vve.iLsfxCIvu",
+            argv: vec![os("--server"), os("-vve.iLsfxCIvu"), os("."), os("dst")],
+            role: ServerRole::Receiver,
+            expect_flags: "-vve.iLsfxCIvu",
+            expect_operands: vec![os("dst")],
+        },
+        Case {
+            name: "joined pull -logDtpre.iLsfxC",
+            argv: vec![
+                os("--server"),
+                os("--sender"),
+                os("-logDtpre.iLsfxC"),
+                os("."),
+                os("src"),
+            ],
+            role: ServerRole::Generator,
+            expect_flags: "-logDtpre.iLsfxC",
+            expect_operands: vec![os("src")],
+        },
+        Case {
+            name: "split push -vve + .iLsfxCIvu",
+            argv: vec![
+                os("--server"),
+                os("-vve"),
+                os(".iLsfxCIvu"),
+                os("."),
+                os("dst"),
+            ],
+            role: ServerRole::Receiver,
+            expect_flags: "-vve.iLsfxCIvu",
+            expect_operands: vec![os("dst")],
+        },
+        Case {
+            name: "-e final cluster letter binds next token",
+            argv: vec![
+                os("--server"),
+                os("-logDtpre"),
+                os(".iLsfxCIvu"),
+                os("."),
+                os("dst"),
+            ],
+            role: ServerRole::Receiver,
+            expect_flags: "-logDtpre.iLsfxCIvu",
+            expect_operands: vec![os("dst")],
+        },
+        Case {
+            name: "secluded-args -s packed, split -e",
+            argv: vec![
+                os("--server"),
+                os("-svve"),
+                os(".iLsfxCIvu"),
+                os("."),
+                os("dst"),
+            ],
+            role: ServerRole::Receiver,
+            expect_flags: "-svve.iLsfxCIvu",
+            expect_operands: vec![os("dst")],
+        },
+    ];
+
+    for case in cases {
+        let (flag_string, operands, _) = decode_server_argv(&case.argv, case.role);
+        assert_eq!(
+            flag_string, case.expect_flags,
+            "flag string for `{}`",
+            case.name
+        );
+        assert_eq!(
+            operands, case.expect_operands,
+            "operands for `{}`",
+            case.name
+        );
+    }
+}
+
+/// Round-trip guard: the client's real server-command builder must agree with
+/// the server parser's arity model for every option set in the matrix. Building
+/// the argv, then splitting its capability token the way a remote shell would,
+/// must decode to the SAME flags and operands as the joined delivery - so emit
+/// and decode can never silently diverge again (the recurring positional-leak
+/// class: #6569, #6587, #6880, #7153).
+#[test]
+fn client_build_to_server_parse_round_trip() {
+    // Representative matrix: role (push/pull), verbosity, links/recursive,
+    // secluded-args, and protocol (>=30 emits the `e.<caps>` suffix, 29 does
+    // not). Each entry configures the real ClientConfig used to spawn a remote.
+    let matrix: Vec<(RemoteRole, ClientConfig)> = vec![
+        (RemoteRole::Sender, ClientConfig::builder().build()),
+        (RemoteRole::Receiver, ClientConfig::builder().build()),
+        (
+            RemoteRole::Sender,
+            ClientConfig::builder()
+                .verbosity(2)
+                .links(true)
+                .recursive(true)
+                .build(),
+        ),
+        (
+            RemoteRole::Receiver,
+            ClientConfig::builder().verbosity(1).recursive(true).build(),
+        ),
+        (
+            RemoteRole::Sender,
+            ClientConfig::builder()
+                .protect_args(Some(true))
+                .recursive(true)
+                .build(),
+        ),
+        (
+            RemoteRole::Sender,
+            ClientConfig::builder()
+                .protocol_version(Some(protocol::ProtocolVersion::V29))
+                .recursive(true)
+                .build(),
+        ),
+    ];
+
+    for (role, config) in &matrix {
+        let full = RemoteInvocationBuilder::new(config, *role).build("dest");
+        // run.rs feeds the parser everything after the program name.
+        let joined_argv: Vec<OsString> = full[1..].to_vec();
+
+        // Map the client's role to the peer server's role.
+        let server_role = match role {
+            RemoteRole::Sender => ServerRole::Receiver, // push: peer receives
+            // pull: peer sends. Proxy never occurs in this matrix; the arm
+            // only satisfies exhaustiveness.
+            RemoteRole::Receiver | RemoteRole::Proxy => ServerRole::Generator,
+        };
+
+        let (joined_flags_str, joined_ops, joined_flags) =
+            decode_server_argv(&joined_argv, server_role);
+        assert_eq!(
+            joined_ops,
+            vec![OsString::from("dest")],
+            "joined operands must be exactly the destination for {role:?}",
+        );
+
+        // Simulate a remote shell splitting the `-...e.<caps>` token. When
+        // there is no suffix (protocol 29) there is nothing to split.
+        if let Some(split_argv) = split_capability_token(&joined_argv) {
+            let (split_flags_str, split_ops, split_flags) =
+                decode_server_argv(&split_argv, server_role);
+            assert_eq!(
+                split_flags_str, joined_flags_str,
+                "split delivery must reconstruct the joined flag string for {role:?}",
+            );
+            assert_eq!(
+                split_ops, joined_ops,
+                "split delivery must not leak the `.<caps>` value into operands for {role:?}",
+            );
+            assert_eq!(
+                split_flags, joined_flags,
+                "split delivery must decode to the same caps as joined for {role:?}",
+            );
+        } else {
+            // Protocol 29: no capability suffix, flag string ends in a
+            // transfer letter, and the parser must not bind the `.` separator.
+            assert!(
+                !joined_flags_str.ends_with('e'),
+                "protocol 29 flag string must not end in a bare `e`: {joined_flags_str}",
+            );
+        }
+    }
+}
+
+/// Property-style guard over a representative generated space: for every
+/// transfer-letter bundle and optional `.`-capability payload, delivered both
+/// joined and split, NO capability letter and no `-e` value ever lands in the
+/// operand list, and the two deliveries decode identically.
+#[test]
+fn no_capability_letter_leaks_into_operands() {
+    let letter_bundles = ["-r", "-logDtpr", "-vvlogDtpr", "-slogDtpr", "-a"];
+    let cap_payloads = ["", ".iLsfxCIvu", ".LsfxCIvu", ".sfxCIvu", ".iLsfxCIvuZ"];
+
+    for bundle in letter_bundles {
+        for cap in cap_payloads {
+            // The client always emits `e` immediately before the `.<caps>`
+            // suffix (maybe_add_e_option), so a non-empty cap implies a
+            // trailing `-e`.
+            let joined_flags = if cap.is_empty() {
+                bundle.to_string()
+            } else {
+                format!("{bundle}e{cap}")
+            };
+
+            let joined_argv = vec![
+                OsString::from("--server"),
+                OsString::from(joined_flags.clone()),
+                OsString::from("."),
+                OsString::from("dst"),
+            ];
+            let (joined_str, joined_ops) = parse_server_flag_string_and_args(&joined_argv);
+            assert_eq!(joined_str, joined_flags);
+            assert_eq!(joined_ops, vec![OsString::from("dst")]);
+
+            if cap.is_empty() {
+                continue;
+            }
+
+            // Split delivery: `<bundle>e` then `.<caps>`.
+            let split_argv = vec![
+                OsString::from("--server"),
+                OsString::from(format!("{bundle}e")),
+                OsString::from(cap),
+                OsString::from("."),
+                OsString::from("dst"),
+            ];
+            let (split_str, split_ops) = parse_server_flag_string_and_args(&split_argv);
+            assert_eq!(
+                split_str, joined_flags,
+                "split `{bundle}e` `{cap}` must reconstruct the joined flag string",
+            );
+            assert_eq!(
+                split_ops,
+                vec![OsString::from("dst")],
+                "no capability letter may leak into operands for `{bundle}e` `{cap}`",
+            );
+            // No operand may contain a capability character or a leading dot
+            // payload.
+            for op in &split_ops {
+                let s = op.to_string_lossy();
+                assert!(
+                    !s.starts_with('.') || s == ".",
+                    "operand looks like a `.<caps>` leak: {s}"
+                );
+            }
+        }
+    }
+}

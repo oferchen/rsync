@@ -3,7 +3,9 @@
 use std::ffi::{OsStr, OsString};
 use std::time::SystemTime;
 
-use super::flags::{is_known_server_long_flag, is_two_arg_server_long_flag};
+use super::flags::{
+    compact_flag_string_expects_split_value, is_known_server_long_flag, is_two_arg_server_long_flag,
+};
 
 /// Parses the flag string and positional arguments from server-mode argument list.
 ///
@@ -11,13 +13,20 @@ use super::flags::{is_known_server_long_flag, is_two_arg_server_long_flag};
 /// a known long flag) and positional arguments (everything after the flag string
 /// and optional `.` separator).
 ///
-/// Upstream `options.c::server_options()` emits a few path-bearing long flags
-/// (`--copy-dest`, `--link-dest`, `--compare-dest`, `--files-from`,
-/// `--backup-dir`, `--partial-dir`, `--temp-dir`) as two argv slots via
-/// `safe_arg("", value)`. This parser recognises the bare flag and skips the
-/// following value slot so the path never lands in `positional_args` as a
-/// stray destination. See [`is_two_arg_server_long_flag`] for the upstream
-/// emission sites.
+/// This mirrors popt's argument-arity model (upstream runs the same
+/// `options.c` `long_options[]` popt parser on the server): a value-bearing
+/// option's value is bound whether it travels inside the same token or in the
+/// FOLLOWING argv token, so it never lands in `positional_args`. Two arms:
+///
+/// - Long `POPT_ARG_STRING` flags (`--copy-dest`, `--link-dest`,
+///   `--compare-dest`, `--files-from`, `--backup-dir`, `--partial-dir`,
+///   `--temp-dir`) that `server_options()` emits as two argv slots via
+///   `safe_arg("", value)` - recognised by [`is_two_arg_server_long_flag`],
+///   whose following value slot is skipped.
+/// - The short `-e` (`POPT_ARG_STRING`, options.c:823) whose `.`-capability
+///   value can split off the compact flag string when a remote shell
+///   re-tokenizes the joined exec line - rebound by
+///   [`compact_flag_string_expects_split_value`].
 pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString>) {
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();
@@ -28,38 +37,45 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
         let arg = &args[idx];
         let arg_str = arg.to_string_lossy();
 
-        if is_known_server_long_flag(&arg_str) {
-            // upstream: options.c:2886-2890 - `--partial-dir` is emitted as
-            // TWO separate argv entries by server_options(), so the value
-            // that immediately follows must also be skipped here. Without
-            // this, the partial-dir VALUE leaks into the positional list and
-            // becomes a destination-path argument.
-            if arg_str == "--partial-dir" {
-                idx += 2;
-                continue;
-            }
-            idx += 1;
+        // popt value-in-next-token arity: long `POPT_ARG_STRING` options that
+        // server_options() emits as two argv slots (`--copy-dest`,
+        // `--link-dest`, `--compare-dest`, `--files-from`, `--backup-dir`,
+        // `--temp-dir`, `--partial-dir`). Checked BEFORE
+        // `is_known_server_long_flag` so the following value slot is consumed
+        // too, not just the flag name. Without this, `--copy-dest /alt . dest/`
+        // lands `/alt` in positional_args[0] and `dest/` in positional_args[1],
+        // so the receiver mkdir's the alt-dest basis (already exists) instead
+        // of the actual destination root. The joined `--flag=value` form rides
+        // in one token and is handled by `is_known_server_long_flag` below.
+        if is_two_arg_server_long_flag(&arg_str) {
+            idx += 2;
             continue;
         }
 
-        // upstream: options.c::server_options() emits path-bearing long
-        // flags (`--copy-dest`, `--link-dest`, `--compare-dest`,
-        // `--files-from`, `--backup-dir`, `--temp-dir`) as `--flag VALUE`
-        // (two argv slots). The `--flag=value` joined form is handled by
-        // `is_known_server_long_flag` above; the split form is consumed
-        // here so the value does not surface as a positional destination
-        // path. Without this, `--copy-dest /alt . dest/` lands `/alt` in
-        // positional_args[0] and `dest/` in positional_args[1], so the
-        // receiver mkdir's the alt-dest basis (already exists) instead of
-        // the actual destination root.
-        if is_two_arg_server_long_flag(&arg_str) {
-            idx += 2;
+        if is_known_server_long_flag(&arg_str) {
+            idx += 1;
             continue;
         }
 
         if !found_flags && arg_str.starts_with('-') {
             flag_string = arg_str.into_owned();
             found_flags = true;
+            // popt value-in-next-token arity for the short `-e`
+            // (`POPT_ARG_STRING`, options.c:823). When a remote shell
+            // re-tokenized the joined `-...e.<caps>` exec line, `-e`'s
+            // capability value became a separate argv token. Rebind it onto
+            // the compact flag string so it is consumed as the `-e` value
+            // (never a positional) and the downstream `ParsedServerFlags::parse`
+            // reads the `.`-capability letters exactly as it does for the
+            // never-split joined form - fixing both the path leak and the lost
+            // compat negotiation in one place. See
+            // `compact_flag_string_expects_split_value`.
+            if compact_flag_string_expects_split_value(&flag_string) {
+                if let Some(value) = args.get(idx + 1) {
+                    flag_string.push_str(&value.to_string_lossy());
+                    idx += 1;
+                }
+            }
             idx += 1;
             continue;
         }
