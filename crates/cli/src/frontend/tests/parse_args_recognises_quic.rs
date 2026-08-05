@@ -81,7 +81,8 @@ fn parse_args_rejects_quic_flags_with_actionable_error_when_feature_off() {
     ] {
         let mut argv = vec![OsString::from(RSYNC)];
         argv.extend(args.iter().map(OsString::from));
-        let err = parse_args(argv).expect_err("quic flags must be rejected when the feature is off");
+        let err =
+            parse_args(argv).expect_err("quic flags must be rejected when the feature is off");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
         let msg = err.to_string();
