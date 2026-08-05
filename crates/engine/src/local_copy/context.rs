@@ -42,7 +42,7 @@ use super::{
     trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
     write_sparse_chunk,
 };
-use crate::delta::DeltaSignatureIndex;
+use crate::delta::{DeltaSignatureIndex, ProbeCounters};
 use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
@@ -57,7 +57,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::strategy::adaptive_level::AdaptiveLevelController;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
-use logging::info_log;
+use logging::{debug_log, info_log};
 use protocol::flist::FileListWriter;
 
 use super::overrides::{backup_rename, create_hard_link};
@@ -294,6 +294,15 @@ pub(crate) struct CopyContext<'a> {
     /// Adaptive compression level controller that adjusts compression level
     /// between files based on observed compression ratios.
     adaptive_level: Option<AdaptiveLevelController>,
+    /// Cumulative delta-matcher diagnostics for the `-vv` `total:` line,
+    /// accumulated across every file the local-copy delta path processes and
+    /// emitted once at end-of-run by [`CopyContext::emit_delta_match_report`].
+    ///
+    /// upstream: match.c:433-436 folds each file's `matches`/`hash_hits`/
+    /// `false_alarms` into `total_*`; match_report() (match.c:439) prints them
+    /// once. The local-copy executor has no forked sender, so it keeps the same
+    /// running totals here.
+    delta_match_report: DeltaMatchReport,
 }
 
 /// Path and type context for metadata finalization.
@@ -378,6 +387,24 @@ impl<'a> FinalizeMetadataParams<'a> {
         self.pre_transfer_meta = pre_transfer_meta;
         self
     }
+}
+
+/// Cumulative delta-match diagnostics reproduced on the `-vv` `total:` line.
+///
+/// upstream: `match.c:433-436` folds each file's per-file `matches`,
+/// `hash_hits`, and `false_alarms` into `total_*`, and `match_report()`
+/// (`match.c:439-448`) prints them once at end-of-run alongside
+/// `stats.literal_data`. The local-copy executor has no forked sender running
+/// `match_sums()`, so it accumulates the same figures directly. `matches` and
+/// the literal-byte total match upstream exactly; `hash_hits`/`false_alarms`
+/// are oc-native (bithash-prefilter positives and the subset that fails the
+/// exact verify) and do not reproduce upstream's `SUM2HASH`-collision counts -
+/// see [`crate::delta::ProbeCounters`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DeltaMatchReport {
+    matches: u64,
+    hash_hits: u64,
+    false_alarms: u64,
 }
 
 /// Byte-level statistics from a single file copy (literal and optional

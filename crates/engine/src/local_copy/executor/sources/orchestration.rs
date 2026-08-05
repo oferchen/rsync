@@ -306,6 +306,10 @@ pub(crate) fn copy_sources(
             context
                 .summary_mut()
                 .record_wall_clock_elapsed(Duration::from_secs(elapsed_secs));
+            // upstream: sender.c:491 calls match_report() once at the end of
+            // send_files(); mirror that end-of-run emission for the local copy
+            // so `-vv` prints the delta `total:` line (match.c:439).
+            context.emit_delta_match_report();
             Ok(context.into_outcome())
         }
         Err(error) => {
