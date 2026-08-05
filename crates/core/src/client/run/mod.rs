@@ -298,6 +298,24 @@ fn run_client_internal(
             }
         }
 
+        // With the embedded SSH client absent, an ssh:// operand would otherwise
+        // fall through to the subprocess ssh path below, which parses
+        // ssh://user@host/path as a host:path spec with host "ssh" and fails
+        // with a confusing "could not resolve hostname ssh". Fail fast with an
+        // actionable diagnostic instead.
+        // oc-specific: upstream rsync has no ssh:// operand scheme.
+        #[cfg(not(feature = "embedded-ssh"))]
+        {
+            let has_ssh_url = config
+                .transfer_args()
+                .iter()
+                .any(|arg| remote::is_ssh_url(&arg.to_string_lossy()));
+
+            if has_ssh_url {
+                return Err(super::error::ssh_url_requires_embedded_ssh());
+            }
+        }
+
         // upstream parity: SSH transfers stay on the spawned-process path by
         // default. The async transport (#1805) is gated behind the
         // `async-ssh` cargo feature and only activated when the
@@ -1085,6 +1103,33 @@ mod run_client_tests {
 
     use super::run_client;
     use crate::client::config::{ClientConfig, FilterRuleSpec};
+
+    /// Without the embedded SSH client compiled in, an `ssh://` operand has no
+    /// transport. It must fail fast with the feature-unavailable exit code and
+    /// an actionable message, never fall through to the subprocess ssh path
+    /// where `ssh://user@host/path` misparses as host `ssh` and yields the
+    /// confusing "could not resolve hostname ssh".
+    #[cfg(not(feature = "embedded-ssh"))]
+    #[test]
+    fn run_client_rejects_ssh_url_without_embedded_ssh() {
+        use crate::client::error::FEATURE_UNAVAILABLE_EXIT_CODE;
+
+        let error = run_client(
+            ClientConfig::builder()
+                .transfer_args([
+                    std::ffi::OsString::from("ssh://user@localhost/src"),
+                    std::ffi::OsString::from("/tmp/oc-ssh-url-dest"),
+                ])
+                .build(),
+        )
+        .expect_err("ssh:// without embedded-ssh must error");
+
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let msg = error.to_string();
+        assert!(msg.contains("ssh:// URLs require the built-in SSH client"));
+        assert!(msg.contains("embedded-ssh"));
+        assert!(msg.contains("-e ssh"));
+    }
 
     #[test]
     fn run_client_update_skips_newer_destination() {

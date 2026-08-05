@@ -49,8 +49,6 @@ pub use async_ssh_transport::{
 };
 pub use daemon_transfer::{run_daemon_over_remote_shell, run_daemon_transfer};
 #[cfg(feature = "embedded-ssh")]
-pub(crate) use embedded_ssh_transfer::is_ssh_url;
-#[cfg(feature = "embedded-ssh")]
 pub use embedded_ssh_transfer::run_embedded_ssh_transfer;
 pub use invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, SecludedInvocation, TransferSpec,
@@ -61,6 +59,20 @@ pub use ssh_transfer::run_ssh_transfer;
 use rsync_io::ssh::SshAddressFamily;
 
 use super::config::AddressMode;
+
+/// Checks whether an operand is an `ssh://` URL.
+///
+/// Returns `true` for operands beginning with `ssh://`, the scheme that selects
+/// the built-in (russh) SSH transport rather than the `host:path` subprocess
+/// ssh path. Compiled into every build - not gated on `embedded-ssh` - so the
+/// dispatcher can recognise the scheme even when that feature is absent and
+/// reject it with a clear diagnostic instead of misparsing it as a `host:path`
+/// spec with host `ssh`.
+///
+/// oc-specific: upstream rsync has no `ssh://` operand scheme.
+pub(crate) fn is_ssh_url(operand: &str) -> bool {
+    operand.starts_with("ssh://")
+}
 
 /// Maps the negotiated [`AddressMode`] onto the SSH `-4`/`-6` hint shared by
 /// every `do_cmd()`-equivalent SSH spawn (single-host and remote-to-remote).
@@ -78,5 +90,27 @@ pub(in crate::client::remote) const fn ssh_address_family(
         AddressMode::Default => None,
         AddressMode::Ipv4 => Some(SshAddressFamily::V4),
         AddressMode::Ipv6 => Some(SshAddressFamily::V6),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ssh_url;
+
+    /// The `ssh://` detector is the single source of truth for the scheme that
+    /// selects the embedded transport, so it must recognise the scheme (with or
+    /// without user/port) and reject every other operand shape - `host:path`,
+    /// daemon modules, `rsync://`, `quic://`, and plain local paths.
+    #[test]
+    fn is_ssh_url_matches_only_ssh_scheme() {
+        assert!(is_ssh_url("ssh://host/path"));
+        assert!(is_ssh_url("ssh://user@host/path"));
+        assert!(is_ssh_url("ssh://user:pass@host:2222/path"));
+
+        assert!(!is_ssh_url("host:path"));
+        assert!(!is_ssh_url("host::module"));
+        assert!(!is_ssh_url("rsync://host/module"));
+        assert!(!is_ssh_url("quic://host/module"));
+        assert!(!is_ssh_url("/local/path"));
     }
 }
