@@ -447,30 +447,34 @@ mod tests {
 
     #[test]
     fn parse_single_source_operand() {
-        let operands = RemoteOperands::Single("user@host:/path/to/file".to_string());
+        let operands = RemoteOperands::Single(OsString::from("user@host:/path/to/file"));
         let (host, user, port, paths) = parse_source_operands(&operands).unwrap();
         assert_eq!(host, "host");
         assert_eq!(user, Some("user".to_string()));
         assert_eq!(port, None);
-        assert_eq!(paths, vec!["/path/to/file"]);
+        assert_eq!(paths, vec![OsString::from("/path/to/file")]);
     }
 
     #[test]
     fn parse_multiple_source_operands() {
         let operands = RemoteOperands::Multiple(vec![
-            "user@host:/path/one".to_string(),
-            "user@host:/path/two".to_string(),
+            OsString::from("user@host:/path/one"),
+            OsString::from("user@host:/path/two"),
         ]);
         let (host, user, port, paths) = parse_source_operands(&operands).unwrap();
         assert_eq!(host, "host");
         assert_eq!(user, Some("user".to_string()));
         assert_eq!(port, None);
-        assert_eq!(paths, vec!["/path/one", "/path/two"]);
+        assert_eq!(
+            paths,
+            vec![OsString::from("/path/one"), OsString::from("/path/two")]
+        );
     }
 
     #[test]
     fn parse_dest_operand_basic() {
-        let (host, user, port, path) = parse_dest_operand("root@server:/backup").unwrap();
+        let (host, user, port, path) =
+            parse_dest_operand(std::ffi::OsStr::new("root@server:/backup")).unwrap();
         assert_eq!(host, "server");
         assert_eq!(user, Some("root".to_string()));
         assert_eq!(port, None);

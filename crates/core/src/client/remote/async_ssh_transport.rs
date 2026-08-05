@@ -164,8 +164,12 @@ pub fn run_async_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            let plan =
-                build_plan(config, RemoteRole::Receiver, OsStr::new(""), Some(&remote_sources))?;
+            let plan = build_plan(
+                config,
+                RemoteRole::Receiver,
+                OsStr::new(""),
+                Some(&remote_sources),
+            )?;
             let mut server_config = build_pull_server_config(config, &[local_dest])?;
             // upstream: main.c:1525,1549 / io.c:427,464 / flist.c:1026 - record
             // each requested source path (or local --files-from entry) as an
@@ -736,7 +740,7 @@ mod tests {
 
     #[test]
     fn encode_secluded_args_empty_only_terminator() {
-        let payload = encode_secluded_args(&[], None);
+        let payload = encode_secluded_args::<&[u8]>(&[], None);
         assert_eq!(payload, vec![0u8]);
     }
 

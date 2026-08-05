@@ -49,6 +49,7 @@ pub(super) use server_config::{
 mod tests {
     use super::*;
     use connection::{should_warn_double_compression, warn_double_compression_once};
+    use std::ffi::OsString;
 
     use super::super::super::config::ClientConfig;
     use crate::server::ServerRole;
@@ -57,7 +58,7 @@ mod tests {
     fn builds_receiver_server_config() {
         let config = ClientConfig::builder().recursive(true).times(true).build();
 
-        let result = build_server_config_for_receiver(&config, &["dest/".to_owned()]);
+        let result = build_server_config_for_receiver(&config, &[OsString::from("dest/")]);
         assert!(result.is_ok());
 
         let server_config = result.unwrap();
@@ -79,7 +80,7 @@ mod tests {
             .prune_empty_dirs(true)
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest/".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest/")]).unwrap();
         assert!(server_config.flags.prune_empty_dirs);
     }
 
@@ -87,7 +88,7 @@ mod tests {
     fn receiver_server_config_prune_empty_dirs_default_false() {
         let config = ClientConfig::builder().recursive(true).times(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest/".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest/")]).unwrap();
         assert!(!server_config.flags.prune_empty_dirs);
     }
 
@@ -97,7 +98,7 @@ mod tests {
 
         let result = build_server_config_for_generator(
             &config,
-            &["file1.txt".to_owned(), "file2.txt".to_owned()],
+            &[OsString::from("file1.txt"), OsString::from("file2.txt")],
         );
         assert!(result.is_ok());
 
@@ -126,8 +127,9 @@ mod tests {
             .files_from(FilesFromSource::LocalFile(list_path.clone()))
             .build();
 
-        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
-            .expect("generator config builds");
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")])
+                .expect("generator config builds");
 
         assert_eq!(
             server_config.file_selection.files_from_path.as_deref(),
@@ -150,8 +152,9 @@ mod tests {
             .from0(true)
             .build();
 
-        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
-            .expect("generator config builds");
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")])
+                .expect("generator config builds");
 
         assert_eq!(
             server_config.file_selection.files_from_path.as_deref(),
@@ -172,8 +175,9 @@ mod tests {
             .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
             .build();
 
-        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
-            .expect("generator config builds");
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")])
+                .expect("generator config builds");
 
         assert_eq!(
             server_config.file_selection.files_from_path.as_deref(),
@@ -190,8 +194,9 @@ mod tests {
     fn generator_config_leaves_files_from_path_unset_when_disabled() {
         let config = ClientConfig::builder().recursive(true).build();
 
-        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
-            .expect("generator config builds");
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")])
+                .expect("generator config builds");
 
         assert!(
             server_config.file_selection.files_from_path.is_none(),

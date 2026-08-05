@@ -1250,7 +1250,10 @@ pub(super) fn shell_safe_filename_arg(arg: &OsStr) -> OsString {
 /// `escape_leading_tilde` flag is set only on a pull (`!am_sender`) for an
 /// untrusted sender and a relative/no-slash path; the caller computes that
 /// gate and passes the result here.
-pub(super) fn shell_safe_filename_arg_with_tilde(arg: &OsStr, escape_leading_tilde: bool) -> OsString {
+pub(super) fn shell_safe_filename_arg_with_tilde(
+    arg: &OsStr,
+    escape_leading_tilde: bool,
+) -> OsString {
     // On Unix the escape runs over raw bytes so a non-UTF-8 remote path (a legal
     // filename, carried by rsync as raw `char*`) survives verbatim; every
     // metacharacter in SHELL_CHARS/WILD_CHARS is ASCII, so byte-level membership
@@ -1264,7 +1267,10 @@ pub(super) fn shell_safe_filename_arg_with_tilde(arg: &OsStr, escape_leading_til
     }
     #[cfg(not(unix))]
     {
-        OsString::from(escape_shell_str(&arg.to_string_lossy(), escape_leading_tilde))
+        OsString::from(escape_shell_str(
+            &arg.to_string_lossy(),
+            escape_leading_tilde,
+        ))
     }
 }
 
