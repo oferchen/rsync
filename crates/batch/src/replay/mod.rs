@@ -22,8 +22,8 @@
 //!
 //! # Submodules
 //!
-//! - `codec` - compression codec detection (`zlib` vs `zstd`) and decoder
-//!   construction.
+//! - `codec` - zlib decoder construction for the compressed batch token
+//!   stream (upstream pins batch compression to zlib).
 //! - `delta` - low-level delta-application primitives (`apply_delta_ops`,
 //!   `write_literals_to_file`).
 //! - `dispatch` - per-file helpers used by the main loop: iflags decoding,

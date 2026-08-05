@@ -9,7 +9,10 @@ description = "Batch mode support for offline rsync transfer workflows"
 repository.workspace = true
 
 [features]
-# Compression algorithm features forwarded from protocol crate.
+# Enables protocol's zstd codec. Batch replay itself never decodes zstd -
+# upstream pins batch compression to zlib (compat.c:417-418) - so this only
+# lets the test suite construct a zstd-framed batch body to prove replay
+# refuses to auto-detect it.
 zstd = ["protocol/zstd"]
 
 [dependencies]

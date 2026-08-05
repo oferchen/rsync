@@ -20,9 +20,7 @@ use crate::format::BatchFlags;
 use crate::reader::BatchReader;
 
 use super::ReplayResult;
-#[cfg(feature = "zstd")]
-use super::codec::detect_compression_codec;
-use super::codec::{CompressionCodec, create_compressed_decoder};
+use super::codec::create_compressed_decoder;
 use super::delta::default_xfer_sum_len;
 use super::dispatch::{
     ITEM_TRANSFER, apply_file_delta, read_and_discard_file_checksum,
@@ -42,7 +40,7 @@ pub(super) fn apply_delta_phase(
     verbosity: i32,
 ) -> BatchResult<()> {
     let proto = reader.config().protocol_version;
-    let mut codec_state = CodecState::new(flags, proto as u32)?;
+    let mut codec_state = CodecState::new(flags, proto as u32);
     let mut flist_segments = init_flist_segments(reader, entries.len())?;
     let mut ndx_codec = reader
         .take_ndx_codec()
@@ -106,90 +104,28 @@ pub(super) fn apply_delta_phase(
 /// Tracks compression-codec state across the NDX loop iterations.
 struct CodecState {
     decoder: Option<protocol::wire::CompressedTokenDecoder>,
-    /// Currently detected codec. `None` means the batch is uncompressed.
-    /// Only read when the `zstd` feature is enabled; without `zstd` the
-    /// codec is always [`CompressionCodec::Zlib`] and detection is a no-op.
-    #[cfg(feature = "zstd")]
-    detected: Option<CompressionCodec>,
     /// True when the active codec is CPRES_ZLIB, requiring `see_token()`
     /// dictionary sync between block-match tokens.
     cpres_zlib: bool,
-    /// Negotiated protocol version of the recorded batch, retained so a late
-    /// zstd fallback rebuilds its decoder with the same value. Only the zstd
-    /// auto-detection path reads it; without that feature the codec is always
-    /// zlib and the version is applied at construction.
-    #[cfg(feature = "zstd")]
-    protocol_version: u32,
 }
 
 impl CodecState {
-    fn new(flags: &BatchFlags, protocol_version: u32) -> BatchResult<Self> {
+    fn new(flags: &BatchFlags, protocol_version: u32) -> Self {
         // upstream: batch.c:check_batch_flags() - when the batch stream flags
         // include do_compression (bit 8), the token data in the batch file
         // uses compressed format (DEFLATED_DATA headers).
         //
-        // Upstream always forces CPRES_ZLIB for batch reads (compat.c:194-195),
-        // so we start with a zlib decoder. However, if zlib decompression
-        // fails on the first token, we fall back to zstd. This auto-detection
-        // handles both standard upstream batch files (always zlib) and
-        // hypothetical zstd-compressed batch files from patched or future
-        // upstream versions.
-        let decoder = if flags.do_compression {
-            Some(create_compressed_decoder(
-                CompressionCodec::Zlib,
-                protocol_version,
-            )?)
-        } else {
-            None
-        };
-        let cpres_zlib = flags.do_compression;
-        Ok(Self {
+        // upstream: compat.c:417-418 getenv_nstr() forces `write_batch` to
+        // negotiate "zlib", and compat.c:195 defaults read-batch to CPRES_ZLIB,
+        // so a batch token stream is ALWAYS zlib. Replay pins the codec to zlib
+        // and never sniffs the payload to pick a different one.
+        let decoder = flags
+            .do_compression
+            .then(|| create_compressed_decoder(protocol_version));
+        Self {
             decoder,
-            #[cfg(feature = "zstd")]
-            detected: if flags.do_compression {
-                Some(CompressionCodec::Zlib)
-            } else {
-                None
-            },
-            cpres_zlib,
-            #[cfg(feature = "zstd")]
-            protocol_version,
-        })
-    }
-
-    /// Run codec auto-detection at most once. If detection finds zstd, build
-    /// a fresh zstd decoder so the next read uses the right inflate context.
-    #[cfg(feature = "zstd")]
-    fn detect_once(&mut self, reader: &mut BatchReader) -> BatchResult<()> {
-        let was_zlib = self.detected == Some(CompressionCodec::Zlib);
-        let Some(decoder) = self.decoder.as_mut() else {
-            return Ok(());
-        };
-        if !was_zlib || decoder.initialized() {
-            return Ok(());
+            cpres_zlib: flags.do_compression,
         }
-        let stream = reader
-            .inner_reader()
-            .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
-        let actual_codec = detect_compression_codec(stream);
-        if actual_codec != CompressionCodec::Zlib {
-            self.detected = Some(actual_codec);
-            self.cpres_zlib = false;
-            // Replace the zlib decoder with a fresh zstd one. Subsequent
-            // files reuse this decoder across iterations.
-            self.decoder = Some(create_compressed_decoder(
-                CompressionCodec::Zstd,
-                self.protocol_version,
-            )?);
-        }
-        Ok(())
-    }
-
-    /// Without `zstd`, codec detection is a no-op: the active codec is always
-    /// CPRES_ZLIB and there is nothing to swap.
-    #[cfg(not(feature = "zstd"))]
-    fn detect_once(&mut self, _reader: &mut BatchReader) -> BatchResult<()> {
-        Ok(())
     }
 }
 
@@ -290,10 +226,6 @@ fn process_file_ndx(
     // A non-regular dest never has a usable basis (and must not be opened as
     // one).
     let basis_exists = is_regular && dest_path.exists();
-
-    // Auto-detect compression codec on the first compressed file before
-    // building delta operations. Detection runs once per batch.
-    codec_state.detect_once(reader)?;
 
     let delta_ops = read_delta_tokens(
         reader,
