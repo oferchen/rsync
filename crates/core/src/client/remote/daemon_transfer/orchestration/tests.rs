@@ -1048,8 +1048,12 @@ mod server_config_reference_dirs {
             .compare_destination("/tmp/compare")
             .link_destination("/prev")
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.reference_directories.len(), 2);
         assert_eq!(
@@ -1081,8 +1085,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .copy_destination("/tmp/copy")
             .build();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.reference_directories.len(), 1);
         assert_eq!(
@@ -1101,8 +1109,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.reference_directories.is_empty());
     }
@@ -1120,8 +1132,12 @@ mod server_config_reference_dirs {
             .backup_directory(Some("/bak"))
             .backup_suffix(Some(".old"))
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.backup);
         assert_eq!(server_config.backup_dir.as_deref(), Some("/bak"));
@@ -1131,8 +1147,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_backup_has_no_backup_dir() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.flags.backup);
         assert!(server_config.backup_dir.is_none());
@@ -1148,8 +1168,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_ignore_existing() {
         let config = ClientConfig::builder().ignore_existing(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.file_selection.ignore_existing);
     }
@@ -1158,8 +1182,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_ignore_existing_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.file_selection.ignore_existing);
     }
@@ -1176,8 +1204,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .chmod(Some(modifiers.clone()))
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -1187,8 +1219,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_chmod_has_none() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -1205,8 +1241,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .user_mapping(Some(mapping.clone()))
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
@@ -1219,8 +1259,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .group_mapping(Some(mapping.clone()))
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.group_mapping.as_ref(), Some(&mapping));
     }
@@ -1229,8 +1273,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_id_maps_has_none() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.user_mapping.is_none());
         assert!(server_config.group_mapping.is_none());
@@ -1243,8 +1291,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_write_devices() {
         let config = ClientConfig::builder().write_devices(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.write.write_devices);
     }
@@ -1256,8 +1308,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_keep_dirlinks() {
         let config = ClientConfig::builder().keep_dirlinks(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.keep_dirlinks);
     }
@@ -1269,8 +1325,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_fuzzy_level() {
         let config = ClientConfig::builder().fuzzy_level(2).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.flags.fuzzy_level, 2);
     }
@@ -1287,8 +1347,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .temp_directory(Some("/var/tmp/rsync"))
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(
             server_config.temp_dir.as_deref(),
@@ -1300,8 +1364,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_temp_dir_stays_none() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.temp_dir.is_none());
     }
@@ -1315,8 +1383,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_omit_dir_times() {
         let config = ClientConfig::builder().omit_dir_times(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.omit_dir_times);
     }
@@ -1325,8 +1397,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_omit_dir_times_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.flags.omit_dir_times);
     }
@@ -1338,8 +1414,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_omit_link_times() {
         let config = ClientConfig::builder().omit_link_times(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.omit_link_times);
     }
@@ -1348,8 +1428,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_omit_link_times_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.flags.omit_link_times);
     }
@@ -1361,8 +1445,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_preserve_executability() {
         let config = ClientConfig::builder().executability(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.preserve_executability);
     }
@@ -1371,8 +1459,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_preserve_executability_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.flags.preserve_executability);
     }
@@ -1386,8 +1478,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_propagates_mkpath() {
         let config = ClientConfig::builder().mkpath(true).build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.flags.mkpath);
     }
@@ -1397,8 +1493,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.flags.mkpath);
     }
@@ -1408,8 +1508,12 @@ mod server_config_reference_dirs {
     #[test]
     fn receiver_config_without_receiver_only_flags_stays_clear() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(!server_config.write.write_devices);
         assert!(!server_config.flags.keep_dirlinks);
@@ -1429,8 +1533,12 @@ mod server_config_reference_dirs {
         let config = ClientConfig::builder()
             .chmod(Some(modifiers.clone()))
             .build();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -1440,8 +1548,12 @@ mod server_config_reference_dirs {
     #[test]
     fn generator_config_without_chmod_has_none() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -1449,8 +1561,12 @@ mod server_config_reference_dirs {
     #[test]
     fn generator_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(server_config.reference_directories.is_empty());
     }
@@ -1466,7 +1582,7 @@ mod server_config_reference_dirs {
             ))
             .build();
 
-        let local_paths = vec!["src/".to_owned()];
+        let local_paths = vec![std::ffi::OsString::from("src/")];
         let server_config =
             build_server_config_for_generator(&config, &local_paths, Vec::new()).unwrap();
 
@@ -1485,7 +1601,7 @@ mod server_config_reference_dirs {
             ))
             .build();
 
-        let local_paths = vec!["src/".to_owned()];
+        let local_paths = vec![std::ffi::OsString::from("src/")];
         let server_config =
             build_server_config_for_generator(&config, &local_paths, Vec::new()).unwrap();
 
@@ -1506,8 +1622,12 @@ mod server_config_reference_dirs {
         // info_flags.itemize set so the generator's maybe_emit_itemize()
         // produces client-side output via the callback.
         let config = ClientConfig::builder().itemize_changes(true).build();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(
             server_config.flags.info_flags.itemize,
@@ -1518,8 +1638,12 @@ mod server_config_reference_dirs {
     #[test]
     fn generator_config_itemize_default_false() {
         let config = ClientConfig::default();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert!(
             !server_config.flags.info_flags.itemize,
@@ -1998,8 +2122,12 @@ mod iconv_bridge {
         let config = ClientConfig::builder()
             .iconv(IconvSetting::Unspecified)
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
         assert!(server_config.connection.iconv.is_none());
     }
 
@@ -2008,8 +2136,12 @@ mod iconv_bridge {
         let config = ClientConfig::builder()
             .iconv(IconvSetting::Disabled)
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
         assert!(server_config.connection.iconv.is_none());
     }
 
@@ -2022,8 +2154,12 @@ mod iconv_bridge {
                 remote: Some("ISO-8859-1".to_owned()),
             })
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
         let converter = server_config
             .connection
             .iconv
@@ -2047,8 +2183,12 @@ mod iconv_bridge {
                 remote: Some("ISO-8859-1".to_owned()),
             })
             .build();
-        let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_generator(
+            &config,
+            &[std::ffi::OsString::from("src")],
+            Vec::new(),
+        )
+        .unwrap();
         assert!(server_config.connection.iconv.is_some());
     }
 
@@ -2058,8 +2198,12 @@ mod iconv_bridge {
         let config = ClientConfig::builder()
             .iconv(IconvSetting::LocaleDefault)
             .build();
-        let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let server_config = build_server_config_for_receiver(
+            &config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
         let converter = server_config
             .connection
             .iconv
@@ -2067,5 +2211,46 @@ mod iconv_bridge {
         // converter_from_locale uses UTF-8 on both sides for portability,
         // making it an identity converter on most modern systems.
         assert!(converter.is_identity());
+    }
+}
+
+// A non-UTF-8 local destination path (here a 0xFF byte, invalid UTF-8) must
+// round-trip byte-for-byte through the daemon-transfer local_paths pipeline
+// into the receiver ServerConfig args. Before local_paths carried OsString,
+// the String view lossily rewrote 0xFF as U+FFFD (EF BF BD), and the daemon
+// then failed link_stat on the mangled path. Upstream carries daemon operand
+// paths as raw char* end-to-end (clientserver.c), so raw bytes must survive.
+#[cfg(unix)]
+mod raw_byte_local_paths {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    #[test]
+    fn non_utf8_local_dest_round_trips_into_receiver_args() {
+        let raw = b"dst/x\xff.txt".to_vec();
+        let dest = OsString::from_vec(raw.clone());
+        let config = ClientConfig::builder().build();
+        let server_config = build_server_config_for_receiver(&config, &[dest], Vec::new()).unwrap();
+        assert_eq!(
+            server_config.args.len(),
+            1,
+            "single local dest maps to a single server arg"
+        );
+        assert_eq!(
+            server_config.args[0].as_bytes(),
+            raw.as_slice(),
+            "the 0xFF byte must survive; a lossy String view would rewrite it to EF BF BD"
+        );
+    }
+
+    #[test]
+    fn non_utf8_local_source_round_trips_into_generator_args() {
+        let raw = b"src/y\xff/".to_vec();
+        let source = OsString::from_vec(raw.clone());
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &[source], Vec::new()).unwrap();
+        assert_eq!(server_config.args[0].as_bytes(), raw.as_slice());
     }
 }
