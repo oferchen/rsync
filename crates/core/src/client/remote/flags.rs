@@ -298,7 +298,7 @@ pub(crate) fn build_wire_format_rules(
                 let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
                 wire_rules.push(FilterRuleWireFormat {
                     rule_type: RuleType::Exclude,
-                    pattern,
+                    pattern: pattern.into(),
                     anchored,
                     directory_only,
                     // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
@@ -317,7 +317,7 @@ pub(crate) fn build_wire_format_rules(
         let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
-            pattern,
+            pattern: pattern.into(),
             anchored,
             directory_only,
             xattr_only: spec.is_xattr_only(),

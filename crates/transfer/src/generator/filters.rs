@@ -622,11 +622,15 @@ fn cvs_exclude_wire_rule() -> FilterRuleWireFormat {
 }
 
 fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
-    let mut pattern = String::with_capacity(wire_rule.pattern.len() + 2);
-    if wire_rule.anchored && !wire_rule.pattern.starts_with('/') {
+    // The sender's local FilterChain compiles patterns via wildmatch (&str),
+    // so a non-UTF-8 wire pattern is decoded lossily here. The wire pattern
+    // itself remains byte-faithful; only this rule-compilation input is lossy.
+    let body = wire_rule.pattern.to_string_lossy();
+    let mut pattern = String::with_capacity(body.len() + 2);
+    if wire_rule.anchored && !body.starts_with('/') {
         pattern.push('/');
     }
-    pattern.push_str(&wire_rule.pattern);
+    pattern.push_str(&body);
     if wire_rule.directory_only && !pattern.ends_with('/') {
         pattern.push('/');
     }
@@ -659,10 +663,14 @@ fn wire_rule_to_dir_merge_config(
     // resulting `DirMergeConfig` would have an empty filename, which causes
     // `enter_directory()` to look up the directory itself instead of any
     // `.cvsignore` it contains, dropping CVS-style ignores entirely.
-    let pattern: &str = if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
+    // The merge filename feeds `Path`/`DirMergeConfig`, which are `str`-based,
+    // so a non-UTF-8 wire pattern is decoded lossily here. The wire pattern is
+    // byte-faithful; only this local dir-merge config boundary is lossy.
+    let lossy = wire_rule.pattern.to_string_lossy();
+    let pattern: &str = if wire_rule.cvs_exclude && lossy.is_empty() {
         ".cvsignore"
     } else {
-        wire_rule.pattern.as_str()
+        lossy.as_ref()
     };
 
     // upstream: exclude.c - a leading '/' on the merge filename means the
@@ -847,7 +855,7 @@ mod tests {
     fn make_dir_merge_wire_rule(pattern: &str) -> FilterRuleWireFormat {
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: pattern.to_owned(),
+            pattern: pattern.into(),
             ..FilterRuleWireFormat::default()
         }
     }
