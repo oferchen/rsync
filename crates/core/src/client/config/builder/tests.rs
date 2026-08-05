@@ -1362,6 +1362,55 @@ fn validate_default_builder_ok() {
 }
 
 #[test]
+fn validate_rsh_with_ssh_url_operand_conflicts() {
+    // oc-specific: `-e ssh` selects the external system ssh binary, but an
+    // `ssh://` URL operand dispatches to the built-in SSH client, which never
+    // consults --rsh. Silently dropping --rsh would run a different transport
+    // than the user asked for, so the pair must be rejected as RERR_SYNTAX.
+    let b = builder()
+        .set_remote_shell(["ssh"])
+        .transfer_args(["ssh://host/path", "dest"]);
+    let err = b.validate().unwrap_err();
+    assert_eq!(err.option1, "rsh");
+    assert_eq!(err.option2, "ssh-url-operand");
+}
+
+#[test]
+fn validate_rsh_with_host_path_operand_ok() {
+    // A `host:path` operand is exactly the case where --rsh is honoured (it
+    // spawns the external ssh), so it must not trip the ssh:// conflict.
+    let b = builder()
+        .set_remote_shell(["ssh"])
+        .transfer_args(["host:path", "dest"]);
+    assert!(b.validate().is_ok());
+}
+
+#[test]
+fn validate_ssh_url_without_rsh_ok() {
+    // An `ssh://` operand on its own is the normal built-in-SSH path. With no
+    // explicit --rsh (remote_shell = None) there is nothing to conflict with,
+    // so the default/unset shell must not trip the check.
+    let b = builder().transfer_args(["ssh://host/path", "dest"]);
+    assert!(b.validate().is_ok());
+}
+
+#[test]
+fn validate_rsh_ssh_url_conflict_message() {
+    // The message names the operand, not a second option, and points the user
+    // at the two ways to resolve it (host:path, or dropping --rsh).
+    let b = builder()
+        .set_remote_shell(["ssh"])
+        .transfer_args(["ssh://host/path", "dest"]);
+    let err = b.validate().unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "--rsh/-e cannot be combined with an ssh:// URL operand \
+         (ssh:// uses the built-in SSH client); use host:path for an \
+         external ssh, or drop --rsh"
+    );
+}
+
+#[test]
 fn compare_destination_adds_directory() {
     let config = builder().compare_destination("/tmp/compare").build();
     assert_eq!(config.reference_directories().len(), 1);
