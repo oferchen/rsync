@@ -169,44 +169,13 @@ pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<
 
     #[cfg(windows)]
     {
-        use std::borrow::Cow;
-        use std::hash::{Hash, Hasher};
-        use std::path::{Component, Prefix};
-
-        fn normalize_path<'a>(path: &'a Path) -> Cow<'a, Path> {
-            if path.is_absolute() {
-                Cow::Borrowed(path)
-            } else {
-                std::env::current_dir()
-                    .map(|cwd| Cow::Owned(cwd.join(path)))
-                    .unwrap_or_else(|_| Cow::Borrowed(path))
-            }
-        }
-
-        fn device_from_components(path: &Path) -> Option<u64> {
-            let mut components = path.components();
-            match components.next()? {
-                Component::Prefix(prefix) => match prefix.kind() {
-                    Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => Some(letter as u64),
-                    Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        server.hash(&mut hasher);
-                        share.hash(&mut hasher);
-                        Some(hasher.finish())
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        }
-
-        let absolute = normalize_path(path);
-        // The standard library's `MetadataExt::volume_serial_number` accessor is currently
-        // unstable on Windows, so fall back to deriving the device identifier from the path
-        // components instead.
+        // Native Windows has no POSIX st_dev. Use the volume serial number
+        // (GetFileInformationByHandle) as the stable per-volume identity so a
+        // junction or a volume mounted at a directory is detected as a
+        // filesystem boundary - a drive-letter path prefix cannot see it.
+        // upstream: flist.c `st.st_dev != filesystem_dev` mount-point check.
         let _ = metadata;
-
-        device_from_components(absolute.as_ref())
+        fast_io::same_fs::volume_id(path)
     }
 
     #[cfg(not(any(unix, windows)))]
