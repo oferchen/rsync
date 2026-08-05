@@ -274,6 +274,25 @@ pub fn apply_file_metadata_with_fd_if_changed(
     Ok(())
 }
 
+/// Returns `true` when the destination's Windows read-only attribute differs
+/// from what the sender's mode requires, so the quick-check must treat the file
+/// as changed and let the apply path re-stamp the bit.
+///
+/// Windows preserves only the read-only attribute; the apply path
+/// ([`permissions::set_permissions_like`] and `apply_permissions_from_entry`)
+/// derives it from the POSIX owner-write bit, so a mode with `0o200` clear is
+/// read-only. This collapses upstream's full-mode `perms_differ()`
+/// (generator.c:418) to a single read-only-bit compare, mirroring the Unix
+/// arm's permission leg. Kept as a pure, platform-independent helper so it is
+/// unit-testable on Linux even though it only gates the `cfg(not(unix))` path.
+// upstream: generator.c:418 perms_differ() - the mode compare behind
+// unchanged_attrs()'s `if perms_differ(...)` leg.
+#[cfg(any(not(unix), test))]
+pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly: bool) -> bool {
+    let required_readonly = entry_permissions & 0o200 == 0;
+    required_readonly != current_readonly
+}
+
 /// Fast check whether all metadata attributes already match the destination.
 ///
 /// Mirrors upstream `generator.c:468 unchanged_attrs()` - a pure in-memory
@@ -370,6 +389,19 @@ pub fn metadata_unchanged(
 
     #[cfg(not(unix))]
     {
+        // upstream: generator.c:494-495 perms_differ(). Windows preserves only
+        // the read-only attribute, so the full-mode compare collapses to a
+        // single read-only-bit compare (`windows_readonly_differs`). The apply
+        // path (permissions::set_permissions_like /
+        // apply_permissions_from_entry) re-stamps this bit under --perms, so the
+        // quick-check must gate on it or a file differing ONLY in the read-only
+        // attribute is judged unchanged and the update is silently skipped.
+        if options.permissions()
+            && windows_readonly_differs(entry.permissions(), cached_meta.permissions().readonly())
+        {
+            return false;
+        }
+
         if options.times() {
             let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
             // upstream: util1.c:1478 same_time() - apply the `--modify-window`
