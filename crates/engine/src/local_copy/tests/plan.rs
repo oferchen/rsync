@@ -59,11 +59,25 @@ fn plan_rejects_remote_destination() {
     ));
 }
 
+#[cfg(windows)]
 #[test]
 fn plan_accepts_windows_drive_style_paths() {
     let operands = vec![OsString::from("C:\\source"), OsString::from("C:\\dest")];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan accepts drive paths");
     assert_eq!(plan.sources().len(), 1);
+}
+#[cfg(unix)]
+#[test]
+fn plan_rejects_windows_drive_style_paths() {
+    // upstream: options.c check_for_hostspec treats "C:\\path" as host "C" on Unix
+    // (no drive-letter concept); drive paths are local only on Windows.
+    let operands = vec![OsString::from("C:\\source"), OsString::from("C:\\dest")];
+    let error =
+        LocalCopyPlan::from_operands(&operands).expect_err("drive path is a hostspec on unix");
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::RemoteOperandUnsupported)
+    ));
 }
 
 #[test]

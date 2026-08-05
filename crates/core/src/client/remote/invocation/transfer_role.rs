@@ -10,7 +10,6 @@
 //! - `main.c:do_cmd()` - Role determination from operand positions
 //! - `main.c:check_for_hostspec()` - Remote operand detection
 
-use std::ffi::OsStr;
 use std::ffi::OsString;
 
 use super::super::super::error::{ClientError, invalid_argument_error};
@@ -18,42 +17,13 @@ use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
 
 /// Checks if an operand represents a remote path.
 ///
-/// Detects `rsync://` URLs, `ssh://` URLs, double-colon daemon syntax
-/// (`host::module`), and single-colon SSH syntax (`host:path`). This mirrors upstream
-/// `main.c:check_for_hostspec()`. A simplified version that matches the logic in
-/// `engine::local_copy::operand_is_remote` which is not public.
-pub fn operand_is_remote(path: &OsStr) -> bool {
-    let text = path.to_string_lossy();
-
-    if text.starts_with("rsync://") || text.starts_with("ssh://") {
-        return true;
-    }
-
-    if text.contains("::") {
-        return true;
-    }
-
-    if let Some(colon_index) = text.find(':') {
-        #[cfg(windows)]
-        if colon_index == 1
-            && text
-                .chars()
-                .next()
-                .map_or(false, |c| c.is_ascii_alphabetic())
-        {
-            return false;
-        }
-
-        let before = &text[..colon_index];
-        if before.contains('/') || before.contains('\\') {
-            return false;
-        }
-
-        return true;
-    }
-
-    false
-}
+/// Re-exported from [`engine::operand`], the single source of truth mirroring
+/// upstream `options.c:check_for_hostspec()`. Sharing one classifier keeps this
+/// remote-invocation planner, the CLI front end, and the local-copy executor
+/// from ever disagreeing on whether an operand is local, remote, or a daemon
+/// module - a #7153-class defect where a divergent verdict shipped the wrong
+/// operand to the remote server.
+pub use engine::operand::operand_is_remote;
 
 /// Parses a remote operand string into its components for validation.
 ///

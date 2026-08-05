@@ -133,6 +133,7 @@ pub mod delete;
 pub mod delta;
 pub mod error;
 pub mod local_copy;
+pub mod operand;
 pub mod throughput;
 pub mod util;
 pub mod walk;
