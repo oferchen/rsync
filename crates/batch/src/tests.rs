@@ -1205,18 +1205,19 @@ mod integration {
         assert_eq!(content, file_data);
     }
 
-    /// Verifies replay of a batch file with zstd-compressed delta tokens.
+    /// A batch body whose DEFLATED_DATA payload is a real zstd frame (magic
+    /// 0xFD2FB528) must NOT be auto-detected and decoded as zstd on replay.
     ///
-    /// This tests the auto-detection path: when a batch file's compressed
-    /// payload contains zstd frames (magic 0xFD2FB528), oc-rsync detects
-    /// the codec and creates a zstd decoder instead of the default zlib.
-    ///
-    /// Upstream rsync write-batch always forces zlib (compat.c:413-414),
-    /// so this scenario only arises from a patched or future upstream.
-    /// oc-rsync handles it correctly via compressed payload auto-detection.
+    /// Upstream forces `write_batch` compression to "zlib" (compat.c:417-418),
+    /// so a batch token stream is ALWAYS zlib; the codec is pinned, never
+    /// sniffed from the payload. A zstd frame is therefore fed to the zlib
+    /// inflater, which rejects it - replay fails rather than silently switching
+    /// codecs. If the non-upstream magic-byte auto-detect were reintroduced,
+    /// this replay would succeed and the assertion below would fail, guarding
+    /// the removed divergence.
     #[cfg(feature = "zstd")]
     #[test]
-    fn test_replay_zstd_compressed_batch() {
+    fn test_replay_zstd_magic_payload_not_autodetected() {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
@@ -1304,145 +1305,20 @@ mod integration {
             protocol_version,
         );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        assert_eq!(result.file_count, 2); // 1 dir + 1 file
-        assert!(dest_dir.join("zstd_test.txt").exists());
-
-        let content = fs::read(dest_dir.join("zstd_test.txt")).unwrap();
-        assert_eq!(content, file_data);
-    }
-
-    /// Verifies replay of a zstd-compressed batch with block matches.
-    ///
-    /// Unlike CPRES_ZLIB, zstd does not need dictionary synchronization
-    /// (see_token is a noop). This test exercises the code path where
-    /// the detected codec is zstd and cpres_zlib is false, ensuring
-    /// block matches work without dictionary sync.
-    #[cfg(feature = "zstd")]
-    #[test]
-    fn test_replay_zstd_compressed_delta_with_block_matches() {
-        use protocol::flist::{FileEntry, FileListWriter};
-        use protocol::wire::CompressedTokenEncoder;
-
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("replay_delta_zstd.batch");
-        let dest_dir = temp_dir.path().join("dest");
-        fs::create_dir_all(&dest_dir).unwrap();
-
-        let protocol_version = 32;
-
-        // Create basis file at destination
-        let basis_data = vec![b'Z'; 2000];
-        fs::write(dest_dir.join("data.bin"), &basis_data).unwrap();
-
-        let patch = b"ZSTD_PATCHED_DATA";
-        let output_size = 700 + 700 + patch.len() + 600;
-
-        let write_config = BatchConfig::new(
-            BatchMode::Write,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        )
-        .with_checksum_seed(42);
-
-        let mut writer = BatchWriter::new(write_config).unwrap();
-        let flags = BatchFlags {
-            recurse: true,
-            do_compression: true,
-            ..Default::default()
-        };
-        writer.write_header(flags).unwrap();
-
-        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
-        let mut flist_writer = FileListWriter::new(protocol);
-        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
-        dir_entry.set_mtime(1_700_000_000, 0);
-        let mut buf = Vec::new();
-        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
-        writer.write_data(&buf).unwrap();
-        let mut file_entry = FileEntry::new_file("data.bin".into(), output_size as u64, 0o644);
-        file_entry.set_mtime(1_700_000_001, 0);
-        buf.clear();
-        flist_writer.write_entry(&mut buf, &file_entry).unwrap();
-        writer.write_data(&buf).unwrap();
-        let mut end_buf = Vec::new();
-        flist_writer.write_end(&mut end_buf, None).unwrap();
-        writer.write_data(&end_buf).unwrap();
-
-        // NDX-framed delta with zstd-compressed block matches and literals
-        {
-            use protocol::codec::{NdxCodec, NdxCodecEnum};
-
-            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
-            let mut ndx_buf = Vec::new();
-
-            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
-            writer.write_data(&ndx_buf).unwrap();
-
-            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
-
-            let block_length: i32 = 700;
-            let block_count: i32 = 3;
-            let remainder: i32 = 600;
-            let s2length: i32 = 16;
-            writer.write_data(&block_count.to_le_bytes()).unwrap();
-            writer.write_data(&block_length.to_le_bytes()).unwrap();
-            writer.write_data(&s2length.to_le_bytes()).unwrap();
-            writer.write_data(&remainder.to_le_bytes()).unwrap();
-
-            // Zstd encoder - see_token is noop, no dictionary sync needed
-            let mut token_buf = Vec::new();
-            let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
-
-            // Block 0: copy from basis
-            encoder.send_block_match(&mut token_buf, 0).unwrap();
-            encoder.see_token(&basis_data[0..700]).unwrap(); // noop for zstd
-
-            // Block 1: copy from basis
-            encoder.send_block_match(&mut token_buf, 1).unwrap();
-            encoder.see_token(&basis_data[700..1400]).unwrap(); // noop for zstd
-
-            // Literal patch
-            encoder.send_literal(&mut token_buf, patch).unwrap();
-
-            // Block 2: copy from basis (remainder)
-            encoder.send_block_match(&mut token_buf, 2).unwrap();
-            encoder.see_token(&basis_data[1400..2000]).unwrap(); // noop for zstd
-
-            encoder.finish(&mut token_buf).unwrap();
-            writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
-
-            // NDX_DONE phase 1 -> phase 2
-            ndx_buf.clear();
-            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
-            writer.write_data(&ndx_buf).unwrap();
-
-            // NDX_DONE phase 2 -> end
-            ndx_buf.clear();
-            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
-            writer.write_data(&ndx_buf).unwrap();
-        }
-
-        writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
+        // The pinned zlib inflater rejects the zstd frame; replay must fail
+        // rather than auto-switch to a zstd decoder. A successful replay here
+        // would mean the removed magic-byte auto-detect had come back.
+        let err = crate::replay::replay(&read_config, &dest_dir, 0)
+            .expect_err("zstd-framed batch body must not be auto-detected as zstd");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("delta token") || msg.contains("delta operations"),
+            "expected a delta-token decode failure, got: {msg}"
         );
-
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        assert_eq!(result.file_count, 2);
-        assert!(dest_dir.join("data.bin").exists());
-
-        let content = fs::read(dest_dir.join("data.bin")).unwrap();
-        assert_eq!(content.len(), output_size);
-        assert_eq!(&content[0..700], &basis_data[0..700]);
-        assert_eq!(&content[700..1400], &basis_data[700..1400]);
-        assert_eq!(&content[1400..1400 + patch.len()], patch);
-        assert_eq!(&content[1400 + patch.len()..], &basis_data[1400..2000]);
+        assert!(
+            !dest_dir.join("zstd_test.txt").exists(),
+            "no file should be materialised from a rejected zstd payload"
+        );
     }
 
     /// Verifies that compressed batch replay correctly resets the decoder
