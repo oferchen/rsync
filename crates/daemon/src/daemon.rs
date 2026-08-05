@@ -69,8 +69,11 @@ use crate::{
     systemd,
 };
 
+mod at_error;
 mod help;
 pub(crate) mod tracing_stream;
+
+pub(crate) use self::at_error::AtError;
 
 /// Concurrent session tracking for the daemon accept loop.
 #[cfg(feature = "concurrent-sessions")]
@@ -724,11 +727,11 @@ fn refuse_async_connection_at_capacity(
     limit: Option<usize>,
 ) {
     let limit = limit.unwrap_or(0);
-    let payload = format!(
-        "{}\n",
-        MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.to_string())
-    );
-    let _ = stream.write_all(payload.as_bytes());
+    let payload = AtError::MaxConnections {
+        limit: limit as i64,
+    }
+    .to_wire();
+    let _ = stream.write_all(&payload);
     let _ = stream.flush();
 }
 

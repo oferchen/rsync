@@ -72,7 +72,7 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// The presence gates themselves live in [`missing_greeting_token`] so the
 /// daemon (`am_client == 0`) and the client (`am_client == 1`) enforce the exact
 /// same upstream thresholds; only the diagnostic wording differs by role.
-pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<String> {
+pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
     // upstream: clientserver.c:180-184 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
     // < 1)` the daemon answers `@ERROR: protocol startup error`. The client's
     // first line must be a version banner, so a bare module name, an empty
@@ -80,14 +80,14 @@ pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<String> {
     // module name. A banner that parses but omits a required token falls through
     // to the token check below, which is upstream's later, distinct refusal.
     if !is_version_banner(line) {
-        return Some(PROTOCOL_STARTUP_ERROR_PAYLOAD.to_owned());
+        return Some(AtError::ProtocolStartupError);
     }
 
     let token = missing_greeting_token(line)?;
-    Some(format!(
-        "@ERROR: your client omitted the {}: {line}",
+    Some(AtError::message(format!(
+        "your client omitted the {}: {line}",
         token.description()
-    ))
+    )))
 }
 
 /// Reads one line from `reader`, stripping trailing `\r` and `\n`.
@@ -158,7 +158,9 @@ mod greeting_validation_tests {
             "@RSYNCD: OK",
         ] {
             assert_eq!(
-                reject_malformed_client_greeting(not_a_banner).as_deref(),
+                reject_malformed_client_greeting(not_a_banner)
+                .map(|e| e.to_string())
+                .as_deref(),
                 Some("@ERROR: protocol startup error"),
                 "not a version banner: {not_a_banner:?}"
             );
@@ -167,7 +169,9 @@ mod greeting_validation_tests {
         // Parses as a banner (protocol number present), so the refusal is the
         // token diagnostic, not the startup error.
         assert_eq!(
-            reject_malformed_client_greeting("@RSYNCD: 32").as_deref(),
+            reject_malformed_client_greeting("@RSYNCD: 32")
+                .map(|e| e.to_string())
+                .as_deref(),
             Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 32"),
         );
     }
@@ -178,11 +182,15 @@ mod greeting_validation_tests {
     #[test]
     fn rejects_greeting_missing_subprotocol() {
         assert_eq!(
-            reject_malformed_client_greeting("@RSYNCD: 32").as_deref(),
+            reject_malformed_client_greeting("@RSYNCD: 32")
+                .map(|e| e.to_string())
+                .as_deref(),
             Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 32"),
         );
         assert_eq!(
-            reject_malformed_client_greeting("@RSYNCD: 30").as_deref(),
+            reject_malformed_client_greeting("@RSYNCD: 30")
+                .map(|e| e.to_string())
+                .as_deref(),
             Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 30"),
         );
     }
@@ -192,7 +200,9 @@ mod greeting_validation_tests {
     #[test]
     fn rejects_greeting_missing_digest_list() {
         assert_eq!(
-            reject_malformed_client_greeting("@RSYNCD: 32.0").as_deref(),
+            reject_malformed_client_greeting("@RSYNCD: 32.0")
+                .map(|e| e.to_string())
+                .as_deref(),
             Some("@ERROR: your client omitted the digest name list: @RSYNCD: 32.0"),
         );
     }
@@ -202,7 +212,9 @@ mod greeting_validation_tests {
     #[test]
     fn protocol_31_requires_subprotocol_not_digest() {
         assert_eq!(
-            reject_malformed_client_greeting("@RSYNCD: 31").as_deref(),
+            reject_malformed_client_greeting("@RSYNCD: 31")
+                .map(|e| e.to_string())
+                .as_deref(),
             Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 31"),
         );
         assert_eq!(reject_malformed_client_greeting("@RSYNCD: 31.0"), None);

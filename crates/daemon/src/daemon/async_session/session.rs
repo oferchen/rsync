@@ -203,10 +203,11 @@ pub(super) async fn handle_async_session(
     // handling lives in the sync `legacy_session` path.
     // upstream: clientserver.c:381-385 - the client treats `@ERROR` as fatal
     // and returns before reading further, so no `@RSYNCD: EXIT` follows.
-    let error_msg = "@ERROR: daemon functionality limited in async mode\n";
-    writer.write_all(error_msg.as_bytes()).await?;
+    let error_wire =
+        crate::daemon::AtError::message("daemon functionality limited in async mode").to_wire();
+    writer.write_all(&error_wire).await?;
     writer.flush().await?;
-    bytes_sent += error_msg.len() as u64;
+    bytes_sent += error_wire.len() as u64;
 
     #[cfg(feature = "concurrent-sessions")]
     {
