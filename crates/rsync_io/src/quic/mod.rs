@@ -60,13 +60,18 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn_proto::{ClientConfig, ConnectionError, Endpoint, EndpointConfig, ServerConfig, VarInt};
+use quinn_proto::{ClientConfig, Endpoint, EndpointConfig, ServerConfig};
 pub use rustls::RootCertStore;
 pub use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
+
+pub use error::{
+    TransportFault, connect_fault, connection_fault, driver_gone, io_fault, stream_reset,
+};
+pub use quinn_proto::{ConnectError, ConnectionError, TransportError, TransportErrorCode, VarInt};
 
 pub use trust::{
     Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
