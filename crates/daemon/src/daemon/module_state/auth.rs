@@ -69,10 +69,12 @@ pub(crate) trait GroupMembership {
 /// Production [`GroupMembership`] backed by the host group database.
 ///
 /// Resolves the user's uid and enumerates its full group set via
-/// `metadata::id_lookup::groups_for_user` (`getpwnam` + `getgrouplist` +
-/// `getgrgid`). On platforms without a POSIX group database the set is empty,
-/// so no `@group` token can match - matching upstream, which compiles the
-/// `@group` branch only when `HAVE_GETGROUPLIST` is defined.
+/// `metadata::id_lookup::groups_for_user`. On Unix this is `getpwnam` +
+/// `getgrouplist` + `getgrgid`; on Windows it is `NetUserGetLocalGroups`
+/// (local groups the account belongs to, including indirect membership). On a
+/// platform with neither database the set is empty, so no `@group` token can
+/// match - matching upstream, which compiles the `@group` branch only when
+/// `HAVE_GETGROUPLIST` is defined.
 ///
 /// upstream: authenticate.c:283-295 `auth_server()` resolves the authenticating
 /// user's groups with `getallgroups()` and `wildmatch`es each against `tok+1`.
@@ -80,11 +82,11 @@ pub(crate) struct SystemGroupMembership;
 
 impl GroupMembership for SystemGroupMembership {
     fn groups_of(&self, user: &str) -> Vec<String> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             metadata::id_lookup::groups_for_user(user).unwrap_or_default()
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = user;
             Vec::new()
@@ -277,5 +279,98 @@ mod tests {
         let list = entries(&["alice", "team*", "@staff"]);
         let groups = MockGroups(HashMap::from([("carol", vec!["staff"])]));
         assert!(authorize_auth_user(&list, "intruder", &groups).is_none());
+    }
+
+    /// On Windows, `auth users = @group` must admit a real member of a local
+    /// group and reject a non-member. This exercises the production
+    /// [`SystemGroupMembership`] against live `NetUserGetLocalGroups`
+    /// resolution, guarding against a regression to the old empty-`Vec` stub
+    /// that made every `@group` token dead on Windows.
+    ///
+    /// WHY the real resolver, not [`MockGroups`]: the mock proves the matching
+    /// loop; only the system resolver proves the platform lookup actually
+    /// returns the account's groups. The test provisions a throwaway local
+    /// group containing the current user with `net localgroup`. Creating or
+    /// populating a local group needs Administrator rights, so when the CI
+    /// account lacks them the provisioning step fails and the test skips with a
+    /// printed reason - it never passes silently.
+    #[cfg(windows)]
+    #[test]
+    fn windows_group_token_admits_real_member() {
+        use std::process::Command;
+
+        let group = format!("ocrsync_test_grp_{}", std::process::id());
+        let Ok(user) = std::env::var("USERNAME") else {
+            eprintln!(
+                "SKIP windows_group_token_admits_real_member: USERNAME is not set, cannot identify the current account"
+            );
+            return;
+        };
+
+        let delete = |g: &str| {
+            let _ = Command::new("net")
+                .args(["localgroup", g, "/delete"])
+                .status();
+        };
+
+        // Provision: create the group. Denied without admin rights - skip.
+        match Command::new("net")
+            .args(["localgroup", &group, "/add"])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                eprintln!(
+                    "SKIP windows_group_token_admits_real_member: cannot create local group (net localgroup /add exit {:?})",
+                    status.code()
+                );
+                return;
+            }
+            Err(err) => {
+                eprintln!(
+                    "SKIP windows_group_token_admits_real_member: net.exe unavailable: {err}"
+                );
+                return;
+            }
+        }
+
+        // Populate: add the current user. May also be denied - skip after
+        // cleaning up the group we just created.
+        let added = Command::new("net")
+            .args(["localgroup", &group, &user, "/add"])
+            .status();
+        if !matches!(added, Ok(ref status) if status.success()) {
+            delete(&group);
+            eprintln!(
+                "SKIP windows_group_token_admits_real_member: cannot add user to local group (exit {:?})",
+                added.ok().and_then(|status| status.code())
+            );
+            return;
+        }
+
+        let token = format!("@{group}");
+        let list = entries(&[token.as_str()]);
+        let groups = SystemGroupMembership;
+
+        let member = authorize_auth_user(&list, &user, &groups);
+        let non_member = authorize_auth_user(&list, "definitely_not_a_member_zzzz", &groups);
+
+        // Clean up before asserting so a failed assertion cannot leak the group.
+        delete(&group);
+
+        let member =
+            member.expect("a real member of the local group must be admitted by the @group token");
+        assert!(
+            member
+                .group
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&group)),
+            "the concrete matched group name must be reported, got {:?}",
+            member.group
+        );
+        assert!(
+            non_member.is_none(),
+            "a non-member must not be admitted by the @group token"
+        );
     }
 }

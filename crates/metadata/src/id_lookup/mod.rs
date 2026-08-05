@@ -29,6 +29,8 @@ mod name_cache;
 mod nss;
 #[cfg(not(unix))]
 mod nss_stub;
+#[cfg(windows)]
+mod nss_win;
 
 #[cfg(unix)]
 pub use cache::{map_gid, map_uid};
@@ -43,6 +45,8 @@ pub use nss::{
 pub use nss_stub::{
     lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,
 };
+#[cfg(windows)]
+pub use nss_win::groups_for_user;
 
 /// Maps a remote UID to a local UID.
 ///
