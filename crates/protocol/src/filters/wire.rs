@@ -449,7 +449,20 @@ fn parse_wire_rule_modern(
                 pattern_start += 1;
             }
             'C' => {
+                // upstream: exclude.c:1248-1255 parse_rule_tok() case 'C' sets
+                // FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
+                // | FILTRULE_CVS_IGNORE together, so a `C` rule carries all the
+                // flags it implies. Re-derive them here so a `:C` dir-merge from
+                // an upstream peer keeps its no-inherit/word-split/no-prefixes
+                // semantics (the receiver gates DirMergeConfig::with_inherit on
+                // no_inherit). The serializer collapses these back to a bare `C`
+                // (get_rule_prefix emits only `C` and suppresses the implied
+                // flags, exclude.c:1548-1561), so re-encoding a decoded `:C`
+                // stays `:C` - no double-application.
                 rule.cvs_exclude = true;
+                rule.no_inherit = true;
+                rule.word_split = true;
+                rule.no_prefixes = true;
                 pattern_start += 1;
             }
             'n' => {

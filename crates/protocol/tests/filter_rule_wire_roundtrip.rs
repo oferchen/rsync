@@ -556,62 +556,55 @@ fn risk_normalizes_to_receiver_side_include() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// CVS `C` modifier: the serializer emits ONLY `C` and suppresses the flags it
+// CVS `C` modifier. The serializer emits ONLY `C` and suppresses the flags it
 // implies (no-inherit/word-split/no-prefixes), matching upstream
-// get_rule_prefix() (exclude.c:1548-1561). Upstream's parser, however,
-// RE-DERIVES those implied flags from `C` (parse_rule_tok case 'C',
-// exclude.c:1248-1254), whereas oc's wire parser sets only `cvs_exclude` and
-// leaves the implied flags unset. This is therefore NOT a self-inverse for a
-// realistic CVS dir-merge: the implied flags are lost on decode. Pinned here as
-// the current behavior; flagged to the lead as an asymmetry-vs-upstream finding
-// for a separate fix (the wire parser should re-derive the implied flags on `C`
-// to match parse_rule_tok).
+// get_rule_prefix() (exclude.c:1548-1561). The PARSER re-derives those implied
+// flags from `C`, mirroring upstream parse_rule_tok case 'C'
+// (exclude.c:1248-1255 sets NO_PREFIXES|WORD_SPLIT|NO_INHERIT|CVS_IGNORE). The
+// two halves compose into a stable WIRE fixpoint: `:C` decodes to the full
+// implied flag set and re-encodes back to `:C`.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cvs_dir_merge_serializes_only_c_and_parser_does_not_re_derive_implied_flags() {
+fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {
     let protocol = proto(32);
+    // A realistic CVS dir-merge carries the flags `C` implies on the send side.
     let cvs = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
         pattern: ".cvsignore".to_owned(),
         cvs_exclude: true,
-        // The flags `C` implies upstream; oc sets them on the send-side rule.
         no_inherit: true,
         word_split: true,
         no_prefixes: true,
         ..FilterRuleWireFormat::default()
     };
 
-    let (payload, decoded) = encode_payload_and_decode(&cvs, protocol);
-    // Serializer collapses the implied flags to a single `C`, matching upstream.
-    assert_eq!(payload, b":C .cvsignore");
-    assert!(decoded.cvs_exclude, "the `C` bit survives");
-    // Asymmetry: oc's parser does NOT re-add the flags `C` implies (upstream
-    // parse_rule_tok would). Pinned so the divergence is visible and any future
-    // fix updates this assertion deliberately.
-    assert!(
-        !decoded.no_inherit,
-        "implied no-inherit is NOT re-derived (finding)"
-    );
-    assert!(
-        !decoded.word_split,
-        "implied word-split is NOT re-derived (finding)"
-    );
-    assert!(
-        !decoded.no_prefixes,
-        "implied no-prefixes is NOT re-derived (finding)"
-    );
+    // Serializer collapses the implied flags to a single `C`, and the parser
+    // re-derives them, so this full-implied rule is a true struct fixpoint.
+    assert_roundtrips_to_self(cvs, protocol, b":C .cvsignore");
 
-    // A rule carrying ONLY the `C` bit (no implied flags) IS a clean fixpoint,
-    // so the oc<->oc wire is self-consistent even though it diverges from an
-    // upstream peer's re-derivation.
+    // A rule carrying ONLY the `C` bit still serializes to `:C`, and decoding it
+    // re-derives the flags `C` implies - exactly what an UPSTREAM peer's `:C`
+    // means. So the struct gains the implied flags (it is NOT a struct fixpoint),
+    // but the WIRE bytes are a fixpoint: `:C` -> full-implied -> `:C`.
     let bare_cvs = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
         pattern: ".cvsignore".to_owned(),
         cvs_exclude: true,
         ..FilterRuleWireFormat::default()
     };
-    assert_roundtrips_to_self(bare_cvs, protocol, b":C .cvsignore");
+    let (payload, decoded) = encode_payload_and_decode(&bare_cvs, protocol);
+    assert_eq!(payload, b":C .cvsignore");
+    assert!(decoded.cvs_exclude, "the `C` bit survives");
+    assert!(decoded.no_inherit, "no-inherit is re-derived from `C`");
+    assert!(decoded.word_split, "word-split is re-derived from `C`");
+    assert!(decoded.no_prefixes, "no-prefixes is re-derived from `C`");
+
+    // Re-encoding the decoded rule reproduces the same `:C` bytes (the
+    // serializer suppresses the implied flags again - no double-application).
+    let (payload2, decoded2) = encode_payload_and_decode(&decoded, protocol);
+    assert_eq!(payload2, b":C .cvsignore");
+    assert_eq!(decoded2, decoded, "`:C` is a wire fixpoint");
 }
 
 #[test]
