@@ -7,7 +7,7 @@
 use std::fs;
 use tempfile::TempDir;
 
-use super::codec::{CompressionCodec, create_compressed_decoder};
+use super::codec::create_compressed_decoder;
 use super::delta::{apply_delta_ops, write_literals_to_file};
 
 /// Builds the geometry a batch would have advertised for these tests.
@@ -154,39 +154,17 @@ fn write_literals_ignores_copy_ops() {
     assert_eq!(result, b"datamore");
 }
 
+/// The batch replay codec is pinned to zlib: `create_compressed_decoder`
+/// builds a zlib decoder regardless of payload, matching upstream which forces
+/// `write_batch` compression to "zlib" (compat.c:417-418). There is no codec
+/// parameter and no payload sniffing, so a zstd stream can never be selected.
 #[test]
-fn compressed_decoder_created_for_zlib() {
-    let decoder = create_compressed_decoder(CompressionCodec::Zlib, 31).unwrap();
+fn compressed_decoder_created_is_zlib() {
+    let decoder = create_compressed_decoder(31);
     assert!(
         !decoder.initialized(),
         "fresh zlib decoder should not be initialized"
     );
-}
-
-#[cfg(feature = "zstd")]
-#[test]
-fn compressed_decoder_created_for_zstd() {
-    let decoder = create_compressed_decoder(CompressionCodec::Zstd, 31).unwrap();
-    assert!(
-        !decoder.initialized(),
-        "fresh zstd decoder should not be initialized"
-    );
-}
-
-/// When the detected codec is zlib, dictionary sync (`see_token`)
-/// must be active. Matches upstream CPRES_ZLIB behavior.
-#[test]
-fn cpres_zlib_true_for_zlib_codec() {
-    let codec = CompressionCodec::Zlib;
-    assert!(Some(codec) == Some(CompressionCodec::Zlib));
-}
-
-/// Zstd's `see_token()` is a noop, so the dictionary-sync path does not apply.
-#[cfg(feature = "zstd")]
-#[test]
-fn cpres_zlib_false_for_zstd_codec() {
-    let codec = CompressionCodec::Zstd;
-    assert!(Some(codec) != Some(CompressionCodec::Zlib));
 }
 
 /// A pre-29 batch stream carries no iflags word, so the replay loop must
