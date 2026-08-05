@@ -11,12 +11,31 @@ use std::time::SystemTime;
 pub struct ConfigConflict {
     /// The first conflicting option (e.g. `--inplace`).
     pub option1: &'static str,
-    /// The second conflicting option (e.g. `--partial-dir`).
+    /// The second conflicting option (e.g. `--partial-dir`), or a sentinel such
+    /// as [`SSH_URL_OPERAND`] when the conflict is against an operand rather
+    /// than a second option.
     pub option2: &'static str,
 }
 
+/// Sentinel [`ConfigConflict::option2`] value marking the `--rsh`/`ssh://`-URL
+/// transport-selection conflict. Its second half is a URL operand, not an
+/// option, so [`ConfigConflict`]'s `Display` gives it a bespoke message rather
+/// than the generic "--X cannot be used with --Y" phrasing.
+const SSH_URL_OPERAND: &str = "ssh-url-operand";
+
 impl fmt::Display for ConfigConflict {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // oc-specific: an explicit --rsh/-e selects the external system ssh
+        // binary, which is honoured only for `host:path` operands; an `ssh://`
+        // URL instead selects the built-in SSH client, which ignores --rsh.
+        // The two are contradictory, so the message names the operand rather
+        // than a second option. No upstream analogue: upstream has no ssh://.
+        if matches!((self.option1, self.option2), ("rsh", SSH_URL_OPERAND)) {
+            return write!(
+                f,
+                "--rsh/-e cannot be combined with an ssh:// URL operand (ssh:// uses the built-in SSH client); use host:path for an external ssh, or drop --rsh"
+            );
+        }
         // upstream: options.c:1977 - the secluded/old-args conflict has a
         // dedicated phrasing (and operand order) distinct from the generic
         // "--X cannot be used with --Y" template used for other conflicts.
@@ -308,7 +327,31 @@ impl ClientConfigBuilder {
     ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
     /// - `--append` conflicts with `--whole-file`
     ///   (upstream: options.c:2400 `if (append_mode) { if (whole_file > 0) ... }`)
+    /// - `--rsh`/`-e` conflicts with an `ssh://` URL operand (oc-specific: the
+    ///   URL scheme selects the built-in SSH client, which ignores `--rsh`)
     pub fn validate(&self) -> Result<(), ConfigConflict> {
+        // oc-specific: an explicit --rsh/-e (or RSYNC_RSH) selects the external
+        // system ssh binary, which is consulted only for `host:path` operands.
+        // An `ssh://` URL operand instead dispatches to the built-in SSH
+        // client, which never spawns an external shell and so silently drops
+        // --rsh. The two select mutually exclusive transports, so reject the
+        // combination up front instead of dropping --rsh without warning. This
+        // has no direct upstream analogue - upstream rsync has no `ssh://`
+        // scheme. The check is unconditional (not gated on `embedded-ssh`)
+        // because the combination is contradictory regardless of build
+        // features.
+        if self.remote_shell.is_some()
+            && self
+                .transfer_args
+                .iter()
+                .any(|arg| arg.to_string_lossy().starts_with("ssh://"))
+        {
+            return Err(ConfigConflict {
+                option1: "rsh",
+                option2: SSH_URL_OPERAND,
+            });
+        }
+
         // upstream: options.c:1974-1977 - --old-args conflicts with --protect-args.
         // Any active level (>= 1) triggers the conflict, matching upstream's
         // `else if (old_style_args)` truthiness test.
