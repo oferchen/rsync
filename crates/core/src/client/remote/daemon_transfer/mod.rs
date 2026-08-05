@@ -108,15 +108,12 @@ pub fn run_daemon_transfer(
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
-    // The daemon orchestration carries local operands as `String`; a lossy view
-    // is intentional here and unchanged by the byte-faithful SSH operand work.
-    // Raw-byte local-path fidelity for the daemon path is tracked separately.
-    let local_paths: Vec<String> = match &transfer_spec {
-        TransferSpec::Push { local_sources, .. } => local_sources
-            .iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect(),
-        TransferSpec::Pull { local_dest, .. } => vec![local_dest.to_string_lossy().into_owned()],
+    // Carry local operands as `OsString` so a non-UTF-8 local dest/source path
+    // (e.g. a 0xFF-named directory) round-trips byte-faithfully; upstream
+    // (clientserver.c) carries daemon operand paths as raw char* end-to-end.
+    let local_paths: Vec<std::ffi::OsString> = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
         TransferSpec::Proxy { .. } => {
             return Err(invalid_argument_error(
                 "remote-to-remote transfers via rsync daemon are not supported",
@@ -340,15 +337,12 @@ pub fn run_daemon_over_remote_shell(
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
-    // The daemon orchestration carries local operands as `String`; a lossy view
-    // is intentional here and unchanged by the byte-faithful SSH operand work.
-    // Raw-byte local-path fidelity for the daemon path is tracked separately.
-    let local_paths: Vec<String> = match &transfer_spec {
-        TransferSpec::Push { local_sources, .. } => local_sources
-            .iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect(),
-        TransferSpec::Pull { local_dest, .. } => vec![local_dest.to_string_lossy().into_owned()],
+    // Carry local operands as `OsString` so a non-UTF-8 local dest/source path
+    // (e.g. a 0xFF-named directory) round-trips byte-faithfully; upstream
+    // (clientserver.c) carries daemon operand paths as raw char* end-to-end.
+    let local_paths: Vec<std::ffi::OsString> = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
         TransferSpec::Proxy { .. } => {
             return Err(invalid_argument_error(
                 "remote-to-remote transfers via daemon-over-remote-shell are not supported",
