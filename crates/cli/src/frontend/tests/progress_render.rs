@@ -55,11 +55,12 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         false,
         HumanReadableMode::DecimalUnits,
         false,
-        false, // emit_flist_banner (list_only path)
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        false,                               // emit_flist_banner (list_only path)
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render summary");
@@ -91,11 +92,12 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         false,
         HumanReadableMode::DecimalUnits,
         false,
-        true,  // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        true,                                // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render summary");
@@ -136,6 +138,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         HumanReadableMode::Grouped,
         false,
         false, // emit_flist_banner (out_format path: starts_with assertion)
+        DeltaTransmissionSummary::default(), // delta_notice
         false, // show_copy_method
         false, // show_atimes
         false, // show_crtimes
