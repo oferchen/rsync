@@ -64,15 +64,20 @@ pub(super) struct RemoteOperandParsed {
 /// For push operations (local -> remote), there's always a single remote destination.
 /// For pull operations (remote -> local), there can be multiple remote sources from
 /// the same host.
+///
+/// Operands are held as [`OsString`] so a non-UTF-8 remote path (a legal Unix
+/// filename, carried by rsync as raw `char*`) survives verbatim to the
+/// remote-shell command line. upstream: `main.c:do_cmd()` forwards the raw
+/// `remote_argv` bytes through `safe_arg()` without transcoding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemoteOperands {
     /// Single remote operand (for push or single-source pull).
-    Single(String),
+    Single(OsString),
 
     /// Multiple remote operands (for multi-source pull).
     ///
     /// All operands must be from the same host with the same user and port.
-    Multiple(Vec<String>),
+    Multiple(Vec<OsString>),
 }
 
 /// Full specification of a transfer, capturing both endpoints and their types.
@@ -86,9 +91,9 @@ pub enum TransferSpec {
     /// The local process acts as generator/sender.
     Push {
         /// Local file paths to send.
-        local_sources: Vec<String>,
+        local_sources: Vec<OsString>,
         /// Remote destination operand (e.g., "user@host:/path").
-        remote_dest: String,
+        remote_dest: OsString,
     },
 
     /// Pull transfer: remote sources -> local destination.
@@ -98,7 +103,7 @@ pub enum TransferSpec {
         /// Remote source operand(s) (e.g., "user@host:/path").
         remote_sources: RemoteOperands,
         /// Local destination path.
-        local_dest: String,
+        local_dest: OsString,
     },
 
     /// Proxy transfer: remote sources -> remote destination (via local).
@@ -108,7 +113,7 @@ pub enum TransferSpec {
         /// Remote source operand(s) (e.g., "user@src:/path").
         remote_sources: RemoteOperands,
         /// Remote destination operand (e.g., "user@dst:/path").
-        remote_dest: String,
+        remote_dest: OsString,
     },
 }
 
@@ -139,6 +144,7 @@ pub struct SecludedInvocation {
     pub command_line_args: Vec<OsString>,
     /// Arguments to send over stdin (non-empty only when secluded-args is
     /// active): the deferred long-form tail, `.`, and the path arguments.
-    /// Each string is sent null-separated with an empty-string terminator.
-    pub stdin_args: Vec<String>,
+    /// Each argument is sent null-separated with an empty-string terminator.
+    /// Held as [`OsString`] so a non-UTF-8 remote path survives verbatim.
+    pub stdin_args: Vec<OsString>,
 }

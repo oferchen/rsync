@@ -3,7 +3,7 @@
 //! This module provides utilities to parse remote operand strings (e.g.,
 //! `user@host:path`, `[::1]:path`) into structured components for SSH invocation.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 
 use thiserror::Error;
 
@@ -19,20 +19,30 @@ use thiserror::Error;
 /// let parsed = parse_ssh_operand(operand).unwrap();
 /// assert_eq!(parsed.user(), Some("user"));
 /// assert_eq!(parsed.host(), "example.com");
-/// assert_eq!(parsed.path(), "/path/to/file");
+/// assert_eq!(parsed.path(), OsStr::new("/path/to/file"));
 /// ```
+///
+/// The `path` is retained as an [`OsString`] so a non-UTF-8 remote path (a
+/// legal filename on Unix, which rsync carries as raw `char*`) survives verbatim
+/// on its way to the remote-shell command line. The `user`/`host` components
+/// remain `String`: they are validated as text and never carry arbitrary bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteOperand {
     user: Option<String>,
     host: String,
     port: Option<u16>,
-    path: String,
+    path: OsString,
 }
 
 impl RemoteOperand {
     /// Creates a new remote operand with the specified components.
     #[must_use]
-    pub const fn new(user: Option<String>, host: String, port: Option<u16>, path: String) -> Self {
+    pub const fn new(
+        user: Option<String>,
+        host: String,
+        port: Option<u16>,
+        path: OsString,
+    ) -> Self {
         Self {
             user,
             host,
@@ -57,9 +67,12 @@ impl RemoteOperand {
         self.port
     }
 
-    /// Returns the remote path component.
+    /// Returns the remote path component as raw bytes.
+    ///
+    /// The value round-trips the operand's post-colon bytes verbatim, so a
+    /// non-UTF-8 remote path is preserved for the remote-shell command line.
     #[must_use]
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &OsStr {
         &self.path
     }
 }
@@ -108,7 +121,7 @@ pub enum RemoteOperandParseError {
 /// let operand = OsStr::new("example.com:/remote/path");
 /// let parsed = parse_ssh_operand(operand).unwrap();
 /// assert_eq!(parsed.host(), "example.com");
-/// assert_eq!(parsed.path(), "/remote/path");
+/// assert_eq!(parsed.path(), OsStr::new("/remote/path"));
 /// ```
 pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperandParseError> {
     if operand.is_empty() {
@@ -126,6 +139,19 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
     if host.is_empty() {
         return Err(RemoteOperandParseError::InvalidFormat);
     }
+
+    // Recover the post-colon path as raw bytes. `path` is always a trailing
+    // suffix of the lossy `text` (every extractor returns `&text[colon + 1..]`),
+    // and the operand prefix up to and including the colon is pure ASCII
+    // (`user@host:` / `[ipv6]:`). Because that prefix contains no non-UTF-8
+    // bytes, its lossy length equals its raw byte length, so
+    // `text.len() - path.len()` is a valid byte offset into the raw operand -
+    // the lossy expansion of any non-UTF-8 path byte appears identically in
+    // both `text` and `path` and therefore cancels. See upstream
+    // options.c:check_for_hostspec(), which returns `path + 1` into the raw
+    // `char*` arg without transcoding.
+    let path_start = text.len() - path.len();
+    let raw_path = raw_path_suffix(operand, path_start);
 
     // An empty path after the colon (e.g. `localhost:`) is valid: upstream
     // rsync interprets it as the remote user's home directory.
@@ -146,8 +172,34 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
         host: host.to_owned(),
         // Port is carried via the `-e ssh -p N` option, not the operand.
         port: None,
-        path: path.to_owned(),
+        path: raw_path,
     })
+}
+
+/// Reconstructs the raw post-colon path bytes at `path_start` within `operand`.
+///
+/// On Unix the operand's bytes are sliced verbatim (`OsStrExt::as_bytes`), so a
+/// non-UTF-8 filename survives byte-for-byte. On Windows the wide units are
+/// sliced (`encode_wide` / `OsStringExt::from_wide`), preserving unpaired
+/// surrogates. `path_start` is a byte offset into the (all-ASCII) prefix, which
+/// equals the wide-unit offset there. On other targets, which cannot expose the
+/// underlying bytes safely, the lossy operand slice is used as a fallback.
+fn raw_path_suffix(operand: &OsStr, path_start: usize) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        OsString::from_vec(operand.as_bytes()[path_start..].to_vec())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let wide: Vec<u16> = operand.encode_wide().collect();
+        OsString::from_wide(&wide[path_start..])
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        OsString::from(operand.to_string_lossy()[path_start..].to_owned())
+    }
 }
 
 /// Rejects a hostname or user component that begins with `-`.
@@ -223,7 +275,7 @@ mod tests {
         assert_eq!(result.user(), None);
         assert_eq!(result.host(), "example.com");
         assert_eq!(result.port(), None);
-        assert_eq!(result.path(), "/remote/path");
+        assert_eq!(result.path(), OsStr::new("/remote/path"));
     }
 
     #[test]
@@ -234,7 +286,7 @@ mod tests {
         assert_eq!(result.user(), Some("alice"));
         assert_eq!(result.host(), "example.com");
         assert_eq!(result.port(), None);
-        assert_eq!(result.path(), "/home/alice/file.txt");
+        assert_eq!(result.path(), OsStr::new("/home/alice/file.txt"));
     }
 
     #[test]
@@ -245,7 +297,7 @@ mod tests {
         assert_eq!(result.user(), None);
         assert_eq!(result.host(), "::1");
         assert_eq!(result.port(), None);
-        assert_eq!(result.path(), "/path");
+        assert_eq!(result.path(), OsStr::new("/path"));
     }
 
     #[test]
@@ -256,7 +308,7 @@ mod tests {
         assert_eq!(result.user(), Some("bob"));
         assert_eq!(result.host(), "2001:db8::1");
         assert_eq!(result.port(), None);
-        assert_eq!(result.path(), "/remote/dir/");
+        assert_eq!(result.path(), OsStr::new("/remote/dir/"));
     }
 
     #[test]
@@ -266,7 +318,7 @@ mod tests {
 
         assert_eq!(result.user(), None);
         assert_eq!(result.host(), "2001:0db8:85a3:0000:0000:8a2e:0370:7334");
-        assert_eq!(result.path(), "/data");
+        assert_eq!(result.path(), OsStr::new("/data"));
     }
 
     #[test]
@@ -276,7 +328,7 @@ mod tests {
 
         assert_eq!(result.user(), Some("user"));
         assert_eq!(result.host(), "::ffff:127.0.0.1");
-        assert_eq!(result.path(), "/tmp/file");
+        assert_eq!(result.path(), OsStr::new("/tmp/file"));
     }
 
     #[test]
@@ -285,7 +337,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "host");
-        assert_eq!(result.path(), "relative/path");
+        assert_eq!(result.path(), OsStr::new("relative/path"));
     }
 
     #[test]
@@ -294,7 +346,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "host");
-        assert_eq!(result.path(), "/path/with:colon/in:name");
+        assert_eq!(result.path(), OsStr::new("/path/with:colon/in:name"));
     }
 
     #[test]
@@ -304,7 +356,7 @@ mod tests {
 
         assert_eq!(result.user(), Some("user"));
         assert_eq!(result.host(), "host");
-        assert_eq!(result.path(), "/path/with@symbol");
+        assert_eq!(result.path(), OsStr::new("/path/with@symbol"));
     }
 
     #[test]
@@ -313,7 +365,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "files.example.co.uk");
-        assert_eq!(result.path(), "/backup/data");
+        assert_eq!(result.path(), OsStr::new("/backup/data"));
     }
 
     #[test]
@@ -322,7 +374,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "backup-server");
-        assert_eq!(result.path(), "/data");
+        assert_eq!(result.path(), OsStr::new("/data"));
     }
 
     #[test]
@@ -331,7 +383,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "192.168.1.100");
-        assert_eq!(result.path(), "/files");
+        assert_eq!(result.path(), OsStr::new("/files"));
     }
 
     #[test]
@@ -341,7 +393,7 @@ mod tests {
 
         assert_eq!(result.user(), Some("admin"));
         assert_eq!(result.host(), "10.0.0.1");
-        assert_eq!(result.path(), "/etc/config");
+        assert_eq!(result.path(), OsStr::new("/etc/config"));
     }
 
     #[test]
@@ -378,7 +430,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "host");
-        assert_eq!(result.path(), "");
+        assert_eq!(result.path(), OsStr::new(""));
     }
 
     #[test]
@@ -387,7 +439,7 @@ mod tests {
         let result = parse_ssh_operand(operand).unwrap();
 
         assert_eq!(result.host(), "::1");
-        assert_eq!(result.path(), "");
+        assert_eq!(result.path(), OsStr::new(""));
     }
 
     #[test]
@@ -397,7 +449,7 @@ mod tests {
 
         assert_eq!(result.user(), Some("alice"));
         assert_eq!(result.host(), "example.com");
-        assert_eq!(result.path(), "");
+        assert_eq!(result.path(), OsStr::new(""));
     }
 
     #[test]
@@ -430,13 +482,13 @@ mod tests {
             Some("user".to_owned()),
             "example.com".to_owned(),
             Some(2222),
-            "/path".to_owned(),
+            OsString::from("/path"),
         );
 
         assert_eq!(operand.user(), Some("user"));
         assert_eq!(operand.host(), "example.com");
         assert_eq!(operand.port(), Some(2222));
-        assert_eq!(operand.path(), "/path");
+        assert_eq!(operand.path(), OsStr::new("/path"));
     }
 
     #[test]
@@ -518,5 +570,32 @@ mod tests {
             result,
             Err(RemoteOperandParseError::LeadingDash("-bad".to_owned()))
         );
+    }
+
+    /// A non-UTF-8 path byte (`0xFF`, a legal Unix filename byte that rsync
+    /// carries as raw `char*`) must survive the split verbatim rather than
+    /// collapsing to U+FFFD. Guards the shell-operand pipeline: the remote
+    /// sender/receiver must see the exact bytes the user typed, or it opens the
+    /// wrong file. upstream: options.c:check_for_hostspec() slices the raw arg.
+    #[cfg(unix)]
+    #[test]
+    fn preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        // `alice@host:/dir/a<FF>b)c` - non-UTF-8 byte plus a shell metacharacter.
+        let mut raw = b"alice@host:/dir/a".to_vec();
+        raw.push(0xFF);
+        raw.extend_from_slice(b"b)c");
+        let operand = std::ffi::OsString::from_vec(raw);
+
+        let parsed = parse_ssh_operand(&operand).unwrap();
+
+        assert_eq!(parsed.user(), Some("alice"));
+        assert_eq!(parsed.host(), "host");
+
+        let mut expected = b"/dir/a".to_vec();
+        expected.push(0xFF);
+        expected.extend_from_slice(b"b)c");
+        assert_eq!(parsed.path().as_bytes(), &expected[..]);
     }
 }

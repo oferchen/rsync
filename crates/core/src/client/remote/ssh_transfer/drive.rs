@@ -5,6 +5,7 @@
 //! server over the SSH pipes and reaps the remote child. This mirrors the flow
 //! in upstream `main.c:do_cmd()` / `main.c:client_run()`.
 
+use std::ffi::OsString;
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -156,7 +157,7 @@ pub fn run_ssh_transfer(
 fn run_pull_transfer(
     config: &ClientConfig,
     connection: SshConnection,
-    local_paths: &[String],
+    local_paths: &[OsString],
     source_paths: &[String],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
@@ -229,7 +230,7 @@ fn run_pull_transfer(
 fn run_push_transfer(
     config: &ClientConfig,
     connection: SshConnection,
-    local_paths: &[String],
+    local_paths: &[OsString],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
@@ -280,7 +281,7 @@ fn run_push_transfer(
 fn run_proxy_transfer(
     config: &ClientConfig,
     remote_sources: RemoteOperands,
-    remote_dest: String,
+    remote_dest: OsString,
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     use super::super::remote_to_remote::run_remote_to_remote_transfer;

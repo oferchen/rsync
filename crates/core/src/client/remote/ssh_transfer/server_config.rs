@@ -15,10 +15,10 @@ use crate::server::{ServerConfig, ServerRole};
 /// Builds server configuration for receiver role (pull transfer).
 pub(in crate::client::remote) fn build_server_config_for_receiver(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
@@ -208,10 +208,10 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
 ///   wires `filesfrom_fd = f_in` so the remote forwards bytes via the wire.
 pub(in crate::client::remote) fn build_server_config_for_generator(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
@@ -314,7 +314,7 @@ mod tests {
     fn generator_config_carries_only_write_batch() {
         let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
         let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("src")]).unwrap();
         assert!(server_config.flags.only_write_batch);
     }
 
@@ -325,7 +325,7 @@ mod tests {
     fn generator_config_leaves_plain_write_batch_on_the_wire() {
         let config = config_with_batch_mode(engine::batch::BatchMode::Write);
         let server_config =
-            build_server_config_for_generator(&config, &["src".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("src")]).unwrap();
         assert!(!server_config.flags.only_write_batch);
     }
 
@@ -344,7 +344,7 @@ mod tests {
             .link_destination("/prev")
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.reference_directories.len(), 2);
         assert_eq!(
@@ -378,7 +378,7 @@ mod tests {
     fn receiver_config_without_alt_dest_has_no_reference_directories() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
         assert!(server_config.reference_directories.is_empty());
     }
 
@@ -397,7 +397,7 @@ mod tests {
             .backup_suffix(Some(".old"))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.backup);
         assert_eq!(server_config.backup_dir.as_deref(), Some("/bak"));
@@ -410,7 +410,7 @@ mod tests {
     fn receiver_config_without_backup_has_no_backup_dir() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.backup);
         assert!(server_config.backup_dir.is_none());
@@ -427,7 +427,7 @@ mod tests {
     fn receiver_config_propagates_ignore_existing() {
         let config = ClientConfig::builder().ignore_existing(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.file_selection.ignore_existing);
     }
@@ -438,7 +438,7 @@ mod tests {
     fn receiver_config_without_ignore_existing_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.file_selection.ignore_existing);
     }
@@ -457,7 +457,7 @@ mod tests {
             .chmod(Some(modifiers.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -468,7 +468,7 @@ mod tests {
     fn receiver_config_without_chmod_has_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -487,7 +487,7 @@ mod tests {
             .user_mapping(Some(mapping.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
@@ -501,7 +501,7 @@ mod tests {
             .group_mapping(Some(mapping.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.group_mapping.as_ref(), Some(&mapping));
     }
@@ -511,7 +511,7 @@ mod tests {
     fn receiver_config_without_id_maps_has_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.user_mapping.is_none());
         assert!(server_config.group_mapping.is_none());
@@ -526,7 +526,7 @@ mod tests {
     fn receiver_config_propagates_fsync() {
         let config = ClientConfig::builder().fsync(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.fsync);
     }
@@ -538,7 +538,7 @@ mod tests {
     fn receiver_config_propagates_write_devices() {
         let config = ClientConfig::builder().write_devices(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.write_devices);
     }
@@ -550,11 +550,11 @@ mod tests {
     #[test]
     fn receiver_config_propagates_out_format_forwards_i() {
         let with_i = ClientConfig::builder().out_format_forwards_i(true).build();
-        let sc = build_server_config_for_receiver(&with_i, &["dest".to_owned()]).unwrap();
+        let sc = build_server_config_for_receiver(&with_i, &[OsString::from("dest")]).unwrap();
         assert!(sc.flags.info_flags.out_format_forwards_i);
 
         let without = ClientConfig::builder().out_format_forwards_i(false).build();
-        let sc = build_server_config_for_receiver(&without, &["dest".to_owned()]).unwrap();
+        let sc = build_server_config_for_receiver(&without, &[OsString::from("dest")]).unwrap();
         assert!(!sc.flags.info_flags.out_format_forwards_i);
     }
 
@@ -565,7 +565,7 @@ mod tests {
     fn receiver_config_propagates_keep_dirlinks() {
         let config = ClientConfig::builder().keep_dirlinks(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.keep_dirlinks);
     }
@@ -577,7 +577,7 @@ mod tests {
     fn receiver_config_propagates_fuzzy_level() {
         let config = ClientConfig::builder().fuzzy_level(2).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.flags.fuzzy_level, 2);
     }
@@ -592,7 +592,7 @@ mod tests {
     fn receiver_config_propagates_delay_updates() {
         let config = ClientConfig::builder().delay_updates(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.delay_updates);
     }
@@ -606,7 +606,7 @@ mod tests {
     fn receiver_config_propagates_list_only() {
         let config = ClientConfig::builder().list_only(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.list_only);
     }
@@ -618,7 +618,7 @@ mod tests {
     fn receiver_config_without_receiver_only_flags_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.write.fsync);
         assert!(!server_config.write.write_devices);
@@ -640,7 +640,7 @@ mod tests {
             .temp_directory(Some("/var/tmp/rsync"))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(
             server_config.temp_dir.as_deref(),
@@ -654,7 +654,7 @@ mod tests {
     fn receiver_config_without_temp_dir_stays_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.temp_dir.is_none());
     }
@@ -669,7 +669,7 @@ mod tests {
     fn receiver_config_propagates_omit_dir_times() {
         let config = ClientConfig::builder().omit_dir_times(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.omit_dir_times);
     }
@@ -680,7 +680,7 @@ mod tests {
     fn receiver_config_without_omit_dir_times_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.omit_dir_times);
     }
@@ -695,7 +695,7 @@ mod tests {
     fn receiver_config_propagates_omit_link_times() {
         let config = ClientConfig::builder().omit_link_times(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.omit_link_times);
     }
@@ -706,7 +706,7 @@ mod tests {
     fn receiver_config_without_omit_link_times_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.omit_link_times);
     }
@@ -721,7 +721,7 @@ mod tests {
     fn receiver_config_propagates_preserve_executability() {
         let config = ClientConfig::builder().executability(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.preserve_executability);
     }
@@ -731,7 +731,7 @@ mod tests {
     fn receiver_config_without_preserve_executability_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.preserve_executability);
     }
@@ -747,7 +747,7 @@ mod tests {
     fn receiver_config_propagates_mkpath() {
         let config = ClientConfig::builder().mkpath(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.mkpath);
     }
@@ -758,7 +758,7 @@ mod tests {
     fn receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.mkpath);
     }
@@ -772,7 +772,7 @@ mod tests {
     fn receiver_config_propagates_fake_super() {
         let config = ClientConfig::builder().fake_super(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.fake_super);
     }
@@ -782,7 +782,7 @@ mod tests {
     fn receiver_config_without_fake_super_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.fake_super);
     }
@@ -800,7 +800,7 @@ mod tests {
             .chmod(Some(modifiers.clone()))
             .build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -811,7 +811,7 @@ mod tests {
     fn generator_config_without_chmod_has_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -826,7 +826,7 @@ mod tests {
     fn generator_config_propagates_fake_super() {
         let config = ClientConfig::builder().fake_super(true).build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert!(server_config.fake_super);
     }
@@ -836,7 +836,7 @@ mod tests {
     fn generator_config_without_fake_super_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert!(!server_config.fake_super);
     }

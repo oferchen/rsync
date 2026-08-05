@@ -167,20 +167,18 @@ pub fn determine_transfer_role(
 
             validate_same_host(&parsed_sources)?;
 
+            // Preserve the operand bytes verbatim (a non-UTF-8 remote path is a
+            // legal Unix filename); host/user validation above already ran on a
+            // lossy copy, which is fine because those components are ASCII.
             let remote_sources = if sources.len() > 1 {
-                RemoteOperands::Multiple(
-                    sources
-                        .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect(),
-                )
+                RemoteOperands::Multiple(sources.to_vec())
             } else {
-                RemoteOperands::Single(sources[0].to_string_lossy().to_string())
+                RemoteOperands::Single(sources[0].clone())
             };
 
             Ok(TransferSpec::Proxy {
                 remote_sources,
-                remote_dest: destination.to_string_lossy().to_string(),
+                remote_dest: destination.clone(),
             })
         }
         (false, false) => Err(invalid_argument_error("no remote operand found", 1)),
@@ -200,17 +198,15 @@ pub fn determine_transfer_role(
 
             validate_same_host(&parsed_sources)?;
 
-            let local_dest = destination.to_string_lossy().to_string();
+            let local_dest = destination.clone();
 
+            // Preserve the operand bytes verbatim (a non-UTF-8 remote path is a
+            // legal Unix filename); host/user validation above already ran on a
+            // lossy copy, which is fine because those components are ASCII.
             let remote_sources = if sources.len() > 1 {
-                RemoteOperands::Multiple(
-                    sources
-                        .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect(),
-                )
+                RemoteOperands::Multiple(sources.to_vec())
             } else {
-                RemoteOperands::Single(sources[0].to_string_lossy().to_string())
+                RemoteOperands::Single(sources[0].clone())
             };
 
             Ok(TransferSpec::Pull {
@@ -218,16 +214,9 @@ pub fn determine_transfer_role(
                 local_dest,
             })
         }
-        (false, true) => {
-            let local_sources: Vec<String> = sources
-                .iter()
-                .map(|s| s.to_string_lossy().to_string())
-                .collect();
-
-            Ok(TransferSpec::Push {
-                local_sources,
-                remote_dest: destination.to_string_lossy().to_string(),
-            })
-        }
+        (false, true) => Ok(TransferSpec::Push {
+            local_sources: sources.to_vec(),
+            remote_dest: destination.clone(),
+        }),
     }
 }
