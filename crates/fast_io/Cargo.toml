@@ -78,7 +78,13 @@ sqpoll-mlock-basis = []
 
 # io_uring support for Linux 5.6+ with automatic fallback to standard I/O
 # Requirements: Linux 5.6+ kernel (runtime detection and fallback)
-# Benefits: 20-40% faster I/O via batched syscalls
+# Scope: batches metadata syscalls (statx, rename, linkat). The data write
+# path submits one SQE per buffer flush (equivalent to a pwrite - queue depth
+# and pipelining are NOT engaged), and the WRITE_FIXED / registered-buffer /
+# SEND_ZC fast paths are gated off pending IUR-3.e and unvalidated on
+# hardware. Measured data-path impact on a default build is neutral to
+# negative versus BufWriter (escape hatch: OC_RSYNC_DISABLE_IOURING=1); do
+# NOT expect write-throughput gains from the stock build.
 # Trade-offs: Linux-only, adds dependency on io-uring crate
 io_uring = ["dep:io-uring"]
 

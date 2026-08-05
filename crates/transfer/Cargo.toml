@@ -89,8 +89,11 @@ iconv = ["protocol/iconv"]
 # I/O Optimization Features
 # ============================================================================
 
-# io_uring support for Linux 5.6+ with automatic fallback
-# Benefits: Batched async I/O for 20-40% better throughput
+# io_uring support for Linux 5.6+ with automatic fallback.
+# Batches metadata syscalls; the data write path is single-SQE-per-flush (no
+# pipelining / queue depth engaged) and measures neutral-to-negative versus
+# BufWriter on a default build - see fast_io's io_uring feature note. Not a
+# write-throughput win today.
 io_uring = ["fast_io/io_uring"]
 
 # IOCP (I/O Completion Ports) for Windows with automatic fallback
