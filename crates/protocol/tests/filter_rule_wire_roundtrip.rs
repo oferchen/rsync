@@ -288,7 +288,7 @@ fn merge_rule_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::Merge,
-            pattern: "merge.rules".to_owned(),
+            pattern: "merge.rules".into(),
             ..FilterRuleWireFormat::default()
         },
         proto(32),
@@ -301,7 +301,7 @@ fn dir_merge_rule_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rsync-filter".to_owned(),
+            pattern: ".rsync-filter".into(),
             ..FilterRuleWireFormat::default()
         },
         proto(32),
@@ -317,7 +317,7 @@ fn dir_merge_anchored_emits_slash_modifier_and_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rules".to_owned(),
+            pattern: ".rules".into(),
             anchored: true,
             ..FilterRuleWireFormat::default()
         },
@@ -332,7 +332,7 @@ fn dir_merge_no_inherit_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".f".to_owned(),
+            pattern: ".f".into(),
             no_inherit: true,
             ..FilterRuleWireFormat::default()
         },
@@ -347,7 +347,7 @@ fn dir_merge_word_split_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".f".to_owned(),
+            pattern: ".f".into(),
             word_split: true,
             ..FilterRuleWireFormat::default()
         },
@@ -362,7 +362,7 @@ fn dir_merge_exclude_self_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".f".to_owned(),
+            pattern: ".f".into(),
             exclude_from_merge: true,
             ..FilterRuleWireFormat::default()
         },
@@ -379,7 +379,7 @@ fn dir_merge_no_prefixes_minus_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".excl".to_owned(),
+            pattern: ".excl".into(),
             no_prefixes: true,
             ..FilterRuleWireFormat::default()
         },
@@ -395,7 +395,7 @@ fn dir_merge_no_prefixes_plus_roundtrips() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".incl".to_owned(),
+            pattern: ".incl".into(),
             no_prefixes: true,
             no_prefixes_include: true,
             ..FilterRuleWireFormat::default()
@@ -413,7 +413,7 @@ fn dir_merge_all_merge_modifiers_roundtrip() {
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rules".to_owned(),
+            pattern: ".rules".into(),
             anchored: true,
             no_inherit: true,
             word_split: true,
@@ -460,7 +460,7 @@ fn heterogeneous_rule_list_roundtrips_in_order() {
         FilterRuleWireFormat::exclude("secret".to_owned()).with_anchored(true),
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rsync-filter".to_owned(),
+            pattern: ".rsync-filter".into(),
             ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
@@ -499,7 +499,7 @@ fn protect_normalizes_to_receiver_side_exclude() {
     let protocol = proto(32);
     let protect = FilterRuleWireFormat {
         rule_type: RuleType::Protect,
-        pattern: "protected".to_owned(),
+        pattern: "protected".into(),
         receiver_side: true,
         ..FilterRuleWireFormat::default()
     };
@@ -530,7 +530,7 @@ fn risk_normalizes_to_receiver_side_include() {
     let protocol = proto(32);
     let risk = FilterRuleWireFormat {
         rule_type: RuleType::Risk,
-        pattern: "scratch".to_owned(),
+        pattern: "scratch".into(),
         receiver_side: true,
         ..FilterRuleWireFormat::default()
     };
@@ -571,7 +571,7 @@ fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {
     // A realistic CVS dir-merge carries the flags `C` implies on the send side.
     let cvs = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         no_inherit: true,
         word_split: true,
@@ -589,7 +589,7 @@ fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {
     // but the WIRE bytes are a fixpoint: `:C` -> full-implied -> `:C`.
     let bare_cvs = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         ..FilterRuleWireFormat::default()
     };
@@ -607,19 +607,29 @@ fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {
     assert_eq!(decoded2, decoded, "`:C` is a wire fixpoint");
 }
 
+// Upstream carries filter patterns as a raw `char *` and never validates them
+// as UTF-8 (exclude.c:1685 `read_sbuf(f_in, line, len)` into a `char[]`), so a
+// non-UTF-8 pattern must decode to its raw bytes rather than being rejected.
+// This retires the earlier pinned `InvalidData` rejection. The 0xFF byte cannot
+// live in a `String`, so this case is unix-only where `OsStr` is byte-addressable.
+#[cfg(unix)]
 #[test]
-fn non_utf8_wire_record_is_rejected_not_silently_decoded() {
+fn non_utf8_wire_record_decodes_to_raw_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
     let protocol = proto(32);
 
     // Hand-build a well-framed record whose payload (`- \xff`) is a valid
-    // prefix followed by an invalid UTF-8 byte, then the zero terminator.
+    // prefix followed by a non-UTF-8 byte, then the zero terminator.
     let mut buf = Vec::new();
     let payload: &[u8] = b"- \xff";
     buf.extend_from_slice(&(payload.len() as i32).to_le_bytes());
     buf.extend_from_slice(payload);
     buf.extend_from_slice(&0i32.to_le_bytes());
 
-    let err = read_filter_list(&mut &buf[..], protocol)
-        .expect_err("a non-UTF-8 filter record must be rejected, not decoded lossily");
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    let rules = read_filter_list(&mut &buf[..], protocol)
+        .expect("a non-UTF-8 filter record must decode to raw bytes, not be rejected");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].rule_type, RuleType::Exclude);
+    assert_eq!(rules[0].pattern.as_bytes(), b"\xff");
 }

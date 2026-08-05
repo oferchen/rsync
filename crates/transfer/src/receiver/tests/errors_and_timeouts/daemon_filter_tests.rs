@@ -22,7 +22,7 @@ fn daemon_filter_set_built_from_config_rules() {
     let mut config = test_config();
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.tmp".to_string(),
+        pattern: "*.tmp".into(),
         ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -54,12 +54,12 @@ fn daemon_filter_set_include_and_exclude() {
     config.daemon_filter_rules = vec![
         FilterRuleWireFormat {
             rule_type: RuleType::Include,
-            pattern: "*.rs".to_string(),
+            pattern: "*.rs".into(),
             ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
-            pattern: "*".to_string(),
+            pattern: "*".into(),
             ..FilterRuleWireFormat::default()
         },
     ];
@@ -86,7 +86,7 @@ fn daemon_filter_set_anchored_pattern() {
     let mut config = test_config();
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "/secret".to_string(),
+        pattern: "/secret".into(),
         anchored: true,
         ..FilterRuleWireFormat::default()
     }];
@@ -118,7 +118,7 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
     let mut config = test_config();
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "secret_*".to_string(),
+        pattern: "secret_*".into(),
         ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -149,7 +149,7 @@ fn refused_directory_swallows_its_contents_without_a_second_report() {
     let mut config = test_config();
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.secret".to_string(),
+        pattern: "*.secret".into(),
         ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);

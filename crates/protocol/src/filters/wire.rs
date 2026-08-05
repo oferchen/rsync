@@ -1,6 +1,7 @@
 //! Wire format encoding and decoding for filter rules.
 
 use crate::ProtocolVersion;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 
 /// Rule type prefix character.
@@ -65,8 +66,17 @@ impl RuleType {
 pub struct FilterRuleWireFormat {
     /// Rule type (Include/Exclude/Clear/etc.).
     pub rule_type: RuleType,
-    /// Glob pattern.
-    pub pattern: String,
+    /// Glob pattern, stored as raw bytes.
+    ///
+    /// Upstream carries filter patterns as a raw `char *` end-to-end
+    /// (`exclude.c:219` allocates `rule->pattern = new_array(char, ...)`;
+    /// `exclude.c:1638` writes it verbatim with `write_buf`; `exclude.c:1685`
+    /// reads it back into a `char[]` with `read_sbuf`) and never validates the
+    /// bytes as UTF-8. Storing an [`OsString`] rather than a `String` lets a
+    /// pattern containing non-UTF-8 bytes round-trip through the wire
+    /// serialize/parse pair byte-for-byte, matching upstream. For a valid-UTF-8
+    /// pattern the on-wire bytes are unchanged.
+    pub pattern: OsString,
     /// Anchored pattern (`/` modifier).
     pub anchored: bool,
     /// Directory-only pattern (trailing `/`).
@@ -117,10 +127,10 @@ pub struct FilterRuleWireFormat {
 
 impl FilterRuleWireFormat {
     /// Creates a simple exclude rule with default modifiers.
-    pub const fn exclude(pattern: String) -> Self {
+    pub fn exclude(pattern: impl Into<OsString>) -> Self {
         Self {
             rule_type: RuleType::Exclude,
-            pattern,
+            pattern: pattern.into(),
             anchored: false,
             directory_only: false,
             no_inherit: false,
@@ -139,10 +149,10 @@ impl FilterRuleWireFormat {
     }
 
     /// Creates a simple include rule with default modifiers.
-    pub const fn include(pattern: String) -> Self {
+    pub fn include(pattern: impl Into<OsString>) -> Self {
         Self {
             rule_type: RuleType::Include,
-            pattern,
+            pattern: pattern.into(),
             anchored: false,
             directory_only: false,
             no_inherit: false,
@@ -202,6 +212,41 @@ fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
 /// which writes 4 bytes as a little-endian int32.
 fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
+}
+
+/// Returns the raw wire bytes of a filter pattern.
+///
+/// On unix the pattern bytes are the `OsStr` bytes verbatim, so any byte
+/// sequence (including non-UTF-8) round-trips unchanged. On other platforms
+/// `OsStr` is not byte-addressable, so we fall back to the UTF-8 encoding,
+/// which is lossless for the valid-UTF-8 patterns those platforms produce.
+#[cfg(unix)]
+fn pattern_to_wire_bytes(pattern: &OsStr) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    pattern.as_bytes().to_vec()
+}
+
+/// Non-unix twin of [`pattern_to_wire_bytes`].
+#[cfg(not(unix))]
+fn pattern_to_wire_bytes(pattern: &OsStr) -> Vec<u8> {
+    pattern.to_string_lossy().into_owned().into_bytes()
+}
+
+/// Reconstructs a filter pattern from its raw wire bytes.
+///
+/// The inverse of [`pattern_to_wire_bytes`]: on unix it wraps the bytes as an
+/// `OsString` without any UTF-8 check, so a non-UTF-8 pattern survives
+/// verbatim.
+#[cfg(unix)]
+fn wire_bytes_to_pattern(bytes: &[u8]) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    OsStr::from_bytes(bytes).to_os_string()
+}
+
+/// Non-unix twin of [`wire_bytes_to_pattern`].
+#[cfg(not(unix))]
+fn wire_bytes_to_pattern(bytes: &[u8]) -> OsString {
+    OsString::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// Reads filter list from wire format.
@@ -325,6 +370,12 @@ pub fn write_filter_list<W: Write>(
 /// or `"!"`. No modifier characters are parsed. This matches upstream
 /// `exclude.c:1119-1133` where `XFLG_OLD_PREFIXES` restricts parsing to
 /// these three forms.
+///
+/// The rule-type prefix and every modifier byte are ASCII, so parsing scans
+/// the leading bytes directly and treats the remaining bytes as the raw
+/// pattern body. The pattern is never validated as UTF-8: upstream carries it
+/// as a raw `char *` (`exclude.c:1685` `read_sbuf` into a `char[]`), so a
+/// non-UTF-8 pattern is preserved verbatim rather than rejected.
 fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRuleWireFormat> {
     if buf.is_empty() {
         return Err(io::Error::new(
@@ -333,19 +384,12 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
         ));
     }
 
-    let text = std::str::from_utf8(buf).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 in filter rule: {e}"),
-        )
-    })?;
-
     // upstream: exclude.c:1675 - protocol < 29 uses XFLG_OLD_PREFIXES
     if protocol.uses_old_prefixes() {
-        return parse_wire_rule_old_prefix(text);
+        return parse_wire_rule_old_prefix(buf);
     }
 
-    parse_wire_rule_modern(text, protocol)
+    parse_wire_rule_modern(buf, protocol)
 }
 
 /// Parses a wire rule using old-style prefix rules (protocol < 29).
@@ -372,28 +416,31 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
 /// Returns `InvalidData` when a prefix is followed by an empty pattern,
 /// mirroring upstream's "unexpected end of filter rule" `RERR_SYNTAX` exit
 /// (exclude.c:1324-1327).
-fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
-    if text == "!" {
+fn parse_wire_rule_old_prefix(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
+    if buf == b"!" {
         return Ok(FilterRuleWireFormat {
             rule_type: RuleType::Clear,
             ..FilterRuleWireFormat::default()
         });
     }
 
-    let (rule_type, pattern_text) = if let Some(pat) = text.strip_prefix("- ") {
+    let (rule_type, pattern_bytes) = if let Some(pat) = buf.strip_prefix(b"- ".as_slice()) {
         (RuleType::Exclude, pat)
-    } else if let Some(pat) = text.strip_prefix("+ ") {
+    } else if let Some(pat) = buf.strip_prefix(b"+ ".as_slice()) {
         (RuleType::Include, pat)
     } else {
-        (RuleType::Exclude, text)
+        (RuleType::Exclude, buf)
     };
 
-    if pattern_text.is_empty() {
+    if pattern_bytes.is_empty() {
         // upstream: exclude.c:1324-1327 exits RERR_SYNTAX on a rule that
         // ends right after its prefix.
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("unexpected end of filter rule: {text:?}"),
+            format!(
+                "unexpected end of filter rule: {:?}",
+                String::from_utf8_lossy(buf)
+            ),
         ));
     }
 
@@ -402,11 +449,11 @@ fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
         ..FilterRuleWireFormat::default()
     };
 
-    if let Some(stripped) = pattern_text.strip_suffix('/') {
+    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
         rule.directory_only = true;
-        stripped.clone_into(&mut rule.pattern);
+        rule.pattern = wire_bytes_to_pattern(stripped);
     } else {
-        pattern_text.clone_into(&mut rule.pattern);
+        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
     }
 
     Ok(rule)
@@ -417,18 +464,19 @@ fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
 /// Supports full modifier parsing including `/`, `!`, `C`, `n`, `w`, `e`,
 /// `x`, `s`, `r`, `p` flags.
 fn parse_wire_rule_modern(
-    text: &str,
+    buf: &[u8],
     protocol: ProtocolVersion,
 ) -> io::Result<FilterRuleWireFormat> {
-    let mut chars = text.chars();
-    let first = chars
-        .next()
+    // The rule-type prefix is always a single ASCII byte, so decode it as a
+    // char without validating the rest of the buffer as UTF-8.
+    let first = *buf
+        .first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty filter rule"))?;
 
-    let rule_type = RuleType::from_prefix_char(first).ok_or_else(|| {
+    let rule_type = RuleType::from_prefix_char(first as char).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid rule type prefix: '{first}'"),
+            format!("invalid rule type prefix: '{}'", first as char),
         )
     })?;
 
@@ -438,17 +486,19 @@ fn parse_wire_rule_modern(
     };
 
     let mut pattern_start = 1;
-    for (i, c) in chars.enumerate() {
+    // Every modifier byte is ASCII; scan them directly and stop at the first
+    // non-modifier byte, which begins the (possibly non-UTF-8) pattern body.
+    for (i, &c) in buf[1..].iter().enumerate() {
         match c {
-            '/' if i == 0 => {
+            b'/' if i == 0 => {
                 rule.anchored = true;
                 pattern_start += 1;
             }
-            '!' => {
+            b'!' => {
                 rule.negate = true;
                 pattern_start += 1;
             }
-            'C' => {
+            b'C' => {
                 // upstream: exclude.c:1248-1255 parse_rule_tok() case 'C' sets
                 // FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
                 // | FILTRULE_CVS_IGNORE together, so a `C` rule carries all the
@@ -465,19 +515,19 @@ fn parse_wire_rule_modern(
                 rule.no_prefixes = true;
                 pattern_start += 1;
             }
-            'n' => {
+            b'n' => {
                 rule.no_inherit = true;
                 pattern_start += 1;
             }
-            'w' => {
+            b'w' => {
                 rule.word_split = true;
                 pattern_start += 1;
             }
-            'e' => {
+            b'e' => {
                 rule.exclude_from_merge = true;
                 pattern_start += 1;
             }
-            'x' => {
+            b'x' => {
                 rule.xattr_only = true;
                 pattern_start += 1;
             }
@@ -486,28 +536,28 @@ fn parse_wire_rule_modern(
             // Acceptance is gated on Merge/DirMerge to mirror upstream's
             // FILTRULE_MERGE_FILE precondition; on other rule types these
             // characters fall through to `_` and terminate modifier parsing.
-            '-' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
+            b'-' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
                 rule.no_prefixes = true;
                 pattern_start += 1;
             }
-            '+' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
+            b'+' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
                 rule.no_prefixes = true;
                 rule.no_prefixes_include = true;
                 pattern_start += 1;
             }
-            's' if protocol.supports_sender_receiver_modifiers() => {
+            b's' if protocol.supports_sender_receiver_modifiers() => {
                 rule.sender_side = true;
                 pattern_start += 1;
             }
-            'r' if protocol.supports_sender_receiver_modifiers() => {
+            b'r' if protocol.supports_sender_receiver_modifiers() => {
                 rule.receiver_side = true;
                 pattern_start += 1;
             }
-            'p' if protocol.supports_perishable_modifier() => {
+            b'p' if protocol.supports_perishable_modifier() => {
                 rule.perishable = true;
                 pattern_start += 1;
             }
-            ' ' => {
+            b' ' => {
                 // Trailing space terminates the modifier section per upstream
                 // exclude.c parser.
                 pattern_start += 1;
@@ -517,7 +567,7 @@ fn parse_wire_rule_modern(
         }
     }
 
-    let mut pattern_text = &text[pattern_start..];
+    let mut pattern_bytes = &buf[pattern_start..];
 
     // Non-merge rules encode the anchor as a leading `/` in the pattern body
     // (upstream keeps it in ent->pattern with FILTRULE_ABS_PATH unset). Fold it
@@ -528,18 +578,18 @@ fn parse_wire_rule_modern(
     // the `/` prefix modifier in the loop above.
     if !rule.anchored
         && !matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge)
-        && pattern_text.len() > 1
-        && pattern_text.starts_with('/')
+        && pattern_bytes.len() > 1
+        && pattern_bytes.first() == Some(&b'/')
     {
         rule.anchored = true;
-        pattern_text = &pattern_text[1..];
+        pattern_bytes = &pattern_bytes[1..];
     }
 
-    if let Some(stripped) = pattern_text.strip_suffix('/') {
+    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
         rule.directory_only = true;
-        stripped.clone_into(&mut rule.pattern);
+        rule.pattern = wire_bytes_to_pattern(stripped);
     } else {
-        pattern_text.clone_into(&mut rule.pattern);
+        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
     }
 
     Ok(rule)
@@ -563,6 +613,7 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
         )
     })?;
     let mut bytes = prefix.into_bytes();
+    let pattern_bytes = pattern_to_wire_bytes(&rule.pattern);
     // Non-merge anchored rules carry the anchor as a leading `/` in the pattern
     // body, mirroring upstream whose command-line `- /foo` keeps the slash in
     // ent->pattern with FILTRULE_ABS_PATH unset (exclude.c:200-208). The `/`
@@ -572,11 +623,11 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
     // parse_wire_rule_modern() (server) fold the leading `/` into `anchored`.
     if rule.anchored
         && !matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge)
-        && !rule.pattern.starts_with('/')
+        && pattern_bytes.first() != Some(&b'/')
     {
         bytes.push(b'/');
     }
-    bytes.extend_from_slice(rule.pattern.as_bytes());
+    bytes.extend_from_slice(&pattern_bytes);
 
     if rule.directory_only {
         bytes.push(b'/');
@@ -809,7 +860,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".excl".to_owned(),
+            pattern: ".excl".into(),
             no_prefixes: true,
             ..FilterRuleWireFormat::default()
         };
@@ -838,7 +889,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".incl".to_owned(),
+            pattern: ".incl".into(),
             no_prefixes: true,
             no_prefixes_include: true,
             ..FilterRuleWireFormat::default()
@@ -892,6 +943,45 @@ mod tests {
         let mut buf = Vec::new();
         let result = write_filter_list(&mut buf, &[rule], protocol_v28);
         assert!(result.is_err());
+    }
+
+    /// A filter rule whose pattern contains a non-UTF-8 byte must round-trip
+    /// through the wire serialize/parse pair byte-for-byte. Upstream carries the
+    /// pattern as a raw `char *` and never validates it as UTF-8
+    /// (`exclude.c:1638` `write_buf(f_out, ent->pattern, len)` on send,
+    /// `exclude.c:1685` `read_sbuf(f_in, line, len)` into a `char[]` on recv),
+    /// so a `0xFF` byte survives verbatim. Before the pattern became byte-based
+    /// the reader rejected such a record as `InvalidData` (the pinned rejection
+    /// is retired by this round-trip). The 0xFF byte cannot live in a `String`,
+    /// so this case is unix-only where `OsStr` is byte-addressable.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_pattern_roundtrips_byte_for_byte() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let pattern = OsStr::from_bytes(b"log\xff.txt").to_os_string();
+        let rule = FilterRuleWireFormat::exclude(pattern);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        // Wire bytes: 4-byte LE length + "- " prefix + the raw pattern bytes
+        // (0xFF emitted verbatim) + the 4-byte LE zero terminator.
+        let payload = b"- log\xff.txt";
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&(payload.len() as i32).to_le_bytes());
+        expected.extend_from_slice(payload);
+        expected.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(
+            buf, expected,
+            "0xFF pattern byte must reach the wire verbatim"
+        );
+
+        // Decode(encode(rule)) == rule, byte-for-byte on the pattern.
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed, vec![rule]);
+        assert_eq!(parsed[0].pattern.as_bytes(), b"log\xff.txt");
     }
 
     /// Proves the async twin decodes byte-for-byte identically to the blocking

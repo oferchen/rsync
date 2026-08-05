@@ -239,7 +239,7 @@ fn explicitly_sided_no_prefix_merge_uses_side_check() {
 fn cvs_origin_exclude_local_on_pull_transmitted_on_push() {
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.o".to_owned(),
+        pattern: "*.o".into(),
         cvs_origin: true,
         ..FilterRuleWireFormat::default()
     };
@@ -274,7 +274,7 @@ fn cvs_origin_exclude_local_on_pull_transmitted_on_push() {
 fn cvs_origin_dir_merge_gated_on_protocol_29() {
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         cvs_origin: true,
         ..FilterRuleWireFormat::default()
@@ -323,7 +323,7 @@ fn cvs_origin_dir_merge_gated_on_protocol_29() {
 fn manual_dir_merge_without_cvs_origin_not_gated() {
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         cvs_origin: false,
         ..FilterRuleWireFormat::default()

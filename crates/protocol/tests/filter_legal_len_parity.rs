@@ -25,7 +25,7 @@ fn proto(v: u8) -> ProtocolVersion {
 fn dir_merge_rule(pattern: &str) -> FilterRuleWireFormat {
     FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: pattern.to_owned(),
+        pattern: pattern.into(),
         ..FilterRuleWireFormat::default()
     }
 }

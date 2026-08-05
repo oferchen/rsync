@@ -1602,7 +1602,7 @@ mod module_access_tests {
         let rule = build_pattern_rule("foo/", false);
         assert!(rule.anchored); // has embedded '/'
         assert!(!rule.directory_only); // cleared by DIR2WILD3
-        assert!(rule.pattern.ends_with("/***"));
+        assert!(rule.pattern.to_string_lossy().ends_with("/***"));
     }
 
     #[test]

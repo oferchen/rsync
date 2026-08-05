@@ -41,11 +41,16 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
         // applied below via `anchor_to_root()`.
         // upstream: exclude.c:get_rule_prefix() - directory-only is a trailing
         // slash on the pattern body.
-        let pattern: Cow<'_, str> = if wire_rule.directory_only && !wire_rule.pattern.ends_with('/')
-        {
-            Cow::Owned(format!("{}/", wire_rule.pattern))
+        // The `filters` crate compiles patterns into `wildmatch`, which operates
+        // on `&str`, so a non-UTF-8 wire pattern is decoded lossily here for the
+        // local match set. The wire pattern itself stays byte-faithful (it is an
+        // `OsString`); only this receiver-side rule-compilation boundary is
+        // lossy, mirroring the fact that the whole `filters` model is `String`.
+        let lossy = wire_rule.pattern.to_string_lossy();
+        let pattern: Cow<'_, str> = if wire_rule.directory_only && !lossy.ends_with('/') {
+            Cow::Owned(format!("{lossy}/"))
         } else {
-            Cow::Borrowed(wire_rule.pattern.as_str())
+            lossy.clone()
         };
         let mut rule = match wire_rule.rule_type {
             RuleType::Include => FilterRule::include(pattern.as_ref()),
@@ -74,11 +79,7 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
                 // encoder emits the anchor as a `/` modifier with a bare pattern,
                 // so this is a no-op for the oc<->oc wire and only normalises the
                 // `/`-in-body form a real upstream client sends.
-                let filename = wire_rule
-                    .pattern
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(wire_rule.pattern.as_str());
+                let filename = lossy.rsplit('/').next().unwrap_or(lossy.as_ref());
                 let mut config = DirMergeConfig::new(filename);
                 if wire_rule.no_inherit {
                     config = config.with_inherit(false);
@@ -143,7 +144,7 @@ mod tests {
     fn dir_merge_wire_pattern_yields_basename_filename() {
         let wire = vec![FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: "/.rsync-filter".to_string(),
+            pattern: "/.rsync-filter".into(),
             ..FilterRuleWireFormat::default()
         }];
 
@@ -168,7 +169,7 @@ mod tests {
     fn dir_merge_bare_pattern_is_unchanged() {
         let wire = vec![FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rsync-filter".to_string(),
+            pattern: ".rsync-filter".into(),
             anchored: true,
             ..FilterRuleWireFormat::default()
         }];

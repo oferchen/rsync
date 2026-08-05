@@ -32,7 +32,7 @@ fn colon_c_bare_modifier_emits_cvsignore_default_over_lsh() {
     let protocol = ProtocolVersion::from_supported(32).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         ..FilterRuleWireFormat::default()
     };
@@ -72,7 +72,7 @@ fn colon_c_bare_modifier_wire_format_stable_at_v29() {
     let protocol = ProtocolVersion::from_supported(29).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::DirMerge,
-        pattern: ".cvsignore".to_owned(),
+        pattern: ".cvsignore".into(),
         cvs_exclude: true,
         ..FilterRuleWireFormat::default()
     };

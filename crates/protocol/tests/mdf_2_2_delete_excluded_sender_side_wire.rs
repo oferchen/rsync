@@ -37,7 +37,7 @@ fn delete_excluded_merge_exclude_wire_emits_sender_side_prefix() {
     let protocol = ProtocolVersion::from_supported(32).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.tmp".to_owned(),
+        pattern: "*.tmp".into(),
         sender_side: true,
         ..FilterRuleWireFormat::default()
     };
@@ -78,7 +78,7 @@ fn merge_exclude_without_delete_excluded_emits_bare_prefix() {
     let protocol = ProtocolVersion::from_supported(32).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.tmp".to_owned(),
+        pattern: "*.tmp".into(),
         ..FilterRuleWireFormat::default()
     };
 
@@ -105,7 +105,7 @@ fn delete_excluded_does_not_flip_include_rule_wire_format() {
     let protocol = ProtocolVersion::from_supported(32).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::Include,
-        pattern: "*.keep".to_owned(),
+        pattern: "*.keep".into(),
         ..FilterRuleWireFormat::default()
     };
 
@@ -136,7 +136,7 @@ fn explicit_receiver_side_rule_unaffected_by_delete_excluded() {
     let protocol = ProtocolVersion::from_supported(32).unwrap();
     let rule = FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
-        pattern: "*.tmp".to_owned(),
+        pattern: "*.tmp".into(),
         receiver_side: true,
         ..FilterRuleWireFormat::default()
     };

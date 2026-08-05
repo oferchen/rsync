@@ -68,8 +68,11 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
     // upstream: exclude.c:1538 - only emit "- " when the pattern would otherwise
     // be ambiguous with another prefix; else send the bare pattern (legal_len = 0).
     if matches!(rule.rule_type, RuleType::Exclude) {
-        let pat = &rule.pattern;
-        let needs_prefix = (pat.starts_with("- ") || pat.starts_with("+ "))
+        // `as_encoded_bytes()` preserves ASCII bytes verbatim on every platform,
+        // so probing the ASCII `"- "`/`"+ "` prefixes on the raw bytes is sound
+        // even for a non-UTF-8 pattern body.
+        let pat = rule.pattern.as_encoded_bytes();
+        let needs_prefix = (pat.starts_with(b"- ") || pat.starts_with(b"+ "))
             || matches!(
                 rule.rule_type,
                 RuleType::Protect | RuleType::Risk | RuleType::Merge | RuleType::Clear
@@ -232,7 +235,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".rules".to_owned(),
+            pattern: ".rules".into(),
             anchored: true,
             ..FilterRuleWireFormat::default()
         };
@@ -268,7 +271,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
-            pattern: ".cvsignore".to_owned(),
+            pattern: ".cvsignore".into(),
             cvs_exclude: true,
             no_inherit: true,
             word_split: true,
@@ -391,7 +394,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Protect,
-            pattern: "important".to_owned(),
+            pattern: "important".into(),
             receiver_side: true,
             ..FilterRuleWireFormat::default()
         };
@@ -407,7 +410,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Risk,
-            pattern: "scratch".to_owned(),
+            pattern: "scratch".into(),
             receiver_side: true,
             ..FilterRuleWireFormat::default()
         };
