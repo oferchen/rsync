@@ -179,4 +179,38 @@ mod tests {
         assert_eq!(merge_configs.len(), 1);
         assert_eq!(merge_configs[0].filename(), ".rsync-filter");
     }
+
+    /// End-to-end: a `:C` dir-merge as an UPSTREAM peer emits it must yield a
+    /// non-inheriting per-directory merge config on the receiver. Upstream's
+    /// `parse_rule_tok` case `C` sets NO_INHERIT (exclude.c:1248-1255), and this
+    /// receiver gates `DirMergeConfig::with_inherit(false)` on `wire_rule.no_inherit`.
+    /// Before the wire parser re-derived the `C`-implied flags, `no_inherit` came
+    /// back unset and the config inherited into subdirectories - dropping the CVS
+    /// no-inherit semantics for a real upstream `:C`. Decode the raw `:C` bytes
+    /// (exercising the parser) and confirm the built config does not inherit.
+    #[test]
+    fn upstream_colon_c_dir_merge_yields_non_inheriting_config() {
+        let protocol = protocol::ProtocolVersion::from_supported(32).unwrap();
+        // Wire record an upstream peer emits for a CVS per-directory merge.
+        let payload: &[u8] = b":C .cvsignore";
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as i32).to_le_bytes());
+        buf.extend_from_slice(payload);
+        buf.extend_from_slice(&0i32.to_le_bytes());
+
+        let wire = protocol::filters::read_filter_list(&mut &buf[..], protocol)
+            .expect("`:C` record decodes");
+        assert_eq!(wire.len(), 1);
+        assert!(wire[0].cvs_exclude, "`C` bit decoded");
+        assert!(wire[0].no_inherit, "`C` re-derives no-inherit on decode");
+
+        let (_set, merge_configs) =
+            parse_wire_filters_for_receiver(&wire).expect("dir-merge rule parses");
+        assert_eq!(merge_configs.len(), 1);
+        assert_eq!(merge_configs[0].filename(), ".cvsignore");
+        assert!(
+            !merge_configs[0].inherits(),
+            "an upstream `:C` merge must NOT inherit into subdirectories",
+        );
+    }
 }
