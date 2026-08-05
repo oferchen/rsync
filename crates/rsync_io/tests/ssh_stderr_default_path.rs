@@ -35,7 +35,7 @@ fn default_pipe_path_surfaces_child_stderr() {
     // An empty host suppresses the SSH target operand so the spawned
     // argv is exactly `/bin/sh -c 'echo hi >&2; exit 0'`. Setting the
     // program to `/bin/sh` also disables every SSH-only flag
-    // (`-oBatchMode=yes`, keepalive, ConnectTimeout, etc.).
+    // (keepalive, ConnectTimeout, etc.).
     let mut builder = SshCommand::new("");
     builder
         .set_program("/bin/sh")

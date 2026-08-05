@@ -75,7 +75,6 @@ pub struct SshCommand {
     user: Option<OsString>,
     host: OsString,
     port: Option<u16>,
-    batch_mode: bool,
     bind_address: Option<IpAddr>,
     address_family: Option<SshAddressFamily>,
     blocking_io: Option<bool>,
@@ -99,7 +98,6 @@ impl SshCommand {
             user: None,
             host: host.into(),
             port: None,
-            batch_mode: true,
             bind_address: None,
             address_family: None,
             blocking_io: None,
@@ -170,12 +168,6 @@ impl SshCommand {
     /// and is set to `1`/`0` by `--blocking-io`/`--no-blocking-io`.
     pub const fn set_blocking_io(&mut self, blocking: Option<bool>) -> &mut Self {
         self.blocking_io = blocking;
-        self
-    }
-
-    /// Enables or disables batch mode (default: enabled).
-    pub const fn set_batch_mode(&mut self, enabled: bool) -> &mut Self {
-        self.batch_mode = enabled;
         self
     }
 
@@ -506,17 +498,11 @@ impl SshCommand {
             2 + self.options.len() + self.remote_command.len() + usize::from(self.port.is_some()),
         );
 
-        // Inject `-oBatchMode=yes` only when the program looks like an SSH
-        // client. Upstream rsync does not inject SSH-specific options into a
-        // user-supplied `--rsh` / `-e` wrapper, and neither do we for any
-        // other SSH option (keepalive, ConnectTimeout, AES-GCM ciphers,
-        // ProxyJump). A non-SSH wrapper would otherwise receive
-        // `-oBatchMode=yes` as a positional argument and either reject it or
-        // silently consume it in place of the host argument.
-        if self.batch_mode && self.is_ssh_program() {
-            args.push(OsString::from("-oBatchMode=yes"));
-        }
-
+        // upstream: main.c do_cmd()/piped_child spawns ssh with no BatchMode;
+        // ssh prompts for the key passphrase (or host-key confirmation) on
+        // /dev/tty itself. Injecting `-oBatchMode=yes` would suppress those
+        // prompts and break interactive key-based auth, so we mirror upstream
+        // and inject nothing here.
         if let Some(port) = self.port {
             args.push(OsString::from("-p"));
             args.push(OsString::from(port.to_string()));
