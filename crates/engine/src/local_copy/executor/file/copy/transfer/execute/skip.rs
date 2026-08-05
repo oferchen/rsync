@@ -10,8 +10,6 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use logging::debug_log;
-
 use ::metadata::MetadataOptions;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -113,7 +111,6 @@ pub(super) fn try_skip_up_to_date(
         existing,
         flags,
         mode,
-        "already up-to-date",
     )?;
 
     Ok(true)
@@ -138,15 +135,7 @@ pub(super) fn record_metadata_only_skip(
     flags: &TransferFlags,
     #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
     mode: LocalCopyExecution,
-    reason: &str,
 ) -> Result<(), LocalCopyError> {
-    debug_log!(
-        Deltasum,
-        2,
-        "skipping {}: {}",
-        record_path.display(),
-        reason
-    );
     // upstream: rsync.c:672-676 - rprintf(FCLIENT, "%s is uptodate\n", fname)
     // at INFO_GTE(NAME, 2) when a quick-check or content-equal path reuses
     // the existing destination instead of transferring. The CLI renders this
