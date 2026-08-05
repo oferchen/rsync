@@ -22,7 +22,8 @@
 /// - [`generate_delta`] is the high-level convenience wrapper around
 ///   [`DeltaGenerator`].
 pub use matching::{
-    DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta,
+    DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, ProbeCounters, apply_delta,
+    generate_delta,
 };
 
 /// Signature-layout primitives mirroring upstream `generator.c:sum_sizes_sqroot()`.
