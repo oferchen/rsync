@@ -3,6 +3,7 @@
 //! Orchestrates the transfer lifecycle by configuring server infrastructure,
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,7 +46,7 @@ pub(crate) fn run_pull_transfer(
     reader: &mut DaemonStreamReader,
     writer: &mut DaemonStreamWriter,
     _guard: DaemonStreamGuard,
-    local_paths: &[String],
+    local_paths: &[OsString],
     implied_source_args: &[String],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
@@ -167,7 +168,7 @@ pub(crate) fn run_push_transfer(
     reader: &mut DaemonStreamReader,
     writer: &mut DaemonStreamWriter,
     _guard: DaemonStreamGuard,
-    local_paths: &[String],
+    local_paths: &[OsString],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
     buffered: Vec<u8>,
