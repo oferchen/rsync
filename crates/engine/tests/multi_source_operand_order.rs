@@ -244,3 +244,63 @@ fn reordering_does_not_change_destination_contents() {
         "destination contents are independent of operand visit order",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Known divergences NOT addressed by the operand sort, pinned as ignored specs
+// so they stay tracked rather than silently masked. Each encodes upstream's
+// exact behaviour and is ready to un-ignore when its dedicated follow-up lands.
+// ---------------------------------------------------------------------------
+
+/// KNOWN DIVERGENCE (tracked, ignored): copy-contents (trailing-slash) sources
+/// merging into one destination. Upstream flattens every operand's CONTENTS
+/// into one flist and sorts globally, interleaving files across operands by
+/// content name (`aaa, mmm, zzz` below); oc processes each operand's contents
+/// contiguously (`aaa, zzz, mmm`). Ordering the operands cannot reproduce a
+/// cross-operand interleave, so this needs a local-copy flist-collect refactor
+/// and is deliberately out of scope for the named-operand sort. Un-ignore when
+/// that refactor lands.
+#[test]
+#[ignore = "known divergence: copy-contents multi-source content interleave \
+            needs a local-copy flist-collect refactor (separate follow-up)"]
+fn copy_contents_multi_source_interleave_matches_upstream() {
+    let temp = tempdir().expect("tempdir");
+    let dst = temp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    fs::create_dir_all(temp.path().join("asrc")).unwrap();
+    fs::create_dir_all(temp.path().join("zsrc")).unwrap();
+    for f in ["aaa", "zzz"] {
+        fs::write(temp.path().join("asrc").join(f), f.as_bytes()).unwrap();
+    }
+    fs::write(temp.path().join("zsrc").join("mmm"), b"mmm").unwrap();
+
+    // Both sources are copy-contents (trailing slash), given asrc then zsrc.
+    let operands = vec![
+        format!("{}/", temp.path().join("asrc").display()).into(),
+        format!("{}/", temp.path().join("zsrc").display()).into(),
+        dst.clone().into_os_string(),
+    ];
+
+    let report = apply(
+        &operands,
+        LocalCopyOptions::default()
+            .recursive(true)
+            .collect_events(true),
+    );
+
+    // Upstream 3.4.4 interleaves by content name across the two operands.
+    assert_eq!(
+        emitted_entry_order(report.records()),
+        vec!["aaa", "mmm", "zzz"],
+        "copy-contents sources must interleave globally by content name",
+    );
+}
+
+// KNOWN DIVERGENCE (tracked, not tested here): multi-source `--delete` timing.
+// With copy-contents directory sources under `--delete`, upstream removes an
+// extraneous destination entry BEFORE it transfers the sources (the `*deleting`
+// row precedes the `>f` rows), whereas oc runs its delete pass at the end so the
+// deletion trails the transfers. The operand sort deliberately does not move the
+// delete pass (the deletion keep-set is order-independent, so results are
+// unchanged). This timing is a separate investigate-and-fix follow-up; it is
+// noted here rather than tested because it only arises with copy-contents
+// sources, which are themselves out of scope above.
