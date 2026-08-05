@@ -23,7 +23,9 @@ use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
 
 use core::client::remote::invocation::{RemoteInvocationBuilder, RemoteRole};
-use core::client::{BandwidthLimit, ClientConfig, TransferTimeout};
+use core::client::{
+    BandwidthLimit, ClientConfig, IconvSetting, StrongChecksumChoice, TransferTimeout,
+};
 
 use super::flags::parse_server_long_flags;
 use super::parse::parse_server_flag_string_and_args;
@@ -177,4 +179,134 @@ fn broad_flag_mix_never_leaks_positionals() {
     // Receiver (PULL): bwlimit/block-size/timeout still emit. Multi-path exercises
     // the `.` separator and back-to-back paths.
     assert_no_positional_leak(&config, RemoteRole::Receiver, &["/remote/a", "/remote/b"]);
+}
+
+// ---------------------------------------------------------------------------
+// VALUE round-trip: not just "the flag did not leak" but "the value the parser
+// captures is exactly the value the builder emitted". The presence guards above
+// (and #7160) prove the token reaches the server parser; these prove the VALUE
+// survives the emit->parse chain so a value-mangling regression fails here.
+//
+// The comparison is always parsed-vs-EMITTED (extracted from the same argv),
+// never parsed-vs-raw-builder-input, because several options transform on the
+// way out: --bwlimit scales bytes/sec to whole KiB, --iconv forwards only the
+// remote charset, --info/--debug are role-filtered and level-1 is emitted bare.
+// Comparing against the emitted token captures the true wire contract.
+// ---------------------------------------------------------------------------
+
+/// Returns the value of the joined `--flag=value` server arg the builder
+/// emitted, panicking if the flag was not forwarded for this config/role (so a
+/// test expecting emission fails loudly rather than passing vacuously).
+fn emitted_joined_value(built: &[OsString], prefix: &str) -> String {
+    built
+        .iter()
+        .find_map(|arg| arg.to_str()?.strip_prefix(prefix).map(str::to_owned))
+        .unwrap_or_else(|| panic!("expected the builder to emit `{prefix}...`: {built:?}"))
+}
+
+#[test]
+fn bwlimit_value_round_trips_through_the_server_parser() {
+    // upstream: options.c:2799 - `--bwlimit=%d` in whole KiB. server_option_kib()
+    // scales bytes/sec to KiB, so 4 MiB/s emits 4096; the parser must capture
+    // that KiB string, not the byte count.
+    let config = ClientConfig::builder()
+        .bandwidth_limit(Some(BandwidthLimit::from_bytes_per_second(
+            NonZeroU64::new(4 * 1024 * 1024).unwrap(),
+        )))
+        .build();
+
+    for role in [RemoteRole::Sender, RemoteRole::Receiver] {
+        let built = server_argv(&config, role, &["/remote/path"]);
+        let emitted = emitted_joined_value(&built, "--bwlimit=");
+        assert_eq!(
+            emitted, "4096",
+            "4 MiB/s must emit 4096 whole KiB on {role:?}"
+        );
+        let long = parse_server_long_flags(&built[1..]);
+        assert_eq!(
+            long.bwlimit.as_deref(),
+            Some(emitted.as_str()),
+            "parsed --bwlimit must equal the emitted KiB value on {role:?}: {built:?}"
+        );
+    }
+}
+
+#[test]
+fn checksum_choice_value_round_trips_through_the_server_parser() {
+    // upstream: options.c:2816 safe_arg("--checksum-choice", ...) joins with `=`
+    // to `--checksum-choice=<algo>`, emitted only when the choice is non-Auto.
+    let config = ClientConfig::builder()
+        .checksum_choice(StrongChecksumChoice::parse("md5").unwrap())
+        .build();
+
+    for role in [RemoteRole::Sender, RemoteRole::Receiver] {
+        let built = server_argv(&config, role, &["/remote/path"]);
+        let emitted = emitted_joined_value(&built, "--checksum-choice=");
+        let long = parse_server_long_flags(&built[1..]);
+        assert_eq!(
+            long.checksum_choice.as_deref(),
+            Some(emitted.as_str()),
+            "parsed --checksum-choice must equal the emitted value on {role:?}: {built:?}"
+        );
+    }
+}
+
+#[test]
+fn iconv_value_round_trips_and_forwards_the_remote_charset_only() {
+    // upstream: options.c:2735-2740 - the client forwards the REMOTE charset (the
+    // part after the comma) as `--iconv=<remote>`, not both halves. safe_arg
+    // joins with `=`, so `--iconv=utf-8,latin1` forwards `latin1`. The parser
+    // must capture exactly that forwarded value.
+    let config = ClientConfig::builder()
+        .iconv(IconvSetting::parse("utf-8,latin1").unwrap())
+        .build();
+
+    for role in [RemoteRole::Sender, RemoteRole::Receiver] {
+        let built = server_argv(&config, role, &["/remote/path"]);
+        let emitted = emitted_joined_value(&built, "--iconv=");
+        assert_eq!(emitted, "latin1", "only the remote charset is forwarded");
+        let long = parse_server_long_flags(&built[1..]);
+        assert_eq!(
+            long.iconv.as_deref(),
+            Some(emitted.as_str()),
+            "parsed --iconv must equal the emitted remote charset on {role:?}: {built:?}"
+        );
+    }
+}
+
+#[test]
+fn info_value_round_trips_for_a_role_surviving_category() {
+    // upstream: options.c:354 make_output_option() role-filters the words; `del`
+    // is receiver-side (W_REC), so on a PUSH (peer is the receiver) it survives
+    // and level-1 emits bare as `--info=del`. The parser captures the whole
+    // comma-joined value as one token.
+    let config = ClientConfig::builder().info_flags(["del1"]).build();
+
+    let built = server_argv(&config, RemoteRole::Sender, &["/remote/path"]);
+    let emitted = emitted_joined_value(&built, "--info=");
+    assert_eq!(emitted, "del", "level-1 del emits bare on push");
+    let long = parse_server_long_flags(&built[1..]);
+    assert_eq!(
+        long.info,
+        vec![OsString::from(&emitted)],
+        "parsed --info must equal the emitted value: {built:?}"
+    );
+}
+
+#[test]
+fn debug_value_round_trips_for_a_role_surviving_category() {
+    // upstream: options.c:354 - the `io` debug category survives on a PULL and
+    // keeps its non-default level digit, emitting `--debug=io2`. The parser
+    // captures the whole value as one token.
+    let config = ClientConfig::builder().debug_flags(["io2"]).build();
+
+    let built = server_argv(&config, RemoteRole::Receiver, &["/remote/path"]);
+    let emitted = emitted_joined_value(&built, "--debug=");
+    assert_eq!(emitted, "io2", "io2 keeps its level digit on pull");
+    let long = parse_server_long_flags(&built[1..]);
+    assert_eq!(
+        long.debug,
+        vec![OsString::from(&emitted)],
+        "parsed --debug must equal the emitted value: {built:?}"
+    );
 }
