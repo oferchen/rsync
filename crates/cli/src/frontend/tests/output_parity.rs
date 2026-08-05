@@ -71,11 +71,12 @@ fn render_stats_at_level(
         false,
         human_readable,
         false,
-        false, // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        false,                               // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render stats");
@@ -99,11 +100,12 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,  // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        true,                                // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render verbose");
@@ -143,11 +145,12 @@ fn info_name_only_suppresses_stats_footer() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false, // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        false,                               // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render");
@@ -540,11 +543,12 @@ fn parity_totals_only_without_stats_flag() {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,  // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        true,                                // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render");
@@ -811,11 +815,12 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,  // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        true,                                // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut rendered,
     )
     .expect("render");

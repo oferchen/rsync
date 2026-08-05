@@ -10,14 +10,14 @@ use core::{
     },
     message::Message,
 };
-use logging::{InfoFlag, LogCode, info_gte};
+use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, info_gte};
 use logging_sink::{MessageSink, logfile::LogFileWriter};
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
-        LiveProgress, NameOutputLevel, ProgressMode, ProgressOutputConfig, StderrMode,
-        emit_transfer_summary,
+        DeltaTransmissionState, DeltaTransmissionSummary, LiveProgress, NameOutputLevel,
+        ProgressMode, ProgressOutputConfig, StderrMode, emit_transfer_summary,
     },
 };
 
@@ -152,6 +152,31 @@ where
     // the collected events - still gets the banner from this deferred path.
     let emit_flist_banner =
         config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull() && !is_sender;
+    // A pure-local copy (no remote operand): `is_local_sender()` reports false
+    // for the local `local_server` case and `is_pull()` is false, so their
+    // conjunction uniquely identifies the in-process local-copy path whose
+    // generator/sender diagnostics oc renders post-hoc.
+    let is_local_transfer = !config.is_pull() && !is_sender;
+    // upstream: main.c:650-653 forces whole_file=1 for a local transfer unless
+    // the user passed --[no-]whole-file; the local-copy default is therefore
+    // whole-file. This decides the `delta-transmission` wording and gates the
+    // `total:` line (whose zero match counts are only provable in whole-file
+    // mode).
+    let whole_file = config.whole_file();
+    // upstream: generator.c:2291-2294 + match.c:439-446 - the delta-transmission
+    // notice fires at DEBUG_GTE(FLIST, 1) and the match_report `total:` line at
+    // DEBUG_GTE(DELTASUM, 1); both first activate at -vv and honour --debug
+    // overrides. Only wire them for the local-copy path (see #170); network
+    // transfers emit them live from the generator/sender.
+    let delta_state = if whole_file {
+        DeltaTransmissionState::Disabled
+    } else {
+        DeltaTransmissionState::Enabled
+    };
+    let delta_notice = DeltaTransmissionSummary {
+        notice: (is_local_transfer && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
+        emit_total: is_local_transfer && whole_file && debug_gte(DebugFlag::Deltasum, 1),
+    };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
@@ -218,6 +243,7 @@ where
                     human_readable_mode,
                     suppress_updated_only_totals,
                     emit_flist_banner,
+                    delta_notice,
                     show_copy_method,
                     show_atimes,
                     show_crtimes,
@@ -395,6 +421,10 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         human_readable_mode,
         false,
         false,
+        // The delta-transmission notice and match_report `total:` line are
+        // stdout-only diagnostics (upstream FINFO); the log file is fed from the
+        // FLOG queue above, so suppress them here.
+        DeltaTransmissionSummary::default(),
         // The `Copy method` line is a stdout-only `--info=copy` nicety; keep it
         // out of the log file.
         false,

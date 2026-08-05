@@ -375,6 +375,75 @@ fn level_2_includes_summary_totals() {
     );
 }
 
+/// Pins the ordering of the two generator/sender diagnostics that bracket the
+/// per-file name list on a `-vv` local transfer, matching upstream rsync 3.4.4:
+///
+/// ```text
+/// sending incremental file list
+/// delta-transmission disabled for local transfer or --whole-file
+/// <name list>
+/// total: matches=0  hash_hits=0  false_alarms=0 data=<literal bytes>
+///
+/// sent ... bytes  received ... bytes  ...
+/// ```
+///
+/// upstream: generator.c:2291-2294 prints the delta-transmission notice at
+/// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:439-446
+/// `match_report()` prints the `total:` line at `DEBUG_GTE(DELTASUM, 1)` after
+/// `send_files()` and before `output_summary()`. Both first activate at `-vv`.
+/// Fails before the fix, which emitted the notice dead-last (after the summary)
+/// and omitted the `total:` line entirely.
+#[test]
+fn level_2_local_brackets_name_list_with_delta_and_total() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("src");
+    let destination = tmp.path().join("dst");
+    std::fs::create_dir(&source).expect("mkdir src");
+    // Deterministic literal-byte total: 6 + 11 = 17 bytes copied whole-file.
+    std::fs::write(source.join("a.txt"), b"hello\n").expect("write a");
+    std::fs::write(source.join("b.txt"), b"worldworld\n").expect("write b");
+
+    let mut src_arg = source.clone().into_os_string();
+    src_arg.push("/");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from("-vv"),
+        src_arg,
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    let rendered = String::from_utf8(stdout).expect("utf8");
+
+    let delta = rendered
+        .find("delta-transmission disabled for local transfer or --whole-file")
+        .unwrap_or_else(|| panic!("missing delta-transmission notice, got: {rendered:?}"));
+    let total = rendered
+        .find("total: matches=0  hash_hits=0  false_alarms=0 data=17")
+        .unwrap_or_else(|| panic!("missing or malformed total: line, got: {rendered:?}"));
+    let first_name = rendered
+        .find("a.txt")
+        .unwrap_or_else(|| panic!("missing name list, got: {rendered:?}"));
+    let last_name = rendered
+        .rfind("b.txt")
+        .unwrap_or_else(|| panic!("missing name list, got: {rendered:?}"));
+    let sent = rendered
+        .find("\nsent ")
+        .unwrap_or_else(|| panic!("missing summary trailer, got: {rendered:?}"));
+
+    assert!(
+        delta < first_name,
+        "delta-transmission notice must precede the name list, got: {rendered:?}"
+    );
+    assert!(
+        last_name < total && total < sent,
+        "total: line must follow the name list and precede the summary trailer, got: {rendered:?}"
+    );
+}
+
 /// Verifies that -vvv produces output that is at least as verbose as -vv.
 /// It should still contain the descriptor prefix and totals.
 #[test]
