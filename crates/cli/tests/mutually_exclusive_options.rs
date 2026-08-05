@@ -282,13 +282,41 @@ fn test_old_args_and_secluded_args_rejected() {
     );
 }
 
+#[cfg(feature = "embedded-ssh")]
 #[test]
 fn test_rsh_and_ssh_url_operand_rejected() {
     // oc-specific: `-e ssh` requests the external system ssh, but an `ssh://`
     // URL operand selects the built-in SSH client, which ignores --rsh. The
     // two pick mutually exclusive transports; historically `ssh://` silently
     // won and --rsh was dropped, running a transport the user did not ask for.
-    // The conflict surfaces at config-build time as RERR_SYNTAX (exit 1).
+    // The conflict surfaces at config-build time as RERR_SYNTAX (exit 1). Only
+    // under `embedded-ssh`: without it ssh:// has no transport and the clearer
+    // feature-unavailable diagnostic wins (see the companion test below).
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code = cli::run(
+        ["oc-rsync", "-e", "ssh", "ssh://host/path", "dest"],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    // #7123: the reworded message names both --rsh/-e and RSYNC_RSH.
+    assert!(
+        stderr_text.contains("a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) cannot be combined with an ssh:// URL operand"),
+        "stderr should explain the transport conflict and name RSYNC_RSH, got: {stderr_text}"
+    );
+}
+
+#[cfg(not(feature = "embedded-ssh"))]
+#[test]
+fn test_rsh_and_ssh_url_operand_reports_missing_embedded_ssh() {
+    // #7123: without the built-in SSH client, `ssh://` has no transport at all,
+    // so `-e ssh` (or an implicit RSYNC_RSH) with an `ssh://` operand must
+    // surface the "requires the embedded-ssh feature" diagnostic - NOT the -e
+    // conflict, which would blame an option the user may never have typed on a
+    // build that cannot do ssh:// regardless. Still RERR_SYNTAX (exit 1).
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let code = cli::run(
@@ -300,8 +328,12 @@ fn test_rsh_and_ssh_url_operand_rejected() {
     assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
     let stderr_text = String::from_utf8_lossy(&stderr);
     assert!(
-        stderr_text.contains("--rsh/-e cannot be combined with an ssh:// URL operand"),
-        "stderr should explain the transport conflict, got: {stderr_text}"
+        stderr_text.contains("ssh:// URLs require the built-in SSH client"),
+        "stderr should surface the embedded-ssh feature error, got: {stderr_text}"
+    );
+    assert!(
+        !stderr_text.contains("cannot be combined with an ssh:// URL operand"),
+        "the -e conflict must not pre-empt the feature error, got: {stderr_text}"
     );
 }
 

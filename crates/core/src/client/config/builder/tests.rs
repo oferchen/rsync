@@ -1361,18 +1361,34 @@ fn validate_default_builder_ok() {
     assert!(b.validate().is_ok());
 }
 
+#[cfg(feature = "embedded-ssh")]
 #[test]
 fn validate_rsh_with_ssh_url_operand_conflicts() {
     // oc-specific: `-e ssh` selects the external system ssh binary, but an
     // `ssh://` URL operand dispatches to the built-in SSH client, which never
     // consults --rsh. Silently dropping --rsh would run a different transport
     // than the user asked for, so the pair must be rejected as RERR_SYNTAX.
+    // Only under `embedded-ssh`: without it, ssh:// has no transport at all and
+    // the clearer "requires the embedded-ssh feature" diagnostic wins instead.
     let b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["ssh://host/path", "dest"]);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "rsh");
     assert_eq!(err.option2, "ssh-url-operand");
+}
+
+#[cfg(not(feature = "embedded-ssh"))]
+#[test]
+fn validate_rsh_with_ssh_url_operand_no_conflict_without_embedded_ssh() {
+    // #7123: without the built-in SSH client, an `ssh://` operand has no
+    // transport regardless of --rsh (or an implicit shell from RSYNC_RSH). The
+    // -e conflict must NOT pre-empt run_client's clearer "ssh:// requires the
+    // embedded-ssh feature" error, so validate() stays Ok here and defers.
+    let b = builder()
+        .set_remote_shell(["ssh"])
+        .transfer_args(["ssh://host/path", "dest"]);
+    assert!(b.validate().is_ok());
 }
 
 #[test]
@@ -1394,19 +1410,23 @@ fn validate_ssh_url_without_rsh_ok() {
     assert!(b.validate().is_ok());
 }
 
+#[cfg(feature = "embedded-ssh")]
 #[test]
 fn validate_rsh_ssh_url_conflict_message() {
-    // The message names the operand, not a second option, and points the user
-    // at the two ways to resolve it (host:path, or dropping --rsh).
+    // #7123: the message names both sources of the remote shell (--rsh/-e and
+    // the RSYNC_RSH environment variable) because the shell is often implicit,
+    // and points the user at every way to resolve it (unset RSYNC_RSH, drop
+    // --rsh, or use host:path for the external ssh).
     let b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["ssh://host/path", "dest"]);
     let err = b.validate().unwrap_err();
     assert_eq!(
         err.to_string(),
-        "--rsh/-e cannot be combined with an ssh:// URL operand \
-         (ssh:// uses the built-in SSH client); use host:path for an \
-         external ssh, or drop --rsh"
+        "a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) \
+         cannot be combined with an ssh:// URL operand (ssh:// uses the built-in \
+         SSH client); unset RSYNC_RSH or drop --rsh, or use a host:path source \
+         for the external ssh"
     );
 }
 

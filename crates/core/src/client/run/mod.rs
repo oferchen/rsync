@@ -1131,6 +1131,38 @@ mod run_client_tests {
         assert!(msg.contains("-e ssh"));
     }
 
+    /// #7123: an `ssh://` operand combined with a remote shell (e.g. an implicit
+    /// one from `RSYNC_RSH`) on a build without the built-in SSH client must
+    /// still surface the "requires the embedded-ssh feature" diagnostic - the
+    /// feature-availability error wins over the -e conflict (which is now gated
+    /// on `embedded-ssh` and so cannot pre-empt it here).
+    #[cfg(not(feature = "embedded-ssh"))]
+    #[test]
+    fn run_client_ssh_url_with_remote_shell_reports_missing_embedded_ssh() {
+        use crate::client::error::FEATURE_UNAVAILABLE_EXIT_CODE;
+
+        let error = run_client(
+            ClientConfig::builder()
+                .set_remote_shell(["ssh"])
+                .transfer_args([
+                    std::ffi::OsString::from("ssh://user@localhost/src"),
+                    std::ffi::OsString::from("/tmp/oc-ssh-url-rsh-dest"),
+                ])
+                .build(),
+        )
+        .expect_err("ssh:// + remote shell without embedded-ssh must error");
+
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let msg = error.to_string();
+        assert!(
+            msg.contains("ssh:// URLs require the built-in SSH client"),
+            "expected the embedded-ssh diagnostic, got: {msg}"
+        );
+        // Must NOT be the -e conflict, which would blame an option the user may
+        // never have typed (RSYNC_RSH) on a build that cannot do ssh:// anyway.
+        assert!(!msg.contains("cannot be combined with an ssh:// URL operand"));
+    }
+
     #[test]
     fn run_client_update_skips_newer_destination() {
         use filetime::{FileTime, set_file_times};

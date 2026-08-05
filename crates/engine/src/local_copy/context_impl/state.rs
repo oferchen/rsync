@@ -178,7 +178,6 @@ impl<'a> CopyContext<'a> {
             batch_token_encoder,
             readdir_buf: Vec::new(),
             adaptive_level,
-            delta_match_report: DeltaMatchReport::default(),
         }
     }
 
