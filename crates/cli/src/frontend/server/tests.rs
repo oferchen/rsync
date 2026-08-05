@@ -2453,7 +2453,7 @@ fn client_build_to_server_parse_round_trip() {
     ];
 
     for (role, config) in &matrix {
-        let full = RemoteInvocationBuilder::new(config, *role).build("dest");
+        let full = RemoteInvocationBuilder::new(config, *role).build(std::ffi::OsStr::new("dest"));
         // run.rs feeds the parser everything after the program name.
         let joined_argv: Vec<OsString> = full[1..].to_vec();
 

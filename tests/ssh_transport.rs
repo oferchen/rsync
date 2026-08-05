@@ -310,7 +310,7 @@ fn test_transfer_role_detection() {
             assert_eq!(local_dest, "local.txt");
             assert_eq!(
                 remote_sources,
-                RemoteOperands::Single("host:remote.txt".to_string())
+                RemoteOperands::Single(OsString::from("host:remote.txt"))
             );
         }
         _ => panic!("Expected Pull transfer"),
@@ -366,7 +366,7 @@ fn test_remote_invocation_builder() {
         .build();
 
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
@@ -389,7 +389,7 @@ fn test_remote_invocation_builder() {
 
     // Test receiver (pull) invocation — SHOULD have --sender flag
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
@@ -447,7 +447,7 @@ fn test_remote_invocation_with_custom_rsync_path() {
 
     // Build invocation for sender (push) role — no --sender flag
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     // First argument should be the custom rsync path, not "rsync"
     assert_eq!(args[0].to_string_lossy(), "/usr/local/bin/rsync");
@@ -468,7 +468,7 @@ fn test_remote_invocation_with_default_rsync_path() {
 
     // Build invocation for sender role
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     // First argument should be default "rsync"
     assert_eq!(args[0].to_string_lossy(), "rsync");
@@ -499,9 +499,9 @@ fn test_multiple_sources_same_host() {
             assert_eq!(
                 remote_sources,
                 RemoteOperands::Multiple(vec![
-                    "host:/file1".to_string(),
-                    "host:/file2".to_string(),
-                    "host:/dir/file3".to_string(),
+                    OsString::from("host:/file1"),
+                    OsString::from("host:/file2"),
+                    OsString::from("host:/dir/file3"),
                 ])
             );
         }
@@ -532,8 +532,8 @@ fn test_multiple_sources_with_user_same_host() {
             assert_eq!(
                 remote_sources,
                 RemoteOperands::Multiple(vec![
-                    "user@host:/file1".to_string(),
-                    "user@host:/file2".to_string(),
+                    OsString::from("user@host:/file1"),
+                    OsString::from("user@host:/file2"),
                 ])
             );
         }
@@ -628,7 +628,7 @@ fn test_single_remote_source_returns_single_variant() {
             assert_eq!(local_dest, "local/");
             assert_eq!(
                 remote_sources,
-                RemoteOperands::Single("host:/single/file".to_string())
+                RemoteOperands::Single(OsString::from("host:/single/file"))
             );
         }
         _ => panic!("Expected Pull transfer"),
@@ -642,7 +642,11 @@ fn test_remote_invocation_with_multiple_paths() {
 
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build_with_paths(&["/path1", "/path2", "/path3"]);
+    let args = builder.build_with_paths(&[
+        std::ffi::OsStr::new("/path1"),
+        std::ffi::OsStr::new("/path2"),
+        std::ffi::OsStr::new("/path3"),
+    ]);
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");

@@ -19,7 +19,7 @@
 //! - `main.c:do_cmd()` - SSH fork/exec and pipe setup (replaced by russh)
 //! - `main.c:client_run()` - Role dispatch after SSH connection
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -108,14 +108,18 @@ pub fn run_embedded_ssh_transfer(
 /// Executes a push transfer (local -> remote) via embedded SSH.
 fn run_embedded_push(
     config: &ClientConfig,
-    remote_dest: &str,
-    local_sources: &[String],
+    remote_dest: &OsStr,
+    local_sources: &[OsString],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    let (ssh_config, remote_path) = parse_ssh_url(remote_dest, config)?;
+    // The embedded transport only handles `ssh://` operands (see the dispatch
+    // in `run/mod.rs`), whose URL grammar is ASCII/percent-encoded, so the
+    // lossy view is exact here. Raw-byte remote paths ride the `host:path`
+    // subprocess path (`ssh_transfer`) instead.
+    let (ssh_config, remote_path) = parse_ssh_url(&remote_dest.to_string_lossy(), config)?;
     let invocation_builder = RemoteInvocationBuilder::new(config, RemoteRole::Sender);
-    let secluded = invocation_builder.build_secluded(&[&remote_path]);
+    let secluded = invocation_builder.build_secluded(&[OsStr::new(&remote_path)]);
 
     let mut server_config = build_server_config_for_generator(config, local_sources)?;
     server_config.connection.client_mode = true;
@@ -141,12 +145,12 @@ fn run_embedded_push(
 fn run_embedded_pull(
     config: &ClientConfig,
     remote_sources: &RemoteOperands,
-    local_dest: &str,
+    local_dest: &OsStr,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let (ssh_config, paths) = parse_remote_operands_urls(remote_sources, config)?;
-    let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let path_refs: Vec<&OsStr> = paths.iter().map(OsStr::new).collect();
     let invocation_builder = RemoteInvocationBuilder::new(config, RemoteRole::Receiver);
     let secluded = invocation_builder.build_secluded(&path_refs);
 
@@ -210,7 +214,7 @@ fn parse_remote_operands_urls(
 ) -> Result<(SshConfig, Vec<String>), ClientError> {
     match operands {
         RemoteOperands::Single(url) => {
-            let (ssh_config, path) = parse_ssh_url(url, config)?;
+            let (ssh_config, path) = parse_ssh_url(&url.to_string_lossy(), config)?;
             Ok((ssh_config, vec![path]))
         }
         RemoteOperands::Multiple(urls) => {
@@ -218,7 +222,7 @@ fn parse_remote_operands_urls(
             let mut paths = Vec::with_capacity(urls.len());
 
             for url in urls {
-                let (cfg, path) = parse_ssh_url(url, config)?;
+                let (cfg, path) = parse_ssh_url(&url.to_string_lossy(), config)?;
                 if let Some(ref existing) = ssh_config {
                     let existing: &SshConfig = existing;
                     if cfg.host != existing.host
@@ -321,7 +325,7 @@ fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
 fn run_transfer_over_embedded_ssh(
     ssh_config: SshConfig,
     invocation_args: &[OsString],
-    stdin_args: &[String],
+    stdin_args: &[OsString],
     server_config: ServerConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_ctx: Option<super::batch_support::BatchContext>,
@@ -333,7 +337,9 @@ fn run_transfer_over_embedded_ssh(
     } else {
         let mut data = Vec::new();
         for arg in stdin_args {
-            data.extend_from_slice(arg.as_bytes());
+            // as_encoded_bytes is the raw filesystem bytes on Unix (a no-op
+            // conversion) so a non-UTF-8 remote path ships verbatim.
+            data.extend_from_slice(arg.as_encoded_bytes());
             data.push(0);
         }
         data.push(0);
@@ -482,10 +488,10 @@ impl TransferProgressCallback for ServerProgressAdapter<'_> {
 /// Builds server configuration for receiver role (pull transfer).
 fn build_server_config_for_receiver(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
@@ -652,10 +658,10 @@ fn build_server_config_for_receiver(
 /// from a recursive walk of the source operand.
 fn build_server_config_for_generator(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
@@ -726,7 +732,7 @@ mod tests {
             .link_destination("/prev")
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.reference_directories.len(), 2);
         assert_eq!(
@@ -760,7 +766,7 @@ mod tests {
             .backup_suffix(Some(".old"))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.backup);
         assert_eq!(server_config.backup_dir.as_deref(), Some("/bak"));
@@ -773,7 +779,7 @@ mod tests {
     fn embedded_receiver_config_without_backup_has_no_backup_dir() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.backup);
         assert!(server_config.backup_dir.is_none());
@@ -789,7 +795,7 @@ mod tests {
     fn embedded_receiver_config_propagates_ignore_existing() {
         let config = ClientConfig::builder().ignore_existing(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.file_selection.ignore_existing);
     }
@@ -799,7 +805,7 @@ mod tests {
     fn embedded_receiver_config_without_ignore_existing_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.file_selection.ignore_existing);
     }
@@ -817,7 +823,7 @@ mod tests {
             .chmod(Some(modifiers.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -828,7 +834,7 @@ mod tests {
     fn embedded_receiver_config_without_chmod_has_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -843,7 +849,7 @@ mod tests {
     fn embedded_receiver_config_propagates_list_only() {
         let config = ClientConfig::builder().list_only(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.list_only);
     }
@@ -858,7 +864,7 @@ mod tests {
     fn embedded_receiver_config_propagates_delay_updates() {
         let config = ClientConfig::builder().delay_updates(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.delay_updates);
     }
@@ -875,7 +881,7 @@ mod tests {
             .user_mapping(Some(mapping.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
@@ -889,7 +895,7 @@ mod tests {
             .group_mapping(Some(mapping.clone()))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.group_mapping.as_ref(), Some(&mapping));
     }
@@ -901,7 +907,7 @@ mod tests {
     fn embedded_receiver_config_propagates_fsync() {
         let config = ClientConfig::builder().fsync(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.fsync);
     }
@@ -913,7 +919,7 @@ mod tests {
     fn embedded_receiver_config_propagates_write_devices() {
         let config = ClientConfig::builder().write_devices(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.write.write_devices);
     }
@@ -924,7 +930,7 @@ mod tests {
     fn embedded_receiver_config_propagates_keep_dirlinks() {
         let config = ClientConfig::builder().keep_dirlinks(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.keep_dirlinks);
     }
@@ -936,7 +942,7 @@ mod tests {
     fn embedded_receiver_config_propagates_fuzzy_level() {
         let config = ClientConfig::builder().fuzzy_level(2).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(server_config.flags.fuzzy_level, 2);
     }
@@ -952,7 +958,7 @@ mod tests {
             .temp_directory(Some("/var/tmp/rsync"))
             .build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert_eq!(
             server_config.temp_dir.as_deref(),
@@ -965,7 +971,7 @@ mod tests {
     fn embedded_receiver_config_without_temp_dir_stays_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.temp_dir.is_none());
     }
@@ -980,7 +986,7 @@ mod tests {
     fn embedded_receiver_config_propagates_omit_dir_times() {
         let config = ClientConfig::builder().omit_dir_times(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.omit_dir_times);
     }
@@ -990,7 +996,7 @@ mod tests {
     fn embedded_receiver_config_without_omit_dir_times_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.omit_dir_times);
     }
@@ -1003,7 +1009,7 @@ mod tests {
     fn embedded_receiver_config_propagates_omit_link_times() {
         let config = ClientConfig::builder().omit_link_times(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.omit_link_times);
     }
@@ -1013,7 +1019,7 @@ mod tests {
     fn embedded_receiver_config_without_omit_link_times_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.omit_link_times);
     }
@@ -1026,7 +1032,7 @@ mod tests {
     fn embedded_receiver_config_propagates_preserve_executability() {
         let config = ClientConfig::builder().executability(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.preserve_executability);
     }
@@ -1036,7 +1042,7 @@ mod tests {
     fn embedded_receiver_config_without_preserve_executability_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.preserve_executability);
     }
@@ -1051,7 +1057,7 @@ mod tests {
     fn embedded_receiver_config_propagates_mkpath() {
         let config = ClientConfig::builder().mkpath(true).build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.flags.mkpath);
     }
@@ -1062,7 +1068,7 @@ mod tests {
     fn embedded_receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.mkpath);
     }
@@ -1073,7 +1079,7 @@ mod tests {
     fn embedded_receiver_config_without_receiver_only_flags_stays_clear() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(!server_config.flags.list_only);
         assert!(!server_config.write.delay_updates);
@@ -1098,7 +1104,7 @@ mod tests {
             .chmod(Some(modifiers.clone()))
             .build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
     }
@@ -1109,7 +1115,7 @@ mod tests {
     fn embedded_generator_config_without_chmod_has_none() {
         let config = ClientConfig::builder().build();
         let server_config =
-            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+            build_server_config_for_generator(&config, &[OsString::from("/tmp/source")]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }
@@ -1337,7 +1343,7 @@ mod tests {
     #[test]
     fn parse_remote_operands_single() {
         let config = ClientConfig::builder().build();
-        let operands = RemoteOperands::Single("ssh://user@host/~/data".to_owned());
+        let operands = RemoteOperands::Single(OsString::from("ssh://user@host/~/data"));
         let (ssh_config, paths) = parse_remote_operands_urls(&operands, &config).unwrap();
         assert_eq!(ssh_config.host, "host");
         assert_eq!(paths, vec!["~/data"]);
@@ -1347,8 +1353,8 @@ mod tests {
     fn parse_remote_operands_multiple_same_host() {
         let config = ClientConfig::builder().build();
         let operands = RemoteOperands::Multiple(vec![
-            "ssh://user@host/~/file1".to_owned(),
-            "ssh://user@host/~/file2".to_owned(),
+            OsString::from("ssh://user@host/~/file1"),
+            OsString::from("ssh://user@host/~/file2"),
         ]);
         let (ssh_config, paths) = parse_remote_operands_urls(&operands, &config).unwrap();
         assert_eq!(ssh_config.host, "host");
@@ -1359,8 +1365,8 @@ mod tests {
     fn parse_remote_operands_multiple_different_hosts_fails() {
         let config = ClientConfig::builder().build();
         let operands = RemoteOperands::Multiple(vec![
-            "ssh://user@host1/~/file1".to_owned(),
-            "ssh://user@host2/~/file2".to_owned(),
+            OsString::from("ssh://user@host1/~/file1"),
+            OsString::from("ssh://user@host2/~/file2"),
         ]);
         let result = parse_remote_operands_urls(&operands, &config);
         assert!(result.is_err());
