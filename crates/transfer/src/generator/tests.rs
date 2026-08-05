@@ -16,7 +16,7 @@ use crate::delta_apply::ChecksumVerifier;
 use crate::handshake::HandshakeResult;
 use crate::receiver::SumHead;
 use engine::delta::{DeltaScript, DeltaToken};
-use protocol::filters::FilterRuleWireFormat;
+use protocol::filters::{FilterRuleWireFormat, write_filter_list};
 use protocol::wire::{CompressedTokenEncoder, DeltaOp};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 use std::ffi::OsString;
@@ -6177,5 +6177,89 @@ fn server_sender_symlink_time_follows_receiver_l_capability_not_own_flag() {
         server_sender_symlink_time_glyph(with_l_no_flag, None),
         't',
         "server-sender tracks the receiver's 'L', independent of its own flag",
+    );
+}
+
+// -- server-sender CVS-exclude injection (compact `C`, upstream recv_filter_list) --
+
+/// Builds an empty client filter list on the wire at protocol 28 (raw, not
+/// multiplexed) so `receive_filter_list_if_server` reads zero client rules and
+/// then applies only whatever the server injects.
+fn empty_client_filter_list_v28() -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_filter_list(&mut buf, &[], ProtocolVersion::try_from(28u8).unwrap())
+        .expect("encode empty filter list");
+    buf
+}
+
+/// A server-side config at protocol 28 with the given role and `cvs_exclude`
+/// state, in server mode (not client_mode) so the server filter-receive path
+/// runs.
+fn cvs_server_config(role: ServerRole, cvs_exclude: bool) -> ServerConfig {
+    let mut config = test_config();
+    config.role = role;
+    config.protocol = ProtocolVersion::try_from(28u8).unwrap();
+    config.flag_string = "-logDtprC".to_owned();
+    config.flags.cvs_exclude = cvs_exclude;
+    config.connection.client_mode = false;
+    config
+}
+
+fn receive_empty_list(config: ServerConfig) -> GeneratorContext {
+    let handshake = test_handshake_with_protocol(28);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    let buf = empty_client_filter_list_v28();
+    ctx.receive_filter_list_if_server(&mut Cursor::new(buf))
+        .expect("server filter receive");
+    ctx
+}
+
+/// A pull (`ServerRole::Generator` = upstream `am_sender`) with `--cvs-exclude`
+/// forwarded as the compact `C` must re-derive the built-in CVS excludes even
+/// though the pulling client sends NO filter rules over the wire. Before the
+/// fix the server dropped `C`, so `*.o` and `CVS/` were transferred instead of
+/// skipped.
+///
+/// upstream: exclude.c:1689-1695 recv_filter_list() appends `:C` then `-C` when
+/// `am_sender`; the `-C` set includes the `*.o` / `CVS` defaults.
+#[test]
+fn server_sender_cvs_exclude_injects_default_excludes() {
+    let ctx = receive_empty_list(cvs_server_config(ServerRole::Generator, true));
+    assert!(
+        !ctx.filter_chain.allows(Path::new("foo.o"), false),
+        "*.o must be excluded by the injected CVS defaults on a -C pull",
+    );
+    assert!(
+        !ctx.filter_chain.allows(Path::new("CVS"), true),
+        "CVS/ must be excluded by the injected CVS defaults on a -C pull",
+    );
+    assert!(
+        ctx.filter_chain.allows(Path::new("keep.txt"), false),
+        "a non-CVS file must still transfer",
+    );
+}
+
+/// The injection is gated on `cvs_exclude`: a pull WITHOUT `-C` must not grow
+/// any CVS excludes (guards against unconditionally adding them).
+#[test]
+fn server_sender_without_cvs_exclude_transfers_everything() {
+    let ctx = receive_empty_list(cvs_server_config(ServerRole::Generator, false));
+    assert!(
+        ctx.filter_chain.allows(Path::new("foo.o"), false),
+        "without -C the server must not synthesize CVS excludes",
+    );
+}
+
+/// The injection is gated on the sender role: on a PUSH the server is the
+/// receiver (`ServerRole::Receiver`), and upstream transmits the CVS rules over
+/// the wire instead of re-deriving them locally (exclude.c:1652 / :1695 gate on
+/// `am_sender`). So a `-C` push server must NOT inject them a second time.
+#[test]
+fn server_receiver_does_not_inject_cvs_excludes() {
+    let ctx = receive_empty_list(cvs_server_config(ServerRole::Receiver, true));
+    assert!(
+        ctx.filter_chain.allows(Path::new("foo.o"), false),
+        "a server-receiver (push) must rely on the wire-transmitted CVS rules, \
+         not inject its own",
     );
 }
