@@ -469,6 +469,28 @@ mod tests {
     }
 
     #[test]
+    fn backslash_name_round_trips_as_literal() {
+        // A valid filename containing a literal backslash (an ordinary byte on
+        // Unix) must be admitted by its own implied-include rule. upstream
+        // records `back\slash.txt` as a NON-wild rule (no `*?[`) and matches it
+        // with a literal strcmp (exclude.c:967-978), so the `\` stays literal.
+        // Regression: oc's wildmatch treated `\s` as an escape, so the receiver
+        // rejected the sender's own name as "unrequested file-list name",
+        // aborting an oc<->oc SSH --files-from pull.
+        let opts = ImpliedIncludeOptions {
+            relative: true,
+            dirs: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["back\\slash.txt", "plain.txt"]).unwrap();
+        assert!(covers(&implied, "back\\slash.txt", false));
+        assert!(covers(&implied, "plain.txt", false));
+        // The literal-backslash rule stays anchored: it must not admit an
+        // unrelated injected name (CVE-2022-29154 teeth preserved).
+        assert!(!covers(&implied, "evil", false));
+    }
+
+    #[test]
     fn escape_live_brackets_escapes_only_live_brackets() {
         assert_eq!(escape_live_brackets("a[b").as_deref(), Some("a\\[b"));
         assert_eq!(
