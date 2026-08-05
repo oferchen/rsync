@@ -552,18 +552,6 @@ pub(in crate::local_copy) fn execute_transfer(
     };
 
     let start = Instant::now();
-    debug_log!(
-        Send,
-        1,
-        "sending {}: {} bytes{}",
-        record_path.display(),
-        file_size,
-        if delta_signature.is_some() {
-            " (delta)"
-        } else {
-            ""
-        }
-    );
 
     // When a backup RENAME moved the basis file (non-inplace --backup) or a
     // fuzzy basis is used, point the delta transfer at that separate location so
@@ -666,14 +654,6 @@ pub(in crate::local_copy) fn execute_transfer(
     context.record_hard_link(metadata, hard_link_path);
 
     let elapsed = start.elapsed();
-    debug_log!(
-        Deltasum,
-        2,
-        "transferred {}: {} literal bytes in {:.3}s",
-        record_path.display(),
-        outcome.literal_bytes(),
-        elapsed.as_secs_f64()
-    );
 
     // EMA throughput sample feeds dynamic buffer sizing.
     if context.use_buffer_pool() {

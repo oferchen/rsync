@@ -18,8 +18,6 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use logging::debug_log;
-
 use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
@@ -133,13 +131,6 @@ pub(super) fn try_clone(
     }
 
     let start = Instant::now();
-    debug_log!(
-        Send,
-        1,
-        "cloned {}: {} bytes (FICLONE)",
-        record_path.display(),
-        file_size
-    );
 
     context.capture_batch_whole_file(source, file_size)?;
     context.finalize_batch_file_delta(source)?;

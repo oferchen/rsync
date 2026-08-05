@@ -138,13 +138,6 @@ pub(super) fn try_clone(
 
     let start = Instant::now();
     debug_log!(
-        Send,
-        1,
-        "cloned {}: {} bytes (CoW)",
-        record_path.display(),
-        file_size
-    );
-    debug_log!(
         Clone,
         1,
         "CoW clone succeeded: dst={} ({} bytes)",
