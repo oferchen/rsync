@@ -59,9 +59,9 @@ mod workspace;
 
 use crate::cli::{Cli, Command, CommandExt};
 use crate::commands::{
-    benchmark, branding, doc_package, docs, gap_report, interop, man_page, no_binaries,
-    no_placeholders, package, preflight, readme_version, release, release_notes, sbom, test,
-    validate,
+    benchmark, branding, cross_check, doc_package, docs, gap_report, interop, man_page,
+    no_binaries, no_placeholders, package, preflight, readme_version, release, release_notes, sbom,
+    test, validate,
 };
 use crate::error::TaskError;
 use crate::task::TreeRenderer;
@@ -104,6 +104,7 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
     match cli.command {
         Command::Benchmark(args) => benchmark::execute(&workspace, args.into()),
         Command::Branding(args) => branding::execute(&workspace, args.into()),
+        Command::CrossCheck => cross_check::execute(&workspace),
         Command::Docs(args) => docs::execute(&workspace, args.into()),
         Command::DocPackage(args) => doc_package::execute(&workspace, args.into()),
         Command::GapReport(args) => gap_report::execute(&workspace, args.into()),
