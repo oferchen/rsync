@@ -3842,6 +3842,214 @@ WRAPPER
   return 0
 }
 
+# Task #146: SSH host:path SERVER-mode interop.
+#
+# WHY THIS EXISTS (the daemon-only gap). The port-873 daemon cells above
+# (run_interop_case / comp_run_scenario over rsync://) reach the server through
+# the @RSYNCD: protocol handshake, which never carries the client's compact
+# `-...e.<caps>` capability token on a server CLI. Only the remote-shell
+# (host:path) transport spawns a peer as `rsync --server -...e.<caps> . <path>`,
+# so ONLY this transport exercises the server-side argv parser that binds the
+# `-e` capability value. That parser is where #7153 regressed (split `.<caps>`
+# leaked into the positional path list); the daemon-only harness could not have
+# caught it. This cell is the end-to-end guard for that class of bug.
+#
+# WHY A CONTROLLED rsh WRAPPER (not real sshd). Wiring a real sshd + loopback
+# key material into every CI runner is heavy and flaky; upstream's own testsuite
+# drives "remote" mode through a fake remote shell that drops the host argument
+# and exec's the rest locally over a stdio pipe (same technique as
+# test_iconv_local_ssh_interop / test_compress_ssh_interop above). That still
+# routes the spawned peer through the identical `rsync --server ...` argv the
+# real SSH path builds, so the server argument parser under test is the real
+# one. Two wrappers are used:
+#   - joined  : plain `shift; exec "$@"` (the byte-identical joined delivery).
+#   - split-e : re-tokenizes the joined `-...e.<caps>` token into the two argv
+#               slots (`-...e` `.<caps>`) that a re-tokenizing remote shell
+#               (Windows OpenSSH) produces. This is the exact #7153 condition:
+#               a correct server binds `.<caps>` to `-e`; a regressed one leaks
+#               it as a stray dest path. See the unit coverage in
+#               crates/cli/src/frontend/server/tests.rs
+#               (parse_server_split_e_value_{push,pull}_no_leak).
+#
+# MATRIX (both directions x peer roles; oracle = upstream, same flags -> same
+# dest/exit/content). push => host:path is the DEST (server = receiver);
+# pull => host:path is the SOURCE (server = `--server --sender`):
+#   oc  -> oc       push + pull   (split-e AND joined)   primary #7153 guard
+#   oc  -> upstream push + pull   (split-e)              oc client / upstream server
+#   upstream -> oc  push + pull   (split-e)              upstream client / oc server
+# Cross-peer rows are skipped cleanly when the upstream binary is unavailable.
+#
+# ASSERTIONS per row: exit 0 within the hard timeout; the destination file tree
+# is byte-for-byte identical to the source tree (sha256 per file); and dest PATH
+# correctness - no stray entry (the fixture holds no dotfiles, so any
+# dot-prefixed dest entry is a leaked `.<caps>` capability token => #7153).
+#
+# References:
+#   upstream: options.c:823        -e/--rsh is POPT_ARG_STRING (value-bearing)
+#   upstream: options.c:2728,3025  maybe_add_e_option() appends e.<caps>
+#   oc-rsync: crates/cli/src/frontend/server/flags.rs
+#             (compact_flag_string_expects_split_value, arg-arity model)
+test_ssh_server_mode_hostpath_interop() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local ssm_src="${work}/ssh-server-src"
+  rm -rf "$ssm_src"
+  mkdir -p "$ssm_src/sub/deep"
+  # Fixture: mixed content, nested dirs, NO dotfiles (so any dot-prefixed dest
+  # entry is unambiguously a leaked capability token). No symlinks - keep every
+  # entry a regular file so the tree comparison is a clean sha256 check.
+  local i
+  for i in $(seq 1 128); do
+    echo "server-mode host:path fixture line ${i} with padding" >> "$ssm_src/top.txt"
+  done
+  echo "small root file" > "$ssm_src/small.txt"
+  printf 'nested body\n' > "$ssm_src/sub/nested.txt"
+  printf 'deep leaf body\n' > "$ssm_src/sub/deep/leaf.txt"
+  if [[ -r /dev/urandom ]]; then
+    dd if=/dev/urandom of="$ssm_src/data.bin" bs=1K count=16 >/dev/null 2>&1 || true
+  fi
+
+  # Joined-form remote shell: drop the host argument and exec the rest locally.
+  local rsh_joined="${work}/ssh-server-rsh-joined.sh"
+  cat > "$rsh_joined" <<'WRAPPER'
+#!/bin/sh
+# Joined-delivery fake remote shell: discard the host arg, exec the peer.
+shift
+exec "$@"
+WRAPPER
+  chmod +x "$rsh_joined"
+
+  # split-e remote shell: reproduce the Windows-OpenSSH re-tokenization that
+  # splits the joined `-...e.<caps>` capability token into two argv slots
+  # (`-...e` `.<caps>`) before the server parses it. Guards #7153.
+  local rsh_split="${work}/ssh-server-rsh-split-e.sh"
+  cat > "$rsh_split" <<'WRAPPER'
+#!/bin/sh
+# split-e fake remote shell (issue #7153). Drops the host arg, then splits any
+# single-dash compact flag token that carries an `e.<caps>` suffix into the two
+# argv slots a re-tokenizing remote shell (Windows OpenSSH) produces: the
+# transfer-letter run ending in `e`, and the `.<caps>` capability value. `for`
+# expands "$@" once, so rebuilding the positional list inside the loop is safe.
+shift
+first=1
+for arg in "$@"; do
+  case "$arg" in
+    -[!-]*e.*)
+      head=${arg%%e.*}e
+      value=.${arg#*e.}
+      if [ "$first" -eq 1 ]; then set -- "$head" "$value"; first=0
+      else set -- "$@" "$head" "$value"; fi
+      ;;
+    *)
+      if [ "$first" -eq 1 ]; then set -- "$arg"; first=0
+      else set -- "$@" "$arg"; fi
+      ;;
+  esac
+done
+exec "$@"
+WRAPPER
+  chmod +x "$rsh_split"
+
+  # sha256 helper: coreutils sha256sum, macOS shasum, else cmp sentinel.
+  _ssm_digest() {
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum -a 256 "$1" | awk '{print $1}'
+    else
+      echo "__no_sha__"
+    fi
+  }
+
+  # Sorted list of tree entries relative to a root (files and dirs).
+  _ssm_rel_list() { (cd "$1" && find . -mindepth 1 | LC_ALL=C sort); }
+
+  # Verify dest is a byte-for-byte copy of src AND carries no leaked token.
+  _ssm_verify() {
+    local label=$1 sdir=$2 ddir=$3
+    # (1) PATH correctness: identical entry trees. A leaked `.<caps>` token
+    #     surfaces as an extra dest entry and fails this equality.
+    if ! diff <(_ssm_rel_list "$sdir") <(_ssm_rel_list "$ddir") >/dev/null 2>&1; then
+      echo "    ${label}: dest tree differs from src tree"
+      echo "    src: $(_ssm_rel_list "$sdir" | tr '\n' ' ')"
+      echo "    dst: $(_ssm_rel_list "$ddir" | tr '\n' ' ')"
+      return 1
+    fi
+    # (2) #7153 signature: no dot-prefixed entry may exist (fixture has none).
+    if _ssm_rel_list "$ddir" | grep -qE '/\.[^/]'; then
+      echo "    ${label}: stray dot-prefixed dest entry (split-e capability leak, #7153):"
+      _ssm_rel_list "$ddir" | grep -E '/\.[^/]' | sed 's/^/      /'
+      return 1
+    fi
+    # (3) CONTENT: sha256 (or cmp) every regular file.
+    local rel f sd dd
+    while IFS= read -r rel; do
+      f="${rel#./}"
+      [[ -f "$sdir/$f" ]] || continue
+      if [[ ! -f "$ddir/$f" ]]; then
+        echo "    ${label}: missing dest file $f"
+        return 1
+      fi
+      sd=$(_ssm_digest "$sdir/$f")
+      dd=$(_ssm_digest "$ddir/$f")
+      if [[ "$sd" == "__no_sha__" || "$dd" == "__no_sha__" ]]; then
+        cmp -s "$sdir/$f" "$ddir/$f" || { echo "    ${label}: content mismatch (cmp) $f"; return 1; }
+      elif [[ "$sd" != "$dd" ]]; then
+        echo "    ${label}: sha256 mismatch $f (src=$sd dst=$dd)"
+        return 1
+      fi
+    done < <(_ssm_rel_list "$sdir")
+    return 0
+  }
+
+  # Run one matrix row. direction: push (server=receiver) | pull (server=sender).
+  _ssm_run() {
+    local label=$1 rsh=$2 client=$3 server=$4 direction=$5
+    local dest="${work}/ssh-server-dest"
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    local out="${log}.ssm.out" err="${log}.ssm.err"
+    local rc=0
+    if [[ "$direction" == "push" ]]; then
+      timeout "$hard_timeout" "$client" -a \
+          -e "$rsh" --rsync-path="$server" --timeout=10 \
+          "${ssm_src}/" "fakehost:${dest}/" >"$out" 2>"$err" || rc=$?
+    else
+      timeout "$hard_timeout" "$client" -a \
+          -e "$rsh" --rsync-path="$server" --timeout=10 \
+          "fakehost:${ssm_src}/" "${dest}/" >"$out" 2>"$err" || rc=$?
+    fi
+    if (( rc != 0 )); then
+      echo "    ${label} (${direction}): transfer failed (exit=$rc)"
+      echo "    stderr: $(head -5 "$err")"
+      return 1
+    fi
+    _ssm_verify "$label ($direction)" "$ssm_src" "$dest" || return 1
+    return 0
+  }
+
+  # --- Primary #7153 guard: oc client <-> oc server, split-e and joined. ---
+  _ssm_run "oc->oc split-e"  "$rsh_split"  "$oc_bin" "$oc_bin" push || return 1
+  _ssm_run "oc->oc split-e"  "$rsh_split"  "$oc_bin" "$oc_bin" pull || return 1
+  _ssm_run "oc->oc joined"   "$rsh_joined" "$oc_bin" "$oc_bin" push || return 1
+  _ssm_run "oc->oc joined"   "$rsh_joined" "$oc_bin" "$oc_bin" pull || return 1
+
+  # --- Cross-peer oracle rows (upstream = oracle). Skip cleanly if absent. ---
+  if [[ -z "$upstream_binary" || ! -x "$upstream_binary" ]]; then
+    echo "    SKIP cross-peer rows: upstream rsync binary not available"
+    return 0
+  fi
+
+  # oc client -> upstream server (upstream parses the split-e argv).
+  _ssm_run "oc->upstream split-e" "$rsh_split" "$oc_bin" "$upstream_binary" push || return 1
+  _ssm_run "oc->upstream split-e" "$rsh_split" "$oc_bin" "$upstream_binary" pull || return 1
+  # upstream client -> oc server (oc parses the split-e argv from a real client).
+  _ssm_run "upstream->oc split-e" "$rsh_split" "$upstream_binary" "$oc_bin" push || return 1
+  _ssm_run "upstream->oc split-e" "$rsh_split" "$upstream_binary" "$oc_bin" pull || return 1
+
+  return 0
+}
+
 # #885: Comprehensive hardlink interop
 # Tests hardlink scenarios that go beyond the basic -H flag: multiple hardlink
 # groups, chains of 3+ links to the same inode, hardlinks across subdirectories,
@@ -11008,6 +11216,7 @@ run_standalone_interop_tests() {
     "iconv-upstream"
     "iconv-local-ssh"
     "compress-ssh"
+    "ssh-server-mode-hostpath"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
     "inc-recurse-sender-push"
@@ -11083,6 +11292,7 @@ run_standalone_interop_tests() {
     "test_iconv_upstream_interop"
     "test_iconv_local_ssh_interop"
     "test_compress_ssh_interop"
+    "test_ssh_server_mode_hostpath_interop"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
     "test_inc_recurse_sender_push"
