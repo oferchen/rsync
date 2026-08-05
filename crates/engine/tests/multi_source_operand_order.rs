@@ -193,9 +193,11 @@ fn relative_operands_are_left_in_command_line_order() {
             .collect_events(true),
     );
 
+    // Absolute operands under --relative record their full path-minus-root, so
+    // match the operand leaf by suffix rather than by a bare name.
     let order = emitted_entry_order(report.records());
-    let zdir = order.iter().position(|p| p == "zdir");
-    let adir = order.iter().position(|p| p == "adir");
+    let zdir = order.iter().position(|p| p.ends_with("zdir"));
+    let adir = order.iter().position(|p| p.ends_with("adir"));
     assert!(
         matches!((zdir, adir), (Some(z), Some(a)) if z < a),
         "under --relative the operands keep command-line order (zdir before \
@@ -209,10 +211,7 @@ fn relative_operands_are_left_in_command_line_order() {
 #[test]
 fn reordering_does_not_change_destination_contents() {
     let (operands, dst, _temp) = two_named_dirs();
-    apply(
-        &operands,
-        LocalCopyOptions::default().recursive(true),
-    );
+    apply(&operands, LocalCopyOptions::default().recursive(true));
 
     fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         let mut out = Vec::new();
