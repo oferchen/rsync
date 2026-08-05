@@ -14,7 +14,7 @@ fn args_to_strings(args: &[OsString]) -> Vec<String> {
 }
 
 #[test]
-fn assembles_minimal_command_with_batch_mode() {
+fn assembles_minimal_command() {
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(false));
     let (program, args) = command.command_parts_for_testing();
@@ -23,7 +23,6 @@ fn assembles_minimal_command_with_batch_mode() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -49,7 +48,6 @@ fn assembles_command_with_user_port_and_remote_args() {
     assert_eq!(
         rendered,
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-p".to_owned(),
             "2222".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
@@ -67,24 +65,6 @@ fn assembles_command_with_user_port_and_remote_args() {
 }
 
 #[test]
-fn disables_batch_mode_when_requested() {
-    let mut command = SshCommand::new("example.com");
-    command.set_prefer_aes_gcm(Some(false));
-    command.set_batch_mode(false);
-
-    let (_, args) = command.command_parts_for_testing();
-    assert_eq!(
-        args_to_strings(&args),
-        vec![
-            "-oServerAliveInterval=20".to_owned(),
-            "-oServerAliveCountMax=3".to_owned(),
-            "-oConnectTimeout=30".to_owned(),
-            "example.com".to_owned(),
-        ]
-    );
-}
-
-#[test]
 fn wraps_ipv6_hosts_in_brackets() {
     let mut command = SshCommand::new("2001:db8::1");
     command.set_prefer_aes_gcm(Some(false));
@@ -93,7 +73,6 @@ fn wraps_ipv6_hosts_in_brackets() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -113,7 +92,6 @@ fn wraps_ipv6_hosts_with_usernames() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -135,7 +113,6 @@ fn preserves_explicit_bracketed_ipv6_literals() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -159,7 +136,6 @@ fn wraps_ipv6_hosts_with_scoped_zone_id() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -182,7 +158,6 @@ fn wraps_bracketed_ipv6_hosts_with_scoped_zone_id() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -206,7 +181,6 @@ fn does_not_bracket_malformed_ipv6_with_multiple_double_colons() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -227,7 +201,6 @@ fn does_not_bracket_garbage_colon_input() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -248,7 +221,6 @@ fn does_not_bracket_zone_with_whitespace() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -340,7 +312,6 @@ fn command_parts_skip_target_when_host_and_user_missing() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -361,7 +332,6 @@ fn target_override_supersedes_computed_target() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -382,7 +352,6 @@ fn empty_target_override_suppresses_target_argument() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
@@ -395,7 +364,6 @@ fn empty_target_override_suppresses_target_argument() {
 fn spawn_echo_process() -> SshConnection {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("cat");
 
@@ -435,7 +403,6 @@ fn stalled_read_aborts_with_timeout_error() {
     // directly, so the watchdog's `Child::kill()` reaches the right process.
     let mut command = SshCommand::new("ignored");
     command.set_program("cat");
-    command.set_batch_mode(false);
     command.set_target_override(Some(OsString::new()));
     command.set_io_timeout(Some(std::time::Duration::from_millis(300)));
 
@@ -491,7 +458,6 @@ fn progress_prevents_false_timeout() {
     // Spawn `cat` directly so it echoes stdin verbatim (child == the process we
     // read/write), avoiding any shell-wrapper fork ambiguity.
     command.set_program("cat");
-    command.set_batch_mode(false);
     command.set_target_override(Some(OsString::new()));
     command.set_io_timeout(Some(timeout));
 
@@ -529,7 +495,6 @@ fn progress_prevents_false_timeout() {
 fn stderr_output_collected_via_child_handle() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'err-line\\n' >&2");
     command.set_target_override(Some(OsString::new()));
@@ -564,7 +529,6 @@ fn stderr_output_empty_when_no_errors() {
 fn stderr_output_bounded_to_cap() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     // Generate ~128 KB of stderr output to exceed the 64 KB cap.
     command.push_option(
@@ -594,7 +558,6 @@ fn stderr_output_readable_before_wait() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'early-msg\\n' >&2");
     command.set_target_override(Some(OsString::new()));
@@ -767,7 +730,6 @@ fn drop_child_handle_reaps_process() {
 fn drop_child_handle_kills_running_process() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("sleep 60");
 
@@ -1068,39 +1030,6 @@ fn omits_keepalive_for_absolute_path_non_ssh_program() {
 }
 
 #[test]
-fn omits_batch_mode_for_non_ssh_program() {
-    // Regression: a custom --rsh wrapper (e.g., a fake_rsh.sh shim that
-    // does `shift; exec "$@"`) used to receive `-oBatchMode=yes` as its
-    // first positional argument, then `shift` would consume it instead of
-    // the host argument and `exec "$@"` would try to launch the literal
-    // host name as a command. Real `ssh` silently consumes the option, so
-    // the bug only surfaced in interop tests with non-SSH wrappers.
-    //
-    // Upstream rsync does not inject SSH-specific options into a
-    // user-supplied --rsh; mirror that behaviour for parity.
-    let mut command = SshCommand::new("example.com");
-    command.set_program("plink");
-    let (_, args) = command.command_parts_for_testing();
-    let rendered = args_to_strings(&args);
-    assert!(
-        !rendered.iter().any(|a| a == "-oBatchMode=yes"),
-        "BatchMode should not be injected for non-SSH program: {rendered:?}"
-    );
-}
-
-#[test]
-fn omits_batch_mode_for_absolute_path_non_ssh_program() {
-    let mut command = SshCommand::new("example.com");
-    command.set_program("/tmp/fake_rsh.sh");
-    let (_, args) = command.command_parts_for_testing();
-    let rendered = args_to_strings(&args);
-    assert!(
-        !rendered.iter().any(|a| a == "-oBatchMode=yes"),
-        "BatchMode should not be injected for non-SSH absolute path: {rendered:?}"
-    );
-}
-
-#[test]
 fn keepalive_injected_between_port_and_user_options() {
     let mut command = SshCommand::new("example.com");
     command.set_port(2222);
@@ -1144,17 +1073,13 @@ fn keepalive_injected_between_port_and_user_options() {
 }
 
 #[test]
-fn keepalive_with_bind_address_and_batch_mode() {
+fn keepalive_injected_after_bind_address() {
     let mut command = SshCommand::new("example.com");
     command.set_bind_address(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
 
     let (_, args) = command.command_parts_for_testing();
     let rendered = args_to_strings(&args);
 
-    let batch_pos = rendered
-        .iter()
-        .position(|a| a == "-oBatchMode=yes")
-        .expect("batch mode present");
     let bind_pos = rendered
         .iter()
         .position(|a| a.starts_with("-oBindAddress="))
@@ -1168,10 +1093,6 @@ fn keepalive_with_bind_address_and_batch_mode() {
         .position(|a| a == "example.com")
         .expect("target present");
 
-    assert!(
-        batch_pos < bind_pos,
-        "batch mode at {batch_pos} should precede bind address at {bind_pos}"
-    );
     assert!(
         bind_pos < keepalive_pos,
         "bind address at {bind_pos} should precede keepalive at {keepalive_pos}"
@@ -1190,7 +1111,6 @@ fn stderr_drain_handles_non_utf8_output() {
     // individual lines contain invalid UTF-8 sequences.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     // Emit a valid line, then raw 0xFF bytes (invalid UTF-8), then another valid line.
     command.push_option(
@@ -1225,7 +1145,6 @@ fn stderr_drain_forwards_multiline_errors() {
     // context lines from the remote host.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option(
         "printf 'Permission denied (publickey).\\n' >&2; printf 'Connection closed by remote host\\n' >&2",
@@ -1258,7 +1177,6 @@ fn stderr_output_available_on_connection_before_split() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'conn-level-msg\\n' >&2; cat");
     command.set_target_override(Some(OsString::new()));
@@ -1355,7 +1273,6 @@ fn stderr_drain_forwards_error_output_after_split() {
     // Spawn a child that writes to stderr and exits.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo stderr-line >&2");
 
@@ -1384,7 +1301,6 @@ fn stderr_drain_handles_large_output_without_deadlock() {
     // never exit, causing this test to hang.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     // Generate ~128 KB of stderr output (2048 lines of 64 bytes each).
     command.push_option(
@@ -1406,7 +1322,6 @@ fn stderr_drain_handles_large_output_without_deadlock() {
 fn stderr_drain_joins_on_drop() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo drop-test >&2");
     command.set_target_override(Some(OsString::new()));
@@ -1432,7 +1347,6 @@ fn child_handle_drop_surfaces_stderr_on_nonzero_exit() {
     // prevents SSH errors from being silently lost.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'fatal: host key verification failed\\n' >&2; exit 255");
     command.set_target_override(Some(OsString::new()));
@@ -1455,7 +1369,6 @@ fn connection_drop_surfaces_stderr_on_nonzero_exit() {
     // connection Drop path used when callers do not split into reader/writer.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'Connection refused\\n' >&2; exit 1");
     command.set_target_override(Some(OsString::new()));
@@ -1484,7 +1397,6 @@ fn stderr_deadlock_regression_large_stderr_does_not_block_stdout() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     // Write ~640 KB to stderr (10000 lines of ~64 bytes) interleaved with
     // a known sentinel on stdout. The stderr volume far exceeds the OS pipe
@@ -1536,7 +1448,6 @@ fn stderr_drain_with_no_stderr_output() {
     // Child produces no stderr output - drain thread should exit cleanly at EOF.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo stdout-only");
     command.set_target_override(Some(OsString::new()));
@@ -1557,7 +1468,6 @@ fn connection_wait_with_stderr_captures_error_on_failure() {
     // surfacing SSH connection errors (e.g., "Permission denied") to the user.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option(
         "printf 'ssh: connect to host unreachable port 22: Connection refused\\n' >&2; exit 255",
@@ -1602,7 +1512,6 @@ fn child_handle_wait_with_stderr_surfaces_error_after_split() {
     // This covers the path used by ssh_transfer.rs and remote_to_remote.rs.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("printf 'Permission denied (publickey).\\n' >&2; exit 255");
     command.set_target_override(Some(OsString::new()));
@@ -1939,7 +1848,6 @@ fn connect_watchdog_fires_on_timeout() {
     // orphan `sleep` and never close the pipe - hanging the read.
     let mut command = SshCommand::new("ignored");
     command.set_program("sleep");
-    command.set_batch_mode(false);
     command.push_option("60");
     command.set_target_override(Some(OsString::new()));
     // Set a very short connect timeout to trigger the watchdog quickly.
@@ -1992,7 +1900,6 @@ fn connect_watchdog_cancelled_before_timeout() {
     // Spawn a process that exits quickly - simulating a successful SSH connection.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo hello");
     command.set_target_override(Some(OsString::new()));
@@ -2025,7 +1932,6 @@ fn connect_watchdog_not_armed_when_timeout_is_none() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo no-watchdog");
     command.set_target_override(Some(OsString::new()));
@@ -2054,7 +1960,6 @@ fn connect_watchdog_transferred_to_child_handle_on_split() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo split-test");
     command.set_target_override(Some(OsString::new()));
@@ -2079,7 +1984,6 @@ fn connect_watchdog_fires_and_child_handle_reports_timeout() {
     // Spawn a process that hangs, with a short timeout.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("sleep 60");
     command.set_target_override(Some(OsString::new()));
@@ -2108,7 +2012,6 @@ fn connect_watchdog_error_message_includes_duration() {
 
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("sleep 60");
     command.set_target_override(Some(OsString::new()));
