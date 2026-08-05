@@ -80,9 +80,9 @@ impl<'a> ModuleRequestContext<'a> {
 fn send_error(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
-    payload: &str,
+    error: &AtError,
 ) -> io::Result<()> {
-    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, error.line().as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
     stream.flush()
 }
@@ -133,18 +133,19 @@ fn deny_module(
     limiter: &mut Option<BandwidthLimiter>,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
-    let payload = if !module.listable {
+    let error = if !module.listable {
         // upstream: clientserver.c:730 - hide module existence for non-listable modules.
-        UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref())
+        AtError::UnknownModule(module_display.into_owned())
     } else {
         let addr_str = peer_ip.to_string();
         let host_display = host.unwrap_or(&addr_str);
-        ACCESS_DENIED_PAYLOAD
-            .replace("{module}", module_display.as_ref())
-            .replace("{host}", host_display)
-            .replace("{addr}", &addr_str)
+        AtError::AccessDenied {
+            module: module_display.into_owned(),
+            host: host_display.to_owned(),
+            addr: addr_str,
+        }
     };
-    send_error(stream, limiter, &payload)
+    send_error(stream, limiter, &error)
 }
 
 /// Sends the "@RSYNCD: OK" acknowledgment to the client.
@@ -171,8 +172,13 @@ fn handle_max_connections_exceeded(
     module: &ModuleRuntime,
     limit: i32,
 ) -> io::Result<()> {
-    let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.to_string());
-    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+    send_error(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        &AtError::MaxConnections {
+            limit: i64::from(limit),
+        },
+    )?;
     if let Some(log) = ctx.log_sink {
         let current = module
             .active_connections
@@ -193,11 +199,7 @@ fn handle_max_connections_exceeded(
 ///
 /// Sends an error message and logs the lock failure.
 fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
-    send_error(
-        ctx.reader.get_mut(),
-        ctx.limiter,
-        MODULE_LOCK_ERROR_PAYLOAD,
-    )?;
+    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
     if let Some(log) = ctx.log_sink {
         log_module_lock_error(log, ctx.effective_host(), ctx.peer_ip, ctx.request, error);
     }
@@ -210,8 +212,8 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 /// Used when refused-options are detected from `OPTION` directives sent before
 /// `@RSYNCD: OK`; at this point the client still reads raw text.
 fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
-    let payload = format!("@ERROR: The server is configured to refuse {refused}");
-    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+    let error = AtError::message(format!("The server is configured to refuse {refused}"));
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
     if let Some(log) = ctx.log_sink {
         log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
     }
@@ -246,11 +248,11 @@ fn handle_refused_option_post_handshake(
     client_args: &[String],
 ) -> io::Result<()> {
     finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
-    let payload = format!("@ERROR: The server is configured to refuse {refused}");
+    let error = AtError::message(format!("The server is configured to refuse {refused}"));
     send_multiplexed_error_and_exit(
         ctx.reader.get_mut(),
         ctx.limiter,
-        &payload,
+        &error.line(),
         FEATURE_UNAVAILABLE_EXIT_CODE,
     )?;
     if let Some(log) = ctx.log_sink {
@@ -512,14 +514,13 @@ fn handle_unknown_module(
     session_peer_host: Option<&str>,
     log_sink: Option<&SharedLogSink>,
 ) -> io::Result<()> {
-    let module_display = sanitize_module_identifier(request);
-    let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
+    let error = AtError::UnknownModule(sanitize_module_identifier(request).into_owned());
 
     if let Some(log) = log_sink {
         log_unknown_module(log, session_peer_host, peer_ip, request);
     }
 
-    send_error(stream, limiter, &payload)
+    send_error(stream, limiter, &error)
 }
 
 /// Handles a denied module access.

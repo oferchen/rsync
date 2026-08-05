@@ -94,9 +94,10 @@ fn perform_module_authentication(
     ) {
         Ok(digest) => digest,
         Err(_) => {
-            let payload = UNSUPPORTED_AUTH_DIGEST_PAYLOAD
-                .replace("{digests}", &supported_daemon_digest_list());
-            send_error(reader.get_mut(), limiter, &payload)?;
+            let error = AtError::UnsupportedAuthDigest {
+                digests: supported_daemon_digest_list(),
+            };
+            send_error(reader.get_mut(), limiter, &error)?;
             return Ok(AuthenticationStatus::DigestUnsupported);
         }
     };
@@ -293,7 +294,8 @@ fn send_auth_failed(
     module: &ModuleDefinition,
     limiter: &mut Option<BandwidthLimiter>,
 ) -> io::Result<()> {
-    let module_display = sanitize_module_identifier(&module.name);
-    let payload = AUTH_FAILED_PAYLOAD.replace("{module}", module_display.as_ref());
-    send_error(stream, limiter, &payload)
+    let error = AtError::AuthFailed {
+        module: sanitize_module_identifier(&module.name).into_owned(),
+    };
+    send_error(stream, limiter, &error)
 }
