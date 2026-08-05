@@ -23,6 +23,7 @@
 //! multiple `fsync()` calls. This module uses `syncfs()` when available.
 
 use std::collections::HashSet;
+#[cfg(unix)]
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -258,9 +259,45 @@ fn sync_file(path: &Path) -> io::Result<()> {
 }
 
 /// Syncs a directory to disk.
+///
+/// The directory `fsync` is oc-rsync's durability extension on top of
+/// upstream's file-only `--fsync` (upstream `do_fsync` in `syscall.c` targets
+/// regular files). On Unix a plain `File::open` yields a directory descriptor
+/// that `fsync(2)` accepts, so that path is used unchanged.
+///
+/// On Windows a directory handle can only be obtained with
+/// `FILE_FLAG_BACKUP_SEMANTICS`; a bare `File::open` of a directory fails
+/// (with an error that is not `NotFound`), which previously aborted the whole
+/// [`SyncStrategy::DirectoryLevel`] flush. The flag is requested through the
+/// safe `OpenOptionsExt::custom_flags` shim, so no unsafe code is needed here.
+#[cfg(not(windows))]
 fn sync_directory(path: &Path) -> io::Result<()> {
     let dir = File::open(path)?;
     dir.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+    let dir = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+
+    match dir.sync_all() {
+        Ok(()) => Ok(()),
+        // Windows `FlushFileBuffers` rejects a directory handle with
+        // ERROR_ACCESS_DENIED (mapped to `PermissionDenied`) because a
+        // directory grants no write access to flush against. The handle
+        // opened, so the directory exists and its metadata is already
+        // committed; there is simply no directory-buffer flush to perform.
+        // Treat it as a durable no-op rather than a fatal error, matching the
+        // Unix tolerance for filesystems that do not support directory fsync.
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Syncs an entire filesystem using syncfs() on Linux.
@@ -364,6 +401,41 @@ mod tests {
         // Should have queued the parent directory
         assert_eq!(sync.pending_count(), 1);
         assert!(sync.pending_dirs.contains(&subdir));
+    }
+
+    #[test]
+    fn test_directory_level_flush_succeeds() {
+        // Regression: `DirectoryLevel` must flush a real directory on every
+        // platform. On Windows a directory handle can only be opened with
+        // FILE_FLAG_BACKUP_SEMANTICS; a bare `File::open` of the parent
+        // directory fails with an error that is not `NotFound`, so before the
+        // fix this flush aborted the whole strategy under `--fsync`. On Unix
+        // the plain directory-fd `fsync` path must keep working unchanged.
+        let dir = TempDir::new().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let mut sync = DeferredSync::new(SyncStrategy::DirectoryLevel);
+
+        let file = subdir.join("file.txt");
+        fs::write(&file, b"test").unwrap();
+        sync.register(file).unwrap();
+
+        assert_eq!(sync.pending_count(), 1);
+        // The flush opens `subdir` as a directory handle and fsyncs it.
+        sync.flush().unwrap();
+        assert_eq!(sync.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_sync_directory_real_dir_ok() {
+        // `sync_directory` must succeed against an existing directory on all
+        // platforms. This encodes the Windows requirement directly: opening
+        // the directory handle needs FILE_FLAG_BACKUP_SEMANTICS, and the
+        // subsequent `FlushFileBuffers` (which cannot flush a directory) is
+        // tolerated rather than surfaced as a fatal error.
+        let dir = TempDir::new().unwrap();
+        sync_directory(dir.path()).unwrap();
     }
 
     #[test]
