@@ -263,6 +263,50 @@ fn regrouping_preserves_the_full_option_set() {
     );
 }
 
+#[test]
+fn access_methods_block_lists_all_connection_forms_feature_gated() {
+    // WHY: --help must tell a user every way to name a SOURCE/DEST. The upstream
+    // forms (remote shell, host::module, rsync://) are always available, so they
+    // are unconditional. ssh:// and quic:// are oc-rsync extensions that only
+    // work when their cargo feature is compiled in; advertising them in a build
+    // that cannot honor them would be a lie. The assertions therefore track the
+    // feature set this test is compiled under (cfg!), never a fixed snapshot.
+    let help = render_help(ProgramName::OcRsync);
+
+    assert!(help.contains("Access methods for SOURCE and DEST:"));
+    assert!(
+        help.contains("[USER@]HOST:PATH  Connect via a remote shell"),
+        "remote-shell access method missing"
+    );
+    assert!(
+        help.contains("[USER@]HOST::MODULE[/PATH]  Connect to an rsync daemon."),
+        "host::module daemon access method missing"
+    );
+    assert!(
+        help.contains("rsync://[USER@]HOST[:PORT]/MODULE[/PATH]  Connect to an rsync daemon."),
+        "rsync:// daemon access method missing"
+    );
+
+    let has_ssh = help.contains("ssh://[USER@]HOST[:PORT]/PATH  oc-rsync extension");
+    assert_eq!(
+        has_ssh,
+        cfg!(feature = "embedded-ssh"),
+        "ssh:// access method must appear iff the embedded-ssh feature is compiled in"
+    );
+
+    let has_quic = help.contains("quic://[USER@]HOST[:PORT]/MODULE[/PATH]  oc-rsync extension");
+    assert_eq!(
+        has_quic,
+        cfg!(feature = "quic"),
+        "quic:// access method must appear iff the quic feature is compiled in"
+    );
+
+    assert!(
+        help.contains("When multiple sources are supplied,\nDEST must name a directory."),
+        "multi-source DEST-must-be-a-directory note missing"
+    );
+}
+
 fn collect_options(text: &str) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
     let mut chars = text.chars().peekable();
