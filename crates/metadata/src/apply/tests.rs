@@ -1775,6 +1775,85 @@ fn metadata_unchanged_honors_modify_window() {
     );
 }
 
+/// WHY: On Windows the only permission bit the apply path preserves is the
+/// read-only attribute, derived from the sender's owner-write bit (0o200).
+/// `windows_readonly_differs` is the pure compare that the `cfg(not(unix))`
+/// quick-check gates on; if it were wrong (or absent) a dest differing ONLY in
+/// the read-only attribute would be judged unchanged and never re-stamped. This
+/// runs on Linux to lock the mapping (0o200 clear == read-only) independent of
+/// any Windows filesystem, mirroring upstream `perms_differ()` (generator.c:418).
+#[test]
+fn windows_readonly_differs_maps_owner_write_bit() {
+    // Sender mode is writable (0o644): a read-only dest differs, a writable
+    // dest matches.
+    assert!(
+        crate::apply::windows_readonly_differs(0o644, true),
+        "writable source vs read-only dest must differ"
+    );
+    assert!(
+        !crate::apply::windows_readonly_differs(0o644, false),
+        "writable source vs writable dest must match"
+    );
+
+    // Sender mode is read-only (0o444, 0o200 clear): a writable dest differs, a
+    // read-only dest matches.
+    assert!(
+        crate::apply::windows_readonly_differs(0o444, false),
+        "read-only source vs writable dest must differ"
+    );
+    assert!(
+        !crate::apply::windows_readonly_differs(0o444, true),
+        "read-only source vs read-only dest must match"
+    );
+}
+
+/// WHY: `set_permissions_like` / `apply_permissions_from_entry` re-stamp the
+/// Windows read-only attribute under `--perms`, so the quick-check must report
+/// a file that differs ONLY in that attribute as changed - otherwise the update
+/// is silently skipped. Runs in the Windows CI job for the metadata crate.
+#[cfg(windows)]
+#[test]
+fn metadata_unchanged_detects_readonly_difference() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("ro.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    // Destination is writable on disk.
+    let meta = fs::metadata(&dest).expect("metadata");
+    assert!(!meta.permissions().readonly(), "dest starts writable");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    // Sender entry carries a read-only mode (owner-write bit 0o200 cleared);
+    // every other preserved attribute matches the destination.
+    let mut entry = FileEntry::new_file("ro.txt".into(), 4, 0o444);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        "a read-only-only difference must be reported as changed"
+    );
+
+    // Applying the entry must re-stamp the read-only attribute.
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
+    let applied = fs::metadata(&dest).expect("re-stat");
+    assert!(
+        applied.permissions().readonly(),
+        "read-only attribute must be applied to the destination"
+    );
+
+    // Now the destination matches: the quick-check reports unchanged.
+    assert!(
+        metadata_unchanged(&entry, &opts, &applied, crate::ModifyWindow::ZERO),
+        "matching read-only attribute must be reported as unchanged"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn metadata_unchanged_ignores_perms_when_not_preserved() {
