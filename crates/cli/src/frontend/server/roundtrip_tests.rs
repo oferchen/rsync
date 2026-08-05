@@ -22,9 +22,10 @@
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
 
-use core::client::config::{IconvSetting, StrongChecksumChoice};
 use core::client::remote::invocation::{RemoteInvocationBuilder, RemoteRole};
-use core::client::{BandwidthLimit, ClientConfig, TransferTimeout};
+use core::client::{
+    BandwidthLimit, ClientConfig, IconvSetting, StrongChecksumChoice, TransferTimeout,
+};
 
 use super::flags::parse_server_long_flags;
 use super::parse::parse_server_flag_string_and_args;
