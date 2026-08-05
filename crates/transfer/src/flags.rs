@@ -586,6 +586,17 @@ impl ParsedServerFlags {
             // upstream: options.c:2631 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
+            // upstream: options.c:2646-2649 - `if (am_sender) { if (omit_dir_times
+            // > 0) 'O'; if (omit_link_times) 'J'; }`. On a push the local client is
+            // the sender, so 'O'/'J' ride to the remote server (the receiver),
+            // which must skip re-setting a directory's / symlink's mtime
+            // (rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR` /
+            // `omit_link_times && S_ISLNK`; generator.c:2271 gates
+            // need_retouch_dir_times on !omit_dir_times). Without parsing them a
+            // pushed -O/-J left the server preserving the source dir/symlink
+            // mtimes instead of leaving them at "now".
+            b'O' => self.omit_dir_times = true,
+            b'J' => self.omit_link_times = true,
             // upstream: options.c:2692-2693 - `'E'` rides the compact flag
             // string in the `else if (preserve_executability && am_sender)`
             // branch, i.e. on a *push*, where the remote server IS the
@@ -665,6 +676,39 @@ mod tests {
         assert!(flags.info_flags.flist);
         assert!(flags.info_flags.checksum);
         assert!(flags.info_flags.compress);
+    }
+
+    /// GUARD (#191/#192): a `--server` compact flag string carrying the
+    /// sender-side omit-times letters must set `omit_dir_times`/`omit_link_times`
+    /// so the receiver honours the client-negotiated request. Upstream
+    /// `server_options()` packs `'O'` (omit_dir_times) and `'J'` (omit_link_times)
+    /// on a push (options.c:2646-2649); the oc receiver must decode them so a
+    /// pushed `-O`/`-J` leaves the destination dir/symlink mtime at "now" rather
+    /// than copying the source mtime. Before the fix these letters fell through
+    /// `_ => {}` and were silently dropped (measured: oc-oc push preserved the
+    /// source mtimes while upstream did not).
+    #[test]
+    fn parses_omit_dir_and_link_times_letters() {
+        let flags = ParsedServerFlags::parse("-lOJogDtpre.iLsfxC").unwrap();
+
+        assert!(flags.omit_dir_times, "'O' must set omit_dir_times");
+        assert!(flags.omit_link_times, "'J' must set omit_link_times");
+        // The surrounding letters still parse (O/J are not swallowing them).
+        assert!(flags.links);
+        assert!(flags.owner);
+        assert!(flags.group);
+        assert!(flags.times);
+        assert!(flags.recursive);
+    }
+
+    /// A flag string without `O`/`J` must leave both omit-times knobs off, so
+    /// the guard above cannot pass vacuously.
+    #[test]
+    fn omit_times_default_off_without_letters() {
+        let flags = ParsedServerFlags::parse("-logDtpre.iLsfxC").unwrap();
+
+        assert!(!flags.omit_dir_times);
+        assert!(!flags.omit_link_times);
     }
 
     #[test]
