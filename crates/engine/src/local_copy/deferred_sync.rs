@@ -23,6 +23,7 @@
 //! multiple `fsync()` calls. This module uses `syncfs()` when available.
 
 use std::collections::HashSet;
+#[cfg(unix)]
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
