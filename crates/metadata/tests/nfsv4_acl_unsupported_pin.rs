@@ -31,8 +31,8 @@ fn sample_acl() -> Nfs4Acl {
     Nfs4Acl {
         aces: vec![Nfs4Ace {
             ace_type: AceType::Allow,
-            flags: AceFlags(0),
-            mask: AccessMask(0x1f),
+            flags: AceFlags::default(),
+            mask: AccessMask::from_raw(0x1f),
             who: "OWNER@".to_string(),
         }],
     }
