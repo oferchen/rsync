@@ -9,7 +9,7 @@
 //! - `options.c:server_options()` - Server argument generation
 //! - `options.c:parse_arguments()` - Server-side argument parsing
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::time::SystemTime;
 
 use super::super::super::config::{
@@ -83,7 +83,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// The first element is the rsync binary name (either from `--rsync-path`
     /// or "rsync" by default), followed by "--server", optional role flags,
     /// the compact flag string, ".", and the remote path(s).
-    pub fn build(&self, remote_path: &str) -> Vec<OsString> {
+    pub fn build(&self, remote_path: &OsStr) -> Vec<OsString> {
         self.build_with_paths(&[remote_path])
     }
 
@@ -91,7 +91,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     ///
     /// This is used for pull operations with multiple remote sources from the same host.
     /// Filename arguments are shell-escaped for safe eval by the remote shell.
-    pub fn build_with_paths(&self, remote_paths: &[&str]) -> Vec<OsString> {
+    pub fn build_with_paths(&self, remote_paths: &[&OsStr]) -> Vec<OsString> {
         let mut args = Vec::new();
 
         if let Some(rsync_path) = self.config.rsync_path() {
@@ -123,7 +123,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// even under `--secluded-args`; only the arguments emitted after the
     /// `protect_args && !local_server` NULL cutoff (`options.c:2745-2746`)
     /// are deferred to `send_protected_args()` (`rsync.c:283-320`).
-    pub fn build_secluded(self, remote_paths: &[&str]) -> SecludedInvocation {
+    pub fn build_secluded(self, remote_paths: &[&OsStr]) -> SecludedInvocation {
         if !self.config.protect_args().unwrap_or(false) {
             return SecludedInvocation {
                 command_line_args: self.build_with_paths(remote_paths),
@@ -148,9 +148,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
     }
 
     /// Builds the tail portion for stdin transmission in secluded-args mode:
-    /// the long-form options, `.`, and the remote paths as `String` values
+    /// the long-form options, `.`, and the remote paths as `OsString` values
     /// suitable for null-separated transmission. No shell escaping is
-    /// applied because stdin args are null-separated, not eval'd.
+    /// applied because stdin args are null-separated, not eval'd. Paths keep
+    /// their raw bytes so a non-UTF-8 remote path ships verbatim.
     ///
     /// # Upstream Reference
     ///
@@ -161,16 +162,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// arg0 so the receiver's `read_args()`/`parse_arguments()` can skip
     /// argv[0] the same way it would for a real command line; the
     /// server-side reader (`frontend/server/run.rs`) discards this element.
-    fn build_tail_args_for_stdin(&self, remote_paths: &[&str]) -> Vec<String> {
+    fn build_tail_args_for_stdin(&self, remote_paths: &[&OsStr]) -> Vec<OsString> {
         let mut args = vec![OsString::from("rsync")];
         self.append_long_form_args(&mut args);
         args.push(OsString::from("."));
         for path in remote_paths {
-            args.push(OsString::from(*path));
+            args.push((*path).to_os_string());
         }
-        args.into_iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect()
+        args
     }
 
     /// Builds the protected head of the server invocation: `--server`,
@@ -276,7 +275,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `lsh.sh`) does not misinterpret special characters in filenames.
     fn build_args_without_program(
         &self,
-        remote_paths: &[&str],
+        remote_paths: &[&OsStr],
         escape_for_shell: bool,
     ) -> Vec<OsString> {
         let mut args = self.build_head_args();
@@ -307,17 +306,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 // upstream: main.c:622 safe_arg(NULL, *remote_argv++)
                 // upstream: options.c:2555-2557 - escape a leading ~ for a
                 // relative path without a `/./` pivot, or a path with no `/`.
+                // The `/`-based shape tests are pure ASCII, so a lossy view is
+                // sufficient here and never touches the escaped bytes below.
+                let shape = path.to_string_lossy();
                 let escape_tilde = escape_tilde_role
-                    && ((self.config.relative_paths() && !path.contains("/./"))
-                        || !path.contains('/'));
+                    && ((self.config.relative_paths() && !shape.contains("/./"))
+                        || !shape.contains('/'));
                 let escaped = if escape_tilde {
                     shell_safe_filename_arg_with_tilde(path, true)
                 } else {
                     shell_safe_filename_arg(path)
                 };
-                args.push(OsString::from(escaped));
+                args.push(escaped);
             } else {
-                args.push(OsString::from(*path));
+                args.push((*path).to_os_string());
             }
         }
 
@@ -1234,7 +1236,7 @@ const WILD_CHARS: &str = "*?[]";
 /// `old_style_args == 0`; the caller (`build_args_without_program`) evaluates
 /// that gate (upstream `options.c:2551`, where the filename branch reduces to
 /// `!protect_args && old_style_args == 0`) and calls this only when it holds.
-pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
+pub(super) fn shell_safe_filename_arg(arg: &OsStr) -> OsString {
     shell_safe_filename_arg_with_tilde(arg, false)
 }
 
@@ -1248,7 +1250,64 @@ pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
 /// `escape_leading_tilde` flag is set only on a pull (`!am_sender`) for an
 /// untrusted sender and a relative/no-slash path; the caller computes that
 /// gate and passes the result here.
-pub(super) fn shell_safe_filename_arg_with_tilde(arg: &str, escape_leading_tilde: bool) -> String {
+pub(super) fn shell_safe_filename_arg_with_tilde(arg: &OsStr, escape_leading_tilde: bool) -> OsString {
+    // On Unix the escape runs over raw bytes so a non-UTF-8 remote path (a legal
+    // filename, carried by rsync as raw `char*`) survives verbatim; every
+    // metacharacter in SHELL_CHARS/WILD_CHARS is ASCII, so byte-level membership
+    // is exact and non-ASCII bytes pass through untouched. Other targets keep
+    // the char-based escape over the lossy string: their operands originate from
+    // Unicode argv, so no arbitrary-byte fidelity is lost.
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        OsString::from_vec(escape_shell_bytes(arg.as_bytes(), escape_leading_tilde))
+    }
+    #[cfg(not(unix))]
+    {
+        OsString::from(escape_shell_str(&arg.to_string_lossy(), escape_leading_tilde))
+    }
+}
+
+/// Byte-level shell escape used on Unix (see [`shell_safe_filename_arg_with_tilde`]).
+#[cfg(unix)]
+fn escape_shell_bytes(arg: &[u8], escape_leading_tilde: bool) -> Vec<u8> {
+    let shell = SHELL_CHARS.as_bytes();
+    let wild = WILD_CHARS.as_bytes();
+    let leading_dash = arg.first() == Some(&b'-');
+    let leading_tilde = escape_leading_tilde && arg.first() == Some(&b'~');
+    let needs_escaping = leading_dash || leading_tilde || arg.iter().any(|b| shell.contains(b));
+    if !needs_escaping {
+        return arg.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(arg.len() + 16);
+    if leading_dash {
+        out.extend_from_slice(b"./");
+    } else if leading_tilde {
+        // upstream: options.c:2581 - a single backslash before a leading ~.
+        out.push(b'\\');
+    }
+
+    for (i, &b) in arg.iter().enumerate() {
+        if b == b'\\' {
+            // upstream: backslash is only escaped when the next character is
+            // NOT a wildcard (preserving intentional wildcard escapes).
+            let next = arg.get(i + 1).copied().unwrap_or(0);
+            if !wild.contains(&next) {
+                out.push(b'\\');
+            }
+        } else if shell.contains(&b) {
+            out.push(b'\\');
+        }
+        out.push(b);
+    }
+
+    out
+}
+
+/// Char-level shell escape used on non-Unix targets, over the lossy operand.
+#[cfg(not(unix))]
+fn escape_shell_str(arg: &str, escape_leading_tilde: bool) -> String {
     let leading_dash = arg.starts_with('-');
     let leading_tilde = escape_leading_tilde && arg.starts_with('~');
     let needs_escaping =
@@ -1269,8 +1328,6 @@ pub(super) fn shell_safe_filename_arg_with_tilde(arg: &str, escape_leading_tilde
     let chars: Vec<char> = arg.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
         if ch == '\\' {
-            // upstream: backslash is only escaped when the next character is
-            // NOT a wildcard (preserving intentional wildcard escapes).
             let next = chars.get(i + 1).copied().unwrap_or('\0');
             if !WILD_CHARS.contains(next) {
                 out.push('\\');

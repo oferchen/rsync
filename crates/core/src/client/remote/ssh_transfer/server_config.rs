@@ -15,10 +15,10 @@ use crate::server::{ServerConfig, ServerRole};
 /// Builds server configuration for receiver role (pull transfer).
 pub(in crate::client::remote) fn build_server_config_for_receiver(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
@@ -208,10 +208,10 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
 ///   wires `filesfrom_fd = f_in` so the remote forwards bytes via the wire.
 pub(in crate::client::remote) fn build_server_config_for_generator(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let flag_string = flags::build_server_flag_string(config);
-    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+    let args: Vec<OsString> = local_paths.to_vec();
 
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)

@@ -108,14 +108,18 @@ pub fn run_embedded_ssh_transfer(
 /// Executes a push transfer (local -> remote) via embedded SSH.
 fn run_embedded_push(
     config: &ClientConfig,
-    remote_dest: &str,
-    local_sources: &[String],
+    remote_dest: &OsStr,
+    local_sources: &[OsString],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    let (ssh_config, remote_path) = parse_ssh_url(remote_dest, config)?;
+    // The embedded transport only handles `ssh://` operands (see the dispatch
+    // in `run/mod.rs`), whose URL grammar is ASCII/percent-encoded, so the
+    // lossy view is exact here. Raw-byte remote paths ride the `host:path`
+    // subprocess path (`ssh_transfer`) instead.
+    let (ssh_config, remote_path) = parse_ssh_url(&remote_dest.to_string_lossy(), config)?;
     let invocation_builder = RemoteInvocationBuilder::new(config, RemoteRole::Sender);
-    let secluded = invocation_builder.build_secluded(&[&remote_path]);
+    let secluded = invocation_builder.build_secluded(&[OsStr::new(&remote_path)]);
 
     let mut server_config = build_server_config_for_generator(config, local_sources)?;
     server_config.connection.client_mode = true;
@@ -141,12 +145,12 @@ fn run_embedded_push(
 fn run_embedded_pull(
     config: &ClientConfig,
     remote_sources: &RemoteOperands,
-    local_dest: &str,
+    local_dest: &OsStr,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let (ssh_config, paths) = parse_remote_operands_urls(remote_sources, config)?;
-    let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let path_refs: Vec<&OsStr> = paths.iter().map(OsStr::new).collect();
     let invocation_builder = RemoteInvocationBuilder::new(config, RemoteRole::Receiver);
     let secluded = invocation_builder.build_secluded(&path_refs);
 
@@ -210,7 +214,7 @@ fn parse_remote_operands_urls(
 ) -> Result<(SshConfig, Vec<String>), ClientError> {
     match operands {
         RemoteOperands::Single(url) => {
-            let (ssh_config, path) = parse_ssh_url(url, config)?;
+            let (ssh_config, path) = parse_ssh_url(&url.to_string_lossy(), config)?;
             Ok((ssh_config, vec![path]))
         }
         RemoteOperands::Multiple(urls) => {
@@ -218,7 +222,7 @@ fn parse_remote_operands_urls(
             let mut paths = Vec::with_capacity(urls.len());
 
             for url in urls {
-                let (cfg, path) = parse_ssh_url(url, config)?;
+                let (cfg, path) = parse_ssh_url(&url.to_string_lossy(), config)?;
                 if let Some(ref existing) = ssh_config {
                     let existing: &SshConfig = existing;
                     if cfg.host != existing.host
@@ -321,7 +325,7 @@ fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
 fn run_transfer_over_embedded_ssh(
     ssh_config: SshConfig,
     invocation_args: &[OsString],
-    stdin_args: &[String],
+    stdin_args: &[OsString],
     server_config: ServerConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_ctx: Option<super::batch_support::BatchContext>,
@@ -333,7 +337,9 @@ fn run_transfer_over_embedded_ssh(
     } else {
         let mut data = Vec::new();
         for arg in stdin_args {
-            data.extend_from_slice(arg.as_bytes());
+            // as_encoded_bytes is the raw filesystem bytes on Unix (a no-op
+            // conversion) so a non-UTF-8 remote path ships verbatim.
+            data.extend_from_slice(arg.as_encoded_bytes());
             data.push(0);
         }
         data.push(0);

@@ -108,9 +108,15 @@ pub fn run_daemon_transfer(
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
-    let local_paths = match &transfer_spec {
-        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
-        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
+    // The daemon orchestration carries local operands as `String`; a lossy view
+    // is intentional here and unchanged by the byte-faithful SSH operand work.
+    // Raw-byte local-path fidelity for the daemon path is tracked separately.
+    let local_paths: Vec<String> = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.to_string_lossy().into_owned()],
         TransferSpec::Proxy { .. } => {
             return Err(invalid_argument_error(
                 "remote-to-remote transfers via rsync daemon are not supported",
@@ -334,9 +340,15 @@ pub fn run_daemon_over_remote_shell(
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
-    let local_paths = match &transfer_spec {
-        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
-        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
+    // The daemon orchestration carries local operands as `String`; a lossy view
+    // is intentional here and unchanged by the byte-faithful SSH operand work.
+    // Raw-byte local-path fidelity for the daemon path is tracked separately.
+    let local_paths: Vec<String> = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.to_string_lossy().into_owned()],
         TransferSpec::Proxy { .. } => {
             return Err(invalid_argument_error(
                 "remote-to-remote transfers via daemon-over-remote-shell are not supported",

@@ -53,7 +53,7 @@ use crate::exit_code::ExitCode;
 ///
 /// Returned by `parse_source_operands` to encapsulate all connection details
 /// extracted from remote source operand(s).
-type SourceConnectionInfo = (String, Option<String>, Option<u16>, Vec<String>);
+type SourceConnectionInfo = (String, Option<String>, Option<u16>, Vec<OsString>);
 
 /// Statistics from a proxy transfer.
 #[derive(Debug, Default)]
@@ -80,7 +80,7 @@ struct ProxyStats {
 pub fn run_remote_to_remote_transfer(
     config: &ClientConfig,
     remote_sources: RemoteOperands,
-    remote_dest: String,
+    remote_dest: OsString,
 ) -> Result<ClientSummary, ClientError> {
     let (source_host, source_user, source_port, source_paths) =
         parse_source_operands(&remote_sources)?;
@@ -107,26 +107,26 @@ pub fn run_remote_to_remote_transfer(
 /// Parses source operand(s) and extracts connection info.
 fn parse_source_operands(operands: &RemoteOperands) -> Result<SourceConnectionInfo, ClientError> {
     match operands {
-        RemoteOperands::Single(operand_str) => {
-            let operand = parse_ssh_operand(OsStr::new(operand_str))
+        RemoteOperands::Single(operand) => {
+            let parsed = parse_ssh_operand(operand)
                 .map_err(|e| invalid_argument_error(&format!("invalid source operand: {e}"), 1))?;
             Ok((
-                operand.host().to_owned(),
-                operand.user().map(String::from),
-                operand.port(),
-                vec![operand.path().to_owned()],
+                parsed.host().to_owned(),
+                parsed.user().map(String::from),
+                parsed.port(),
+                vec![parsed.path().to_os_string()],
             ))
         }
-        RemoteOperands::Multiple(operand_strs) => {
-            let first = parse_ssh_operand(OsStr::new(&operand_strs[0]))
+        RemoteOperands::Multiple(operands) => {
+            let first = parse_ssh_operand(&operands[0])
                 .map_err(|e| invalid_argument_error(&format!("invalid source operand: {e}"), 1))?;
 
-            let mut paths = Vec::with_capacity(operand_strs.len());
-            for operand_str in operand_strs {
-                let operand = parse_ssh_operand(OsStr::new(operand_str)).map_err(|e| {
+            let mut paths = Vec::with_capacity(operands.len());
+            for operand in operands {
+                let parsed = parse_ssh_operand(operand).map_err(|e| {
                     invalid_argument_error(&format!("invalid source operand: {e}"), 1)
                 })?;
-                paths.push(operand.path().to_owned());
+                paths.push(parsed.path().to_os_string());
             }
 
             Ok((
@@ -141,31 +141,31 @@ fn parse_source_operands(operands: &RemoteOperands) -> Result<SourceConnectionIn
 
 /// Parses the destination operand and extracts connection info.
 fn parse_dest_operand(
-    operand_str: &str,
-) -> Result<(String, Option<String>, Option<u16>, String), ClientError> {
-    let operand = parse_ssh_operand(OsStr::new(operand_str))
+    operand: &OsStr,
+) -> Result<(String, Option<String>, Option<u16>, OsString), ClientError> {
+    let parsed = parse_ssh_operand(operand)
         .map_err(|e| invalid_argument_error(&format!("invalid destination operand: {e}"), 1))?;
     Ok((
-        operand.host().to_owned(),
-        operand.user().map(String::from),
-        operand.port(),
-        operand.path().to_owned(),
+        parsed.host().to_owned(),
+        parsed.user().map(String::from),
+        parsed.port(),
+        parsed.path().to_os_string(),
     ))
 }
 
 /// Builds the rsync invocation for the source (sender) side.
-fn build_source_invocation(config: &ClientConfig, paths: &[String]) -> Vec<OsString> {
+fn build_source_invocation(config: &ClientConfig, paths: &[OsString]) -> Vec<OsString> {
     let builder = RemoteInvocationBuilder::new(config, RemoteRole::Sender);
     if paths.len() == 1 {
         builder.build(&paths[0])
     } else {
-        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        let path_refs: Vec<&OsStr> = paths.iter().map(OsString::as_os_str).collect();
         builder.build_with_paths(&path_refs)
     }
 }
 
 /// Builds the rsync invocation for the destination (receiver) side.
-fn build_dest_invocation(config: &ClientConfig, path: &str) -> Vec<OsString> {
+fn build_dest_invocation(config: &ClientConfig, path: &OsStr) -> Vec<OsString> {
     let builder = RemoteInvocationBuilder::new(config, RemoteRole::Receiver);
     builder.build(path)
 }

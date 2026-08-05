@@ -5,7 +5,7 @@
 //! secluded args over stdin when active (upstream:
 //! `rsync.c:283-320 send_protected_args()`).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
 use rsync_io::ssh::{SshCommand, SshConnection};
@@ -13,6 +13,23 @@ use rsync_io::ssh::{SshCommand, SshConnection};
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{ClientError, invalid_argument_error};
 use super::super::ssh_address_family;
+
+/// Returns the raw bytes backing an `OsStr` for null-separated stdin
+/// transmission. On Unix this is the verbatim filesystem bytes
+/// (`OsStrExt::as_bytes`); other targets expose the WTF-8 encoding
+/// (`as_encoded_bytes`), which is exact for the Unicode operands they carry.
+#[inline]
+fn os_str_bytes(name: &OsStr) -> &[u8] {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        name.as_bytes()
+    }
+    #[cfg(not(unix))]
+    {
+        name.as_encoded_bytes()
+    }
+}
 
 /// Builds and spawns an SSH connection with the remote rsync invocation.
 ///
@@ -25,7 +42,7 @@ pub(super) fn build_ssh_connection(
     port: Option<u16>,
     invocation_args: &[OsString],
     config: &ClientConfig,
-    stdin_args: &[String],
+    stdin_args: &[OsString],
 ) -> Result<SshConnection, ClientError> {
     let mut ssh = SshCommand::new(host);
 
@@ -90,12 +107,13 @@ pub(super) fn build_ssh_connection(
     // applying iconvbufs(ic_send, ...) to each arg when iconv is configured
     // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
     if !stdin_args.is_empty() {
-        let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
         // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
-        // per-arg `iconvbufs(ic_send, ...)` loop. `arg_refs` is the same
-        // payload we are about to ship over stdin.
-        protocol::cmd::trace_protected_args(&arg_refs);
+        // per-arg `iconvbufs(ic_send, ...)` loop. `stdin_args` is the same
+        // payload we are about to ship over stdin, carried as raw bytes so a
+        // non-UTF-8 remote path survives verbatim.
+        protocol::cmd::trace_protected_args(stdin_args);
+        let arg_bytes: Vec<&[u8]> = stdin_args.iter().map(|a| os_str_bytes(a)).collect();
         let iconv_converter = if config.protect_args().unwrap_or(false) {
             config.iconv().resolve_converter()
         } else {
@@ -103,7 +121,7 @@ pub(super) fn build_ssh_connection(
         };
         protocol::secluded_args::send_secluded_args(
             &mut connection,
-            &arg_refs,
+            &arg_bytes,
             iconv_converter.as_ref(),
         )
         .map_err(|e| {

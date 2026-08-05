@@ -41,7 +41,7 @@
 //! pulls in `rsync_io/async-ssh` and `dep:tokio`). Default builds remain
 //! on the synchronous transport.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
@@ -164,7 +164,8 @@ pub fn run_async_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            let plan = build_plan(config, RemoteRole::Receiver, "", Some(&remote_sources))?;
+            let plan =
+                build_plan(config, RemoteRole::Receiver, OsStr::new(""), Some(&remote_sources))?;
             let mut server_config = build_pull_server_config(config, &[local_dest])?;
             // upstream: main.c:1525,1549 / io.c:427,464 / flist.c:1026 - record
             // each requested source path (or local --files-from entry) as an
@@ -188,14 +189,14 @@ pub fn run_async_ssh_transfer(
 struct AsyncSpawnPlan {
     remote: String,
     invocation_args: Vec<OsString>,
-    stdin_args: Vec<String>,
+    stdin_args: Vec<OsString>,
     config: SshConnectConfig,
 }
 
 fn build_plan(
     config: &ClientConfig,
     role: RemoteRole,
-    single_dest: &str,
+    single_dest: &OsStr,
     pull_sources: Option<&RemoteOperands>,
 ) -> Result<AsyncSpawnPlan, ClientError> {
     let (invocation_args, host, user, _port, stdin_args) = if let Some(sources) = pull_sources {
@@ -227,7 +228,7 @@ fn build_plan(
 
 fn build_pull_server_config(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
     server_config.connection.client_mode = true;
@@ -241,7 +242,7 @@ fn build_pull_server_config(
 
 fn build_push_server_config(
     config: &ClientConfig,
-    local_paths: &[String],
+    local_paths: &[OsString],
 ) -> Result<ServerConfig, ClientError> {
     let mut server_config = build_server_config_for_generator(config, local_paths)?;
     server_config.connection.client_mode = true;
@@ -305,9 +306,9 @@ fn run_async_session(
         // Done here on the async side because AsyncSshTransport owns
         // stdin until we hand it to the pump below.
         if !stdin_args.is_empty() {
-            let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
-            protocol::cmd::trace_protected_args(&arg_refs);
-            let payload = encode_secluded_args(&arg_refs, iconv_converter.as_ref());
+            protocol::cmd::trace_protected_args(&stdin_args);
+            let arg_bytes: Vec<&[u8]> = stdin_args.iter().map(|a| os_str_bytes(a)).collect();
+            let payload = encode_secluded_args(&arg_bytes, iconv_converter.as_ref());
             async_writer.write_all(&payload).await.map_err(|e| {
                 invalid_argument_error(
                     &format!("failed to send secluded args: {e}"),
@@ -463,23 +464,40 @@ fn transport_split(
 /// upstream: rsync.c:283-320 send_protected_args() / iconvbufs(ic_send)
 /// uses `ICB_INCLUDE_BAD`: invalid bytes are passed through verbatim.
 /// We use lossy conversion which replaces unconvertible bytes with `?`.
-fn encode_secluded_args(
-    args: &[&str],
+fn encode_secluded_args<A: AsRef<[u8]>>(
+    args: &[A],
     iconv: Option<&protocol::iconv::FilenameConverter>,
 ) -> Vec<u8> {
     let mut payload = Vec::new();
     for arg in args {
+        let bytes = arg.as_ref();
         match iconv {
             Some(converter) => {
-                let outcome = converter.local_to_remote_lossy(arg.as_bytes());
+                let outcome = converter.local_to_remote_lossy(bytes);
                 payload.extend_from_slice(&outcome.output);
             }
-            None => payload.extend_from_slice(arg.as_bytes()),
+            None => payload.extend_from_slice(bytes),
         }
         payload.push(0);
     }
     payload.push(0);
     payload
+}
+
+/// Returns the raw bytes backing an `OsStr` for null-separated stdin
+/// transmission. Unix exposes the verbatim filesystem bytes; other targets
+/// expose the WTF-8 encoding, exact for the Unicode operands they carry.
+#[inline]
+fn os_str_bytes(name: &OsStr) -> &[u8] {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        name.as_bytes()
+    }
+    #[cfg(not(unix))]
+    {
+        name.as_encoded_bytes()
+    }
 }
 
 /// Sync `Read` adapter over a `std::sync::mpsc::Receiver<Vec<u8>>`.
@@ -679,7 +697,7 @@ mod tests {
                 std::num::NonZeroU64::new(37).unwrap(),
             ))
             .build();
-        let plan = build_plan(&config, RemoteRole::Sender, "host:/data", None)
+        let plan = build_plan(&config, RemoteRole::Sender, OsStr::new("host:/data"), None)
             .expect("build_plan should succeed for a simple remote dest");
         assert_eq!(
             plan.config.io_timeout,
@@ -694,7 +712,7 @@ mod tests {
         // must preserve the watchdog's default-off behavior, matching the
         // pre-wiring contract for transfers that never opt into a timeout.
         let config = crate::client::config::ClientConfigBuilder::default().build();
-        let plan = build_plan(&config, RemoteRole::Sender, "host:/data", None)
+        let plan = build_plan(&config, RemoteRole::Sender, OsStr::new("host:/data"), None)
             .expect("build_plan should succeed for a simple remote dest");
         assert_eq!(plan.config.io_timeout, None);
     }

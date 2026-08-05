@@ -16,23 +16,24 @@ use super::super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRo
 ///
 /// Used by `parse_single_remote` and `parse_remote_operands` to return parsed
 /// remote connection information along with the rsync invocation arguments.
-/// The final `Vec<String>` contains arguments to send over stdin when
-/// secluded-args is active (empty when disabled).
+/// The final `Vec<OsString>` contains arguments to send over stdin when
+/// secluded-args is active (empty when disabled); it is `OsString` so a
+/// non-UTF-8 remote path ships verbatim.
 pub(super) type SshInvocationResult = (
     Vec<OsString>,
     String,
     Option<String>,
     Option<u16>,
-    Vec<String>,
+    Vec<OsString>,
 );
 
 /// Parses a single remote operand and builds the invocation args.
 pub(in crate::client::remote) fn parse_single_remote(
-    operand_str: &str,
+    operand: &OsStr,
     config: &ClientConfig,
     role: RemoteRole,
 ) -> Result<SshInvocationResult, ClientError> {
-    let operand = parse_ssh_operand(OsStr::new(operand_str))
+    let operand = parse_ssh_operand(operand)
         .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
     let invocation_builder = RemoteInvocationBuilder::new(config, role);
@@ -54,21 +55,21 @@ pub(in crate::client::remote) fn parse_remote_operands(
     role: RemoteRole,
 ) -> Result<SshInvocationResult, ClientError> {
     match remote_operands {
-        RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
-        RemoteOperands::Multiple(operand_strs) => {
-            let first_operand = parse_ssh_operand(OsStr::new(&operand_strs[0]))
+        RemoteOperands::Single(operand) => parse_single_remote(operand, config, role),
+        RemoteOperands::Multiple(operands) => {
+            let first_operand = parse_ssh_operand(&operands[0])
                 .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
-            let mut paths = Vec::new();
-            for operand_str in operand_strs {
-                let operand = parse_ssh_operand(OsStr::new(operand_str)).map_err(|e| {
+            let mut paths: Vec<OsString> = Vec::new();
+            for operand in operands {
+                let parsed = parse_ssh_operand(operand).map_err(|e| {
                     invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
                 })?;
-                paths.push(operand.path().to_owned());
+                paths.push(parsed.path().to_os_string());
             }
 
             let invocation_builder = RemoteInvocationBuilder::new(config, role);
-            let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
+            let path_refs: Vec<&OsStr> = paths.iter().map(OsString::as_os_str).collect();
             let secluded = invocation_builder.build_secluded(&path_refs);
 
             Ok((
@@ -91,15 +92,19 @@ pub(in crate::client::remote) fn parse_remote_operands(
 pub(in crate::client::remote) fn remote_operand_source_paths(
     operands: &RemoteOperands,
 ) -> Result<Vec<String>, ClientError> {
-    let operand_strs: &[String] = match operands {
+    let operand_list: &[OsString] = match operands {
         RemoteOperands::Single(operand) => std::slice::from_ref(operand),
         RemoteOperands::Multiple(operands) => operands.as_slice(),
     };
-    operand_strs
+    // These feed the receiver-side implied-include check (CVE-2022-29154),
+    // which matches against the `String`-typed filter machinery; a lossy view
+    // is intentional here and independent of the byte-faithful operand that
+    // `parse_remote_operands` ships to the remote sender.
+    operand_list
         .iter()
         .map(|operand| {
-            parse_ssh_operand(OsStr::new(operand))
-                .map(|parsed| parsed.path().to_owned())
+            parse_ssh_operand(operand)
+                .map(|parsed| parsed.path().to_string_lossy().into_owned())
                 .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))
         })
         .collect()
