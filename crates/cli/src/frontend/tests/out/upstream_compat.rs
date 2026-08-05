@@ -202,7 +202,8 @@ fn out_format_current_time_follows_upstream_format() {
 #[test]
 fn out_format_suppresses_verbose_listing_in_summary() {
     use super::super::super::{
-        NameOutputLevel, ProgressSetting, emit_transfer_summary, parse_out_format,
+        DeltaTransmissionSummary, NameOutputLevel, ProgressSetting, emit_transfer_summary,
+        parse_out_format,
     };
     use core::client::{ClientConfig, HumanReadableMode};
 
@@ -239,11 +240,12 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false, // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        false,                               // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut with_out_format,
     )
     .expect("render with out-format");
@@ -264,11 +266,12 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false, // emit_flist_banner
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
-        false, // eight_bit_output
+        false,                               // emit_flist_banner
+        DeltaTransmissionSummary::default(), // delta_notice
+        false,                               // show_copy_method
+        false,                               // show_atimes
+        false,                               // show_crtimes
+        false,                               // eight_bit_output
         &mut without_out_format,
     )
     .expect("render without out-format");

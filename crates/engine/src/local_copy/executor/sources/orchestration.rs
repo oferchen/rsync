@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use logging::{debug_log, info_log};
+use logging::info_log;
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
@@ -69,19 +69,11 @@ pub(crate) fn copy_sources(
     context.set_multi_source(plan.sources().len() > 1);
 
     // upstream: generator.c:2290-2295 - the generator prints the
-    // delta-transmission status once, gated on DEBUG_GTE(FLIST, 1) (first
-    // active at -vv). Local copies default to whole-file mode; delta is
-    // used only when --no-whole-file is explicitly set.
-    debug_log!(
-        Flist,
-        1,
-        "delta-transmission {}",
-        if context.options().whole_file_enabled() {
-            "disabled for local transfer or --whole-file"
-        } else {
-            "enabled"
-        }
-    );
+    // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
+    // -vv), before the per-file generate loop. A local copy renders its name
+    // list post-hoc in the CLI, so that notice is emitted there (in
+    // `emit_transfer_summary`) to keep it ahead of the list rather than
+    // dead-last through the deferred diagnostic flush.
 
     let result = {
         let context = &mut context;

@@ -53,6 +53,50 @@ use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
 use logging::{InfoFlag, info_gte};
 
+/// Which `delta-transmission %s` notice the generator would print.
+///
+/// upstream: generator.c:2291-2294 - the generator emits this line once at
+/// `DEBUG_GTE(FLIST, 1)` (first active at `-vv`), before the per-file generate
+/// loop. `whole_file` (the local-copy default) reports `Disabled`; an explicit
+/// `--no-whole-file` reports `Enabled`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DeltaTransmissionState {
+    /// `delta-transmission disabled for local transfer or --whole-file`.
+    Disabled,
+    /// `delta-transmission enabled`.
+    Enabled,
+}
+
+impl DeltaTransmissionState {
+    /// The exact `%s` substituted into upstream's `delta-transmission %s` line.
+    const fn text(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled for local transfer or --whole-file",
+            Self::Enabled => "enabled",
+        }
+    }
+}
+
+/// The two generator/sender diagnostics that bracket the per-file name list on
+/// a verbose (`-vv`) local transfer, threaded in so `emit_transfer_summary`
+/// renders them at their upstream positions rather than dead-last through the
+/// deferred diagnostic flush.
+///
+/// Both are `None`/`false` for network transfers and for verbosity below the
+/// gating debug level, leaving remote-path output untouched.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct DeltaTransmissionSummary {
+    /// The `delta-transmission %s` notice printed after the `created directory`
+    /// notice and before the name list. `Some` only at `DEBUG_GTE(FLIST, 1)` on
+    /// a local transfer. upstream: generator.c:2291-2294.
+    pub notice: Option<DeltaTransmissionState>,
+    /// Whether to print the `match_report()` `total:` line after the name list.
+    /// `true` only at `DEBUG_GTE(DELTASUM, 1)` on a whole-file local transfer,
+    /// where every match count is provably zero and `data` is the literal bytes
+    /// copied (read from the summary). upstream: match.c:439-446.
+    pub emit_total: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_transfer_summary(
     summary: &ClientSummary,
@@ -72,6 +116,7 @@ pub(crate) fn emit_transfer_summary(
     human_readable_mode: HumanReadableMode,
     suppress_updated_only_totals: bool,
     emit_flist_banner: bool,
+    delta_notice: DeltaTransmissionSummary,
     show_copy_method: bool,
     show_atimes: bool,
     show_crtimes: bool,
@@ -161,6 +206,16 @@ pub(crate) fn emit_transfer_summary(
         writer.write_all(b"\n")?;
     }
 
+    // upstream: generator.c:2290-2295 - the generator prints the
+    // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
+    // -vv), after the receiver's `created directory` notice and before the
+    // per-file generate loop. On a local transfer oc renders the name list
+    // post-hoc here, so emit the notice at the same position rather than
+    // dead-last through the deferred diagnostic flush.
+    if let Some(state) = delta_notice.notice {
+        writeln!(writer, "delta-transmission {}", state.text())?;
+    }
+
     let formatted_rendered = if let Some(format) = out_format {
         if events.is_empty() {
             false
@@ -211,6 +266,20 @@ pub(crate) fn emit_transfer_summary(
             human_readable_mode,
             eight_bit_output,
             writer,
+        )?;
+    }
+
+    // upstream: match.c:439-446 match_report() - the sender prints the
+    // cumulative match totals once at DEBUG_GTE(DELTASUM, 1) (first active at
+    // -vv) after send_files() finishes and before output_summary(). On a
+    // whole-file local transfer no block matching runs, so matches, hash_hits
+    // and false_alarms are all zero; `data` is the literal bytes copied, which
+    // upstream renders with big_num() (plain digits, no separator: inums.h:19).
+    if delta_notice.emit_total {
+        writeln!(
+            writer,
+            "total: matches=0  hash_hits=0  false_alarms=0 data={}",
+            summary.bytes_copied()
         )?;
     }
 
@@ -1419,12 +1488,13 @@ mod tests {
             NameOutputLevel::Disabled,
             false, // name_overridden
             HumanReadableMode::Grouped,
-            false, // suppress_updated_only_totals
-            false, // emit_flist_banner
-            false, // show_copy_method
-            false, // show_atimes
-            false, // show_crtimes
-            false, // eight_bit_output
+            false,                               // suppress_updated_only_totals
+            false,                               // emit_flist_banner
+            DeltaTransmissionSummary::default(), // delta_notice
+            false,                               // show_copy_method
+            false,                               // show_atimes
+            false,                               // show_crtimes
+            false,                               // eight_bit_output
             &mut out,
         )
         .expect("emit_transfer_summary writes to an in-memory buffer");
