@@ -19,12 +19,20 @@
 //! Companion to `nfsv4_acl_unsupported_pin.rs` (NFSv4-ACL surfaced-error /
 //! silent-absence).
 
+// The entry-based crtime apply and the non-root xattr-namespace pins below run
+// only on non-macOS targets: macOS crtime is covered by
+// `atimes_crtimes_roundtrip.rs`, so this file has no macOS test using these
+// items. Gate the imports and the shared constant to match, so a macOS build
+// under `-D warnings` does not fail on unused imports / dead code.
+#[cfg(not(target_os = "macos"))]
 use metadata::{AttrsFlags, MetadataOptions, apply_metadata_with_attrs_flags};
+#[cfg(not(target_os = "macos"))]
 use protocol::flist::FileEntry;
 
 /// 2000-01-01 UTC: a fixed historical creation time that the freshly created
 /// destination cannot already carry, so an applied-vs-no-op regression cannot
 /// pass by coincidence.
+#[cfg(not(target_os = "macos"))]
 const HISTORICAL_CRTIME_SECS: i64 = 946_684_800;
 
 /// #198 - the entry-based crtime apply is a documented no-op on non-macOS,
