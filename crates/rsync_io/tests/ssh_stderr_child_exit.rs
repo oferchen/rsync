@@ -27,7 +27,6 @@ use rsync_io::ssh::SshCommand;
 fn child_non_zero_exit_and_stderr_surface_to_caller() {
     let mut command = SshCommand::new("ignored");
     command.set_program("/bin/sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo \"fatal: cannot connect\" >&2; exit 7");
     command.set_target_override(Some(OsString::new()));
@@ -63,7 +62,6 @@ fn child_non_zero_exit_and_stderr_surface_to_caller() {
 fn child_non_zero_exit_and_stderr_surface_through_child_handle() {
     let mut command = SshCommand::new("ignored");
     command.set_program("/bin/sh");
-    command.set_batch_mode(false);
     command.push_option("-c");
     command.push_option("echo \"fatal: cannot connect\" >&2; exit 7");
     command.set_target_override(Some(OsString::new()));

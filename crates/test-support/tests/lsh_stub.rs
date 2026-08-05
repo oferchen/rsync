@@ -54,8 +54,9 @@ fn stub_rejects_unknown_host_loudly() {
 
 #[test]
 fn stub_strips_bare_ssh_style_flags_before_the_host() {
-    // Why: oc-rsync may pass bundled ssh-style flags (e.g. -oBatchMode=yes)
-    // ahead of the host. The stub must drop such bare `-*` tokens the way
+    // Why: a user's `-e` remote-shell string may place bundled ssh-style
+    // flags (e.g. -oBatchMode=yes) ahead of the host. The stub must drop
+    // such bare `-*` tokens the way
     // upstream lsh.sh does and still reach the host token. (Flags that take a
     // separate value are not honoured by lsh.sh either: its `-*) shift` drops
     // only the flag, so a lone value would be misread as the host - we mirror
