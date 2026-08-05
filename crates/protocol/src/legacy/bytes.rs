@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(
             message,
             LegacyDaemonMessage::AuthRequired {
-                module: Some("module"),
+                challenge: Some("module"),
             }
         );
     }

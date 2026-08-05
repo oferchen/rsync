@@ -7,6 +7,8 @@ use std::io::{BufReader, Write};
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
+use protocol::format_daemon_auth_response;
+
 use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 
 use super::super::{ClientError, socket_error};
@@ -85,11 +87,9 @@ where
     S: Write,
 {
     let digest = compute_daemon_auth_response(context.secret(), challenge, context.digest());
-    let mut command = String::with_capacity(context.username.len() + digest.len() + 2);
-    command.push_str(&context.username);
-    command.push(' ');
-    command.push_str(&digest);
-    command.push('\n');
+    // Emit `<user> <response>` via the shared protocol helper - the exact
+    // inverse of the daemon's `parse_daemon_auth_response`.
+    let command = format_daemon_auth_response(&context.username, &digest);
 
     reader
         .get_mut()

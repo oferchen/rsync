@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use protocol::{
     LEGACY_DAEMON_PREFIX, LegacyDaemonGreetingOwned, LegacyDaemonMessage, missing_greeting_token,
-    parse_legacy_daemon_message, parse_legacy_warning_message,
+    parse_daemon_module_listing, parse_legacy_daemon_message, parse_legacy_warning_message,
 };
 use rsync_io::negotiate_legacy_daemon_session;
 
@@ -98,18 +98,16 @@ pub struct ModuleListEntry {
 
 impl ModuleListEntry {
     fn from_line(line: &str) -> Self {
-        match line.split_once('\t') {
-            Some((name, comment)) => Self {
-                name: name.to_owned(),
-                comment: if comment.is_empty() {
-                    None
-                } else {
-                    Some(comment.to_owned())
-                },
-            },
-            None => Self {
-                name: line.to_owned(),
-                comment: None,
+        // Split the `%-15s\t%s` wire line via the shared protocol helper - the
+        // exact inverse of the daemon's `format_daemon_module_listing` emit. An
+        // empty comment field maps to `None`.
+        let (name, comment) = parse_daemon_module_listing(line);
+        Self {
+            name: name.to_owned(),
+            comment: if comment.is_empty() {
+                None
+            } else {
+                Some(comment.to_owned())
             },
         }
     }
@@ -309,7 +307,7 @@ pub fn run_module_list_with_password_and_options(
                     capabilities.push(flags.to_owned());
                     continue;
                 }
-                Ok(LegacyDaemonMessage::AuthRequired { module }) => {
+                Ok(LegacyDaemonMessage::AuthRequired { challenge }) => {
                     if auth_attempted {
                         return Err(daemon_protocol_error(
                             "daemon repeated authentication challenge",
@@ -356,7 +354,7 @@ pub fn run_module_list_with_password_and_options(
 
                     let context =
                         DaemonAuthContext::new(username.to_owned(), secret, selected_digest);
-                    if let Some(challenge) = module {
+                    if let Some(challenge) = challenge {
                         send_daemon_auth_credentials(&mut reader, &context, challenge, addr)?;
                     }
 

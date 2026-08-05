@@ -514,8 +514,8 @@ fn read_and_parse_legacy_daemon_message_after_greeting() {
         .read_and_parse_legacy_daemon_message(&mut line)
         .expect("message parses");
     match message {
-        LegacyDaemonMessage::AuthRequired { module } => {
-            assert_eq!(module, Some("module"));
+        LegacyDaemonMessage::AuthRequired { challenge } => {
+            assert_eq!(challenge, Some("module"));
         }
         other => panic!("unexpected message: {other:?}"),
     }
@@ -537,8 +537,8 @@ fn read_and_parse_legacy_daemon_message_routes_keywords() {
         .read_and_parse_legacy_daemon_message(&mut line)
         .expect("message parses")
     {
-        LegacyDaemonMessage::AuthRequired { module } => {
-            assert_eq!(module, Some("module"));
+        LegacyDaemonMessage::AuthRequired { challenge } => {
+            assert_eq!(challenge, Some("module"));
         }
         other => panic!("unexpected message: {other:?}"),
     }
