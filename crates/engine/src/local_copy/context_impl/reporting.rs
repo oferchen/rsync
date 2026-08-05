@@ -1,4 +1,50 @@
 impl<'a> CopyContext<'a> {
+    /// Folds one delta-scanned file's match diagnostics into the cumulative
+    /// totals for the end-of-run `-vv` `total:` line.
+    ///
+    /// upstream: match.c:433-436 - `total_matches += matches` etc. after each
+    /// file's `match_sums()`.
+    pub(in crate::local_copy) fn record_delta_match_stats(
+        &mut self,
+        matches: u64,
+        hash_hits: u64,
+        false_alarms: u64,
+    ) {
+        self.delta_match_report.matches = self.delta_match_report.matches.saturating_add(matches);
+        self.delta_match_report.hash_hits =
+            self.delta_match_report.hash_hits.saturating_add(hash_hits);
+        self.delta_match_report.false_alarms = self
+            .delta_match_report
+            .false_alarms
+            .saturating_add(false_alarms);
+    }
+
+    /// Emits upstream's `match_report()` `total:` line once at end-of-run.
+    ///
+    /// upstream: match.c:439-448 match_report() prints
+    /// `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s` gated on
+    /// `DEBUG_GTE(DELTASUM, 1)` (first active at `-vv`), where `data` is the
+    /// cumulative literal-byte count (`stats.literal_data`, plain `big_num`, no
+    /// grouping). A whole-file local copy still emits the line with
+    /// `matches=0` and `data` equal to the total literal bytes, exactly as
+    /// upstream's forked sender does. `matches` and `data` match upstream
+    /// exactly; `hash_hits`/`false_alarms` are oc-native (bithash-prefilter
+    /// positives and the subset that fails the exact verify) and are not
+    /// expected to equal upstream's `SUM2HASH`-collision counts (see
+    /// [`crate::delta::ProbeCounters`]).
+    pub(in crate::local_copy) fn emit_delta_match_report(&self) {
+        let report = &self.delta_match_report;
+        debug_log!(
+            Deltasum,
+            1,
+            "total: matches={}  hash_hits={}  false_alarms={} data={}",
+            report.matches,
+            report.hash_hits,
+            report.false_alarms,
+            self.summary.bytes_copied()
+        );
+    }
+
     /// Records a skip event for a non-regular file (e.g. socket, unknown type).
     ///
     /// Emits an `--info=NONREG` notice mirroring upstream rsync 3.4.1

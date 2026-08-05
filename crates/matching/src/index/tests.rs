@@ -75,6 +75,46 @@ fn find_match_window_handles_split_buffers() {
 }
 
 #[test]
+fn find_match_window_counted_tallies_probe_diagnostics() {
+    let data = vec![b'a'; 2048];
+    let params = SignatureLayoutParams::new(
+        data.len() as u64,
+        None,
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+        .expect("signature");
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+
+    let digest = index.block(0).rolling();
+    let mut window = VecDeque::with_capacity(index.block_length());
+    let mut scratch = Vec::with_capacity(index.block_length());
+    for &byte in &data[..index.block_length()] {
+        window.push_back(byte);
+    }
+
+    // A matching full-length window is exactly one bithash-prefilter positive
+    // that then confirms (no false alarm), and the counted probe returns the
+    // same index the uncounted path would. Two probes accumulate (the probe
+    // does not consume the block).
+    let mut counters = ProbeCounters::default();
+    assert_eq!(
+        index.find_match_window_counted(digest, &window, &mut scratch, &mut counters),
+        Some(0)
+    );
+    assert_eq!(counters.hash_hits, 1, "one bithash-prefilter positive");
+    assert_eq!(counters.false_alarms, 0, "exact verify confirmed the match");
+    index
+        .find_match_window_counted(digest, &window, &mut scratch, &mut counters)
+        .expect("second match");
+    assert_eq!(counters.hash_hits, 2, "counters accumulate across probes");
+    assert_eq!(counters.false_alarms, 0);
+}
+
+#[test]
 fn delta_signature_index_block_length() {
     let data = vec![b'a'; 2048];
     let params = SignatureLayoutParams::new(
