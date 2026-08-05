@@ -12,7 +12,7 @@ use quinn_proto::{
     ReadableError, StreamEvent, StreamId, VarInt, WriteError,
 };
 
-use super::{DATAGRAM_BUF, Io, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, loopback_of};
+use super::{DATAGRAM_BUF, Io, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error, loopback_of};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
@@ -65,7 +65,7 @@ impl Driver {
         let mut st = self.shared.lock();
         if st.terminal.is_none() {
             if let Err(err) = result {
-                st.terminal = Some(Terminal::Error(err.to_string()));
+                st.terminal = Some(Terminal::Error(error::io_fault(&err)));
             }
         }
         st.drained = true;
@@ -297,9 +297,7 @@ impl Driver {
                         }
                         Err(ReadError::Reset(code)) => {
                             if st.terminal.is_none() {
-                                st.terminal = Some(Terminal::Error(format!(
-                                    "stream reset by peer: code {code}"
-                                )));
+                                st.terminal = Some(Terminal::Error(error::stream_reset(code)));
                             }
                             c.readable = false;
                             progress = true;
