@@ -1743,7 +1743,11 @@ mod files_from_forwarding_tests {
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
         assert_eq!(
             filenames,
-            vec!["file1.txt", "file2.txt", "subdir/file3.txt"]
+            vec![
+                b"file1.txt".to_vec(),
+                b"file2.txt".to_vec(),
+                b"subdir/file3.txt".to_vec()
+            ]
         );
     }
 
@@ -1762,7 +1766,7 @@ mod files_from_forwarding_tests {
 
         let mut reader = Cursor::new(&data);
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
-        assert_eq!(filenames, vec!["alpha.txt", "beta.txt"]);
+        assert_eq!(filenames, vec![b"alpha.txt".to_vec(), b"beta.txt".to_vec()]);
     }
 
     #[test]
@@ -1828,7 +1832,10 @@ mod files_from_forwarding_tests {
 
         let mut reader = Cursor::new(&data);
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
-        assert_eq!(filenames, vec!["file1.txt", "file2.txt"]);
+        assert_eq!(
+            filenames,
+            vec![b"file1.txt".to_vec(), b"file2.txt".to_vec()]
+        );
     }
 
     #[test]

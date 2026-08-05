@@ -139,16 +139,20 @@ fn write_filesfrom_entry<W: Write>(
 
 /// Reads NUL-separated filenames from a remote source (wire protocol).
 ///
-/// Returns a vector of filenames. The stream is terminated by a double-NUL
-/// sentinel (an empty filename after a NUL). Empty strings between NULs
-/// are skipped.
+/// Returns each filename as a raw byte vector. The stream is terminated by a
+/// double-NUL sentinel (an empty filename after a NUL). Empty entries between
+/// NULs are skipped.
+///
+/// Names are carried as raw bytes, never UTF-8-validated, mirroring upstream
+/// rsync which handles filenames as `char*` byte strings. A non-UTF-8 name
+/// (a legal filename on Unix) therefore round-trips intact instead of being
+/// silently dropped.
 ///
 /// When `iconv` is `Some`, each NUL-separated entry is transcoded with
-/// [`FilenameConverter::remote_to_local`] before being decoded into a
-/// `String`, mirroring upstream `read_line(RL_CONVERT)`'s
-/// `iconvbufs(ic_recv, ...)` call. When `iconv` is `None`, wire bytes are
-/// decoded verbatim - equivalent to upstream's `ic_recv == (iconv_t)-1`
-/// case.
+/// [`FilenameConverter::remote_to_local`], mirroring upstream
+/// `read_line(RL_CONVERT)`'s `iconvbufs(ic_recv, ...)` call. When `iconv` is
+/// `None`, wire bytes are forwarded verbatim - equivalent to upstream's
+/// `ic_recv == (iconv_t)-1` case.
 ///
 /// This is used by the sender process to receive the file list from the
 /// client when `--files-from=-` was passed (stdin/socket forwarding).
@@ -162,7 +166,7 @@ fn write_filesfrom_entry<W: Write>(
 pub fn read_files_from_stream<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<Vec<u8>>> {
     read_files_from_stream_inner(reader, iconv, None)
 }
 
@@ -193,7 +197,7 @@ pub fn read_files_from_stream_with_deadline<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
     deadline: std::time::Duration,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<Vec<u8>>> {
     read_files_from_stream_inner(reader, iconv, Some(deadline))
 }
 
@@ -201,7 +205,7 @@ fn read_files_from_stream_inner<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
     deadline: Option<std::time::Duration>,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<Vec<u8>>> {
     let mut filenames = Vec::new();
     let mut current = Vec::new();
     let start = deadline.map(|_| std::time::Instant::now());
@@ -245,13 +249,13 @@ fn read_files_from_stream_inner<R: Read>(
     Ok(filenames)
 }
 
-/// Decodes a single wire entry into a `String`, applying iconv when configured.
+/// Pushes a single wire entry as raw bytes, applying iconv when configured.
 ///
-/// Non-UTF-8 results are silently dropped to preserve the existing String-based
-/// representation. Upstream's `ICB_INCLUDE_BAD` flag (pass through bad bytes)
-/// is honored only at the iconv layer; the final UTF-8 check is a downstream
-/// limitation of the `Vec<String>` API.
-fn push_decoded_filename(out: &mut Vec<String>, raw: &[u8], iconv: Option<&FilenameConverter>) {
+/// The name is kept as raw bytes and never UTF-8-validated, so a non-UTF-8
+/// filename (legal on Unix) is preserved verbatim rather than silently
+/// dropped. Empty entries are skipped, matching the double-NUL / collapsed-run
+/// handling upstream applies to filenames.
+fn push_decoded_filename(out: &mut Vec<Vec<u8>>, raw: &[u8], iconv: Option<&FilenameConverter>) {
     let bytes: Cow<'_, [u8]> = match iconv {
         Some(converter) => match converter.remote_to_local(raw) {
             Ok(cow) => cow,
@@ -260,10 +264,8 @@ fn push_decoded_filename(out: &mut Vec<String>, raw: &[u8], iconv: Option<&Filen
         },
         None => Cow::Borrowed(raw),
     };
-    if let Ok(s) = std::str::from_utf8(&bytes)
-        && !s.is_empty()
-    {
-        out.push(s.to_owned());
+    if !bytes.is_empty() {
+        out.push(bytes.into_owned());
     }
 }
 
@@ -356,7 +358,43 @@ mod tests {
 
         let files = read_files_from_stream(&mut reader, None).unwrap();
 
-        assert_eq!(files, vec!["file1.txt", "file2.txt", "file3.txt"]);
+        assert_eq!(
+            files,
+            vec![
+                b"file1.txt".to_vec(),
+                b"file2.txt".to_vec(),
+                b"file3.txt".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn read_preserves_non_utf8_entry() {
+        // A non-UTF-8 filename (0xFF byte) is a legal name on Unix. Upstream
+        // carries filenames as raw char* bytes and never UTF-8-validates, so
+        // the sender must receive the exact bytes rather than silently drop
+        // the entry (which corrupts the file list and aborts the transfer).
+        let input = b"foo\xffbar.txt\0plain.txt\0\0";
+        let mut reader = Cursor::new(input);
+
+        let files = read_files_from_stream(&mut reader, None).unwrap();
+
+        assert_eq!(
+            files,
+            vec![b"foo\xffbar.txt".to_vec(), b"plain.txt".to_vec()]
+        );
+    }
+
+    #[test]
+    fn read_preserves_backslash_entry() {
+        // A backslash is a literal filename byte on Unix, not an escape, and
+        // must survive the wire read verbatim.
+        let input = b"back\\slash.txt\0\0";
+        let mut reader = Cursor::new(input);
+
+        let files = read_files_from_stream(&mut reader, None).unwrap();
+
+        assert_eq!(files, vec![b"back\\slash.txt".to_vec()]);
     }
 
     #[test]
@@ -376,7 +414,7 @@ mod tests {
 
         let files = read_files_from_stream(&mut reader, None).unwrap();
 
-        assert_eq!(files, vec!["only.txt"]);
+        assert_eq!(files, vec![b"only.txt".to_vec()]);
     }
 
     #[test]
@@ -386,7 +424,7 @@ mod tests {
 
         let files = read_files_from_stream(&mut reader, None).unwrap();
 
-        assert_eq!(files, vec!["partial.txt"]);
+        assert_eq!(files, vec![b"partial.txt".to_vec()]);
     }
 
     #[test]
@@ -400,7 +438,14 @@ mod tests {
         let mut wire_reader = Cursor::new(&wire);
         let files = read_files_from_stream(&mut wire_reader, None).unwrap();
 
-        assert_eq!(files, vec!["alpha.txt", "beta.txt", "gamma.txt"]);
+        assert_eq!(
+            files,
+            vec![
+                b"alpha.txt".to_vec(),
+                b"beta.txt".to_vec(),
+                b"gamma.txt".to_vec()
+            ]
+        );
     }
 
     #[test]
@@ -414,7 +459,14 @@ mod tests {
         let mut wire_reader = Cursor::new(&wire);
         let files = read_files_from_stream(&mut wire_reader, None).unwrap();
 
-        assert_eq!(files, vec!["one.txt", "two.txt", "three.txt"]);
+        assert_eq!(
+            files,
+            vec![
+                b"one.txt".to_vec(),
+                b"two.txt".to_vec(),
+                b"three.txt".to_vec()
+            ]
+        );
     }
 
     #[cfg(feature = "iconv")]
@@ -466,7 +518,10 @@ mod tests {
 
         let files = read_files_from_stream(&mut Cursor::new(wire), Some(&converter)).unwrap();
 
-        assert_eq!(files, vec!["café", "naïve"]);
+        assert_eq!(
+            files,
+            vec!["café".as_bytes().to_vec(), "naïve".as_bytes().to_vec()]
+        );
     }
 
     #[cfg(feature = "iconv")]
@@ -490,6 +545,9 @@ mod tests {
         .unwrap();
 
         let files = read_files_from_stream(&mut Cursor::new(&wire), Some(&reader_iconv)).unwrap();
-        assert_eq!(files, vec!["café", "naïve"]);
+        assert_eq!(
+            files,
+            vec!["café".as_bytes().to_vec(), "naïve".as_bytes().to_vec()]
+        );
     }
 }
