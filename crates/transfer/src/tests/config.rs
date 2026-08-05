@@ -210,5 +210,12 @@ fn files_from_data_roundtrip_with_protocol_wire_format() {
     let data = cfg.connection.files_from_data.take().unwrap();
     let mut wire_reader = Cursor::new(&data);
     let filenames = protocol::read_files_from_stream(&mut wire_reader, None).unwrap();
-    assert_eq!(filenames, vec!["alpha.txt", "beta.txt", "gamma/delta.txt"]);
+    assert_eq!(
+        filenames,
+        vec![
+            b"alpha.txt".to_vec(),
+            b"beta.txt".to_vec(),
+            b"gamma/delta.txt".to_vec()
+        ]
+    );
 }

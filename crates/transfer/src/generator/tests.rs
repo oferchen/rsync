@@ -3982,7 +3982,7 @@ mod files_from {
 
             // Build the entry through the real non-relative split so the walk
             // base absorbs `sub` and the wire name flattens to `file`.
-            let entry = super::filters::split_files_from_entry(&src, "sub/file", false, false);
+            let entry = super::filters::split_files_from_entry(&src, b"sub/file", false, false);
             ctx.build_file_list_with_base(&src, &[entry]).unwrap();
 
             ctx.file_list()
@@ -4402,7 +4402,10 @@ mod files_from {
         let result =
             super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), false)
                 .unwrap();
-        assert_eq!(result, vec!["a.txt", "b.txt", "c.txt"]);
+        assert_eq!(
+            result,
+            vec![b"a.txt".to_vec(), b"b.txt".to_vec(), b"c.txt".to_vec()]
+        );
     }
 
     #[test]
@@ -4414,7 +4417,7 @@ mod files_from {
         let result =
             super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), true)
                 .unwrap();
-        assert_eq!(result, vec!["x.txt", "y.txt"]);
+        assert_eq!(result, vec![b"x.txt".to_vec(), b"y.txt".to_vec()]);
     }
 
     #[test]
@@ -4429,7 +4432,7 @@ mod files_from {
         let result =
             super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), true)
                 .unwrap();
-        assert_eq!(result, vec!["x.txt", "y.txt"]);
+        assert_eq!(result, vec![b"x.txt".to_vec(), b"y.txt".to_vec()]);
     }
 
     #[test]
@@ -4441,7 +4444,7 @@ mod files_from {
         let result =
             super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), false)
                 .unwrap();
-        assert_eq!(result, vec!["file.txt", "other.txt"]);
+        assert_eq!(result, vec![b"file.txt".to_vec(), b"other.txt".to_vec()]);
     }
 }
 

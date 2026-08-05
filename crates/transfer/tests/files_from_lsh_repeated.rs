@@ -88,11 +88,11 @@ fn forwarded_round_trip_repeats_cleanly() {
         assert_eq!(
             names,
             vec![
-                "from/./",
-                "from/./dir/subdir",
-                "from/./dir/subdir/subsubdir",
-                "from/./dir/subdir/subsubdir2/",
-                "from/./dir/subdir/foobar.baz",
+                b"from/./".to_vec(),
+                b"from/./dir/subdir".to_vec(),
+                b"from/./dir/subdir/subsubdir".to_vec(),
+                b"from/./dir/subdir/subsubdir2/".to_vec(),
+                b"from/./dir/subdir/foobar.baz".to_vec(),
             ],
             "iteration {iteration} parsed filenames diverged"
         );
