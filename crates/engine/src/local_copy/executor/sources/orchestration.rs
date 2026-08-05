@@ -1,13 +1,11 @@
 //! Top-level source processing orchestration and deferred operation flushing.
 
-use std::cmp::Ordering;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use logging::info_log;
-use protocol::flist::{FileEntry, compare_file_entries};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
@@ -37,67 +35,6 @@ fn whole_unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|since_epoch| since_epoch.as_secs())
         .unwrap_or(0)
-}
-
-/// Returns the operands in the order the local-copy executor should process
-/// them so multi-operand itemize / `--list-only` output matches upstream.
-///
-/// upstream: flist.c:2544 flist_sort_and_clean() sorts the COMBINED
-/// multi-source file list with f_name_cmp before the generator itemizes it, so
-/// top-level operands are emitted in name order, not command-line order. oc's
-/// per-directory walk already emits each operand's subtree in f_name_cmp order,
-/// and a directory sorts contiguously with its own contents (no top-level
-/// sibling can slot between a directory and its children), so reproducing
-/// upstream's global order only requires ordering the operands themselves with
-/// the same comparator the network generator applies to its flist
-/// (`protocol::flist::compare_file_entries`, transfer `generator/file_list`).
-///
-/// Scope: applied only when every operand contributes a single NAMED top-level
-/// entry - a non-`--relative` transfer with no trailing-slash / copy-contents
-/// operand. A copy-contents operand merges its CONTENTS into the destination,
-/// which upstream interleaves across operands by content name; that cannot be
-/// reproduced by ordering the operands, so those transfers keep command-line
-/// order. `--relative` operands carry implied parent directories whose ordering
-/// is handled during emission, so they are left untouched. Reordering is a
-/// pure output-ordering change: the destination result is byte-identical, the
-/// `--delete` keep-set is order-independent, and dir creation simply follows
-/// the same sorted order upstream uses.
-fn ordered_operands(sources: &[SourceSpec], relative_paths: bool) -> Vec<&SourceSpec> {
-    let mut ordered: Vec<&SourceSpec> = sources.iter().collect();
-    let reorderable = sources.len() > 1
-        && !relative_paths
-        && sources.iter().all(|source| !source.copy_contents());
-    if reorderable {
-        ordered.sort_by(|a, b| compare_operand_names(a, b));
-    }
-    ordered
-}
-
-/// Compares two named operands with the flist sort comparator upstream applies
-/// to top-level entries: directories compare as `name/` and a file sorts before
-/// a same-prefixed directory, exactly as `compare_file_entries` orders the
-/// generator's flist.
-fn compare_operand_names(a: &SourceSpec, b: &SourceSpec) -> Ordering {
-    compare_file_entries(&operand_sort_entry(a), &operand_sort_entry(b))
-}
-
-/// Models an operand as a top-level flist entry (its destination basename plus
-/// its on-disk directory-ness) purely for ordering.
-///
-/// link_stat (lstat) semantics: a directory operand is a directory; a symlink
-/// operand is not (upstream keeps the symlink's own name in the flist). An
-/// operand that has vanished or cannot be stat'd is ordered as a file;
-/// `process_single_source` reports its `link_stat` failure downstream.
-fn operand_sort_entry(source: &SourceSpec) -> FileEntry {
-    let name = source
-        .path()
-        .file_name()
-        .map_or_else(|| source.path().to_path_buf(), PathBuf::from);
-    if fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir()) {
-        FileEntry::new_directory(name, 0o755)
-    } else {
-        FileEntry::new_file(name, 0, 0o644)
-    }
 }
 
 /// Entry point for copying all sources to the destination.
@@ -248,7 +185,7 @@ pub(crate) fn copy_sources(
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
             let mut first_io_error: Option<LocalCopyError> = None;
-            for source in ordered_operands(plan.sources(), context.relative_paths_enabled()) {
+            for source in plan.sources() {
                 let result = process_single_source(
                     context,
                     plan,
@@ -376,10 +313,6 @@ pub(crate) fn copy_sources(
             context
                 .summary_mut()
                 .record_wall_clock_elapsed(Duration::from_secs(elapsed_secs));
-            // upstream: sender.c:491 calls match_report() once at the end of
-            // send_files(); mirror that end-of-run emission for the local copy
-            // so `-vv` prints the delta `total:` line (match.c:439).
-            context.emit_delta_match_report();
             Ok(context.into_outcome())
         }
         Err(error) => {

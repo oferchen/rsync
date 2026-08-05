@@ -16,6 +16,15 @@ targets = ["x86_64-unknown-linux-gnu"]
 default = ["zstd", "lz4", "xattr"]
 
 # ============================================================================
+# Transport Features
+# ============================================================================
+# Built-in (russh) SSH client for `ssh://` operands. Off by default; forwarded
+# from `core` so the frontend - and its integration tests - can gate behaviour
+# on it (whether an `ssh://` x remote-shell combination is a conflict or the
+# "requires the embedded-ssh feature" diagnostic).
+embedded-ssh = ["core/embedded-ssh"]
+
+# ============================================================================
 # Compression Features
 # ============================================================================
 zstd = ["core/zstd", "compress/zstd"]
