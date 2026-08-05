@@ -134,6 +134,31 @@ impl<'a> CopyContext<'a> {
         self.emitted_implied_dirs.insert(relative.to_path_buf())
     }
 
+    /// Reports whether the `--relative` operand rooted at `relative` is wholly
+    /// covered by an earlier operand whose subtree was already walked
+    /// recursively. `true` means every flist entry this operand would emit (its
+    /// implied parents, itself, and its recursive contents) is a duplicate of an
+    /// entry an earlier operand already produced, so the caller must skip it
+    /// entirely.
+    ///
+    /// The test is a path-prefix (ancestor-or-equal) match against the recorded
+    /// covering roots, reproducing the collapse upstream performs in
+    /// `flist_sort_and_clean()` (flist.c:3016) after merging every source arg
+    /// into one shared flist.
+    pub(super) fn source_root_already_covered(&self, relative: &Path) -> bool {
+        self.expanded_source_roots
+            .iter()
+            .any(|root| relative == root || relative.starts_with(root))
+    }
+
+    /// Records `relative` as a covering root: a `--relative` directory operand
+    /// whose whole subtree was just walked recursively. A subsequent operand
+    /// equal to or descending from it is redundant (see
+    /// [`Self::source_root_already_covered`]).
+    pub(super) fn register_expanded_source_root(&mut self, relative: PathBuf) {
+        self.expanded_source_roots.push(relative);
+    }
+
     /// Consumes the context and returns the final [`CopyOutcome`].
     pub(super) fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {

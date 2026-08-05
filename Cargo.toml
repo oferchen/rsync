@@ -111,8 +111,13 @@ openssl-vendored = ["checksums/openssl-vendored"]
 # ============================================================================
 
 # Embedded SSH transport via russh - removes the runtime dependency on an
-# external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`.
-embedded-ssh = ["core/embedded-ssh"]
+# external `ssh` client. Forwards to BOTH `cli` and `core` so a workspace
+# feature-unified build (e.g. `cargo nextest --workspace`) enables the feature
+# consistently across every crate that gates on it. Forwarding to `core` alone
+# left `cli/embedded-ssh` OFF while `core/embedded-ssh` was ON under `--workspace`
+# unification, so cli-crate `#[cfg(not(feature = "embedded-ssh"))]` tests
+# compiled and ran while `core` behaved as if the feature were present.
+embedded-ssh = ["cli/embedded-ssh", "core/embedded-ssh"]
 
 # Native QUIC daemon transport (oc extension, off by default). Forwards through
 # `cli`/`core` to `rsync_io/quic`; only makes the `Transport::Quic` selection

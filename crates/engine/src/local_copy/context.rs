@@ -230,6 +230,19 @@ pub(crate) struct CopyContext<'a> {
     /// that single-emission guarantee for the local-copy itemize/stats/verbose
     /// stream, which never builds a shared sorted flist.
     emitted_implied_dirs: HashSet<PathBuf>,
+    /// Destination-relative roots of `--relative` source operands whose entire
+    /// subtree has already been walked recursively during this transfer. A later
+    /// operand whose own relative root equals or descends from one of these is
+    /// wholly redundant - every flist entry it would produce (its implied
+    /// parents, itself, and its recursive contents) was already emitted by the
+    /// covering operand. Upstream reaches the same result by building one shared
+    /// flist across all source args and then collapsing the overlap in
+    /// `flist_sort_and_clean()` (flist.c:3016); the streaming local-copy executor
+    /// never materialises that shared list, so this ordered set of covering roots
+    /// reproduces the dedup. Kept as a `Vec` because the covering test is an
+    /// ancestor (path-prefix) match, not an exact lookup, and the operand count
+    /// is tiny.
+    expanded_source_roots: Vec<PathBuf>,
     /// Protocol flist encoder for batch mode.
     ///
     /// When batch mode is active, file entries are encoded using the protocol

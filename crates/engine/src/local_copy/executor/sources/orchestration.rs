@@ -341,6 +341,21 @@ fn process_single_source(
 
     let (relative_root, relative_parent) = compute_relative_paths(context, source);
 
+    // upstream: flist.c:3016 flist_sort_and_clean() - after every source arg is
+    // merged into one shared flist, an operand that duplicates a subtree already
+    // contributed by an earlier `--relative` operand collapses away. The
+    // streaming local-copy executor emits each operand's rows as it walks, so a
+    // later operand whose relative root descends from (or equals) an earlier
+    // recursively-walked operand would re-list the shared subtree - its implied
+    // parents, itself, and its recursive contents. Skip it here to reproduce the
+    // single-emission result. Guarded on `--relative` (without it operands map to
+    // distinct basenames and never overlap) and on a resolvable relative root.
+    if let Some(root) = relative_root.as_deref() {
+        if context.source_root_already_covered(root) {
+            return Ok(());
+        }
+    }
+
     let metadata_result = fetch_source_metadata(
         context,
         source,
@@ -469,6 +484,18 @@ fn process_single_source(
         relative_root.as_deref(),
         destination_root_created,
     )?;
+
+    // Record this operand as a covering root once we know it is a directory
+    // being walked recursively: its full subtree enters the flist here, so a
+    // later `--relative` operand equal to or beneath it is redundant (see
+    // `source_root_already_covered`). Non-recursive walks (`-d`, or a single
+    // file) do not cover descendants, so they are not registered.
+    if file_type.is_dir()
+        && context.recursive_enabled()
+        && let Some(root) = relative_root.as_deref()
+    {
+        context.register_expanded_source_root(root.to_path_buf());
+    }
 
     if file_type.is_dir() {
         if source.copy_contents() {
