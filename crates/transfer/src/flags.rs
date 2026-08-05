@@ -397,6 +397,21 @@ pub struct ParsedServerFlags {
     /// byte-identical output on arbitrary inputs.
     pub parallel_delta_scan: bool,
 
+    /// Apply the built-in CVS-ignore rule set (`C` flag, `--cvs-exclude`).
+    ///
+    /// Sender-side in effect. Upstream `options.c:2709-2710` packs `'C'` into
+    /// the compact string whenever `cvs_exclude` is set, on both a push and a
+    /// pull. On a **pull** the remote server is the sender and the CVS rules
+    /// are NOT transmitted over the wire (`exclude.c:1652` gates the send on
+    /// `am_sender`, which the pulling client is not); instead the server must
+    /// re-derive them locally, exactly as upstream `recv_filter_list()` does
+    /// when `am_sender` (`exclude.c:1689-1695`, appending `:C` then `-C` after
+    /// the received rules). Without decoding `C` here the server-sender ran
+    /// with `cvs_exclude` off and transferred `CVS/`, `*.o`, `.cvsignore`
+    /// matches that upstream skips. On a **push** the client sends the CVS
+    /// rules over the wire, so the flag rides along but adds nothing extra.
+    pub cvs_exclude: bool,
+
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
 }
@@ -624,6 +639,21 @@ impl ParsedServerFlags {
             // upstream: options.c:764 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
+            // upstream: options.c:2709-2710 - `if (cvs_exclude) argstr = 'C'`.
+            // A pulling client forwards `C` so the server-sender re-derives the
+            // CVS-ignore rules itself (they are not sent on a pull); the
+            // generator wires this into its filter chain via
+            // `receive_filter_list_if_server`.
+            b'C' => self.cvs_exclude = true,
+            // Deliberately NOT stored here (each still falls through):
+            //  - `s` (options.c:2623, `--secluded-args`) is detected by the
+            //    dedicated `detect_secluded_args_flag` scan in the CLI server
+            //    entry, which switches argv reading to the protected stream;
+            //    routing it through this struct would be redundant.
+            //  - `q` (options.c:2629, `--quiet`, sent only when
+            //    `quiet && msgs2stderr`) suppresses the sender's own progress
+            //    chatter; oc has no such server-side chatter to gate, so it is
+            //    cosmetic with no observable effect to reproduce.
             // Unknown flags are ignored for forward compatibility.
             _ => {}
         }
@@ -1059,5 +1089,48 @@ mod tests {
         let _ = flags.clear_unsupported_features();
         assert!(flags.recursive, "recursive should be preserved");
         assert!(flags.compress, "compress should be preserved");
+    }
+
+    /// A pulling client packs `C` into the compact string (upstream
+    /// `options.c:2709`) so the server-sender re-derives the CVS excludes.
+    /// Before this arm the byte fell through to `_ => {}` and
+    /// `--cvs-exclude` was silently ignored on a pull from an oc server.
+    #[test]
+    fn parses_cvs_exclude_flag() {
+        let flags = ParsedServerFlags::parse("-rltC").unwrap();
+        assert!(flags.cvs_exclude);
+        assert!(flags.recursive);
+        // The real pull flag string carries `C` right before the `.` section.
+        let packed = ParsedServerFlags::parse("-logDtprCe.iLsfxC").unwrap();
+        assert!(packed.cvs_exclude);
+    }
+
+    #[test]
+    fn cvs_exclude_off_by_default() {
+        assert!(!ParsedServerFlags::parse("-rlt").unwrap().cvs_exclude);
+    }
+
+    /// The `s` (secluded-args) and `q` (quiet) letters are intentionally not
+    /// stored on this struct - `s` is handled by the CLI server's dedicated
+    /// secluded-args detection and `q` is cosmetic. Decoding them here must
+    /// stay a no-op: they must not accidentally set an unrelated flag, and the
+    /// surrounding real flags must still parse.
+    #[test]
+    fn secluded_and_quiet_letters_are_inert_here() {
+        let flags = ParsedServerFlags::parse("-sqrlt").unwrap();
+        assert!(flags.recursive);
+        assert!(flags.links);
+        assert!(flags.times);
+        assert!(!flags.cvs_exclude);
+        // No transfer flag is spuriously toggled by `s`/`q`.
+        assert_eq!(
+            flags,
+            ParsedServerFlags {
+                recursive: true,
+                links: true,
+                times: true,
+                ..ParsedServerFlags::default()
+            }
+        );
     }
 }
