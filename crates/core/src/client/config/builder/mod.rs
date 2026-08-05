@@ -33,7 +33,7 @@ impl fmt::Display for ConfigConflict {
         if matches!((self.option1, self.option2), ("rsh", SSH_URL_OPERAND)) {
             return write!(
                 f,
-                "--rsh/-e cannot be combined with an ssh:// URL operand (ssh:// uses the built-in SSH client); use host:path for an external ssh, or drop --rsh"
+                "a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) cannot be combined with an ssh:// URL operand (ssh:// uses the built-in SSH client); unset RSYNC_RSH or drop --rsh, or use a host:path source for the external ssh"
             );
         }
         // upstream: options.c:1977 - the secluded/old-args conflict has a
@@ -334,12 +334,19 @@ impl ClientConfigBuilder {
         // system ssh binary, which is consulted only for `host:path` operands.
         // An `ssh://` URL operand instead dispatches to the built-in SSH
         // client, which never spawns an external shell and so silently drops
-        // --rsh. The two select mutually exclusive transports, so reject the
-        // combination up front instead of dropping --rsh without warning. This
-        // has no direct upstream analogue - upstream rsync has no `ssh://`
-        // scheme. The check is unconditional (not gated on `embedded-ssh`)
-        // because the combination is contradictory regardless of build
-        // features.
+        // the remote shell. The two select mutually exclusive transports, so
+        // reject the combination up front instead of dropping the shell without
+        // warning. This has no direct upstream analogue - upstream rsync has no
+        // `ssh://` scheme.
+        //
+        // Gated on `embedded-ssh` so feature-availability wins on a build
+        // without the built-in client: there `ssh://` has no transport at all,
+        // so this conflict must NOT pre-empt the clearer "ssh:// requires the
+        // embedded-ssh feature" diagnostic run_client raises later. A remote
+        // shell is often implicit (RSYNC_RSH in the environment), so surfacing
+        // the -e conflict there would blame an option the user never typed on a
+        // build that could not do ssh:// regardless.
+        #[cfg(feature = "embedded-ssh")]
         if self.remote_shell.is_some()
             && self
                 .transfer_args
