@@ -46,15 +46,6 @@ use super::ssh_transfer::convert_server_stats_to_summary;
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
 
-/// Checks whether an operand is an `ssh://` URL suitable for embedded transport.
-///
-/// Returns `true` for operands starting with `ssh://`, which distinguishes
-/// embedded SSH transfers from standard `host:path` SSH operands that use
-/// the system SSH binary.
-pub(crate) fn is_ssh_url(operand: &str) -> bool {
-    operand.starts_with("ssh://")
-}
-
 /// Executes a transfer over the embedded SSH transport.
 ///
 /// Entry point for `ssh://` URL transfers when the `embedded-ssh` feature is
@@ -719,13 +710,6 @@ fn build_server_config_for_generator(
 mod tests {
     use super::*;
 
-    #[test]
-    fn is_ssh_url_detects_ssh_scheme() {
-        assert!(is_ssh_url("ssh://host/path"));
-        assert!(is_ssh_url("ssh://user@host/path"));
-        assert!(is_ssh_url("ssh://user:pass@host:2222/path"));
-    }
-
     /// The embedded (russh) pull receiver must carry the alt-dest reference
     /// directories onto its ServerConfig, exactly like the subprocess ssh and
     /// daemon receiver builders. On a pull the args are never forwarded to the
@@ -1128,14 +1112,6 @@ mod tests {
             build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
-    }
-
-    #[test]
-    fn is_ssh_url_rejects_non_ssh() {
-        assert!(!is_ssh_url("rsync://host/module"));
-        assert!(!is_ssh_url("host:path"));
-        assert!(!is_ssh_url("host::module"));
-        assert!(!is_ssh_url("/local/path"));
     }
 
     #[test]
