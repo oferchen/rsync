@@ -213,13 +213,24 @@ fn escaped_brackets() {
     assert!(set.allows(Path::new("array0"), false));
 }
 
-/// Verifies escaped backslash is literal.
+/// Verifies a non-wild backslash pattern matches literally, byte for byte.
+///
+/// The pattern `path\\file` (two literal backslash bytes) has no `*?[`, so
+/// upstream sets no FILTRULE_WILD and matches it with a literal comparison
+/// (exclude.c:967-978 litmatch_array): the backslashes are ordinary bytes, NOT
+/// escapes. Verified against rsync 3.4.4 (`- path\\file` excludes the file named
+/// `path\\file` and leaves `path\file` untouched). A pattern is only de-escaped
+/// on the wildmatch path, which non-wild rules never take.
 #[test]
 fn escaped_backslash() {
     let set = FilterSet::from_rules([FilterRule::exclude("path\\\\file")]).unwrap();
 
-    // Literal backslash
-    assert!(!set.allows(Path::new("path\\file"), false));
+    // Two literal backslashes match the two-backslash name.
+    assert!(!set.allows(Path::new("path\\\\file"), false));
+
+    // They must NOT collapse to a single-backslash name (that would be the
+    // wildmatch de-escape upstream applies only to wild rules).
+    assert!(set.allows(Path::new("path\\file"), false));
 }
 
 /// Verifies path with multiple dots.

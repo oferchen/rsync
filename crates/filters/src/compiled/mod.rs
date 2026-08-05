@@ -75,6 +75,27 @@ impl CompiledRule {
         );
 
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
+
+        // upstream: exclude.c:236 add_rule() - FILTRULE_WILD is set only when
+        // the pattern contains a wildcard metacharacter (`*`, `?`, `[`). A
+        // non-wild rule is matched with a literal comparison (exclude.c:967-978
+        // litmatch_array / strcmp), where a backslash is an ordinary filename
+        // byte, NOT an escape. oc matches every rule with wildmatch(), which
+        // treats `\` as an escape, so a literal backslash in a non-wild pattern
+        // (e.g. a `back\slash.txt` --files-from name) would otherwise fail to
+        // match its own file - on a pull the receiver then aborts with
+        // "rejecting unrequested file-list name" (flist.c:1026). Escape each `\`
+        // to `\\` for non-wild patterns so wildmatch reproduces upstream's
+        // literal comparison. Wild patterns keep `\` as an escape, matching
+        // upstream's wildmatch_array path.
+        let has_glob_wildcard =
+            core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
+        let core_pattern = if !has_glob_wildcard && core_pattern.contains('\\') {
+            std::borrow::Cow::Owned(core_pattern.replace('\\', "\\\\"))
+        } else {
+            core_pattern
+        };
+
         // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
         // that already begins with `**` is matched with slash_handling = -1
         // (try after every slash) by wildmatch_array (lib/wildmatch.c:316).
@@ -125,8 +146,6 @@ impl CompiledRule {
         // `CompiledRule` is shared across them and upstream's rule_matches()
         // returns "no match" for FILTRULE_DIRECTORY non-dir candidates
         // regardless of which call site dispatched the query.
-        let has_glob_wildcard =
-            core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
         let slash_anchored = pattern.starts_with('/');
         // Directory-only unanchored wildcard gate: the user wrote `foo/*/`
         // (or any dir-only wildcard without a leading `/`). Upstream never
@@ -264,6 +283,37 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
+    }
+
+    /// A non-wild pattern carrying a literal backslash must match the file
+    /// whose name contains that backslash. upstream: exclude.c:236 only sets
+    /// FILTRULE_WILD for `*?[`, so `back\slash.txt` is matched with a literal
+    /// strcmp (exclude.c:967-978) where `\` is an ordinary byte. oc matches via
+    /// wildmatch(), which treats `\` as an escape, so the literal backslash had
+    /// to be escaped at compile time to reproduce upstream's literal match.
+    #[test]
+    fn non_wild_literal_backslash_matches_its_own_name() {
+        use crate::FilterRule;
+        use std::path::Path;
+
+        let compiled = CompiledRule::new(FilterRule::exclude("back\\slash.txt")).unwrap();
+        assert!(compiled.matches(Path::new("back\\slash.txt"), false, true));
+        // The escape must not make it match the escaped-away spelling.
+        assert!(!compiled.matches(Path::new("backslash.txt"), false, true));
+    }
+
+    /// A wild pattern keeps `\` as a wildmatch escape (upstream sets
+    /// FILTRULE_WILD, matching via wildmatch_array). `a\*b` matches the literal
+    /// `a*b`, NOT an arbitrary `a<anything>b`, so the backslash is not
+    /// double-escaped by the non-wild fixup.
+    #[test]
+    fn wild_pattern_backslash_stays_an_escape() {
+        use crate::FilterRule;
+        use std::path::Path;
+
+        let compiled = CompiledRule::new(FilterRule::exclude("a\\*b")).unwrap();
+        assert!(compiled.matches(Path::new("a*b"), false, true));
+        assert!(!compiled.matches(Path::new("axyzb"), false, true));
     }
 
     /// Verifies that `--include '*/'` does NOT generate descendant matchers.
