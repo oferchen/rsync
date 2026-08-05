@@ -52,52 +52,79 @@ fn whole_unix_seconds() -> u64 {
 /// the same comparator the network generator applies to its flist
 /// (`protocol::flist::compare_file_entries`, transfer `generator/file_list`).
 ///
-/// Scope: applied only when every operand contributes a single NAMED top-level
-/// entry - a non-`--relative` transfer with no trailing-slash / copy-contents
-/// operand. A copy-contents operand merges its CONTENTS into the destination,
-/// which upstream interleaves across operands by content name; that cannot be
-/// reproduced by ordering the operands, so those transfers keep command-line
-/// order. `--relative` operands carry implied parent directories whose ordering
-/// is handled during emission, so they are left untouched. Reordering is a
-/// pure output-ordering change: the destination result is byte-identical, the
-/// `--delete` keep-set is order-independent, and dir creation simply follows
-/// the same sorted order upstream uses.
+/// Scope: applied whenever every operand contributes a NAMED top-level subtree,
+/// i.e. no operand is a trailing-slash / copy-contents operand. A copy-contents
+/// operand merges its CONTENTS into the destination, which upstream interleaves
+/// across operands by content name; that cannot be reproduced by ordering the
+/// operands, so those transfers keep command-line order (handled in #212).
+///
+/// Both the plain and `--relative` (`-R`) cases reduce to the same rule because
+/// upstream sorts the whole flist globally: a directory operand's subtree is
+/// emitted contiguously and name-sorted within, and two operands whose paths
+/// diverge sort as whole blocks, so ordering the operands by the exact key
+/// upstream would give their flist rows reproduces the global order. The only
+/// key difference is what that row is named - see `operand_sort_entry`.
+/// Reordering is a pure output-ordering change: the destination result is
+/// byte-identical, the `--delete` keep-set is order-independent, and dir
+/// creation simply follows the same sorted order upstream uses.
 fn ordered_operands(sources: &[SourceSpec], relative_paths: bool) -> Vec<&SourceSpec> {
     let mut ordered: Vec<&SourceSpec> = sources.iter().collect();
-    let reorderable = sources.len() > 1
-        && !relative_paths
-        && sources.iter().all(|source| !source.copy_contents());
+    let reorderable = sources.len() > 1 && sources.iter().all(|source| !source.copy_contents());
     if reorderable {
-        ordered.sort_by(|a, b| compare_operand_names(a, b));
+        ordered.sort_by(|a, b| compare_operand_names(a, b, relative_paths));
     }
     ordered
 }
 
-/// Compares two named operands with the flist sort comparator upstream applies
-/// to top-level entries: directories compare as `name/` and a file sorts before
-/// a same-prefixed directory, exactly as `compare_file_entries` orders the
+/// Compares two operands with the flist sort comparator upstream applies to its
+/// top-level entries: directories compare as `name/` and a file sorts before a
+/// same-prefixed directory, exactly as `compare_file_entries` orders the
 /// generator's flist.
-fn compare_operand_names(a: &SourceSpec, b: &SourceSpec) -> Ordering {
-    compare_file_entries(&operand_sort_entry(a), &operand_sort_entry(b))
+fn compare_operand_names(a: &SourceSpec, b: &SourceSpec, relative_paths: bool) -> Ordering {
+    compare_file_entries(
+        &operand_sort_entry(a, relative_paths),
+        &operand_sort_entry(b, relative_paths),
+    )
 }
 
-/// Models an operand as a top-level flist entry (its destination basename plus
-/// its on-disk directory-ness) purely for ordering.
+/// Models an operand as the top-level flist entry upstream would emit for it
+/// (its flist name plus on-disk directory-ness) purely for ordering.
+///
+/// The flist name depends on `--relative`: without it, only the destination
+/// basename lands in the flist (`flist.c:2479` send_file_name uses the operand
+/// tail), so the basename is the sort key. Under `-R` the operand keeps its
+/// full relative path (`flist.c:2463` send_implied_dirs + the leaf), so the
+/// whole relative path is the key - `a/y` must sort before `b/x` regardless of
+/// command-line order, and `b/w` before `b/x` even sharing the `b/` prefix.
 ///
 /// link_stat (lstat) semantics: a directory operand is a directory; a symlink
 /// operand is not (upstream keeps the symlink's own name in the flist). An
 /// operand that has vanished or cannot be stat'd is ordered as a file;
 /// `process_single_source` reports its `link_stat` failure downstream.
-fn operand_sort_entry(source: &SourceSpec) -> FileEntry {
-    let name = source
-        .path()
-        .file_name()
-        .map_or_else(|| source.path().to_path_buf(), PathBuf::from);
+fn operand_sort_entry(source: &SourceSpec, relative_paths: bool) -> FileEntry {
+    let name = if relative_paths {
+        source
+            .relative_root()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| operand_basename(source))
+    } else {
+        operand_basename(source)
+    };
     if fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir()) {
         FileEntry::new_directory(name, 0o755)
     } else {
         FileEntry::new_file(name, 0, 0o644)
     }
+}
+
+/// Returns the operand's destination basename - the flist name for a
+/// non-`--relative` transfer, and the fallback when a `--relative` operand has
+/// no distinct relative path (e.g. a bare `.`).
+fn operand_basename(source: &SourceSpec) -> PathBuf {
+    source
+        .path()
+        .file_name()
+        .map_or_else(|| source.path().to_path_buf(), PathBuf::from)
 }
 
 /// Entry point for copying all sources to the destination.

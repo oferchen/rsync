@@ -20,12 +20,14 @@
 //! for the identical command (verified against the reference binary). These
 //! tests FAIL before the operand-sort fix (they would see argument order).
 //!
-//! Scope (matches the fix): the reorder applies only to NAMED operands (each
-//! contributes a single top-level entry) in a non-`--relative` transfer.
+//! Scope (matches the fix): the reorder applies to every NAMED operand - both
+//! the plain case (each operand contributes its destination basename) and the
+//! `--relative` (`-R`) case (each operand keeps its full relative path), keyed
+//! on the exact name upstream's global flist sort would give the operand's row.
 //! Trailing-slash / copy-contents operands merge their CONTENTS into the
 //! destination, which upstream interleaves across operands by content name -
 //! unreproducible by operand ordering - so they are left in argument order and
-//! covered separately. `--relative` operands are likewise left untouched here.
+//! covered separately (#212).
 
 #![cfg(unix)]
 
@@ -57,6 +59,16 @@ fn apply(operands: &[OsString], options: LocalCopyOptions) -> engine::local_copy
     let plan = LocalCopyPlan::from_operands(operands).expect("plan builds");
     plan.execute_with_report(LocalCopyExecution::Apply, options)
         .expect("local copy succeeds")
+}
+
+/// Builds a `--relative` operand that reroots at `tail` via a `/./` marker, so
+/// the recorded relative path is exactly `tail` (independent of the temp dir's
+/// absolute prefix). Mirrors how `rsync -R ./tail` anchors the relative root.
+fn dot_rerooted(root: &Path, tail: &str) -> OsString {
+    let mut path = root.to_path_buf();
+    path.push(".");
+    path.push(tail);
+    path.into_os_string()
 }
 
 /// Four single-file operands supplied in an order that is deliberately NOT
@@ -181,12 +193,14 @@ fn single_directory_source_subtree_stays_sorted() {
     );
 }
 
-/// `--relative` operands are intentionally NOT reordered by this fix (their
-/// implied-parent emission ordering is handled separately), so a `-R`
-/// multi-source copy keeps command-line operand order. This pins the scope
-/// boundary: the fix must leave `-R` behaviour exactly as it was.
+/// Under `--relative` (`-R`) the operand keeps its FULL relative path in the
+/// flist, so upstream's global `f_name_cmp` sort orders the operands by that
+/// whole path. `two_named_dirs` supplies `zdir` then `adir` (absolute operands,
+/// so each records its path-minus-root); `adir` sorts before `zdir`, and each
+/// subtree stays contiguous. This is the `-R` counterpart of the named-operand
+/// sort above and pins that the fix now reorders `-R` too.
 #[test]
-fn relative_operands_are_left_in_command_line_order() {
+fn relative_operands_are_ordered_by_full_relative_path() {
     let (operands, _dst, _temp) = two_named_dirs();
 
     let report = apply(
@@ -197,15 +211,89 @@ fn relative_operands_are_left_in_command_line_order() {
             .collect_events(true),
     );
 
-    // Absolute operands under --relative record their full path-minus-root, so
-    // match the operand leaf by suffix rather than by a bare name.
     let order = emitted_entry_order(report.records());
-    let zdir = order.iter().position(|p| p.ends_with("zdir"));
     let adir = order.iter().position(|p| p.ends_with("adir"));
+    let zdir = order.iter().position(|p| p.ends_with("zdir"));
     assert!(
-        matches!((zdir, adir), (Some(z), Some(a)) if z < a),
-        "under --relative the operands keep command-line order (zdir before \
-         adir); reordering -R is out of scope for this fix. Order was {order:?}",
+        matches!((adir, zdir), (Some(a), Some(z)) if a < z),
+        "under --relative the operands sort by full relative path (adir before \
+         zdir), matching upstream's global flist sort. Order was {order:?}",
+    );
+}
+
+/// `-R` multi-source operands with DISTINCT relative prefixes, supplied in
+/// reverse-sorted command-line order (`b/x` before `a/y`), must itemize in
+/// upstream's global `f_name_cmp` order with each implied-parent chain and leaf
+/// contiguous. The `/./` marker reroots each operand so the recorded relative
+/// paths are exactly `a/y`, `b/x`. Expected order is the one upstream rsync
+/// 3.4.4 prints for `rsync -aiR ./b/x ./a/y dst/` (verified against the
+/// reference binary): `a, a/y, a/y/f3, b, b/x, b/x/f1`.
+#[test]
+fn relative_multi_source_distinct_prefixes_match_upstream_order() {
+    let temp = tempdir().expect("tempdir");
+    let dst = temp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    for (dir, file) in [("b/x", "f1"), ("a/y", "f3")] {
+        let dpath = temp.path().join(dir);
+        fs::create_dir_all(&dpath).expect("create source dir");
+        fs::write(dpath.join(file), file.as_bytes()).expect("write file");
+    }
+    // Command-line order b/x then a/y; `/./` reroots to the bare relative path.
+    let operands = vec![
+        dot_rerooted(temp.path(), "b/x"),
+        dot_rerooted(temp.path(), "a/y"),
+        dst.clone().into_os_string(),
+    ];
+
+    let report = apply(
+        &operands,
+        LocalCopyOptions::default()
+            .recursive(true)
+            .relative_paths(true)
+            .collect_events(true),
+    );
+
+    assert_eq!(
+        emitted_entry_order(report.records()),
+        vec!["a", "a/y", "a/y/f3", "b", "b/x", "b/x/f1"],
+        "-R operands with distinct prefixes must itemize in upstream's global \
+         f_name_cmp order, not command-line order",
+    );
+}
+
+/// `-R` multi-source operands SHARING a prefix, supplied reversed (`b/x` before
+/// `b/w`), must still sort by the full relative path so `b/w` precedes `b/x`
+/// under the shared `b/` parent - matching `rsync -aiR ./b/x ./b/w dst/`
+/// (upstream 3.4.4): `b, b/w, b/w/f2, b/x, b/x/f1`.
+#[test]
+fn relative_multi_source_shared_prefix_match_upstream_order() {
+    let temp = tempdir().expect("tempdir");
+    let dst = temp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    for (dir, file) in [("b/x", "f1"), ("b/w", "f2")] {
+        let dpath = temp.path().join(dir);
+        fs::create_dir_all(&dpath).expect("create source dir");
+        fs::write(dpath.join(file), file.as_bytes()).expect("write file");
+    }
+    let operands = vec![
+        dot_rerooted(temp.path(), "b/x"),
+        dot_rerooted(temp.path(), "b/w"),
+        dst.clone().into_os_string(),
+    ];
+
+    let report = apply(
+        &operands,
+        LocalCopyOptions::default()
+            .recursive(true)
+            .relative_paths(true)
+            .collect_events(true),
+    );
+
+    assert_eq!(
+        emitted_entry_order(report.records()),
+        vec!["b", "b/w", "b/w/f2", "b/x", "b/x/f1"],
+        "-R operands sharing a prefix must sort by the full relative path \
+         (b/w before b/x), matching upstream's global flist sort",
     );
 }
 
