@@ -208,8 +208,8 @@ fn read_and_log_client_args(
     let phase1_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
         Ok(args) => args,
         Err(err) => {
-            let payload = format!("@ERROR: failed to read client arguments: {err}");
-            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+            let error = AtError::message(format!("failed to read client arguments: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             return Ok(None);
         }
     };
@@ -249,8 +249,8 @@ fn read_and_log_client_args(
         match protocol::secluded_args::recv_secluded_args(ctx.reader, None) {
             Ok(full_args) => merge_secluded_args(phase1_args, full_args),
             Err(err) => {
-                let payload = format!("@ERROR: failed to read secluded args: {err}");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message(format!("failed to read secluded args: {err}"));
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
         }
