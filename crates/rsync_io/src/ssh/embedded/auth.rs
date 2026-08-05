@@ -33,24 +33,63 @@ fn effective_username(config: &SshConfig) -> Result<String, SshError> {
     })
 }
 
+/// Which SSH agent a resolved `IdentityAgent` value selects.
+///
+/// Mirrors OpenSSH's special-casing in `readconf.c`: the literal
+/// `SSH_AUTH_SOCK` means "use the environment variable", `none` disables the
+/// agent, and any other value is a Unix-domain socket path.
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum AgentSource<'a> {
+    /// `IdentityAgent none` - agent authentication is disabled.
+    Disabled,
+    /// No directive or the literal `SSH_AUTH_SOCK` - use `$SSH_AUTH_SOCK`.
+    Env,
+    /// An explicit Unix-domain socket path.
+    Socket(&'a str),
+}
+
+/// Classifies an `IdentityAgent` value into the agent source to connect to.
+#[cfg(unix)]
+fn classify_identity_agent(identity_agent: Option<&str>) -> AgentSource<'_> {
+    match identity_agent {
+        Some(value) if value.eq_ignore_ascii_case("none") => AgentSource::Disabled,
+        Some("SSH_AUTH_SOCK") => AgentSource::Env,
+        Some(path) => AgentSource::Socket(path),
+        None => AgentSource::Env,
+    }
+}
+
 /// Try authentication via the SSH agent.
 ///
-/// Connects to the agent using `SSH_AUTH_SOCK`, enumerates all identities, and
+/// Connects to the agent selected by `identity_agent` (an `IdentityAgent`
+/// directive or `SSH_AUTH_SOCK` when unset), enumerates all identities, and
 /// signs each via `authenticate_publickey_with()` until one succeeds. Returns
-/// `Ok(true)` on success, `Ok(false)` when the agent is unavailable or no
-/// identity works.
+/// `Ok(true)` on success, `Ok(false)` when the agent is disabled, unavailable,
+/// or no identity works.
 ///
 /// `russh::keys::agent::client::AgentClient::connect_env` is gated to
 /// `cfg(unix)` upstream (Pageant / named-pipe support is a separate Windows
 /// path we have not validated). On non-Unix targets this method short-circuits
 /// to `Ok(false)` so the caller falls through to identity-file and password
-/// auth.
+/// auth; `IdentityAgent` is therefore honoured only on Unix.
 #[cfg(unix)]
 async fn try_agent_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
+    identity_agent: Option<&str>,
 ) -> Result<bool, SshError> {
-    let mut agent = match russh::keys::agent::client::AgentClient::connect_env().await {
+    use russh::keys::agent::client::AgentClient;
+
+    let connect = match classify_identity_agent(identity_agent) {
+        AgentSource::Disabled => {
+            logging::debug_log!(Io, 1, "IdentityAgent=none: SSH agent disabled");
+            return Ok(false);
+        }
+        AgentSource::Env => AgentClient::connect_env().await,
+        AgentSource::Socket(path) => AgentClient::connect_uds(path).await,
+    };
+    let mut agent = match connect {
         Ok(agent) => agent,
         Err(e) => {
             logging::debug_log!(Io, 1, "SSH agent unavailable: {}", e);
@@ -93,6 +132,7 @@ async fn try_agent_auth(
 async fn try_agent_auth(
     _session: &mut russh::client::Handle<SshClientHandler>,
     _username: &str,
+    _identity_agent: Option<&str>,
 ) -> Result<bool, SshError> {
     logging::debug_log!(Io, 1, "SSH agent auth is not supported on this platform");
     Ok(false)
@@ -263,7 +303,8 @@ async fn try_password_auth(
 /// Authenticate an SSH session using all available methods.
 ///
 /// Tries methods in OpenSSH order:
-/// 1. SSH agent (if `config.use_agent` is true and `SSH_AUTH_SOCK` is set)
+/// 1. SSH agent (if `config.use_agent` is true; `config.identity_agent`
+///    selects the socket, defaulting to `SSH_AUTH_SOCK`)
 /// 2. Identity files (each file in `config.identity_files`)
 /// 3. Password (URL-embedded or interactive prompt)
 ///
@@ -277,7 +318,7 @@ pub async fn authenticate(
     let mut tried = Vec::new();
 
     if config.use_agent {
-        if try_agent_auth(session, &username).await? {
+        if try_agent_auth(session, &username, config.identity_agent.as_deref()).await? {
             return Ok(());
         }
         tried.push("agent");
@@ -304,6 +345,44 @@ pub async fn authenticate(
 mod tests {
     use super::*;
     use is_terminal::IsTerminal;
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_identity_agent_defaults_to_env() {
+        // No directive means the agent comes from $SSH_AUTH_SOCK, preserving
+        // the pre-IdentityAgent behaviour.
+        assert_eq!(classify_identity_agent(None), AgentSource::Env);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_identity_agent_literal_sock_uses_env() {
+        // OpenSSH treats the literal token SSH_AUTH_SOCK as "use the env var",
+        // not as a filesystem path named SSH_AUTH_SOCK.
+        assert_eq!(
+            classify_identity_agent(Some("SSH_AUTH_SOCK")),
+            AgentSource::Env
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_identity_agent_none_disables() {
+        // IdentityAgent none must switch the agent off, not connect to a socket
+        // literally named "none".
+        assert_eq!(classify_identity_agent(Some("none")), AgentSource::Disabled);
+        assert_eq!(classify_identity_agent(Some("None")), AgentSource::Disabled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_identity_agent_path_is_socket() {
+        // Any other value is a socket path the agent connects to via connect_uds.
+        assert_eq!(
+            classify_identity_agent(Some("/run/agent.sock")),
+            AgentSource::Socket("/run/agent.sock")
+        );
+    }
 
     #[test]
     fn has_controlling_terminal_does_not_panic() {
@@ -624,6 +703,7 @@ mod tests {
             password: None,
             identity_files: Vec::new(),
             use_agent: false,
+            identity_agent: None,
             ciphers: None,
             connect_timeout: std::time::Duration::from_secs(5),
             keepalive_interval: None,
