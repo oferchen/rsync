@@ -318,13 +318,23 @@ mod unix_impl {
             bench::run(&ctx, options.bench_files)?;
         }
 
+        // Cross-platform gate: reuse the shared cross-check (host
+        // `clippy -D warnings` + `x86_64-pc-windows-gnu` and
+        // `x86_64-unknown-linux-musl` `cargo check`) so `xtask validate` is the
+        // single full local pre-push verification entrypoint. Absent cross
+        // toolchains skip with an actionable hint, so validate still works on a
+        // dev box lacking mingw/musl. This runs after the fidelity matrix
+        // because it takes the workspace build lock.
+        eprintln!("\n=== cross-platform checks ===");
+        let cross_result = crate::commands::cross_check::run(workspace);
+
         let failed = outcomes.iter().filter(|o| o.status == Status::Fail).count();
         if failed > 0 {
             return Err(crate::error::TaskError::Validation(format!(
                 "{failed} fidelity check(s) diverged from upstream"
             )));
         }
-        Ok(())
+        cross_result
     }
 
     /// Ground-truth upstream rsync: prefer the system `rsync` on `PATH` (the
@@ -506,6 +516,65 @@ mod tests {
         assert_eq!(Category::EdgeCases.label(), "edge-cases");
         assert_eq!(Category::Security.label(), "security");
         assert_eq!(Category::Wire.label(), "wire");
+    }
+
+    // Stub toolchain for the cross-check phase that `validate` runs, so the
+    // integration is exercised without shelling out to cargo or rustup.
+    struct StubEnv {
+        clippy_ok: bool,
+    }
+
+    impl crate::commands::cross_check::CheckEnv for StubEnv {
+        fn target_installed(&self, _triple: &str) -> TaskResult<bool> {
+            // No cross targets installed - the windows-gnu and musl gates skip.
+            Ok(false)
+        }
+
+        fn command_available(&self, _program: &str) -> bool {
+            false
+        }
+
+        fn run(&self, _args: &[&str], display: &str) -> TaskResult<()> {
+            if self.clippy_ok {
+                Ok(())
+            } else {
+                Err(crate::error::TaskError::CommandFailed {
+                    program: display.to_owned(),
+                    status: {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::ExitStatusExt;
+                            std::process::ExitStatus::from_raw(1 << 8)
+                        }
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::process::ExitStatusExt;
+                            std::process::ExitStatus::from_raw(1)
+                        }
+                    },
+                })
+            }
+        }
+    }
+
+    #[test]
+    fn validate_cross_check_phase_skips_absent_cross_toolchains() {
+        // The exact shared entrypoint `validate::execute` invokes. On a dev box
+        // lacking mingw/musl the two cross targets skip and the host clippy pass
+        // succeeds, so validate's cross-platform phase does not fail.
+        let env = StubEnv { clippy_ok: true };
+        crate::commands::cross_check::run_with_env(&env)
+            .expect("absent cross toolchains must skip, not fail validate");
+    }
+
+    #[test]
+    fn validate_cross_check_phase_propagates_gate_failure() {
+        // A real gate failure (e.g. clippy warnings) must fail validate too.
+        let env = StubEnv { clippy_ok: false };
+        assert!(
+            crate::commands::cross_check::run_with_env(&env).is_err(),
+            "a failing cross-check gate must propagate through validate"
+        );
     }
 
     #[cfg(unix)]

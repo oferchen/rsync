@@ -30,6 +30,19 @@ pub enum Command {
     /// Validate workspace branding metadata.
     Branding(BrandingArgs),
 
+    /// Run the required-CI cross-platform checks locally before pushing.
+    ///
+    /// Runs, one cargo invocation at a time: host `clippy -D warnings`, then
+    /// `cargo check` for `x86_64-pc-windows-gnu` and
+    /// `x86_64-unknown-linux-musl`, printing a per-target pass/fail/skip
+    /// summary. Targets whose rustup target or cross toolchain is absent are
+    /// skipped with an actionable hint (never silently passed).
+    ///
+    /// windows-MSVC is intentionally excluded: it cannot be cross-compiled
+    /// from a non-Windows host (no `cl.exe` / `lib.exe`). The CI msvc runner is
+    /// authoritative and windows-gnu covers the same `cfg(windows)` code.
+    CrossCheck,
+
     /// Build API docs and run doctests.
     Docs(DocsArgs),
 
@@ -72,7 +85,10 @@ pub enum Command {
     /// Run the workspace test suite (prefers cargo-nextest).
     Test(TestArgs),
 
-    /// Validate drop-in fidelity vs upstream rsync across all client transports.
+    /// Full local pre-push verification: validate drop-in fidelity vs upstream
+    /// rsync across all client transports, then run the cross-platform checks
+    /// (host `clippy -D warnings`, windows-gnu and linux-musl `cargo check`).
+    /// Absent cross toolchains are skipped with a hint, never failed.
     Validate(ValidateMatrixArgs),
 }
 
@@ -489,6 +505,7 @@ impl CommandExt for Command {
         match self {
             Command::Benchmark(args) => args.as_task(),
             Command::Branding(args) => args.as_task(),
+            Command::CrossCheck => Box::new(CrossCheckTask),
             Command::Docs(args) => args.as_task(),
             Command::DocPackage(args) => args.as_task(),
             Command::GapReport(args) => args.as_task(),
@@ -615,6 +632,23 @@ impl Task for BrandingTask {
     }
 }
 
+/// Task for cross-platform pre-push verification.
+struct CrossCheckTask;
+
+impl Task for CrossCheckTask {
+    fn name(&self) -> &'static str {
+        "cross-check"
+    }
+
+    fn description(&self) -> &'static str {
+        "Run required-CI cross-platform checks before pushing"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(180))
+    }
+}
+
 /// Task for man page generation.
 struct ManPageTask;
 
@@ -641,7 +675,7 @@ impl Task for ValidateTask {
     }
 
     fn description(&self) -> &'static str {
-        "Validate drop-in fidelity vs upstream rsync across all transports"
+        "Validate drop-in fidelity vs upstream rsync across all transports, then run cross-platform checks"
     }
 
     fn explicit_duration(&self) -> Option<Duration> {
