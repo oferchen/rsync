@@ -552,6 +552,31 @@ pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
 }
 
+/// Reports that an `ssh://` operand was given but the built-in SSH client was
+/// not compiled into this build, so the transfer has no transport.
+///
+/// Without the `embedded-ssh` feature the `ssh://` scheme has no handler: the
+/// subprocess ssh path parses `ssh://user@host/path` as a `host:path` spec with
+/// host `ssh`, producing a confusing "could not resolve hostname ssh". This
+/// surfaces the real cause with an actionable remedy instead. The exit code
+/// matches the other feature-unavailable diagnostics ([`ExitCode::Syntax`], via
+/// [`FEATURE_UNAVAILABLE_EXIT_CODE`]).
+///
+/// oc-specific: upstream rsync has no `ssh://` operand scheme.
+///
+/// Only compiled when `embedded-ssh` is absent - that is the sole configuration
+/// in which an `ssh://` operand has no transport and this diagnostic fires.
+#[cfg(not(feature = "embedded-ssh"))]
+#[cold]
+pub(crate) fn ssh_url_requires_embedded_ssh() -> ClientError {
+    daemon_error(
+        "ssh:// URLs require the built-in SSH client, which is not compiled \
+         into this build (rebuild with the 'embedded-ssh' feature). For the \
+         standard SSH transport, use a host:path source with -e ssh instead.",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
 /// Enables idiomatic error conversion using the `?` operator.
 ///
 /// # Examples
@@ -1119,6 +1144,18 @@ mod tests {
             let msg = error.to_string();
             assert!(msg.contains("daemon refused module listing"));
             assert!(!msg.contains("listing: "));
+        }
+
+        #[cfg(not(feature = "embedded-ssh"))]
+        #[test]
+        fn ssh_url_requires_embedded_ssh_is_actionable() {
+            let error = ssh_url_requires_embedded_ssh();
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("ssh:// URLs require the built-in SSH client"));
+            assert!(msg.contains("embedded-ssh"));
+            assert!(msg.contains("-e ssh"));
         }
 
         #[test]
