@@ -369,3 +369,6 @@ fn should_negotiate(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod capability_roundtrip_tests;
