@@ -217,7 +217,10 @@ fn bwlimit_value_round_trips_through_the_server_parser() {
     for role in [RemoteRole::Sender, RemoteRole::Receiver] {
         let built = server_argv(&config, role, &["/remote/path"]);
         let emitted = emitted_joined_value(&built, "--bwlimit=");
-        assert_eq!(emitted, "4096", "4 MiB/s must emit 4096 whole KiB on {role:?}");
+        assert_eq!(
+            emitted, "4096",
+            "4 MiB/s must emit 4096 whole KiB on {role:?}"
+        );
         let long = parse_server_long_flags(&built[1..]);
         assert_eq!(
             long.bwlimit.as_deref(),
