@@ -19,11 +19,11 @@
 //! # Protocol dimension
 //!
 //! The oc capability letter set is invariant across protocol 28-32: the
-//! `CF_*` capabilities are all protocol >= 30 concepts, and their letters do
+//! `CF_*` capabilities are all protocol-30+ concepts, and their letters do
 //! not change between 30, 31 and 32. The only protocol-driven variation is
 //! whether `allow_inc_recurse` is set - INC_RECURSE (`i`) requires protocol
-//! >= 30, so a protocol 28/29 negotiation passes `allow_inc_recurse = false`
-//! and omits `i`, while protocol >= 30 may set it. These tests therefore
+//! 30+, so a protocol 28/29 negotiation passes `allow_inc_recurse = false`
+//! and omits `i`, while protocol 30+ may set it. These tests therefore
 //! parametrize on `allow_inc_recurse` (the sole per-protocol difference) and
 //! assert the round-trip holds in both states. Role (sender/receiver) does not
 //! affect the advertised letters or their decode, so it is not a parameter.
