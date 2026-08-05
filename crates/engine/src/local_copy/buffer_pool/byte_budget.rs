@@ -104,17 +104,24 @@ impl ByteBudget {
     /// Called when a pooled buffer is handed back out on acquire (it leaves
     /// the pool and no longer counts against retained bytes).
     pub(super) fn release(&self, bytes: usize) {
-        // `fetch_sub` saturates on underflow via the explicit guard below; in
-        // normal operation reservations and releases are paired so the counter
-        // never goes negative. The guard exists to keep us robust against
-        // accounting drift if the buffer's size changes between admission and
-        // release (e.g. an adaptive buffer larger than the pool default).
-        let prev = self.retained.load(Ordering::Relaxed);
-        let new = prev.saturating_sub(bytes);
-        // A racy store is acceptable here because over-decrement only ever
-        // gives the pool slightly more headroom, never less - admission
-        // checks remain correct.
-        self.retained.store(new, Ordering::Relaxed);
+        // Atomic saturating decrement. This MUST be a single read-modify-write
+        // (`fetch_update`), not a `load` / `saturating_sub` / `store`: two
+        // concurrent releases doing the latter can both read the same `prev`
+        // and both store `prev - bytes`, losing one decrement. A lost decrement
+        // leaves `retained` too HIGH, so `try_reserve` sees the pool as fuller
+        // than it is and rejects admissions it should accept - the pool
+        // under-retains and churns allocations. (`try_reserve` already uses a
+        // CAS loop; the decrement side must be just as atomic.)
+        //
+        // `saturating_sub` keeps us robust against accounting drift if a
+        // buffer's size changed between admission and release (e.g. an adaptive
+        // buffer larger than the pool default); the counter never wraps below
+        // zero. `Relaxed` matches the rest of this soft-cap counter.
+        let _ = self
+            .retained
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
+                Some(prev.saturating_sub(bytes))
+            });
     }
 }
 
@@ -195,5 +202,53 @@ mod tests {
         // is rejected rather than admitted.
         assert!(!budget.try_reserve(usize::MAX));
         assert_eq!(budget.overflows(), 1);
+    }
+
+    // Regression guard: `release` must be an atomic read-modify-write, not a
+    // load/saturating_sub/store. Under contention the non-atomic form loses
+    // decrements (two returners read the same `prev` and both store `prev -
+    // bytes`), leaving `retained` too high - the pool then under-retains and
+    // churns. Each thread pairs every reserve with a release, so a correct
+    // counter must return to exactly zero; a lost decrement leaves it > 0.
+    #[test]
+    fn concurrent_paired_reserve_release_balances_to_zero() {
+        use std::sync::Arc;
+        use std::sync::Barrier;
+
+        const THREADS: usize = 8;
+        const ITERS: usize = 20_000;
+        const SZ: usize = 512;
+
+        // Limit admits every thread's single in-flight reservation at once, so
+        // reservations never fail and each is paired with exactly one release.
+        let budget = Arc::new(ByteBudget::new(THREADS * SZ));
+        let barrier = Arc::new(Barrier::new(THREADS));
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let budget = Arc::clone(&budget);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..ITERS {
+                        while !budget.try_reserve(SZ) {
+                            std::hint::spin_loop();
+                        }
+                        budget.release(SZ);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("worker thread panicked");
+        }
+
+        assert_eq!(
+            budget.retained(),
+            0,
+            "paired reserve/release must balance exactly; a non-zero residue \
+             means release lost decrements under contention"
+        );
     }
 }
