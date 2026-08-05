@@ -1,6 +1,6 @@
 //! Tests for remote invocation builder and transfer role detection.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::time::SystemTime;
 
 use compress::algorithm::CompressionAlgorithm;
@@ -23,7 +23,7 @@ fn builds_receiver_invocation_with_sender_flag() {
     // overflow on the next decode.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
@@ -46,7 +46,7 @@ fn builds_sender_invocation_no_sender_flag() {
     // flag string, producing one argument like `-re.iLsfxCIvu`.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
@@ -69,7 +69,7 @@ fn ssh_sender_includes_inc_recurse_capability_by_default() {
     // upstream: the capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     // Capability string is now embedded in the compact flag string, not separate.
     let flag_str = args[2].to_string_lossy();
@@ -92,7 +92,7 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
     // upstream: capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().inc_recursive_send(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     let flag_str = args[2].to_string_lossy();
     assert!(
@@ -131,7 +131,7 @@ fn ssh_sender_omits_inc_recurse_without_recursion_or_under_qsort() {
         ("--qsort", ClientConfig::builder().qsort(true).build()),
     ] {
         let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-        let args = builder.build("/remote/path");
+        let args = builder.build(std::ffi::OsStr::new("/remote/path"));
         let flag_str = args[2].to_string_lossy();
         let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
         assert!(
@@ -154,7 +154,7 @@ fn ssh_receiver_omits_inc_recurse_capability_by_default() {
     // local side's actual ability to honor CF_INC_RECURSE.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     // Pull: args[3] is the flag string (after --server, --sender)
     let flag_str = args[3].to_string_lossy();
@@ -176,7 +176,7 @@ fn ssh_receiver_omits_inc_recurse_when_no_inc_recursive_set() {
     // upstream: capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().inc_recursive_send(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
 
     // Pull: args[3] is the flag string (after --server, --sender)
     let flag_str = args[3].to_string_lossy();
@@ -195,7 +195,7 @@ fn ssh_receiver_omits_inc_recurse_when_no_inc_recursive_set() {
 fn includes_recursive_flag_when_enabled() {
     let config = ClientConfig::builder().recursive(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     // Push layout: rsync --server -flags . /path
     let flags = args[2].to_string_lossy();
@@ -212,7 +212,7 @@ fn includes_multiple_preservation_flags() {
         .build();
 
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('t'), "expected 't' in flags: {flags}");
@@ -225,7 +225,7 @@ fn includes_multiple_preservation_flags() {
 fn includes_compress_flag() {
     let config = ClientConfig::builder().compress(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('z'), "expected 'z' in flags: {flags}");
@@ -241,7 +241,8 @@ fn omits_compress_flag_for_zstd() {
         .compress(true)
         .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zstd)
         .build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     let flags = args[2].to_string_lossy();
     assert!(!flags.contains('z'), "must not pack 'z' for zstd: {flags}");
 }
@@ -255,7 +256,8 @@ fn omits_compress_flag_for_zlibx() {
         .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
         .compress_choice_name(Some("zlibx".to_owned()))
         .build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     let flags = args[2].to_string_lossy();
     assert!(!flags.contains('z'), "must not pack 'z' for zlibx: {flags}");
 }
@@ -270,7 +272,7 @@ fn includes_log_format_for_itemize() {
         .out_format_forwards_i(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let args_str: Vec<_> = args
         .iter()
@@ -302,7 +304,7 @@ fn includes_ii_log_format_for_itemize_unchanged() {
         .out_format_forwards_i(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let args_str: Vec<_> = args
         .iter()
@@ -322,7 +324,7 @@ fn includes_ii_log_format_for_itemize_unchanged() {
 fn omits_log_format_when_itemize_disabled() {
     let config = ClientConfig::builder().itemize_changes(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let args_str: Vec<_> = args
         .iter()
@@ -370,7 +372,7 @@ fn detects_pull_when_source_remote() {
             assert_eq!(local_dest, "local.txt");
             assert_eq!(
                 remote_sources,
-                RemoteOperands::Single("user@host:/remote.txt".to_owned())
+                RemoteOperands::Single(OsString::from("user@host:/remote.txt"))
             );
         }
         _ => panic!("Expected Pull transfer"),
@@ -411,7 +413,7 @@ fn detects_proxy_when_both_remote() {
         } => {
             assert_eq!(
                 remote_sources,
-                RemoteOperands::Single("host1:/file".to_owned())
+                RemoteOperands::Single(OsString::from("host1:/file"))
             );
             assert_eq!(remote_dest, "host2:/file");
         }
@@ -455,7 +457,10 @@ fn accepts_multiple_remote_sources_same_host() {
             assert_eq!(local_dest, "dest/");
             assert_eq!(
                 remote_sources,
-                RemoteOperands::Multiple(vec!["host:/file1".to_owned(), "host:/file2".to_owned()])
+                RemoteOperands::Multiple(vec![
+                    OsString::from("host:/file1"),
+                    OsString::from("host:/file2")
+                ])
             );
         }
         _ => panic!("Expected Pull transfer"),
@@ -478,7 +483,7 @@ fn rejects_multiple_remote_sources_different_hosts() {
 fn includes_ignore_errors_flag_when_set() {
     let config = ClientConfig::builder().ignore_errors(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--ignore-errors"),
@@ -490,7 +495,7 @@ fn includes_ignore_errors_flag_when_set() {
 fn omits_ignore_errors_flag_when_not_set() {
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| a == "--ignore-errors"),
@@ -507,13 +512,15 @@ fn omits_ignore_errors_flag_when_not_set() {
 fn fsync_forwarded_on_push_only() {
     let config = ClientConfig::builder().fsync(true).build();
 
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         push.iter().any(|a| a == "--fsync"),
         "push must forward --fsync: {push:?}"
     );
 
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !pull.iter().any(|a| a == "--fsync"),
         "pull must not forward --fsync to the remote sender: {pull:?}"
@@ -524,7 +531,7 @@ fn fsync_forwarded_on_push_only() {
 fn omits_fsync_flag_when_not_set() {
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| a == "--fsync"),
@@ -629,7 +636,7 @@ fn remote_invocation_only_sends_upstream_compatible_args() {
 
     for role in [RemoteRole::Sender, RemoteRole::Receiver] {
         let builder = RemoteInvocationBuilder::new(&config, role);
-        let args = builder.build("/path");
+        let args = builder.build(std::ffi::OsStr::new("/path"));
 
         for arg in &args {
             let s = arg.to_string_lossy();
@@ -661,7 +668,7 @@ fn remote_invocation_only_sends_upstream_compatible_args() {
 fn includes_delete_before_long_arg() {
     let config = ClientConfig::builder().delete_before(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--delete-before"),
@@ -673,7 +680,7 @@ fn includes_delete_before_long_arg() {
 fn includes_delete_after_long_arg() {
     let config = ClientConfig::builder().delete_after(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--delete-after"),
@@ -685,7 +692,7 @@ fn includes_delete_after_long_arg() {
 fn includes_delete_excluded_long_arg() {
     let config = ClientConfig::builder().delete_excluded(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--delete-excluded"),
@@ -714,7 +721,7 @@ fn config_with_batch_mode(mode: engine::batch::BatchMode) -> ClientConfig {
 fn only_write_batch_sender_emits_placeholder_arg() {
     let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--only-write-batch=X"),
@@ -729,7 +736,7 @@ fn only_write_batch_sender_emits_placeholder_arg() {
 fn only_write_batch_is_not_forwarded_on_a_pull() {
     let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| a == "--only-write-batch=X"),
@@ -744,7 +751,7 @@ fn only_write_batch_is_not_forwarded_on_a_pull() {
 fn plain_write_batch_sender_emits_no_placeholder_arg() {
     let config = config_with_batch_mode(engine::batch::BatchMode::Write);
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args
@@ -761,7 +768,7 @@ fn includes_timeout_long_arg() {
         .timeout(TransferTimeout::Seconds(NonZeroU64::new(30).unwrap()))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--timeout=30"),
@@ -779,7 +786,7 @@ fn includes_bwlimit_long_arg() {
         )))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter()
@@ -792,7 +799,7 @@ fn includes_bwlimit_long_arg() {
 fn includes_inplace_long_arg() {
     let config = ClientConfig::builder().inplace(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--inplace"),
@@ -810,7 +817,8 @@ fn no_w_emitted_for_inplace_sparse_push() {
     // whole-file mode for --inplace --sparse, defeating the delta the client
     // asked for.
     let config = ClientConfig::builder().inplace(true).sparse(true).build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--inplace"),
@@ -833,7 +841,8 @@ fn no_w_suppressed_on_pull_and_without_sparse_or_whole_file() {
 
     // PULL with inplace+sparse: remote is the sender, no --no-W.
     let pull = ClientConfig::builder().inplace(true).sparse(true).build();
-    let pull_args = RemoteInvocationBuilder::new(&pull, RemoteRole::Receiver).build("/path");
+    let pull_args = RemoteInvocationBuilder::new(&pull, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !pull_args.iter().any(|a| a == "--no-W"),
         "--no-W must not be sent on a pull: {pull_args:?}"
@@ -841,8 +850,8 @@ fn no_w_suppressed_on_pull_and_without_sparse_or_whole_file() {
 
     // PUSH with inplace but no sparse: no --no-W.
     let no_sparse = ClientConfig::builder().inplace(true).build();
-    let no_sparse_args =
-        RemoteInvocationBuilder::new(&no_sparse, RemoteRole::Sender).build("/path");
+    let no_sparse_args = RemoteInvocationBuilder::new(&no_sparse, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !no_sparse_args.iter().any(|a| a == "--no-W"),
         "--no-W must not be sent without --sparse: {no_sparse_args:?}"
@@ -854,7 +863,8 @@ fn no_w_suppressed_on_pull_and_without_sparse_or_whole_file() {
         .sparse(true)
         .whole_file_option(Some(true))
         .build();
-    let whole_args = RemoteInvocationBuilder::new(&whole, RemoteRole::Sender).build("/path");
+    let whole_args = RemoteInvocationBuilder::new(&whole, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !whole_args.iter().any(|a| a == "--no-W"),
         "--no-W must not be sent when whole-file is explicitly requested: {whole_args:?}"
@@ -870,20 +880,24 @@ fn ignore_missing_args_is_pull_only_delete_missing_is_both() {
     // sender already makes, so it is emitted only on a PULL (!am_sender);
     // --delete-missing-args always goes both directions.
     let ignore = ClientConfig::builder().ignore_missing_args(true).build();
-    let pull = RemoteInvocationBuilder::new(&ignore, RemoteRole::Receiver).build("/path");
+    let pull = RemoteInvocationBuilder::new(&ignore, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         pull.iter().any(|a| a == "--ignore-missing-args"),
         "--ignore-missing-args must be forwarded on a pull: {pull:?}"
     );
-    let push = RemoteInvocationBuilder::new(&ignore, RemoteRole::Sender).build("/path");
+    let push = RemoteInvocationBuilder::new(&ignore, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !push.iter().any(|a| a == "--ignore-missing-args"),
         "--ignore-missing-args must NOT be forwarded on a push: {push:?}"
     );
 
     let delete = ClientConfig::builder().delete_missing_args(true).build();
-    let del_pull = RemoteInvocationBuilder::new(&delete, RemoteRole::Receiver).build("/path");
-    let del_push = RemoteInvocationBuilder::new(&delete, RemoteRole::Sender).build("/path");
+    let del_pull = RemoteInvocationBuilder::new(&delete, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
+    let del_push = RemoteInvocationBuilder::new(&delete, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         del_pull.iter().any(|a| a == "--delete-missing-args"),
         "--delete-missing-args must be forwarded on a pull: {del_pull:?}"
@@ -900,7 +914,7 @@ fn includes_partial_dir_long_arg() {
         .partial_directory(Some(".rsync-partial"))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter()
@@ -915,7 +929,7 @@ fn includes_checksum_choice_long_arg() {
     let choice = StrongChecksumChoice::parse("md5").unwrap();
     let config = ClientConfig::builder().checksum_choice(choice).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter()
@@ -938,7 +952,7 @@ fn includes_copy_links_flag() {
 fn includes_keep_dirlinks_flag() {
     let config = ClientConfig::builder().keep_dirlinks(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('K'), "expected 'K' in flags: {flags}");
@@ -948,7 +962,7 @@ fn includes_keep_dirlinks_flag() {
 fn includes_executability_flag() {
     let config = ClientConfig::builder().executability(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('E'), "expected 'E' in flags: {flags}");
@@ -962,7 +976,7 @@ fn executability_suppressed_when_permissions_set() {
         .executability(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
@@ -976,7 +990,7 @@ fn executability_suppressed_when_permissions_set() {
 fn includes_fuzzy_flag() {
     let config = ClientConfig::builder().fuzzy(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('y'), "expected 'y' in flags: {flags}");
@@ -986,7 +1000,7 @@ fn includes_fuzzy_flag() {
 fn includes_double_fuzzy_flag() {
     let config = ClientConfig::builder().fuzzy_level(2).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains("yy"), "expected 'yy' in flags: {flags}");
@@ -996,7 +1010,7 @@ fn includes_double_fuzzy_flag() {
 fn includes_prune_empty_dirs_flag() {
     let config = ClientConfig::builder().prune_empty_dirs(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('m'), "expected 'm' in flags: {flags}");
@@ -1006,7 +1020,7 @@ fn includes_prune_empty_dirs_flag() {
 fn includes_verbosity_flags() {
     let config = ClientConfig::builder().verbosity(3).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     // Count 'v' only in the transfer-flag portion, excluding the embedded
     // capability suffix (which contains its own 'v' in e.g. `e.iLsfxCIvu`).
@@ -1024,7 +1038,7 @@ fn includes_backup_related_args() {
         .backup_suffix(Some(".bak"))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
     let string_args: Vec<String> = args
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
@@ -1057,7 +1071,7 @@ fn includes_backup_related_args() {
 fn includes_link_dest_via_reference_directories() {
     let config = ClientConfig::builder().link_destination("/prev").build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter()
@@ -1079,7 +1093,7 @@ fn reference_directories_not_forwarded_on_pull() {
         .compare_destination("/cmp")
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| {
@@ -1104,13 +1118,15 @@ fn forwards_write_devices_to_remote_receiver_only() {
     // receiver (RemoteRole::Sender) but never a remote sender (a PULL).
     let config = ClientConfig::builder().write_devices(true).build();
 
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         push.iter().any(|a| a == "--write-devices"),
         "expected --write-devices forwarded on a push: {push:?}"
     );
 
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !pull.iter().any(|a| a == "--write-devices"),
         "did not expect --write-devices forwarded on a pull: {pull:?}"
@@ -1124,13 +1140,15 @@ fn forwards_copy_devices_to_remote_sender_only() {
     // sender (RemoteRole::Receiver) but never a remote receiver (a PUSH).
     let config = ClientConfig::builder().copy_devices(true).build();
 
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         pull.iter().any(|a| a == "--copy-devices"),
         "expected --copy-devices forwarded on a pull: {pull:?}"
     );
 
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !push.iter().any(|a| a == "--copy-devices"),
         "did not expect --copy-devices forwarded on a push: {push:?}"
@@ -1141,7 +1159,7 @@ fn forwards_copy_devices_to_remote_sender_only() {
 fn includes_delay_updates_long_arg() {
     let config = ClientConfig::builder().delay_updates(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--delay-updates"),
@@ -1158,7 +1176,8 @@ fn partial_dir_not_forwarded_on_pull_receiver() {
     let config = ClientConfig::builder()
         .partial_directory(Some(".rsync-partial"))
         .build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !args
             .iter()
@@ -1173,7 +1192,8 @@ fn delay_updates_not_forwarded_on_pull_receiver() {
     // `partial_dir && am_sender` block. On a pull the receiver applies it
     // locally and must not forward it to the remote sender.
     let config = ClientConfig::builder().delay_updates(true).build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !args.iter().any(|a| a == "--delay-updates"),
         "--delay-updates must not be forwarded on a pull (receiver): {args:?}"
@@ -1185,7 +1205,8 @@ fn inplace_suppressed_when_append_mode() {
     // upstream: options.c:2951-2956 - `if (append_mode) {...} else if (inplace)`.
     // append_mode takes precedence, so --inplace must not accompany --append.
     let config = ClientConfig::builder().inplace(true).append(true).build();
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
     assert!(
         !args.iter().any(|a| a == "--inplace"),
         "--inplace must be suppressed when --append is set: {args:?}"
@@ -1200,7 +1221,7 @@ fn inplace_suppressed_when_append_mode() {
 fn includes_remove_source_files_long_arg() {
     let config = ClientConfig::builder().remove_source_files(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--remove-source-files"),
@@ -1217,7 +1238,7 @@ fn forwards_deprecated_remove_sent_files_spelling() {
         .remove_sent_files(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--remove-sent-files"),
@@ -1238,7 +1259,7 @@ fn forwards_log_format_o_when_out_format_has_operation() {
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1258,7 +1279,7 @@ fn omits_log_format_o_on_pull() {
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1276,7 +1297,7 @@ fn forwards_log_format_placeholder_when_not_verbose() {
     let config = ClientConfig::builder().out_format_placeholder(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1297,7 +1318,7 @@ fn omits_log_format_placeholder_when_verbose() {
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1322,7 +1343,7 @@ fn out_format_without_i_forwards_o_not_i_even_with_dash_i() {
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1345,7 +1366,7 @@ fn explicit_out_format_with_i_forwards_log_format_i() {
     let config = ClientConfig::builder().out_format_forwards_i(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args: Vec<_> = builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -1360,7 +1381,7 @@ fn explicit_out_format_with_i_forwards_log_format_i() {
 fn includes_size_only_long_arg() {
     let config = ClientConfig::builder().size_only(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--size-only"),
@@ -1378,7 +1399,7 @@ fn includes_no_implied_dirs_when_disabled() {
         .implied_dirs(false)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         args.iter().any(|a| a == "--no-implied-dirs"),
@@ -1390,7 +1411,7 @@ fn includes_no_implied_dirs_when_disabled() {
 fn omits_no_implied_dirs_when_default() {
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| a == "--no-implied-dirs"),
@@ -1408,7 +1429,7 @@ fn omits_no_implied_dirs_when_disabled_without_relative_paths() {
     let config = ClientConfig::builder().implied_dirs(false).build();
     assert!(!config.relative_paths());
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     assert!(
         !args.iter().any(|a| a == "--no-implied-dirs"),
@@ -1420,7 +1441,7 @@ fn omits_no_implied_dirs_when_disabled_without_relative_paths() {
 fn includes_dry_run_flag() {
     let config = ClientConfig::builder().dry_run(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
+    let args = builder.build(std::ffi::OsStr::new("/path"));
 
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('n'), "expected 'n' in flags: {flags}");
@@ -1430,7 +1451,7 @@ fn includes_dry_run_flag() {
 fn secluded_invocation_disabled_returns_normal_args() {
     let config = ClientConfig::builder().protect_args(None).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/path"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path")]);
 
     assert!(
         secluded.stdin_args.is_empty(),
@@ -1453,7 +1474,7 @@ fn secluded_invocation_enabled_keeps_flags_and_capability_on_command_line() {
     // send_protected_args()).
     let config = ClientConfig::builder().protect_args(Some(true)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/path/to/files"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path/to/files")]);
 
     let cmd_strs: Vec<String> = secluded
         .command_line_args
@@ -1496,10 +1517,10 @@ fn secluded_invocation_enabled_keeps_flags_and_capability_on_command_line() {
         "stdin_args should contain the '.' separator"
     );
     assert!(
-        !secluded
-            .stdin_args
-            .iter()
-            .any(|a| a.starts_with('-') && a.contains('s') && a.len() > 2),
+        !secluded.stdin_args.iter().any(|a| {
+            let a = a.to_string_lossy();
+            a.starts_with('-') && a.contains('s') && a.len() > 2
+        }),
         "the compact flag string must not be duplicated over stdin: {:?}",
         secluded.stdin_args
     );
@@ -1509,7 +1530,7 @@ fn secluded_invocation_enabled_keeps_flags_and_capability_on_command_line() {
 fn secluded_invocation_pull_includes_sender_flag() {
     let config = ClientConfig::builder().protect_args(Some(true)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let secluded = builder.build_secluded(&["/remote/src"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/remote/src")]);
 
     let cmd_strs: Vec<String> = secluded
         .command_line_args
@@ -1546,13 +1567,13 @@ fn secluded_invocation_stdin_args_omit_flag_string_and_defer_long_form() {
         .ignore_errors(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/data"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/data")]);
 
     assert!(
-        !secluded
-            .stdin_args
-            .iter()
-            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.len() > 1),
+        !secluded.stdin_args.iter().any(|a| {
+            let a = a.to_string_lossy();
+            a.starts_with('-') && !a.starts_with("--") && a.len() > 1
+        }),
         "stdin_args must not contain the compact flag string: {:?}",
         secluded.stdin_args
     );
@@ -1579,7 +1600,7 @@ fn secluded_invocation_stdin_args_omit_flag_string_and_defer_long_form() {
 fn secluded_invocation_explicitly_disabled_returns_normal() {
     let config = ClientConfig::builder().protect_args(Some(false)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/path"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path")]);
 
     assert!(
         secluded.stdin_args.is_empty(),
@@ -1610,7 +1631,7 @@ fn secluded_invocation_locks_cmdline_and_stdin_sequence() {
         .inc_recursive_send(false)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/data"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/data")]);
 
     let cmd_strs: Vec<String> = secluded
         .command_line_args
@@ -1635,10 +1656,10 @@ fn secluded_invocation_locks_cmdline_and_stdin_sequence() {
     assert_eq!(
         secluded.stdin_args,
         vec![
-            "rsync".to_owned(),
-            "--ignore-errors".to_owned(),
-            ".".to_owned(),
-            "/data".to_owned(),
+            OsString::from("rsync"),
+            OsString::from("--ignore-errors"),
+            OsString::from("."),
+            OsString::from("/data"),
         ],
         "stdin must hold exactly the synthetic arg0, the deferred \
          long-form tail, the '.' separator, and the path"
@@ -1655,7 +1676,7 @@ fn secluded_invocation_locks_cmdline_and_stdin_sequence() {
 fn build_sender_args(config: &ClientConfig) -> Vec<String> {
     let builder = RemoteInvocationBuilder::new(config, RemoteRole::Sender);
     builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
@@ -1702,7 +1723,7 @@ fn sender_flag_string(config: &ClientConfig) -> String {
 fn build_receiver_args(config: &ClientConfig) -> Vec<String> {
     let builder = RemoteInvocationBuilder::new(config, RemoteRole::Receiver);
     builder
-        .build("/path")
+        .build(std::ffi::OsStr::new("/path"))
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
@@ -2900,7 +2921,11 @@ fn build_with_multiple_paths() {
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args: Vec<String> = builder
-        .build_with_paths(&["/src1", "/src2", "/src3"])
+        .build_with_paths(&[
+            std::ffi::OsStr::new("/src1"),
+            std::ffi::OsStr::new("/src2"),
+            std::ffi::OsStr::new("/src3"),
+        ])
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -3447,56 +3472,58 @@ fn all_flags_enabled_produces_valid_invocation() {
 
 #[test]
 fn local_absolute_path_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("/tmp/foo")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("/tmp/foo")));
 }
 
 #[test]
 fn local_relative_path_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("./relative/path")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("./relative/path")));
 }
 
 #[test]
 fn local_bare_filename_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("file.txt")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("file.txt")));
 }
 
 #[test]
 fn local_path_with_colon_after_slash_is_not_remote() {
     // Colon appears after a slash, so the before-colon part contains '/'.
     // upstream: main.c - only treat as remote if no slash before colon.
-    assert!(!operand_is_remote(OsStr::new("/foo:bar")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("/foo:bar")));
 }
 
 #[test]
 fn local_path_with_colon_after_backslash_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("dir\\sub:file")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("dir\\sub:file")));
 }
 
 #[test]
 fn local_path_nested_colon_after_slash_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("/a/b/c:d")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("/a/b/c:d")));
 }
 
 #[test]
 fn local_dot_path_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new(".")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new(".")));
 }
 
 #[test]
 fn local_parent_path_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("..")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("..")));
 }
 
 #[cfg(windows)]
 #[test]
 fn windows_drive_letter_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("C:\\Windows\\path")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new(
+        "C:\\Windows\\path"
+    )));
 }
 
 #[cfg(windows)]
 #[test]
 fn windows_drive_letter_forward_slash_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("D:/Users/test")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("D:/Users/test")));
 }
 
 #[cfg(not(windows))]
@@ -3504,82 +3531,92 @@ fn windows_drive_letter_forward_slash_is_not_remote() {
 fn single_letter_colon_on_unix_is_remote() {
     // On Unix, "C:" looks like host:path with empty path - treated as remote.
     // Only Windows has the drive letter exemption.
-    assert!(operand_is_remote(OsStr::new("C:")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("C:")));
 }
 
 #[test]
 fn rsync_url_is_remote() {
-    assert!(operand_is_remote(OsStr::new("rsync://host/module/path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(
+        "rsync://host/module/path"
+    )));
 }
 
 #[test]
 fn rsync_url_with_user_is_remote() {
-    assert!(operand_is_remote(OsStr::new("rsync://user@host/module")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(
+        "rsync://user@host/module"
+    )));
 }
 
 #[test]
 fn rsync_url_bare_host_is_remote() {
-    assert!(operand_is_remote(OsStr::new("rsync://host")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("rsync://host")));
 }
 
 #[test]
 fn ssh_url_is_remote() {
-    assert!(operand_is_remote(OsStr::new("ssh://host/path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("ssh://host/path")));
 }
 
 #[test]
 fn ssh_url_with_user_is_remote() {
-    assert!(operand_is_remote(OsStr::new("ssh://user@host/path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(
+        "ssh://user@host/path"
+    )));
 }
 
 #[test]
 fn ssh_url_with_port_is_remote() {
-    assert!(operand_is_remote(OsStr::new("ssh://user@host:22/path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(
+        "ssh://user@host:22/path"
+    )));
 }
 
 #[test]
 fn ssh_url_bare_host_is_remote() {
-    assert!(operand_is_remote(OsStr::new("ssh://host")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("ssh://host")));
 }
 
 #[test]
 fn host_colon_path_is_remote() {
-    assert!(operand_is_remote(OsStr::new("host:path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("host:path")));
 }
 
 #[test]
 fn user_at_host_colon_path_is_remote() {
-    assert!(operand_is_remote(OsStr::new("user@host:path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("user@host:path")));
 }
 
 #[test]
 fn host_colon_empty_path_is_remote() {
-    assert!(operand_is_remote(OsStr::new("host:")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("host:")));
 }
 
 #[test]
 fn ip_colon_path_is_remote() {
-    assert!(operand_is_remote(OsStr::new("192.168.1.1:/data")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("192.168.1.1:/data")));
 }
 
 #[test]
 fn host_double_colon_module_is_remote() {
-    assert!(operand_is_remote(OsStr::new("host::module")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("host::module")));
 }
 
 #[test]
 fn user_at_host_double_colon_module_is_remote() {
-    assert!(operand_is_remote(OsStr::new("user@host::module")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("user@host::module")));
 }
 
 #[test]
 fn host_double_colon_module_path_is_remote() {
-    assert!(operand_is_remote(OsStr::new("host::module/subdir")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(
+        "host::module/subdir"
+    )));
 }
 
 #[test]
 fn empty_string_is_not_remote() {
-    assert!(!operand_is_remote(OsStr::new("")));
+    assert!(!operand_is_remote(std::ffi::OsStr::new("")));
 }
 
 #[test]
@@ -3587,13 +3624,13 @@ fn http_url_is_not_classified_as_ssh() {
     // "http://foo" has a colon, but the before-colon part ("http") contains
     // no '/' or '\', so it is treated as host:path (remote).
     // This matches upstream rsync behavior - http:// is not special-cased.
-    assert!(operand_is_remote(OsStr::new("http://foo")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("http://foo")));
 }
 
 #[test]
 fn ftp_url_is_not_special_cased() {
     // Same as http:// - upstream rsync treats any host:path as remote.
-    assert!(operand_is_remote(OsStr::new("ftp://foo")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("ftp://foo")));
 }
 
 #[test]
@@ -3601,26 +3638,26 @@ fn uppercase_ssh_url_is_not_recognized() {
     // Only lowercase "ssh://" triggers the URL check. Uppercase "SSH://"
     // falls through to the colon-based check where "SSH" has no '/' or '\'
     // before the colon, so it is treated as host:path (remote) anyway.
-    assert!(operand_is_remote(OsStr::new("SSH://host/path")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("SSH://host/path")));
 }
 
 #[test]
 fn uppercase_rsync_url_is_not_recognized_as_url() {
     // "RSYNC://host" - "RSYNC" has no slash before colon, treated as remote.
-    assert!(operand_is_remote(OsStr::new("RSYNC://host")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("RSYNC://host")));
 }
 
 #[test]
 fn path_with_only_colons_double_is_remote() {
     // "::" contains double-colon, so it is treated as remote daemon syntax.
-    assert!(operand_is_remote(OsStr::new("::")));
+    assert!(operand_is_remote(std::ffi::OsStr::new("::")));
 }
 
 #[test]
 fn path_with_single_colon_only_is_remote() {
     // ":" has a colon with empty before and after parts. Empty before has no
     // '/' or '\', so it falls through to remote classification.
-    assert!(operand_is_remote(OsStr::new(":")));
+    assert!(operand_is_remote(std::ffi::OsStr::new(":")));
 }
 
 #[test]
@@ -3686,7 +3723,7 @@ fn daemon_double_colon_to_local_is_pull() {
 fn iconv_unspecified_omits_iconv_arg() {
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         !args
             .iter()
@@ -3701,7 +3738,7 @@ fn iconv_disabled_omits_iconv_arg() {
         .iconv(IconvSetting::Disabled)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         !args
             .iter()
@@ -3716,7 +3753,7 @@ fn iconv_locale_default_forwards_dot() {
         .iconv(IconvSetting::LocaleDefault)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         args.iter().any(|a| a == "--iconv=."),
         "LocaleDefault must forward --iconv=.: {args:?}"
@@ -3735,7 +3772,7 @@ fn iconv_explicit_pair_forwards_only_remote_half() {
         })
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         args.iter().any(|a| a == "--iconv=ISO-8859-1"),
         "Explicit pair must forward only the remote half: {args:?}"
@@ -3757,7 +3794,7 @@ fn iconv_explicit_single_forwards_whole_spec() {
         })
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/path");
+    let args = builder.build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         args.iter().any(|a| a == "--iconv=UTF-8"),
         "Explicit single must forward the whole spec: {args:?}"
@@ -3771,53 +3808,93 @@ fn iconv_explicit_single_forwards_whole_spec() {
 
 use super::builder::{shell_safe_filename_arg, shell_safe_filename_arg_with_tilde};
 
+/// `&str` test wrappers around the byte-native escape helpers.
+fn shell_safe(arg: &str) -> OsString {
+    shell_safe_filename_arg(std::ffi::OsStr::new(arg))
+}
+fn shell_safe_tilde(arg: &str, escape_leading_tilde: bool) -> OsString {
+    shell_safe_filename_arg_with_tilde(std::ffi::OsStr::new(arg), escape_leading_tilde)
+}
+
 #[test]
 fn shell_safe_simple_path_unchanged() {
-    assert_eq!(shell_safe_filename_arg("/simple/path"), "/simple/path");
+    assert_eq!(shell_safe("/simple/path"), "/simple/path");
+}
+
+/// A non-UTF-8 operand round-trips byte-identically through
+/// `determine_transfer_role` -> `shell_safe_filename_arg`: the raw path byte
+/// (`0xFF`, a legal Unix filename byte rsync carries as `char*`) survives, and
+/// the ASCII shell metacharacter beside it is still escaped. Fails pre-fix,
+/// where the operand was lossily decoded to U+FFFD before escaping ran.
+#[cfg(unix)]
+#[test]
+fn shell_safe_preserves_non_utf8_operand_bytes() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    // Operand `host:/a<FF>b)c` as it arrives from argv.
+    let mut operand = b"host:/a".to_vec();
+    operand.push(0xFF);
+    operand.extend_from_slice(b"b)c");
+    let sources = [OsString::from_vec(operand)];
+    let dest = OsString::from("/local/dest");
+
+    let spec = determine_transfer_role(&sources, &dest).unwrap();
+    let TransferSpec::Pull { remote_sources, .. } = spec else {
+        panic!("expected a pull");
+    };
+    let RemoteOperands::Single(operand) = remote_sources else {
+        panic!("expected a single source");
+    };
+
+    let parsed = rsync_io::ssh::parse_ssh_operand(&operand).unwrap();
+    let escaped = shell_safe_filename_arg(parsed.path());
+
+    // `)` is escaped; the raw 0xFF byte is preserved verbatim.
+    let mut expected = b"/a".to_vec();
+    expected.push(0xFF);
+    expected.extend_from_slice(b"b\\)c");
+    assert_eq!(escaped.as_bytes(), &expected[..]);
 }
 
 #[test]
 fn shell_safe_escapes_parentheses() {
     // upstream: SHELL_CHARS includes '(' and ')'
     assert_eq!(
-        shell_safe_filename_arg("/dir/A weird)name/file"),
+        shell_safe("/dir/A weird)name/file"),
         "/dir/A\\ weird\\)name/file"
     );
 }
 
 #[test]
 fn shell_safe_escapes_spaces() {
-    assert_eq!(
-        shell_safe_filename_arg("/dir/has space/file"),
-        "/dir/has\\ space/file"
-    );
+    assert_eq!(shell_safe("/dir/has space/file"), "/dir/has\\ space/file");
 }
 
 #[test]
 fn shell_safe_escapes_shell_metacharacters() {
-    assert_eq!(shell_safe_filename_arg("a&b"), "a\\&b");
-    assert_eq!(shell_safe_filename_arg("a;b"), "a\\;b");
-    assert_eq!(shell_safe_filename_arg("a|b"), "a\\|b");
-    assert_eq!(shell_safe_filename_arg("a<b"), "a\\<b");
-    assert_eq!(shell_safe_filename_arg("a>b"), "a\\>b");
-    assert_eq!(shell_safe_filename_arg("a{b}"), "a\\{b\\}");
-    assert_eq!(shell_safe_filename_arg("a\"b"), "a\\\"b");
-    assert_eq!(shell_safe_filename_arg("a'b"), "a\\'b");
-    assert_eq!(shell_safe_filename_arg("a`b"), "a\\`b");
-    assert_eq!(shell_safe_filename_arg("a#b"), "a\\#b");
-    assert_eq!(shell_safe_filename_arg("a$b"), "a\\$b");
-    assert_eq!(shell_safe_filename_arg("a!b"), "a\\!b");
+    assert_eq!(shell_safe("a&b"), "a\\&b");
+    assert_eq!(shell_safe("a;b"), "a\\;b");
+    assert_eq!(shell_safe("a|b"), "a\\|b");
+    assert_eq!(shell_safe("a<b"), "a\\<b");
+    assert_eq!(shell_safe("a>b"), "a\\>b");
+    assert_eq!(shell_safe("a{b}"), "a\\{b\\}");
+    assert_eq!(shell_safe("a\"b"), "a\\\"b");
+    assert_eq!(shell_safe("a'b"), "a\\'b");
+    assert_eq!(shell_safe("a`b"), "a\\`b");
+    assert_eq!(shell_safe("a#b"), "a\\#b");
+    assert_eq!(shell_safe("a$b"), "a\\$b");
+    assert_eq!(shell_safe("a!b"), "a\\!b");
 }
 
 #[test]
 fn shell_safe_escapes_tab() {
-    assert_eq!(shell_safe_filename_arg("a\tb"), "a\\\tb");
+    assert_eq!(shell_safe("a\tb"), "a\\\tb");
 }
 
 #[test]
 fn shell_safe_leading_dash_gets_dot_slash() {
     // upstream: safe_arg prepends "./" to prevent option interpretation
-    assert_eq!(shell_safe_filename_arg("-file"), "./-file");
+    assert_eq!(shell_safe("-file"), "./-file");
 }
 
 #[test]
@@ -3825,8 +3902,8 @@ fn shell_safe_leading_tilde_unescaped_when_not_requested() {
     // The plain wrapper - and a push, where escape_leading_tilde is false -
     // leaves a leading ~ untouched, matching upstream which lets the remote
     // expand ~ on the destination.
-    assert_eq!(shell_safe_filename_arg("~foo"), "~foo");
-    assert_eq!(shell_safe_filename_arg_with_tilde("~foo", false), "~foo");
+    assert_eq!(shell_safe("~foo"), "~foo");
+    assert_eq!(shell_safe_tilde("~foo", false), "~foo");
 }
 
 #[test]
@@ -3834,29 +3911,29 @@ fn shell_safe_leading_tilde_escaped_when_requested() {
     // upstream: options.c:2553-2558 / :2581 - on a pull the leading ~ of a
     // bare-name source path is backslash-escaped to \~foo so the remote shell
     // does not tilde-expand a path literally named ~foo.
-    assert_eq!(shell_safe_filename_arg_with_tilde("~foo", true), "\\~foo");
+    assert_eq!(shell_safe_tilde("~foo", true), "\\~foo");
 }
 
 #[test]
 fn shell_safe_tilde_escape_only_affects_leading_tilde() {
     // A ~ that is not the first character is ordinary (not a SHELL_CHARS
     // member) and is left as-is even when tilde escaping is requested.
-    assert_eq!(shell_safe_filename_arg_with_tilde("a~b", true), "a~b");
+    assert_eq!(shell_safe_tilde("a~b", true), "a~b");
 }
 
 #[test]
 fn shell_safe_backslash_not_before_wildcard_is_escaped() {
     // upstream: backslash is escaped unless followed by a wildcard char
-    assert_eq!(shell_safe_filename_arg("a\\b"), "a\\\\b");
+    assert_eq!(shell_safe("a\\b"), "a\\\\b");
 }
 
 #[test]
 fn shell_safe_backslash_before_wildcard_is_preserved() {
     // upstream: backslash before wildcard chars (*?[]) is NOT escaped
-    assert_eq!(shell_safe_filename_arg("a\\*b"), "a\\*b");
-    assert_eq!(shell_safe_filename_arg("a\\?b"), "a\\?b");
-    assert_eq!(shell_safe_filename_arg("a\\[b"), "a\\[b");
-    assert_eq!(shell_safe_filename_arg("a\\]b"), "a\\]b");
+    assert_eq!(shell_safe("a\\*b"), "a\\*b");
+    assert_eq!(shell_safe("a\\?b"), "a\\?b");
+    assert_eq!(shell_safe("a\\[b"), "a\\[b");
+    assert_eq!(shell_safe("a\\]b"), "a\\]b");
 }
 
 #[test]
@@ -3864,7 +3941,7 @@ fn shell_safe_no_escaping_in_secluded_mode() {
     // When protect_args is active, stdin_args should NOT be shell-escaped
     let config = ClientConfig::builder().protect_args(Some(true)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path/A weird)name/")]);
 
     assert!(
         secluded
@@ -3881,7 +3958,7 @@ fn shell_safe_escaping_in_normal_mode() {
     // When protect_args is off, command_line_args should have escaped paths
     let config = ClientConfig::builder().protect_args(None).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path/A weird)name/")]);
 
     assert!(
         secluded
@@ -3904,7 +3981,7 @@ fn old_args_level_one_skips_filename_escaping() {
         .old_args(Some(1))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path/A weird)name/")]);
 
     assert!(
         secluded
@@ -3927,7 +4004,7 @@ fn old_args_level_two_skips_filename_escaping() {
         .old_args(Some(2))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path/A weird)name/")]);
 
     assert!(
         secluded
@@ -4055,13 +4132,13 @@ fn stop_at_forwarded_in_secluded_mode() {
         .protect_args(Some(true))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/path"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path")]);
 
     assert!(
         secluded
             .stdin_args
             .iter()
-            .any(|a| a.starts_with("--stop-at=")),
+            .any(|a| a.to_string_lossy().starts_with("--stop-at=")),
         "secluded stdin_args should contain --stop-at=: {:?}",
         secluded.stdin_args
     );
@@ -4254,7 +4331,7 @@ fn remote_options_included_in_secluded_stdin_args() {
         .remote_options(vec!["--bwlimit=500"])
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/data"]);
+    let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/data")]);
 
     assert!(
         secluded.stdin_args.iter().any(|a| a == "--bwlimit=500"),
@@ -4301,7 +4378,7 @@ fn push_with_local_files_from_omits_remote_arg() {
         .build();
     // RemoteRole::Sender == local is sender (push).
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/dest");
+    let args = builder.build(std::ffi::OsStr::new("/remote/dest"));
 
     assert!(
         !args.iter().any(|a| {
@@ -4328,7 +4405,7 @@ fn push_with_stdin_files_from_omits_remote_arg() {
         .from0(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/dest");
+    let args = builder.build(std::ffi::OsStr::new("/remote/dest"));
 
     assert!(
         !args.iter().any(|a| {
@@ -4350,7 +4427,7 @@ fn push_with_remote_files_from_forwards_path() {
         .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/remote/dest");
+    let args = builder.build(std::ffi::OsStr::new("/remote/dest"));
 
     assert!(
         args.iter()
@@ -4372,7 +4449,7 @@ fn pull_with_local_files_from_sends_files_from_stdin_to_remote() {
         .build();
     // RemoteRole::Receiver == local is receiver (pull).
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/source");
+    let args = builder.build(std::ffi::OsStr::new("/remote/source"));
 
     assert!(
         args.iter().any(|a| a == "--files-from=-"),
@@ -4399,7 +4476,7 @@ fn pull_with_files_from_no_relative_forwards_no_relative_and_omits_r() {
         .relative_paths(false)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/source");
+    let args = builder.build(std::ffi::OsStr::new("/remote/source"));
 
     assert!(
         args.iter().any(|a| a == "--no-relative"),
@@ -4425,7 +4502,7 @@ fn pull_with_files_from_relative_packs_r_and_omits_no_relative() {
         .relative_paths(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/source");
+    let args = builder.build(std::ffi::OsStr::new("/remote/source"));
 
     assert!(
         !args.iter().any(|a| a == "--no-relative"),
@@ -4448,7 +4525,7 @@ fn pull_with_remote_files_from_forwards_path() {
         .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/remote/source");
+    let args = builder.build(std::ffi::OsStr::new("/remote/source"));
 
     assert!(
         args.iter()
@@ -4464,14 +4541,15 @@ fn ssh_forwards_use_qsort_when_set() {
     let config = ClientConfig::builder().qsort(true).build();
     for role in [RemoteRole::Sender, RemoteRole::Receiver] {
         let builder = RemoteInvocationBuilder::new(&config, role);
-        let args = builder.build("/remote/path");
+        let args = builder.build(std::ffi::OsStr::new("/remote/path"));
         assert!(
             args.iter().any(|a| a == "--use-qsort"),
             "qsort must forward --use-qsort ({role:?}): {args:?}"
         );
     }
     let off = ClientConfig::builder().build();
-    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(!args.iter().any(|a| a == "--use-qsort"));
 }
 
@@ -4481,19 +4559,22 @@ fn ssh_forwards_use_qsort_when_set() {
 #[test]
 fn ssh_forwards_super_on_push_only() {
     let config = ClientConfig::builder().super_user(true).build();
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         push.iter().any(|a| a == "--super"),
         "push must forward --super: {push:?}"
     );
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         !pull.iter().any(|a| a == "--super"),
         "pull must not forward --super: {pull:?}"
     );
     // Not requested: never forwarded.
     let off = ClientConfig::builder().build();
-    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(!args.iter().any(|a| a == "--super"));
 }
 
@@ -4503,18 +4584,21 @@ fn ssh_forwards_super_on_push_only() {
 #[test]
 fn ssh_forwards_stats_on_push_only() {
     let config = ClientConfig::builder().stats(true).build();
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         push.iter().any(|a| a == "--stats"),
         "push must forward --stats: {push:?}"
     );
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         !pull.iter().any(|a| a == "--stats"),
         "pull must not forward --stats: {pull:?}"
     );
     let off = ClientConfig::builder().build();
-    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(!args.iter().any(|a| a == "--stats"));
 }
 
@@ -4529,12 +4613,14 @@ fn ssh_forwards_info_and_debug_when_set() {
         .info_flags([OsString::from("del1")])
         .debug_flags([OsString::from("send1")])
         .build();
-    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         push.iter().any(|a| a == "--info=del"),
         "push must forward receiver-side --info=del: {push:?}"
     );
-    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         pull.iter().any(|a| a == "--debug=send"),
         "pull must forward sender-side --debug=send: {pull:?}"
@@ -4542,7 +4628,8 @@ fn ssh_forwards_info_and_debug_when_set() {
 
     // Nothing set: no --info / --debug argument at all.
     let off = ClientConfig::builder().build();
-    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/remote/path"));
     assert!(
         !args
             .iter()
@@ -5048,7 +5135,7 @@ mod oc_flag_forwarding {
 
     fn build_args(config: &ClientConfig, role: RemoteRole) -> Vec<String> {
         RemoteInvocationBuilder::new(config, role)
-            .build("/remote/path")
+            .build(std::ffi::OsStr::new("/remote/path"))
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()

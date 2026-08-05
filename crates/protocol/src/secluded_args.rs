@@ -56,16 +56,21 @@ use crate::iconv::FilenameConverter;
 /// When `iconv` is `None`, bytes are forwarded verbatim - equivalent to
 /// upstream's `ic_send == (iconv_t)-1` case.
 ///
+/// Arguments are accepted as any byte-slice-convertible type (`&str`,
+/// `&[u8]`, `Vec<u8>`, ...) so a caller holding raw operand bytes - a remote
+/// path that is not valid UTF-8, which rsync carries as raw `char*` - can ship
+/// them verbatim without a lossy `String` round-trip.
+///
 /// # Upstream Reference
 ///
 /// Mirrors `send_protected_args()` in upstream `rsync.c:283-320`.
-pub fn send_secluded_args<W: Write>(
+pub fn send_secluded_args<W: Write, A: AsRef<[u8]>>(
     writer: &mut W,
-    args: &[&str],
+    args: &[A],
     iconv: Option<&FilenameConverter>,
 ) -> io::Result<()> {
     for arg in args {
-        write_secluded_arg(writer, arg.as_bytes(), iconv)?;
+        write_secluded_arg(writer, arg.as_ref(), iconv)?;
     }
     // Empty string terminator
     writer.write_all(b"\0")?;

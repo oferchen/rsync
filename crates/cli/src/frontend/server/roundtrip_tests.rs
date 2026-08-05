@@ -32,7 +32,8 @@ use super::parse::parse_server_flag_string_and_args;
 /// slice the server actually parses: production `run.rs` drops the arg0 program
 /// name (`&args[1..]`) before handing the tail to the parser.
 fn server_argv(config: &ClientConfig, role: RemoteRole, paths: &[&str]) -> Vec<OsString> {
-    RemoteInvocationBuilder::new(config, role).build_with_paths(paths)
+    let os_paths: Vec<&std::ffi::OsStr> = paths.iter().map(|p| std::ffi::OsStr::new(*p)).collect();
+    RemoteInvocationBuilder::new(config, role).build_with_paths(&os_paths)
 }
 
 /// Core invariant: after parsing, `positional_args` must equal exactly the
