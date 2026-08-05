@@ -257,7 +257,9 @@ fn copy_directory_recursive_inner(
         // when the destination already exists (test line 74-79) while `-vv`
         // surfaces it as `.d ./`.
         if destination_missing {
-            context.summary_mut().mark_destination_root_created();
+            // The recursive root frame (relative == None) is the transfer-root
+            // "." flist entry of a copy-contents transfer, so it counts.
+            context.summary_mut().mark_destination_root_created(true);
         }
         Some((
             std::path::PathBuf::from("."),

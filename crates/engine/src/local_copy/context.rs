@@ -222,6 +222,14 @@ pub(crate) struct CopyContext<'a> {
     /// path's same-filesystem gate. `None` means verified but device not yet
     /// resolved.
     verified_parents: HashMap<PathBuf, Option<u64>>,
+    /// Relative paths of implied parent directories already surfaced as flist
+    /// entries during this transfer (`--relative`). Upstream's
+    /// `send_implied_dirs()` (flist.c:1937) relies on `lastpath` plus
+    /// `flist_sort_and_clean()` deduplication so each implied ancestor appears
+    /// once even when several source args share a prefix; this set reproduces
+    /// that single-emission guarantee for the local-copy itemize/stats/verbose
+    /// stream, which never builds a shared sorted flist.
+    emitted_implied_dirs: HashSet<PathBuf>,
     /// Protocol flist encoder for batch mode.
     ///
     /// When batch mode is active, file entries are encoded using the protocol

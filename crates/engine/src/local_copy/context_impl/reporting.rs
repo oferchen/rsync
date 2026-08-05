@@ -119,6 +119,21 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Marks `relative` as an implied parent directory surfaced during this
+    /// transfer and reports whether it is the first sighting. Returns `true`
+    /// when the caller should emit the directory's flist entry (itemize row,
+    /// `--stats` counters, verbose line), `false` when an earlier source arg
+    /// already surfaced the same ancestor.
+    ///
+    /// upstream: flist.c:1937 `send_implied_dirs()` dedups shared ancestors via
+    /// its `lastpath` cache and the later `flist_sort_and_clean()` pass so each
+    /// implied directory appears once even when several `--relative` operands
+    /// share a prefix. The local-copy executor never builds a shared sorted
+    /// flist, so this set enforces the same one-entry-per-ancestor guarantee.
+    pub(super) fn mark_implied_dir_emitted(&mut self, relative: &Path) -> bool {
+        self.emitted_implied_dirs.insert(relative.to_path_buf())
+    }
+
     /// Consumes the context and returns the final [`CopyOutcome`].
     pub(super) fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {

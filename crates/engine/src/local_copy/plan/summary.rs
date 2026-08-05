@@ -515,14 +515,27 @@ impl LocalCopySummary {
         self.destination_root_created
     }
 
-    pub(in crate::local_copy) const fn mark_destination_root_created(&mut self) {
-        // upstream: receiver.c:731-746 - the pre-flight mkdir of the
-        // destination root sets ITEM_IS_NEW on the synthesized "." entry, so
-        // `stats.created_files++` and `stats.created_dirs++` count it. Bump the
-        // created-directory tally exactly once (guarded by the flag, which both
-        // call sites also set) so `--stats` "Number of created files" includes
-        // the destination root - dir:2 for a fresh recursive copy, not dir:1.
-        if !self.destination_root_created {
+    /// Records that the transfer materialised the destination root directory,
+    /// which drives the `created directory %s` notice. `count_created` also
+    /// bumps the created-directory tally when the root is a real "." flist
+    /// entry.
+    ///
+    /// upstream: receiver.c:731-746 - the pre-flight mkdir of the destination
+    /// root sets ITEM_IS_NEW on the synthesized "." entry, so
+    /// `stats.created_files++`/`stats.created_dirs++` count it - but ONLY when
+    /// the flist actually carries that "." entry (a non-relative copy-contents
+    /// transfer). Under `--relative` the destination root is the
+    /// `get_local_name()` mkpath target, printed via the same notice yet absent
+    /// from the flist, so it must not inflate the created-dir count; a
+    /// `./`-anchored operand's "." is accounted for separately by
+    /// `emit_relative_implied_parents`. The flag (and thus the notice) is set
+    /// regardless; the count bump is gated on `count_created` and fires at most
+    /// once.
+    pub(in crate::local_copy) const fn mark_destination_root_created(
+        &mut self,
+        count_created: bool,
+    ) {
+        if !self.destination_root_created && count_created {
             self.directories_created = self.directories_created.saturating_add(1);
         }
         self.destination_root_created = true;

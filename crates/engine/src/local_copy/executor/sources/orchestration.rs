@@ -9,9 +9,9 @@ use logging::{debug_log, info_log};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CopyOutcome, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler,
-    SourceSpec,
+    CopyContext, CopyOutcome, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan,
+    LocalCopyRecord, LocalCopyRecordHandler, SourceSpec,
 };
 
 use super::super::file::remove_existing_destination;
@@ -167,8 +167,19 @@ pub(crate) fn copy_sources(
                 )?;
             }
 
+            // upstream: main.c:803-808 prints `created directory <dest>` for the
+            // pre-flight mkdir and, when the flist carries a "." top entry (a
+            // non-relative copy-contents transfer), counts it as a created dir.
+            // Under `--relative` the destination root is the mkpath target,
+            // announced by the same notice yet absent from the flist, so it must
+            // not inflate the created-dir count - a `./`-anchored operand's "."
+            // is accounted for by `emit_relative_implied_parents`. Set the
+            // notice flag either way; count only for non-relative transfers.
             if destination_root_created {
-                context.summary_mut().mark_destination_root_created();
+                let count_root = !context.relative_paths_enabled();
+                context
+                    .summary_mut()
+                    .mark_destination_root_created(count_root);
             }
 
             let destination_behaves_like_directory =
@@ -183,6 +194,7 @@ pub(crate) fn copy_sources(
                     destination_path,
                     destination_behaves_like_directory,
                     multiple_sources,
+                    destination_root_created,
                 );
                 if let Err(error) = result {
                     if error.is_vanished_error() {
@@ -319,6 +331,7 @@ fn process_single_source(
     destination_path: &Path,
     destination_behaves_like_directory: bool,
     multiple_sources: bool,
+    destination_root_created: bool,
 ) -> Result<(), LocalCopyError> {
     // Directory copy handlers set the correct offset before recursing.
     context.set_safety_depth_offset(0);
@@ -444,6 +457,20 @@ fn process_single_source(
         ));
     }
 
+    // upstream: flist.c:2456-2472 - send_file_list() calls send_implied_dirs()
+    // for each `--relative` operand *before* send_file_name() emits the operand
+    // itself, so the implied parent directories precede the operand's row in the
+    // itemize / verbose / stats stream. Surface those ancestor rows here, ahead
+    // of the leaf's own record, mirroring that ordering.
+    emit_relative_implied_parents(
+        context,
+        source,
+        source_path,
+        destination_path,
+        relative_root.as_deref(),
+        destination_root_created,
+    )?;
+
     if file_type.is_dir() {
         if source.copy_contents() {
             handle_directory_contents_copy(
@@ -480,6 +507,189 @@ fn process_single_source(
     )?;
 
     context.enforce_timeout()?;
+    Ok(())
+}
+
+/// Surfaces the implied parent directories along a `--relative` source's path
+/// as flist entries so the local-copy itemize (`-i`), `--stats` counters, and
+/// verbose (`-v`) listing match upstream. Only the ancestors *above* the leaf
+/// are recorded here; the leaf's own row is emitted by the file/directory
+/// handler. The directories themselves are still physically materialized by
+/// `prepare_parent_directory` during the leaf's copy - this pass records them.
+///
+/// upstream: flist.c:1937 `send_implied_dirs()` emits one `FLAG_IMPLIED_DIR`
+/// entry per ancestor component (`flist.c:1989-1998`), bypassing the filter
+/// chain (`flist.c:1950`) and deduplicating shared ancestors across operands;
+/// the receiver then itemizes each as `cd+++++++++ <dir>/` and counts it under
+/// the created-dir stats. `--no-implied-dirs` clears `implied_dirs`
+/// (`flist.c:2468`), suppressing the whole set - mirrored by the guard below.
+fn emit_relative_implied_parents(
+    context: &mut CopyContext,
+    source: &SourceSpec,
+    source_path: &Path,
+    destination_path: &Path,
+    relative_root: Option<&Path>,
+    destination_root_created: bool,
+) -> Result<(), LocalCopyError> {
+    if !context.relative_paths_enabled() {
+        return Ok(());
+    }
+    let Some(relative) = relative_root else {
+        return Ok(());
+    };
+
+    // upstream: flist.c:2258 - a protocol >= 30 sender (which a local transfer
+    // always is, being a proto-32 sender/receiver pair) forces `implied_dirs = 1`
+    // so the flagged implied parents are always placed in the shared flist and
+    // counted toward "Number of files (dir: N)". `--no-implied-dirs` only tells
+    // the receiver not to apply the source dir's attributes, which suppresses
+    // the itemize row and the created-dir tally - not the flist entry itself.
+    let itemize = context.implied_dirs_enabled();
+
+    // Dot-dir transfer root ".": upstream flist.c:2368+2417-2419 injects a
+    // synthetic "." entry into the flist only for an operand that *begins* with
+    // `./` (`implied_dot_dir`), so it counts toward "Number of files". A dot in
+    // the middle of the path (e.g. `src/./sub`) reroots the relative path but
+    // adds no "." entry. `dot_dir_anchor()` returns "." exactly for the leading
+    // form (its prefix-skip is zero). The receiver never itemizes the
+    // pre-existing destination root and end-of-run touch-up leaves it unchanged,
+    // so the entry stays count-only (no verbose/itemize row, no created-dir bump
+    // - the latter is owned by `mark_destination_root_created` when the root is
+    // freshly made).
+    if source.dot_dir_anchor().as_deref() == Some(Path::new(".")) {
+        let dot = PathBuf::from(".");
+        if context.mark_implied_dir_emitted(&dot) {
+            context.record_file_list_entry(non_empty_path(dot.as_path()));
+            context.summary_mut().record_directory_total();
+
+            // The leading-dot "." maps to the destination transfer root. When
+            // that root is freshly created this run, upstream itemizes it
+            // `cd+++++++++ ./` and counts it as a created dir (main.c:803-808);
+            // a pre-existing root stays count-only (unchanged, suppressed under
+            // -i). `--no-implied-dirs` (itemize == false) drops both. In dry-run
+            // the mkdir is elided, so "would create" is inferred from the root's
+            // absence on disk. The itemize row snapshots the source anchor dir,
+            // which exists in both modes (the destination may not yet).
+            let root_created = destination_root_created
+                || (context.mode().is_dry_run() && !destination_path.exists());
+            if root_created
+                && itemize
+                && let Some(anchor) = source.dot_dir_anchor()
+                && let Ok(meta) = fs::symlink_metadata(&anchor)
+                && meta.file_type().is_dir()
+            {
+                context.summary_mut().record_directory();
+                let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
+                let snapshot_len = snapshot.len();
+                context.record(
+                    LocalCopyRecord::new(
+                        dot.clone(),
+                        LocalCopyAction::DirectoryCreated,
+                        0,
+                        Some(snapshot_len),
+                        Duration::default(),
+                        Some(snapshot),
+                    )
+                    .with_creation(true),
+                );
+            }
+        }
+    }
+
+    let components: Vec<&std::ffi::OsStr> = relative.iter().collect();
+    let parent_count = components.len().saturating_sub(1);
+    if parent_count == 0 {
+        return Ok(());
+    }
+
+    let Some(source_root) = strip_path_suffix(source_path, relative) else {
+        return Ok(());
+    };
+    let destination_root = strip_path_suffix(destination_path, relative)
+        .unwrap_or_else(|| destination_path.to_path_buf());
+
+    let metadata_options = context.metadata_options();
+    let omit_dir_times = context.omit_dir_times_enabled();
+    let modify_window = context.options().modify_window();
+
+    let mut accumulated = PathBuf::new();
+    for component in &components[..parent_count] {
+        accumulated.push(component);
+
+        // Emit each ancestor once per transfer (upstream dedups via lastpath +
+        // flist_sort_and_clean); a later operand sharing this prefix must not
+        // re-list it.
+        if !context.mark_implied_dir_emitted(&accumulated) {
+            continue;
+        }
+
+        let source_dir = source_root.join(&accumulated);
+        // Best-effort, matching send_implied_dirs()'s tolerance for an ancestor
+        // that vanished or is not a directory: skip it silently.
+        let source_meta = match fs::symlink_metadata(&source_dir) {
+            Ok(meta) if meta.file_type().is_dir() => meta,
+            _ => continue,
+        };
+        let destination_dir = destination_root.join(&accumulated);
+        let existing_meta = match fs::symlink_metadata(&destination_dir) {
+            Ok(meta) if meta.file_type().is_dir() => Some(meta),
+            _ => None,
+        };
+
+        let relative_path = accumulated.clone();
+
+        // upstream: flist.c:2258 - implied dirs always join the shared flist, so
+        // each counts toward "Number of files (dir: N)" even under
+        // --no-implied-dirs.
+        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+        context.summary_mut().record_directory_total();
+
+        // --no-implied-dirs (itemize == false): the receiver applies no source
+        // attributes, so there is no itemize/verbose row and no created-dir
+        // bump - the flist count above is the only observable effect.
+        if !itemize {
+            continue;
+        }
+
+        let snapshot = LocalCopyMetadata::from_metadata(&source_meta, None);
+        let snapshot_len = snapshot.len();
+
+        let record = if let Some(existing) = existing_meta.as_ref() {
+            // Pre-existing ancestor: no ITEM_IS_NEW; itemize against the basis so
+            // an unchanged dir stays an all-dot `.d` row (shown only under -vv).
+            let change_set = LocalCopyChangeSet::for_existing_directory(
+                &source_meta,
+                existing,
+                &metadata_options,
+                omit_dir_times,
+                false,
+                false,
+                modify_window,
+            );
+            LocalCopyRecord::new(
+                relative_path,
+                LocalCopyAction::MetadataReused,
+                0,
+                Some(snapshot_len),
+                Duration::default(),
+                Some(snapshot),
+            )
+            .with_change_set(change_set)
+        } else {
+            context.summary_mut().record_directory();
+            LocalCopyRecord::new(
+                relative_path,
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Some(snapshot_len),
+                Duration::default(),
+                Some(snapshot),
+            )
+            .with_creation(true)
+        };
+        context.record(record);
+    }
+
     Ok(())
 }
 
