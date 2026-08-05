@@ -283,6 +283,29 @@ fn test_old_args_and_secluded_args_rejected() {
 }
 
 #[test]
+fn test_rsh_and_ssh_url_operand_rejected() {
+    // oc-specific: `-e ssh` requests the external system ssh, but an `ssh://`
+    // URL operand selects the built-in SSH client, which ignores --rsh. The
+    // two pick mutually exclusive transports; historically `ssh://` silently
+    // won and --rsh was dropped, running a transport the user did not ask for.
+    // The conflict surfaces at config-build time as RERR_SYNTAX (exit 1).
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code = cli::run(
+        ["oc-rsync", "-e", "ssh", "ssh://host/path", "dest"],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert!(
+        stderr_text.contains("--rsh/-e cannot be combined with an ssh:// URL operand"),
+        "stderr should explain the transport conflict, got: {stderr_text}"
+    );
+}
+
+#[test]
 fn test_append_and_no_whole_file_accepted() {
     // The companion `--no-whole-file` form must remain accepted.
     let result = parse_args(["oc-rsync", "--append", "--no-whole-file", "src", "dest"]);
