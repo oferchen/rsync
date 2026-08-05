@@ -2238,9 +2238,12 @@ fn parse_server_split_e_value_push_no_leak() {
         "split delivery must decode to the same caps as the joined form",
     );
     assert!(flags.rsh, "`e` must set rsh");
-    assert!(
-        flags.info_flags.flist,
-        "`f` capability must parse from split value"
+    // The `.<caps>` payload is a capability string (compat.c:712-732), not
+    // `--info` output flags: decoding it must leave every info field default.
+    assert_eq!(
+        flags.info_flags,
+        core::server::InfoFlags::default(),
+        "capability letters must not be decoded as info-output flags"
     );
 }
 
@@ -2266,10 +2269,11 @@ fn parse_server_split_e_value_pull_no_leak() {
         "the `.<caps>` value must never leak into operands on a pull: {operands:?}",
     );
     assert!(flags.rsh);
-    assert!(flags.info_flags.flist);
-    assert!(
-        flags.info_flags.stats,
-        "`s` capability must parse from split value"
+    // The split `.sfxCIvu` value is a capability payload, not info-output flags.
+    assert_eq!(
+        flags.info_flags,
+        core::server::InfoFlags::default(),
+        "capability letters must not be decoded as info-output flags"
     );
 }
 
@@ -2287,7 +2291,13 @@ fn parse_server_joined_e_value_unchanged() {
     let (flag_string, operands, flags) = decode_server_argv(&joined, ServerRole::Receiver);
     assert_eq!(flag_string, "-logDtpre.iLsfxCIvu");
     assert_eq!(operands, vec![OsString::from("dst")]);
-    assert!(flags.info_flags.itemize, "`i` (inc_recurse) must parse");
+    // The `i` after the `.` is the inc-recurse capability (compat.c:730), NOT
+    // the `--itemize` output flag: it must leave `info_flags` at default.
+    assert_eq!(
+        flags.info_flags,
+        core::server::InfoFlags::default(),
+        "the inc-recurse `i` capability must not be decoded as itemize"
+    );
 }
 
 /// A bare compact flag string with no capability suffix and a following `.`
