@@ -224,19 +224,19 @@ impl DropResolutionError {
     /// upstream: clientserver.c:784-786 (`Invalid uid %s` / `@ERROR: invalid
     /// uid %s`) and clientserver.c:657-658 (`Invalid gid %s` / `@ERROR: invalid
     /// gid %s`).
-    fn upstream_reply(&self) -> (String, String) {
+    fn upstream_reply(&self) -> (String, AtError) {
         match self {
             Self::InvalidUid(name) => (
                 format!("Invalid uid {name}"),
-                INVALID_UID_PAYLOAD.replace("{uid}", name),
+                AtError::InvalidUid(name.clone()),
             ),
             Self::InvalidGid(name) => (
                 format!("Invalid gid {name}"),
-                INVALID_GID_PAYLOAD.replace("{gid}", name),
+                AtError::InvalidGid(name.clone()),
             ),
             Self::GroupEnumeration(err) => (
                 format!("group enumeration failed: {err}"),
-                SETUID_FAILED_PAYLOAD.to_owned(),
+                AtError::SetuidFailed,
             ),
         }
     }
@@ -611,19 +611,21 @@ mod privilege_tests {
     /// Pins both strings so they can never be merged again.
     #[test]
     fn drop_resolution_error_maps_to_upstream_invalid_strings() {
-        let (flog, payload) = DropResolutionError::InvalidUid("nobody".to_owned()).upstream_reply();
+        let (flog, error) = DropResolutionError::InvalidUid("nobody".to_owned()).upstream_reply();
         assert_eq!(flog, "Invalid uid nobody");
-        assert_eq!(payload, "@ERROR: invalid uid nobody");
+        assert_eq!(error.line(), "@ERROR: invalid uid nobody");
         assert_ne!(
-            payload, SETUID_FAILED_PAYLOAD,
+            error.line(),
+            SETUID_FAILED_PAYLOAD,
             "resolution failure must not reuse the setuid syscall string"
         );
 
-        let (flog, payload) = DropResolutionError::InvalidGid("nobody".to_owned()).upstream_reply();
+        let (flog, error) = DropResolutionError::InvalidGid("nobody".to_owned()).upstream_reply();
         assert_eq!(flog, "Invalid gid nobody");
-        assert_eq!(payload, "@ERROR: invalid gid nobody");
+        assert_eq!(error.line(), "@ERROR: invalid gid nobody");
         assert_ne!(
-            payload, SETGID_FAILED_PAYLOAD,
+            error.line(),
+            SETGID_FAILED_PAYLOAD,
             "resolution failure must not reuse the setgid syscall string"
         );
     }
@@ -650,10 +652,10 @@ mod privilege_tests {
             ..Default::default()
         };
         let err = resolve_drop_target(&module, true).expect_err("missing nobody must fail");
-        let (flog, payload) = err.upstream_reply();
-        assert_eq!(payload, "@ERROR: invalid uid nobody");
+        let (flog, error) = err.upstream_reply();
+        assert_eq!(error.line(), "@ERROR: invalid uid nobody");
         assert_eq!(flog, "Invalid uid nobody");
-        assert_ne!(payload, SETUID_FAILED_PAYLOAD);
+        assert_ne!(error.line(), SETUID_FAILED_PAYLOAD);
     }
 
     /// WHY: upstream clientserver.c:831 - an EXPLICIT `use chroot = yes` has no

@@ -66,12 +66,12 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // upstream: clientserver.c:985 - `@ERROR: chroot failed\n`
                 // upstream: clientserver.c:649 - `@ERROR: chdir failed\n`
                 let text = err.to_string();
-                let payload = if text.contains("chdir") {
-                    CHDIR_FAILED_PAYLOAD
+                let error = if text.contains("chdir") {
+                    AtError::ChdirFailed
                 } else {
-                    CHROOT_FAILED_PAYLOAD
+                    AtError::ChrootFailed
                 };
-                send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 let host_owned = ctx.effective_host().map(str::to_owned);
                 run_post_xfer_finalizer(
                     ctx,
@@ -100,10 +100,10 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // upstream: clientserver.c:784-786 (uid) / 657-659 (gid). This
                 // lookup runs before the post-xfer-exec fork point (908), so
                 // no `post-xfer exec` hook fires here.
-                let (flog, payload) = err.upstream_reply();
+                let (flog, error) = err.upstream_reply();
                 let message = rsync_error!(1, flog).with_role(Role::Daemon);
                 log_message(log_sink, &message);
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
         };
@@ -113,14 +113,14 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // Distinguish upstream error messages based on the error text.
                 // upstream: clientserver.c:1024/1031/1053
                 let text = err.to_string();
-                let payload = if text.contains("setgroups") {
-                    SETGROUPS_FAILED_PAYLOAD
+                let error = if text.contains("setgroups") {
+                    AtError::SetgroupsFailed
                 } else if text.contains("setuid") {
-                    SETUID_FAILED_PAYLOAD
+                    AtError::SetuidFailed
                 } else {
-                    SETGID_FAILED_PAYLOAD
+                    AtError::SetgidFailed
                 };
-                send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 let host_owned = ctx.effective_host().map(str::to_owned);
                 run_post_xfer_finalizer(
                     ctx,
@@ -181,12 +181,12 @@ fn validate_module_path(
         return Ok(true);
     }
 
-    let payload = format!(
-        "@ERROR: module '{}' path does not exist: {}",
+    let error = AtError::message(format!(
+        "module '{}' path does not exist: {}",
         sanitize_module_identifier(ctx.request),
         module.path.display()
-    );
-    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+    ));
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
 
     if let Some(log) = ctx.log_sink {
         let text = format!(

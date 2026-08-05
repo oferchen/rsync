@@ -192,8 +192,8 @@ fn setup_transfer_streams(
     let read_stream = match tcp.try_clone() {
         Ok(s) => s,
         Err(err) => {
-            let payload = format!("@ERROR: failed to clone stream: {err}");
-            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+            let error = AtError::message(format!("failed to clone stream: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             return Ok(None);
         }
     };
