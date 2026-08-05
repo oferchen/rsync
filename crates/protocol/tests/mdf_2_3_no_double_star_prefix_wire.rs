@@ -36,17 +36,17 @@ fn double_star_corpus() -> [FilterRuleWireFormat; 3] {
     [
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
-            pattern: "foo/**/bar".to_owned(),
+            pattern: "foo/**/bar".into(),
             ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
-            pattern: "**/baz".to_owned(),
+            pattern: "**/baz".into(),
             ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
-            pattern: "bar".to_owned(),
+            pattern: "bar".into(),
             ..FilterRuleWireFormat::default()
         },
     ]
@@ -93,9 +93,10 @@ fn double_star_patterns_emit_no_prefix_companion() {
         // A `**/foo/**/bar` companion would be detectable as a rule that
         // both starts with `**/` AND contains an interior `**`. No such
         // rule must appear in the parsed list.
-        let starts_with_double_star_slash = rule.pattern.starts_with("**/");
-        let has_interior_double_star = rule
-            .pattern
+        // The pattern is UTF-8 in this corpus; decode lossily to probe it.
+        let pat = rule.pattern.to_string_lossy();
+        let starts_with_double_star_slash = pat.starts_with("**/");
+        let has_interior_double_star = pat
             .strip_prefix("**/")
             .map(|rest| rest.contains("**"))
             .unwrap_or(false);

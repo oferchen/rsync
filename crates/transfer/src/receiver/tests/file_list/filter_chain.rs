@@ -277,7 +277,7 @@ fn client_pull_populates_filter_chain_from_cli_rules() {
     config.connection.client_mode = true;
     config.connection.filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Protect,
-        pattern: "emptyprot".to_owned(),
+        pattern: "emptyprot".into(),
         ..FilterRuleWireFormat::default()
     }];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);

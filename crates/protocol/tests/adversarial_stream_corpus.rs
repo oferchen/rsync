@@ -556,21 +556,31 @@ fn filter_list_oversized_length_truncates_to_eof() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
+#[cfg(unix)]
 #[test]
-fn filter_list_invalid_utf8_rejected() {
-    // Bug it catches: a rule body with non-UTF-8 bytes must surface as
-    // InvalidData (upstream rsync expects UTF-8 filter rules). A regression
-    // in `parse_wire_rule` once accepted them silently and corrupted the
-    // pattern downstream.
+fn filter_list_non_utf8_pattern_preserved() {
+    // Bug it catches: a rule body with non-UTF-8 bytes must be preserved
+    // verbatim, not rejected. Upstream carries the pattern as a raw `char *`
+    // and never validates UTF-8 (exclude.c:1685 `read_sbuf(f_in, line, len)`
+    // into a `char[]`), so a `0xFF` byte round-trips. This retires the earlier
+    // pinned `InvalidData` rejection, which wrongly refused a byte sequence
+    // upstream accepts.
+    use std::os::unix::ffi::OsStrExt;
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(&3_i32.to_le_bytes());
-    bytes.extend_from_slice(&[0xFF, 0xFE, 0xFD]);
+    let body = b"- log\xff.txt";
+    bytes.extend_from_slice(&(body.len() as i32).to_le_bytes());
+    bytes.extend_from_slice(body);
     bytes.extend_from_slice(&0_i32.to_le_bytes());
     let mut cursor = Cursor::new(&bytes[..]);
     let protocol = ProtocolVersion::from_supported(32).expect("v32 supported");
-    let err = read_filter_list(&mut cursor, protocol)
-        .expect_err("invalid UTF-8 rule must surface InvalidData");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    let rules = read_filter_list(&mut cursor, protocol)
+        .expect("non-UTF-8 filter pattern must be accepted, not rejected");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(
+        rules[0].pattern.as_bytes(),
+        b"log\xff.txt",
+        "the non-UTF-8 pattern bytes must survive the wire decode verbatim"
+    );
 }
 
 #[test]
