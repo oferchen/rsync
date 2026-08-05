@@ -116,11 +116,15 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
     let filter_rules: Vec<FilterRule> = rules
         .iter()
         .filter_map(|wire_rule| {
+            // FilterRule compiles patterns via wildmatch (String-backed), so a
+            // non-UTF-8 wire pattern is decoded lossily for the local match set.
+            // The wire pattern stays byte-faithful; only this boundary is lossy.
+            let pat = wire_rule.pattern.to_string_lossy();
             let mut rule = match wire_rule.rule_type {
-                RuleType::Include => FilterRule::include(&wire_rule.pattern),
-                RuleType::Exclude => FilterRule::exclude(&wire_rule.pattern),
-                RuleType::Protect => FilterRule::protect(&wire_rule.pattern),
-                RuleType::Risk => FilterRule::risk(&wire_rule.pattern),
+                RuleType::Include => FilterRule::include(pat),
+                RuleType::Exclude => FilterRule::exclude(pat),
+                RuleType::Protect => FilterRule::protect(pat),
+                RuleType::Risk => FilterRule::risk(pat),
                 RuleType::Clear | RuleType::DirMerge | RuleType::Merge => return None,
             };
 

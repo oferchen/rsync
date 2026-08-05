@@ -37,13 +37,13 @@ fn dir_only_corpus() -> [FilterRuleWireFormat; 2] {
     [
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
-            pattern: "foo/*".to_owned(),
+            pattern: "foo/*".into(),
             directory_only: true,
             ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
             rule_type: RuleType::Include,
-            pattern: "foo/s?b".to_owned(),
+            pattern: "foo/s?b".into(),
             directory_only: true,
             ..FilterRuleWireFormat::default()
         },
@@ -93,7 +93,7 @@ fn dir_only_unanchored_emits_no_descendant_companion() {
             "every rule must carry FILTRULE_DIRECTORY, not be a descendant companion",
         );
         assert!(
-            !rule.pattern.contains("**"),
+            !rule.pattern.to_string_lossy().contains("**"),
             "no rule pattern should carry a `/**` descendant suffix",
         );
     }
