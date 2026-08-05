@@ -131,7 +131,9 @@ fn multi_dir_operands_order_by_operand_name_with_contiguous_subtrees() {
 
     let report = apply(
         &operands,
-        LocalCopyOptions::default().recursive(true).collect_events(true),
+        LocalCopyOptions::default()
+            .recursive(true)
+            .collect_events(true),
     );
 
     assert_eq!(
@@ -167,7 +169,9 @@ fn single_directory_source_subtree_stays_sorted() {
 
     let report = apply(
         &operands,
-        LocalCopyOptions::default().recursive(true).collect_events(true),
+        LocalCopyOptions::default()
+            .recursive(true)
+            .collect_events(true),
     );
 
     assert_eq!(
