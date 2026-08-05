@@ -7,7 +7,7 @@ use core::branding::{build_revision, rust_version};
 pub(super) fn help_text(program_name: ProgramName) -> String {
     let program = program_name.as_str();
 
-    format!(
+    let mut help = format!(
         concat!(
             "{program} v{version} revision #{revision}\n",
             "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
@@ -250,13 +250,36 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "    Security / daemon:\n",
             "      --password-command=COMMAND  Alternative to --password-file and the RSYNC_PASSWORD environment variable (both honored); use when the daemon password must come from a command.\n",
             "\n",
-            "SOURCE may be local paths or remote references (USER@HOST:PATH or\n",
-            "rsync://HOST/MODULE/PATH). When multiple sources are supplied, DEST\n",
-            "must name a directory. Metadata preservation covers permissions,\n",
-            "timestamps, and optional ownership metadata.\n",
+            "Access methods for SOURCE and DEST:\n",
+            "      [USER@]HOST:PATH  Connect via a remote shell (-e/--rsh, default ssh).\n",
+            "      [USER@]HOST::MODULE[/PATH]  Connect to an rsync daemon.\n",
+            "      rsync://[USER@]HOST[:PORT]/MODULE[/PATH]  Connect to an rsync daemon.\n",
         ),
         program = program,
         version = rust_version(),
         revision = build_revision(),
-    )
+    );
+
+    // The ssh:// and quic:// schemes are oc-rsync extensions compiled in only
+    // under their respective cargo features. cfg! yields a compile-time bool, so
+    // each line appears only in a build that actually understands the scheme.
+    if cfg!(feature = "embedded-ssh") {
+        help.push_str(
+            "      ssh://[USER@]HOST[:PORT]/PATH  oc-rsync extension: builtin SSH client.\n",
+        );
+    }
+    if cfg!(feature = "quic") {
+        help.push_str(
+            "      quic://[USER@]HOST[:PORT]/MODULE[/PATH]  oc-rsync extension: QUIC transport.\n",
+        );
+    }
+
+    help.push_str(concat!(
+        "\n",
+        "Local paths are also accepted. When multiple sources are supplied,\n",
+        "DEST must name a directory. Metadata preservation covers permissions,\n",
+        "timestamps, and optional ownership metadata.\n",
+    ));
+
+    help
 }
