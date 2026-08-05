@@ -47,16 +47,51 @@ pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
     sanitize_path_with_depth(path, 0, true)
 }
 
+/// Byte-exact variant of [`sanitize_path_keep_dot_dirs`].
+///
+/// Used for `--files-from` entries whose names may not be valid UTF-8. A
+/// filename is a raw byte string on Unix (upstream carries it as `char*`),
+/// so the sanitizer must preserve every non-separator byte verbatim rather
+/// than route through `String`, which would drop non-UTF-8 names. The
+/// traversal-guard logic is identical to the `&str` path - both delegate to
+/// [`sanitize_path_bytes`], which only ever inspects the ASCII `/` and `.`
+/// bytes.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2299` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
+    sanitize_path_bytes(path, 0, true)
+}
+
 /// Core sanitization with configurable depth budget and dot-dir handling.
 ///
 /// - `depth`: number of leading `..` segments allowed (0 for daemon mode)
 /// - `keep_dot_dirs`: when true, preserves leading `./` (SP_KEEP_DOT_DIRS)
 ///
+/// The `&str` input is valid UTF-8 and [`sanitize_path_bytes`] only rewrites
+/// ASCII separators/dot components, so the result is always valid UTF-8.
+///
 /// # Upstream Reference
 ///
 /// - `util1.c:1035-1108`
-fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> String {
-    let bytes = path.as_bytes();
+fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> String {
+    let out = sanitize_path_bytes(path.as_bytes(), depth, keep_dot_dirs);
+    String::from_utf8(out).unwrap_or_else(|_| ".".to_string())
+}
+
+/// Byte-level core of [`sanitize_path_with_depth`].
+///
+/// Operates purely on the raw bytes, inspecting only the ASCII `/` (0x2F)
+/// separator and `.` (0x2E) dot bytes; every other byte is copied through
+/// verbatim, so non-UTF-8 filenames survive intact. This is the single
+/// implementation of the traversal guard - the `&str` and `&[u8]` public
+/// entry points both delegate here so the security behaviour cannot diverge.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:1035-1108`
+fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec<u8> {
     let mut p = 0usize;
 
     // upstream: util1.c:1051 - strip leading slash (absolute -> relative)
@@ -131,11 +166,10 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
     }
 
     if result.is_empty() {
-        ".".to_string()
+        // upstream: util1.c:1103 - an empty result becomes ".".
+        b".".to_vec()
     } else {
-        // SAFETY: input is &str (valid UTF-8), and we only manipulate ASCII
-        // path separators and dot components, preserving UTF-8 validity.
-        String::from_utf8(result).unwrap_or_else(|_| ".".to_string())
+        result
     }
 }
 
@@ -370,6 +404,79 @@ mod tests {
         assert_eq!(
             sanitize_path_keep_dot_dirs("./a/../../etc/passwd"),
             "etc/passwd"
+        );
+    }
+
+    // --- Byte-level entry point: preservation + traversal guard parity ---
+    //
+    // `--files-from` names may be non-UTF-8 (a legal Unix filename), so the
+    // sender sanitizes them through `sanitize_path_keep_dot_dirs_bytes`. These
+    // tests pin two invariants: (1) non-separator bytes (including 0xFF and a
+    // literal backslash) round-trip verbatim, and (2) the traversal guard is
+    // byte-identical to the `&str` path - `../` and absolute escapes are still
+    // collapsed even when the surviving component carries non-UTF-8 bytes.
+
+    #[test]
+    fn bytes_preserves_non_utf8_component() {
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"foo\xffbar.txt"),
+            b"foo\xffbar.txt".to_vec()
+        );
+    }
+
+    #[test]
+    fn bytes_preserves_backslash_component() {
+        // A backslash is an ordinary filename byte on Unix, not a separator.
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"back\\slash.txt"),
+            b"back\\slash.txt".to_vec()
+        );
+    }
+
+    #[test]
+    fn bytes_matches_str_path_for_ascii() {
+        // Same input, both entry points: identical bytes out.
+        let ascii = "a/./b/../c";
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(ascii.as_bytes()),
+            sanitize_path_keep_dot_dirs(ascii).into_bytes()
+        );
+    }
+
+    #[test]
+    fn bytes_dotdot_traversal_blocked_with_non_utf8() {
+        // `../` escape is collapsed to the root even though the retained
+        // component (`\xff\xfe`) is not valid UTF-8. The guard must not be
+        // weakened for non-UTF-8 input.
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"../../\xff\xfe/passwd"),
+            b"\xff\xfe/passwd".to_vec()
+        );
+    }
+
+    #[test]
+    fn bytes_absolute_traversal_stripped_with_non_utf8() {
+        // Leading `/` is stripped (absolute -> relative) with a non-UTF-8 tail.
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"/\xff\xfe/secret"),
+            b"\xff\xfe/secret".to_vec()
+        );
+    }
+
+    #[test]
+    fn bytes_interior_dotdot_collapses_non_utf8_component() {
+        // `a/b/../c` collapses `b`, preserving the non-UTF-8 bytes in `a`/`c`.
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"\xffa/b/../\xfec"),
+            b"\xffa/\xfec".to_vec()
+        );
+    }
+
+    #[test]
+    fn bytes_deep_dotdot_cannot_escape_root_non_utf8() {
+        assert_eq!(
+            sanitize_path_keep_dot_dirs_bytes(b"a/../../../../\xff/shadow"),
+            b"\xff/shadow".to_vec()
         );
     }
 }
