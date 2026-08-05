@@ -80,17 +80,29 @@ fn reading_nfsv4_acl_on_unsupported_fs_is_a_silent_absence() {
     );
 }
 
-/// Clearing an absent NFSv4 ACL (`set_nfsv4_acl(None)`, which removes the
-/// attribute) tolerates a missing attribute rather than surfacing it - so a
-/// source WITHOUT an NFSv4 ACL never fails the destination apply. This is the
-/// deliberate asymmetry with the apply path above: removing nothing is success,
-/// applying-but-cannot is an error.
+/// PINNED CURRENT BEHAVIOR (with a finding): clearing an NFSv4 ACL
+/// (`set_nfsv4_acl(None)`, which removes the attribute) surfaces an error on a
+/// filesystem that does not support NFSv4 ACLs, because the remove path
+/// tolerates only `ENODATA` / `NotFound`, not `EOPNOTSUPP`. So even when there
+/// is nothing to remove, a normal-filesystem destination reports the failure
+/// rather than treating it as a no-op.
+///
+/// This is stricter than the "removing an absent ACL is a no-op" intent and is
+/// flagged as a candidate follow-up (tolerate `EOPNOTSUPP` here too, mirroring
+/// the `ENODATA` tolerance, so a source WITHOUT an NFSv4 ACL never spuriously
+/// fails the destination apply). Pinned so the behavior - and any future change
+/// to it - is explicit and reviewed, not silent.
 #[test]
-fn clearing_absent_nfsv4_acl_is_a_tolerated_no_op() {
+fn clearing_nfsv4_acl_on_unsupported_fs_currently_surfaces_eopnotsupp() {
     let dir = tempdir().expect("tempdir");
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").expect("write file");
 
-    set_nfsv4_acl(&file, None, false)
-        .expect("clearing an absent NFSv4 ACL must be a tolerated no-op success");
+    let err = set_nfsv4_acl(&file, None, false)
+        .expect_err("removing an NFSv4 ACL on an unsupported fs currently surfaces EOPNOTSUPP");
+    assert_eq!(
+        err.source_error().raw_os_error(),
+        Some(libc::EOPNOTSUPP),
+        "the remove path currently surfaces EOPNOTSUPP (candidate: tolerate it like ENODATA)"
+    );
 }
