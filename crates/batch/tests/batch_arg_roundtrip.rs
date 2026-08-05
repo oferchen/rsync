@@ -108,7 +108,8 @@ fn batch_sh_options_round_trip_through_the_shell_to_the_replay_set() {
     );
     // --write-batch is converted to --read-batch with the same batch name.
     assert!(
-        argv.iter().any(|a| a == &format!("--read-batch={batch_str}")),
+        argv.iter()
+            .any(|a| a == &format!("--read-batch={batch_str}")),
         "write-batch must convert to read-batch: {argv:?}"
     );
     assert!(
