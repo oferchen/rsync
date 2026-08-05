@@ -111,8 +111,10 @@ openssl-vendored = ["checksums/openssl-vendored"]
 # ============================================================================
 
 # Embedded SSH transport via russh - removes the runtime dependency on an
-# external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`.
-embedded-ssh = ["core/embedded-ssh"]
+# external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`, and
+# through `cli` so `--help` advertises the built-in `ssh://` client only when it
+# is compiled in.
+embedded-ssh = ["cli/embedded-ssh", "core/embedded-ssh"]
 
 # Native QUIC daemon transport (oc extension, off by default). Forwards through
 # `cli`/`core` to `rsync_io/quic`; only makes the `Transport::Quic` selection
