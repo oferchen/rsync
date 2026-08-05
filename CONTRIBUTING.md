@@ -41,6 +41,41 @@ cargo nextest run -p <crate> --all-features -E 'test(<pattern>)'
 Use `cargo-nextest` rather than `cargo test`; configuration lives in
 `.config/nextest.toml`.
 
+### Optional all-platform pre-push cross-check
+
+`cargo run -p xtask -- cross-check` runs the exact required-CI cross-platform
+gates in sequence (one cargo invocation at a time, sharing the workspace build
+lock) and prints a per-target pass/fail/skip summary, so cross-platform breaks
+are caught before CI:
+
+1. `cargo clippy --locked --workspace --all-targets --all-features --no-deps -- -D warnings`
+2. `cargo check  --locked --workspace --target x86_64-pc-windows-gnu`
+3. `cargo check  --locked --workspace --target x86_64-unknown-linux-musl`
+
+A target whose rustup target or cross toolchain (mingw-w64 for windows-gnu,
+musl for linux-musl) is absent is skipped with an actionable hint
+(`rustup target add ...`, install mingw-w64 / musl) rather than a raw linker
+error, and is never silently reported as passing. windows-MSVC is intentionally
+excluded: it cannot be cross-compiled from a non-Windows host (no
+`cl.exe` / `lib.exe`); the CI msvc runner is authoritative and windows-gnu
+covers the same `cfg(windows)` code paths. This command is opt-in - it takes
+the full workspace build lock, so do not run it concurrently with other cargo
+invocations.
+
+### Full local pre-push verification: `cargo run -p xtask -- validate`
+
+`cargo run -p xtask -- validate` is the single full local pre-push verification
+entrypoint. It runs the drop-in fidelity matrix (oc-rsync vs upstream rsync
+across every client transport) and then the cross-platform checks above (host
+`clippy -D warnings`, plus `cargo check` for `x86_64-pc-windows-gnu` and
+`x86_64-unknown-linux-musl`) via the same shared cross-check - so one command
+covers correctness, lints, and cross-platform compilation. Absent cross
+toolchains are skipped with an actionable hint (never failed), so `validate`
+still works on a dev box lacking mingw-w64 / musl; `cross-check` remains
+available on its own for a lint-and-cross-compile-only run. Run `cargo fmt
+--all` first (validate does not reformat), and note that `validate` takes the
+full workspace build lock, so do not run other cargo commands alongside it.
+
 ---
 
 ## Adding a new optional dependency
