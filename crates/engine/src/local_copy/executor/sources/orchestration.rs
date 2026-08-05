@@ -159,16 +159,23 @@ pub(crate) fn copy_sources(
                 )?;
             }
 
-            // upstream: main.c:803-808 prints `created directory <dest>` for the
-            // pre-flight mkdir and, when the flist carries a "." top entry (a
-            // non-relative copy-contents transfer), counts it as a created dir.
-            // Under `--relative` the destination root is the mkpath target,
-            // announced by the same notice yet absent from the flist, so it must
-            // not inflate the created-dir count - a `./`-anchored operand's "."
-            // is accounted for by `emit_relative_implied_parents`. Set the
-            // notice flag either way; count only for non-relative transfers.
+            // upstream: main.c:802-808 - the pre-flight mkdir always prints
+            // `created directory <dest>`, but only sets FLAG_DIR_CREATED on the
+            // flist top entry (and thus counts the root as a created dir) when
+            // that entry's basename is "." - i.e. a copy-contents transfer whose
+            // implied root maps to the destination. A single-file or
+            // no-trailing-slash directory source has a NAMED top entry
+            // ("a.txt"/"src"), so upstream emits the notice yet never counts the
+            // destination root; the named entries are counted on their own.
+            // Under `--relative` the root is the mkpath target, absent from the
+            // flist, counted instead by `emit_relative_implied_parents`; a
+            // `./`-anchored operand's "." is accounted for there too. Set the
+            // notice flag either way; count the root only for a non-relative
+            // copy-contents "." top entry (multiple sources keep their tally).
             if destination_root_created {
-                let count_root = !context.relative_paths_enabled();
+                let count_root = !context.relative_paths_enabled()
+                    && (multiple_sources
+                        || plan.sources().first().is_some_and(|s| s.copy_contents()));
                 context
                     .summary_mut()
                     .mark_destination_root_created(count_root);
