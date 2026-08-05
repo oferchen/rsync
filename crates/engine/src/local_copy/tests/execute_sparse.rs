@@ -2019,3 +2019,71 @@ fn execute_with_sparse_enabled_marks_ntfs_sparse() {
     );
 }
 
+
+/// A `--sparse` transfer must write byte-identical DATA on Windows/NTFS. NTFS
+/// may not deallocate the hole the way Linux does (a dense fallback is allowed),
+/// but the observable file CONTENT must equal a plain dense copy of the same
+/// source. This pins data-parity independent of block allocation: sparse mode
+/// changes only *how* zero runs are stored, never *what* bytes are read back.
+/// The assertion compares content directly (a content-hash equality), never
+/// `st_blocks` / allocation.
+#[cfg(windows)]
+#[test]
+fn execute_sparse_ntfs_data_matches_dense_copy() {
+    use std::io::{Seek, SeekFrom};
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("holed.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+    source_file.write_all(b"HEAD").expect("write leading data");
+    source_file
+        .seek(SeekFrom::Start(3 * 1024 * 1024))
+        .expect("seek past a large zero run");
+    source_file.write_all(b"TAIL").expect("write trailing data");
+    source_file
+        .set_len(5 * 1024 * 1024)
+        .expect("extend with trailing zeros");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense.bin");
+    let sparse_dest = temp.path().join("sparse.bin");
+
+    LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense")
+    .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+    .expect("dense copy succeeds");
+
+    LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse")
+    .execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    let source_bytes = fs::read(&source).expect("read source");
+    let dense_bytes = fs::read(&dense_dest).expect("read dense copy");
+    let sparse_bytes = fs::read(&sparse_dest).expect("read sparse copy");
+
+    // Data-parity is the invariant, not allocation: the sparse copy must be
+    // byte-for-byte identical to both the source and the dense copy.
+    assert_eq!(
+        sparse_bytes.len(),
+        source_bytes.len(),
+        "sparse copy length must match the source"
+    );
+    assert_eq!(
+        dense_bytes, sparse_bytes,
+        "sparse copy DATA must be identical to the dense copy on NTFS"
+    );
+    assert_eq!(
+        sparse_bytes, source_bytes,
+        "sparse copy DATA must be identical to the source on NTFS"
+    );
+}

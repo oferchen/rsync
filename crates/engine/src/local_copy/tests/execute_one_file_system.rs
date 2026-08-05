@@ -1000,3 +1000,58 @@ fn one_file_system_delete_preserves_mount_nested_in_doomed_dir() {
     // and its contents were not.
     assert!(summary.items_deleted() >= 2, "same-device extras were deleted");
 }
+
+/// On Windows, `--one-file-system` cannot consult a POSIX `st_dev` (std's
+/// `volume_serial_number` accessor is still unstable), so the traversal
+/// boundary is derived from the path prefix: the drive letter, or the
+/// server+share of a UNC path. This pins that documented boundary - the value
+/// the planner compares to decide `SkipMountPoint` - so it cannot silently
+/// regress into, say, a constant that makes every entry look same-device (never
+/// stopping) or different-device (always stopping).
+///
+/// Limitation deliberately NOT asserted here: a directory junction or volume
+/// mount point nested under one drive letter keeps that drive's prefix, so the
+/// native Windows path cannot detect a real volume crossing the way Cygwin's
+/// `st_dev` does. This test pins only the drive-letter / UNC-share boundary
+/// that IS implemented.
+#[cfg(windows)]
+#[test]
+fn one_file_system_windows_boundary_is_drive_letter_and_unc_share() {
+    use crate::local_copy::overrides::device_identifier;
+
+    // device_identifier ignores its metadata argument on Windows (it parses the
+    // path prefix), but the signature still requires one; any real metadata
+    // handle works and the compared paths themselves need not exist.
+    let temp = tempdir().expect("tempdir");
+    let probe = temp.path().join("probe");
+    fs::write(&probe, b"x").expect("write probe");
+    let md = fs::metadata(&probe).expect("probe metadata");
+
+    let dev = |p: &str| device_identifier(Path::new(p), &md).expect("windows device id");
+
+    // Same drive letter -> same device id -> traversal continues into the dir.
+    assert_eq!(
+        dev(r"C:\root\alpha"),
+        dev(r"C:\root\alpha\beta\gamma"),
+        "paths sharing a drive letter must resolve to one device"
+    );
+
+    // Different drive letter -> different device id -> traversal stops.
+    assert_ne!(
+        dev(r"C:\root\alpha"),
+        dev(r"D:\root\alpha"),
+        "a different drive letter is a different filesystem boundary"
+    );
+
+    // UNC: same server+share is one filesystem; a different share is not.
+    assert_eq!(
+        dev(r"\\server\share\a"),
+        dev(r"\\server\share\b\c"),
+        "one UNC share is one filesystem"
+    );
+    assert_ne!(
+        dev(r"\\server\share1\a"),
+        dev(r"\\server\share2\a"),
+        "different UNC shares are different filesystems"
+    );
+}
