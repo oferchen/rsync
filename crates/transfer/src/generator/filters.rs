@@ -24,6 +24,7 @@ use filters::{DirMergeConfig, FilterChain, cvs_exclusion_rules};
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
+use crate::role::ServerRole;
 use crate::role_trailer::error_location;
 
 use super::GeneratorContext;
@@ -300,7 +301,7 @@ impl GeneratorContext {
         // upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
         // on top of client filters. Daemon rules take precedence (prepended).
         let daemon_rules = &self.config.daemon_filter_rules;
-        let combined = if daemon_rules.is_empty() {
+        let mut combined = if daemon_rules.is_empty() {
             wire_rules
         } else if wire_rules.is_empty() {
             daemon_rules.clone()
@@ -309,6 +310,22 @@ impl GeneratorContext {
             combined.extend(wire_rules);
             combined
         };
+
+        // upstream: exclude.c:1689-1695 recv_filter_list() - once the client's
+        // rules are read, a server that IS the sender (a pull; upstream's
+        // `am_sender`) re-derives the CVS-ignore rules locally, because a
+        // pulling client does NOT transmit them (`exclude.c:1652` sends them
+        // only when the client is itself the sender). Append the per-directory
+        // `.cvsignore` merge (`:C`) and then the built-in CVS exclude set
+        // (`-C`), in that order, after the received rules so they take the same
+        // lowest precedence upstream gives them. `ServerRole::Generator` is
+        // oc's `am_sender` server. Without this a `-C` pull from an oc server
+        // transferred exactly the CVS-ignored files (`CVS/`, `*.o`, entries
+        // named by `.cvsignore`) the client asked to skip.
+        if self.config.flags.cvs_exclude && self.config.role == ServerRole::Generator {
+            combined.push(cvs_dir_merge_wire_rule());
+            combined.push(cvs_exclude_wire_rule());
+        }
 
         if !combined.is_empty() {
             let (filter_set, merge_configs) = self.parse_received_filters(&combined)?;
@@ -576,6 +593,34 @@ fn is_order_bearing(rule: &FilterRule) -> bool {
 /// from the pattern body, while the `filters` crate expects them embedded in
 /// the pattern string. This restores them so downstream rule compilation
 /// observes the user's original intent.
+/// Builds the synthetic `:C` wire rule - a per-directory `.cvsignore` merge
+/// carrying the CVS defaults - that a server-sender appends when the pulling
+/// client requested `--cvs-exclude`. The empty pattern defaults to
+/// `.cvsignore` in `wire_rule_to_dir_merge_config`.
+///
+/// upstream: exclude.c:1689 recv_filter_list() `parse_filter_str(":C")`.
+fn cvs_dir_merge_wire_rule() -> FilterRuleWireFormat {
+    FilterRuleWireFormat {
+        rule_type: RuleType::DirMerge,
+        cvs_exclude: true,
+        ..FilterRuleWireFormat::default()
+    }
+}
+
+/// Builds the synthetic `-C` wire rule - the built-in CVS exclude set. The
+/// empty pattern with `cvs_exclude` triggers the `get_cvs_excludes()`
+/// expansion (static defaults + `$HOME/.cvsignore` + `$CVSIGNORE`) in
+/// `parse_received_filters`.
+///
+/// upstream: exclude.c:1691 recv_filter_list() `parse_filter_str("-C")`.
+fn cvs_exclude_wire_rule() -> FilterRuleWireFormat {
+    FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        cvs_exclude: true,
+        ..FilterRuleWireFormat::default()
+    }
+}
+
 fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
     let mut pattern = String::with_capacity(wire_rule.pattern.len() + 2);
     if wire_rule.anchored && !wire_rule.pattern.starts_with('/') {
