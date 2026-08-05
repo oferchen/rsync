@@ -958,7 +958,7 @@ fn refuse_emits_at_error_raw_pre_handshake() {
     send_error(
         &mut stream,
         &mut limiter,
-        "@ERROR: The server is configured to refuse --delete",
+        &AtError::message("The server is configured to refuse --delete"),
     )
     .expect("send pre-handshake error");
 

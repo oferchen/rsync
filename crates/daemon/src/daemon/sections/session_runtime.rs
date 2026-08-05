@@ -318,9 +318,9 @@ fn handle_legacy_session(
         // applies; the refusal is a fatal pre-OK @ERROR line, after which the
         // client returns and the socket closes.
         if negotiated_protocol.is_none()
-            && let Some(payload) = reject_malformed_client_greeting(&line)
+            && let Some(error) = reject_malformed_client_greeting(&line)
         {
-            write_limited(reader.get_mut(), &mut limiter, payload.as_bytes())?;
+            write_limited(reader.get_mut(), &mut limiter, error.line().as_bytes())?;
             write_limited(reader.get_mut(), &mut limiter, b"\n")?;
             reader.get_mut().flush()?;
             // FSM: -> Closing after the fatal @ERROR refusal.
@@ -415,9 +415,8 @@ fn handle_legacy_session(
         // the raw line including the leading `#` - which is distinct from the
         // unknown-module response reserved for a bad module name. The client
         // treats `@ERROR` as fatal and closes without reading further.
-        let command_display = sanitize_module_identifier(&request);
-        let payload = UNKNOWN_COMMAND_PAYLOAD.replace("{command}", command_display.as_ref());
-        send_error(reader.get_mut(), &mut limiter, &payload)?;
+        let error = AtError::UnknownCommand(sanitize_module_identifier(&request).into_owned());
+        send_error(reader.get_mut(), &mut limiter, &error)?;
         // FSM: -> Closing after rejecting the unknown command.
         _ = conn_state
             .transition(ConnectionState::Closing)

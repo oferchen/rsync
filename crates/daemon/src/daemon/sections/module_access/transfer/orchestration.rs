@@ -96,8 +96,8 @@ fn process_approved_module(
             match apply_daemon_param_overrides(options, &mut definition) {
                 Ok(()) => {}
                 Err(err) => {
-                    let payload = format!("@ERROR: invalid daemon param: {err}");
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                    let error = AtError::message(format!("invalid daemon param: {err}"));
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     return Ok(());
                 }
             }
@@ -163,8 +163,8 @@ fn process_approved_module(
                     }
                 }
                 Ok(Err(error_msg)) => {
-                    let payload = format!("@ERROR: {error_msg}");
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                    let error = AtError::message(error_msg.to_string());
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     // upstream: clientserver.c:945-949 - early exec runs after
                     // the post-xfer-exec fork point, so its failure is a
                     // child exit the waiting parent still observes.
@@ -180,11 +180,11 @@ fn process_approved_module(
                     return Ok(());
                 }
                 Err(err) => {
-                    let payload = format!(
-                        "@ERROR: failed to run early exec command for module '{}': {err}",
+                    let error = AtError::message(format!(
+                        "failed to run early exec command for module '{}': {err}",
                         ctx.request
-                    );
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                    ));
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     let host_owned = ctx.effective_host().map(str::to_owned);
                     run_post_xfer_finalizer(
                         ctx,
@@ -240,7 +240,7 @@ fn process_approved_module(
             send_error(
                 ctx.reader.get_mut(),
                 ctx.limiter,
-                "@ERROR: daemon security issue -- contact admin",
+                &AtError::message("daemon security issue -- contact admin"),
             )?;
             let host_owned = ctx.effective_host().map(str::to_owned);
             run_post_xfer_finalizer(
@@ -418,8 +418,8 @@ fn process_approved_module(
         match NameConverter::spawn(&expanded) {
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
-                let payload = format!("@ERROR: name-converter exec failed: {err}");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message(format!("name-converter exec failed: {err}"));
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 // upstream: clientserver.c:965-970 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure
                 // is a child exit the waiting parent still observes.
@@ -486,8 +486,8 @@ fn process_approved_module(
     match build_daemon_filter_rules(module) {
         Ok(rules) => config.daemon_filter_rules = rules,
         Err(err) => {
-            let payload = format!("@ERROR: failed to load module filter rules: {err}");
-            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+            let error = AtError::message(format!("failed to load module filter rules: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             let host_owned = ctx.effective_host().map(str::to_owned);
             run_post_xfer_finalizer(
                 ctx,
@@ -638,8 +638,8 @@ fn process_approved_module(
                     write_limited(ctx.reader.get_mut(), ctx.limiter, err.stdout.as_bytes())?;
                     write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
                 }
-                let payload = format!("@ERROR: {}", err.message);
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message(err.message.clone());
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, err.message).with_role(Role::Daemon);
                     log_message(log, &message);
@@ -662,8 +662,8 @@ fn process_approved_module(
                     "failed to run pre-xfer exec command for module '{}': {io_err}",
                     ctx.request
                 );
-                let payload = format!("@ERROR: {error_msg}");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message(error_msg.clone());
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
                     log_message(log, &message);

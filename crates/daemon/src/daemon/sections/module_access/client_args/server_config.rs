@@ -166,9 +166,8 @@ fn build_server_config(
         match resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name) {
             Some(dest) => vec![OsString::from(dest.as_os_str())],
             None => {
-                let payload =
-                    "@ERROR: requested path resolves outside module root".to_owned();
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message("requested path resolves outside module root");
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
         }
@@ -179,9 +178,8 @@ fn build_server_config(
                 .map(|p| OsString::from(p.as_os_str()))
                 .collect(),
             None => {
-                let payload =
-                    "@ERROR: requested path resolves outside module root".to_owned();
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error = AtError::message("requested path resolves outside module root");
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
         }
@@ -214,9 +212,9 @@ fn build_server_config(
                     let message = rsync_warning!(text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                let payload =
-                    format!("@ERROR: {offender}: unrecognized option (in daemon mode)");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                let error =
+                    AtError::message(format!("{offender}: unrecognized option (in daemon mode)"));
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
 
@@ -354,12 +352,8 @@ fn build_server_config(
                     cfg.daemon_outgoing_chmod = outgoing;
                 }
                 Err(err) => {
-                    let payload = format!("@ERROR: {err}");
-                    send_error(
-                        ctx.reader.get_mut(),
-                        ctx.limiter,
-                        &payload,
-                    )?;
+                    let error = AtError::message(err.to_string());
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     return Ok(None);
                 }
             }
@@ -379,8 +373,8 @@ fn build_server_config(
             Ok(Some(cfg))
         }
         Err(err) => {
-            let payload = format!("@ERROR: failed to configure server: {err}");
-            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+            let error = AtError::message(format!("failed to configure server: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             Ok(None)
         }
     }
