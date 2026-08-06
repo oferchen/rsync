@@ -226,7 +226,7 @@ pub(super) struct ServerLongFlags {
     pub(super) compression_level: Option<String>,
     /// Log format forwarded by the client (upstream: `--log-format=FMT`).
     ///
-    /// upstream: options.c:2750-2762 - the client sends `--log-format=%i`
+    /// upstream: options.c:2768-2780 - the client sends `--log-format=%i`
     /// (or `%i%I`, `%o`, `X`) so the server knows whether the generator
     /// should produce itemize data. The server does not use the full format
     /// string - it only inspects it for `%i` / `%o` tokens to set
