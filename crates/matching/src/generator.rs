@@ -732,16 +732,13 @@ impl DeltaGenerator {
             matches
         );
 
-        // upstream: match.c match_report() equivalent.
-        debug_log!(
-            Deltasum,
-            1,
-            "delta: {} tokens, {} total, {} literal, {} matched",
-            tokens.len(),
-            total_bytes,
-            literal_bytes,
-            total_bytes.saturating_sub(literal_bytes)
-        );
+        // Nothing is printed at DELTASUM level 1 here. upstream's only level-1
+        // delta diagnostic is match_report()'s `total:` line (match.c:439-448),
+        // which the sender emits ONCE for the whole run - not once per file -
+        // from a single place (sender.c:491). oc renders that one line from the
+        // client summary; a per-file line here would both invent output
+        // upstream never prints and land dead-last through the deferred
+        // diagnostic flush.
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }
