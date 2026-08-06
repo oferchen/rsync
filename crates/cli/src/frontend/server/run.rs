@@ -355,19 +355,8 @@ where
         config.write.delay_updates = true;
     }
 
-    // upstream: options.c:2345-2348 - the server parses --log-format to set
-    // stdout_format_has_i, which controls generator itemize output. `%i` sets
-    // has_i = 1 (itemize significant items); `%I` sets has_i = 2, the `-ii`
-    // level that also itemizes unchanged entries. The client forwards
-    // `--log-format=%i%I` for `-ii` (options.c:164-175 server_options), so a
-    // server that sees `%I` must also emit unchanged rows.
     if let Some(fmt) = &long_flags.log_format {
-        if fmt.contains("%i") || fmt.contains("%I") {
-            config.flags.info_flags.itemize = true;
-        }
-        if fmt.contains("%I") {
-            config.flags.info_flags.itemize_unchanged = true;
-        }
+        apply_log_format_itemize(fmt, &mut config.flags.info_flags);
     }
 
     // upstream: rsync.c:85-147 setup_iconv() - server opens iconv against the
@@ -543,6 +532,39 @@ where
             write_server_error(stderr, program_brand, format!("server error: {e}"));
             1
         }
+    }
+}
+
+/// Derives upstream's `stdout_format_has_i` from the `--log-format` the client
+/// forwarded, and records it on `info`.
+///
+/// `%i` sets `has_i = 1` (itemize significant items); `%I` sets `has_i = 2`, the
+/// `-ii` level that also itemizes unchanged entries - the client forwards
+/// `--log-format=%i%I` for `-ii`, so a server that sees `%I` must emit those
+/// rows too.
+///
+/// Both [`InfoFlags::itemize`] and [`InfoFlags::out_format_forwards_i`] come out
+/// of this one parse because upstream has one variable. The distinction in oc is
+/// only about who set it - a client's own `--out-format` versus a forwarded
+/// `--log-format` - and every reader of upstream's `stdout_format_has_i` must
+/// see the same answer either way. The readers are the generator's itemize
+/// decision (generator.c:575-576), the receiver's `created directory` notice
+/// (main.c:807-808, which a server receiver reaches through main.c:1213) and its
+/// `failed verification` warning (receiver.c:1072); the latter two were silent
+/// on a server under a client's `-i` while `out_format_forwards_i` stayed unset.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2345-2358` - the server's `--log-format` parse sets
+///   `stdout_format_has_i`.
+/// - `options.c:164-175` - `server_options()` forwards `%i%I` for `-ii`.
+fn apply_log_format_itemize(fmt: &str, info: &mut core::server::InfoFlags) {
+    if fmt.contains("%i") || fmt.contains("%I") {
+        info.itemize = true;
+        info.out_format_forwards_i = true;
+    }
+    if fmt.contains("%I") {
+        info.itemize_unchanged = true;
     }
 }
 
@@ -781,6 +803,58 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod log_format_itemize_tests {
+    use super::apply_log_format_itemize;
+    use core::server::InfoFlags;
+
+    fn derive(fmt: &str) -> InfoFlags {
+        let mut info = InfoFlags::default();
+        apply_log_format_itemize(fmt, &mut info);
+        info
+    }
+
+    /// A forwarded `%i` is upstream's `stdout_format_has_i = 1`, and every
+    /// reader of that variable must see it - not only the generator's itemize
+    /// decision. The receiver's `created directory` notice (main.c:807-808) and
+    /// its `failed verification` warning (receiver.c:1072) both read it through
+    /// `out_format_forwards_i`, and were silent on a server under a client's
+    /// `-i` while only `itemize` was set.
+    #[test]
+    fn percent_i_sets_both_readers_of_stdout_format_has_i() {
+        let info = derive("%i %n%L");
+        assert!(info.itemize, "%i must drive generator itemize output");
+        assert!(
+            info.out_format_forwards_i,
+            "%i is stdout_format_has_i: the receiver's gates must see it too"
+        );
+        assert!(
+            !info.itemize_unchanged,
+            "one %i is has_i == 1, not the -ii level"
+        );
+    }
+
+    /// `-ii` forwards `%i%I`; the extra `%I` is `has_i > 1`, which additionally
+    /// itemizes unchanged entries.
+    ///
+    /// upstream: options.c:164-175 `server_options()`, generator.c:575-576.
+    #[test]
+    fn percent_i_uppercase_adds_the_unchanged_level() {
+        let info = derive("%i%I");
+        assert!(info.itemize);
+        assert!(info.out_format_forwards_i);
+        assert!(info.itemize_unchanged);
+    }
+
+    /// A format with no `%i`/`%I` leaves `stdout_format_has_i` at 0, so an
+    /// `--out-format` that drops `%i` suppresses the gates even under `-i` -
+    /// the divergence `out_format_forwards_i` exists to capture.
+    #[test]
+    fn a_format_without_i_leaves_every_flag_clear() {
+        assert_eq!(derive("%n%L"), InfoFlags::default());
     }
 }
 
