@@ -1,11 +1,15 @@
 //! Top-level source processing orchestration and deferred operation flushing.
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use logging::info_log;
+use protocol::flist::{FileEntry, compare_file_entries};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
@@ -35,6 +39,286 @@ fn whole_unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|since_epoch| since_epoch.as_secs())
         .unwrap_or(0)
+}
+
+/// Returns the operands in the order the local-copy executor should process
+/// them so multi-operand itemize / `--list-only` output matches upstream.
+///
+/// upstream: flist.c:2544 flist_sort_and_clean() sorts the COMBINED
+/// multi-source file list with f_name_cmp before the generator itemizes it, so
+/// top-level operands are emitted in name order, not command-line order. oc's
+/// per-directory walk already emits each operand's subtree in f_name_cmp order,
+/// and a directory sorts contiguously with its own contents (no top-level
+/// sibling can slot between a directory and its children), so reproducing
+/// upstream's global order only requires ordering the operands themselves with
+/// the same comparator the network generator applies to its flist
+/// (`protocol::flist::compare_file_entries`, transfer `generator/file_list`).
+///
+/// Scope: applied only when every operand contributes a single NAMED top-level
+/// entry - a non-`--relative` transfer with no trailing-slash / copy-contents
+/// operand. A copy-contents operand splays its CONTENTS across the destination
+/// root, which upstream interleaves across operands by content name; that is
+/// handled by [`merged_contents_worklist`] instead, so those transfers never
+/// reach this comparator. `--relative` operands carry implied parent
+/// directories whose ordering is handled during emission, so they are left
+/// untouched. Reordering is a pure output-ordering change: the destination
+/// result is byte-identical, the `--delete` keep-set is order-independent, and
+/// dir creation simply follows the same sorted order upstream uses.
+fn ordered_operands(sources: &[SourceSpec], relative_paths: bool) -> Vec<&SourceSpec> {
+    let mut ordered: Vec<&SourceSpec> = sources.iter().collect();
+    let reorderable = sources.len() > 1
+        && !relative_paths
+        && sources.iter().all(|source| !source.copy_contents());
+    if reorderable {
+        ordered.sort_by(|a, b| compare_operand_names(a, b));
+    }
+    ordered
+}
+
+/// Compares two named operands with the flist sort comparator upstream applies
+/// to top-level entries: directories compare as `name/` and a file sorts before
+/// a same-prefixed directory, exactly as `compare_file_entries` orders the
+/// generator's flist.
+fn compare_operand_names(a: &SourceSpec, b: &SourceSpec) -> Ordering {
+    compare_file_entries(&operand_sort_entry(a), &operand_sort_entry(b))
+}
+
+/// Models an operand as a top-level flist entry (its destination basename plus
+/// its on-disk directory-ness) purely for ordering.
+///
+/// link_stat (lstat) semantics: a directory operand is a directory; a symlink
+/// operand is not (upstream keeps the symlink's own name in the flist). An
+/// operand that has vanished or cannot be stat'd is ordered as a file;
+/// `process_single_source` reports its `link_stat` failure downstream.
+fn operand_sort_entry(source: &SourceSpec) -> FileEntry {
+    let name = source
+        .path()
+        .file_name()
+        .map_or_else(|| source.path().to_path_buf(), PathBuf::from);
+    if fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir()) {
+        FileEntry::new_directory(name, 0o755)
+    } else {
+        FileEntry::new_file(name, 0, 0o644)
+    }
+}
+
+/// A destination-root entry synthesized from the union of every copy-contents
+/// source's immediate children, deduplicated by name.
+struct MergedRootEntry {
+    /// `true` when the winning entry is a directory (lstat semantics).
+    is_dir: bool,
+    /// The child's basename, the destination path component and sort key.
+    name: OsString,
+    /// The contributing source paths in command-line order. A file keeps only
+    /// the first (upstream's dedup keeps the first operand's copy); a directory
+    /// keeps every contributor so their contents merge under one dest dir.
+    paths: Vec<PathBuf>,
+}
+
+/// Builds the merged, globally-sorted work list for a multi-source COPY-CONTENTS
+/// transfer, or `None` when the transfer is not that shape (the caller then
+/// falls back to [`ordered_operands`]).
+///
+/// upstream: flist.c:2227 send_file_list() accumulates every source operand into
+/// ONE file list; a trailing-slash / copy-contents operand contributes its
+/// immediate CHILDREN (send_directory, flist.c:2490) rather than its own name,
+/// and flist.c:2544 flist_sort_and_clean() then sorts the combined list with
+/// f_name_cmp before the generator itemizes it. Two copy-contents sources
+/// therefore interleave their contents by child name (files before dirs at each
+/// level) instead of being emitted one operand's subtree at a time. This
+/// function reproduces that by flattening each source's immediate children into
+/// synthetic named operands (each mapping to `dest/<child>` exactly as the child
+/// would under upstream), deduplicating by name - a file keeps the first
+/// operand's copy (flist_sort_and_clean drops the later duplicate), a directory
+/// keeps every contributor so their contents merge - and sorting with the same
+/// f_name_cmp comparator via [`compare_file_entries`].
+///
+/// Scope is deliberately narrow so no other feature's semantics shift: it
+/// engages only for a non-`--relative`, recursive, plain copy of >= 2
+/// copy-contents sources with no `--delete` (whose extraneous-entry sweep keys
+/// off the whole-root walk this path bypasses), no batch writer (whose wire
+/// format is built by the per-source walk), and no `--one-file-system` (whose
+/// mount-point pruning keys off each source root's device). A fresh destination
+/// under `--dry-run` also falls back, since the synthesized `cd ./` root row is
+/// emitted from the on-disk root the dry run never creates. Every excluded shape
+/// keeps command-line order, exactly as before.
+fn merged_contents_worklist(
+    context: &CopyContext,
+    plan: &LocalCopyPlan,
+    destination_root_created: bool,
+) -> Result<Option<Vec<SourceSpec>>, LocalCopyError> {
+    let sources = plan.sources();
+    let engaged = sources.len() > 1
+        && sources.iter().all(SourceSpec::copy_contents)
+        && !context.relative_paths_enabled()
+        && context.recursive_enabled()
+        && !context.one_file_system_enabled()
+        && context.options().delete_timing().is_none()
+        && context.options().get_batch_writer().is_none()
+        && !(destination_root_created && context.mode().is_dry_run());
+    if !engaged {
+        return Ok(None);
+    }
+
+    let destination_root = plan.destination_spec().path();
+    let mut order: Vec<MergedRootEntry> = Vec::new();
+    let mut index: HashMap<OsString, usize> = HashMap::new();
+
+    for source in sources {
+        let read_dir = match fs::read_dir(source.path()) {
+            Ok(read_dir) => read_dir,
+            // A source that is not a readable directory (vanished, a file given a
+            // trailing slash, permission denied) cannot be merged. Abandon the
+            // merged path so the per-source loop surfaces the exact upstream
+            // error / continuation semantics for it.
+            Err(_) => return Ok(None),
+        };
+        for entry in read_dir {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => return Ok(None),
+            };
+            let path = entry.path();
+            // Never descend into our own output: skip a child that IS the
+            // destination root (mirrors the per-directory retain in the
+            // recursive walk).
+            if path == destination_root {
+                continue;
+            }
+            let name = entry.file_name();
+            let is_dir = match fs::symlink_metadata(&path) {
+                Ok(meta) => meta.file_type().is_dir(),
+                Err(_) => return Ok(None),
+            };
+            match index.get(&name) {
+                None => {
+                    index.insert(name.clone(), order.len());
+                    order.push(MergedRootEntry {
+                        is_dir,
+                        name,
+                        paths: vec![path],
+                    });
+                }
+                Some(&existing) => {
+                    let merged = &mut order[existing];
+                    // Merge same-named directories (their contents combine under
+                    // one dest dir); a file, or a type that disagrees with the
+                    // first occurrence, keeps the first operand's entry.
+                    if merged.is_dir && is_dir {
+                        merged.paths.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort with the generator's f_name_cmp: non-directories before directories,
+    // then bytewise name. Contributors to a merged directory keep command-line
+    // order so their subtrees recurse in operand order under the shared dest dir.
+    order.sort_by(|a, b| compare_file_entries(&merged_sort_entry(a), &merged_sort_entry(b)));
+
+    let mut worklist = Vec::new();
+    for entry in order {
+        for path in entry.paths {
+            worklist.push(SourceSpec::from_child_path(path));
+        }
+    }
+    Ok(Some(worklist))
+}
+
+/// Models a merged root entry as a flist entry for f_name_cmp ordering.
+fn merged_sort_entry(entry: &MergedRootEntry) -> FileEntry {
+    let name = PathBuf::from(&entry.name);
+    if entry.is_dir {
+        FileEntry::new_directory(name, 0o755)
+    } else {
+        FileEntry::new_file(name, 0, 0o644)
+    }
+}
+
+/// Accounts for the transfer root "." of a merged copy-contents transfer: it
+/// counts the per-source "." entries and emits the single displayed root row.
+///
+/// The per-source recursive walk owns both for the command-line path (the root
+/// frame in recursive/mod.rs); the merged path bypasses that walk at the root,
+/// so replay it here so `--stats`, `--list-only`, `-v`, and `-i` all match.
+///
+/// COUNT: upstream sorts the combined flist WITHOUT removing duplicates
+/// (flist.c:2535-2544), so every trailing-slash operand's own "." entry counts
+/// toward "Number of files (dir: N)" even though the display deduplicates them.
+/// A single dirA/ dirB/ transfer therefore reports two "." dirs; count one per
+/// source here. (Duplicate/colliding subtree entries under repeated or
+/// overlapping sources are still display-deduplicated by
+/// [`merged_contents_worklist`], so their non-deduplicated count is a tracked
+/// follow-up; distinct sources - the common case - match exactly.)
+///
+/// DISPLAY: the generator lists the root "." once (duplicates are display-
+/// deduplicated). A freshly created root itemizes `cd+++++++++ ./`
+/// (main.c:803-805 FLAG_DIR_CREATED, generator.c:566-572); a pre-existing root
+/// emits an unchanged `.d` row shown only under `-vv` / `--list-only` and
+/// suppressed under `-i` (generator.c:1480-1483 itemizes the existing "." with
+/// no significant flags). The created-dir tally and the `created directory
+/// <dest>` notice are already owned by `mark_destination_root_created`.
+fn emit_merged_transfer_root(
+    context: &mut CopyContext,
+    plan: &LocalCopyPlan,
+    destination_path: &Path,
+    destination_root_created: bool,
+) -> Result<(), LocalCopyError> {
+    for _ in plan.sources() {
+        context.summary_mut().record_directory_total();
+    }
+
+    // The displayed "." IS the first operand's source directory (upstream sends
+    // each operand's "." into the flist and the display keeps the first), so the
+    // listed perms/size/mtime and any `-i` drift are the source root's, not the
+    // destination's - mirroring the recursive root frame, which snapshots the
+    // source `metadata` and itemizes it against the existing destination.
+    let Some(source_root) = plan.sources().first().map(SourceSpec::path) else {
+        return Ok(());
+    };
+    let source_meta = fs::symlink_metadata(source_root)
+        .map_err(|error| LocalCopyError::io("inspect source", source_root, error))?;
+    let snapshot = LocalCopyMetadata::from_metadata(&source_meta, None);
+    let snapshot_len = snapshot.len();
+    let dot = PathBuf::from(".");
+    let record = if destination_root_created {
+        LocalCopyRecord::new(
+            dot,
+            LocalCopyAction::DirectoryCreated,
+            0,
+            Some(snapshot_len),
+            Duration::default(),
+            Some(snapshot),
+        )
+        .with_creation(true)
+    } else {
+        // Existing root: itemize the source "." against the on-disk destination
+        // root so an unchanged pair yields an all-dot `.d` row (shown only under
+        // -vv / --list-only), exactly as the recursive root frame does.
+        let dest_meta = fs::symlink_metadata(destination_path)
+            .map_err(|error| LocalCopyError::io("inspect destination", destination_path, error))?;
+        let change_set = LocalCopyChangeSet::for_existing_directory(
+            &source_meta,
+            &dest_meta,
+            &context.metadata_options(),
+            context.omit_dir_times_enabled(),
+            false,
+            false,
+            context.options().modify_window(),
+        );
+        LocalCopyRecord::new(
+            dot,
+            LocalCopyAction::MetadataReused,
+            0,
+            Some(snapshot_len),
+            Duration::default(),
+            Some(snapshot),
+        )
+        .with_change_set(change_set)
+    };
+    context.record(record);
+    Ok(())
 }
 
 /// Entry point for copying all sources to the destination.
@@ -184,8 +468,37 @@ pub(crate) fn copy_sources(
             let destination_behaves_like_directory =
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
+            // Build the ordered work list. Upstream accumulates every source into
+            // ONE file list and sorts it globally (flist.c:2544
+            // flist_sort_and_clean) before the generator itemizes it, so the
+            // observable order is name-sorted, never command-line order. For a
+            // multi-source copy-contents transfer that means the sources' contents
+            // MERGE and sort together at the destination root
+            // (`merged_contents_worklist`); for named operands it means the
+            // operands themselves sort (`ordered_operands`). Both fall back to
+            // command-line order for the shapes they do not cover.
+            let worklist: Vec<SourceSpec> =
+                match merged_contents_worklist(context, plan, destination_root_created)? {
+                    Some(entries) => {
+                        // The merged path bypasses the root recursive walk, so
+                        // account for the transfer root "." (count + display row)
+                        // here, ahead of the merged children.
+                        emit_merged_transfer_root(
+                            context,
+                            plan,
+                            destination_path,
+                            destination_root_created,
+                        )?;
+                        entries
+                    }
+                    None => ordered_operands(plan.sources(), context.relative_paths_enabled())
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                };
+
             let mut first_io_error: Option<LocalCopyError> = None;
-            for source in plan.sources() {
+            for source in &worklist {
                 let result = process_single_source(
                     context,
                     plan,
