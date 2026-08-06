@@ -20,10 +20,15 @@
 //!
 //! 1. oc's exit code equals upstream's.
 //! 2. the destination is byte-identical to the source *and* to upstream's.
-//! 3. the `failed verification` warning lines on stderr are exactly upstream's,
-//!    at each verbosity - upstream gates the line behind `INFO_GTE(NAME, 1)`
-//!    (`receiver.c:1072`), so it is silent by default and prints the bare
-//!    *relative* name under `-v`.
+//! 3. the `failed verification` warning lines are exactly upstream's *on each
+//!    stream separately*, at each verbosity - upstream gates the line behind
+//!    `INFO_GTE(NAME, 1)` (`receiver.c:1072`), so it is silent by default, and
+//!    under `-v` it emits the bare *relative* name as an `FWARNING`, which
+//!    `log.c:314` routes to **stderr**. Comparing the union of the two streams
+//!    would accept a line that is present but misrouted; the observable-fidelity
+//!    contract covers stdout and stderr as distinct observables, because callers
+//!    redirect them separately and a warning on stdout corrupts `--out-format`
+//!    and `--stats` output that scripts parse.
 //! 4. the `--stats` literal/matched split matches, so a redo that re-sends the
 //!    whole file as literal instead of re-deltaing against the retained basis is
 //!    caught.
@@ -136,19 +141,94 @@ impl Verbosity {
         }
     }
 
-    /// The `failed verification` lines upstream emits at this verbosity.
+    /// The `failed verification` lines upstream emits at this verbosity, per
+    /// stream.
     ///
     /// Upstream prints the line only when `msgtype == FERROR_XFER ||
     /// INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1072`). The first
     /// failure is a `FWARNING` and the redo then succeeds, so nothing reaches
-    /// the ungated `FERROR_XFER` form: without `-v` the transfer is silent, and
-    /// with `-v` it emits exactly [`WARNING`].
-    const fn expected_warnings(self) -> &'static [&'static str] {
+    /// the ungated `FERROR_XFER` form: without `-v` the transfer is silent on
+    /// both streams, and with `-v` it emits exactly [`WARNING`] - on stderr,
+    /// never stdout, because `rwrite()` maps `FWARNING` to `f = stderr`
+    /// (`log.c:314`) and forwards it as `MSG_WARNING` when `am_server`.
+    const fn expected_warnings(self) -> ExpectedWarnings {
         match self {
-            Verbosity::Default => &[],
-            Verbosity::Verbose => &[WARNING],
+            Verbosity::Default => ExpectedWarnings {
+                stdout: &[],
+                stderr: &[],
+            },
+            Verbosity::Verbose => ExpectedWarnings {
+                stdout: &[],
+                stderr: &[WARNING],
+            },
         }
     }
+}
+
+/// The `failed verification` lines expected on each stream, as an oracle.
+///
+/// Both fields are load-bearing. `stdout` is empty at *every* verbosity, which
+/// is what makes a line emitted on the wrong stream a failure rather than a
+/// silent pass: an implementation that gates correctly but writes to stdout
+/// still diverges from upstream on an observable the contract covers.
+struct ExpectedWarnings {
+    /// Lines upstream writes to stdout. Always empty - see the type doc.
+    stdout: &'static [&'static str],
+    /// Lines upstream writes to stderr.
+    stderr: &'static [&'static str],
+}
+
+/// The `failed verification` lines one run emitted, kept split by stream.
+struct WarningStreams<'a> {
+    /// Matching lines on stdout, in order.
+    stdout: Vec<&'a str>,
+    /// Matching lines on stderr, in order.
+    stderr: Vec<&'a str>,
+}
+
+impl<'a> WarningStreams<'a> {
+    /// Split one run's captured output into its per-stream warning lines.
+    fn capture(stdout: &'a str, stderr: &'a str) -> Self {
+        WarningStreams {
+            stdout: warning_lines(stdout),
+            stderr: warning_lines(stderr),
+        }
+    }
+
+    /// Whether this capture is exactly the oracle, stream for stream.
+    fn matches(&self, expected: &ExpectedWarnings) -> bool {
+        self.stdout == expected.stdout && self.stderr == expected.stderr
+    }
+}
+
+/// How `oc` and `upstream` differ, named per stream, or `None` when they agree
+/// on both.
+///
+/// The stream names are in the message on purpose: the text of the line is
+/// identical whichever stream carries it, so a bare "warning not found" sends
+/// the reader hunting for a missing emit when the real fault is a misrouted
+/// one.
+fn stream_diff(oc: &WarningStreams<'_>, up: &WarningStreams<'_>) -> Option<String> {
+    let mut parts = Vec::new();
+    if oc.stdout != up.stdout {
+        parts.push(format!(
+            "stdout: oc {:?} != upstream {:?}",
+            oc.stdout, up.stdout
+        ));
+    }
+    if oc.stderr != up.stderr {
+        parts.push(format!(
+            "stderr: oc {:?} != upstream {:?}",
+            oc.stderr, up.stderr
+        ));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    if !oc.stdout.is_empty() && up.stdout.is_empty() {
+        parts.push("oc wrote the line to stdout; upstream never does".to_string());
+    }
+    Some(format!("warning lines: {}", parts.join("; ")))
 }
 
 impl Check for VerifyRedo {
@@ -324,26 +404,27 @@ impl VerifyRedo {
             );
         }
 
-        // Assertion 3: the warning lines are exactly upstream's, and upstream's
-        // are exactly the documented oracle for this verbosity.
-        let up_warnings = warning_lines(&up_err);
-        let oc_warnings = warning_lines(&oc_err);
-        if up_warnings != verbosity.expected_warnings() {
+        // Assertion 3: the warning lines are exactly upstream's on each stream,
+        // and upstream's are exactly the documented oracle for this verbosity.
+        // Both comparisons are per-stream: the line's text is the same wherever
+        // it lands, so folding the streams together would accept an oc that
+        // emits it on stdout while upstream emits it on stderr - or, at default
+        // verbosity, one that emits it at all while upstream stays silent.
+        let up_warnings = WarningStreams::capture(&up_out, &up_err);
+        let oc_warnings = WarningStreams::capture(&oc_out, &oc_err);
+        let expected = verbosity.expected_warnings();
+        if !up_warnings.matches(&expected) {
             return CheckOutcome::fail(
                 self.name(),
                 label.as_str(),
                 format!(
-                    "oracle drift: upstream warnings {up_warnings:?} != {:?}",
-                    verbosity.expected_warnings()
+                    "oracle drift: upstream stdout {:?} stderr {:?} != expected stdout {:?} stderr {:?}",
+                    up_warnings.stdout, up_warnings.stderr, expected.stdout, expected.stderr
                 ),
             );
         }
-        if oc_warnings != up_warnings {
-            return CheckOutcome::fail(
-                self.name(),
-                label.as_str(),
-                format!("warning lines: oc {oc_warnings:?} != upstream {up_warnings:?}"),
-            );
+        if let Some(d) = stream_diff(&oc_warnings, &up_warnings) {
+            return CheckOutcome::fail(self.name(), label.as_str(), d);
         }
 
         // Assertion 4: the literal/matched split of the redo.
@@ -500,11 +581,13 @@ fn seed_dest(dst: &Path) -> TaskResult<()> {
         .map_err(|e| TaskError::Validation(format!("seed payload.bin: {e}")))
 }
 
-/// The `failed verification` lines on `stderr`, in order, with trailing
-/// whitespace trimmed. Unrelated stderr noise (ssh banners, chown warnings) is
-/// filtered out so the comparison carries only the redo's own reporting.
-fn warning_lines(stderr: &str) -> Vec<&str> {
-    stderr
+/// The `failed verification` lines in one stream, in order, with trailing
+/// whitespace trimmed. Unrelated noise (ssh banners and chown warnings on
+/// stderr, the `--stats` block on stdout) is filtered out so the comparison
+/// carries only the redo's own reporting. Applied to each stream separately by
+/// [`WarningStreams::capture`].
+fn warning_lines(stream: &str) -> Vec<&str> {
+    stream
         .lines()
         .map(str::trim_end)
         .filter(|line| line.contains("failed verification"))
@@ -595,11 +678,61 @@ mod tests {
     fn verbosity_oracle_matches_the_upstream_gate() {
         // upstream: receiver.c:1072 gates the FWARNING behind INFO_GTE(NAME, 1),
         // so the line exists only under -v; the redo then succeeds, so it never
-        // escalates to the ungated FERROR_XFER form.
-        assert!(Verbosity::Default.expected_warnings().is_empty());
-        assert_eq!(Verbosity::Verbose.expected_warnings(), &[WARNING]);
+        // escalates to the ungated FERROR_XFER form. upstream: log.c:314 maps
+        // FWARNING to stderr, so stdout stays empty at every verbosity.
+        let default = Verbosity::Default.expected_warnings();
+        assert!(default.stdout.is_empty());
+        assert!(default.stderr.is_empty());
+        let verbose = Verbosity::Verbose.expected_warnings();
+        assert!(verbose.stdout.is_empty());
+        assert_eq!(verbose.stderr, &[WARNING]);
         assert!(Verbosity::Default.flags().is_empty());
         assert_eq!(Verbosity::Verbose.flags(), &["-v"]);
+    }
+
+    #[test]
+    fn a_line_on_stdout_never_satisfies_the_stderr_oracle() {
+        // The divergence being gated: the text is right, the gate may even be
+        // right, but the stream is wrong. Folding the two streams into one list
+        // would let this through, and callers who redirect stdout and stderr
+        // separately would see a corrupted stdout - which the observable
+        // fidelity contract counts as a break just as a wrong byte would.
+        let line = format!("{WARNING}\n");
+        let on_stdout = WarningStreams::capture(&line, "");
+        assert!(!on_stdout.matches(&Verbosity::Verbose.expected_warnings()));
+        assert!(!on_stdout.matches(&Verbosity::Default.expected_warnings()));
+
+        let on_stderr = WarningStreams::capture("", &line);
+        assert!(on_stderr.matches(&Verbosity::Verbose.expected_warnings()));
+    }
+
+    #[test]
+    fn silence_only_satisfies_the_default_verbosity_oracle() {
+        // The vacuous-pass guard: at default verbosity upstream prints nothing
+        // anywhere, so a cell is only allowed to be silent on BOTH streams.
+        let silent = WarningStreams::capture("", "");
+        assert!(silent.matches(&Verbosity::Default.expected_warnings()));
+        assert!(!silent.matches(&Verbosity::Verbose.expected_warnings()));
+    }
+
+    #[test]
+    fn stream_diff_names_the_stream_the_line_landed_on() {
+        // A bare "warning not found" costs hours when the text is present but
+        // misrouted, so the message must distinguish the two cases.
+        let line = format!("{WARNING}\n");
+        let up = WarningStreams::capture("", &line);
+        let misrouted = WarningStreams::capture(&line, "");
+        let d = stream_diff(&misrouted, &up).expect("misrouted line must differ");
+        assert!(d.contains("stdout:"), "{d}");
+        assert!(d.contains("stderr:"), "{d}");
+        assert!(d.contains("oc wrote the line to stdout"), "{d}");
+
+        let absent = WarningStreams::capture("", "");
+        let d = stream_diff(&absent, &up).expect("absent line must differ");
+        assert!(d.contains("stderr:"), "{d}");
+        assert!(!d.contains("stdout:"), "{d}");
+
+        assert!(stream_diff(&up, &up).is_none());
     }
 
     #[test]
