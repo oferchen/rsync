@@ -925,7 +925,18 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     eight_bit_output: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
-    if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
+    // upstream: log.c:870 log_delete() prints "deleting %n" whenever
+    // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
+    // listing. `--info=del` leaves NAME disabled at verbosity 0, so this
+    // short-circuit must fall through when DEL-gated deletions are queued -
+    // otherwise the deletion lines below are never rendered.
+    let has_deletions = events
+        .iter()
+        .any(|event| matches!(event.kind(), ClientEventKind::EntryDeleted));
+    if matches!(name_level, NameOutputLevel::Disabled)
+        && (verbosity == 0 || name_overridden)
+        && !(has_deletions && info_gte(InfoFlag::Del, 1))
+    {
         return Ok(());
     }
 
