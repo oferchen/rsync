@@ -2,30 +2,50 @@ use std::env;
 
 /// Returns the default for `--protect-args` derived from `RSYNC_PROTECT_ARGS`.
 ///
-/// Returns `None` when the variable is unset, `Some(false)` for the recognised
-/// disable values (`0`, `no`, `false`, `off`, case-insensitive), and
-/// `Some(true)` otherwise. Mirrors upstream rsync's environment handling so
-/// CLI defaults match.
+/// Returns `None` when the variable is unset or empty (so the compile-time
+/// default decides), and `Some(atoi(value) != 0)` when it is non-empty.
+///
+/// upstream: options.c:1985-1994 - `(arg = getenv("RSYNC_PROTECT_ARGS")) != NULL
+/// && *arg` requires a non-empty value; an empty string falls through to the
+/// compile default (`RSYNC_USE_SECLUDED_ARGS`), which we model as `None` so the
+/// caller applies its own default. A non-empty value maps to
+/// `protect_args = atoi(arg) ? 1 : 0`, i.e. C `atoi` reads a leading base-10
+/// integer, so `1`/`2`/`3x` enable it while `0`/`no`/`false`/`off`/`yes`/`true`
+/// (all `atoi` 0) disable it.
 pub(crate) fn env_protect_args_default() -> Option<bool> {
     let value = env::var_os("RSYNC_PROTECT_ARGS")?;
     if value.is_empty() {
-        return Some(true);
+        return None;
     }
+    Some(atoi_leading(&value.to_string_lossy()) != 0)
+}
 
-    let normalized = value.to_string_lossy();
-    let trimmed = normalized.trim();
-
-    if trimmed.is_empty() {
-        Some(true)
-    } else if trimmed.eq_ignore_ascii_case("0")
-        || trimmed.eq_ignore_ascii_case("no")
-        || trimmed.eq_ignore_ascii_case("false")
-        || trimmed.eq_ignore_ascii_case("off")
-    {
-        Some(false)
-    } else {
-        Some(true)
+/// Parses a leading base-10 integer like C's `atoi`, ignoring leading
+/// whitespace and any trailing non-digit suffix. Returns 0 when no digits lead.
+///
+/// Kept consistent with the `RSYNC_OLD_ARGS` parser (`run.rs::atoi_leading`,
+/// upstream: options.c:1971 `old_style_args = atoi(arg)`).
+fn atoi_leading(s: &str) -> i32 {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
     }
+    let mut sign = 1i32;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        if bytes[i] == b'-' {
+            sign = -1;
+        }
+        i += 1;
+    }
+    let mut value = 0i32;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((bytes[i] - b'0') as i32);
+        i += 1;
+    }
+    sign * value
 }
 
 /// Returns the default `--iconv` value derived from `RSYNC_ICONV`.
@@ -107,6 +127,20 @@ mod tests {
         }
     }
 
+    /// upstream: options.c:1988 - `atoi(arg) ? 1 : 0` uses C `atoi`, a leading
+    /// base-10 parse. This pins the exact mapping oc must reproduce.
+    #[test]
+    fn atoi_leading_matches_c_atoi() {
+        assert_eq!(atoi_leading("1"), 1);
+        assert_eq!(atoi_leading("2"), 2);
+        assert_eq!(atoi_leading("  2"), 2);
+        assert_eq!(atoi_leading("2 "), 2);
+        assert_eq!(atoi_leading("3x"), 3);
+        assert_eq!(atoi_leading("0abc"), 0);
+        assert_eq!(atoi_leading("yes"), 0);
+        assert_eq!(atoi_leading(""), 0);
+    }
+
     #[test]
     fn env_protect_args_returns_none_when_unset() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
@@ -114,11 +148,13 @@ mod tests {
         assert_eq!(env_protect_args_default(), None);
     }
 
+    // upstream: options.c:1987 - `*arg` requires a non-empty value; an empty
+    // string falls through to the compile default, modelled here as `None`.
     #[test]
-    fn env_protect_args_returns_true_when_empty() {
+    fn env_protect_args_returns_none_when_empty() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "");
-        assert_eq!(env_protect_args_default(), Some(true));
+        assert_eq!(env_protect_args_default(), None);
     }
 
     #[test]
@@ -128,10 +164,34 @@ mod tests {
         assert_eq!(env_protect_args_default(), Some(true));
     }
 
+    // upstream: options.c:1988 - `atoi("2")` is non-zero, so protect_args = 1.
+    #[test]
+    fn env_protect_args_returns_true_for_2() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "2");
+        assert_eq!(env_protect_args_default(), Some(true));
+    }
+
+    // upstream: options.c:1988 - `atoi("3x")` reads the leading 3, so on.
+    #[test]
+    fn env_protect_args_returns_true_for_leading_int_suffix() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "3x");
+        assert_eq!(env_protect_args_default(), Some(true));
+    }
+
     #[test]
     fn env_protect_args_returns_false_for_0() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "0");
+        assert_eq!(env_protect_args_default(), Some(false));
+    }
+
+    // upstream: options.c:1988 - `atoi("0abc")` is 0, so protect_args = 0.
+    #[test]
+    fn env_protect_args_returns_false_for_zero_suffix() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "0abc");
         assert_eq!(env_protect_args_default(), Some(false));
     }
 
@@ -156,6 +216,39 @@ mod tests {
         assert_eq!(env_protect_args_default(), Some(false));
     }
 
+    // upstream: options.c:1988 - `atoi("yes")` is 0, so the word disables it
+    // (the pre-fix parser wrongly treated any non-disable word as enabled).
+    #[test]
+    fn env_protect_args_returns_false_for_yes() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "yes");
+        assert_eq!(env_protect_args_default(), Some(false));
+    }
+
+    // upstream: options.c:1988 - `atoi("true")` is 0, so off.
+    #[test]
+    fn env_protect_args_returns_false_for_true() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "true");
+        assert_eq!(env_protect_args_default(), Some(false));
+    }
+
+    // upstream: options.c:1988 - `atoi("on")` is 0, so off.
+    #[test]
+    fn env_protect_args_returns_false_for_on() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "on");
+        assert_eq!(env_protect_args_default(), Some(false));
+    }
+
+    // upstream: options.c:1988 - `atoi("enabled")` is 0, so off.
+    #[test]
+    fn env_protect_args_returns_false_for_enabled() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "enabled");
+        assert_eq!(env_protect_args_default(), Some(false));
+    }
+
     #[test]
     fn env_protect_args_case_insensitive_no() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
@@ -175,20 +268,6 @@ mod tests {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "OFF");
         assert_eq!(env_protect_args_default(), Some(false));
-    }
-
-    #[test]
-    fn env_protect_args_returns_true_for_yes() {
-        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
-        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "yes");
-        assert_eq!(env_protect_args_default(), Some(true));
-    }
-
-    #[test]
-    fn env_protect_args_returns_true_for_true() {
-        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
-        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "true");
-        assert_eq!(env_protect_args_default(), Some(true));
     }
 
     // upstream: options.c:1377-1378 - RSYNC_ICONV seeds the default --iconv value.
