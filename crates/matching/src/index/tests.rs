@@ -4,8 +4,14 @@ use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file
 use std::collections::VecDeque;
 use std::num::NonZeroU8;
 
+/// A basis smaller than one block still yields a usable index.
+///
+/// Upstream runs `build_hash_table()` + `hash_search()` for any `s->count > 0`
+/// (`match.c:match_sums()`), and the short-block rule at `match.c:222-224`
+/// matches that lone block. Refusing to build the index here made the sender
+/// re-send every sub-block-size file entirely as literal data.
 #[test]
-fn from_signature_returns_none_without_full_blocks() {
+fn from_signature_indexes_a_lone_partial_block() {
     let params = SignatureLayoutParams::new(
         64,
         None,
@@ -17,7 +23,17 @@ fn from_signature_returns_none_without_full_blocks() {
     let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
         .expect("signature");
 
-    assert!(DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).is_none());
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+    assert_eq!(index.block_count(), 1);
+    assert_eq!(index.block(0).len(), 64);
+    // The lone short block stays out of the fast-path tables; only the EOF
+    // tail probe can reach it.
+    assert!(
+        index
+            .find_match_bytes(index.block(0).rolling(), data.as_slice())
+            .is_none()
+    );
 }
 
 #[test]
