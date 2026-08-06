@@ -1,0 +1,18 @@
+{
+  "bandwidth": 0,
+  "batch": 0,
+  "checksums": 0,
+  "cli": 7,
+  "compress": 0,
+  "core": 5,
+  "daemon": 7,
+  "engine": 1,
+  "filters": 0,
+  "matching": 0,
+  "metadata": 1,
+  "platform": 0,
+  "protocol": 2,
+  "rsync_io": 0,
+  "signature": 0,
+  "transfer": 6
+}

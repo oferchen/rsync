@@ -72,10 +72,55 @@ def audit(crate):
         print("  ", e)
     return checked, miss
 
+BASELINE = "tools/ci/citation_drift_baseline.json"
+
+def ratchet(counts, path):
+    """Compare per-crate drift counts against the committed baseline.
+
+    Fails only when a crate's count INCREASES, so the 20-ish standing false
+    positives cost nothing while newly introduced drift is caught. A hard gate
+    at zero would be reverted the first time a legitimate definition-vs-usage
+    citation tripped it; a bare report would print into a log nobody reads,
+    which is the failure mode this audit already had once.
+    """
+    import json
+    try:
+        with open(path) as fh:
+            base = json.load(fh)
+    except OSError:
+        sys.exit(f"baseline missing: {path} (regenerate with --write-baseline)")
+    over = [(c, n, base.get(c, 0)) for c, n in sorted(counts.items()) if n > base.get(c, 0)]
+    stale = [(c, n, base[c]) for c, n in sorted(counts.items()) if c in base and n < base[c]]
+    for c, n, b in stale:
+        print(f"note: {c} improved {b} -> {n}; lower the baseline to lock the gain in")
+    if not over:
+        print(f"ratchet OK against {path}")
+        return 0
+    for c, n, b in over:
+        print(f"FAIL: {c} suspected-drift rose {b} -> {n}")
+    print("\nEach new finding is a lead, not a verdict. Resolve it against the\n"
+          f"pinned upstream source ({S}): update a stale line number, or - if the\n"
+          "citation is a range or a definition the anchor cannot see - raise the\n"
+          "baseline in the same commit with a note saying why.")
+    return 1
+
 if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
     if not os.path.isdir(S):
         sys.exit(f"upstream source missing: {S} (run tools/ci/run_interop.sh to fetch)")
-    crates = sys.argv[1:] or sorted(os.path.basename(os.path.dirname(p))
-                                    for p in glob.glob("crates/*/src"))
+    crates = args or sorted(os.path.basename(os.path.dirname(p))
+                            for p in glob.glob("crates/*/src"))
+    counts = {}
     for c in crates:
-        audit(c)
+        checked, miss = audit(c)
+        if checked:
+            counts[c] = miss
+    if "--write-baseline" in flags:
+        import json
+        with open(BASELINE, "w") as fh:
+            json.dump(counts, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print(f"wrote {BASELINE}")
+    elif "--ratchet" in flags:
+        sys.exit(ratchet(counts, BASELINE))
