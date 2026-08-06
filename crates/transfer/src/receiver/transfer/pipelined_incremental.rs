@@ -9,7 +9,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log, info_log};
-use protocol::codec::create_ndx_codec;
+use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 use protocol::flist::FileEntry;
 
 use crate::pipeline::PipelineConfig;
@@ -240,6 +240,14 @@ impl ReceiverContext {
                 let redo_config = pipeline_config.clone();
                 let redo_indices;
                 let delayed;
+                // upstream: io.c::write_ndx / read_ndx keep a single
+                // connection-wide prev_positive/prev_negative. The phase-2 redo
+                // re-requests files (generator.c:2178-2216) through that SAME
+                // state, so one codec pair is threaded through both the phase-1
+                // and the redo pass. Fresh per-pass codecs would reset the diff
+                // base and desync the daemon-sender's NDX decode on the redo.
+                let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
+                let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
                 (
                     files_transferred,
                     transferred_file_size,
@@ -258,6 +266,8 @@ impl ReceiverContext {
                     false,
                     total_files,
                     &mut progress,
+                    &mut ndx_write_codec,
+                    &mut ndx_read_codec,
                 )?;
                 all_delayed_updates.extend(delayed);
 
@@ -306,6 +316,8 @@ impl ReceiverContext {
                         true,
                         total_files,
                         &mut progress,
+                        &mut ndx_write_codec,
+                        &mut ndx_read_codec,
                     )?;
 
                     files_transferred += redo_transferred;
