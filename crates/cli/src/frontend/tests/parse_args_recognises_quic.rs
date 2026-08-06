@@ -69,21 +69,27 @@ fn parse_args_quic_defaults_off() {
 
 #[cfg(not(feature = "quic"))]
 #[test]
-fn parse_args_does_not_recognise_quic_flag_when_feature_off() {
-    // WHY (QUIC-8d): with the feature compiled out the `--quic` modifier is
-    // absent. The parser therefore never consumes it as a flag - it falls
-    // through to the trailing operand list (where it later fails as a bogus
-    // path), so no code path can select an unbuilt transport.
-    let parsed = parse_args([
-        OsString::from(RSYNC),
-        OsString::from("--quic"),
-        OsString::from("host::module"),
-        OsString::from("dest"),
-    ])
-    .expect("parse");
+fn parse_args_rejects_quic_flags_with_actionable_error_when_feature_off() {
+    // WHY (176a): with the feature compiled out the `--quic`/`--quic-ca`
+    // modifiers are still RECOGNISED (hidden from help) so the parser rejects
+    // them with an actionable "requires the 'quic' feature" diagnostic and exit
+    // 1, rather than silently passing `--quic` through as a bogus operand. No
+    // code path can select an unbuilt transport, and the user learns the remedy.
+    for args in [
+        vec!["--quic", "host::module", "dest"],
+        vec!["--quic-ca", "/etc/oc-rsync/ca.pem", "host::module", "dest"],
+    ] {
+        let mut argv = vec![OsString::from(RSYNC)];
+        argv.extend(args.iter().map(OsString::from));
+        let err =
+            parse_args(argv).expect_err("quic flags must be rejected when the feature is off");
 
-    assert!(
-        parsed.remainder.contains(&OsString::from("--quic")),
-        "--quic must not be consumed as a flag when quic is off"
-    );
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--quic requires the QUIC transport"),
+            "unexpected message: {msg}"
+        );
+        assert!(msg.contains("'quic' feature"), "unexpected message: {msg}");
+    }
 }

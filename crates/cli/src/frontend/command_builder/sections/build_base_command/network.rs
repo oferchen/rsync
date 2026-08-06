@@ -127,15 +127,18 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         );
 
-    // The `--quic` modifier (oc extension) upgrades a daemon target to the QUIC
-    // transport; it exists only when the `quic` feature is compiled in, so a
-    // default build rejects it as an unknown argument.
-    #[cfg(feature = "quic")]
-    let command = command
+    // The `--quic`/`--quic-ca` modifiers (oc extension) upgrade a daemon target
+    // to the QUIC transport. They are recognised in every build - hidden from
+    // help when the `quic` feature is absent - so a default build can reject
+    // them with an actionable "requires the 'quic' feature" diagnostic (via
+    // `check_quic_feature`) instead of a bare "unknown option".
+    let quic_unavailable = cfg!(not(feature = "quic"));
+    command
         .arg(
             Arg::new("quic")
                 .long("quic")
                 .help("Carry the rsync daemon protocol over QUIC (873/udp); hard-fails if QUIC cannot be established.")
+                .hide(quic_unavailable)
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -143,10 +146,9 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .long("quic-ca")
                 .value_name("PATH")
                 .help("Verify the QUIC daemon certificate against the CA bundle in PATH (PEM) instead of the system trust store.")
+                .hide(quic_unavailable)
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
-        );
-
-    command
+        )
 }

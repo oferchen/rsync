@@ -577,6 +577,32 @@ pub(crate) fn ssh_url_requires_embedded_ssh() -> ClientError {
     )
 }
 
+/// Reports that a `quic://` operand was given but the QUIC transport was not
+/// compiled into this build, so the transfer has no transport.
+///
+/// Without the `quic` feature the `quic://` scheme is not recognised as a
+/// daemon URL, so the operand falls through to the subprocess ssh path, which
+/// parses `quic://host/module` as a `host:path` spec with host `quic` and fails
+/// with a confusing "could not resolve hostname quic". This surfaces the real
+/// cause with an actionable remedy instead. The exit code matches the other
+/// feature-unavailable diagnostics ([`ExitCode::Syntax`], via
+/// [`FEATURE_UNAVAILABLE_EXIT_CODE`]).
+///
+/// oc-specific: upstream rsync has no `quic://` operand scheme.
+///
+/// Only compiled when `quic` is absent - that is the sole configuration in
+/// which a `quic://` operand has no transport and this diagnostic fires.
+#[cfg(not(feature = "quic"))]
+#[cold]
+pub(crate) fn quic_url_requires_quic_feature() -> ClientError {
+    daemon_error(
+        "quic:// URLs require the QUIC transport, which is not compiled into \
+         this build (rebuild with the 'quic' feature). For the daemon protocol \
+         over TCP, use an rsync:// or host::module target instead.",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
 /// Enables idiomatic error conversion using the `?` operator.
 ///
 /// # Examples
@@ -1156,6 +1182,18 @@ mod tests {
             assert!(msg.contains("ssh:// URLs require the built-in SSH client"));
             assert!(msg.contains("embedded-ssh"));
             assert!(msg.contains("-e ssh"));
+        }
+
+        #[cfg(not(feature = "quic"))]
+        #[test]
+        fn quic_url_requires_quic_feature_is_actionable() {
+            let error = quic_url_requires_quic_feature();
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("quic:// URLs require the QUIC transport"));
+            assert!(msg.contains("'quic' feature"));
+            assert!(msg.contains("rsync://"));
         }
 
         #[test]
