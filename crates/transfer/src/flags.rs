@@ -416,7 +416,15 @@ pub struct ParsedServerFlags {
     pub info_flags: InfoFlags,
 }
 
-/// Info/debug flags parsed from the suffix after `.`.
+/// Per-file output state derived from the client's genuine `--info`/`--itemize`
+/// request.
+///
+/// These are NOT decoded from the compact server flag string: the `-e.<caps>`
+/// suffix carries protocol capability letters (compat.c:712-732), not `--info`
+/// output flags. Upstream sends the output request as separate long-form args
+/// (`--log-format=%i`, options.c:2770-2775), so every field here is set from
+/// those long-form args or the client config, never from the packed flag
+/// letters.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct InfoFlags {
     /// Itemize changes (`i` info flag).
@@ -447,16 +455,6 @@ pub struct InfoFlags {
     /// (main.c:807-808). Without this the notice was tied to the `-i` flag alone
     /// and was dropped under a custom `%i`-bearing `--out-format`.
     pub out_format_forwards_i: bool,
-    /// Log format active (`L` info flag).
-    pub log_format: bool,
-    /// Statistics enabled (`s` info flag).
-    pub stats: bool,
-    /// File list debugging (`f` info flag).
-    pub flist: bool,
-    /// Checksum debugging (`x` info flag).
-    pub checksum: bool,
-    /// Compression debugging (`C` info flag).
-    pub compress: bool,
 }
 
 impl ParsedServerFlags {
@@ -525,19 +523,25 @@ impl ParsedServerFlags {
         }
 
         let mut flags = ParsedServerFlags::default();
-        let mut in_info_section = false;
 
         for &byte in &bytes[1..] {
+            // The only `.` in a compact server flag string is the `-e`
+            // capability separator emitted by upstream `maybe_add_e_option`
+            // (options.c:3021), which appends `e.<caps>` after the transfer
+            // letters, e.g. `-logDtpre.iLsfxCIvu`. Everything from the `.`
+            // onward is the `-e` argument - upstream's `client_info`
+            // (compat.c:165-169, which `strdup`s the payload after the `e`) - a
+            // capability string that upstream only `strchr`s for its OWN known
+            // letters (compat.c:712-732) and never interprets as `--info`
+            // output flags. Genuine `--info`/itemize output rides separate
+            // long-form args (`--log-format=%i`, options.c:2770-2775), never as
+            // compact letters. The capability payload is decoded independently
+            // by the `setup::capability` module, so transfer-flag decoding
+            // stops at the separator; the letters after it are not info flags.
             if byte == b'.' {
-                in_info_section = true;
-                continue;
+                break;
             }
-
-            if in_info_section {
-                flags.info_flags.parse_info_flag(byte);
-            } else {
-                flags.parse_transfer_flag(byte);
-            }
+            flags.parse_transfer_flag(byte);
         }
 
         if flags.archive {
@@ -660,20 +664,6 @@ impl ParsedServerFlags {
     }
 }
 
-impl InfoFlags {
-    const fn parse_info_flag(&mut self, byte: u8) {
-        match byte {
-            b'i' => self.itemize = true,
-            b'L' => self.log_format = true,
-            b's' => self.stats = true,
-            b'f' => self.flist = true,
-            b'x' => self.checksum = true,
-            b'C' => self.compress = true,
-            _ => {}
-        }
-    }
-}
-
 /// Error returned when parsing a flag string fails.
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum ParseFlagError {
@@ -700,12 +690,66 @@ mod tests {
         assert!(flags.recursive);
         assert!(flags.rsh);
 
+        // The `.iLsfxC` suffix is the `-e` capability payload (compat.c:165-169,
+        // 712-732), NOT `--info` output flags: it must leave every info field at
+        // its default. Genuine itemize/output rides `--log-format=%i`
+        // (options.c:2770-2775), decoded elsewhere.
+        assert_eq!(flags.info_flags, InfoFlags::default());
+    }
+
+    /// The `-e.<caps>` capability suffix must never be decoded as `--info`
+    /// output flags. Upstream's `client_info` (compat.c:165-169) is only
+    /// `strchr`-scanned for protocol capability letters (compat.c:712-732); the
+    /// `i` letter is `CF_INC_RECURSE`, not `--itemize`, and `L/s/f/x/C/v/u` are
+    /// likewise capabilities. Output requests reach the server as separate
+    /// long-form args (`--log-format=%i`, options.c:2770-2775). Before the fix
+    /// these letters flowed through `parse_info_flag`, so a pull/push flag string
+    /// spuriously set `info_flags.itemize` from the inc-recurse `i` capability.
+    #[test]
+    fn capability_suffix_letters_are_not_info_flags() {
+        // Upstream release capability string on a pull/push (options.c:3021).
+        let with_caps = ParsedServerFlags::parse("-logDtpre.LsfxCIvu").unwrap();
+        assert_eq!(
+            with_caps.info_flags,
+            InfoFlags::default(),
+            "capability letters must not set any info-output flag"
+        );
+
+        // The inc-recurse capability `i` must not be read as `--itemize`.
+        let with_inc_recurse = ParsedServerFlags::parse("-logDtpre.iLsfxCIvu").unwrap();
+        assert!(
+            !with_inc_recurse.info_flags.itemize,
+            "the inc-recurse `i` capability is not the itemize output flag"
+        );
+        assert_eq!(with_inc_recurse.info_flags, InfoFlags::default());
+
+        // The private oc `Z` consecutive-match capability letter is likewise
+        // inert here - it is negotiated by `setup::capability`, not an info flag.
+        let with_private = ParsedServerFlags::parse("-logDtpre.LsfxCIvuZ").unwrap();
+        assert_eq!(with_private.info_flags, InfoFlags::default());
+
+        // The surrounding real transfer letters still parse across all three.
+        for flags in [&with_caps, &with_inc_recurse, &with_private] {
+            assert!(flags.links);
+            assert!(flags.recursive);
+            assert!(
+                flags.rsh,
+                "`e` still sets rsh before the capability payload"
+            );
+        }
+    }
+
+    /// Sanity floor for the guard above: a genuine itemize request, modeled the
+    /// way it actually reaches the server (as an explicit `info_flags.itemize`,
+    /// set from the long-form `--log-format=%i` in the CLI/daemon server path),
+    /// does set the output flag - so the guard is not vacuously green because
+    /// nothing can ever set it.
+    #[test]
+    fn genuine_info_itemize_still_sets_the_flag() {
+        let mut flags = ParsedServerFlags::parse("-logDtpre.iLsfxCIvu").unwrap();
+        assert!(!flags.info_flags.itemize);
+        flags.info_flags.itemize = true;
         assert!(flags.info_flags.itemize);
-        assert!(flags.info_flags.log_format);
-        assert!(flags.info_flags.stats);
-        assert!(flags.info_flags.flist);
-        assert!(flags.info_flags.checksum);
-        assert!(flags.info_flags.compress);
     }
 
     /// GUARD (#191/#192): a `--server` compact flag string carrying the
