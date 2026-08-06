@@ -76,8 +76,10 @@ pub use greeting::{
 };
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every consumer
 pub use lines::{
-    LegacyDaemonMessage, format_legacy_daemon_message, parse_legacy_daemon_message,
-    parse_legacy_error_message, parse_legacy_warning_message, write_legacy_daemon_message,
+    LegacyDaemonMessage, format_daemon_auth_response, format_daemon_module_listing,
+    format_legacy_daemon_message, parse_daemon_auth_response, parse_daemon_module_listing,
+    parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
+    write_legacy_daemon_message,
 };
 
 /// Builds a [`NegotiationError::MalformedLegacyGreeting`] from a trimmed legacy line.

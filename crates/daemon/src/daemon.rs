@@ -56,8 +56,9 @@ use logging_sink::MessageSink;
 use protocol::{
     AdvertisedDigests, EARLY_INPUT_CMD, EARLY_INPUT_MAX_SIZE, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion, filters::FilterRuleWireFormat,
-    format_legacy_daemon_message, iconv::FilenameConverter, is_version_banner,
-    missing_greeting_token, parse_legacy_daemon_greeting_details, parse_legacy_daemon_message,
+    format_daemon_module_listing, format_legacy_daemon_message, iconv::FilenameConverter,
+    is_version_banner, missing_greeting_token, parse_daemon_auth_response,
+    parse_legacy_daemon_greeting_details, parse_legacy_daemon_message,
 };
 
 use crate::{

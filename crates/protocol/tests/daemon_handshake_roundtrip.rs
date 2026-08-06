@@ -37,7 +37,8 @@
 
 use protocol::{
     AdvertisedDigests, LegacyDaemonMessage, ProtocolVersion, daemon_auth_digest_list,
-    format_legacy_daemon_message, parse_legacy_daemon_greeting_details,
+    format_daemon_auth_response, format_daemon_module_listing, format_legacy_daemon_message,
+    parse_daemon_auth_response, parse_daemon_module_listing, parse_legacy_daemon_greeting_details,
     parse_legacy_daemon_message, parse_legacy_error_message,
 };
 
@@ -164,39 +165,25 @@ fn exit_message_round_trips_and_matches_upstream_bytes() {
 
 // -- Module listing lines --------------------------------------------------
 //
-// The module-name lines are the one boundary here NOT funneled through a shared
-// protocol helper: the daemon emits them with an inline
-// `format!("{name:<15}\t{comment}\n")` (`daemon/sections/module_access/listing.rs`,
-// `format_module_listing_line`) and the client parses them with an inline
-// `split_once('\t')` (`ModuleListEntry::from_line` in
-// `core/src/client/module_list/listing.rs`). Both are private, so these tests
-// reproduce the exact emit format and the exact split the two sides use, pin the
-// upstream bytes, and confirm the split recovers what the format wrote. The
+// The daemon emits each module line with `protocol::format_daemon_module_listing`
+// (`daemon/sections/module_access/listing.rs`) and the client parses it with
+// `protocol::parse_daemon_module_listing` (`ModuleListEntry::from_line` in
+// `core/src/client/module_list/listing.rs`). Both sides funnel through the same
+// shared protocol helpers, so these tests drive the real emit/parse pair, pin
+// the upstream bytes, and confirm the parse recovers what the format wrote. The
 // listing is bracketed on the wire by the shared `@RSYNCD: EXIT` terminator,
 // covered above.
 
-/// Reproduces the daemon's `format_module_listing_line`: `%-15s\t%s\n`.
-///
-/// upstream: clientserver.c:1268 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
-fn emit_module_listing_line(name: &str, comment: &str) -> String {
-    format!("{name:<15}\t{comment}\n")
-}
-
-/// Reproduces the client's `ModuleListEntry::from_line` split, returning
-/// `(name, comment)` with an empty comment mapped to `None`.
-fn parse_module_listing_line(line: &str) -> (String, Option<String>) {
-    let line = line.trim_end_matches(['\r', '\n']);
-    match line.split_once('\t') {
-        Some((name, comment)) => (
-            name.to_owned(),
-            if comment.is_empty() {
-                None
-            } else {
-                Some(comment.to_owned())
-            },
-        ),
-        None => (line.to_owned(), None),
-    }
+/// Maps `parse_daemon_module_listing`'s `(name, comment)` to the client's
+/// `ModuleListEntry` view, where an empty comment field is absent (`None`).
+fn parse_module_entry(line: &str) -> (String, Option<String>) {
+    let (name, comment) = parse_daemon_module_listing(line);
+    let comment = if comment.is_empty() {
+        None
+    } else {
+        Some(comment.to_owned())
+    };
+    (name.to_owned(), comment)
 }
 
 /// A short module name is padded to 15 columns, tab-separated from its comment,
@@ -204,16 +191,16 @@ fn parse_module_listing_line(line: &str) -> (String, Option<String>) {
 /// itself is preserved in the field, but the parser strips it from the name).
 #[test]
 fn module_listing_line_round_trips_and_matches_upstream_layout() {
-    let line = emit_module_listing_line("data", "shared data");
+    let line = format_daemon_module_listing("data", "shared data");
 
     // Golden: name left-justified in a 15-wide field, TAB, comment, newline.
     // "data" + 11 spaces = 15 columns.
     assert_eq!(line, "data           \tshared data\n");
 
-    let (name, comment) = parse_module_listing_line(&line);
+    let (name, comment) = parse_module_entry(&line);
     // The daemon left-pads the name field, so the recovered name carries the
-    // padding exactly as the client's `split_once('\t')` yields it. The client
-    // never trims it either; this pins that observable behaviour.
+    // padding exactly as the client's parse yields it. The client never trims
+    // it either; this pins that observable behaviour.
     assert_eq!(name, "data           ");
     assert_eq!(comment.as_deref(), Some("shared data"));
 }
@@ -222,10 +209,10 @@ fn module_listing_line_round_trips_and_matches_upstream_layout() {
 /// comment; the client maps the empty comment to `None`.
 #[test]
 fn module_listing_line_without_comment_maps_to_none() {
-    let line = emit_module_listing_line("backup", "");
+    let line = format_daemon_module_listing("backup", "");
     assert_eq!(line, "backup         \t\n");
 
-    let (name, comment) = parse_module_listing_line(&line);
+    let (name, comment) = parse_module_entry(&line);
     assert_eq!(name, "backup         ");
     assert_eq!(comment, None);
 }
@@ -234,10 +221,10 @@ fn module_listing_line_without_comment_maps_to_none() {
 /// matching printf's `%-15s` minimum-width (not maximum) semantics.
 #[test]
 fn module_listing_line_long_name_is_not_truncated() {
-    let line = emit_module_listing_line("a-very-long-module-name", "c");
+    let line = format_daemon_module_listing("a-very-long-module-name", "c");
     assert_eq!(line, "a-very-long-module-name\tc\n");
 
-    let (name, comment) = parse_module_listing_line(&line);
+    let (name, comment) = parse_module_entry(&line);
     assert_eq!(name, "a-very-long-module-name");
     assert_eq!(comment.as_deref(), Some("c"));
 }
@@ -245,17 +232,16 @@ fn module_listing_line_long_name_is_not_truncated() {
 // -- Auth challenge / response --------------------------------------------
 
 /// The daemon emits its auth challenge as
-/// `LegacyDaemonMessage::AuthRequired { module: Some(challenge) }`
-/// (`authentication.rs:110`, the challenge occupies the value slot upstream
-/// calls the module name), and the client parses it back into the same variant
-/// (`listing.rs:312`), reading the value as the challenge. The bytes match
+/// `LegacyDaemonMessage::AuthRequired { challenge: Some(challenge) }`
+/// (`authentication.rs`), and the client parses it back into the same variant
+/// (`listing.rs`), reading the value as the challenge. The bytes match
 /// upstream's `@RSYNCD: AUTHREQD <challenge>\n`.
 #[test]
 fn authreqd_challenge_round_trips_and_matches_upstream_bytes() {
     // A representative base64 challenge (unpadded, as `gen_challenge` emits).
     let challenge = "dGVzdGNoYWxsZW5nZQ";
     let message = LegacyDaemonMessage::AuthRequired {
-        module: Some(challenge),
+        challenge: Some(challenge),
     };
     let emitted = format_legacy_daemon_message(message);
 
@@ -266,27 +252,32 @@ fn authreqd_challenge_round_trips_and_matches_upstream_bytes() {
     assert_eq!(
         parsed,
         LegacyDaemonMessage::AuthRequired {
-            module: Some(challenge),
+            challenge: Some(challenge),
         },
     );
     assert_eq!(format_legacy_daemon_message(parsed), emitted);
 }
 
 /// An `AUTHREQD` with no trailing value (the older split-handshake form) round-
-/// trips to `module: None`.
+/// trips to `challenge: None`.
 #[test]
 fn authreqd_without_challenge_round_trips() {
-    let emitted = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired { module: None });
+    let emitted =
+        format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired { challenge: None });
     assert_eq!(emitted, "@RSYNCD: AUTHREQD\n");
 
     let parsed = parse_legacy_daemon_message(&emitted).expect("client parses bare AUTHREQD");
-    assert_eq!(parsed, LegacyDaemonMessage::AuthRequired { module: None });
+    assert_eq!(
+        parsed,
+        LegacyDaemonMessage::AuthRequired { challenge: None }
+    );
 }
 
-/// Reproduces the client's auth-response emit (`send_daemon_auth_credentials`
-/// in `core/src/client/module_list/auth.rs`): `<user> <response>\n`, and the
-/// daemon's `splitn(2, whitespace)` parse (`authentication.rs:124`). Both are
-/// private to their crates, so this pins the shared wire contract between them.
+/// Drives the shared auth-response helpers: the client emits `<user> <response>`
+/// with `format_daemon_auth_response` (`send_daemon_auth_credentials` in
+/// `core/src/client/module_list/auth.rs`) and the daemon parses it with
+/// `parse_daemon_auth_response` (`authentication.rs`). This pins the shared wire
+/// contract between them.
 ///
 /// upstream: authenticate.c:375 `io_printf(fd, "%s %s\n", user, pass2)`.
 #[test]
@@ -294,18 +285,11 @@ fn auth_response_line_round_trips_and_matches_upstream_bytes() {
     let user = "alice";
     let response = "cmVzcG9uc2VoYXNo";
 
-    let emitted = format!("{user} {response}\n");
+    let emitted = format_daemon_auth_response(user, response);
     assert_eq!(emitted, "alice cmVzcG9uc2VoYXNo\n");
 
     // Daemon-side split: first whitespace token is the user, the rest the hash.
-    let line = emitted.trim_end_matches('\n');
-    let mut segments = line.splitn(2, |ch: char| ch.is_ascii_whitespace());
-    let parsed_user = segments.next().unwrap_or_default();
-    let parsed_response = segments
-        .next()
-        .map(|s| s.trim_start_matches(|ch: char| ch.is_ascii_whitespace()))
-        .unwrap_or_default();
-
+    let (parsed_user, parsed_response) = parse_daemon_auth_response(&emitted);
     assert_eq!(parsed_user, user);
     assert_eq!(parsed_response, response);
 }

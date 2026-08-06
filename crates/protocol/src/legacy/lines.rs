@@ -29,15 +29,18 @@ pub enum LegacyDaemonMessage<'a> {
         /// whitespace trimmed from both ends.
         flags: &'a str,
     },
-    /// The daemon requires authentication before continuing. Upstream rsync
-    /// includes the requested module name after the keyword (e.g.
-    /// `@RSYNCD: AUTHREQD module`). The module is optional in practice because
-    /// older daemons sometimes omit it when the request has not yet selected a
-    /// module. The parser therefore surfaces it as an optional borrowed
-    /// substring.
+    /// The daemon requires authentication before continuing and supplies the
+    /// base64 challenge inline after the keyword (e.g.
+    /// `@RSYNCD: AUTHREQD <challenge>`). The value is optional because older
+    /// daemons staged the challenge in a separate `@RSYNCD: AUTH <challenge>`
+    /// banner and sent a bare `AUTHREQD` first; the parser surfaces the inline
+    /// challenge as an optional borrowed substring.
+    ///
+    /// upstream: authenticate.c:245 - leader `"@RSYNCD: AUTHREQD "` followed by
+    /// the challenge, not a module name.
     AuthRequired {
-        /// Optional module name provided by the daemon.
-        module: Option<&'a str>,
+        /// Base64 challenge supplied inline by the daemon, when present.
+        challenge: Option<&'a str>,
     },
     /// Authentication challenge emitted after [`LegacyDaemonMessage::AuthRequired`].
     ///
@@ -99,7 +102,7 @@ pub fn parse_legacy_daemon_message(
             const AUTHREQD_KEYWORD: &str = "AUTHREQD";
             if let Some(rest) = payload.strip_prefix(AUTHREQD_KEYWORD) {
                 if rest.is_empty() {
-                    return Ok(LegacyDaemonMessage::AuthRequired { module: None });
+                    return Ok(LegacyDaemonMessage::AuthRequired { challenge: None });
                 }
 
                 if !rest
@@ -110,13 +113,13 @@ pub fn parse_legacy_daemon_message(
                     return Ok(LegacyDaemonMessage::Other(payload));
                 }
 
-                let module = rest.trim();
-                let module = if module.is_empty() {
+                let challenge = rest.trim();
+                let challenge = if challenge.is_empty() {
                     None
                 } else {
-                    Some(module)
+                    Some(challenge)
                 };
-                return Ok(LegacyDaemonMessage::AuthRequired { module });
+                return Ok(LegacyDaemonMessage::AuthRequired { challenge });
             }
 
             const AUTH_KEYWORD: &str = "AUTH";
@@ -279,8 +282,8 @@ pub fn write_legacy_daemon_message<W: FmtWrite>(
 
             writer.write_char('\n')
         }
-        LegacyDaemonMessage::AuthRequired { module } => {
-            write_prefixed_keyword(writer, "AUTHREQD", module)
+        LegacyDaemonMessage::AuthRequired { challenge } => {
+            write_prefixed_keyword(writer, "AUTHREQD", challenge)
         }
         LegacyDaemonMessage::AuthChallenge { challenge } => {
             write_prefixed_keyword(writer, "AUTH", Some(challenge))
@@ -302,6 +305,101 @@ pub fn format_legacy_daemon_message(message: LegacyDaemonMessage<'_>) -> String 
     let mut rendered = String::with_capacity(LEGACY_DAEMON_PREFIX.len() + 32);
     write_legacy_daemon_message(&mut rendered, message).expect("String implements fmt::Write");
     rendered
+}
+
+/// Formats a single daemon module-listing line in upstream's `%-15s\t%s\n`
+/// layout: the module name left-justified in a 15-column minimum-width field, a
+/// TAB separator, the comment, and a trailing newline. A name longer than 15
+/// columns is not truncated; the field simply grows (printf minimum-width, not
+/// maximum). This is the emit half whose inverse is
+/// [`parse_daemon_module_listing`].
+///
+/// upstream: clientserver.c:1268 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::format_daemon_module_listing;
+///
+/// assert_eq!(format_daemon_module_listing("data", "shared data"), "data           \tshared data\n");
+/// ```
+#[must_use]
+pub fn format_daemon_module_listing(name: &str, comment: &str) -> String {
+    format!("{name:<15}\t{comment}\n")
+}
+
+/// Parses a daemon module-listing line into its `(name, comment)` fields, the
+/// inverse of [`format_daemon_module_listing`]. Trailing CR/LF are removed. The
+/// name is everything before the first TAB and the comment everything after it;
+/// a line with no TAB is all name and an empty comment. The 15-column padding
+/// the daemon writes into the name field is preserved verbatim - upstream's
+/// client does not re-justify the received name - so callers that treat an empty
+/// comment as "absent" should test `comment.is_empty()` themselves.
+///
+/// upstream: clientserver.c - the client prints each received listing line as-is.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::parse_daemon_module_listing;
+///
+/// assert_eq!(parse_daemon_module_listing("backup         \t\n"), ("backup         ", ""));
+/// assert_eq!(parse_daemon_module_listing("solo"), ("solo", ""));
+/// ```
+#[must_use]
+pub fn parse_daemon_module_listing(line: &str) -> (&str, &str) {
+    let line = line.trim_end_matches(['\r', '\n']);
+    match line.split_once('\t') {
+        Some((name, comment)) => (name, comment),
+        None => (line, ""),
+    }
+}
+
+/// Formats a daemon auth-response line the client sends back to the server:
+/// `<user> <response>\n`, a single space between the username and the base64
+/// digest response, terminated by a newline. This is the emit half whose inverse
+/// is [`parse_daemon_auth_response`].
+///
+/// upstream: authenticate.c:375 `io_printf(f_out, "%s %s\n", user, pass2)`.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::format_daemon_auth_response;
+///
+/// assert_eq!(format_daemon_auth_response("alice", "cmVzcG9uc2U"), "alice cmVzcG9uc2U\n");
+/// ```
+#[must_use]
+pub fn format_daemon_auth_response(user: &str, response: &str) -> String {
+    format!("{user} {response}\n")
+}
+
+/// Parses a daemon auth-response line into `(user, response)`, the inverse of
+/// [`format_daemon_auth_response`]. The first ASCII-whitespace run separates the
+/// two fields and any additional leading whitespace on the response is trimmed;
+/// trailing CR/LF are removed. A line with no separator yields an empty
+/// response, which the daemon rejects as a failed authentication.
+///
+/// upstream: authenticate.c - `auth_server()` reads the line and splits it into
+/// the username and the response digest.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::parse_daemon_auth_response;
+///
+/// assert_eq!(parse_daemon_auth_response("alice cmVzcG9uc2U\n"), ("alice", "cmVzcG9uc2U"));
+/// assert_eq!(parse_daemon_auth_response("bare"), ("bare", ""));
+/// ```
+#[must_use]
+pub fn parse_daemon_auth_response(line: &str) -> (&str, &str) {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let mut segments = line.splitn(2, |ch: char| ch.is_ascii_whitespace());
+    let user = segments.next().unwrap_or_default();
+    let response = segments.next().map_or("", |rest| {
+        rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace())
+    });
+    (user, response)
 }
 
 #[cfg(test)]
