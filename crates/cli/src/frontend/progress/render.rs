@@ -976,11 +976,24 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         // engine cleanup pass.
         if matches!(kind, ClientEventKind::EntryDeleted) {
             if info_gte(InfoFlag::Del, 1) {
-                let mut line = b"deleting ".to_vec();
-                line.extend_from_slice(&escape_path(event.relative_path(), eight_bit_output));
-                if event.is_directory() {
-                    line.push(b'/');
+                let mut name = escape_path(event.relative_path(), eight_bit_output);
+                // upstream: flist.c f_name() emits POSIX forward-slash
+                // separators regardless of host OS. The stored relative path
+                // keeps the platform-native separator, so normalize Windows
+                // backslashes at the rendering boundary - mirroring
+                // `verbose_listing_name` - so `deleting %n` matches upstream
+                // and the other verbose rows on every platform.
+                #[cfg(windows)]
+                for byte in name.iter_mut() {
+                    if *byte == b'\\' {
+                        *byte = b'/';
+                    }
                 }
+                if event.is_directory() {
+                    name.push(b'/');
+                }
+                let mut line = b"deleting ".to_vec();
+                line.extend_from_slice(&name);
                 stdout.write_all(&line)?;
                 stdout.write_all(b"\n")?;
             }
