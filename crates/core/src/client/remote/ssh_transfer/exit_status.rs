@@ -138,3 +138,57 @@ pub(in crate::client::remote) fn map_child_exit_status(
         None => ExitCode::WaitChild,
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_exit_status_tests {
+    use super::map_child_exit_status;
+    use crate::exit_code::ExitCode;
+    use std::os::windows::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    // #202: On Windows the `#[cfg(unix)]` signal branch of `map_child_exit_status`
+    // is compiled out, so every non-success child status is classified purely by
+    // its exit code. These pins assert the upstream `main.c:221` contract that
+    // `WEXITSTATUS` is propagated raw into the worst-wins comparison
+    // (cleanup.c:150), driving the mapper directly (no live SSH needed).
+
+    #[test]
+    fn windows_exit_zero_maps_to_ok() {
+        assert_eq!(map_child_exit_status(ExitStatus::from_raw(0)), ExitCode::Ok);
+    }
+
+    #[test]
+    fn windows_command_not_found_127_maps_to_named_variant() {
+        // An SSH "command not found" child exit (127) IS a known RERR_ code
+        // (upstream errcode.h:64 RERR_CMD_NOTFOUND = 127), so it maps to the
+        // named `ExitCode::CommandNotFound` - not `Other(127)`. Its numeric value
+        // is still preserved (CommandNotFound -> 127), so it round-trips verbatim
+        // into the worst-wins comparison; only the representation is named.
+        let mapped = map_child_exit_status(ExitStatus::from_raw(127));
+        assert_eq!(mapped, ExitCode::CommandNotFound);
+        assert_eq!(mapped.as_i32(), 127);
+    }
+
+    #[test]
+    fn windows_connection_failure_255_round_trips_verbatim() {
+        // An SSH connection failure (255) likewise round-trips verbatim.
+        assert_eq!(
+            map_child_exit_status(ExitStatus::from_raw(255)),
+            ExitCode::Other(255)
+        );
+    }
+
+    #[test]
+    fn windows_known_rerr_code_keeps_its_named_variant() {
+        // A known RERR_* code (12 = `RERR_STREAMIO`) maps to its named variant,
+        // not `ExitCode::Other`, but its numeric value is preserved so the
+        // worst-wins comparison still sees 12.
+        let mapped = map_child_exit_status(ExitStatus::from_raw(12));
+        assert_eq!(mapped, ExitCode::from_raw(12));
+        assert_eq!(mapped.as_i32(), 12);
+        assert!(
+            !matches!(mapped, ExitCode::Other(_)),
+            "a known RERR_* code must keep its named variant, not fall to Other"
+        );
+    }
+}

@@ -262,3 +262,43 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_console_ctrl_tests {
+    use super::register_signal_handlers;
+    use crate::error::SignalRegistrationError;
+    use std::sync::atomic::Ordering;
+
+    // #204: The Windows console control handler is installed via
+    // `SetConsoleCtrlHandler` and stores its flag references in process-global
+    // `OnceLock` statics so the `extern "system"` callback can reach them. That
+    // makes registration one-shot per process. nextest runs each test in its own
+    // process, so this test owns a fresh registration and can assert both the
+    // successful install (flags start unset) and the one-shot refusal on a
+    // second call - a regression to a panic, a silent re-register, or a stale
+    // handler would fail here.
+    #[test]
+    fn windows_console_ctrl_registration_is_one_shot() {
+        let flags = register_signal_handlers().expect("first console-ctrl registration succeeds");
+        assert!(
+            !flags.shutdown.load(Ordering::Relaxed),
+            "shutdown flag must start unset after a fresh registration"
+        );
+        assert!(
+            !flags.graceful_exit.load(Ordering::Relaxed),
+            "graceful_exit flag must start unset after a fresh registration"
+        );
+
+        let err = register_signal_handlers()
+            .expect_err("second registration in the same process must be refused");
+        let inner = err
+            .get_ref()
+            .expect("the refusal wraps a SignalRegistrationError");
+        assert!(
+            inner
+                .downcast_ref::<SignalRegistrationError>()
+                .is_some_and(|e| matches!(e, SignalRegistrationError::AlreadyRegistered)),
+            "second registration must surface AlreadyRegistered, got: {inner}"
+        );
+    }
+}
