@@ -453,6 +453,95 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
     );
 }
 
+/// A local `--no-whole-file` transfer must print the same single `total:` line,
+/// carrying the delta matcher's REAL counters rather than hardcoded zeros.
+///
+/// upstream: `match_report()` (match.c:439-448) is gated on
+/// `DEBUG_GTE(DELTASUM, 1)` alone - `--whole-file` does not suppress the line,
+/// it merely leaves the counters at zero. Two regressions this pins, both of
+/// which oc has actually shipped:
+///
+/// 1. Gating the emitter on whole-file mode, which dropped the line entirely
+///    from every `--no-whole-file` local transfer.
+/// 2. Hardcoding `matches=0  hash_hits=0  false_alarms=0`, which is only ever
+///    correct when no block matching ran.
+///
+/// MEASURED against upstream rsync 3.4.4 on this exact fixture (700 'A' + 700
+/// 'B' basis, 700 'A' + 700 'C' source):
+///
+/// ```text
+/// total: matches=1  hash_hits=1  false_alarms=0 data=700
+/// ```
+///
+/// The exactly-once assertion is the guard against a second emitter: upstream
+/// prints the line from one place (sender.c:491), so any additional oc-side
+/// emitter - for example an engine `debug_log!` flushed dead-last - must fail
+/// here rather than silently duplicate or displace the line.
+#[test]
+fn level_2_local_delta_total_reports_real_match_counters() {
+    use filetime::{FileTime, set_file_mtime};
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("src");
+    let destination = tmp.path().join("dst");
+    std::fs::create_dir(&source).expect("mkdir src");
+    std::fs::create_dir(&destination).expect("mkdir dst");
+
+    // Basis = 700 'A' + 700 'B'; source = 700 'A' + 700 'C'. The leading block
+    // is reusable, so the matcher confirms exactly one match and sends the
+    // changed 700-byte suffix as literal data.
+    let mut basis = vec![b'A'; 700];
+    basis.extend(std::iter::repeat_n(b'B', 700));
+    let mut updated = vec![b'A'; 700];
+    updated.extend(std::iter::repeat_n(b'C', 700));
+    std::fs::write(destination.join("f.bin"), &basis).expect("write basis");
+    // Backdate the basis so the quick-check (same size + mtime) cannot skip it.
+    set_file_mtime(destination.join("f.bin"), FileTime::from_unix_time(1, 0))
+        .expect("backdate basis");
+    std::fs::write(source.join("f.bin"), &updated).expect("write source");
+
+    let mut src_arg = source.clone().into_os_string();
+    src_arg.push("/");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("-vv"),
+        OsString::from("--no-whole-file"),
+        src_arg,
+        destination.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    let rendered = String::from_utf8(stdout).expect("utf8");
+
+    let total = rendered
+        .find("total: matches=1  hash_hits=1  false_alarms=0 data=700")
+        .unwrap_or_else(|| panic!("missing or malformed delta total: line, got: {rendered:?}"));
+    let name = rendered
+        .rfind("f.bin")
+        .unwrap_or_else(|| panic!("missing name list, got: {rendered:?}"));
+    let sent = rendered
+        .find("\nsent ")
+        .unwrap_or_else(|| panic!("missing summary trailer, got: {rendered:?}"));
+    assert!(
+        name < total && total < sent,
+        "total: line must follow the name list and precede the summary trailer, \
+         got: {rendered:?}"
+    );
+    assert_eq!(
+        rendered.matches("total: matches=").count(),
+        1,
+        "the match_report total: line must be emitted exactly once, got: {rendered:?}"
+    );
+
+    assert_eq!(
+        std::fs::read(destination.join("f.bin")).expect("read dest"),
+        updated,
+        "the delta must still reconstruct the file byte-exactly"
+    );
+}
+
 /// Verifies that -vvv produces output that is at least as verbose as -vv.
 /// It should still contain the descriptor prefix and totals.
 #[test]

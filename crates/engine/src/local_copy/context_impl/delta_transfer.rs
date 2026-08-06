@@ -112,6 +112,13 @@ impl<'a> CopyContext<'a> {
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
+        // upstream: match.c:363-366 match_sums() zeroes the per-file counters
+        // before scanning; the loop tallies confirmed matches inline and
+        // hash_hits/false_alarms through the counted probe, folded into the run
+        // totals at the end for the `-vv` `total:` line (match.c:439
+        // match_report()).
+        let mut probe = ProbeCounters::default();
+        let mut file_matches = 0u64;
         let mut sparse_state = SparseWriteState::default();
         sparse_state.set_preallocated_len(preallocated_len);
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
@@ -168,7 +175,10 @@ impl<'a> CopyContext<'a> {
             }
 
             let digest = rolling.digest();
-            if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
+            if let Some(block_index) =
+                index.find_match_window_counted(digest, &window, &mut scratch, &mut probe)
+            {
+                file_matches = file_matches.saturating_add(1);
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
                     if inplace_mode {
@@ -297,6 +307,11 @@ impl<'a> CopyContext<'a> {
             index.find_tail_match_window(digest, &window, &mut scratch)
         };
         if let Some(block_index) = tail_matched_block {
+            // A matched trailing partial block is one confirmed match, and its
+            // bucket lookup is one hash hit. upstream: match.c hash_search()
+            // counts the shrunk-window tail probe the same as any other.
+            file_matches = file_matches.saturating_add(1);
+            probe.hash_hits = probe.hash_hits.saturating_add(1);
             if !pending_literals.is_empty() {
                 let flushed_len = pending_literals.len();
                 if inplace_mode {
@@ -449,6 +464,11 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
         }
+
+        // upstream: match.c:433-435 folds the per-file counters into the run
+        // totals after match_sums() returns; do the same so the end-of-run
+        // `-vv` `total:` line reports cumulative figures.
+        self.summary.record_delta_probe(file_matches, probe);
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {

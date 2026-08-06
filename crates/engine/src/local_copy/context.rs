@@ -42,7 +42,7 @@ use super::{
     trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
     write_sparse_chunk,
 };
-use crate::delta::DeltaSignatureIndex;
+use crate::delta::{DeltaSignatureIndex, ProbeCounters};
 use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,

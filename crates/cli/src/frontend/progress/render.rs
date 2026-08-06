@@ -91,9 +91,9 @@ pub(crate) struct DeltaTransmissionSummary {
     /// a local transfer. upstream: generator.c:2291-2294.
     pub notice: Option<DeltaTransmissionState>,
     /// Whether to print the `match_report()` `total:` line after the name list.
-    /// `true` only at `DEBUG_GTE(DELTASUM, 1)` on a whole-file local transfer,
-    /// where every match count is provably zero and `data` is the literal bytes
-    /// copied (read from the summary). upstream: match.c:439-446.
+    /// `true` at `DEBUG_GTE(DELTASUM, 1)` on a local transfer, whole-file or
+    /// not; the counters and `data` are read from the summary.
+    /// upstream: match.c:439-446.
     pub emit_total: bool,
 }
 
@@ -279,14 +279,25 @@ pub(crate) fn emit_transfer_summary(
 
     // upstream: match.c:439-446 match_report() - the sender prints the
     // cumulative match totals once at DEBUG_GTE(DELTASUM, 1) (first active at
-    // -vv) after send_files() finishes and before output_summary(). On a
-    // whole-file local transfer no block matching runs, so matches, hash_hits
-    // and false_alarms are all zero; `data` is the literal bytes copied, which
-    // upstream renders with big_num() (plain digits, no separator: inums.h:19).
+    // -vv) after send_files() finishes (sender.c:491) and before
+    // output_summary(). The gate is the debug level alone: a whole-file
+    // transfer still prints the line, with the match counters left at their
+    // zero initial values. `data` is the cumulative literal-byte count
+    // (`stats.literal_data`), which upstream renders with big_num() (plain
+    // digits, no separator: inums.h:19).
+    //
+    // This is the sole `total:` emitter. Upstream prints it from exactly one
+    // place; oc renders the local-copy name list post-hoc, so emitting it here
+    // is what puts it at upstream's position (after the name list, before the
+    // summary trailer) instead of dead-last through the deferred diagnostic
+    // flush.
     if delta_notice.emit_total {
         writeln!(
             writer,
-            "total: matches=0  hash_hits=0  false_alarms=0 data={}",
+            "total: matches={}  hash_hits={}  false_alarms={} data={}",
+            summary.delta_matches(),
+            summary.delta_hash_hits(),
+            summary.delta_false_alarms(),
             summary.bytes_copied()
         )?;
     }
