@@ -166,6 +166,7 @@ impl<'a> CopyContext<'a> {
             multi_source: false,
             verified_parents: HashMap::new(),
             emitted_implied_dirs: HashSet::new(),
+            expanded_source_roots: Vec::new(),
             batch_flist_writer,
             batch_delta_buf,
             batch_delta_entries: Vec::new(),
