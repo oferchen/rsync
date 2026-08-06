@@ -479,6 +479,54 @@ mod tests {
         assert_eq!(consumer.join().unwrap(), 42);
     }
 
+    /// An idle producer must leave the consumer *parked* - blocked on the
+    /// condvar at ~0 CPU - not busy-spinning at the pipeline constraint.  This
+    /// locks in the bounded-spin-then-park wait strategy (#7033): once the
+    /// consumer parks on an empty queue it must STAY parked for a single, stable
+    /// park episode until the producer pushes, then wake exactly once and
+    /// deliver the item.  Matters because a regression back to a userspace spin
+    /// burns a core while the pipeline waits on its slowest stage; the park
+    /// counter is the observable that distinguishes blocking from spinning.
+    ///
+    /// The counter is asserted rather than wall-clock CPU% (which is flaky): a
+    /// spin regression leaves it pinned at 0 (never parks, so `wait_for` times
+    /// out and fails), while a busy re-park regression makes it climb during the
+    /// idle window; a genuinely blocked consumer holds it at exactly 1.  The
+    /// idle window samples the counter, it is not a synchronization primitive -
+    /// `park_while` increments `parks` once and only returns on a real wake, so
+    /// the count is deterministic regardless of scheduling.
+    ///
+    /// oc-specific infrastructure: the SPSC network -> disk pipeline has no
+    /// upstream rsync analog (upstream has no such threaded pipeline).
+    #[test]
+    fn idle_producer_keeps_consumer_parked() {
+        let (tx, rx) = channel::<i32>(4);
+        let consumer = thread::spawn(move || rx.recv().unwrap());
+        // Wait until the consumer has actually parked on the empty queue.
+        wait_for("consumer to park", || tx.consumer_parks() == 1);
+        // Hold the producer idle: the park episode count must stay pinned at
+        // exactly 1 across the whole window.  Any climb betrays a busy re-park
+        // or spin regression; a stall at 0 could not reach here at all.
+        let idle_until = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < idle_until {
+            assert_eq!(
+                tx.consumer_parks(),
+                1,
+                "consumer re-parked while the producer was idle - busy-wait regression"
+            );
+            thread::yield_now();
+        }
+        // The producer finally pushes: the parked consumer wakes exactly once
+        // and delivers the item, with no additional park episode.
+        tx.send(7).unwrap();
+        assert_eq!(consumer.join().unwrap(), 7);
+        assert_eq!(
+            tx.consumer_parks(),
+            1,
+            "consumer parked more than once for a single push"
+        );
+    }
+
     /// A producer parked on a full queue must be woken by a pop and complete
     /// its send (no lost wakeup on the full → non-full edge).
     #[test]
