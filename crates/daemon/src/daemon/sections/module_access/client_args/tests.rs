@@ -175,12 +175,38 @@ mod output_verbosity_limit_tests {
         // must still leave the `-e` payload byte-identical, because that payload
         // is what the capability decoder turns into the compat flags written on
         // the wire (compat.c:712-738).
-        let mut cfg = parse(DEFAULT_CLIENT_BUNDLE);
-        apply_output_verbosity_limit(&mut cfg, 0);
-        assert_eq!(
-            cfg.flag_string, DEFAULT_CLIENT_BUNDLE,
-            "capping verbosity must cap the level, not edit the client's option string",
-        );
+        // `1` is the shipped default (upstream daemon-parm.txt:49), `0` the
+        // strongest limit an operator can set, `-1` the below-zero arm.
+        for max_verbosity in [-1, 0, 1, 2, 5, 9] {
+            for bundle in [
+                DEFAULT_CLIENT_BUNDLE,
+                "-vlogDtpre.iLsfxCIvu",
+                "-vvvlogDtpre.iLsfxCIvu",
+            ] {
+                let mut cfg = parse(bundle);
+                apply_output_verbosity_limit(&mut cfg, max_verbosity);
+                assert_eq!(
+                    cfg.flag_string, bundle,
+                    "max verbosity {max_verbosity} must cap the level, not edit the \
+                     client's option string",
+                );
+                // Spelled out rather than left implicit in the equality above:
+                // every capability letter the peer advertised has to survive,
+                // because each one is a compat-flag bit (compat.c:720-733).
+                let payload = cfg
+                    .flag_string
+                    .split_once('e')
+                    .expect("bundle carries an -e argument")
+                    .1;
+                for letter in ['i', 'L', 's', 'f', 'x', 'C', 'I', 'v', 'u'] {
+                    assert!(
+                        payload.contains(letter),
+                        "capability letter `{letter}` was stripped at \
+                         max verbosity {max_verbosity}",
+                    );
+                }
+            }
+        }
     }
 
     #[test]
