@@ -89,6 +89,47 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Delivers the diagnostics the pipelined receiver queued (failed
+    /// verification, per-file transfer errors) to the sink upstream's
+    /// `rwrite()` selects for this process.
+    ///
+    /// A SERVER receiver (the far end of a push) frames each line for the
+    /// client; a CLIENT receiver (a pull) owns the terminal and writes to its
+    /// own stdout/stderr. Sending a frame from a client receiver is not merely
+    /// a cosmetic slip: the peer is a `--server --sender` whose stdout IS the
+    /// wire, so the text it renders lands in the middle of the multiplexed
+    /// stream and desyncs the very phase-2 redo the warning announces.
+    ///
+    /// The queued text carries no trailing newline (it is asserted verbatim by
+    /// the queueing unit tests); upstream's `rprintf` format strings end in
+    /// `\n`, so the terminator is appended here, at the single point where the
+    /// line becomes output.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:251-346` - `rwrite()`: `am_server` sends the frame and returns,
+    ///   otherwise `FERROR_XFER`/`FWARNING` go to stderr and `FINFO` to stdout
+    /// - `receiver.c:1088-1091` - the `failed verification` warning/error text
+    fn emit_pipeline_messages<W>(
+        &self,
+        writer: &mut W,
+        messages: Vec<(protocol::MessageCode, String)>,
+    ) where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        for (code, text) in messages {
+            let line = format!("{text}\n");
+            // A diagnostic that cannot be delivered must not abort the
+            // transfer; upstream's rwrite() likewise ignores the write result.
+            let _ = match code {
+                protocol::MessageCode::ErrorXfer => self.emit_error_xfer_line(writer, &line),
+                protocol::MessageCode::Warning => self.emit_warning_line(writer, &line),
+                protocol::MessageCode::Error => self.emit_error_line(writer, &line),
+                _ => self.emit_info_line(writer, &line),
+            };
+        }
+    }
+
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
@@ -569,17 +610,7 @@ impl ReceiverContext {
                 // just confirmed committed.
                 self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
 
-                // Route accumulated warnings through the multiplexed writer
-                // instead of eprintln (which deadlocks in daemon handler threads).
-                // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
-                // got_xfer_error (exit 23); everything else is MSG_INFO.
-                for (code, warning) in pipelined_receiver.drain_warnings() {
-                    let _ = if code == protocol::MessageCode::ErrorXfer {
-                        writer.send_msg_error_xfer(warning.as_bytes())
-                    } else {
-                        writer.send_msg_info(warning.as_bytes())
-                    };
-                }
+                self.emit_pipeline_messages(writer, pipelined_receiver.drain_warnings());
 
                 // upstream: io.c:820 stats.total_read only counts bytes read
                 // off the wire. Matched-from-basis bytes never traverse the
@@ -664,16 +695,7 @@ impl ReceiverContext {
             // sender unlinks their --remove-source-files sources.
             self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
 
-            // Route accumulated warnings through the multiplexed writer.
-            // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
-            // got_xfer_error (exit 23); everything else is MSG_INFO.
-            for (code, warning) in pipelined_receiver.drain_warnings() {
-                let _ = if code == protocol::MessageCode::ErrorXfer {
-                    writer.send_msg_error_xfer(warning.as_bytes())
-                } else {
-                    writer.send_msg_info(warning.as_bytes())
-                };
-            }
+            self.emit_pipeline_messages(writer, pipelined_receiver.drain_warnings());
 
             // upstream: generator.c:2169 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
