@@ -482,7 +482,7 @@ fn append_verify_failure_retains_the_appended_partial_for_the_redo() {
 #[test]
 fn append_verify_success_stays_a_single_pass() {
     // The redo must be reachable only through a real verification failure. A
-    // matching prefix means the whole-file sums agree (receiver.c:517-519), so
+    // matching prefix means the whole-file sums agree (receiver.c:518-519), so
     // upstream never sends MSG_REDO and the file is transferred once. Without
     // this guard a redo that fired unconditionally would still produce correct
     // bytes and go unnoticed.
