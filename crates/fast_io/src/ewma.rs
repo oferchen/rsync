@@ -8,7 +8,8 @@
 //!
 //! # Smoothing rule
 //!
-//! Each [`Ewma::update`] blends the fresh `sample` with the running estimate:
+//! Each [`Ewma::update`](crate::ewma::Ewma::update) blends the fresh `sample`
+//! with the running estimate:
 //!
 //! ```text
 //! value = alpha * sample + (1 - alpha) * value
