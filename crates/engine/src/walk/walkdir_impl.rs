@@ -65,7 +65,9 @@ pub struct WalkdirWalker {
     root: PathBuf,
     config: WalkConfig,
     inner: JwalkIterator,
-    #[cfg(unix)]
+    /// Volume identity of the walk root when `--one-file-system` is active;
+    /// `None` disables the boundary check. Unix uses the root's `st_dev`,
+    /// Windows the volume serial number (native Windows has no `st_dev`).
     root_dev: Option<u64>,
     /// Depth at which to skip subtree entries (entries with depth > this are skipped).
     skip_dir_depth: Option<usize>,
@@ -108,12 +110,12 @@ impl WalkdirWalker {
         if config.sort_entries {
             builder = builder.sort(true);
         }
-        #[cfg(unix)]
+        // upstream: flist.c records the root's device (`filesystem_dev`) so
+        // recursion can skip any directory on a different device. Native
+        // Windows has no `st_dev`, so the volume serial number stands in as the
+        // per-volume identity; both are resolved through `fast_io::same_fs`.
         let root_dev = if config.one_file_system {
-            fs::metadata(root).ok().map(|m| {
-                use std::os::unix::fs::MetadataExt;
-                m.dev()
-            })
+            fast_io::same_fs::volume_id(root)
         } else {
             None
         };
@@ -122,30 +124,49 @@ impl WalkdirWalker {
             root: root.to_path_buf(),
             config,
             inner: Box::new(builder.into_iter()),
-            #[cfg(unix)]
             root_dev,
             skip_dir_depth: None,
             last_depth: 0,
         }
     }
 
-    /// Checks if an entry should be skipped due to one_file_system constraint.
+    /// Checks if an entry should be skipped due to the one-file-system
+    /// constraint - i.e. it lives on a different volume than the walk root.
     #[cfg(unix)]
-    fn should_skip_for_filesystem(&self, metadata: &fs::Metadata) -> bool {
-        if let Some(root_dev) = self.root_dev {
-            use std::os::unix::fs::MetadataExt;
-            metadata.dev() != root_dev
-        } else {
-            false
-        }
+    fn should_skip_for_filesystem(&self, _path: &Path, metadata: &fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        crosses_filesystem_boundary(self.root_dev, Some(metadata.dev()))
     }
 
-    /// Non-Unix platforms lack POSIX device IDs, so the one-file-system
-    /// constraint is a no-op.
-    #[cfg(not(unix))]
-    fn should_skip_for_filesystem(&self, _metadata: &fs::Metadata) -> bool {
+    /// Windows analog: native Windows has no `st_dev`, so the per-directory
+    /// volume serial number stands in. upstream restricts `-x` to directories
+    /// (a plain file is never a mount point), so only directories pay the extra
+    /// per-entry volume probe.
+    #[cfg(windows)]
+    fn should_skip_for_filesystem(&self, path: &Path, metadata: &fs::Metadata) -> bool {
+        if self.root_dev.is_none() || !metadata.is_dir() {
+            return false;
+        }
+        crosses_filesystem_boundary(self.root_dev, fast_io::same_fs::volume_id(path))
+    }
+
+    /// Other platforms lack a stable per-volume identity, so the constraint is
+    /// a no-op.
+    #[cfg(not(any(unix, windows)))]
+    fn should_skip_for_filesystem(&self, _path: &Path, _metadata: &fs::Metadata) -> bool {
         false
     }
+}
+
+/// Returns `true` when `entry_dev` sits on a different volume than the walk
+/// root (`root_dev`) - the filesystem boundary `--one-file-system` (`-x`) must
+/// not cross. `None` on either side (volume identity unavailable) never prunes,
+/// mirroring upstream's reliance on a definitive `st_dev` comparison rather
+/// than guessing across an unknown boundary.
+///
+/// upstream: flist.c - `one_file_system && st.st_dev != filesystem_dev`.
+fn crosses_filesystem_boundary(root_dev: Option<u64>, entry_dev: Option<u64>) -> bool {
+    matches!((root_dev, entry_dev), (Some(root), Some(entry)) if root != entry)
 }
 
 impl Iterator for WalkdirWalker {
@@ -185,14 +206,14 @@ impl Iterator for WalkdirWalker {
                         }
                     };
 
-                    if self.should_skip_for_filesystem(&metadata) {
+                    let path = dir_entry.path();
+
+                    if self.should_skip_for_filesystem(&path, &metadata) {
                         if metadata.is_dir() {
                             self.skip_dir_depth = Some(depth);
                         }
                         continue;
                     }
-
-                    let path = dir_entry.path();
 
                     self.last_depth = depth;
 
@@ -343,6 +364,18 @@ mod tests {
         let results: Vec<_> = walker.collect();
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn boundary_decision_is_pure_and_platform_agnostic() {
+        // Same volume -> not a boundary.
+        assert!(!crosses_filesystem_boundary(Some(7), Some(7)));
+        // A volume-serial / st_dev mismatch is the -x skip trigger.
+        assert!(crosses_filesystem_boundary(Some(7), Some(9)));
+        // Unknown identity on either side must never prune the walk.
+        assert!(!crosses_filesystem_boundary(None, Some(9)));
+        assert!(!crosses_filesystem_boundary(Some(7), None));
+        assert!(!crosses_filesystem_boundary(None, None));
     }
 
     #[cfg(unix)]

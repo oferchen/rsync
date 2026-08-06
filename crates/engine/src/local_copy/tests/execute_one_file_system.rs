@@ -1001,57 +1001,60 @@ fn one_file_system_delete_preserves_mount_nested_in_doomed_dir() {
     assert!(summary.items_deleted() >= 2, "same-device extras were deleted");
 }
 
-/// On Windows, `--one-file-system` cannot consult a POSIX `st_dev` (std's
-/// `volume_serial_number` accessor is still unstable), so the traversal
-/// boundary is derived from the path prefix: the drive letter, or the
-/// server+share of a UNC path. This pins that documented boundary - the value
-/// the planner compares to decide `SkipMountPoint` - so it cannot silently
-/// regress into, say, a constant that makes every entry look same-device (never
-/// stopping) or different-device (always stopping).
+/// On Windows, `--one-file-system` cannot consult a POSIX `st_dev` (Windows has
+/// no such field), so `device_identifier` stands in the volume serial number
+/// from `GetFileInformationByHandle` (`fast_io::same_fs::volume_id`) as the
+/// per-volume identity the planner compares to decide `SkipMountPoint`. This
+/// pins the three properties that boundary check relies on, using only real
+/// paths under a temp dir so it never depends on a runner-specific second drive
+/// letter or UNC share:
 ///
-/// Limitation deliberately NOT asserted here: a directory junction or volume
-/// mount point nested under one drive letter keeps that drive's prefix, so the
-/// native Windows path cannot detect a real volume crossing the way Cygwin's
-/// `st_dev` does. This test pins only the drive-letter / UNC-share boundary
-/// that IS implemented.
+/// - a real path resolves to a `Some` id (not a stub that returns `None`, which
+///   would silently disable the boundary check);
+/// - a file, its parent directory, and a nested subdirectory - always one
+///   volume - resolve to the same id, so a same-volume descent is never
+///   mistaken for a filesystem crossing;
+/// - an unresolvable path resolves to `None`, so the planner treats the device
+///   as unknown and does not spuriously skip the entry.
+///
+/// The complementary "different volume -> different id -> stop" half of the
+/// semantic is pinned platform-agnostically by
+/// `walk::walkdir_impl::tests::boundary_decision_is_pure_and_platform_agnostic`,
+/// which drives the pure `crosses_filesystem_boundary` decision on synthetic
+/// ids (a real second volume is not available on CI runners). Using the volume
+/// serial - not a drive-letter path prefix - is deliberate: it detects a
+/// junction or a volume mounted at a directory, a boundary a prefix cannot see.
 #[cfg(windows)]
 #[test]
-fn one_file_system_windows_boundary_is_drive_letter_and_unc_share() {
+fn one_file_system_windows_boundary_uses_volume_serial_identity() {
     use crate::local_copy::overrides::device_identifier;
 
-    // device_identifier ignores its metadata argument on Windows (it parses the
-    // path prefix), but the signature still requires one; any real metadata
-    // handle works and the compared paths themselves need not exist.
     let temp = tempdir().expect("tempdir");
-    let probe = temp.path().join("probe");
-    fs::write(&probe, b"x").expect("write probe");
-    let md = fs::metadata(&probe).expect("probe metadata");
+    let dir = temp.path().join("root");
+    let nested = dir.join("alpha").join("beta");
+    fs::create_dir_all(&nested).expect("create nested");
+    let file = dir.join("probe");
+    fs::write(&file, b"x").expect("write probe");
 
-    let dev = |p: &str| device_identifier(Path::new(p), &md).expect("windows device id");
+    // device_identifier ignores its metadata argument on Windows (it resolves
+    // the path's volume serial), but the signature still requires one.
+    let md = fs::metadata(&file).expect("probe metadata");
+    let dev = |p: &Path| device_identifier(p, &md);
 
-    // Same drive letter -> same device id -> traversal continues into the dir.
+    // A real path resolves to a concrete volume identity.
+    let dir_id = dev(&dir).expect("an existing dir resolves a volume id");
+
+    // A file, its parent directory, and a nested subdirectory all live on one
+    // volume, so they must share that identity - a same-volume descent must
+    // never look like a filesystem crossing.
+    assert_eq!(dev(&file), Some(dir_id), "a file shares its dir's volume");
+    assert_eq!(dev(&nested), Some(dir_id), "a nested dir shares the volume");
+
+    // An unresolvable path yields None, so the planner leaves the boundary
+    // check disabled rather than spuriously skipping the entry.
     assert_eq!(
-        dev(r"C:\root\alpha"),
-        dev(r"C:\root\alpha\beta\gamma"),
-        "paths sharing a drive letter must resolve to one device"
-    );
-
-    // Different drive letter -> different device id -> traversal stops.
-    assert_ne!(
-        dev(r"C:\root\alpha"),
-        dev(r"D:\root\alpha"),
-        "a different drive letter is a different filesystem boundary"
-    );
-
-    // UNC: same server+share is one filesystem; a different share is not.
-    assert_eq!(
-        dev(r"\\server\share\a"),
-        dev(r"\\server\share\b\c"),
-        "one UNC share is one filesystem"
-    );
-    assert_ne!(
-        dev(r"\\server\share1\a"),
-        dev(r"\\server\share2\a"),
-        "different UNC shares are different filesystems"
+        dev(&dir.join("does-not-exist")),
+        None,
+        "an unresolvable path has no volume identity"
     );
 }
