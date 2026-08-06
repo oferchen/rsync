@@ -4,8 +4,15 @@ use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file
 use std::collections::VecDeque;
 use std::num::NonZeroU8;
 
+/// A signature whose only block is shorter than the block length is usable, and
+/// that short block is matchable through the tail probe.
+///
+/// upstream: `match.c:75-87` inserts every block into the hash table, including
+/// a lone short one, and `match.c:222-224` lets it match at the single offset
+/// where the remaining byte count equals its length. Only a signature with no
+/// blocks at all is unusable.
 #[test]
-fn from_signature_returns_none_without_full_blocks() {
+fn from_signature_accepts_a_basis_smaller_than_one_block() {
     let params = SignatureLayoutParams::new(
         64,
         None,
@@ -16,6 +23,35 @@ fn from_signature_returns_none_without_full_blocks() {
     let data = vec![0u8; 64];
     let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
         .expect("signature");
+
+    let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+        .expect("a sub-block basis is a usable signature");
+    assert_eq!(index.block_count(), 1);
+    assert!(index.block(0).len() < index.block_length());
+
+    let digest = checksums::RollingDigest::from_bytes(&data);
+    assert_eq!(
+        index.find_tail_match(digest, &data, &[], None),
+        Some(0),
+        "the lone short block must be findable at the file's end",
+    );
+}
+
+/// An empty signature carries no block to match, so it yields no index.
+///
+/// upstream: `match.c:393` skips the hash path entirely when `s->count == 0`.
+#[test]
+fn from_signature_returns_none_for_an_empty_signature() {
+    let params = SignatureLayoutParams::new(
+        0,
+        None,
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature =
+        generate_file_signature(&[][..], layout, SignatureAlgorithm::Md4).expect("signature");
+    assert_eq!(signature.blocks().len(), 0, "no blocks for an empty basis");
 
     assert!(DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).is_none());
 }

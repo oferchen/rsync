@@ -464,29 +464,55 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
 
     let block_count = config.sig_blocks.len() as u64;
 
-    // Reconstruct signature layout (remainder unknown, set to 0)
+    // The trailing block's length is the sum head's fourth field, written by the
+    // receiver's generator (io.c:write_sum_head()) - it is carried on the wire,
+    // not inferred. Ignoring it left every block claiming a full block_length,
+    // so the basis's short trailing block could never match: its rolling
+    // checksum covers `remainder` bytes and match.c:222-224 accepts a candidate
+    // only when the lengths agree.
+    // upstream: sender.c:109-112 - `if (i == s->count-1 && s->remainder != 0)
+    // s->sums[i].len = s->remainder; else s->sums[i].len = s->blength;`
+    let remainder = config.remainder;
+    let last_block_len = if remainder == 0 {
+        config.block_length
+    } else {
+        remainder
+    };
     let layout = SignatureLayout::from_raw_parts(
         block_length_nz,
-        0, // remainder unknown from wire format
+        remainder,
         block_count,
         strong_sum_length_nz,
     );
 
     // Convert wire blocks to engine signature blocks (consumes sig_blocks)
+    let last_index = block_count.saturating_sub(1);
     let engine_blocks: Vec<SignatureBlock> = config
         .sig_blocks
         .into_iter()
-        .map(|wire_block| {
+        .enumerate()
+        .map(|(position, wire_block)| {
+            let block_len = if position as u64 == last_index {
+                last_block_len
+            } else {
+                config.block_length
+            };
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
+                RollingDigest::from_value(wire_block.rolling_sum, block_len as usize),
                 &wire_block.strong_sum,
             )
         })
         .collect();
 
-    // Calculate total bytes (approximation since we don't know exact remainder)
-    let total_bytes = (block_count.saturating_sub(1)) * u64::from(config.block_length);
+    // upstream: sender.c:126 `s->flength = offset` - the basis length is the sum
+    // of every block's own length, so the trailing short block counts as
+    // `remainder`, not as a whole block.
+    let total_bytes = if block_count == 0 {
+        0
+    } else {
+        (block_count - 1) * u64::from(config.block_length) + u64::from(last_block_len)
+    };
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
@@ -1652,6 +1678,10 @@ mod tests {
             block_length: block_len,
             sig_blocks,
             strong_sum_length: strong_len,
+            // Every basis built for these cases is a whole number of blocks, so
+            // the sum head upstream would write carries remainder 0
+            // (generator.c:sum_sizes_sqroot()).
+            remainder: 0,
             protocol: ProtocolVersion::NEWEST,
             negotiated_algorithms: None,
             compat_flags: None,

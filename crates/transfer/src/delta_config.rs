@@ -41,6 +41,19 @@ pub struct DeltaGeneratorConfig<'a> {
     /// of the negotiated checksum algorithm.
     pub strong_sum_length: u8,
 
+    /// Length of the basis's trailing block when it is shorter than
+    /// [`Self::block_length`], or `0` when the basis divides evenly.
+    ///
+    /// This is the fourth field of the sum head the receiver's generator wrote
+    /// (`io.c:write_sum_head()`), so it is known from the wire, not inferred:
+    /// upstream's sender assigns `s->sums[i].len = s->remainder` for the last
+    /// block and `s->blength` for every other (`sender.c:109-112`). Without it
+    /// every block would claim a full `block_length`, and the basis's short
+    /// trailing block could never be matched - its rolling checksum covers
+    /// `remainder` bytes, and a candidate is accepted only when the lengths
+    /// agree (`match.c:222-224`).
+    pub remainder: u32,
+
     /// Protocol version used to pick the strong-checksum algorithm when no
     /// explicit negotiation result is present: protocol < 30 falls back to
     /// MD4/MD5, protocol >= 30 expects [`Self::negotiated_algorithms`].
@@ -91,11 +104,22 @@ impl<'a> DeltaGeneratorConfig<'a> {
             sig_blocks,
             strong_sum_length,
             protocol,
+            remainder: 0,
             negotiated_algorithms: None,
             compat_flags: None,
             checksum_seed: 0,
             updating_basis_file: false,
         }
+    }
+
+    /// Sets the trailing short block's length, as carried by the sum head.
+    ///
+    /// upstream: `sender.c:109-112` reads it from `read_sum_head()` and applies
+    /// it to the last block only.
+    #[must_use]
+    pub const fn with_remainder(mut self, remainder: u32) -> Self {
+        self.remainder = remainder;
+        self
     }
 
     /// Attaches negotiated algorithms from protocol >= 30 capability exchange.

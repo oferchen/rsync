@@ -22,7 +22,13 @@ use super::{
 /// break the chain (they are not indexed and never become successors), which
 /// preserves wire compatibility under trailing-partial-block layouts.
 ///
-/// Returns `true` if at least one full-length block was indexed.
+/// Upstream's `build_hash_table()` (`match.c:75-87`) inserts every block,
+/// including the trailing short one, and relies on the length check at
+/// `match.c:222-224` to reject it at all but the one offset where the remaining
+/// byte count equals its length. Indexing only full-length blocks here is the
+/// same rule expressed in the data structure: the trailing short block is found
+/// by [`DeltaSignatureIndex::find_tail_match`]'s direct scan instead, at exactly
+/// that one offset.
 fn populate_index(
     blocks: &[SignatureBlock],
     block_length: usize,
@@ -30,14 +36,12 @@ fn populate_index(
     bithash: &mut BitHash,
     lookup: &mut CompactLookup,
     next_match: &mut [u32],
-) -> bool {
-    let mut has_full_blocks = false;
+) {
     let mut prev_full: Option<usize> = None;
     for (index, block) in blocks.iter().enumerate() {
         if block.len() != block_length {
             continue;
         }
-        has_full_blocks = true;
         let digest = block.rolling();
         tag_table[digest.sum1() as usize] = true;
         bithash.insert(digest.value());
@@ -49,7 +53,6 @@ fn populate_index(
         }
         prev_full = Some(index);
     }
-    has_full_blocks
 }
 
 /// Detects whether two or more full-length blocks carry identical content.
@@ -124,16 +127,24 @@ impl DeltaSignatureIndex {
         // so `next_match[K]` is addressable for every K the lookup can yield.
         let mut next_match = vec![NEXT_MATCH_NONE; requested];
 
-        if !populate_index(
+        // A basis smaller than one block indexes no full-length block, but it is
+        // still a usable signature: upstream builds a hash table from a
+        // one-short-block sum_struct like any other (match.c:75-87) and matches
+        // it at the file's end. Rejecting it here made the sender fail with
+        // "failed to create signature index" for any basis under one block.
+        // Only a signature with no blocks at all is unusable, and upstream never
+        // reaches match_sums()'s hash path for one either (match.c:393).
+        if blocks.is_empty() {
+            return None;
+        }
+        populate_index(
             &blocks,
             block_length,
             &mut tag_table,
             &mut bithash,
             &mut lookup,
             &mut next_match,
-        ) {
-            return None;
-        }
+        );
 
         let size = lookup.capacity();
         let consumed = build_consumed_words(blocks.len());
@@ -168,8 +179,10 @@ impl DeltaSignatureIndex {
     /// the table is cleared and repopulated rather than freed and
     /// re-allocated, avoiding per-file malloc/free overhead.
     ///
-    /// Returns `false` if the signature has no full blocks (caller
-    /// should discard the index).
+    /// Returns `false` only when the signature carries no blocks at all (the
+    /// caller should discard the index). A signature whose single block is
+    /// shorter than the block length is usable: it matches at the file's end
+    /// exactly as upstream's does (match.c:75-87,222-224).
     pub fn rebuild(&mut self, signature: &FileSignature, algorithm: SignatureAlgorithm) -> bool {
         let block_length = signature.layout().block_length().get() as usize;
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
@@ -199,7 +212,7 @@ impl DeltaSignatureIndex {
         #[cfg(any(test, feature = "bench-internal"))]
         self.seq_match_counters.reset();
 
-        let ok = populate_index(
+        populate_index(
             &self.blocks,
             block_length,
             &mut self.tag_table,
@@ -207,6 +220,7 @@ impl DeltaSignatureIndex {
             &mut self.lookup,
             &mut self.next_match,
         );
+        let ok = !self.blocks.is_empty();
 
         self.has_duplicate_blocks = detect_duplicate_blocks(&self.blocks, block_length);
 

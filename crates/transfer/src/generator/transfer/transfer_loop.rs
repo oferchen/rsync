@@ -938,6 +938,9 @@ impl GeneratorContext {
                     block_length,
                     sig_blocks,
                     strong_sum_length,
+                    // upstream: sender.c:109-112 - the sum head's remainder is
+                    // the trailing block's real length.
+                    remainder: sum_head.remainder,
                     protocol: self.protocol,
                     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
                     compat_flags: self.compat_flags.as_ref(),

@@ -810,17 +810,28 @@ fn index_strong_length_accessor() {
     );
 }
 
-/// Verifies that index returns None for data without full blocks.
+/// A basis smaller than one block still yields a usable index.
+///
+/// This asserted `is_none()` while the sender forced every wire block to the
+/// full block length, which made a sub-block basis look like a block-length
+/// block with the wrong checksum. Upstream builds a hash table from such a
+/// signature like any other (`match.c:75-87`) and matches its single short
+/// block at the file's end (`match.c:222-224`), so refusing to build the index
+/// made the sender fail outright on any basis under one block.
 #[test]
-fn index_returns_none_for_small_data() {
-    // Very small data that won't produce full blocks
+fn index_is_built_for_a_basis_smaller_than_one_block() {
     let basis = vec![0u8; 64];
-    let result = build_index(&basis);
+    let index = build_index(&basis).expect("a sub-block basis is a usable signature");
 
-    // The index should return None because there are no full blocks
+    assert_eq!(index.block_count(), 1, "one short block");
+    assert_eq!(
+        index.block(0).len(),
+        basis.len(),
+        "the block carries its real length, not the block length"
+    );
     assert!(
-        result.is_none(),
-        "small data should not produce index with full blocks"
+        index.block(0).len() < index.block_length(),
+        "the fixture must be shorter than one block"
     );
 }
 
@@ -1531,7 +1542,17 @@ mod algorithm_correctness {
         let basis: Vec<u8> = (0..16384).map(|i| (i % 251) as u8).collect();
         let index = build_index(&basis).expect("index");
         let block_len = index.block_length();
-        let num_blocks = basis.len() / block_len;
+        // Every indexed block, including the trailing short one. This was
+        // `basis.len() / block_len`, which floors away that last block: the
+        // basis does not divide evenly, and the scan can match its short tail
+        // (upstream: match.c:174,222-224), so the floor under-counted the
+        // legal index range by one.
+        let num_blocks = index.block_count();
+        let tail_len = index.block(num_blocks - 1).len();
+        assert!(
+            tail_len < block_len,
+            "fixture must end with a short block for the tail cases below",
+        );
 
         let input = basis.clone();
         let script = generate_delta(&input[..], &index).expect("delta");
@@ -1546,16 +1567,28 @@ mod algorithm_correctness {
                     (*block_idx as usize) < num_blocks,
                     "copy token should reference valid block index: {block_idx} >= {num_blocks}"
                 );
-                // Seq-match coalesces consecutive matched basis blocks into
-                // a single fat Copy. The token length is therefore an
-                // integer multiple of the canonical block length, and the
-                // run must fit inside the indexed block range.
-                assert_eq!(
-                    *len % block_len,
-                    0,
-                    "copy length should be a multiple of block length"
-                );
-                let run = *len / block_len;
+                // Seq-match coalesces consecutive matched basis blocks into a
+                // single fat Copy, so a run's length is an integer multiple of
+                // the canonical block length. The one exception is the basis's
+                // trailing short block, which is matched at the file's own end
+                // and emitted standalone with its real length - never folded
+                // into a run, because the wire layer expands a whole-multiple
+                // length into that many FULL-length ops.
+                let run = if *len % block_len == 0 {
+                    *len / block_len
+                } else {
+                    assert_eq!(
+                        *len, tail_len,
+                        "a copy length that is not a whole number of blocks may \
+                         only be the trailing short block"
+                    );
+                    assert_eq!(
+                        *block_idx as usize,
+                        num_blocks - 1,
+                        "only the last indexed block is short"
+                    );
+                    1
+                };
                 assert!(
                     (*block_idx as usize) + run <= num_blocks,
                     "copy run extends past last indexed block: index={block_idx} run={run} num_blocks={num_blocks}"
