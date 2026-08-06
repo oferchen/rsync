@@ -102,7 +102,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
 
     if options.build_tarball {
         let specs = tarball::tarball_specs(&branding, options.tarball_target.as_deref())?;
-        let resolved = resolve_tarball_builds(workspace, specs)?;
+        let resolved = resolve_tarball_builds(workspace, specs, env::consts::ARCH)?;
 
         if resolved.builds.is_empty() {
             if let Some(skipped) = resolved.skipped.first() {
@@ -141,12 +141,13 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
 fn resolve_tarball_builds(
     workspace: &Path,
     specs: Vec<tarball::TarballSpec>,
+    host_arch: &str,
 ) -> TaskResult<ResolvedTarballSpecs> {
     let mut builds = Vec::with_capacity(specs.len());
     let mut skipped = Vec::new();
 
     for spec in specs {
-        match resolve_cross_compiler(workspace, &spec) {
+        match resolve_cross_compiler(workspace, &spec, host_arch) {
             Ok(linker) => builds.push(TarballBuild { spec, linker }),
             Err(TaskError::ToolMissing(message)) => {
                 skipped.push(SkippedTarballSpec { spec, message })
@@ -162,8 +163,9 @@ fn resolve_tarball_builds(
 pub(super) fn resolve_tarball_cross_compilers_for_tests(
     workspace: &Path,
     specs: Vec<tarball::TarballSpec>,
+    host_arch: &str,
 ) -> TaskResult<ResolvedTarballSpecs> {
-    resolve_tarball_builds(workspace, specs)
+    resolve_tarball_builds(workspace, specs, host_arch)
 }
 
 pub(super) fn build_workspace_binaries(
@@ -244,8 +246,9 @@ pub(super) struct SkippedTarballSpec {
 fn resolve_cross_compiler(
     workspace: &Path,
     spec: &tarball::TarballSpec,
+    host_arch: &str,
 ) -> TaskResult<Option<LinkerOverride>> {
-    if !spec.requires_cross_compiler() {
+    if !spec.requires_cross_compiler(host_arch) {
         return Ok(None);
     }
 
@@ -632,6 +635,7 @@ fn rename_deb_with_variant_suffix(
 pub(super) fn resolve_cross_compiler_for_tests(
     workspace: &Path,
     target: &str,
+    host_arch: &str,
 ) -> TaskResult<Option<(OsString, OsString)>> {
     let spec = match target {
         "x86_64-unknown-linux-gnu" => tarball::TarballSpec {
@@ -653,7 +657,7 @@ pub(super) fn resolve_cross_compiler_for_tests(
         }
     };
 
-    resolve_cross_compiler(workspace, &spec).map(|override_opt| {
+    resolve_cross_compiler(workspace, &spec, host_arch).map(|override_opt| {
         override_opt.map(|override_value| (override_value.env_var, override_value.value))
     })
 }
