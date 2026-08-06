@@ -442,6 +442,15 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
         last_name < total && total < sent,
         "total: line must follow the name list and precede the summary trailer, got: {rendered:?}"
     );
+    // A single well-placed emitter: the match_report total: line must appear
+    // exactly once. Guards against a second emitter (e.g. an engine-side
+    // debug_log flushed dead-last) re-introducing a duplicate or mispositioned
+    // total: line. upstream: match.c:439 match_report() prints it once.
+    assert_eq!(
+        rendered.matches("total: matches=").count(),
+        1,
+        "the match_report total: line must be emitted exactly once, got: {rendered:?}"
+    );
 }
 
 /// Verifies that -vvv produces output that is at least as verbose as -vv.
