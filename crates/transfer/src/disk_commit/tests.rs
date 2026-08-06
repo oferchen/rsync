@@ -184,6 +184,7 @@ fn write_file_with_io_uring_auto_policy() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -229,6 +230,7 @@ fn device_target_inplace_commit_does_not_truncate() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -346,6 +348,7 @@ fn write_and_commit_file() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -406,6 +409,7 @@ fn inplace_skip_matched_seeks_without_rewriting() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -454,6 +458,7 @@ fn abort_cleans_up_temp_file() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -496,6 +501,7 @@ fn multiple_files_sequential() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             })))
             .unwrap();
 
@@ -550,6 +556,7 @@ fn multi_chunk_file() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -589,6 +596,7 @@ fn buffer_recycling() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -637,6 +645,7 @@ fn whole_file_coalesced() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"whole dat".to_vec(),
             expected_checksum: Default::default(),
@@ -684,6 +693,7 @@ fn commit_file_rename_via_io_uring_or_fallback() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -732,6 +742,7 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -780,6 +791,7 @@ fn delay_updates_stages_to_partial_dir() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -850,6 +862,7 @@ fn delay_updates_whole_file_stages_to_partial_dir() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"whole delayed!".to_vec(),
             expected_checksum: Default::default(),
@@ -897,6 +910,7 @@ fn whole_file_commit_via_io_uring_or_fallback() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"whole iouring".to_vec(),
             expected_checksum: Default::default(),
@@ -940,6 +954,7 @@ fn partial_mode_partial_retains_file_on_shutdown() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -987,6 +1002,7 @@ fn partial_mode_none_deletes_file_on_shutdown() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1032,6 +1048,7 @@ fn partial_mode_partial_retains_file_on_abort() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1082,6 +1099,7 @@ fn partial_mode_partial_dir_retains_file_in_directory() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1135,6 +1153,7 @@ fn partial_mode_no_retention_without_data() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1177,6 +1196,7 @@ fn partial_mode_channel_disconnect_retains_file() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1223,6 +1243,7 @@ fn partial_mode_relative_partial_dir() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1276,6 +1297,7 @@ fn cleanup_manager_removes_orphaned_temp_files_on_simulated_signal() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1365,6 +1387,7 @@ fn cleanup_manager_unregisters_on_successful_commit() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1427,6 +1450,7 @@ fn cleanup_manager_mixed_committed_and_orphaned_files() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -1452,6 +1476,7 @@ fn cleanup_manager_mixed_committed_and_orphaned_files() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -1547,6 +1572,7 @@ fn cleanup_manager_whole_file_unregisters_on_commit() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"whole file".to_vec(),
             expected_checksum: Default::default(),
@@ -1598,6 +1624,7 @@ fn cleanup_manager_inplace_skips_registration() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -1659,6 +1686,7 @@ fn inplace_abort_does_not_delete_existing_destination() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1722,6 +1750,7 @@ fn non_inplace_abort_discards_temp_and_leaves_existing_dest() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1799,6 +1828,7 @@ fn partial_dir_abort_mid_stream_moves_to_partial_dir() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1870,6 +1900,7 @@ fn partial_dir_channel_disconnect_moves_to_partial_dir() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1923,6 +1954,7 @@ fn partial_dir_auto_created_on_interrupt() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -1986,6 +2018,7 @@ fn partial_dir_mid_stream_has_intermediate_size() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2052,6 +2085,7 @@ fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"complete-dat".to_vec(),
             expected_checksum: Default::default(),
@@ -2108,6 +2142,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2160,6 +2195,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2215,6 +2251,7 @@ fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2271,6 +2308,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2334,6 +2372,7 @@ fn verify_failure_keeps_recent_mtime_on_plain_partial() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: data.to_vec(),
             // Sender's sum is for different bytes: forces a verify mismatch.
@@ -2405,6 +2444,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"file1 staged".to_vec(),
             expected_checksum: Default::default(),
@@ -2429,6 +2469,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"file2 staged".to_vec(),
             expected_checksum: Default::default(),
@@ -2501,6 +2542,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"committed".to_vec(),
             expected_checksum: Default::default(),
@@ -2523,6 +2565,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
 
@@ -2584,6 +2627,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"sweep1".to_vec(),
             expected_checksum: Default::default(),
@@ -2605,6 +2649,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"sweep2".to_vec(),
             expected_checksum: Default::default(),
@@ -2667,6 +2712,7 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: b"disconnect data".to_vec(),
             expected_checksum: Default::default(),
@@ -2738,6 +2784,7 @@ fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -2809,6 +2856,7 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -2885,6 +2933,7 @@ fn inplace_redo_pass_does_not_overwrite_phase1_backup() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx
@@ -2958,6 +3007,7 @@ fn whole_file_checksum_mismatch_is_not_committed_to_dest() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: data.to_vec(),
             // Sender's sum for entirely different bytes: forces a mismatch.
@@ -3006,6 +3056,7 @@ fn whole_file_checksum_match_commits_to_dest() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: data.to_vec(),
             expected_checksum: expected_md5(data),
@@ -3045,6 +3096,7 @@ fn chunked_checksum_mismatch_is_not_committed_to_dest() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: None,
         })))
         .unwrap();
     h.file_tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
@@ -3091,6 +3143,7 @@ fn checksum_mismatch_leaves_preexisting_dest_untouched() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: None,
             }),
             data: data.to_vec(),
             expected_checksum: expected_md5(b"a different payload"),
@@ -3116,16 +3169,19 @@ const SPARSE_MTIME_SECS: i64 = 1_614_830_767;
 /// entry stamped with [`SPARSE_MTIME_SECS`] and whose metadata options preserve
 /// times, so the disk thread applies that mtime via `apply_file_metadata`
 /// (upstream `set_file_attrs()` -> `set_modtime()`).
-fn sparse_mtime_config(sparse: bool, size: u64) -> DiskCommitConfig {
+fn sparse_mtime_entry(size: u64) -> protocol::flist::FileEntry {
     let mut entry = protocol::flist::FileEntry::new_file(
         std::path::PathBuf::from("sparse_mtime.dat"),
         size,
         0o644,
     );
     entry.set_mtime(SPARSE_MTIME_SECS, 0);
+    entry
+}
+
+fn sparse_mtime_config(sparse: bool, _size: u64) -> DiskCommitConfig {
     DiskCommitConfig {
         use_sparse: sparse,
-        file_list: Some(std::sync::Arc::new(vec![entry])),
         metadata_opts: Some(
             metadata::MetadataOptions::new()
                 .preserve_permissions(true)
@@ -3179,6 +3235,7 @@ fn sparse_streaming_commit_preserves_source_mtime() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: Some(sparse_mtime_entry(size)),
         })))
         .unwrap();
     h.file_tx.send(FileMessage::Chunk(payload)).unwrap();
@@ -3229,6 +3286,7 @@ fn sparse_whole_file_commit_preserves_source_mtime() {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                file_entry: Some(sparse_mtime_entry(size)),
             }),
             data: payload,
             expected_checksum: Default::default(),
@@ -3276,6 +3334,7 @@ fn non_sparse_commit_preserves_source_mtime() {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            file_entry: Some(sparse_mtime_entry(size)),
         })))
         .unwrap();
     h.file_tx.send(FileMessage::Chunk(payload)).unwrap();

@@ -129,10 +129,6 @@ pub struct DiskCommitConfig {
     /// Temporary directory for staging received files before final placement.
     /// Shared across all files in a transfer session.
     pub temp_dir: Option<PathBuf>,
-    /// Shared file list for metadata application. The disk thread looks up
-    /// entries by `file_entry_index` instead of receiving cloned entries
-    /// per file, eliminating ~88-295 bytes of cloning per file.
-    pub file_list: Option<Arc<Vec<protocol::flist::FileEntry>>>,
     /// Metadata options for applying file attributes after commit.
     /// When `Some`, the disk thread applies metadata (mtime, perms, ownership)
     /// immediately after rename - mirroring upstream `finish_transfer()` ->
@@ -260,7 +256,6 @@ impl Default for DiskCommitConfig {
             #[cfg(unix)]
             sandbox: None,
             temp_dir: None,
-            file_list: None,
             metadata_opts: None,
             backup: None,
             acl_cache: None,
