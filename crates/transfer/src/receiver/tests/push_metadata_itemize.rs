@@ -103,7 +103,7 @@ fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
     let sent = SharedBuf::default();
     let mut writer = crate::writer::ServerWriter::new_plain(sent.clone());
     let mut metadata_errors = Vec::new();
-    let files: Vec<(usize, &FileEntry, PathBuf, u32)> = Vec::new();
+    let files: Vec<(usize, PathBuf, u32)> = Vec::new();
     let mut ndx_write_codec = protocol::codec::MonotonicNdxWriter::new(ctx.protocol.as_u8());
     let mut ndx_read_codec = protocol::codec::create_ndx_codec(ctx.protocol.as_u8());
     let result = ctx

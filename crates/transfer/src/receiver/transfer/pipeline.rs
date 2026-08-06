@@ -97,16 +97,15 @@ impl ReceiverContext {
     /// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn run_pipeline_loop_decoupled<
-        'a,
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &'a self,
+        &mut self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &'a FileEntry, PathBuf, u32)>,
+        files_to_transfer: Vec<(usize, PathBuf, u32)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
@@ -148,12 +147,12 @@ impl ReceiverContext {
             for item in files_to_transfer {
                 while let Some(&(idx, iflags)) = rows.peek().filter(|&&(idx, _)| idx < item.0) {
                     rows.next();
-                    merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+                    merged.push((idx, PathBuf::new(), u32::from(iflags)));
                 }
                 merged.push(item);
             }
             for (idx, iflags) in rows {
-                merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+                merged.push((idx, PathBuf::new(), u32::from(iflags)));
             }
             merged
         };
@@ -220,7 +219,10 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, u32)> =
+        // Stage 0: the in-flight window OWNS its FileEntry (cloned at push,
+        // bounded to the pipeline window = O(window)), so the loop no longer
+        // holds a borrow into `self.file_list`.
+        let mut pending_files_info: VecDeque<(usize, PathBuf, FileEntry, u32)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         // upstream: receiver.c:784 stats.total_transferred_size += F_LENGTH(file),
@@ -314,9 +316,14 @@ impl ReceiverContext {
                 {
                     use rayon::prelude::*;
 
-                    let batch: Vec<_> = file_iter
+                    // Stage 0: resolve each queued flist index to an owned
+                    // FileEntry clone as it enters the window (bounded by
+                    // available_slots <= window size), releasing the borrow on
+                    // `self.file_list` before the rest of the loop body.
+                    let batch: Vec<(usize, FileEntry, PathBuf, u32)> = file_iter
                         .by_ref()
                         .take(pipeline.available_slots())
+                        .map(|(idx, path, iflags)| (idx, self.file_list[idx].clone(), path, iflags))
                         .collect();
 
                     if !batch.is_empty() && !is_redo_pass {
@@ -419,7 +426,7 @@ impl ReceiverContext {
                             // --link-dest / --compare-dest / --partial-dir bases
                             // drive the resolution in upstream's priority order.
                             let xattr_request = self.build_xattr_request(
-                                file_entry,
+                                &file_entry,
                                 basis_result.basis_path.as_deref(),
                             );
                             let pending = send_file_request_xattr(
@@ -466,7 +473,7 @@ impl ReceiverContext {
                             // abbreviated value is requested. This keeps a large
                             // xattr on a new or redo'd file from being dropped
                             // for lack of a local copy to resolve it against.
-                            let xattr_request = self.build_xattr_request(file_entry, None);
+                            let xattr_request = self.build_xattr_request(&file_entry, None);
                             let pending = send_file_request_xattr(
                                 writer,
                                 &mut *ndx_write_codec,
@@ -534,7 +541,7 @@ impl ReceiverContext {
                     dest_dir: Some(setup.dest_dir.as_path()),
                 };
 
-                let xattr_list = self.resolve_xattr_list(file_entry);
+                let xattr_list = self.resolve_xattr_list(&file_entry);
                 let is_device_target = self.config.write.write_devices && file_entry.is_device();
                 let result = process_file_response_streaming(
                     reader,
@@ -545,7 +552,7 @@ impl ReceiverContext {
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
                     file_idx,
-                    file_entry,
+                    &file_entry,
                     is_device_target,
                     xattr_list,
                     &mut token_reader,
@@ -634,7 +641,7 @@ impl ReceiverContext {
                         // produces a client-visible row (record_itemize gates on
                         // client_mode), so this stays the no-op it already was,
                         // whether or not deferral is active.
-                        let _ = self.emit_or_record_itemize(writer, file_idx, &iflags, file_entry);
+                        let _ = self.emit_or_record_itemize(writer, file_idx, &iflags, &file_entry);
                     }
                 }
 
@@ -730,14 +737,14 @@ impl ReceiverContext {
     /// - `generator.c:584-587` - `write_ndx()` + `write_shortint(iflags)`
     /// - `sender.c:292-294` - the sender logs the row, then echoes the attrs
     #[allow(clippy::too_many_arguments)]
-    fn send_no_transfer_itemize<'a, W: Write + ?Sized>(
+    fn send_no_transfer_itemize<W: Write + ?Sized>(
         &self,
         writer: &mut W,
         ndx_write_codec: &mut impl protocol::codec::NdxCodec,
         pipeline: &mut PipelineState,
-        pending_files_info: &mut VecDeque<(usize, PathBuf, &'a FileEntry, u32)>,
+        pending_files_info: &mut VecDeque<(usize, PathBuf, FileEntry, u32)>,
         file_idx: usize,
-        file_entry: &'a FileEntry,
+        file_entry: FileEntry,
         file_path: PathBuf,
         base_iflags: u32,
     ) -> io::Result<()> {
