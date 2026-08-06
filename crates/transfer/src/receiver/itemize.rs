@@ -302,6 +302,37 @@ impl ReceiverContext {
         }
     }
 
+    /// Routes an already-formatted `FWARNING` diagnostic to the correct sink.
+    ///
+    /// Same routing as [`Self::emit_error_line`]: a server receiver frames the
+    /// text as `MSG_WARNING` so the client on the far end renders it, while a
+    /// client receiver (pull) owns its own stderr and writes there. Below
+    /// protocol 30 the frame downgrades to `MSG_INFO`, which is the only code
+    /// the older peer understands.
+    ///
+    /// `line` carries its trailing newline, as upstream's payload does.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:313-315` - `FWARNING` selects stderr on the non-server side
+    /// - `log.c:330-346` - `am_server` sends the frame *instead of* writing it
+    /// - `log.c:332-337` - `protocol_version < 30` maps `MSG_WARNING` to `MSG_INFO`
+    pub(in crate::receiver) fn emit_warning_line<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        line: &str,
+    ) -> std::io::Result<()> {
+        if self.config.connection.client_mode {
+            use std::io::Write as _;
+            return std::io::stderr().write_all(line.as_bytes());
+        }
+        if self.protocol.supports_generator_messages() {
+            writer.send_msg_warning(line.as_bytes())
+        } else {
+            writer.send_msg_info(line.as_bytes())
+        }
+    }
+
     /// Routes an already-formatted `FERROR` diagnostic to the correct sink.
     ///
     /// Same routing as [`Self::emit_error_xfer_line`], but the peer's
