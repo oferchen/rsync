@@ -166,7 +166,7 @@ impl ReceiverContext {
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
-        use crate::pipeline::receiver::PipelinedReceiver;
+        use crate::pipeline::receiver::{PipelinedReceiver, VerifyReport};
         use crate::shared::TransferDeadline;
 
         // upstream: generator.c:582-593 - itemize() also writes NDX + iflags
@@ -322,7 +322,14 @@ impl ReceiverContext {
             daemon_module_root: self.config.connection.daemon_module_root.clone(),
             ..DiskCommitConfig::default()
         };
-        let mut pipelined_receiver = PipelinedReceiver::new(disk_config)?;
+        // upstream: receiver.c:1072,1085 - `stdout_format_has_i` and `read_batch`
+        // are globals in `recv_files()`; here they travel with the mediator that
+        // owns the verification result.
+        let mut pipelined_receiver =
+            PipelinedReceiver::new(disk_config)?.with_verify_report(VerifyReport {
+                out_format_forwards_i: self.config.flags.info_flags.out_format_forwards_i,
+                read_batch: self.local_replay,
+            });
         if is_redo_pass {
             let _ = pipelined_receiver.take_redo_indices();
         }
@@ -596,6 +603,9 @@ impl ReceiverContext {
                     result.expected_checksum,
                     result.checksum_len,
                     file_path,
+                    // upstream: receiver.c:1089 - the verification-failure line
+                    // names `f_name(file, ..)`, not the joined destination path.
+                    file_entry.path().clone(),
                     file_idx,
                     result.is_inplace,
                 );
