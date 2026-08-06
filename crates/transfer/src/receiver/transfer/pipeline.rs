@@ -14,7 +14,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use logging::{debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
@@ -237,7 +236,6 @@ impl ReceiverContext {
         } else {
             None
         };
-        let file_list_arc = Arc::new(self.file_list.clone());
         // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags
         let partial_mode = if let Some(ref dir) = self.config.partial_dir {
             PartialMode::PartialDir(dir.clone())
@@ -256,7 +254,6 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox: setup.sandbox.clone(),
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
-            file_list: Some(file_list_arc),
             metadata_opts: Some(setup.metadata_opts.clone()),
             // upstream: generator.c:2187 `make_backups = -make_backups`
             // negates make_backups during the redo pass so the inplace
@@ -539,6 +536,7 @@ impl ReceiverContext {
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
                     file_idx,
+                    file_entry,
                     is_device_target,
                     xattr_list,
                     &mut token_reader,

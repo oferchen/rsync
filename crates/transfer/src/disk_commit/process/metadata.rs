@@ -29,10 +29,10 @@ pub(super) fn apply_file_metadata(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
 ) -> Option<(PathBuf, String)> {
-    let file_entry = config
-        .file_list
-        .as_ref()
-        .and_then(|fl| fl.get(begin.file_entry_index));
+    // The desired metadata rides on the begin message per-file (see
+    // `BeginMessage::file_entry`), so the disk thread no longer indexes a shared
+    // clone of the whole receiver flist.
+    let file_entry = begin.file_entry.as_ref();
 
     if begin.is_device_target {
         None
@@ -201,4 +201,141 @@ pub(super) fn finalize_checksum(verifier: Option<ChecksumVerifier>) -> Option<Co
         let len = v.finalize_into(&mut buf);
         ComputedChecksum { bytes: buf, len }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_file_metadata;
+    use crate::disk_commit::DiskCommitConfig;
+    use crate::pipeline::messages::BeginMessage;
+
+    fn begin_for(
+        path: &std::path::Path,
+        entry: Option<protocol::flist::FileEntry>,
+    ) -> BeginMessage {
+        BeginMessage {
+            file_path: path.to_path_buf(),
+            target_size: 0,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: entry,
+        }
+    }
+
+    /// The disk thread must source a file's metadata from the entry carried on
+    /// its begin message, not from a shared receiver flist (which this crate no
+    /// longer clones for the disk thread). Proven by handing `apply_file_metadata`
+    /// a config with an empty flist context and an entry only on the message:
+    /// the permission and mtime it applies must be the message entry's, which
+    /// only holds if the message channel is the source of truth.
+    #[cfg(unix)]
+    #[test]
+    fn metadata_is_sourced_from_begin_message_entry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("from_message.dat");
+        std::fs::write(&path, b"payload").unwrap();
+        // Seed a mode that differs from the entry's so a pass-through (no apply)
+        // or a wrong source would be visible.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let mut entry = protocol::flist::FileEntry::new_file(
+            std::path::PathBuf::from("from_message.dat"),
+            7,
+            0o640,
+        );
+        entry.set_mtime(1_600_000_000, 0);
+
+        let config = DiskCommitConfig {
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_permissions(true)
+                    .preserve_times(true),
+            ),
+            ..DiskCommitConfig::default()
+        };
+
+        // target_path == file_path: the final-destination apply path.
+        let begin = begin_for(&path, Some(entry));
+        let err = apply_file_metadata(&path, &begin, &config);
+        assert!(err.is_none(), "metadata apply reported an error: {err:?}");
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o640,
+            "permissions must come from the begin-message entry"
+        );
+        let mtime = filetime::FileTime::from_last_modification_time(&meta).unix_seconds();
+        assert_eq!(
+            mtime, 1_600_000_000,
+            "mtime must come from the begin-message entry"
+        );
+    }
+
+    /// With no entry on the message (and no shared flist), the apply path is a
+    /// no-op rather than a panic or an index into a list that no longer exists.
+    /// This pins the `None` contract that replaced the old
+    /// `file_list.get(index)` miss.
+    #[test]
+    fn absent_entry_applies_no_metadata() {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("no_entry.dat");
+        std::fs::write(&path, b"payload").unwrap();
+
+        let config = DiskCommitConfig {
+            metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
+            ..DiskCommitConfig::default()
+        };
+        let begin = begin_for(&path, None);
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
+    }
+
+    /// ACL case: the access/default ACL indices live in the entry's `extras`
+    /// box, which the receiver's `reclaim_heap_data` zeroes when it frees a
+    /// completed flist segment. Carrying the entry on the begin message means
+    /// the disk thread reads those indices from its own per-file copy, immune to
+    /// that reclaim - so the ACL apply branch (`entry.acl_ndx()` /
+    /// `entry.def_acl_ndx()` in `apply_metadata_acls_and_xattrs`) sees the right
+    /// values. This pins the delivery of the ACL indices via the message; the OS
+    /// ACL application itself is covered by the daemon ACL integration tests.
+    #[test]
+    fn acl_indices_ride_on_the_begin_message_entry() {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("acl.dat");
+        std::fs::write(&path, b"payload").unwrap();
+
+        let mut entry =
+            protocol::flist::FileEntry::new_file(std::path::PathBuf::from("acl.dat"), 7, 0o640);
+        entry.set_acl_ndx(3);
+        entry.set_def_acl_ndx(4);
+
+        let begin = begin_for(&path, Some(entry));
+        let carried = begin.file_entry.as_ref().expect("entry present on message");
+        assert_eq!(
+            carried.acl_ndx(),
+            Some(3),
+            "access ACL index must survive on the begin-message entry"
+        );
+        assert_eq!(
+            carried.def_acl_ndx(),
+            Some(4),
+            "default ACL index must survive on the begin-message entry"
+        );
+
+        // With no ACL cache configured the apply path skips ACLs cleanly (the
+        // `if let Some(cache)` guard), so carrying acl indices never regresses a
+        // plain metadata apply.
+        let config = DiskCommitConfig {
+            metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
+            ..DiskCommitConfig::default()
+        };
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
+    }
 }
