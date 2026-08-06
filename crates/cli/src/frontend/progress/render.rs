@@ -242,12 +242,20 @@ pub(crate) fn emit_transfer_summary(
     // name listing so `--progress` (info=name1, verbosity 0) does not re-print
     // the whole list - mirroring the `!progress_rendered` guard already applied
     // to the verbosity>0 branch above.
+    // upstream: log_delete() (log.c:870) prints deletions whenever
+    // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
+    // listing. -v raises both, but `--info=del1` alone raises only DEL, so the
+    // verbose listing must still run to surface the "deleting" lines.
+    let has_deletions = events
+        .iter()
+        .any(|event| matches!(event.kind(), ClientEventKind::EntryDeleted));
     let emit_verbose_listing = out_format.is_none()
         && !events.is_empty()
         && ((verbosity > 0
             && (!name_overridden || name_enabled)
             && (!progress_rendered || verbosity > 1))
-            || (verbosity == 0 && name_enabled && !progress_rendered));
+            || (verbosity == 0 && name_enabled && !progress_rendered)
+            || (has_deletions && info_gte(InfoFlag::Del, 1) && !progress_rendered));
 
     if formatted_rendered && (emit_verbose_listing || stats_on || verbosity > 0) {
         writeln!(writer)?;
@@ -917,7 +925,18 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     eight_bit_output: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
-    if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
+    // upstream: log.c:870 log_delete() prints "deleting %n" whenever
+    // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
+    // listing. `--info=del` leaves NAME disabled at verbosity 0, so this
+    // short-circuit must fall through when DEL-gated deletions are queued -
+    // otherwise the deletion lines below are never rendered.
+    let has_deletions = events
+        .iter()
+        .any(|event| matches!(event.kind(), ClientEventKind::EntryDeleted));
+    if matches!(name_level, NameOutputLevel::Disabled)
+        && (verbosity == 0 || name_overridden)
+        && !(has_deletions && info_gte(InfoFlag::Del, 1))
+    {
         return Ok(());
     }
 
@@ -947,6 +966,39 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
     for event in ordered_events {
         let kind = event.kind();
+        // upstream: log.c:870-874 log_delete() prints "deleting %n" gated on
+        // INFO_GTE(DEL, 1), which -v raises to 1 (options.c:251). The deletion
+        // notice is DEL-gated and independent of the NAME level that governs the
+        // per-file listing, so render it here - ahead of the transfer summary -
+        // rather than via info_log! (whose events drain after the summary and so
+        // misorder the line). f_name() appends a trailing slash for a directory
+        // (log.c:639-640); EntryDeleted rows carry the directory bit set by the
+        // engine cleanup pass.
+        if matches!(kind, ClientEventKind::EntryDeleted) {
+            if info_gte(InfoFlag::Del, 1) {
+                let mut name = escape_path(event.relative_path(), eight_bit_output);
+                // upstream: flist.c f_name() emits POSIX forward-slash
+                // separators regardless of host OS. The stored relative path
+                // keeps the platform-native separator, so normalize Windows
+                // backslashes at the rendering boundary - mirroring
+                // `verbose_listing_name` - so `deleting %n` matches upstream
+                // and the other verbose rows on every platform.
+                #[cfg(windows)]
+                for byte in name.iter_mut() {
+                    if *byte == b'\\' {
+                        *byte = b'/';
+                    }
+                }
+                if event.is_directory() {
+                    name.push(b'/');
+                }
+                let mut line = b"deleting ".to_vec();
+                line.extend_from_slice(&name);
+                stdout.write_all(&line)?;
+                stdout.write_all(b"\n")?;
+            }
+            continue;
+        }
         let include_for_name = event_matches_name_level(event, name_level);
 
         if verbosity == 0 {
