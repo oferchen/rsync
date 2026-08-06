@@ -200,11 +200,12 @@ where
     config.file_selection.files_from_path = long_flags.files_from;
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
-    // upstream: options.c:2400-2412 - append mode implies inplace; the transfer
-    // layer derives that internally (transfer_ops.rs `use_inplace = inplace ||
-    // append`), so only the append flags need forwarding. append_verify
-    // (append_mode == 2) folds the on-disk prefix into the whole-file checksum
-    // (receiver.c:357, match.c:373). Mirrors the daemon long-form parser.
+    // upstream: options.c:2400-2411 - append mode implies inplace. The promotion
+    // is applied once for every role by `ServerConfig::apply_append_implies_inplace`
+    // on entry to the server body, so only the append flags need forwarding here.
+    // append_verify (append_mode == 2) folds the on-disk prefix into the
+    // whole-file checksum (receiver.c:357, match.c:373). Mirrors the daemon
+    // long-form parser.
     config.flags.append = long_flags.append;
     config.flags.append_verify = long_flags.append_verify;
     // upstream: receiver.c:320 - a server receiver that was passed --preallocate

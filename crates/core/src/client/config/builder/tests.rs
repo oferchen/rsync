@@ -1154,6 +1154,38 @@ fn append_sets_flag() {
     assert!(config.append());
 }
 
+// upstream: options.c:2410 - `if (append_mode) { ...; inplace = 1; }`. Nothing
+// downstream reads `append_mode` to decide where the receiver writes: the write
+// target (receiver.c:968), the retained-vs-discarded branch for a failed
+// verification (receiver.c:1029), the keptstr wording (receiver.c:1074) and the
+// sender's updating_basis_file (sender.c:337) all read `inplace`. Materialising
+// the flag here is what lets those sites stay single-implementation.
+#[test]
+fn append_implies_inplace() {
+    let config = builder().append(true).build();
+    assert!(
+        config.inplace(),
+        "--append must promote inplace so the receiver rewrites the live \
+         destination and a failed update is retained, not discarded"
+    );
+}
+
+// `--append-verify` is append_mode == 2 upstream (options.c:719), the same
+// `if (append_mode)` truth test, so it promotes identically.
+#[test]
+fn append_verify_implies_inplace() {
+    let config = builder().append(true).append_verify(true).build();
+    assert!(config.inplace());
+}
+
+// The promotion is one-directional: it must not manufacture `inplace` for a
+// transfer that never asked for append semantics.
+#[test]
+fn without_append_inplace_is_untouched() {
+    assert!(!builder().build().inplace());
+    assert!(builder().inplace(true).build().inplace());
+}
+
 #[test]
 fn append_false_clears_flag_and_verify() {
     let config = builder().append_verify(true).append(false).build();
@@ -1263,7 +1295,7 @@ fn validate_inplace_with_partial_dir_conflicts() {
     // receiver's internal one_inplace optimization for a basis file in the
     // partial directory; it never relaxes this user-facing option conflict, so
     // validation must reject the pair regardless of negotiated capabilities.
-    let b = builder()
+    let mut b = builder()
         .inplace(true)
         .partial_directory(Some("/tmp/partial"));
     let err = b.validate().unwrap_err();
@@ -1273,7 +1305,7 @@ fn validate_inplace_with_partial_dir_conflicts() {
 
 #[test]
 fn validate_inplace_with_delay_updates_conflicts() {
-    let b = builder().inplace(true).delay_updates(true);
+    let mut b = builder().inplace(true).delay_updates(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "inplace");
     assert_eq!(err.option2, "delay-updates");
@@ -1281,7 +1313,7 @@ fn validate_inplace_with_delay_updates_conflicts() {
 
 #[test]
 fn validate_append_with_partial_dir_conflicts() {
-    let b = builder()
+    let mut b = builder()
         .append(true)
         .partial_directory(Some("/tmp/partial"));
     let err = b.validate().unwrap_err();
@@ -1291,7 +1323,7 @@ fn validate_append_with_partial_dir_conflicts() {
 
 #[test]
 fn validate_append_with_delay_updates_conflicts() {
-    let b = builder().append(true).delay_updates(true);
+    let mut b = builder().append(true).delay_updates(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "append");
     assert_eq!(err.option2, "delay-updates");
@@ -1300,7 +1332,7 @@ fn validate_append_with_delay_updates_conflicts() {
 #[test]
 fn validate_append_with_whole_file_conflicts() {
     // upstream: options.c:2400 - --append cannot be used with --whole-file.
-    let b = builder().append(true).whole_file(true);
+    let mut b = builder().append(true).whole_file(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "append");
     assert_eq!(err.option2, "whole-file");
@@ -1313,7 +1345,7 @@ fn validate_old_args_with_secluded_args_conflicts() {
     // (`--protect-args`) are mutually exclusive and abort with this exact
     // wording, which differs from the generic "cannot be used with" template:
     // the message names --secluded-args first and ends with a period.
-    let b = builder().old_args(Some(1)).protect_args(Some(true));
+    let mut b = builder().old_args(Some(1)).protect_args(Some(true));
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "old-args");
     assert_eq!(err.option2, "secluded-args");
@@ -1326,38 +1358,38 @@ fn validate_old_args_with_secluded_args_conflicts() {
 #[test]
 fn validate_append_with_no_whole_file_ok() {
     // Explicit `--no-whole-file` is the upstream-compatible companion to --append.
-    let b = builder().append(true).whole_file(false);
+    let mut b = builder().append(true).whole_file(false);
     assert!(b.validate().is_ok());
 }
 
 #[test]
 fn validate_append_without_explicit_whole_file_ok() {
     // Default (None) leaves auto-detection in place and does not conflict.
-    let b = builder().append(true);
+    let mut b = builder().append(true);
     assert!(b.validate().is_ok());
 }
 
 #[test]
 fn validate_inplace_without_conflicts_ok() {
-    let b = builder().inplace(true);
+    let mut b = builder().inplace(true);
     assert!(b.validate().is_ok());
 }
 
 #[test]
 fn validate_delay_updates_without_inplace_ok() {
-    let b = builder().delay_updates(true);
+    let mut b = builder().delay_updates(true);
     assert!(b.validate().is_ok());
 }
 
 #[test]
 fn validate_partial_dir_without_inplace_ok() {
-    let b = builder().partial_directory(Some("/tmp/partial"));
+    let mut b = builder().partial_directory(Some("/tmp/partial"));
     assert!(b.validate().is_ok());
 }
 
 #[test]
 fn validate_default_builder_ok() {
-    let b = builder();
+    let mut b = builder();
     assert!(b.validate().is_ok());
 }
 
@@ -1370,7 +1402,7 @@ fn validate_rsh_with_ssh_url_operand_conflicts() {
     // than the user asked for, so the pair must be rejected as RERR_SYNTAX.
     // Only under `embedded-ssh`: without it, ssh:// has no transport at all and
     // the clearer "requires the embedded-ssh feature" diagnostic wins instead.
-    let b = builder()
+    let mut b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["ssh://host/path", "dest"]);
     let err = b.validate().unwrap_err();
@@ -1385,7 +1417,7 @@ fn validate_rsh_with_ssh_url_operand_no_conflict_without_embedded_ssh() {
     // transport regardless of --rsh (or an implicit shell from RSYNC_RSH). The
     // -e conflict must NOT pre-empt run_client's clearer "ssh:// requires the
     // embedded-ssh feature" error, so validate() stays Ok here and defers.
-    let b = builder()
+    let mut b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["ssh://host/path", "dest"]);
     assert!(b.validate().is_ok());
@@ -1395,7 +1427,7 @@ fn validate_rsh_with_ssh_url_operand_no_conflict_without_embedded_ssh() {
 fn validate_rsh_with_host_path_operand_ok() {
     // A `host:path` operand is exactly the case where --rsh is honoured (it
     // spawns the external ssh), so it must not trip the ssh:// conflict.
-    let b = builder()
+    let mut b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["host:path", "dest"]);
     assert!(b.validate().is_ok());
@@ -1406,7 +1438,7 @@ fn validate_ssh_url_without_rsh_ok() {
     // An `ssh://` operand on its own is the normal built-in-SSH path. With no
     // explicit --rsh (remote_shell = None) there is nothing to conflict with,
     // so the default/unset shell must not trip the check.
-    let b = builder().transfer_args(["ssh://host/path", "dest"]);
+    let mut b = builder().transfer_args(["ssh://host/path", "dest"]);
     assert!(b.validate().is_ok());
 }
 
@@ -1417,7 +1449,7 @@ fn validate_rsh_ssh_url_conflict_message() {
     // the RSYNC_RSH environment variable) because the shell is often implicit,
     // and points the user at every way to resolve it (unset RSYNC_RSH, drop
     // --rsh, or use host:path for the external ssh).
-    let b = builder()
+    let mut b = builder()
         .set_remote_shell(["ssh"])
         .transfer_args(["ssh://host/path", "dest"]);
     let err = b.validate().unwrap_err();
