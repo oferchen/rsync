@@ -107,6 +107,21 @@ impl SourceSpec {
         }
     }
 
+    /// Builds a synthetic NAMED operand from a copy-contents source's immediate
+    /// child, used by the local-copy executor to reproduce upstream's global
+    /// merge of multiple copy-contents sources' contents (flist.c:2544
+    /// flist_sort_and_clean). The child maps to `dest/<basename>` exactly like a
+    /// real named operand of the same basename, so it carries no copy-contents,
+    /// relative-prefix, or dot-dir markers.
+    pub(crate) const fn from_child_path(path: PathBuf) -> Self {
+        Self {
+            path,
+            copy_contents: false,
+            relative_prefix_components: None,
+            has_dot_dir_marker: false,
+        }
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
