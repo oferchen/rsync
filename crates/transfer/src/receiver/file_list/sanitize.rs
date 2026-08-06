@@ -5,6 +5,8 @@
 //! components, and (on Windows) drive/UNC prefixes are stripped from the
 //! file list before any disk operation runs against them.
 
+use std::io;
+
 use logging::info_log;
 
 use super::super::ReceiverContext;
@@ -111,5 +113,87 @@ impl ReceiverContext {
         }
 
         removed
+    }
+
+    /// Segment-scoped, abort-based path-safety check for an INC_RECURSE sub-list
+    /// occupying `self.file_list[flat_start..]`.
+    ///
+    /// Unlike [`sanitize_file_list`](Self::sanitize_file_list) - which runs once
+    /// on the level-1 list and drops offending entries - sub-list entries mirror
+    /// upstream `recv_file_entry()` (flist.c:769-771), which calls
+    /// `exit_cleanup(RERR_UNSUPPORTED)` on the first entry carrying a `..`
+    /// component, an absolute path (without `--relative`), or (on Windows) a
+    /// drive/UNC prefix. Aborting rather than dropping is also required for
+    /// correctness on a multi-segment `file_list`: a `Vec::retain()` compaction
+    /// would shift every later segment's entries and desync the `ndx_segments`
+    /// flat-start bookkeeping. The `--relative` leading-slash strip is an
+    /// in-place mutation (no removal) and is always segment-safe.
+    ///
+    /// Returns [`io::ErrorKind::Unsupported`] so the error maps to
+    /// `RERR_UNSUPPORTED` (exit 4), matching upstream.
+    pub(in crate::receiver) fn sanitize_segment_paths(
+        &mut self,
+        flat_start: usize,
+    ) -> io::Result<()> {
+        let relative_paths = self.config.flags.relative;
+
+        if !self.config.trust_sender {
+            for entry in &self.file_list[flat_start..] {
+                let path = entry.path();
+
+                // upstream: flist.c:769 `!relative_paths && *thisname == '/'`
+                if !relative_paths && path.has_root() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!(
+                            "ABORTING due to unsafe pathname from sender: {}",
+                            path.display()
+                        ),
+                    ));
+                }
+
+                // Windows-only drive/UNC prefix - same rationale as
+                // sanitize_file_list; joining such a path onto dest_dir escapes
+                // the destination tree.
+                #[cfg(windows)]
+                if path
+                    .components()
+                    .next()
+                    .is_some_and(|c| matches!(c, std::path::Component::Prefix(_)))
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!(
+                            "ABORTING due to unsafe pathname from sender: {}",
+                            path.display()
+                        ),
+                    ));
+                }
+
+                // upstream: flist.c:769 clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0
+                if path_contains_dot_dot(path) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!(
+                            "ABORTING due to unsafe pathname from sender: {}",
+                            path.display()
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // upstream: flist.c:3106-3119 strip_root in flist_sort_and_clean() -
+        // leading-slash stripping is a functional requirement for --relative,
+        // applied in place (no removal, segment-safe).
+        if relative_paths {
+            for entry in &mut self.file_list[flat_start..] {
+                if entry.path().has_root() {
+                    entry.strip_leading_slashes();
+                }
+            }
+        }
+
+        Ok(())
     }
 }
