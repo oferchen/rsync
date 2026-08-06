@@ -145,6 +145,15 @@ pub struct LocalCopySummary {
     transferred_file_size: u64,
     bytes_copied: u64,
     matched_bytes: u64,
+    // Cumulative delta-matcher diagnostics for the `-vv` `total:` line.
+    // upstream: match.c:433-435 folds each file's per-file `matches`,
+    // `hash_hits`, and `false_alarms` into `total_*` after `match_sums()`
+    // returns, and `match_report()` (match.c:439) prints the totals once. The
+    // local-copy executor has no forked sender running `match_sums()`, so it
+    // accumulates the same running totals here.
+    delta_matches: u64,
+    delta_hash_hits: u64,
+    delta_false_alarms: u64,
     bytes_sent: u64,
     bytes_received: u64,
     compressed_bytes: u64,
@@ -355,6 +364,36 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn matched_bytes(&self) -> u64 {
         self.matched_bytes
+    }
+
+    /// Returns the number of basis blocks the delta matcher reused across the
+    /// whole run - the `matches=` field of the `-vv` `total:` line.
+    ///
+    /// upstream: `match.c:435` `total_matches`.
+    #[must_use]
+    pub const fn delta_matches(&self) -> u64 {
+        self.delta_matches
+    }
+
+    /// Returns the run's cumulative delta-probe hash hits - the `hash_hits=`
+    /// field of the `-vv` `total:` line.
+    ///
+    /// upstream: `match.c:433` `total_hash_hits`. oc counts bithash-prefilter
+    /// positives rather than upstream's `SUM2HASH` bucket hits; see
+    /// [`crate::delta::ProbeCounters`] for why the two are not comparable.
+    #[must_use]
+    pub const fn delta_hash_hits(&self) -> u64 {
+        self.delta_hash_hits
+    }
+
+    /// Returns the run's cumulative delta-probe false alarms - the
+    /// `false_alarms=` field of the `-vv` `total:` line.
+    ///
+    /// upstream: `match.c:434` `total_false_alarms`. See
+    /// [`crate::delta::ProbeCounters`] for oc's counting semantics.
+    #[must_use]
+    pub const fn delta_false_alarms(&self) -> u64 {
+        self.delta_false_alarms
     }
 
     /// Returns the aggregate number of bytes that were sent to the peer.
@@ -727,6 +766,9 @@ impl LocalCopySummary {
             transferred_file_size: 0,
             bytes_copied: 0,
             matched_bytes: 0,
+            delta_matches: 0,
+            delta_hash_hits: 0,
+            delta_false_alarms: 0,
             compressed_bytes: 0,
             compression_used: false,
             total_source_bytes: 0,
@@ -764,6 +806,21 @@ impl LocalCopySummary {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
         }
+    }
+
+    /// Folds one delta-scanned file's match diagnostics into the run totals
+    /// rendered on the `-vv` `total:` line.
+    ///
+    /// upstream: `match.c:433-435` - `total_hash_hits += hash_hits` etc. once
+    /// per file, immediately after that file's `match_sums()` returns.
+    pub(in crate::local_copy) fn record_delta_probe(
+        &mut self,
+        matches: u64,
+        probe: crate::delta::ProbeCounters,
+    ) {
+        self.delta_matches = self.delta_matches.saturating_add(matches);
+        self.delta_hash_hits = self.delta_hash_hits.saturating_add(probe.hash_hits);
+        self.delta_false_alarms = self.delta_false_alarms.saturating_add(probe.false_alarms);
     }
 
     /// Records a would-be transfer for a `--dry-run`, mirroring upstream's
@@ -1257,6 +1314,35 @@ mod tests {
         // "Total transferred file size: 0").
         assert_eq!(summary.transferred_file_size(), 204_800);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(3));
+    }
+
+    /// The `-vv` `total:` line reports RUN totals, not the last file's figures.
+    /// upstream: match.c:433-435 folds each file's counters into `total_*` and
+    /// match_report() prints the accumulation once, so a per-file overwrite
+    /// would under-report every multi-file transfer.
+    #[test]
+    fn record_delta_probe_accumulates_across_files() {
+        let mut summary = LocalCopySummary::default();
+        assert_eq!(summary.delta_matches(), 0);
+
+        summary.record_delta_probe(
+            3,
+            crate::delta::ProbeCounters {
+                hash_hits: 5,
+                false_alarms: 2,
+            },
+        );
+        summary.record_delta_probe(
+            1,
+            crate::delta::ProbeCounters {
+                hash_hits: 4,
+                false_alarms: 3,
+            },
+        );
+
+        assert_eq!(summary.delta_matches(), 4);
+        assert_eq!(summary.delta_hash_hits(), 9);
+        assert_eq!(summary.delta_false_alarms(), 5);
     }
 
     #[test]
