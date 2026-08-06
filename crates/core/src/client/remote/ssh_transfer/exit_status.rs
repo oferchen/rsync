@@ -158,14 +158,15 @@ mod windows_exit_status_tests {
     }
 
     #[test]
-    fn windows_command_not_found_127_round_trips_verbatim() {
-        // An SSH "command not found" child exit (127) is not a known RERR_*, so
-        // it must round-trip verbatim as `ExitCode::Other(127)` rather than being
-        // folded into a generic error code.
-        assert_eq!(
-            map_child_exit_status(ExitStatus::from_raw(127)),
-            ExitCode::Other(127)
-        );
+    fn windows_command_not_found_127_maps_to_named_variant() {
+        // An SSH "command not found" child exit (127) IS a known RERR_ code
+        // (upstream errcode.h:64 RERR_CMD_NOTFOUND = 127), so it maps to the
+        // named `ExitCode::CommandNotFound` - not `Other(127)`. Its numeric value
+        // is still preserved (CommandNotFound -> 127), so it round-trips verbatim
+        // into the worst-wins comparison; only the representation is named.
+        let mapped = map_child_exit_status(ExitStatus::from_raw(127));
+        assert_eq!(mapped, ExitCode::CommandNotFound);
+        assert_eq!(mapped.as_i32(), 127);
     }
 
     #[test]
