@@ -23,9 +23,14 @@ pub(crate) fn env_protect_args_default() -> Option<bool> {
 /// Parses a leading base-10 integer like C's `atoi`, ignoring leading
 /// whitespace and any trailing non-digit suffix. Returns 0 when no digits lead.
 ///
-/// Kept consistent with the `RSYNC_OLD_ARGS` parser (`run.rs::atoi_leading`,
-/// upstream: options.c:1971 `old_style_args = atoi(arg)`).
-fn atoi_leading(s: &str) -> i32 {
+/// Shared leading-integer parser for the CLI's environment defaults:
+/// `RSYNC_PROTECT_ARGS` (options.c:1987 `protect_args = atoi(arg) ? 1 : 0`) and
+/// `RSYNC_OLD_ARGS` (options.c:1971 `old_style_args = atoi(arg)`, via
+/// `run.rs::resolve_old_args`).
+///
+/// upstream: options.c:1971 & 1987 call libc `atoi(3)` (stdlib.h); this mirrors
+/// its optional-sign, leading-decimal parse.
+pub(crate) fn atoi_leading(s: &str) -> i32 {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -127,17 +132,26 @@ mod tests {
         }
     }
 
-    /// upstream: options.c:1988 - `atoi(arg) ? 1 : 0` uses C `atoi`, a leading
-    /// base-10 parse. This pins the exact mapping oc must reproduce.
+    /// upstream: options.c:1971 & 1987 call libc `atoi(3)` on the env value; it
+    /// reads an optional sign plus leading decimal digits and stops at the first
+    /// non-digit, so `12abc` -> 12 while `yes`/`true`/`abc`/`` -> 0. This pins
+    /// the exact mapping both `RSYNC_PROTECT_ARGS` and `RSYNC_OLD_ARGS` reuse.
     #[test]
     fn atoi_leading_matches_c_atoi() {
         assert_eq!(atoi_leading("1"), 1);
         assert_eq!(atoi_leading("2"), 2);
+        assert_eq!(atoi_leading("10"), 10);
+        assert_eq!(atoi_leading("12abc"), 12);
         assert_eq!(atoi_leading("  2"), 2);
         assert_eq!(atoi_leading("2 "), 2);
         assert_eq!(atoi_leading("3x"), 3);
+        assert_eq!(atoi_leading("-5"), -5);
+        assert_eq!(atoi_leading("0"), 0);
+        assert_eq!(atoi_leading("0x"), 0);
         assert_eq!(atoi_leading("0abc"), 0);
+        assert_eq!(atoi_leading("abc"), 0);
         assert_eq!(atoi_leading("yes"), 0);
+        assert_eq!(atoi_leading("true"), 0);
         assert_eq!(atoi_leading(""), 0);
     }
 

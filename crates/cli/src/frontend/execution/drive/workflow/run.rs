@@ -15,7 +15,7 @@ use crate::frontend::log_format_has;
 use crate::frontend::outbuf::parse_outbuf_mode;
 use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
-    arguments::{ChecksumThreadsSetting, ParsedArgs, StopRequest},
+    arguments::{ChecksumThreadsSetting, ParsedArgs, StopRequest, atoi_leading},
     execution::{
         chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
         parse_chown_argument, resolve_file_list_entries, resolve_files_from_source,
@@ -1162,31 +1162,6 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
     }
 }
 
-/// Parses a leading base-10 integer like C's `atoi`, ignoring leading
-/// whitespace and any trailing non-digit suffix. Returns 0 when no digits lead.
-fn atoi_leading(s: &str) -> i32 {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    let mut sign = 1i32;
-    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-        if bytes[i] == b'-' {
-            sign = -1;
-        }
-        i += 1;
-    }
-    let mut value = 0i32;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        value = value
-            .saturating_mul(10)
-            .saturating_add((bytes[i] - b'0') as i32);
-        i += 1;
-    }
-    sign * value
-}
-
 /// Returns the explicit checksum seed to record in a batch header, or `None`
 /// when the seed must be derived from time/pid.
 ///
@@ -1230,7 +1205,7 @@ fn open_log_file(path: &PathBuf) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use super::{atoi_leading, derive_batch_seed, explicit_batch_seed, resolve_old_args};
+    use super::{derive_batch_seed, explicit_batch_seed, resolve_old_args};
     use platform::env::EnvGuard;
     use std::ffi::OsStr;
     use std::sync::Mutex;
@@ -1238,21 +1213,6 @@ mod tests {
     /// Serialises the `RSYNC_OLD_ARGS` env mutations so the resolver tests never
     /// race on the process environment even under a threaded test runner.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// `atoi_leading` mirrors C `atoi`: it reads a leading integer and ignores a
-    /// trailing non-digit suffix, which is exactly how upstream parses
-    /// `RSYNC_OLD_ARGS` (options.c:1971 `old_style_args = atoi(arg)`).
-    #[test]
-    fn atoi_leading_matches_c_atoi() {
-        assert_eq!(atoi_leading("2"), 2);
-        assert_eq!(atoi_leading("1"), 1);
-        assert_eq!(atoi_leading("  2"), 2);
-        assert_eq!(atoi_leading("2 "), 2);
-        assert_eq!(atoi_leading("2abc"), 2);
-        assert_eq!(atoi_leading("10"), 10);
-        assert_eq!(atoi_leading("yes"), 0);
-        assert_eq!(atoi_leading(""), 0);
-    }
 
     /// An explicit `--old-args` counter must flow through unchanged and suppress
     /// the env lookup, mirroring upstream skipping the `old_style_args < 0`
