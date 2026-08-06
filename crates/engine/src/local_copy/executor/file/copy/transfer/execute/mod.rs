@@ -675,9 +675,12 @@ pub(in crate::local_copy) fn execute_transfer_once(
     }
 
     let compressed_bytes = outcome.compressed_bytes();
-    context
-        .summary_mut()
-        .record_file(file_size, outcome.literal_bytes(), compressed_bytes);
+    context.summary_mut().record_file(
+        file_size,
+        outcome.literal_bytes(),
+        outcome.matched_bytes(),
+        compressed_bytes,
+    );
     context
         .summary_mut()
         .record_copy_method(CopyMethodKind::Standard);

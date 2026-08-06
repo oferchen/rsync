@@ -544,6 +544,27 @@ fn plain_append_never_redoes_even_with_a_mismatching_prefix() {
         b"01234XXX89ABCDEFGHIJ",
         "--append keeps the wrong prefix - that is the documented trade-off"
     );
+
+    // The prefix an append skips is neither literal nor matched. Upstream
+    // accumulates `stats.matched_data` only in `matched()` (match.c:121), and
+    // append mode never reaches it, so upstream reports 0 - MEASURED on this
+    // shape: `oc -a --append --ignore-times --stats` over a 100 KiB prefix
+    // gives upstream `Literal 102,400 / Matched 0`.
+    //
+    // This is the assertion that catches deriving the figure as
+    // `file_size - literal_bytes`: that derivation assumes every non-literal
+    // byte was matched, which is exactly what append falsifies, and it would
+    // report the whole 10-byte prefix here.
+    assert_eq!(
+        summary.bytes_copied(),
+        10,
+        "only the appended tail is literal"
+    );
+    assert_eq!(
+        summary.matched_bytes(),
+        0,
+        "an appended-over prefix is not matched data"
+    );
 }
 
 #[test]
