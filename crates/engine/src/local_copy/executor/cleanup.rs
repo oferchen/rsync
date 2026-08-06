@@ -641,10 +641,8 @@ fn delete_leaf(
     // leaving it non-empty. Upstream `delete_dir_contents` reports this as the
     // benign `DR_NOT_EMPTY` (delete.c:117): print the notice, keep the
     // directory, do not flag an I/O error or count a deletion. The rmdir must
-    // therefore run before the "deleting" line so the line is only emitted for a
-    // directory that is actually removed. Files keep the print-before-unlink
-    // order (the backup already renamed them; the unlink cannot leave a
-    // survivor).
+    // therefore run before the deletion is recorded so the `*deleting` event is
+    // only emitted for a directory that is actually removed.
     if is_dir {
         if !context.mode().is_dry_run() {
             match RealDeleteFs.rmdir(path) {
@@ -670,30 +668,22 @@ fn delete_leaf(
                 }
             }
         }
-        if !context.options().is_itemize_active() {
-            info_log!(Del, 1, "deleting {}/", entry_relative.display());
-        }
-    } else {
-        if !context.options().is_itemize_active() {
-            info_log!(Del, 1, "deleting {}", entry_relative.display());
-        }
-        if !context.mode().is_dry_run() {
-            let fs = RealDeleteFs;
-            let result = if file_type.is_symlink() {
-                fs.unlink_symlink(path)
-            } else {
-                fs.unlink_file(path)
-            };
-            if let Err(error) = result {
-                // A vanished entry is a benign no-op (upstream ENOENT path); any
-                // other failure surfaces so the exit code reflects it.
-                if error.kind() != io::ErrorKind::NotFound {
-                    return Err(LocalCopyError::io(
-                        "delete extraneous destination entry",
-                        path.to_path_buf(),
-                        error,
-                    ));
-                }
+    } else if !context.mode().is_dry_run() {
+        let fs = RealDeleteFs;
+        let result = if file_type.is_symlink() {
+            fs.unlink_symlink(path)
+        } else {
+            fs.unlink_file(path)
+        };
+        if let Err(error) = result {
+            // A vanished entry is a benign no-op (upstream ENOENT path); any
+            // other failure surfaces so the exit code reflects it.
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(LocalCopyError::io(
+                    "delete extraneous destination entry",
+                    path.to_path_buf(),
+                    error,
+                ));
             }
         }
     }
@@ -984,18 +974,6 @@ fn apply_delete_side_effects(
                 true,
             )?;
         }
-        // upstream: log.c:log_delete emits exactly ONE line - the itemize
-        // format when stdout_format_has_o_or_i, otherwise "deleting %n".
-        // Suppress the plain line when itemize is active so only the
-        // `*deleting` record renders; f_name appends a trailing slash for
-        // directories and never inserts the word "directory".
-        if !context.options().is_itemize_active() {
-            if is_dir {
-                info_log!(Del, 1, "deleting {}/", entry_relative.display());
-            } else {
-                info_log!(Del, 1, "deleting {}", entry_relative.display());
-            }
-        }
         context.summary_mut().record_deletion(file_type);
         context.record(
             LocalCopyRecord::new(
@@ -1065,16 +1043,6 @@ pub(crate) fn record_directory_subtree(
         let is_dir = file_type.is_dir();
         if is_dir {
             record_directory_subtree(context, path_buf, relative_buf)?;
-        }
-        // upstream: log.c:log_delete emits one line; suppress the plain
-        // "deleting %n" when itemize is active. f_name appends a trailing
-        // slash for dirs and never inserts the word "directory".
-        if !context.options().is_itemize_active() {
-            if is_dir {
-                info_log!(Del, 1, "deleting {}/", relative_buf.display());
-            } else {
-                info_log!(Del, 1, "deleting {}", relative_buf.display());
-            }
         }
         context.summary_mut().record_deletion(file_type);
         context.record(

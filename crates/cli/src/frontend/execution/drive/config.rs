@@ -469,10 +469,25 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         NameOutputLevel::UpdatedAndUnchanged
     ));
 
+    // upstream: log.c:870 log_delete() prints "deleting %n" whenever
+    // INFO_GTE(DEL, 1), independent of -v. `--info=del` (level >= 1) raises DEL
+    // without raising verbosity, so `collect_events()` - which only fires on
+    // verbosity/progress/list_only - would leave the engine without the
+    // EntryDeleted events the CLI renders, dropping the deletion lines. Force
+    // collection when DEL was explicitly requested. `info_flags_list` carries
+    // the resolved `del{level}` token (options.c info_words[] order).
+    let info_del_requested = inputs.info_flags_list.iter().any(|token| {
+        token
+            .to_str()
+            .and_then(|value| value.strip_prefix("del"))
+            .and_then(|level| level.parse::<u8>().ok())
+            .is_some_and(|level| level >= 1)
+    });
     let force_event_collection = inputs.itemize_changes
         || inputs.out_format_template.is_some()
         || inputs.log_file_template.is_some()
-        || !matches!(inputs.name_level, NameOutputLevel::Disabled);
+        || !matches!(inputs.name_level, NameOutputLevel::Disabled)
+        || info_del_requested;
 
     builder = builder.files_from(inputs.files_from).from0(inputs.from0);
 

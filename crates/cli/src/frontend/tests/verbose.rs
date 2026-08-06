@@ -1569,3 +1569,121 @@ fn verbose_directory_listing_has_trailing_slash_and_root_row() {
         "expected the file row `sub/file.txt`, got: {rendered:?}"
     );
 }
+
+/// Regression: `-v --delete` on a local copy must render deletions as upstream
+/// does - a `deleting <path>` line (trailing slash for a directory) emitted at
+/// the generator's delete-pass position, BEFORE the transfer summary. The
+/// pre-fix engine leaked a bare filename in the verbose listing while routing
+/// the real `deleting` line through `info_log!`, whose events drain AFTER the
+/// summary (misordered) - so the output showed both a bare name and a trailing
+/// duplicate. Encodes the ordering + text contract, not merely presence.
+///
+/// upstream: delete.c:180 log_delete() -> log.c:873 fmt "deleting %n".
+#[test]
+fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir_all(&source_dir).expect("mkdir source");
+    fs::create_dir_all(&dest_dir).expect("mkdir dest");
+
+    // A file that already matches keeps the transfer side quiet; the deletions
+    // are what we assert on.
+    fs::write(source_dir.join("keep.txt"), b"keep").expect("write src keep");
+    fs::write(dest_dir.join("keep.txt"), b"keep").expect("write dst keep");
+    // Extraneous entries that must be deleted: a plain file and a non-empty
+    // directory (its child is deleted first, then the directory itself).
+    fs::write(dest_dir.join("extra.txt"), b"stale").expect("write extra");
+    fs::create_dir_all(dest_dir.join("staledir")).expect("mkdir staledir");
+    fs::write(dest_dir.join("staledir/gone.txt"), b"gone").expect("write gone");
+
+    // Backdate every entry so the quick-check skips the matching keep.txt and
+    // no spurious transfer row appears.
+    let epoch = filetime::FileTime::from_unix_time(1_000_000_000, 0);
+    for path in [
+        source_dir.join("keep.txt"),
+        dest_dir.join("keep.txt"),
+        dest_dir.join("extra.txt"),
+        dest_dir.join("staledir"),
+        dest_dir.join("staledir/gone.txt"),
+    ] {
+        filetime::set_file_mtime(&path, epoch).expect("backdate");
+    }
+
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-rv"),
+        OsString::from("--delete"),
+        source_operand,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    // (text) every deletion is rendered with the `deleting ` prefix; the
+    // directory carries a trailing slash (f_name), the file does not.
+    assert!(
+        rendered.contains("deleting staledir/gone.txt\n"),
+        "missing `deleting staledir/gone.txt`, got: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("deleting staledir/\n"),
+        "directory deletion must carry a trailing slash, got: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("deleting extra.txt\n"),
+        "missing `deleting extra.txt`, got: {rendered:?}"
+    );
+
+    // (no bare-name leak) the verbose listing must never emit a deleted entry as
+    // a bare filename - only the `deleting ` form is upstream-legal.
+    for bare in ["extra.txt", "staledir", "staledir/gone.txt"] {
+        assert!(
+            !lines.contains(&bare),
+            "bare deleted name `{bare}` leaked into verbose output, got: {rendered:?}"
+        );
+    }
+
+    // (order) child precedes its parent directory in the delete pass.
+    let idx_child = rendered
+        .find("deleting staledir/gone.txt")
+        .expect("child deletion present");
+    let idx_dir = rendered
+        .find("deleting staledir/\n")
+        .expect("dir deletion present");
+    assert!(
+        idx_child < idx_dir,
+        "child must be deleted before its parent directory, got: {rendered:?}"
+    );
+
+    // (order) every `deleting` line precedes the transfer summary - upstream
+    // deletes during the generator pass, ahead of `sent ... bytes`.
+    let summary_pos = rendered
+        .find("\nsent ")
+        .or_else(|| rendered.strip_prefix("sent ").map(|_| 0))
+        .expect("summary line present");
+    let last_delete = rendered
+        .rfind("deleting ")
+        .expect("at least one deletion present");
+    assert!(
+        last_delete < summary_pos,
+        "all `deleting` lines must precede the summary, got: {rendered:?}"
+    );
+
+    assert!(
+        !dest_dir.join("extra.txt").exists(),
+        "extra.txt should have been deleted"
+    );
+    assert!(
+        !dest_dir.join("staledir").exists(),
+        "staledir should have been deleted"
+    );
+}
