@@ -88,6 +88,10 @@ impl GeneratorContext {
         // can find it via flist_find_name() (generator.c:1313). We track
         // emitted ancestors across sources to avoid duplicate entries.
         let mut implied_ancestors: HashSet<PathBuf> = HashSet::new();
+        // upstream: flist.c:2368 - a positional operand whose transmitted name
+        // begins with a bare `./` sets `implied_dot_dir`, which fires the
+        // synthetic `.` transfer-root emission below (once per build).
+        let mut implied_dot_dir = false;
         for base_path in base_paths {
             // upstream: flist.c:2338-2349 - non-relative mode splits each
             // positional on the LAST `/`: `dir = strrchr(fbuf, '/')` becomes
@@ -111,6 +115,13 @@ impl GeneratorContext {
             if !self.try_walk_source_entry(&base, &path)? {
                 continue;
             }
+            // upstream: flist.c:2368-2369 - the first operand whose relative
+            // name begins with a bare `./` arms `implied_dot_dir` (set after
+            // the operand's containing dir is validated, mirrored here by the
+            // successful walk above).
+            if relative_paths && !implied_dot_dir && operand_sets_implied_dot(base_path) {
+                implied_dot_dir = true;
+            }
             // upstream: flist.c:2257-2258 - `if (relative_paths &&
             // protocol_version >= 30) implied_dirs = 1;` forces the sender to
             // emit flagged implied parent dirs at protocol >= 30 regardless of
@@ -123,6 +134,33 @@ impl GeneratorContext {
             if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
             {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
+            }
+        }
+
+        // upstream: flist.c:2417-2419 - a positional operand beginning with a
+        // bare `./` (implied_dot_dir) makes send_file_list() emit a single
+        // synthetic `.` transfer-root entry via
+        // send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR).
+        // Upstream routes that call through send_file1(), which drops a
+        // directory when xfer_dirs is off (flist.c:2451, printing "skipping
+        // directory ."), so the `.` rides the wire ONLY when directories are
+        // transferred (`-r` / `-d` / list-only; --files-from forces xfer_dirs on
+        // and takes the build_file_list_with_base path instead). Mirror both:
+        // emit exactly once, gated on the same xfer_dirs condition. The `.` maps
+        // to the sender's current directory (the transfer root); mark it
+        // FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared so a real receiver does
+        // not scope `--delete` over the destination root. The post-loop sort
+        // orders it ahead of every other entry (flist.c f_name_cmp).
+        let xfer_dirs =
+            self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
+        if implied_dot_dir && xfer_dirs {
+            let dot_root = Path::new(".");
+            if let Ok(meta) = std::fs::symlink_metadata(dot_root) {
+                if meta.is_dir() {
+                    let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta)?;
+                    mark_implied_dir(&mut dot_entry);
+                    self.push_file_item(dot_entry, dot_root.to_path_buf());
+                }
             }
         }
 
@@ -549,6 +587,29 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
     (base, path.to_path_buf())
 }
 
+/// Returns true when a positional operand carries a bare leading `./` anchor
+/// that upstream's `implied_dot_dir` trigger recognises.
+///
+/// Upstream computes the operand's transmitted name `fn` - everything after the
+/// first `/./` split, with any leading slashes skipped - and fires when
+/// `*fn == '.' && fn[1] == '/' && fn[2]` (`flist.c:2364-2369`). A bare `.` or
+/// `./` (no third byte) does not qualify, matching `has_leading_dot_anchor` on
+/// the `--files-from` path.
+fn operand_sets_implied_dot(path: &Path) -> bool {
+    let Some(s) = path.as_os_str().to_str() else {
+        return false;
+    };
+    // upstream: flist.c:2351 - split on the first `/./`; the transmitted name is
+    // everything after it (leading slashes skipped). Without a `/./` the whole
+    // operand is the name.
+    let fn_part = match s.find("/./") {
+        Some(idx) => s[idx + 3..].trim_start_matches('/'),
+        None => s,
+    };
+    let b = fn_part.as_bytes();
+    b.len() > 2 && b[0] == b'.' && b[1] == b'/'
+}
+
 /// Locates the byte offset of `/./` in a path, used as the `--relative`
 /// anchor separator.
 fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
@@ -601,3 +662,29 @@ fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
 
 #[cfg(test)]
 pub(super) use protocol::flist::apply_permutation_in_place;
+
+#[cfg(test)]
+mod implied_dot_tests {
+    use super::operand_sets_implied_dot;
+    use std::path::Path;
+
+    /// upstream: flist.c:2368-2369 - `implied_dot_dir` fires for a bare leading
+    /// `./` with content after it, whether the operand is bare or the remainder
+    /// of a `/./` split; it never fires for `.`/`./`, a plain relative name, an
+    /// absolute path, or a `/./` anchor whose remainder is a plain name.
+    #[test]
+    fn detects_leading_dot_anchor_like_upstream() {
+        for yes in ["./a", "./a/b/file", "./x/", "/abs/././x"] {
+            assert!(
+                operand_sets_implied_dot(Path::new(yes)),
+                "expected {yes:?} to arm implied_dot_dir"
+            );
+        }
+        for no in [".", "./", "a/b/file", "/abs/a/b/file", "/abs/./a/b/file"] {
+            assert!(
+                !operand_sets_implied_dot(Path::new(no)),
+                "expected {no:?} to NOT arm implied_dot_dir"
+            );
+        }
+    }
+}

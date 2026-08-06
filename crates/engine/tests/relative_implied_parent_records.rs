@@ -148,3 +148,58 @@ fn no_implied_dirs_suppresses_rows_but_still_counts_ancestors() {
         "ancestors still ship in the flist at protocol >= 30, so they count"
     );
 }
+
+/// A `-R` operand whose implied ancestor is a SYMLINK to a directory:
+/// `<from>/./link/c.txt` where `link -> real`. Upstream sets
+/// `copy_links = xfer_dirs = 1` around the implied-ancestor loop
+/// (`flist.c:1985`), so a symlinked ancestor is FOLLOWED and emitted as a real
+/// directory - it earns an itemize row and counts under `--stats`. The
+/// local-copy executor previously stat'd ancestors with `symlink_metadata`,
+/// which reports the symlink as a non-directory and dropped it, losing the row
+/// and the dir count while still materialising the directory on disk.
+#[test]
+fn symlinked_implied_ancestor_is_followed_itemized_and_counted() {
+    let temp = tempdir().expect("tempdir");
+    let from = temp.path().join("from");
+    let to = temp.path().join("to");
+    let real = from.join("real");
+    fs::create_dir_all(&real).expect("create real dir");
+    fs::create_dir_all(&to).expect("create dest root");
+    fs::write(real.join("c.txt"), b"payload").expect("write leaf file");
+    std::os::unix::fs::symlink("real", from.join("link")).expect("symlink ancestor");
+
+    let mut operand = from.clone();
+    operand.push(".");
+    operand.push("link");
+    operand.push("c.txt");
+    let operands = vec![operand.into_os_string(), to.clone().into_os_string()];
+
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .relative_paths(true)
+        .collect_events(true);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("relative copy succeeds");
+
+    // Data is unaffected: the leaf still lands under the followed ancestor.
+    assert!(to.join("link").join("c.txt").is_file());
+
+    let records = report.records();
+    let dir_paths: Vec<PathBuf> = records
+        .iter()
+        .filter(|r| is_created_dir(r))
+        .map(|r| r.relative_path().to_path_buf())
+        .collect();
+    assert_eq!(
+        dir_paths,
+        vec![PathBuf::from("link")],
+        "the symlinked ancestor must be followed and itemized as a created dir"
+    );
+
+    let summary = report.summary();
+    assert_eq!(summary.directories_created(), 1, "created dirs: link");
+    assert_eq!(summary.directories_total(), 1, "total dirs: link");
+}
