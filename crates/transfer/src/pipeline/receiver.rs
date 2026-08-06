@@ -170,52 +170,28 @@ pub struct VerifyReport {
     pub read_batch: bool,
 }
 
-/// Selects the upstream verification-failure `keptstr` wording for a file.
+/// Projects this receiver's partial-retention mode onto the three upstream
+/// variables `receiver.c:1074-1076` reads.
 ///
-/// Mirrors the branch at `receiver.c:1073-1078`: a temp update with no partial
-/// retention and no in-place write is "discarded"; a `--partial-dir` transfer
-/// keeps it "put into partial-dir"; anything else (plain `--partial` or an
-/// in-place/append write to the live destination) leaves it "retained".
-///
-/// upstream: receiver.c:1073-1078 keptstr selection.
-fn verification_kept_str(partial_mode: &PartialMode, is_inplace: bool) -> &'static str {
-    if matches!(partial_mode, PartialMode::None) && !is_inplace {
-        "discarded"
-    } else if matches!(partial_mode, PartialMode::PartialDir(_)) {
-        "put into partial-dir"
-    } else {
-        "retained"
+/// Upstream keeps `keep_partial`, `partialptr` and `partial_dir` separately;
+/// oc collapses them into one session-wide [`PartialMode`], so a mode other
+/// than [`PartialMode::None`] always has a partial path to retain.
+fn partial_state(partial_mode: &PartialMode) -> (bool, bool, bool) {
+    match partial_mode {
+        PartialMode::None => (false, false, false),
+        PartialMode::Partial => (true, true, false),
+        PartialMode::PartialDir(_) => (true, true, true),
     }
-}
-
-/// Whether the phase-1 (`FWARNING`) verification-failure line is reported at
-/// all.
-///
-/// Upstream prints the `failed verification` text only when the message is a
-/// hard `FERROR_XFER` - the phase-2 form, which is unconditional and so does not
-/// consult this - or the run asked for per-file output, either through the
-/// `NAME` info category (`-v`, `--info=name`) or through a per-file format
-/// carrying `%i` (`-i`, or a custom `--out-format` with `%i`). A plain `-a` run
-/// is therefore silent about a failure it is about to retry successfully.
-///
-/// The `NAME` level comes from the thread-local verbosity configuration, seeded
-/// on a client from its own command line and on a server receiver from the flags
-/// the client forwarded, so `--info=name0` suppresses the line even under `-v`
-/// exactly as upstream's `INFO_GTE` does.
-///
-/// upstream: receiver.c:1072 - `if (msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
-/// || stdout_format_has_i)`.
-fn reports_verify_warning(report: VerifyReport) -> bool {
-    logging::info_gte(logging::InfoFlag::Name, 1) || report.out_format_forwards_i
 }
 
 /// Builds the diagnostic upstream's receiver emits for a file that failed its
 /// whole-file verification, or `None` when upstream stays silent.
 ///
-/// This is the whole of `receiver.c:1071-1091` in one place - severity, gate,
-/// message text, `keptstr` selection and retry suffix - deliberately free of any
-/// transport or queueing concern, so both the message and the decision to emit
-/// it stay comparable to the C side line by line.
+/// The rule itself is [`logging::verification_failure`]; this maps the
+/// receiver's own state onto it and converts upstream's `msgtype` into the
+/// multiplexed code the warning queue carries. The local-copy executor
+/// supplies its own state to the same function, so neither path can drift the
+/// wording, the severity or the emission gate away from the other.
 ///
 /// `name` is the file's *file list* name. Upstream's receiver has already
 /// `change_dir()`ed into the destination root (`main.c:815`), so `fname` - and
@@ -226,13 +202,7 @@ fn reports_verify_warning(report: VerifyReport) -> bool {
 /// failure is a retryable `FWARNING`, and true in the phase-2 redo, where the
 /// same failure is a fatal `FERROR_XFER` with no retry left to promise.
 ///
-/// # Upstream Reference
-///
-/// - `receiver.c:1071` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
-/// - `receiver.c:1072` - the emit gate, mirrored by [`reports_verify_warning`].
-/// - `receiver.c:1073-1078` - `keptstr`, mirrored by [`verification_kept_str`].
-/// - `receiver.c:1079-1086` - `errstr` and `redostr`.
-/// - `receiver.c:1088-1091` - the format string reproduced verbatim below.
+/// upstream: receiver.c:1071-1091.
 fn verification_failure_report(
     name: &std::path::Path,
     partial_mode: &PartialMode,
@@ -240,26 +210,24 @@ fn verification_failure_report(
     redoing: bool,
     report: VerifyReport,
 ) -> Option<(MessageCode, String)> {
-    let kept = verification_kept_str(partial_mode, is_inplace);
-    let name = name.display();
-    if redoing {
-        return Some((
-            MessageCode::ErrorXfer,
-            format!("ERROR: {name} failed verification -- update {kept}."),
-        ));
-    }
-    if !reports_verify_warning(report) {
-        return None;
-    }
-    let redostr = if report.read_batch {
-        " (may try again)"
-    } else {
-        " (will try again)"
-    };
-    Some((
-        MessageCode::Warning,
-        format!("WARNING: {name} failed verification -- update {kept}{redostr}."),
-    ))
+    let (keep_partial, has_partial_path, partial_dir) = partial_state(partial_mode);
+    let (code, message) = logging::verification_failure(
+        name,
+        logging::VerifyFailure {
+            redoing,
+            read_batch: report.read_batch,
+            stdout_format_has_i: report.out_format_forwards_i,
+            keep_partial,
+            has_partial_path,
+            partial_dir,
+            inplace: is_inplace,
+        },
+    )?;
+    // upstream: log.c:332-337 - the receiver's rprintf(msgtype, ..) travels to
+    // the client as the multiplexed message for that log code.
+    let code = MessageCode::from_log_code(code)
+        .expect("FERROR_XFER and FWARNING both have multiplexed equivalents");
+    Some((code, message))
 }
 
 impl PipelinedReceiver {
@@ -1647,25 +1615,61 @@ mod tests {
         );
     }
 
-    /// The `keptstr` selection must mirror upstream `receiver.c:1073-1078`: a
-    /// plain temp update is "discarded", an in-place/append write is "retained"
-    /// (the destination inode was already overwritten), `--partial` retains the
-    /// temp, and `--partial-dir` reports "put into partial-dir".
+    /// Each [`PartialMode`] must project onto the three upstream variables
+    /// `receiver.c:1074-1076` reads. The `keptstr` chain those variables drive
+    /// is pinned by the table in `logging::verify_failure`; what this test owns
+    /// is the projection, the only part of the rule that is oc-specific.
+    ///
+    /// The end-to-end wordings below (`queued_verification_messages`) then
+    /// confirm the projection and the shared rule agree on the live path.
     #[test]
-    fn verification_kept_str_matches_upstream() {
+    fn partial_state_projects_onto_the_upstream_variables() {
         assert_eq!(
-            verification_kept_str(&PartialMode::None, false),
-            "discarded"
-        );
-        assert_eq!(verification_kept_str(&PartialMode::None, true), "retained");
-        assert_eq!(
-            verification_kept_str(&PartialMode::Partial, false),
-            "retained"
+            partial_state(&PartialMode::None),
+            (false, false, false),
+            "no retention: keep_partial and partialptr are both unset"
         );
         assert_eq!(
-            verification_kept_str(&PartialMode::PartialDir(PathBuf::from("/pd")), false),
-            "put into partial-dir"
+            partial_state(&PartialMode::Partial),
+            (true, true, false),
+            "--partial retains at the destination name, with no partial-dir"
         );
+        assert_eq!(
+            partial_state(&PartialMode::PartialDir(PathBuf::from("/pd"))),
+            (true, true, true),
+            "--partial-dir also sets partial_dir, which selects its own keptstr"
+        );
+    }
+
+    /// The projection and the shared rule together must still produce every
+    /// upstream `keptstr`, reached through this receiver's own types.
+    ///
+    /// upstream: receiver.c:1073-1079.
+    #[test]
+    fn every_kept_str_is_reachable_through_partial_mode() {
+        for (partial_mode, is_inplace, expected) in [
+            (PartialMode::None, false, "discarded"),
+            (PartialMode::None, true, "retained"),
+            (PartialMode::Partial, false, "retained"),
+            (
+                PartialMode::PartialDir(PathBuf::from("/pd")),
+                false,
+                "put into partial-dir",
+            ),
+        ] {
+            let (_, message) = verification_failure_report(
+                std::path::Path::new("sub/payload.bin"),
+                &partial_mode,
+                is_inplace,
+                true,
+                VerifyReport::default(),
+            )
+            .expect("the FERROR_XFER form is unconditional");
+            assert_eq!(
+                message,
+                format!("ERROR: sub/payload.bin failed verification -- update {expected}.")
+            );
+        }
     }
 
     /// Verifies `collect_delayed_update` captures the staging path from
