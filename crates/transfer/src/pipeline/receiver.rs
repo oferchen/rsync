@@ -35,6 +35,20 @@ struct PendingChecksum {
     expected: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     len: usize,
     file_path: PathBuf,
+    /// The file's name as it appears in the file list, i.e. upstream's
+    /// `f_name(file, ..)`.
+    ///
+    /// Kept beside the joined destination path in [`Self::file_path`] because
+    /// the two diagnostics this queue feeds want different renderings: the
+    /// `mkstemp` failure names the temp file it tried to create, while the
+    /// verification failure names the transferred file the way upstream's
+    /// receiver does - relative to the destination root it `change_dir()`ed
+    /// into, never as an absolute path.
+    ///
+    /// upstream: receiver.c:706 - `fname = local_name ? local_name : f_name(file, fbuf)`
+    /// upstream: receiver.c:1089 - `local_name ? f_name(file, NULL) : fname`, so
+    /// the flist name is printed in both the `local_name` and the plain case.
+    flist_name: PathBuf,
     /// File list index for this file, used to identify which file to redo.
     file_index: usize,
     /// Whether this file was written in place (`--inplace`/`--append`).
@@ -125,6 +139,35 @@ pub struct PipelinedReceiver {
     /// upstream: util1.c:1285 - `p1 = curr_dir + module_dirlen`.
     daemon_module_root: Option<PathBuf>,
     dest_dir: Option<PathBuf>,
+    /// Session state behind the verification-failure report, seeded by
+    /// [`Self::with_verify_report`].
+    verify_report: VerifyReport,
+}
+
+/// The session state upstream's receiver consults when a whole-file
+/// verification fails, beyond what the per-file [`PendingChecksum`] carries.
+///
+/// Both fields are process-wide globals upstream and are `false` by default
+/// there, so [`Default`] reproduces a plain, non-batch run with no `%i` in the
+/// per-file format.
+///
+/// upstream: receiver.c:1072,1085 - the two globals read by `case 0:`.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct VerifyReport {
+    /// The resolved per-file output format carries `%i`, i.e. upstream's
+    /// `stdout_format_has_i`. Together with `INFO_GTE(NAME, 1)` it is what
+    /// lets the `FWARNING` form print at all.
+    ///
+    /// upstream: receiver.c:1072 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
+    /// || stdout_format_has_i`.
+    pub out_format_forwards_i: bool,
+    /// This receiver is replaying a recorded batch (`--read-batch`), i.e.
+    /// upstream's `read_batch`. Selects the retry wording: a batch replay may
+    /// only *try* the redo, because the recorded stream may not carry it.
+    ///
+    /// upstream: receiver.c:1085 - `redostr = read_batch ? " (may try again)"
+    /// : " (will try again)"`.
+    pub read_batch: bool,
 }
 
 /// Selects the upstream verification-failure `keptstr` wording for a file.
@@ -175,7 +218,20 @@ impl PipelinedReceiver {
             daemon_module,
             daemon_module_root,
             dest_dir,
+            verify_report: VerifyReport::default(),
         })
+    }
+
+    /// Seeds the session state the verification-failure report reads.
+    ///
+    /// Separate from [`Self::new`] because it carries no disk-commit meaning:
+    /// the disk thread neither knows nor cares about the client's output format
+    /// or a batch replay. The default is upstream's default global state, so a
+    /// receiver that never calls this reports exactly as a plain run does.
+    #[must_use]
+    pub fn with_verify_report(mut self, report: VerifyReport) -> Self {
+        self.verify_report = report;
+        self
     }
 
     /// Returns the daemon path context `full_fname()` renders against, or
@@ -238,6 +294,7 @@ impl PipelinedReceiver {
         expected_checksum: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
         checksum_len: usize,
         file_path: PathBuf,
+        flist_name: PathBuf,
         file_index: usize,
         is_inplace: bool,
     ) {
@@ -246,6 +303,7 @@ impl PipelinedReceiver {
             expected: expected_checksum,
             len: checksum_len,
             file_path,
+            flist_name,
             file_index,
             is_inplace,
         });
@@ -377,6 +435,27 @@ impl PipelinedReceiver {
         self.permission_error_count
     }
 
+    /// Whether the phase-1 (`FWARNING`) verification-failure line is reported.
+    ///
+    /// Upstream prints the `failed verification` text only when the message is
+    /// a hard `FERROR_XFER` - the phase-2 form, which is unconditional - or the
+    /// user asked for per-file output, either through the `NAME` info category
+    /// (`-v`, `--info=name`) or through a per-file format carrying `%i` (`-i`,
+    /// or a custom `--out-format` with `%i`). A plain `-a` run is therefore
+    /// silent about a failure it is about to retry successfully.
+    ///
+    /// The `NAME` level is read from the thread-local verbosity configuration,
+    /// which is seeded on a client from its own command line and on a server
+    /// receiver from the flags the client forwarded, so `--info=name0`
+    /// suppresses the line even under `-v` exactly as upstream's `INFO_GTE`
+    /// does.
+    ///
+    /// upstream: receiver.c:1072 - `if (msgtype == FERROR_XFER ||
+    /// INFO_GTE(NAME, 1) || stdout_format_has_i)`.
+    fn reports_verify_warning(&self) -> bool {
+        logging::info_gte(logging::InfoFlag::Name, 1) || self.verify_report.out_format_forwards_i
+    }
+
     /// Verifies a commit result's computed checksum against the expected value.
     ///
     /// Pops the next expected checksum from the FIFO queue (files are processed
@@ -402,28 +481,42 @@ impl PipelinedReceiver {
                 // upstream: receiver.c:1073-1078 - keptstr depends on partial
                 // retention and whether the write was in place.
                 let kept = verification_kept_str(&self.partial_mode, pending.is_inplace);
+                // upstream names the file the way its receiver sees it, i.e.
+                // relative to the destination root it has already `change_dir()`ed
+                // into (main.c:815) - never the joined absolute path.
+                let name = pending.flist_name.display();
                 if self.redo_enabled {
                     // upstream: receiver.c:1088-1091 -
-                    // "WARNING: %s failed verification -- update %s%s.\n"
-                    // with redostr=" (will try again)" on the non-batch path.
-                    self.warnings.push((
-                        MessageCode::Warning,
-                        format!(
-                            "WARNING: {} failed verification -- update {kept} (will try again).",
-                            pending.file_path.display(),
-                        ),
-                    ));
+                    // "WARNING: %s failed verification -- update %s%s.\n". The
+                    // FWARNING form is the only one behind the emit gate; the
+                    // redo itself is queued either way (receiver.c:1093-1096
+                    // sits outside the `if`), so a suppressed line never costs
+                    // the retry.
+                    if self.reports_verify_warning() {
+                        // upstream: receiver.c:1085 - a batch replay may only
+                        // "try again", a live peer will.
+                        let redostr = if self.verify_report.read_batch {
+                            " (may try again)"
+                        } else {
+                            " (will try again)"
+                        };
+                        self.warnings.push((
+                            MessageCode::Warning,
+                            format!(
+                                "WARNING: {name} failed verification -- update {kept}{redostr}."
+                            ),
+                        ));
+                    }
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
                 // upstream: receiver.c:1088-1091 - phase-2 redo path (FERROR_XFER):
                 // "ERROR: %s failed verification -- update %s.\n" with redostr="".
+                // `msgtype == FERROR_XFER` short-circuits the emit gate, so this
+                // form always prints.
                 self.warnings.push((
                     MessageCode::ErrorXfer,
-                    format!(
-                        "ERROR: {} failed verification -- update {kept}.",
-                        pending.file_path.display(),
-                    ),
+                    format!("ERROR: {name} failed verification -- update {kept}."),
                 ));
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
@@ -639,6 +732,7 @@ mod tests {
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
             file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -699,6 +793,7 @@ mod tests {
             expected,
             len: 4,
             file_path: PathBuf::from("/dest/file.txt"),
+            flist_name: PathBuf::from("file.txt"),
             file_index: 7,
             is_inplace: false,
         });
@@ -750,6 +845,7 @@ mod tests {
             expected,
             len: 4,
             file_path: PathBuf::from("/dest/file2.txt"),
+            flist_name: PathBuf::from("file2.txt"),
             file_index: 3,
             is_inplace: false,
         });
@@ -791,6 +887,7 @@ mod tests {
             expected,
             len: 4,
             file_path: PathBuf::from("/dest/ok.txt"),
+            flist_name: PathBuf::from("ok.txt"),
             file_index: 5,
             is_inplace: false,
         });
@@ -842,6 +939,7 @@ mod tests {
             expected,
             len: 4,
             file_path: PathBuf::from("/dest/ok.txt"),
+            flist_name: PathBuf::from("ok.txt"),
             file_index: 9,
             is_inplace: false,
         });
@@ -904,6 +1002,7 @@ mod tests {
             expected,
             len: 4,
             file_path: PathBuf::from("/dest/corrupt.txt"),
+            flist_name: PathBuf::from("corrupt.txt"),
             file_index: 4,
             is_inplace: false,
         });
@@ -979,7 +1078,8 @@ mod tests {
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
-            file_path,
+            file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1070,7 +1170,8 @@ mod tests {
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
-            file_path,
+            file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1121,6 +1222,7 @@ mod tests {
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
             ok_path.clone(),
+            PathBuf::from(ok_path.file_name().unwrap()),
             1,
             false,
         );
@@ -1185,7 +1287,8 @@ mod tests {
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
-            file_path,
+            file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1263,7 +1366,8 @@ mod tests {
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
-            file_path,
+            file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1339,31 +1443,181 @@ mod tests {
         let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
     }
 
-    /// Pins the WARNING wording to upstream `receiver.c:965-968` verbatim.
+    /// Drives one mismatching commit through `verify_checksum` and returns the
+    /// queued diagnostics, so every wording and gating assertion below exercises
+    /// the production branch rather than restating a format string.
+    ///
+    /// `verbose` seeds the thread-local `NAME` info level the way `-v` does, and
+    /// `report` supplies the two session globals upstream reads alongside it.
+    fn queued_verification_messages(
+        verbose: u8,
+        report: VerifyReport,
+        redo_enabled: bool,
+    ) -> Vec<(MessageCode, String)> {
+        use crate::pipeline::messages::ComputedChecksum;
+        use logging::VerbosityConfig;
+
+        logging::init(VerbosityConfig::from_verbose_level(verbose));
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default())
+            .unwrap()
+            .with_verify_report(report);
+        pr.redo_enabled = redo_enabled;
+
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        expected[0] = 0xAA;
+        pr.expected_checksums.push_back(PendingChecksum {
+            expected,
+            len: 4,
+            // A deep absolute destination path: if it ever reaches the message
+            // the assertions below fail loudly instead of matching a substring.
+            file_path: PathBuf::from("/abs/dest/root/sub/payload.bin"),
+            flist_name: PathBuf::from("sub/payload.bin"),
+            file_index: 0,
+            is_inplace: false,
+        });
+
+        let mut computed_bytes = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        computed_bytes[0] = 0xBB;
+        let result = CommitResult {
+            bytes_written: 100,
+            file_entry_index: 0,
+            metadata_error: None,
+            computed_checksum: Some(ComputedChecksum {
+                bytes: computed_bytes,
+                len: 4,
+            }),
+            delayed_path: None,
+            backup_notice: None,
+        };
+        pr.verify_checksum(&result).unwrap();
+        pr.drain_warnings()
+    }
+
+    /// Under `-v` the phase-1 line must be upstream's verbatim, naming the file
+    /// as the file list does.
+    ///
+    /// The flist name is what upstream renders: its receiver has already
+    /// `change_dir()`ed into the destination root (`main.c:815`), so `fname` -
+    /// and `f_name(file, NULL)` in the `local_name` case - is destination
+    /// relative. An absolute path here is a real divergence a user sees.
+    ///
+    /// upstream: receiver.c:1088-1091.
     #[test]
-    fn verification_warning_wording_matches_upstream() {
-        let path = PathBuf::from("/tmp/a/b");
-        let msg = format!(
-            "WARNING: {} failed verification -- update discarded (will try again).",
-            path.display(),
-        );
+    fn verbose_phase1_warning_matches_upstream_verbatim() {
+        let msgs = queued_verification_messages(1, VerifyReport::default(), true);
         assert_eq!(
-            msg,
-            "WARNING: /tmp/a/b failed verification -- update discarded (will try again)."
+            msgs,
+            vec![(
+                MessageCode::Warning,
+                "WARNING: sub/payload.bin failed verification -- update discarded (will try again)."
+                    .to_string()
+            )]
         );
     }
 
-    /// Pins the ERROR wording for the phase-2 redo path to upstream verbatim.
+    /// Without `-v`, `-i`, or a `%i` out-format, upstream stays silent about a
+    /// phase-1 failure it is about to retry - but it still queues the redo.
+    ///
+    /// Both halves matter: suppressing the line must not suppress the retry, or
+    /// the destination is left wrong without any diagnostic at all.
+    ///
+    /// upstream: receiver.c:1072 gates only the `rprintf`; the
+    /// `send_msg_int(MSG_REDO, ndx)` at receiver.c:1093-1096 sits outside it.
     #[test]
-    fn verification_error_wording_matches_upstream() {
-        let path = PathBuf::from("/tmp/a/b");
-        let msg = format!(
-            "ERROR: {} failed verification -- update discarded.",
-            path.display(),
+    fn default_verbosity_suppresses_the_phase1_warning_but_not_the_redo() {
+        use crate::pipeline::messages::ComputedChecksum;
+        use logging::VerbosityConfig;
+
+        logging::init(VerbosityConfig::from_verbose_level(0));
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        expected[0] = 0xAA;
+        pr.expected_checksums.push_back(PendingChecksum {
+            expected,
+            len: 4,
+            file_path: PathBuf::from("/abs/dest/root/payload.bin"),
+            flist_name: PathBuf::from("payload.bin"),
+            file_index: 9,
+            is_inplace: false,
+        });
+        let mut computed_bytes = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        computed_bytes[0] = 0xBB;
+        pr.verify_checksum(&CommitResult {
+            bytes_written: 100,
+            file_entry_index: 0,
+            metadata_error: None,
+            computed_checksum: Some(ComputedChecksum {
+                bytes: computed_bytes,
+                len: 4,
+            }),
+            delayed_path: None,
+            backup_notice: None,
+        })
+        .unwrap();
+
+        assert!(
+            pr.drain_warnings().is_empty(),
+            "-a alone must print nothing"
         );
         assert_eq!(
-            msg,
-            "ERROR: /tmp/a/b failed verification -- update discarded."
+            pr.take_redo_indices(),
+            vec![9],
+            "the retry must survive the suppressed diagnostic"
+        );
+    }
+
+    /// `-i` (or any `--out-format` carrying `%i`) satisfies the gate on its own,
+    /// with no `-v`: upstream ORs `stdout_format_has_i` with `INFO_GTE(NAME, 1)`.
+    ///
+    /// upstream: receiver.c:1072.
+    #[test]
+    fn out_format_i_alone_reports_the_phase1_warning() {
+        let report = VerifyReport {
+            out_format_forwards_i: true,
+            read_batch: false,
+        };
+        let msgs = queued_verification_messages(0, report, true);
+        assert_eq!(msgs.len(), 1, "%i alone must satisfy the gate: {msgs:?}");
+        assert_eq!(msgs[0].0, MessageCode::Warning);
+    }
+
+    /// A `--read-batch` replay says "may try again": the recorded stream is not
+    /// guaranteed to carry the redo the way a live sender does.
+    ///
+    /// upstream: receiver.c:1085 - `redostr = read_batch ? " (may try again)"
+    /// : " (will try again)"`.
+    #[test]
+    fn read_batch_replay_says_may_try_again() {
+        let report = VerifyReport {
+            out_format_forwards_i: false,
+            read_batch: true,
+        };
+        let msgs = queued_verification_messages(1, report, true);
+        assert_eq!(
+            msgs,
+            vec![(
+                MessageCode::Warning,
+                "WARNING: sub/payload.bin failed verification -- update discarded (may try again)."
+                    .to_string()
+            )]
+        );
+    }
+
+    /// The phase-2 form is a `FERROR_XFER`, which short-circuits the emit gate,
+    /// so it prints at default verbosity and carries no retry suffix.
+    ///
+    /// upstream: receiver.c:1071-1072,1083-1084 - `msgtype == FERROR_XFER` is the
+    /// first disjunct, and `redostr = ""` on that branch.
+    #[test]
+    fn phase2_error_is_ungated_and_has_no_retry_suffix() {
+        let msgs = queued_verification_messages(0, VerifyReport::default(), false);
+        assert_eq!(
+            msgs,
+            vec![(
+                MessageCode::ErrorXfer,
+                "ERROR: sub/payload.bin failed verification -- update discarded.".to_string()
+            )]
         );
     }
 
@@ -1400,6 +1654,7 @@ mod tests {
             expected: [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             len: 0,
             file_path: PathBuf::from("/dest/file.txt"),
+            flist_name: PathBuf::from("file.txt"),
             file_index: 0,
             is_inplace: false,
         });
@@ -1473,6 +1728,7 @@ mod tests {
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
             file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1539,6 +1795,7 @@ mod tests {
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
             file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );
@@ -1595,6 +1852,7 @@ mod tests {
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
             file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
             0,
             false,
         );

@@ -15,12 +15,15 @@
 //!
 //! Measured with the real `rsync 3.4.4 protocol version 32` binary on all four
 //! cells plus a local control, using exactly the fixture below: every cell
-//! exits 0, leaves the destination byte-identical to the source, reports
-//! `Number of regular files transferred: 2`, and prints
-//! `WARNING: <name> failed verification -- update retained (will try again).`
-//! to **stderr** - on a pull from the client's own receiver, on a push from the
-//! remote receiver's `MSG_WARNING` frame. These assertions encode that oracle,
-//! not oc's prior behaviour.
+//! exits 0, leaves the destination byte-identical to the source and reports
+//! `Number of regular files transferred: 2`.
+//!
+//! The diagnostic is verbosity gated. Under `-v` (or `-i`) every cell prints
+//! `WARNING: payload.bin failed verification -- update retained (will try
+//! again).` to **stderr** and to nothing else - on a pull from the client's own
+//! receiver, on a push from the remote receiver's `MSG_WARNING` frame. Under a
+//! plain `-a` every cell recovers in complete silence, on both streams. These
+//! assertions encode that oracle, not oc's prior behaviour.
 //!
 //! # What forces the failure deterministically
 //!
@@ -57,8 +60,14 @@
 //!    same frame was merely swallowed, which is why the daemon cells recovered
 //!    while the remote-shell pull hung forever.
 //!
-//! Both regressions are transport-shaped: each reproduced on some cells and not
-//! others, so every reachable cell is pinned here individually.
+//! 3. The queue was unconditional and named the file by its joined ABSOLUTE
+//!    destination path, so oc reported `WARNING: /tmp/.../dst/payload.bin ...`
+//!    on a plain `-a` run where upstream says nothing at all, and never
+//!    reproduced upstream's bare `payload.bin` under `-v`. Measured against
+//!    3.4.4 on daemon pull, daemon push, ssh pull and ssh push.
+//!
+//! The first two regressions are transport-shaped: each reproduced on some cells
+//! and not others, so every reachable cell is pinned here individually.
 //!
 //! # The fourth cell is NOT covered, and why
 //!
@@ -114,14 +123,26 @@ const BAD_PREFIX_LEN: usize = 100 * 1024;
 /// deadlocked forever, so this deadline is what turns that hang into a failing
 /// test instead of a stuck CI job.
 const CLIENT_DEADLINE: Duration = Duration::from_secs(60);
-/// The stderr text upstream 3.4.4 emits on the phase-1 verification failure.
+/// The stderr line upstream 3.4.4 emits on the phase-1 verification failure,
+/// measured verbatim on every cell below.
 ///
-/// Matched as a suffix: upstream prefixes the flist name (`WARNING: payload.bin
-/// failed ...`) while oc currently prefixes the full destination path. That name
-/// divergence is a separate output-fidelity gap, so this pin asserts the part
-/// that must hold on every cell - that the diagnostic reaches the client's
-/// stderr at all - without silently blessing the prefix.
-const UPSTREAM_WARNING: &str = "failed verification -- update retained (will try again).";
+/// The name is the *file list* name, not the destination path: upstream's
+/// receiver has already `change_dir()`ed into the destination root
+/// (`main.c:815`), so `f_name(file, ..)` renders relative. Pinning the whole
+/// line - not a suffix - is what keeps an absolute path from creeping back in.
+const UPSTREAM_WARNING: &str =
+    "WARNING: payload.bin failed verification -- update retained (will try again).";
+
+/// Substring identifying the diagnostic regardless of its wording, used to
+/// assert it is *absent* from a stream or a run.
+const WARNING_MARKER: &str = "failed verification";
+
+/// `-v` is required on every cell: upstream gates the phase-1 `FWARNING` behind
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1072`), so a plain
+/// `-a` run recovers silently and the warning assertions would have nothing to
+/// match. The silence itself is pinned by
+/// [`daemon_pull_default_verbosity_recovers_silently`].
+const VERBOSE: &str = "-v";
 
 /// Deterministic authoritative payload bytes.
 fn authoritative_payload() -> Vec<u8> {
@@ -291,7 +312,17 @@ fn assert_recovered(cell: &str, outcome: &RunOutcome, dest_file: &Path, payload:
     // recovery means the diagnostic was framed to the wrong peer or dropped.
     assert!(
         outcome.stderr.contains(UPSTREAM_WARNING),
-        "{cell}: missing upstream verification warning on stderr\nstdout:\n{}\nstderr:\n{}",
+        "{cell}: stderr must carry upstream's verbatim warning\nwant: {UPSTREAM_WARNING}\nstdout:\n{}\nstderr:\n{}",
+        outcome.stdout,
+        outcome.stderr,
+    );
+
+    // ... and only to stderr. `FWARNING` never reaches stdout, so a copy there
+    // means the line was framed as `MSG_INFO` (which the peer renders as
+    // `FINFO`) instead of `MSG_WARNING`, or written to the wrong local stream.
+    assert!(
+        !outcome.stdout.contains(WARNING_MARKER),
+        "{cell}: the warning must not reach stdout\nstdout:\n{}\nstderr:\n{}",
         outcome.stdout,
         outcome.stderr,
     );
@@ -354,6 +385,7 @@ fn daemon_pull_forced_verification_failure_recovers_via_redo() {
         OsStr::new("--append-verify"),
         OsStr::new("--ignore-times"),
         OsStr::new("--stats"),
+        OsStr::new(VERBOSE),
         &src_url,
         &dest_arg,
     ];
@@ -364,6 +396,86 @@ fn daemon_pull_forced_verification_failure_recovers_via_redo() {
         &outcome,
         &dest_dir.join("payload.bin"),
         &payload,
+    );
+}
+
+/// The same daemon pull WITHOUT `-v` must recover just as silently as upstream.
+///
+/// This is the other half of the oracle and it is not cosmetic: the diagnostic
+/// is queued by the receiver and then routed, so an ungated queue puts text on a
+/// stream - or a wire - that upstream leaves untouched at this verbosity. The
+/// redo itself is unconditional, so the recovery assertions still have to hold.
+///
+/// upstream: receiver.c:1072 - `INFO_GTE(NAME, 1) || stdout_format_has_i` gates
+/// the `rprintf`; receiver.c:1093-1096 queues the redo outside that `if`.
+#[test]
+fn daemon_pull_default_verbosity_recovers_silently() {
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(scratch) = DaemonScratch::new() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+
+    let module_root = scratch.root.join("source");
+    let dest_dir = scratch.root.join("dest");
+    let payload = seed_fixture(&module_root, &dest_dir);
+
+    write_daemon_config(
+        &scratch.config,
+        &scratch.pid,
+        &scratch.log,
+        "data",
+        &module_root,
+        true,
+    )
+    .expect("write daemon config");
+
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
+            return;
+        }
+    };
+
+    let src_url = OsString::from(format!("rsync://127.0.0.1:{port}/data/payload.bin"));
+    let dest_arg = dest_dir.join("payload.bin").into_os_string();
+    let args: &[&OsStr] = &[
+        OsStr::new("--append-verify"),
+        OsStr::new("--ignore-times"),
+        OsStr::new("--stats"),
+        &src_url,
+        &dest_arg,
+    ];
+
+    let outcome =
+        run_oc_rsync_deadlined(&oc_bin, args).expect("run silent daemon-pull redo client");
+
+    assert!(
+        outcome.status.success(),
+        "silent daemon pull exited non-zero: {:?}\nstdout:\n{}\nstderr:\n{}",
+        outcome.status,
+        outcome.stdout,
+        outcome.stderr,
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("payload.bin")).expect("read reconstructed destination"),
+        payload,
+        "silent daemon pull: destination not byte-correct after the redo",
+    );
+    // The redo ran - so the run had something it could have reported.
+    assert!(
+        outcome
+            .stdout
+            .contains("Number of regular files transferred: 2"),
+        "silent daemon pull: the redo did not run, so the silence proves nothing\nstdout:\n{}",
+        outcome.stdout,
+    );
+    assert!(
+        !outcome.stderr.contains(WARNING_MARKER) && !outcome.stdout.contains(WARNING_MARKER),
+        "silent daemon pull: -a alone must print nothing about the failure\nstdout:\n{}\nstderr:\n{}",
+        outcome.stdout,
+        outcome.stderr,
     );
 }
 
@@ -406,6 +518,7 @@ fn daemon_push_forced_verification_failure_recovers_via_redo() {
         OsStr::new("--append-verify"),
         OsStr::new("--ignore-times"),
         OsStr::new("--stats"),
+        OsStr::new(VERBOSE),
         &src_arg,
         &dest_url,
     ];
@@ -450,6 +563,7 @@ fn rsh_pull_forced_verification_failure_recovers_via_redo() {
         OsStr::new("--append-verify"),
         OsStr::new("--ignore-times"),
         OsStr::new("--stats"),
+        OsStr::new(VERBOSE),
         &rsh_arg,
         &rsync_path_arg,
         &src_arg,
