@@ -727,6 +727,32 @@ impl ServerConfig {
         }
     }
 
+    /// Applies upstream's `--append` implies `--inplace` promotion.
+    ///
+    /// Upstream runs one `parse_arguments()` in every peer, so the flag is
+    /// already set by the time any consumer looks at it. oc parses the client
+    /// CLI, the `--server` argv and the daemon's client args in three separate
+    /// places, so the server-side halves pick the implication up here - the one
+    /// path every role's config reaches before the transfer starts.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2400-2411` - `if (append_mode) { ...; inplace = 1; }`.
+    /// - `receiver.c:968` - `if (inplace || one_inplace)` selects the live
+    ///   destination as the write target instead of a temp file.
+    /// - `receiver.c:496` - `inplace_sizing` truncates the destination to the
+    ///   received length.
+    /// - `receiver.c:1029` - `|| inplace` retains a failed-verification partial
+    ///   instead of discarding it.
+    /// - `receiver.c:1074` - `keptstr` reads "retained" off the same flag.
+    /// - `sender.c:337` - `updating_basis_file` gates `match.c:211`.
+    /// - `compat.c:688` - protocol < 29 refuses a basis dir with `inplace`.
+    pub(crate) fn apply_append_implies_inplace(&mut self) {
+        if self.flags.append {
+            self.write.inplace = true;
+        }
+    }
+
     /// Promotes plain `--append` to `--append-verify` semantics for legacy
     /// (protocol < 30) peers.
     ///
@@ -1045,6 +1071,35 @@ mod tests {
         config.flags.append = append;
         config.flags.append_verify = append_verify;
         config
+    }
+
+    // upstream: options.c:2410 - every peer's parse_arguments() sets `inplace`
+    // for any append_mode. The server-side halves (the `--server` argv parser
+    // and the daemon's client_args parser) build this config themselves, so the
+    // promotion has to land here or their sender would compute
+    // `updating_basis_file` (sender.c:337) off a false `inplace` and their
+    // receiver would skip the closing ftruncate (receiver.c:496).
+    #[test]
+    fn append_implies_inplace() {
+        let mut config = append_config(true, false);
+        assert!(!config.write.inplace, "precondition: parsed as append only");
+        config.apply_append_implies_inplace();
+        assert!(config.write.inplace);
+    }
+
+    #[test]
+    fn append_implies_inplace_is_one_directional() {
+        let mut config = append_config(false, false);
+        config.apply_append_implies_inplace();
+        assert!(
+            !config.write.inplace,
+            "a transfer that never asked for append must not gain inplace"
+        );
+
+        let mut explicit = append_config(false, false);
+        explicit.write.inplace = true;
+        explicit.apply_append_implies_inplace();
+        assert!(explicit.write.inplace, "an explicit --inplace must survive");
     }
 
     #[test]

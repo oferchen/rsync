@@ -1066,7 +1066,7 @@ where
         from0,
     };
 
-    let builder = match filters::apply_filters(builder, filter_inputs, stderr) {
+    let mut builder = match filters::apply_filters(builder, filter_inputs, stderr) {
         Ok(builder) => builder,
         Err(code) => return code,
     };
