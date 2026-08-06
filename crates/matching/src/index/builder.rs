@@ -83,10 +83,16 @@ fn detect_duplicate_blocks(blocks: &[SignatureBlock], block_length: usize) -> bo
 impl DeltaSignatureIndex {
     /// Builds a signature index from the provided [`FileSignature`].
     ///
-    /// The helper only indexes blocks that match the canonical block length
-    /// reported by the layout. Files that produce fewer than one full block
-    /// therefore return `None`, mirroring upstream rsync's behaviour of
-    /// disabling the rolling checksum pipeline for very small payloads.
+    /// Only full-length blocks go into the tag/bithash/lookup tables, because
+    /// only those can be found by the sliding-window fast path. A basis whose
+    /// single block is short still yields an index: upstream runs
+    /// `build_hash_table()` + `hash_search()` for any `s->count > 0`
+    /// (`match.c:match_sums()`), and its short-block rule
+    /// (`l = MIN(blength, len-offset) == s->sums[i].len`, `match.c:222-224`)
+    /// then matches that lone block through the EOF tail probe. Returning
+    /// `None` here would send such a file entirely as literal data. Only a
+    /// signature with no blocks at all - an empty basis, which upstream also
+    /// skips - returns `None`.
     ///
     /// The returned index emits its `--debug=HASH` create line with the
     /// default `HashtableRole::Sender` prefix - upstream's `who_am_i()`
@@ -124,16 +130,17 @@ impl DeltaSignatureIndex {
         // so `next_match[K]` is addressable for every K the lookup can yield.
         let mut next_match = vec![NEXT_MATCH_NONE; requested];
 
-        if !populate_index(
+        if blocks.is_empty() {
+            return None;
+        }
+        populate_index(
             &blocks,
             block_length,
             &mut tag_table,
             &mut bithash,
             &mut lookup,
             &mut next_match,
-        ) {
-            return None;
-        }
+        );
 
         let size = lookup.capacity();
         let consumed = build_consumed_words(blocks.len());
