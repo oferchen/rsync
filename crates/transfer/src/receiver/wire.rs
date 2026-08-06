@@ -372,9 +372,37 @@ impl SenderAttrs {
     ) -> io::Result<(i32, Self)> {
         // Read NDX using protocol-aware codec (handles delta encoding for protocol 30+)
         let ndx = ndx_codec.read_ndx(reader)?;
-
         let protocol_version = ndx_codec.protocol_version();
+        let attrs = Self::read_attrs_after_ndx(
+            reader,
+            protocol_version,
+            preserve_xattrs,
+            want_xattr_optim,
+        )?;
+        Ok((ndx, attrs))
+    }
 
+    /// Reads the attribute tail that follows a per-file NDX.
+    ///
+    /// This is the second half of upstream `read_ndx_and_attrs()`: everything
+    /// from the `iflags` read onwards. Splitting it from the NDX read is what
+    /// lets [`crate::receiver::ndx_stream::read_ndx_and_attrs`] honour
+    /// `rsync.c:334-335`, where `NDX_DONE` returns *before* any attribute byte
+    /// is consumed - calling the combined helper there would swallow two
+    /// phantom `iflags` bytes that the peer never sent.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:383-384` - `iflags` via `read_shortint` for protocol >= 29
+    /// - `rsync.c:403-405` - basis-type byte on `ITEM_BASIS_TYPE_FOLLOWS`
+    /// - `rsync.c:407-417` - xname vstring on `ITEM_XNAME_FOLLOWS`
+    /// - `receiver.c:721-723` - xattr data on `ITEM_REPORT_XATTR`
+    pub fn read_attrs_after_ndx<R: Read + ?Sized>(
+        reader: &mut R,
+        protocol_version: u8,
+        preserve_xattrs: bool,
+        want_xattr_optim: bool,
+    ) -> io::Result<Self> {
         // For protocol >= 29, read iflags (shortint = 2 bytes LE)
         let iflags = if protocol_version >= 29 {
             let mut iflags_buf = [0u8; 2];
@@ -433,15 +461,12 @@ impl SenderAttrs {
             Vec::new()
         };
 
-        Ok((
-            ndx,
-            Self {
-                iflags,
-                fnamecmp_type,
-                xname,
-                xattr_values,
-            },
-        ))
+        Ok(Self {
+            iflags,
+            fnamecmp_type,
+            xname,
+            xattr_values,
+        })
     }
 
     /// Reads sender attributes from the wire (legacy method for tests).
@@ -582,7 +607,9 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
 /// # Upstream Reference
 ///
 /// - `xattrs.c:681-757` - `recv_xattr_request()` called by receiver (!am_sender)
-fn read_xattr_abbreviation_data<R: Read>(reader: &mut R) -> io::Result<Vec<(i32, Vec<u8>)>> {
+fn read_xattr_abbreviation_data<R: Read + ?Sized>(
+    reader: &mut R,
+) -> io::Result<Vec<(i32, Vec<u8>)>> {
     let mut values = Vec::new();
     let mut prior_req = 0i32;
 

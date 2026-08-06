@@ -14,7 +14,54 @@ use protocol::codec::{MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NdxCodec};
 use protocol::stats::DeleteStats;
 
 use super::super::{GeneratorContext, is_early_close_error};
+use crate::receiver::ndx_stream::{FlistMarkerSink, NdxFrame, StreamRole, read_marker_aware_ndx};
 use crate::role_trailer::error_location;
+
+/// The sender's view of the goodbye NDX stream.
+///
+/// Borrows the generator so `NDX_DEL_STATS` lands in its counters, and reports
+/// [`StreamRole::Sender`] so upstream's `am_sender` term (`rsync.c:343`) is what
+/// rejects any file-list marker. `inc_recurse` is reported truthfully rather
+/// than forced off, so the rejection is attributable to the role and not to a
+/// capability the transfer actually negotiated.
+///
+/// The primitive is defined under `receiver` because that is where the lazy
+/// file-list state it inverts lives; it holds no receiver-only types, and the
+/// generator already reaches across for shared wire types (see
+/// `generator/protocol_io.rs`'s use of `receiver::SumHead`).
+struct GoodbyeNdxSink<'a>(&'a mut GeneratorContext);
+
+impl FlistMarkerSink for GoodbyeNdxSink<'_> {
+    type FrameMark = ();
+
+    fn role(&self) -> StreamRole {
+        StreamRole::Sender
+    }
+
+    fn last_file_ndx(&self) -> i32 {
+        // upstream: rsync.c:345-348 - the last index of the newest flist, or -1
+        // when nothing has been sent.
+        self.0.file_list().len() as i32 - 1
+    }
+
+    fn begin_frame(&mut self) {}
+
+    fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {
+        // upstream: main.c:238-247 read_del_stats() adds to the global counters.
+        self.0.accumulate_delete_stats(stats);
+        debug_log!(
+            Flist,
+            2,
+            "consumed NDX_DEL_STATS during goodbye: {} deletions",
+            stats.total()
+        );
+        Ok(())
+    }
+
+    fn inc_recurse(&self) -> bool {
+        self.0.inc_recurse()
+    }
+}
 
 impl GeneratorContext {
     /// Handles the goodbye handshake at end of transfer.
@@ -221,32 +268,30 @@ impl GeneratorContext {
 
     /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
     ///
-    /// Upstream `read_ndx_and_attrs()` (rsync.c:337-342) loops over NDX_DEL_STATS,
-    /// calling `read_del_stats()` which reads 5 varints and accumulates counts.
+    /// Delegates to the shared marker-aware reader
+    /// ([`crate::receiver::ndx_stream::read_marker_aware_ndx`]) so the branch
+    /// order lives in one place. The asymmetry with the receiver is upstream's:
+    /// `rsync.c:343` rejects every negative NDX other than NDX_DONE and
+    /// NDX_DEL_STATS when `am_sender` is set, so a file-list marker arriving
+    /// here is a protocol violation rather than a segment to consume - hence
+    /// [`GoodbyeNdxSink`] declares [`StreamRole::Sender`] while still reporting
+    /// this transfer's real `inc_recurse`, leaving the `am_sender` term as the
+    /// thing that rejects.
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:337-342` - NDX_DEL_STATS loop in `read_ndx_and_attrs()`
+    /// - `rsync.c:336-342` - NDX_DEL_STATS drain in `read_ndx_and_attrs()`
+    /// - `rsync.c:343-352` - the `am_sender` rejection
     /// - `main.c:238-247` - `read_del_stats()` accumulates into global counters
     fn read_ndx_skipping_del_stats<R: Read>(
         &mut self,
         reader: &mut R,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
     ) -> io::Result<i32> {
-        loop {
-            let ndx = ndx_read_codec.read_ndx(reader)?;
-            if ndx == NDX_DEL_STATS {
-                let stats = DeleteStats::read_from(reader)?;
-                self.accumulate_delete_stats(&stats);
-                debug_log!(
-                    Flist,
-                    2,
-                    "consumed NDX_DEL_STATS during goodbye: {} deletions",
-                    stats.total()
-                );
-                continue;
-            }
-            return Ok(ndx);
+        let mut sink = GoodbyeNdxSink(self);
+        match read_marker_aware_ndx(reader, ndx_read_codec, &mut sink)? {
+            NdxFrame::Done => Ok(NDX_DONE),
+            NdxFrame::File(ndx) => Ok(ndx),
         }
     }
 
