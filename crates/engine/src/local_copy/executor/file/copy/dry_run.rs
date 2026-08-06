@@ -161,8 +161,8 @@ pub(super) fn handle_dry_run(
         return Ok(());
     }
     // A dry run never writes, so the phase-2 redo a failed `--append-verify`
-    // would trigger has nothing to report: upstream's `--dry-run` receiver takes
-    // the `discard_receive_data()` leg (receiver.c:797) and never reaches the
+    // would trigger has nothing to report: upstream's `if (!do_xfers)` leg
+    // (receiver.c:805-810) logs the item and `continue`s, never reaching the
     // `recv_ok` switch that queues the redo.
     let append_offset = match append_mode {
         AppendMode::Append { offset, .. } => offset,

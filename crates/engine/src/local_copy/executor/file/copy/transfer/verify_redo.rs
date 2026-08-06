@@ -12,7 +12,7 @@
 //!    writes a sum header with no block sums (generator.c:787), so pass one is
 //!    always a pure append.
 //! 2. **Verify the whole file.** `receive_data()` compares the sender's
-//!    whole-file checksum with the receiver's (receiver.c:517-519). With
+//!    whole-file checksum with the receiver's (receiver.c:518-519). With
 //!    `--append-verify` both sides fold the pre-existing prefix into that sum
 //!    (match.c:373-386, receiver.c:357-371) and then the identical appended
 //!    tail, so the comparison is exactly "do the two prefixes agree".
