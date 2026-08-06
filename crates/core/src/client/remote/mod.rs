@@ -74,6 +74,20 @@ pub(crate) fn is_ssh_url(operand: &str) -> bool {
     operand.starts_with("ssh://")
 }
 
+/// Checks whether an operand is a `quic://` URL.
+///
+/// Returns `true` for operands beginning with `quic://` (case-insensitive
+/// scheme, matching the daemon-URL dispatch), the scheme that carries the
+/// daemon protocol over QUIC. Compiled into every build - not gated on the
+/// `quic` feature - so the dispatcher can recognise the scheme even when that
+/// feature is absent and reject it with a clear diagnostic instead of
+/// misparsing it as a `host:path` spec with host `quic`.
+///
+/// oc-specific: upstream rsync has no `quic://` operand scheme.
+pub(crate) fn is_quic_url(operand: &str) -> bool {
+    operand.starts_with("quic://") || operand.starts_with("QUIC://")
+}
+
 /// Maps the negotiated [`AddressMode`] onto the SSH `-4`/`-6` hint shared by
 /// every `do_cmd()`-equivalent SSH spawn (single-host and remote-to-remote).
 ///
@@ -95,7 +109,7 @@ pub(in crate::client::remote) const fn ssh_address_family(
 
 #[cfg(test)]
 mod tests {
-    use super::is_ssh_url;
+    use super::{is_quic_url, is_ssh_url};
 
     /// The `ssh://` detector is the single source of truth for the scheme that
     /// selects the embedded transport, so it must recognise the scheme (with or
@@ -112,5 +126,22 @@ mod tests {
         assert!(!is_ssh_url("rsync://host/module"));
         assert!(!is_ssh_url("quic://host/module"));
         assert!(!is_ssh_url("/local/path"));
+    }
+
+    /// The `quic://` detector is the single source of truth for the QUIC daemon
+    /// scheme (compiled into every build), so it must recognise `quic://` in
+    /// either case and reject every other operand shape - `host:path`, daemon
+    /// modules, `rsync://`, `ssh://`, and plain local paths.
+    #[test]
+    fn is_quic_url_matches_only_quic_scheme() {
+        assert!(is_quic_url("quic://host/module"));
+        assert!(is_quic_url("quic://user@host:8730/module"));
+        assert!(is_quic_url("QUIC://host/module"));
+
+        assert!(!is_quic_url("host:path"));
+        assert!(!is_quic_url("host::module"));
+        assert!(!is_quic_url("rsync://host/module"));
+        assert!(!is_quic_url("ssh://host/path"));
+        assert!(!is_quic_url("/local/path"));
     }
 }

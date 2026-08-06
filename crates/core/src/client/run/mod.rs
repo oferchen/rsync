@@ -229,6 +229,23 @@ fn run_client_internal(
         },
     );
 
+    // With the QUIC transport absent, a quic:// operand would otherwise fall
+    // through to the subprocess ssh path below, which parses quic://host/module
+    // as a host:path spec with host "quic" and fails with a confusing "could
+    // not resolve hostname quic". Fail fast with an actionable diagnostic
+    // instead. oc-specific: upstream rsync has no quic:// operand scheme.
+    #[cfg(not(feature = "quic"))]
+    {
+        let has_quic_url = config
+            .transfer_args()
+            .iter()
+            .any(|arg| remote::is_quic_url(&arg.to_string_lossy()));
+
+        if has_quic_url {
+            return Err(super::error::quic_url_requires_quic_feature());
+        }
+    }
+
     let has_daemon_url = config.transfer_args().iter().any(|arg| {
         let s = arg.to_string_lossy();
         if s.starts_with("rsync://") || s.contains("::") {
@@ -238,7 +255,7 @@ fn run_client_internal(
         // routes to the daemon path (not the SSH path). Recognised only under
         // the `quic` feature; absent from a default build.
         #[cfg(feature = "quic")]
-        if s.starts_with("quic://") || s.starts_with("QUIC://") {
+        if remote::is_quic_url(&s) {
             return true;
         }
         false
@@ -1161,6 +1178,33 @@ mod run_client_tests {
         // Must NOT be the -e conflict, which would blame an option the user may
         // never have typed (RSYNC_RSH) on a build that cannot do ssh:// anyway.
         assert!(!msg.contains("cannot be combined with an ssh:// URL operand"));
+    }
+
+    /// Without the QUIC transport compiled in, a `quic://` operand has no
+    /// transport. It must fail fast with the feature-unavailable exit code and
+    /// an actionable message, never fall through to the subprocess ssh path
+    /// where `quic://host/module` misparses as host `quic` and yields the
+    /// confusing "could not resolve hostname quic".
+    #[cfg(not(feature = "quic"))]
+    #[test]
+    fn run_client_rejects_quic_url_without_quic() {
+        use crate::client::error::FEATURE_UNAVAILABLE_EXIT_CODE;
+
+        let error = run_client(
+            ClientConfig::builder()
+                .transfer_args([
+                    std::ffi::OsString::from("quic://localhost/module"),
+                    std::ffi::OsString::from("/tmp/oc-quic-url-dest"),
+                ])
+                .build(),
+        )
+        .expect_err("quic:// without the quic feature must error");
+
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let msg = error.to_string();
+        assert!(msg.contains("quic:// URLs require the QUIC transport"));
+        assert!(msg.contains("'quic' feature"));
+        assert!(msg.contains("rsync://"));
     }
 
     #[test]

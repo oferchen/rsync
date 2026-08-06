@@ -90,6 +90,30 @@ fn check_basis_dir_limit(matches: &clap::ArgMatches) -> Result<(), clap::Error> 
     ))
 }
 
+/// Rejects `--quic`/`--quic-ca` on a build without the QUIC transport with an
+/// actionable diagnostic (exit 1) instead of silently ignoring them.
+///
+/// The flags are registered in every build (hidden from help when the `quic`
+/// feature is absent) so they are recognised here and rejected with a clear
+/// remedy, rather than falling through to a bare "unknown option '--quic'".
+///
+/// oc-specific: upstream rsync has no `--quic` modifier.
+#[cfg(not(feature = "quic"))]
+fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+    let quic_requested =
+        matches.get_flag("quic") || matches.get_one::<OsString>("quic-ca").is_some();
+    if !quic_requested {
+        return Ok(());
+    }
+
+    Err(clap::Error::raw(
+        clap::error::ErrorKind::UnknownArgument,
+        "--quic requires the QUIC transport, which is not compiled into this \
+         build (rebuild with the 'quic' feature). For the daemon protocol over \
+         TCP, use an rsync:// or host::module target instead.\n",
+    ))
+}
+
 /// Parses command-line arguments into a structured [`ParsedArgs`] representation.
 ///
 /// This function accepts an iterator of arguments (typically from `std::env::args_os()`)
@@ -116,6 +140,8 @@ where
     let mut matches = command.try_get_matches_from(args.clone())?;
 
     check_basis_dir_limit(&matches)?;
+    #[cfg(not(feature = "quic"))]
+    check_quic_feature(&matches)?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_count("version");
