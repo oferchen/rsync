@@ -304,16 +304,79 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        // EOF tail match: the window now holds the file's short trailing bytes
-        // (fewer than block_length). Upstream rsync matches this short tail
-        // against the basis's final partial block via `l = MIN(blength,
-        // len-offset)` (`match.c:222-224`). Mirror that: probe the same-length
-        // basis block and, on a hit, flush preceding literals then emit the
-        // short matched block. Without this the trailing partial block is
-        // always sent as literal data, diverging from upstream deltas.
-        let tail_matched_block = {
-            let digest = rolling.digest();
-            index.find_tail_match_window(digest, &window, &mut scratch)
+        // EOF tail match against the basis's short final block.
+        //
+        // Upstream reaches this block by shrinking the rolling window: once
+        // `offset + k >= len` there is no next byte to add, so `more` is false
+        // and `k` decrements on every step (`match.c:321`, `match.c:331`). Its
+        // scan runs to `end = len + 1 - s->sums[s->count-1].len`
+        // (`match.c:174`) - bounded by the LAST block's length, not by
+        // `blength` - so the window keeps narrowing until it is exactly as long
+        // as that final short block. Only then does the candidate pass
+        // `l = MIN(blength, len-offset); if (l != s->sums[i].len) continue;`
+        // (`match.c:222-224`), because a short block is the only one whose
+        // recorded length is below `blength`.
+        //
+        // Probing whatever the loop happened to leave behind fails twice over.
+        //
+        // First, the length. Each failed full-window probe pops one byte, so at
+        // EOF the window normally holds `block_length - 1` bytes, and
+        // `find_tail_match` rejects every candidate on `block.len() != tail_len`
+        // - the same length-equality rule as upstream. Only a basis whose final
+        // block happens to be exactly `block_length - 1` could even reach the
+        // strong-sum comparison.
+        //
+        // Second, the digest. `outgoing` is recorded when a byte is popped but
+        // the rolling sum is not corrected until the *next* push rolls it out,
+        // so after the final pop the digest still covers the popped byte. At EOF
+        // there is no next push, leaving the digest describing `block_length`
+        // bytes while the window holds one fewer. Even the coincidental
+        // length match above would fail on sum1/sum2.
+        //
+        // So drain to the basis's final block length EXPLICITLY and recompute
+        // the sum over exactly those bytes. That is upstream's shrinking window
+        // expressed as a single probe at the one width that can match, instead
+        // of re-probing at every intermediate width.
+        //
+        // What hid all of this: the window lands on the final block's length,
+        // with a digest that happens to agree, only when a match `clear()`ed it
+        // with exactly that many bytes left - an identical source, where every
+        // full block matches. A fixture built that way passes either way.
+        let short_tail_len = index
+            .block_count()
+            .checked_sub(1)
+            .map(|last| index.block(last).len())
+            .filter(|&len| len > 0 && len < index.block_length());
+        let tail_matched_block = match short_tail_len {
+            // A basis whose length is an exact multiple of the block length has
+            // no short final block, so upstream has nothing extra to offer and
+            // this is a clean no-op.
+            None => None,
+            Some(tail_len) => {
+                while window.len() > tail_len {
+                    if let Some(front) = window.pop_front() {
+                        pending_literals.push(front);
+                    }
+                }
+                // A source shorter than the final basis block never reaches the
+                // probe: upstream's `end` would be non-positive and its scan
+                // would not run either.
+                if window.len() == tail_len {
+                    // Recompute rather than adjust: the digest carried out of
+                    // the loop covers neither the pre-drain window nor the
+                    // post-drain one (see the stale-`outgoing` note above), so
+                    // there is no increment that would repair it.
+                    rolling.reset();
+                    let (first, second) = window.as_slices();
+                    rolling.update(first);
+                    if !second.is_empty() {
+                        rolling.update(second);
+                    }
+                    index.find_tail_match_window(rolling.digest(), &window, &mut scratch)
+                } else {
+                    None
+                }
+            }
         };
         if let Some(block_index) = tail_matched_block {
             // A matched trailing partial block is one confirmed match, and its
