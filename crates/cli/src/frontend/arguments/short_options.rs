@@ -678,4 +678,47 @@ mod tests {
     fn hoist_leaves_bare_dash_as_operand() {
         assert_eq!(hoist(&["rsync", "-", "dst/"]), vec!["rsync", "-", "dst/"]);
     }
+
+    #[test]
+    fn hoist_bwlimit_after_operands_uses_real_command() {
+        // Regression: `--bwlimit` supplied AFTER the source/destination operands
+        // must be recognised against the real option registry and hoisted ahead
+        // of the operands so clap consumes it client-side. Without hoisting, the
+        // operand `args` (allow_hyphen_values + trailing_var_arg) swallows it as
+        // a path, and the leaked `--bwlimit=10000` reaches the remote sender as a
+        // bogus file name (`link_stat "--bwlimit=10000" failed`). Both the
+        // attached and space-separated spellings must hoist. Guards the coupling
+        // between `classify_long_options` and the actual `--bwlimit` Arg, which
+        // the synthetic `hoist_command` above does not cover.
+        let command = crate::frontend::command_builder::clap_command("rsync");
+        let equals = hoist_options_before_operands(
+            &command,
+            ["rsync", "host:src/", "dst/", "--bwlimit=10000"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+        );
+        assert_eq!(
+            equals,
+            ["rsync", "--bwlimit=10000", "host:src/", "dst/"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
+
+        let spaced = hoist_options_before_operands(
+            &command,
+            ["rsync", "host:src/", "dst/", "--bwlimit", "10000"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+        );
+        assert_eq!(
+            spaced,
+            ["rsync", "--bwlimit", "10000", "host:src/", "dst/"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
+    }
 }
