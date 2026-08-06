@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{debug_log, info_log};
-use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
+use protocol::codec::{MonotonicNdxWriter, NdxCodec, NdxCodecEnum, create_ndx_codec};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
@@ -111,6 +111,18 @@ impl ReceiverContext {
         is_redo_pass: bool,
         total_files: usize,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
+        // The connection-wide NDX diff-state codecs. Upstream io.c::write_ndx /
+        // read_ndx keep a single static prev_positive/prev_negative for the whole
+        // connection; the phase-2 redo pass (generator.c:2178-2216) re-requests a
+        // file through that SAME state. The caller therefore threads one codec
+        // pair through both the phase-1 and the redo call so the redo request's
+        // positive NDX diff-encodes against the last phase-1 index, not a reset
+        // base. Creating fresh codecs per pass (the pre-fix bug) reset
+        // prev_positive to -1, so the daemon-sender decoded the redo NDX against
+        // its running state and mis-read the file index, truncating the mux
+        // stream ("multiplexed frame truncated").
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
         use crate::pipeline::receiver::PipelinedReceiver;
@@ -157,9 +169,6 @@ impl ReceiverContext {
         }
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
-
-        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         // upstream: receiver.c:recv_files - on entering the redo pass after an
         // append transfer, `if (append_mode) sparse_files = -sparse_files;`
@@ -392,7 +401,7 @@ impl ReceiverContext {
                             if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                                 self.send_no_transfer_itemize(
                                     writer,
-                                    &mut ndx_write_codec,
+                                    &mut *ndx_write_codec,
                                     &mut pipeline,
                                     &mut pending_files_info,
                                     file_idx,
@@ -415,7 +424,7 @@ impl ReceiverContext {
                             );
                             let pending = send_file_request_xattr(
                                 writer,
-                                &mut ndx_write_codec,
+                                &mut *ndx_write_codec,
                                 self.flat_to_wire_ndx(file_idx),
                                 file_path.clone(),
                                 basis_result.signature,
@@ -442,7 +451,7 @@ impl ReceiverContext {
                             if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                                 self.send_no_transfer_itemize(
                                     writer,
-                                    &mut ndx_write_codec,
+                                    &mut *ndx_write_codec,
                                     &mut pipeline,
                                     &mut pending_files_info,
                                     file_idx,
@@ -460,7 +469,7 @@ impl ReceiverContext {
                             let xattr_request = self.build_xattr_request(file_entry, None);
                             let pending = send_file_request_xattr(
                                 writer,
-                                &mut ndx_write_codec,
+                                &mut *ndx_write_codec,
                                 self.flat_to_wire_ndx(file_idx),
                                 file_path.clone(),
                                 None,
@@ -507,7 +516,7 @@ impl ReceiverContext {
                 if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                     let _ = crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                         &mut *reader,
-                        &mut ndx_read_codec,
+                        &mut *ndx_read_codec,
                         request_config.preserve_xattrs,
                         request_config.want_xattr_optim,
                     )?;
@@ -529,7 +538,7 @@ impl ReceiverContext {
                 let is_device_target = self.config.write.write_devices && file_entry.is_device();
                 let result = process_file_response_streaming(
                     reader,
-                    &mut ndx_read_codec,
+                    &mut *ndx_read_codec,
                     pending,
                     &response_ctx,
                     &mut checksum_verifier,
