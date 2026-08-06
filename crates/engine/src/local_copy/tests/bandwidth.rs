@@ -71,7 +71,17 @@ fn execute_with_append_appends_missing_bytes() {
 
     assert_eq!(fs::read(&destination).expect("read dest"), b"abcdef");
     assert_eq!(summary.bytes_copied(), 3);
-    assert_eq!(summary.matched_bytes(), 3);
+
+    // Zero, not three. MEASURED against rsync 3.4.4 on this exact fixture
+    // (`-a --append --ignore-times --stats`, source "abcdef", dest "abc"):
+    // `Literal data: 3 bytes`, `Matched data: 0 bytes`.
+    //
+    // The 3-byte prefix the append skipped is neither literal nor matched.
+    // Asserting 3 here encoded the old derivation `file_size - literal_bytes`,
+    // which treats every non-literal byte as matched; upstream only ever
+    // increments `stats.matched_data` inside `matched()` (match.c:121), which
+    // append mode never reaches (match.c:389-390).
+    assert_eq!(summary.matched_bytes(), 0);
 }
 
 #[test]
@@ -107,16 +117,14 @@ fn execute_with_append_verify_appends_then_redoes_on_mismatch() {
     // not match. Asserting 6 would be asserting that the append never happened.
     assert_eq!(summary.bytes_copied(), 9);
 
-    // KNOWN DIVERGENCE, tracked separately: upstream reports 0 matched bytes
-    // here. Append mode never calls `matched()` (upstream match.c:389-390 sets
-    // `last_match = s->flength; s->count = 0;` and skips the hash loop), so the
-    // pre-existing prefix contributes nothing to `stats.matched_data`. oc
-    // derives matched as `file_size - literal_bytes` in
-    // local_copy::plan::summary, so pass one's untouched 3-byte prefix falls
-    // out as "matched". This is pinned at the current value deliberately: when
-    // the accounting is fixed this assertion fails and points straight at the
-    // upstream answer above.
-    assert_eq!(summary.matched_bytes(), 3);
+    // Zero matched bytes, matching upstream. The 3-byte prefix pass one
+    // appended past is neither literal nor matched: upstream never calls
+    // `matched()` in append mode (match.c:389-390 sets
+    // `last_match = s->flength; s->count = 0;` so the hash loop is skipped),
+    // and `stats.matched_data` grows nowhere else (match.c:121). Pass two is an
+    // ordinary delta whose single 6-byte basis block does not match, so it
+    // contributes nothing either.
+    assert_eq!(summary.matched_bytes(), 0);
 }
 
 #[test]
