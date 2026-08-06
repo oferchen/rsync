@@ -377,6 +377,19 @@ impl ReceiverContext {
             let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false, false, true);
             self.file_list.extend(cleaned);
         }
+
+        // INC_RECURSE-on-pull security prerequisite: mirror upstream
+        // recv_file_entry()'s per-entry defenses (flist.c:769-771 clean_fname /
+        // absolute-path, 1022-1024 server-filter, 1026-1028 implied-include) for
+        // every sub-list entry, not just the level-1 list validated in
+        // build_pipeline_setup(). Upstream aborts with exit_cleanup(RERR_UNSUPPORTED)
+        // per offending entry; we abort too, so no Vec compaction runs on the
+        // multi-segment file_list (which would desync ndx_segments flat-starts).
+        // Runs after the per-segment sort/clean so the entries examined are final.
+        self.sanitize_segment_paths(flat_start)?;
+        self.recheck_received_filter_entries(&self.file_list[flat_start..])?;
+        self.recheck_received_implied_includes_entries(&self.file_list[flat_start..])?;
+
         match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
         // Normalize pre-30 hardlinks in this segment.

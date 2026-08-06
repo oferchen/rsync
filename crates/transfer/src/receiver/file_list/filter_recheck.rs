@@ -27,6 +27,7 @@ use std::io;
 use std::path::Path;
 
 use filters::{FilterSet, ImpliedIncludeOptions, ImpliedIncludes};
+use protocol::flist::FileEntry;
 
 use super::super::ReceiverContext;
 use crate::receiver::transfer::parse_wire_filters_for_receiver;
@@ -56,6 +57,19 @@ impl ReceiverContext {
     ///
     /// - `flist.c:1049-1052` `recv_file_entry()`
     pub(in crate::receiver) fn recheck_received_filter(&self) -> io::Result<()> {
+        self.recheck_received_filter_entries(&self.file_list)
+    }
+
+    /// Range-scoped variant of
+    /// [`recheck_received_filter`](Self::recheck_received_filter) that re-checks
+    /// only `entries` (an INC_RECURSE sub-list at `self.file_list[flat_start..]`),
+    /// so sub-list entries received on a pull get the same defense-in-depth as
+    /// the level-1 list. upstream: flist.c:1022 `recv_file_entry()` runs the
+    /// server-filter check for every received entry, including sub-lists.
+    pub(in crate::receiver) fn recheck_received_filter_entries(
+        &self,
+        entries: &[FileEntry],
+    ) -> io::Result<()> {
         // upstream: flist.c:1021 - `!trust_sender_filter` guards the whole
         // re-check (options.c:2512/main.c:1496 set it for local/--trust-sender).
         if self.config.trust_sender {
@@ -88,7 +102,7 @@ impl ReceiverContext {
             return Ok(());
         };
 
-        for entry in &self.file_list {
+        for entry in entries {
             let path = entry.path().as_path();
             // upstream: flist.c:1019 - the transfer root (`.` / `/.`) is never
             // re-checked. Cleared entries (empty name, mode 0) are no-ops.
@@ -153,6 +167,20 @@ impl ReceiverContext {
     /// - `exclude.c:379` `add_implied_include()` - rule construction.
     /// - `options.c:2510-2513` - `trust_sender_args` disables the mechanism.
     pub(in crate::receiver) fn recheck_received_implied_includes(&self) -> io::Result<()> {
+        self.recheck_received_implied_includes_entries(&self.file_list)
+    }
+
+    /// Range-scoped variant of
+    /// [`recheck_received_implied_includes`](Self::recheck_received_implied_includes)
+    /// that validates only `entries` (an INC_RECURSE sub-list at
+    /// `self.file_list[flat_start..]`) so sub-list entries get the same
+    /// CVE-2022-29154 defense as the level-1 list. upstream: flist.c:1026
+    /// `recv_file_entry()` runs the implied-include check for every received
+    /// entry, including sub-lists.
+    pub(in crate::receiver) fn recheck_received_implied_includes_entries(
+        &self,
+        entries: &[FileEntry],
+    ) -> io::Result<()> {
         // upstream: options.c:2510 / exclude.c:385 - trust_sender_args makes
         // add_implied_include() a no-op, leaving implied_filter_list empty.
         if self.config.trust_sender {
@@ -184,7 +212,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in entries {
             let path = entry.path().as_path();
             // upstream: flist.c:1019 - the transfer root (`.` / `/.`) is exempt.
             if path.as_os_str().is_empty() || path == Path::new(".") {

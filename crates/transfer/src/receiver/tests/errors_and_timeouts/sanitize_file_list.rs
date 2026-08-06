@@ -209,3 +209,89 @@ fn windows_drive_relative_path_allowed_when_trusted() {
     assert_eq!(removed, 0);
     assert_eq!(ctx.file_list.len(), 2);
 }
+
+// --- sanitize_segment_paths: per-INC_RECURSE-sub-list, abort-based variant. ---
+// Unlike sanitize_file_list (level-1, drop-and-continue), sub-list entries
+// mirror upstream recv_file_entry (flist.c:769-771): the first unsafe path
+// ABORTS with RERR_UNSUPPORTED so no Vec compaction runs on the multi-segment
+// file_list. These drive the check in isolation (no live peer needed).
+
+#[test]
+fn segment_absolute_path_aborts_when_untrusted() {
+    let entries = vec![
+        FileEntry::new_file("safe.txt".into(), 10, 0o644),
+        FileEntry::new_file("/etc/passwd".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust(entries, false);
+    let err = ctx.sanitize_segment_paths(0).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    // Aborts, never drops: the segment stays intact for teardown.
+    assert_eq!(ctx.file_list.len(), 2);
+}
+
+#[test]
+fn segment_dot_dot_path_aborts_when_untrusted() {
+    let entries = vec![
+        FileEntry::new_file("ok.txt".into(), 10, 0o644),
+        FileEntry::new_file("sub/../../escape.txt".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust(entries, false);
+    let err = ctx.sanitize_segment_paths(0).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    assert_eq!(ctx.file_list.len(), 2);
+}
+
+#[test]
+fn segment_safe_paths_ok_when_untrusted() {
+    let entries = vec![
+        FileEntry::new_file("dir/a.txt".into(), 10, 0o644),
+        FileEntry::new_file("dir/b.txt".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust(entries, false);
+    assert!(ctx.sanitize_segment_paths(0).is_ok());
+}
+
+#[test]
+fn segment_checks_skipped_when_trusted() {
+    let entries = vec![
+        FileEntry::new_file("/abs".into(), 10, 0o644),
+        FileEntry::new_file("../dotdot".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust(entries, true);
+    assert!(ctx.sanitize_segment_paths(0).is_ok());
+    assert_eq!(ctx.file_list.len(), 2);
+}
+
+#[test]
+fn segment_range_scoped_ignores_entries_before_flat_start() {
+    // A `..` entry BEFORE flat_start (an earlier, already-validated segment)
+    // must not be re-examined: only file_list[flat_start..] is checked.
+    let entries = vec![
+        FileEntry::new_file("../earlier_segment_entry".into(), 10, 0o644),
+        FileEntry::new_file("current/ok.txt".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust(entries, false);
+    assert!(ctx.sanitize_segment_paths(1).is_ok());
+}
+
+#[test]
+fn segment_relative_strips_leading_slash_in_range_only() {
+    let entries = vec![
+        FileEntry::new_file("/before.txt".into(), 10, 0o644),
+        FileEntry::new_file("/after.txt".into(), 20, 0o644),
+    ];
+    let mut ctx = receiver_with_trust_and_relative(entries, false);
+    assert!(ctx.sanitize_segment_paths(1).is_ok());
+    // Entry before flat_start is untouched; the in-range one is stripped.
+    assert!(ctx.file_list[0].path().has_root());
+    assert!(!ctx.file_list[1].path().has_root());
+}
+
+#[cfg(windows)]
+#[test]
+fn segment_windows_drive_prefix_aborts_when_untrusted() {
+    let entries = vec![FileEntry::new_file("C:foo".into(), 20, 0o644)];
+    let mut ctx = receiver_with_trust(entries, false);
+    let err = ctx.sanitize_segment_paths(0).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+}
