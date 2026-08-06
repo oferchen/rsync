@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
-use protocol::flist::FileEntry;
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
@@ -237,6 +236,13 @@ impl ReceiverContext {
             }
             ReceiverMode::Transfer => {
                 let total_files = files_to_transfer.len();
+                // Stage 0: hand the pipeline the transfer set by flist index;
+                // the in-flight window clones each FileEntry as it is pushed
+                // (O(window)), so the loop no longer borrows `self.file_list`.
+                let files_to_transfer: Vec<(usize, PathBuf, u32)> = files_to_transfer
+                    .into_iter()
+                    .map(|(idx, _entry, path, iflags)| (idx, path, iflags))
+                    .collect();
                 let redo_config = pipeline_config.clone();
                 let redo_indices;
                 let delayed;
@@ -278,7 +284,7 @@ impl ReceiverContext {
 
                     // upstream: generator.c:1939 - the phase-2 redo re-itemizes with
                     // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
-                    let redo_files: Vec<(usize, &FileEntry, PathBuf, u32)> = redo_indices
+                    let redo_files: Vec<(usize, PathBuf, u32)> = redo_indices
                         .iter()
                         .filter_map(|&idx| {
                             self.file_list.get(idx).map(|entry| {
@@ -288,12 +294,7 @@ impl ReceiverContext {
                                 } else {
                                     setup.dest_dir.join(p)
                                 };
-                                (
-                                    idx,
-                                    entry,
-                                    file_path,
-                                    crate::generator::ItemFlags::ITEM_TRANSFER,
-                                )
+                                (idx, file_path, crate::generator::ItemFlags::ITEM_TRANSFER)
                             })
                         })
                         .collect();
