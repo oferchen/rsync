@@ -109,7 +109,7 @@ fn perform_module_authentication(
             stream,
             limiter,
             LegacyDaemonMessage::AuthRequired {
-                module: Some(&challenge),
+                challenge: Some(&challenge),
             },
         )?;
         stream.flush()?;
@@ -122,11 +122,9 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied);
     };
 
-    let mut segments = response.splitn(2, |ch: char| ch.is_ascii_whitespace());
-    let username = segments.next().unwrap_or_default();
-    let response_digest = segments.next().map_or("", |segment| {
-        segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace())
-    });
+    // Parse `<user> <response>` via the shared protocol helper - the exact
+    // inverse of the client's `send_daemon_auth_credentials` emit.
+    let (username, response_digest) = parse_daemon_auth_response(&response);
 
     if username.is_empty() || response_digest.is_empty() {
         send_auth_failed(reader.get_mut(), module, limiter)?;

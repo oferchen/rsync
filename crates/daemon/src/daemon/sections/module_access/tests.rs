@@ -451,54 +451,54 @@ mod module_access_tests {
         assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
     }
 
-    // upstream: clientserver.c:1254 governs the format_module_listing_line
+    // upstream: clientserver.c:1254 governs the format_daemon_module_listing
     // wire layout exercised below.
 
     #[test]
     fn module_listing_format_short_name_padded_to_15() {
         // upstream: %-15s pads short names with trailing spaces
-        let line = format_module_listing_line("docs", "Documentation");
+        let line = format_daemon_module_listing("docs", "Documentation");
         assert_eq!(line, "docs           \tDocumentation\n");
     }
 
     #[test]
     fn module_listing_format_exact_15_char_name() {
         // A name exactly 15 characters wide should have no extra padding
-        let line = format_module_listing_line("exactly15chars_", "comment");
+        let line = format_daemon_module_listing("exactly15chars_", "comment");
         assert_eq!(line, "exactly15chars_\tcomment\n");
     }
 
     #[test]
     fn module_listing_format_name_longer_than_15() {
         // upstream: %-15s does not truncate - names wider than 15 chars extend the field
-        let line = format_module_listing_line("very_long_module_name", "A long name module");
+        let line = format_daemon_module_listing("very_long_module_name", "A long name module");
         assert_eq!(line, "very_long_module_name\tA long name module\n");
     }
 
     #[test]
     fn module_listing_format_empty_comment() {
         // upstream: lp_comment(i) returns "" for modules without a comment directive
-        let line = format_module_listing_line("backup", "");
+        let line = format_daemon_module_listing("backup", "");
         assert_eq!(line, "backup         \t\n");
     }
 
     #[test]
     fn module_listing_format_single_char_name() {
-        let line = format_module_listing_line("x", "tiny");
+        let line = format_daemon_module_listing("x", "tiny");
         assert_eq!(line, "x              \ttiny\n");
     }
 
     #[test]
     fn module_listing_format_empty_name() {
         // Edge case: empty module name still gets padded to 15 spaces
-        let line = format_module_listing_line("", "orphan");
+        let line = format_daemon_module_listing("", "orphan");
         assert_eq!(line, "               \torphan\n");
     }
 
     #[test]
     fn module_listing_format_tab_separator_present() {
         // The separator between name field and comment must be exactly one tab
-        let line = format_module_listing_line("test", "hello");
+        let line = format_daemon_module_listing("test", "hello");
         let parts: Vec<&str> = line.trim_end_matches('\n').splitn(2, '\t').collect();
         assert_eq!(
             parts.len(),
@@ -511,7 +511,7 @@ mod module_access_tests {
 
     #[test]
     fn module_listing_format_terminates_with_newline() {
-        let line = format_module_listing_line("mod", "comment");
+        let line = format_daemon_module_listing("mod", "comment");
         assert!(line.ends_with('\n'), "line must end with newline");
         assert!(!line.ends_with("\n\n"), "line must not have double newline");
     }

@@ -17,7 +17,7 @@ fn legacy_daemon_message_supports_copy_and_hash() {
     assert_hash::<LegacyDaemonMessage<'static>>();
 
     let sample = LegacyDaemonMessage::AuthRequired {
-        module: Some("module"),
+        challenge: Some("module"),
     };
     let copied = sample;
 
@@ -105,14 +105,14 @@ fn write_legacy_daemon_message_formats_capabilities() {
 
 #[test]
 fn write_legacy_daemon_message_formats_auth_requests() {
-    let without_module = LegacyDaemonMessage::AuthRequired { module: None };
+    let without_module = LegacyDaemonMessage::AuthRequired { challenge: None };
     assert_eq!(
         format_legacy_daemon_message(without_module),
         "@RSYNCD: AUTHREQD\n"
     );
 
     let with_module = LegacyDaemonMessage::AuthRequired {
-        module: Some("module"),
+        challenge: Some("module"),
     };
     assert_eq!(
         format_legacy_daemon_message(with_module),
@@ -139,7 +139,7 @@ fn parse_legacy_daemon_message_accepts_authreqd_with_module() {
     assert_eq!(
         message,
         LegacyDaemonMessage::AuthRequired {
-            module: Some("sample"),
+            challenge: Some("sample"),
         }
     );
 }
@@ -151,7 +151,7 @@ fn parse_legacy_daemon_message_preserves_internal_whitespace_in_module_name() {
     assert_eq!(
         message,
         LegacyDaemonMessage::AuthRequired {
-            module: Some("module name"),
+            challenge: Some("module name"),
         }
     );
 }
@@ -159,7 +159,10 @@ fn parse_legacy_daemon_message_preserves_internal_whitespace_in_module_name() {
 #[test]
 fn parse_legacy_daemon_message_accepts_authreqd_without_module() {
     let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\n").expect("keyword");
-    assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    assert_eq!(
+        message,
+        LegacyDaemonMessage::AuthRequired { challenge: None }
+    );
 }
 
 #[test]
@@ -172,7 +175,10 @@ fn parse_legacy_daemon_message_requires_delimiter_after_authreqd_keyword() {
 fn parse_legacy_daemon_message_treats_whitespace_only_module_as_none() {
     let message =
         parse_legacy_daemon_message("@RSYNCD: AUTHREQD    \n").expect("keyword with padding");
-    assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    assert_eq!(
+        message,
+        LegacyDaemonMessage::AuthRequired { challenge: None }
+    );
 }
 
 #[test]
@@ -182,7 +188,7 @@ fn parse_legacy_daemon_message_accepts_authreqd_with_trailing_whitespace() {
     assert_eq!(
         message,
         LegacyDaemonMessage::AuthRequired {
-            module: Some("module"),
+            challenge: Some("module"),
         }
     );
 }
@@ -270,7 +276,7 @@ fn parse_legacy_daemon_message_accepts_authreqd_with_trailing_tabs() {
     assert_eq!(
         message,
         LegacyDaemonMessage::AuthRequired {
-            module: Some("module"),
+            challenge: Some("module"),
         }
     );
 }

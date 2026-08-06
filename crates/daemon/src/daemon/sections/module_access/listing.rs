@@ -7,16 +7,6 @@
 // upstream: clientserver.c:1246-1254 - `rsync_module()` handles the `#list`
 // request by iterating `lp_numservices()` and printing each listable module.
 
-/// Formats a single module listing line using upstream's `%-15s\t%s\n` layout.
-///
-/// The module name is left-aligned in a 15-character wide field, followed by a
-/// tab separator and the comment string, terminated by a newline.
-///
-/// upstream: clientserver.c:1254 - `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));`
-fn format_module_listing_line(name: &str, comment: &str) -> String {
-    format!("{name:<15}\t{comment}\n")
-}
-
 /// Sends the list of available modules to a client.
 ///
 /// This responds to a module listing request by sending the names and comments
@@ -45,7 +35,7 @@ fn respond_with_module_list(
 
         // upstream: clientserver.c:1267 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
         let comment = module.comment.as_deref().unwrap_or("");
-        let line = format_module_listing_line(&module.name, comment);
+        let line = format_daemon_module_listing(&module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;
     }
 
