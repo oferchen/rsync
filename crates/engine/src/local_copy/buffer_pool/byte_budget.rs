@@ -105,23 +105,31 @@ impl ByteBudget {
     /// the pool and no longer counts against retained bytes).
     pub(super) fn release(&self, bytes: usize) {
         // Atomic saturating decrement. This MUST be a single read-modify-write
-        // (`fetch_update`), not a `load` / `saturating_sub` / `store`: two
-        // concurrent releases doing the latter can both read the same `prev`
-        // and both store `prev - bytes`, losing one decrement. A lost decrement
-        // leaves `retained` too HIGH, so `try_reserve` sees the pool as fuller
-        // than it is and rejects admissions it should accept - the pool
-        // under-retains and churns allocations. (`try_reserve` already uses a
-        // CAS loop; the decrement side must be just as atomic.)
+        // (a `compare_exchange_weak` loop), not a `load` / `saturating_sub` /
+        // `store`: two concurrent releases doing the latter can both read the
+        // same `prev` and both store `prev - bytes`, losing one decrement. A
+        // lost decrement leaves `retained` too HIGH, so `try_reserve` sees the
+        // pool as fuller than it is and rejects admissions it should accept -
+        // the pool under-retains and churns allocations. (`try_reserve` already
+        // uses a CAS loop; the decrement side must be just as atomic.)
         //
         // `saturating_sub` keeps us robust against accounting drift if a
         // buffer's size changed between admission and release (e.g. an adaptive
         // buffer larger than the pool default); the counter never wraps below
         // zero. `Relaxed` matches the rest of this soft-cap counter.
-        let _ = self
-            .retained
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
-                Some(prev.saturating_sub(bytes))
-            });
+        let mut prev = self.retained.load(Ordering::Relaxed);
+        loop {
+            let next = prev.saturating_sub(bytes);
+            match self.retained.compare_exchange_weak(
+                prev,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => prev = actual,
+            }
+        }
     }
 }
 
