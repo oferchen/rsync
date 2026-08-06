@@ -243,20 +243,24 @@ pub struct ResponseContext<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:968` - append mode implies inplace.
+/// `inplace` already carries `--append`: `ServerConfig::apply_append_implies_inplace`
+/// materialises upstream's `options.c:2410` promotion before the transfer starts,
+/// so this reads the single flag exactly as `receiver.c:968` does.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:968` - `if (inplace || one_inplace)`.
 /// - `receiver.c:910` - `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`.
 /// - `receiver.c:969` - `fnametmp = one_inplace ? partialptr : fname`.
 /// - `cleanup.c:105-115` - `handle_partial_dir()` moves the temp into the partial dir.
 fn resolve_use_inplace(
     inplace: bool,
-    append: bool,
     inplace_partial: bool,
     fnamecmp_type: Option<protocol::FnameCmpType>,
 ) -> bool {
-    let write_to_destination = inplace || append;
     let one_inplace_partial_dir =
         inplace_partial && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir);
-    write_to_destination && !one_inplace_partial_dir
+    inplace && !one_inplace_partial_dir
 }
 
 /// Reads and validates the echoed NDX and sum_head from the sender response.
@@ -299,7 +303,6 @@ fn read_response_header<R: Read>(
 
     let use_inplace = resolve_use_inplace(
         ctx.config.inplace,
-        ctx.config.append,
         ctx.config.inplace_partial,
         sender_attrs.fnamecmp_type,
     );
@@ -355,18 +358,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_use_inplace_writes_to_destination_for_inplace_and_append() {
-        // upstream: receiver.c:968 - append implies inplace; both write to the
-        // destination directly.
-        assert!(resolve_use_inplace(true, false, false, None));
-        assert!(resolve_use_inplace(false, true, false, None));
+    fn resolve_use_inplace_writes_to_destination_for_inplace() {
+        // upstream: receiver.c:968 - `inplace` selects the live destination as
+        // the write target. `--append` reaches this through the same flag,
+        // promoted by apply_append_implies_inplace (options.c:2410).
+        assert!(resolve_use_inplace(true, false, None));
     }
 
     #[test]
     fn resolve_use_inplace_temp_rename_without_inplace_flags() {
-        assert!(!resolve_use_inplace(false, false, false, None));
+        assert!(!resolve_use_inplace(false, false, None));
         assert!(!resolve_use_inplace(
-            false,
             false,
             false,
             Some(protocol::FnameCmpType::Fname)
@@ -383,7 +385,6 @@ mod tests {
         // upstream: receiver.c:910,969 write one_inplace to partialptr, never fname.
         assert!(!resolve_use_inplace(
             false,
-            false,
             true,
             Some(protocol::FnameCmpType::PartialDir)
         ));
@@ -391,11 +392,10 @@ mod tests {
         // or exact-name transfer) is likewise temp+rename.
         assert!(!resolve_use_inplace(
             false,
-            false,
             true,
             Some(protocol::FnameCmpType::Fname)
         ));
-        assert!(!resolve_use_inplace(false, false, true, None));
+        assert!(!resolve_use_inplace(false, true, None));
     }
 
     #[test]
