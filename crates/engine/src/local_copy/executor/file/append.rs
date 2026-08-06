@@ -14,15 +14,32 @@ pub(crate) enum AppendMode {
     Disabled,
     /// Destination is already at least as large as the source; skip the file.
     Skip,
-    /// Destination is shorter; append starting from the given offset.
-    Append(u64),
+    /// Destination is shorter; append starting from `offset`.
+    Append {
+        /// Byte offset the appended tail starts at - the destination's length.
+        offset: u64,
+        /// Whether `--append-verify`'s whole-file re-checksum will fail, so the
+        /// caller must retain the appended result and redo the file in phase 2.
+        verify_failed: bool,
+    },
 }
 
 /// Decides the append strategy for a file based on existing destination size.
 ///
 /// Returns `Disabled` when append is off, `Skip` when the destination is
-/// already at least as large, or `Append(offset)` when the destination is
-/// shorter and the transfer should resume from that offset.
+/// already at least as large, or `Append` when the destination is shorter and
+/// the transfer should resume from that offset.
+///
+/// Under `--append-verify` a mismatching prefix does **not** cancel the append.
+/// Upstream appends first and only then compares whole-file checksums: the
+/// sender sums the source's first `flength` bytes and the receiver sums the
+/// destination's, both followed by the identical appended tail
+/// (match.c:372-391, receiver.c:352-379), so the comparison reduces exactly to
+/// "do the two prefixes agree". A disagreement is reported through
+/// `verify_failed` rather than acted on here, because upstream keeps the
+/// appended bytes on disk (receiver.c:1029, reached because `--append` implies
+/// `--inplace` - options.c:2400-2411) and redoes the file in phase 2 against
+/// that retained partial.
 // upstream: receiver.c:recv_files() - append mode size comparison
 pub(crate) fn determine_append_mode(
     append_allowed: bool,
@@ -60,21 +77,23 @@ pub(crate) fn determine_append_mode(
         return Ok(AppendMode::Skip);
     }
 
-    if append_verify {
-        let matches = verify_append_prefix(reader, source, destination, existing_len)?;
-        reader
-            .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
-        if !matches {
-            return Ok(AppendMode::Disabled);
-        }
+    // Plain `--append` (append_mode == 1) never re-checksums: upstream skips the
+    // prefix in `sum_update` on both sides (match.c:373-391 runs the CHUNK_SIZE
+    // loop only when `append_mode == 2`), so the two whole-file sums cover just
+    // the appended tail and always agree.
+    let verify_failed = if append_verify {
+        !verify_append_prefix(reader, source, destination, existing_len)?
     } else {
-        reader
-            .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
-    }
+        false
+    };
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
 
-    Ok(AppendMode::Append(existing_len))
+    Ok(AppendMode::Append {
+        offset: existing_len,
+        verify_failed,
+    })
 }
 
 /// Verifies that the existing destination prefix matches the source.
@@ -272,7 +291,15 @@ mod tests {
         .expect("determine");
 
         match result {
-            AppendMode::Append(offset) => assert_eq!(offset, 6), // "source" is 6 bytes
+            AppendMode::Append {
+                offset,
+                verify_failed,
+            } => {
+                assert_eq!(offset, 6); // "source" is 6 bytes
+                // Without --append-verify upstream never re-checksums the
+                // prefix, so no redo can be requested.
+                assert!(!verify_failed);
+            }
             AppendMode::Disabled | AppendMode::Skip => panic!("expected Append mode"),
         }
     }
@@ -299,13 +326,19 @@ mod tests {
         .expect("determine");
 
         match result {
-            AppendMode::Append(offset) => assert_eq!(offset, 15),
+            AppendMode::Append {
+                offset,
+                verify_failed,
+            } => {
+                assert_eq!(offset, 15);
+                assert!(!verify_failed);
+            }
             AppendMode::Disabled | AppendMode::Skip => panic!("expected Append mode"),
         }
     }
 
     #[test]
-    fn determine_append_mode_with_verify_disabled_when_prefix_mismatch() {
+    fn determine_append_mode_still_appends_when_verify_will_fail() {
         let temp = tempdir().expect("tempdir");
         let source_path = temp.path().join("source.txt");
         let dest_path = temp.path().join("dest.txt");
@@ -325,7 +358,25 @@ mod tests {
         )
         .expect("determine");
 
-        assert!(matches!(result, AppendMode::Disabled));
+        // Degrading to a plain whole-file copy here is exactly the bug this
+        // encodes against: upstream appends the tail regardless, keeps the
+        // result (--append implies --inplace, options.c:2400-2411), and only
+        // then reports the failed whole-file re-checksum so the generator can
+        // redo the file against the retained partial (generator.c:2175-2217).
+        // Cancelling the append would leave nothing to re-delta and would make
+        // the transfer look like a clean single-pass copy.
+        match result {
+            AppendMode::Append {
+                offset,
+                verify_failed,
+            } => {
+                assert_eq!(offset, 16);
+                assert!(verify_failed);
+            }
+            AppendMode::Disabled | AppendMode::Skip => {
+                panic!("a failed verification must still append, then redo")
+            }
+        }
     }
 
     #[test]
