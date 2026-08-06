@@ -47,7 +47,7 @@ env:
 jobs:
   coverage:
     name: ${{ matrix.target }} (informational)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     # 5 min per target + 25 min for toolchain install, upstream build, and
     # cargo-fuzz coverage compilation overhead.
     timeout-minutes: 30

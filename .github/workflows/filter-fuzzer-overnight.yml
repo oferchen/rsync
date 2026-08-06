@@ -42,7 +42,7 @@ env:
 jobs:
   fuzz:
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     # Each target budget + 30 minutes for build/upstream/setup overhead.
     timeout-minutes: 90
     strategy:

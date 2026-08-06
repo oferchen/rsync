@@ -50,7 +50,7 @@ env:
 jobs:
   reorder-spill-check:
     name: Reorder spill regression
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     # Non-required: ROB-13.b will promote this check after a bake-in
     # period on master. Do not add to branch protection here.

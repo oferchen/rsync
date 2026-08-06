@@ -36,7 +36,7 @@ env:
 jobs:
   smoke:
     name: fuzz coverage smoke
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 60
 
     steps:

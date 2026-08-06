@@ -36,7 +36,7 @@ concurrency:
 jobs:
   check:
     name: Test cells build oc-rsync
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout

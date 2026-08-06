@@ -48,7 +48,7 @@ jobs:
   # ===========================================================================
   validate-version:
     name: validate tag matches Cargo.toml
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.extract.outputs.version }}
@@ -94,7 +94,7 @@ jobs:
   # ===========================================================================
   linux-gnu:
     name: linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs: validate-version
     timeout-minutes: 30
 
@@ -293,7 +293,7 @@ jobs:
   # ===========================================================================
   linux-musl:
     name: linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs: validate-version
     timeout-minutes: 45
 
@@ -416,7 +416,7 @@ jobs:
   # ===========================================================================
   linux-alpine:
     name: alpine-apk-${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs:
       - validate-version
       - linux-musl
@@ -516,7 +516,7 @@ jobs:
   # ===========================================================================
   macos:
     name: macos-${{ matrix.arch }}-${{ matrix.toolchain }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: depot-${{ matrix.runner }}
     needs: validate-version
     timeout-minutes: 30
 
@@ -601,7 +601,7 @@ jobs:
   # ===========================================================================
   windows:
     name: windows-${{ matrix.toolchain }}
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     needs: validate-version
     timeout-minutes: 45
 
@@ -701,7 +701,7 @@ jobs:
   # ===========================================================================
   release-artifacts:
     name: create GitHub Release and upload assets
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 15
     needs:
       - validate-version
@@ -816,7 +816,7 @@ jobs:
   # ===========================================================================
   brew-formula:
     name: update Homebrew formula
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 10
     needs:
       - validate-version
@@ -1019,7 +1019,7 @@ jobs:
   # ===========================================================================
   docker:
     name: build and push Docker image
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 15
     needs:
       - validate-version

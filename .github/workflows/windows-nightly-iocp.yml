@@ -47,7 +47,7 @@ env:
 jobs:
   windows-iocp-stress:
     name: Windows IOCP stress (high-IOPS)
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     timeout-minutes: 45
 
     steps:

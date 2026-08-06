@@ -34,7 +34,7 @@ env:
 jobs:
   audit:
     name: cargo-deny
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 15
 
     steps:

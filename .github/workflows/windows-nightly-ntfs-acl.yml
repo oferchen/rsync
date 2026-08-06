@@ -82,7 +82,7 @@ env:
 jobs:
   windows-ntfs-acl:
     name: Windows NTFS ACL round-trip
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     timeout-minutes: 45
 
     steps:

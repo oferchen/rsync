@@ -41,7 +41,7 @@ env:
 jobs:
   build-rsync-2-6-9:
     name: Build rsync 2.6.9 from source
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 15
 
     steps:

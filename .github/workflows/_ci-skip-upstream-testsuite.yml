@@ -9,7 +9,7 @@ permissions:
 jobs:
   upstream-testsuite:
     name: upstream testsuite
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no relevant changes"
 
@@ -19,6 +19,6 @@ jobs:
   # context leaves a skipped pull request permanently unmergeable.
   upstream-testsuite-root:
     name: upstream testsuite (root)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no relevant changes"

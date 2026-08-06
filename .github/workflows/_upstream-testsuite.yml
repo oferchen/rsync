@@ -23,7 +23,7 @@ jobs:
   upstream-testsuite:
     name: upstream testsuite
     if: ${{ inputs.variant == 'all' || inputs.variant == 'nonroot' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 45
 
     env:
@@ -176,7 +176,7 @@ jobs:
   upstream-testsuite-root:
     name: upstream testsuite (root)
     if: ${{ inputs.variant == 'all' || inputs.variant == 'root' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 45
 
     env:

@@ -16,7 +16,7 @@ permissions:
 jobs:
   check-known-failures:
     name: Track known failure status
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
 
     env:

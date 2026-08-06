@@ -61,7 +61,7 @@ env:
 jobs:
   windows-case-insensitive:
     name: Windows case-insensitive collision detection
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     timeout-minutes: 30
 
     steps:

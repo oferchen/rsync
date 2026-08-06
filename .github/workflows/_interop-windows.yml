@@ -58,7 +58,7 @@ permissions:
 jobs:
   interop-windows:
     name: interop with upstream rsync (Windows, best-effort)
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
     # Best-effort: do not block merges on Windows interop quirks while
     # baseline parity is being established. Promote to required once

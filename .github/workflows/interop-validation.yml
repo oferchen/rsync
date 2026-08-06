@@ -43,7 +43,7 @@ env:
 jobs:
   build:
     name: Build oc-rsync and upstream rsync
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 45
 
     steps:
@@ -100,7 +100,7 @@ jobs:
   validate-exit-codes:
     name: Exit Code Validation
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -152,7 +152,7 @@ jobs:
   validate-messages:
     name: Message Format Validation
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -204,7 +204,7 @@ jobs:
   validate-behavior:
     name: Behavior Comparison
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 45
 
     steps:
@@ -258,7 +258,7 @@ jobs:
   validate-batch:
     name: Batch Mode Interop
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -296,7 +296,7 @@ jobs:
   validate-filters:
     name: Filter Rules Interop
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -336,7 +336,7 @@ jobs:
   validate-compress:
     name: Compression Codec Interop
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -376,7 +376,7 @@ jobs:
   validate-inc-recurse:
     name: INC_RECURSE Interop
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -419,7 +419,7 @@ jobs:
   regenerate-goldens:
     name: Regenerate Golden Files (Manual)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     # Only run on workflow_dispatch
     if: github.event_name == 'workflow_dispatch'

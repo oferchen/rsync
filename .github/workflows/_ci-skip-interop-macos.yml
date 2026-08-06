@@ -9,6 +9,6 @@ permissions:
 jobs:
   interop-with-upstream-macos:
     name: interop with upstream rsync (macOS)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"

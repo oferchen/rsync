@@ -65,7 +65,7 @@ jobs:
   # ===========================================================================
   lint:
     name: fmt + clippy
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 10
 
     steps:
@@ -140,7 +140,7 @@ jobs:
   # ===========================================================================
   fuzz-workspace-check:
     name: fuzz workspaces check
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -177,7 +177,7 @@ jobs:
   # ===========================================================================
   unsafe-safety-comment-audit:
     name: unsafe-safety-comment-audit (informational)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     timeout-minutes: 5
     continue-on-error: true
@@ -194,7 +194,7 @@ jobs:
   # ===========================================================================
   test:
     name: nextest (${{ matrix.toolchain }})
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs: lint
     timeout-minutes: 120
     # Stable gates merge; beta/nightly are informational so a churning
@@ -283,7 +283,7 @@ jobs:
   # ===========================================================================
   windows-test:
     name: Windows (${{ matrix.toolchain }})
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     needs: lint
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
@@ -373,7 +373,7 @@ jobs:
   # ===========================================================================
   windows-iocp:
     name: Windows IOCP (--features iocp)
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     needs: lint
     timeout-minutes: 30
 
@@ -449,7 +449,7 @@ jobs:
   # ===========================================================================
   windows-acl-xattr:
     name: Windows ACL/xattr
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     needs: lint
     timeout-minutes: 30
 
@@ -527,7 +527,7 @@ jobs:
   # ===========================================================================
   windows-daemon:
     name: Windows daemon
-    runs-on: windows-latest
+    runs-on: depot-windows-latest
     needs: lint
     timeout-minutes: 30
 
@@ -576,7 +576,7 @@ jobs:
   # ===========================================================================
   windows-gnu-cross-check:
     name: Windows GNU cross-check
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs: lint
     timeout-minutes: 20
 
@@ -634,7 +634,7 @@ jobs:
   # ===========================================================================
   macos-test:
     name: macOS (${{ matrix.toolchain }})
-    runs-on: macos-latest
+    runs-on: depot-macos-latest
     needs: lint
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
@@ -699,7 +699,7 @@ jobs:
   # ===========================================================================
   linux-musl:
     name: Linux musl (${{ matrix.toolchain }})
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     needs: lint
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
@@ -865,7 +865,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: depot-${{ matrix.os }}
 
     steps:
       - name: Checkout

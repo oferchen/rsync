@@ -51,7 +51,7 @@ permissions:
 jobs:
   interop-macos:
     name: interop with upstream rsync (macOS)
-    runs-on: macos-latest
+    runs-on: depot-macos-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     env:

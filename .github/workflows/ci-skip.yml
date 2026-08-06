@@ -46,31 +46,31 @@ permissions:
 jobs:
   lint:
     name: fmt + clippy
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"
 
   test:
     name: nextest (stable)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"
 
   windows-test:
     name: Windows (stable)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"
 
   macos-test:
     name: macOS (stable)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"
 
   musl-test:
     name: Linux musl (stable)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
       - run: echo "Skipped — no code changes"
 

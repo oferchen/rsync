@@ -32,7 +32,7 @@ jobs:
   # ---------------------------------------------------------------------------
   feature-flags-cross-os:
     name: ${{ matrix.row.name }} (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: depot-${{ matrix.os }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     strategy:
@@ -149,7 +149,7 @@ jobs:
   # ---------------------------------------------------------------------------
   feature-flags-linux:
     name: ${{ matrix.name }} (linux)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     strategy:
