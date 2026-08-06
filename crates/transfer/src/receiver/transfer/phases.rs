@@ -15,11 +15,13 @@ use std::io::{self, Read, Write};
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{
-    NDX_DEL_STATS, NDX_DONE, NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec,
-    create_protocol_codec,
+    NDX_DEL_STATS, NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec, create_protocol_codec,
 };
 
 use crate::receiver::ReceiverContext;
+use crate::receiver::ndx_stream::{
+    FlistMarkerSink, NdxFrame, NoLazyFlist, StreamRole, read_marker_aware_ndx, read_ndx_and_attrs,
+};
 use crate::receiver::stats::SenderStats;
 use crate::transfer_state::TransferPhase;
 
@@ -123,38 +125,60 @@ impl ReceiverContext {
     /// framing is delta-state independent, so consuming with the fresh phase
     /// codec still advances by the exact wire bytes even though the discarded
     /// index values are not needed.
+    ///
+    /// Returns `true` once the sender's NDX_DONE has surfaced mid-drain: that
+    /// value reads no attribute tail (upstream `rsync.c:334-335`), so the phase
+    /// boundary is already satisfied and no further NDX may be consumed.
     fn drain_hardlink_follower_echoes<R: Read>(
         &self,
         ndx_read_codec: &mut NdxCodecEnum,
         reader: &mut R,
-    ) -> io::Result<()> {
+        sink: &mut NoLazyFlist,
+    ) -> io::Result<bool> {
         for _ in 0..self.hardlink_follower_echoes.take() {
-            crate::receiver::wire::SenderAttrs::read_with_codec(reader, ndx_read_codec)?;
+            if read_ndx_and_attrs(reader, ndx_read_codec, sink, false, false)?.is_none() {
+                return Ok(true);
+            }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Reads an NDX and validates it is NDX_DONE (-1).
+    ///
+    /// Routed through the shared marker-aware reader
+    /// ([`read_marker_aware_ndx`]), which drains an `NDX_DEL_STATS` frame ahead
+    /// of the check exactly as upstream does (`rsync.c:336-342`, evaluated
+    /// before the `rsync.c:343` gate). A phase boundary is outside the lazy
+    /// file-list window, so the sink refuses to grow the list.
     pub(in crate::receiver) fn read_expected_ndx_done<R: Read>(
         &self,
         ndx_read_codec: &mut NdxCodecEnum,
         reader: &mut R,
         context: &str,
     ) -> io::Result<()> {
-        self.drain_hardlink_follower_echoes(ndx_read_codec, reader)?;
-        let ndx = ndx_read_codec.read_ndx(reader)?;
-        if ndx != -1 {
+        let mut sink = self.no_lazy_flist_sink();
+        if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
+            return Ok(());
+        }
+        match read_marker_aware_ndx(reader, ndx_read_codec, &mut sink)? {
+            NdxFrame::Done => Ok(()),
             // upstream: io.c read_ndx / rsync.c:818 - a wire index that is not
             // the expected NDX_DONE (-1) is "File-list index N not in ..." and
             // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
             // the core exit-code mapper yields RERR_PROTOCOL, not RERR_STREAMIO.
-            return Err(protocol::protocol_violation(format!(
+            NdxFrame::File(ndx) => Err(protocol::protocol_violation(format!(
                 "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
                 crate::role_trailer::error_location!(),
                 crate::role_trailer::receiver()
-            )));
+            ))),
         }
-        Ok(())
+    }
+
+    /// Builds the marker-rejecting sink used by the phase-boundary and goodbye
+    /// reads, seeded with the highest valid file index so a rejection carries
+    /// upstream's `(%d - %d)` span (`rsync.c:344-350`).
+    fn no_lazy_flist_sink(&self) -> NoLazyFlist {
+        NoLazyFlist::new(StreamRole::Receiver, FlistMarkerSink::last_file_ndx(self))
     }
 
     /// Handles the goodbye handshake at end of transfer.
@@ -204,26 +228,21 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            // upstream: main.c:893-924 read_final_goodbye() - the sender may
-            // send NDX_DEL_STATS before the NDX_DONE echo. Loop to skip it.
-            loop {
-                let ndx = ndx_read_codec.read_ndx(reader)?;
-                if ndx == NDX_DONE {
-                    break;
-                }
-                if ndx == NDX_DEL_STATS {
-                    // Consume the 5 varints of deletion statistics
-                    let _stats = protocol::stats::DeleteStats::read_from(reader)?;
-                    continue;
-                }
+            // upstream: main.c:904 read_final_goodbye() calls read_ndx_and_attrs(),
+            // which is where the sender's NDX_DEL_STATS frame gets drained
+            // (rsync.c:336-342) before NDX_DONE surfaces.
+            match read_marker_aware_ndx(reader, ndx_read_codec, &mut self.no_lazy_flist_sink())? {
+                NdxFrame::Done => {}
                 // upstream: main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
                 // non-NDX_DONE goodbye echo is a protocol violation, tagged so
                 // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
-                return Err(protocol::protocol_violation(format!(
-                    "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                )));
+                NdxFrame::File(ndx) => {
+                    return Err(protocol::protocol_violation(format!(
+                        "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    )));
+                }
             }
 
             ndx_write_codec.write_ndx_done(&mut *writer)?;

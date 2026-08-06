@@ -35,6 +35,7 @@ mod dest_root;
 mod directory;
 mod file_list;
 mod itemize;
+pub(crate) mod ndx_stream;
 mod pipeline_setup;
 mod quick_check;
 mod stats;
