@@ -966,9 +966,15 @@ fn emit_relative_implied_parents(
         }
 
         let source_dir = source_root.join(&accumulated);
-        // Best-effort, matching send_implied_dirs()'s tolerance for an ancestor
-        // that vanished or is not a directory: skip it silently.
-        let source_meta = match fs::symlink_metadata(&source_dir) {
+        // upstream: flist.c:1985 - send_implied_dirs() sets `copy_links =
+        // xfer_dirs = 1` around the ancestor loop, so the implied-parent stat
+        // FOLLOWS symlinks: a symlinked ancestor is emitted as a real directory
+        // (its `-i` itemize row and `--stats` dir count), matching the two
+        // protocol paths (generator/file_list/mod.rs:326,491). symlink_metadata
+        // reports a symlinked ancestor as a non-directory and drops it, losing
+        // the itemize row and the dir count. Best-effort: an ancestor that
+        // vanished or is not a directory is skipped silently.
+        let source_meta = match fs::metadata(&source_dir) {
             Ok(meta) if meta.file_type().is_dir() => meta,
             _ => continue,
         };
