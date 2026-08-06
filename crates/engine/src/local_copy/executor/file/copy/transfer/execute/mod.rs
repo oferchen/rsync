@@ -1,9 +1,10 @@
 //! Main file transfer orchestration.
 //!
-//! Hosts [`execute_transfer`], the central function that drives a single file
-//! copy: skip detection, backup, append-mode resume, delta signature,
+//! Hosts [`execute_transfer_once`], the central function that drives a single
+//! file copy pass: skip detection, backup, append-mode resume, delta signature,
 //! writer-strategy selection (direct, inplace, temp-file), buffer allocation,
-//! data copy, and post-transfer bookkeeping.
+//! data copy, and post-transfer bookkeeping. The `verify_redo` module wraps it
+//! to supply the second pass an `--append-verify` failure requires.
 //!
 //! # Submodules
 //!
@@ -43,10 +44,10 @@ use super::super::super::comparison::build_delta_signature;
 use super::super::super::compute_backup_path;
 use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::maybe_preallocate_destination;
-use super::TransferFlags;
 use super::finalize::finalize_guard_and_metadata;
 use super::open::open_source_file;
 use super::write_strategy::{open_destination_writer, select_write_strategy};
+use super::{TransferFlags, TransferOutcome};
 
 use skip::try_skip_up_to_date;
 
@@ -57,7 +58,7 @@ use skip::try_skip_up_to_date;
 /// when a usable basis file exists at the destination. The caller is
 /// responsible for pre-checks (dry-run, size filters, link processing).
 #[allow(clippy::too_many_arguments)]
-pub(in crate::local_copy) fn execute_transfer(
+pub(in crate::local_copy) fn execute_transfer_once(
     context: &mut CopyContext,
     source: &Path,
     destination: &Path,
@@ -76,7 +77,7 @@ pub(in crate::local_copy) fn execute_transfer(
     // rather than a network transfer (`>`).
     // upstream: generator.c:1039 - itemize(..., ITEM_LOCAL_CHANGE, ...).
     reference_basis: Option<PathBuf>,
-) -> Result<(), LocalCopyError> {
+) -> Result<TransferOutcome, LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
 
@@ -122,7 +123,7 @@ pub(in crate::local_copy) fn execute_transfer(
             &flags,
             mode,
         )? {
-            return Ok(());
+            return Ok(TransferOutcome::Complete);
         }
     }
 
@@ -223,6 +224,8 @@ pub(in crate::local_copy) fn execute_transfer(
     // instead falls through to the generic read/write loop below, which streams
     // its `file_size` bytes just like a regular file (upstream sender.c:410-418).
     if !file_type.is_file() && device_as_file_size.is_none() {
+        // A placeholder write carries no appended tail and no whole-file
+        // checksum, so it can never fail verification.
         return super::special::copy_special_as_regular_file(
             context,
             source,
@@ -236,7 +239,8 @@ pub(in crate::local_copy) fn execute_transfer(
             relative,
             mode,
             flags,
-        );
+        )
+        .map(|()| TransferOutcome::Complete);
     }
 
     // Fast path: macOS clonefile for new whole-file copies. Skipped for
@@ -265,7 +269,7 @@ pub(in crate::local_copy) fn execute_transfer(
             flags,
         )?
     {
-        return Ok(());
+        return Ok(TransferOutcome::Complete);
     }
 
     // Fast path: Windows CopyFileExW / ReFS reflink for new whole-file copies.
@@ -296,7 +300,7 @@ pub(in crate::local_copy) fn execute_transfer(
             flags,
         )?
     {
-        return Ok(());
+        return Ok(TransferOutcome::Complete);
     }
 
     // Fast path: Linux FICLONE reflink for new whole-file copies on Btrfs,
@@ -325,7 +329,7 @@ pub(in crate::local_copy) fn execute_transfer(
             flags,
         )?
     {
-        return Ok(());
+        return Ok(TransferOutcome::Complete);
     }
 
     let mut reader = open_source_file(source, context.open_noatime_enabled())
@@ -355,11 +359,19 @@ pub(in crate::local_copy) fn execute_transfer(
             Duration::default(),
             Some(metadata_snapshot),
         ));
-        return Ok(());
+        return Ok(TransferOutcome::Complete);
     }
 
+    // `verify_failed` is upstream's `recv_ok == 0` for this file, decided before
+    // the append rather than after it because the local executor can compare the
+    // two prefixes directly. The append still runs: upstream retains the result
+    // and re-deltas it in phase 2 (receiver.c:1029, generator.c:2175-2217).
+    let mut verify_failed = false;
     let append_offset = match append_mode {
-        AppendMode::Append(offset) => {
+        AppendMode::Append {
+            offset,
+            verify_failed: failed,
+        } => {
             debug_log!(
                 Send,
                 2,
@@ -367,6 +379,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 record_path.display(),
                 offset
             );
+            verify_failed = failed;
             offset
         }
         AppendMode::Disabled | AppendMode::Skip => 0,
@@ -467,7 +480,7 @@ pub(in crate::local_copy) fn execute_transfer(
         mode,
         flags,
     )? {
-        return Ok(());
+        return Ok(TransferOutcome::Complete);
     }
 
     let mut writer = open_destination_writer(
@@ -778,7 +791,16 @@ pub(in crate::local_copy) fn execute_transfer(
         preserve_acls,
     )?;
 
-    Ok(())
+    // upstream: receiver.c:1015 - `recv_ok = receive_data(...)` compares the
+    // sender's whole-file checksum against the receiver's. The local executor
+    // reduces that comparison to the pre-append prefix comparison recorded in
+    // `verify_failed` (see `determine_append_mode`), because both sides sum the
+    // same appended tail.
+    Ok(if verify_failed {
+        TransferOutcome::VerificationFailed
+    } else {
+        TransferOutcome::Complete
+    })
 }
 
 /// Finds a fuzzy delta basis for `destination` when the exact destination is
