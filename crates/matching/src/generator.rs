@@ -741,6 +741,12 @@ impl DeltaGenerator {
         // position - the source's trailing `tail_len` bytes - and let everything
         // ahead of it drain as literals, which is what upstream's scan does over
         // those offsets anyway.
+        //
+        // That derivation is also what keeps the cost honest. `find_tail_match`
+        // is O(block_count): a short block cannot live in the BitHash or the
+        // compact lookup, which are keyed on full-block rolling sums, so it has
+        // to be found by scan. This block sits OUTSIDE the scan loop and so runs
+        // at most once per call; probing per window would be quadratic.
         if tail_match {
             if let Some(tail_len) = short_final_block_len(index, block_len) {
                 if window.len() >= tail_len {

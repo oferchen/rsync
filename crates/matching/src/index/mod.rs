@@ -680,6 +680,36 @@ impl DeltaSignatureIndex {
     /// strong checksums match, returning its index. Partial blocks only ever
     /// occur as the final block, so this scan touches at most one candidate in
     /// practice.
+    ///
+    /// # Why this bypasses the BitHash, tag table and compact lookup
+    ///
+    /// Do not "optimize" this onto the prefilter path - it would silently stop
+    /// matching short blocks. All three structures are keyed on rolling sums
+    /// computed over `block_length` bytes, while a short final block's rolling
+    /// sum spans only `tail_len` bytes, so probing them with it is a category
+    /// error rather than a slower path. `populate_index` deliberately never
+    /// inserts a partial block, so the lookup cannot return one and the BitHash
+    /// would reject it as a negative. The linear scan is the only way in.
+    ///
+    /// The prunes that turn on block *identity* rather than rolling-sum
+    /// geometry do still apply, and are honoured below: the per-session
+    /// [`MatchedBlocks`] filter and the shared `consumed` bitset.
+    ///
+    /// # Cost
+    ///
+    /// O(`block_count`), with a single length comparison for every block that
+    /// is not the short one. Callers must invoke this **at most once per
+    /// file**: the sender's EOF drain probes exactly one source offset
+    /// (`len - tail_len`), because upstream's shrinking window admits no other
+    /// position where a short block can match. Calling it per window would be
+    /// quadratic.
+    ///
+    /// The scan is not narrowed to the last block even though the wire and
+    /// local signature builders both put the only short block there. This is a
+    /// public API over a [`FileSignature`], and `SignatureBlock::from_raw_parts`
+    /// lets a caller hand over blocks of any length in any order, so a
+    /// last-block-only check would be an unsound assumption rather than an
+    /// optimization.
     #[inline]
     pub fn find_tail_match(
         &self,
