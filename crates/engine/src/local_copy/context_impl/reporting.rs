@@ -134,6 +134,36 @@ impl<'a> CopyContext<'a> {
         self.emitted_implied_dirs.insert(relative.to_path_buf())
     }
 
+    /// Reports whether the `--relative` operand whose source is `source_path` is
+    /// wholly covered by an earlier operand whose subtree was already walked
+    /// recursively. `true` means every flist entry this operand would emit (its
+    /// implied parents, itself, and its recursive contents) is a duplicate of an
+    /// entry an earlier operand already produced, so the caller must skip it
+    /// entirely.
+    ///
+    /// The key is the operand's SOURCE filesystem path, not its
+    /// destination-relative root: two `--relative` operands can map to the same
+    /// relative subtree from different sources (e.g. `-R down/3/deep
+    /// extra/./down/3/deep/extra.added.value`), and only the one physically
+    /// living inside an already-walked source directory is redundant. Matching
+    /// on the source path reproduces upstream's `flist_sort_and_clean()`
+    /// (flist.c:3016) collapse - which drops an entry only when an earlier
+    /// operand already contributed that exact file/subtree - without wrongly
+    /// dropping a distinct source that merely shares the relative suffix.
+    pub(super) fn source_root_already_covered(&self, source_path: &Path) -> bool {
+        self.expanded_source_roots
+            .iter()
+            .any(|root| source_root_covers(root, source_path))
+    }
+
+    /// Records `source_path` as a covering root: the source of a `--relative`
+    /// directory operand whose whole subtree was just walked recursively. A
+    /// subsequent operand whose source equals or descends from it is redundant
+    /// (see [`Self::source_root_already_covered`]).
+    pub(super) fn register_expanded_source_root(&mut self, source_path: PathBuf) {
+        self.expanded_source_roots.push(source_path);
+    }
+
     /// Consumes the context and returns the final [`CopyOutcome`].
     pub(super) fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {
@@ -437,6 +467,19 @@ impl<'a> CopyContext<'a> {
     }
 }
 
+/// Returns `true` when the covering source directory `root` contains (or is)
+/// the source path `candidate`. Uses component-wise [`Path::starts_with`], so a
+/// covering root `a/b` matches `a/b` and `a/b/c` but NOT the sibling `a/bc` -
+/// only whole path components count, never a raw byte prefix. Both arguments are
+/// source filesystem paths, so a descendant match means `candidate`'s bytes were
+/// physically walked when `root`'s subtree was expanded.
+///
+/// upstream: flist.c:3016 flist_sort_and_clean() collapses an operand that
+/// duplicates a subtree already contributed by an earlier `--relative` operand.
+fn source_root_covers(root: &Path, candidate: &Path) -> bool {
+    candidate == root || candidate.starts_with(root)
+}
+
 /// Returns the wire-encoded byte length of a path (platform-aware, with null
 /// terminator).
 fn encoded_path_len(path: &Path) -> usize {
@@ -459,5 +502,55 @@ fn encoded_path_len(path: &Path) -> usize {
     #[cfg(not(any(unix, windows)))]
     {
         path.to_string_lossy().len() + NULL_TERMINATOR
+    }
+}
+
+
+#[cfg(test)]
+mod source_root_covers_tests {
+    use super::source_root_covers;
+    use std::path::Path;
+
+    /// A covering source directory must match itself and any source physically
+    /// beneath it - these are the redundant operands upstream collapses in
+    /// flist_sort_and_clean().
+    #[test]
+    fn covers_self_and_descendants() {
+        let root = Path::new("a/b");
+        assert!(source_root_covers(root, Path::new("a/b")), "equal root");
+        assert!(source_root_covers(root, Path::new("a/b/c")), "child dir");
+        assert!(
+            source_root_covers(root, Path::new("a/b/c/f2")),
+            "deep descendant"
+        );
+    }
+
+    /// The key is the SOURCE path, not the destination-relative root. Two
+    /// operands can map to the same relative subtree from different sources - e.g.
+    /// upstream's relative.test runs `-R down/3/deep extra/./down/3/deep/extra.added.value`,
+    /// where the second source lives under `extra/` and is NOT inside the first
+    /// operand's walked directory. It must not be treated as covered, or the
+    /// distinct file is silently dropped (flist_sort_and_clean keeps it because
+    /// no earlier entry produced it).
+    #[test]
+    fn does_not_cover_distinct_source_with_shared_relative_suffix() {
+        let walked = Path::new("down/3/deep");
+        let other_source = Path::new("extra/down/3/deep/extra.added.value");
+        assert!(
+            !source_root_covers(walked, other_source),
+            "distinct source under extra/ must remain transferable"
+        );
+    }
+
+    /// A sibling that merely shares a byte prefix (`a/bc` vs `a/b`) is NOT
+    /// covered: it contributes its own distinct subtree, so deduping it would
+    /// wrongly drop real entries. Component-wise matching guards this.
+    #[test]
+    fn does_not_cover_byte_prefix_siblings() {
+        let root = Path::new("a/b");
+        assert!(!source_root_covers(root, Path::new("a/bc")));
+        assert!(!source_root_covers(root, Path::new("a/bcd/e")));
+        assert!(!source_root_covers(root, Path::new("a")), "ancestor is not covered");
+        assert!(!source_root_covers(root, Path::new("x/y")), "unrelated");
     }
 }

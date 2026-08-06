@@ -341,6 +341,25 @@ fn process_single_source(
 
     let (relative_root, relative_parent) = compute_relative_paths(context, source);
 
+    // upstream: flist.c:3016 flist_sort_and_clean() - after every source arg is
+    // merged into one shared flist, an operand that duplicates a subtree already
+    // contributed by an earlier `--relative` operand collapses away. The
+    // streaming local-copy executor emits each operand's rows as it walks, so a
+    // later operand whose SOURCE descends from (or equals) an earlier
+    // recursively-walked operand's source directory would re-list the shared
+    // subtree - its implied parents, itself, and its recursive contents. Skip it
+    // here to reproduce the single-emission result. The covering key is the
+    // source filesystem path, not the destination-relative root: two `--relative`
+    // operands can carry the same relative suffix from different sources (e.g.
+    // `-R down/3/deep extra/./down/3/deep/extra.added.value`), and upstream keeps
+    // the distinct file because no earlier flist entry produced it - only a source
+    // physically inside an already-walked directory is truly redundant. Guarded on
+    // `--relative` (without it operands map to distinct basenames and never
+    // overlap in the destination).
+    if relative_root.is_some() && context.source_root_already_covered(source_path) {
+        return Ok(());
+    }
+
     let metadata_result = fetch_source_metadata(
         context,
         source,
@@ -469,6 +488,17 @@ fn process_single_source(
         relative_root.as_deref(),
         destination_root_created,
     )?;
+
+    // Record this operand's SOURCE path as a covering root once we know it is a
+    // directory being walked recursively: its full subtree enters the flist
+    // here, so a later `--relative` operand whose source equals or lies beneath
+    // it is redundant (see `source_root_already_covered`). Non-recursive walks
+    // (`-d`, or a single file) do not cover descendants, so they are not
+    // registered. Keyed on the source path (not the relative root) so a distinct
+    // source sharing the relative suffix is never wrongly skipped.
+    if file_type.is_dir() && context.recursive_enabled() && relative_root.is_some() {
+        context.register_expanded_source_root(source_path.to_path_buf());
+    }
 
     if file_type.is_dir() {
         if source.copy_contents() {
