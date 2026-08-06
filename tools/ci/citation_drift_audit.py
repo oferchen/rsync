@@ -16,6 +16,16 @@ as a ranked lead list for manual review, NOT a hard gate. In practice a healthy
 crate audits at ~10-20% (false-positive-dominated); a crate whose citations were
 bulk-shifted onto wrong lines audits much higher (e.g. >50%).
 
+CAVEAT (false negatives - a clean run is NOT proof): the matcher looks for the
+quoted anchor inside a *single* upstream line, so a comment quoting C that
+upstream wraps across two lines is skipped silently and never counted. The 3.4.4
+sweep found three wrong citations in crates/filters/src/rule.rs this way: only
+the one quoting the short `case '/'` was flagged; its two siblings quoting
+`case '/': rule->rflags |= FILTRULE_ABS_PATH;` were invisible because upstream
+splits that across exclude.c:1238-1239. Nor does the tool check the *claim* - a
+citation can land on a real line that says something else entirely. Both classes
+need eyes on the comment and the upstream context.
+
 Usage:
     python3 tools/ci/citation_drift_audit.py [crate ...]   # default: all crates
 """
@@ -118,9 +128,19 @@ if __name__ == "__main__":
             counts[c] = miss
     if "--write-baseline" in flags:
         import json
+        # Merge, never replace. Two traps this avoids: `--write-baseline engine`
+        # would otherwise drop every other crate's entry, and rewriting the file
+        # would erase the `_`-prefixed notes that tell the next reader lowering
+        # the baseline is mandatory, not optional.
+        try:
+            with open(BASELINE) as fh:
+                merged = json.load(fh)
+        except OSError:
+            merged = {}
+        merged.update(counts)
         with open(BASELINE, "w") as fh:
-            json.dump(counts, fh, indent=2, sort_keys=True)
+            json.dump(merged, fh, indent=2, sort_keys=True)
             fh.write("\n")
-        print(f"wrote {BASELINE}")
+        print(f"wrote {BASELINE} ({', '.join(sorted(counts)) or 'no crates'} updated)")
     elif "--ratchet" in flags:
         sys.exit(ratchet(counts, BASELINE))
