@@ -75,7 +75,7 @@ def audit(crate):
 if __name__ == "__main__":
     if not os.path.isdir(S):
         sys.exit(f"upstream source missing: {S} (run tools/ci/run_interop.sh to fetch)")
-    crates = sys.argv[1:] or sorted(os.path.basename(os.path.dirname(os.path.dirname(p)))
+    crates = sys.argv[1:] or sorted(os.path.basename(os.path.dirname(p))
                                     for p in glob.glob("crates/*/src"))
     for c in crates:
         audit(c)
