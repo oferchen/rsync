@@ -188,6 +188,80 @@ fn verification_kept_str(partial_mode: &PartialMode, is_inplace: bool) -> &'stat
     }
 }
 
+/// Whether the phase-1 (`FWARNING`) verification-failure line is reported at
+/// all.
+///
+/// Upstream prints the `failed verification` text only when the message is a
+/// hard `FERROR_XFER` - the phase-2 form, which is unconditional and so does not
+/// consult this - or the run asked for per-file output, either through the
+/// `NAME` info category (`-v`, `--info=name`) or through a per-file format
+/// carrying `%i` (`-i`, or a custom `--out-format` with `%i`). A plain `-a` run
+/// is therefore silent about a failure it is about to retry successfully.
+///
+/// The `NAME` level comes from the thread-local verbosity configuration, seeded
+/// on a client from its own command line and on a server receiver from the flags
+/// the client forwarded, so `--info=name0` suppresses the line even under `-v`
+/// exactly as upstream's `INFO_GTE` does.
+///
+/// upstream: receiver.c:1072 - `if (msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
+/// || stdout_format_has_i)`.
+fn reports_verify_warning(report: VerifyReport) -> bool {
+    logging::info_gte(logging::InfoFlag::Name, 1) || report.out_format_forwards_i
+}
+
+/// Builds the diagnostic upstream's receiver emits for a file that failed its
+/// whole-file verification, or `None` when upstream stays silent.
+///
+/// This is the whole of `receiver.c:1071-1091` in one place - severity, gate,
+/// message text, `keptstr` selection and retry suffix - deliberately free of any
+/// transport or queueing concern, so both the message and the decision to emit
+/// it stay comparable to the C side line by line.
+///
+/// `name` is the file's *file list* name. Upstream's receiver has already
+/// `change_dir()`ed into the destination root (`main.c:815`), so `fname` - and
+/// `f_name(file, NULL)` in the `local_name` case - renders relative to it; the
+/// joined absolute destination path is never what a user sees here.
+///
+/// `redoing` is upstream's global of the same name: false in phase 1, where a
+/// failure is a retryable `FWARNING`, and true in the phase-2 redo, where the
+/// same failure is a fatal `FERROR_XFER` with no retry left to promise.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:1071` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
+/// - `receiver.c:1072` - the emit gate, mirrored by [`reports_verify_warning`].
+/// - `receiver.c:1073-1078` - `keptstr`, mirrored by [`verification_kept_str`].
+/// - `receiver.c:1079-1086` - `errstr` and `redostr`.
+/// - `receiver.c:1088-1091` - the format string reproduced verbatim below.
+fn verification_failure_report(
+    name: &std::path::Path,
+    partial_mode: &PartialMode,
+    is_inplace: bool,
+    redoing: bool,
+    report: VerifyReport,
+) -> Option<(MessageCode, String)> {
+    let kept = verification_kept_str(partial_mode, is_inplace);
+    let name = name.display();
+    if redoing {
+        return Some((
+            MessageCode::ErrorXfer,
+            format!("ERROR: {name} failed verification -- update {kept}."),
+        ));
+    }
+    if !reports_verify_warning(report) {
+        return None;
+    }
+    let redostr = if report.read_batch {
+        " (may try again)"
+    } else {
+        " (will try again)"
+    };
+    Some((
+        MessageCode::Warning,
+        format!("WARNING: {name} failed verification -- update {kept}{redostr}."),
+    ))
+}
+
 impl PipelinedReceiver {
     /// Spawns the disk commit thread and returns a new mediator.
     ///
@@ -435,27 +509,6 @@ impl PipelinedReceiver {
         self.permission_error_count
     }
 
-    /// Whether the phase-1 (`FWARNING`) verification-failure line is reported.
-    ///
-    /// Upstream prints the `failed verification` text only when the message is
-    /// a hard `FERROR_XFER` - the phase-2 form, which is unconditional - or the
-    /// user asked for per-file output, either through the `NAME` info category
-    /// (`-v`, `--info=name`) or through a per-file format carrying `%i` (`-i`,
-    /// or a custom `--out-format` with `%i`). A plain `-a` run is therefore
-    /// silent about a failure it is about to retry successfully.
-    ///
-    /// The `NAME` level is read from the thread-local verbosity configuration,
-    /// which is seeded on a client from its own command line and on a server
-    /// receiver from the flags the client forwarded, so `--info=name0`
-    /// suppresses the line even under `-v` exactly as upstream's `INFO_GTE`
-    /// does.
-    ///
-    /// upstream: receiver.c:1072 - `if (msgtype == FERROR_XFER ||
-    /// INFO_GTE(NAME, 1) || stdout_format_has_i)`.
-    fn reports_verify_warning(&self) -> bool {
-        logging::info_gte(logging::InfoFlag::Name, 1) || self.verify_report.out_format_forwards_i
-    }
-
     /// Verifies a commit result's computed checksum against the expected value.
     ///
     /// Pops the next expected checksum from the FIFO queue (files are processed
@@ -478,46 +531,19 @@ impl PipelinedReceiver {
             if computed.len != pending.len
                 || computed.bytes[..computed.len] != pending.expected[..pending.len]
             {
-                // upstream: receiver.c:1073-1078 - keptstr depends on partial
-                // retention and whether the write was in place.
-                let kept = verification_kept_str(&self.partial_mode, pending.is_inplace);
-                // upstream names the file the way its receiver sees it, i.e.
-                // relative to the destination root it has already `change_dir()`ed
-                // into (main.c:815) - never the joined absolute path.
-                let name = pending.flist_name.display();
-                if self.redo_enabled {
-                    // upstream: receiver.c:1088-1091 -
-                    // "WARNING: %s failed verification -- update %s%s.\n". The
-                    // FWARNING form is the only one behind the emit gate; the
-                    // redo itself is queued either way (receiver.c:1093-1096
-                    // sits outside the `if`), so a suppressed line never costs
-                    // the retry.
-                    if self.reports_verify_warning() {
-                        // upstream: receiver.c:1085 - a batch replay may only
-                        // "try again", a live peer will.
-                        let redostr = if self.verify_report.read_batch {
-                            " (may try again)"
-                        } else {
-                            " (will try again)"
-                        };
-                        self.warnings.push((
-                            MessageCode::Warning,
-                            format!(
-                                "WARNING: {name} failed verification -- update {kept}{redostr}."
-                            ),
-                        ));
-                    }
-                    self.redo_indices.push(pending.file_index);
-                    return Ok(());
-                }
-                // upstream: receiver.c:1088-1091 - phase-2 redo path (FERROR_XFER):
-                // "ERROR: %s failed verification -- update %s.\n" with redostr="".
-                // `msgtype == FERROR_XFER` short-circuits the emit gate, so this
-                // form always prints.
-                self.warnings.push((
-                    MessageCode::ErrorXfer,
-                    format!("ERROR: {name} failed verification -- update {kept}."),
+                self.warnings.extend(verification_failure_report(
+                    &pending.flist_name,
+                    &self.partial_mode,
+                    pending.is_inplace,
+                    !self.redo_enabled,
+                    self.verify_report,
                 ));
+                if self.redo_enabled {
+                    // upstream: receiver.c:1093-1096 - `send_msg_int(MSG_REDO,
+                    // ndx)` sits OUTSIDE the emit `if`, so a suppressed
+                    // diagnostic never costs the retry that corrects the file.
+                    self.redo_indices.push(pending.file_index);
+                }
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
             }
