@@ -57,15 +57,17 @@ fn test_rsync_protect_args_env_enables_protect_args() {
     );
 }
 
+// upstream: options.c:1986 - getenv(RSYNC_PROTECT_ARGS) != NULL && *arg
+// requires a non-empty value; an empty string falls through to the compile
+// default, which oc leaves unresolved (None) for the caller to decide.
 #[test]
 #[serial]
-fn test_rsync_protect_args_empty_enables_protect_args() {
+fn test_rsync_protect_args_empty_uses_compile_default() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert_eq!(
-        args.protect_args,
-        Some(true),
-        "RSYNC_PROTECT_ARGS='' should enable protect_args"
+        args.protect_args, None,
+        "RSYNC_PROTECT_ARGS='' should fall through to the compile default"
     );
 }
 
