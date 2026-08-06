@@ -133,12 +133,15 @@ impl TarballSpec {
         self.platform.includes_daemon()
     }
 
-    pub fn requires_cross_compiler(&self) -> bool {
+    /// Reports whether building this spec on `host_arch` needs a cross-compiler.
+    ///
+    /// The host architecture is supplied by the caller rather than read from
+    /// `env::consts::ARCH` so that resolution is a pure function of its inputs.
+    pub fn requires_cross_compiler(&self, host_arch: &str) -> bool {
         if !matches!(self.platform, TarballPlatform::Linux) {
             return false;
         }
 
-        let host_arch = env::consts::ARCH;
         self.metadata_arch != host_arch
     }
 }
