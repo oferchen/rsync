@@ -68,6 +68,12 @@ pub struct SshConfig {
     pub identity_files: Vec<PathBuf>,
     /// Whether to attempt authentication via an SSH agent.
     pub use_agent: bool,
+    /// Explicit SSH agent socket from an `IdentityAgent` directive. `None`
+    /// uses `SSH_AUTH_SOCK`. The literal `"SSH_AUTH_SOCK"` forces the
+    /// environment variable; `"none"` disables agent authentication; any
+    /// other value is treated as a Unix-domain socket path. Honoured only on
+    /// Unix, where the embedded transport supports agent auth.
+    pub identity_agent: Option<String>,
     /// Cipher preference list. `None` uses hardware-detected defaults.
     pub ciphers: Option<Vec<String>>,
     /// TCP connect timeout.
@@ -127,6 +133,7 @@ impl Default for SshConfig {
             password: None,
             identity_files: default_identity_files(),
             use_agent: true,
+            identity_agent: None,
             ciphers: None,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
             keepalive_interval: Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS)),
@@ -172,6 +179,12 @@ impl SshConfig {
     /// Sets whether to attempt SSH agent authentication.
     pub fn use_agent(&mut self, use_agent: bool) -> &mut Self {
         self.use_agent = use_agent;
+        self
+    }
+
+    /// Sets the `IdentityAgent` socket. Pass `None` to use `SSH_AUTH_SOCK`.
+    pub fn identity_agent(&mut self, identity_agent: Option<String>) -> &mut Self {
+        self.identity_agent = identity_agent;
         self
     }
 
@@ -269,6 +282,11 @@ impl SshConfig {
             if !self.identity_files.contains(ident) {
                 self.identity_files.push(ident.clone());
             }
+        }
+        if self.identity_agent.is_none()
+            && let Some(ref agent) = resolved.identity_agent
+        {
+            self.identity_agent = Some(agent.clone());
         }
     }
 
@@ -849,5 +867,41 @@ mod tests {
             defaults.strict_host_key_checking
         );
         assert_eq!(cfg.ip_preference, defaults.ip_preference);
+    }
+
+    #[test]
+    fn default_identity_agent_is_none() {
+        let cfg = SshConfig::default();
+        assert!(cfg.identity_agent.is_none());
+    }
+
+    #[test]
+    fn builder_identity_agent() {
+        let mut cfg = SshConfig::default();
+        cfg.identity_agent(Some("/run/agent.sock".to_owned()));
+        assert_eq!(cfg.identity_agent.as_deref(), Some("/run/agent.sock"));
+    }
+
+    #[test]
+    fn identity_agent_from_config_is_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  IdentityAgent /run/custom.sock\n")
+            .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example");
+        assert_eq!(cfg.identity_agent.as_deref(), Some("/run/custom.sock"));
+    }
+
+    #[test]
+    fn explicit_identity_agent_wins_over_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  IdentityAgent /run/from-file.sock\n")
+            .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.identity_agent(Some("/run/explicit.sock".to_owned()));
+        cfg.apply_ssh_config_from(&path, "example");
+        assert_eq!(cfg.identity_agent.as_deref(), Some("/run/explicit.sock"));
     }
 }
