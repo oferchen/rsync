@@ -70,7 +70,7 @@ impl TransportFault {
 
     /// Rebuilds the classified [`std::io::Error`] for the facade to return.
     ///
-    /// Protocol violations are emitted through [`protocol::protocol_violation`]
+    /// Protocol violations are emitted through [`protocol::protocol_violation()`]
     /// so they carry the [`protocol::ProtocolViolation`] tag (mapped to
     /// `RERR_PROTOCOL` = 2); every other fault carries its selected
     /// [`io::ErrorKind`] verbatim.
