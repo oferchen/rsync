@@ -141,6 +141,23 @@ pub struct BeginMessage {
     /// - `xattrs.c:944-1009` `rsync_xal_set(fname, ..., fnamecmp, ...)` - the
     ///   abbreviated resolution re-reads `fnamecmp`, the basis actually used.
     pub xattr_basis: Option<PathBuf>,
+    /// Flist entry whose metadata (permissions, ownership, timestamps, ACL
+    /// indices) the disk thread applies after committing this file.
+    ///
+    /// Carried per-file so the disk thread never has to index a shared copy of
+    /// the whole receiver file list. Previously the disk thread read
+    /// `DiskCommitConfig.file_list[file_entry_index]`, which forced the receiver
+    /// to hand it an `Arc<Vec<FileEntry>>` clone of the entire flist that stayed
+    /// resident for the whole transfer (a second full name-heap copy). A single
+    /// cloned entry per in-flight file is transient (dropped once the file
+    /// commits) and window-bounded, and it is immune to the receiver
+    /// progressively reclaiming its own flist segments (`reclaim_heap_data`
+    /// zeroes the very fields - mode/uid/gid/mtime and the `acl_ndx` in
+    /// `extras` - that this apply path reads).
+    ///
+    /// `None` means no metadata is applied (matches the former behavior when the
+    /// index did not resolve in the shared list).
+    pub file_entry: Option<protocol::flist::FileEntry>,
 }
 
 /// Sender's trailing whole-file checksum, carried to the disk thread for

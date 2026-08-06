@@ -69,7 +69,10 @@ pub struct StreamingResult {
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
 /// * `file_tx` - Channel sender to the disk commit thread
 /// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
-/// * `file_entry_index` - Index into the file list for metadata application
+/// * `file_entry_index` - Index into the file list, correlated back on the
+///   returned [`crate::pipeline::messages::CommitResult`]
+/// * `file_entry` - This file's flist entry, cloned into the begin message so
+///   the disk thread applies its metadata without indexing a shared flist copy
 /// * `is_device_target` - Whether the target is a device file
 /// * `xattr_list` - Optional extended attribute list for metadata application
 /// * `token_reader` - Reusable token reader, shared across files in a session.
@@ -86,6 +89,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_tx: &spsc::Sender<FileMessage>,
     buf_return_rx: &spsc::Receiver<Vec<u8>>,
     file_entry_index: usize,
+    file_entry: &protocol::flist::FileEntry,
     is_device_target: bool,
     xattr_list: Option<protocol::xattr::XattrList>,
     token_reader: &mut TokenReader,
@@ -139,6 +143,11 @@ pub fn process_file_response_streaming<R: Read>(
         // is not the primary destination. Carry that basis so an entry the
         // generator left abbreviated (it matched the basis) still resolves.
         xattr_basis: header.basis_path.clone(),
+        // Carry this file's metadata entry with the message instead of having
+        // the disk thread index a shared clone of the whole flist. Cloning one
+        // entry per in-flight file is transient (freed at commit) and immune to
+        // the receiver reclaiming its own flist segments mid-transfer.
+        file_entry: Some(file_entry.clone()),
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {
