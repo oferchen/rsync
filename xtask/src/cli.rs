@@ -1,6 +1,6 @@
 //! CLI argument parsing using clap.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Workspace maintenance commands for oc-rsync.
@@ -57,6 +57,9 @@ pub enum Command {
 
     /// Generate man page from markdown source using pandoc.
     ManPage,
+
+    /// Verify upstream C citations name lines the cited files have.
+    Citations(CitationsArgs),
 
     /// Assert the git index contains no binary artifacts.
     NoBinaries,
@@ -412,6 +415,14 @@ pub struct ReleaseArgs {
     pub skip_upload: bool,
 }
 
+/// Arguments for the `citations` command.
+#[derive(Args, Debug, Clone)]
+pub struct CitationsArgs {
+    /// Regenerate the committed line-count manifest from the pinned source.
+    #[arg(long)]
+    pub write_manifest: bool,
+}
+
 /// Arguments for the `release-notes` command.
 #[derive(Parser, Debug)]
 pub struct ReleaseNotesArgs {
@@ -490,8 +501,8 @@ pub struct TestArgs {
 
 use crate::task::Task;
 use crate::task::tasks::{
-    DocPackageTask, DocsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask, PreflightTask,
-    ReleaseTask, SbomTask, TestTask,
+    CitationsTask, DocPackageTask, DocsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask,
+    PreflightTask, ReleaseTask, SbomTask, TestTask,
 };
 
 /// Extension trait for converting commands to task trees.
@@ -505,6 +516,7 @@ impl CommandExt for Command {
         match self {
             Command::Benchmark(args) => args.as_task(),
             Command::Branding(args) => args.as_task(),
+            Command::Citations(_) => Box::new(CitationsTask),
             Command::CrossCheck => Box::new(CrossCheckTask),
             Command::Docs(args) => args.as_task(),
             Command::DocPackage(args) => args.as_task(),

@@ -152,7 +152,7 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
 /// on `ndx != 0` for cache hit vs literal data.
 pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     let ndx_plus_one = read_varint(reader)?;
-    // upstream: xattrs.c:773-775 reads `int ndx = read_varint(f)` and rejects
+    // upstream: xattrs.c:780-782 reads `int ndx = read_varint(f)` and rejects
     // out-of-range indices with an error. The wire value is an index + 1, so a
     // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
     // panic under overflow-checks builds. Reject that edge with a protocol
