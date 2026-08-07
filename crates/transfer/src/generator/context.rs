@@ -633,15 +633,34 @@ impl GeneratorContext {
     /// every source file.
     ///
     /// Mirrors the branch upstream `sender.c` takes before reading a file:
-    /// a non-chroot daemon (`use_secure_symlinks = am_daemon && !am_chrooted`;
-    /// oc never chroots, so it is simply `is_daemon_connection`) confines the
-    /// open beneath the module root; otherwise `do_open_checklinks` opens with
-    /// `O_NOFOLLOW` unless `--copy-links` / `--copy-unsafe-links` follows the
-    /// symlink.
+    /// when `use_secure_symlinks` holds, confine the open beneath the module
+    /// root; otherwise `do_open_checklinks` opens with `O_NOFOLLOW` unless
+    /// `--copy-links` / `--copy-unsafe-links` follows the symlink.
+    ///
+    /// # Why the gate is `is_daemon_connection` alone
+    ///
+    /// Upstream's condition is `am_daemon && !am_chrooted`, and `am_chrooted`
+    /// is assigned in exactly ONE place: `clientserver.c:988`, inside
+    /// `rsync_module()`'s PER-MODULE `use chroot` handling. The daemon-level
+    /// `daemon chroot` deliberately leaves it 0 - `clientserver.c:1345-1357`
+    /// spells out why, since that chroot confines resolution to the daemon
+    /// root, not to a module boundary, so modules sharing it stay
+    /// distinguishable subtrees and the per-module defenses must keep firing.
+    ///
+    /// So for a daemon-chrooted oc (`accept_loop.rs` applies the global
+    /// `daemon chroot`) this gate is exactly right: upstream is also still
+    /// gated on. It diverges only when a per-module `use chroot` succeeds
+    /// (`privilege.rs` `chroot_or_fallback`, reachable on the sync daemon
+    /// path), where upstream sets `am_chrooted = 1` and stops confining while
+    /// oc keeps confining. That is fail-safe - strictly more confinement,
+    /// never less - and is tracked rather than silently relied on. Do NOT
+    /// restate this as "oc never chroots": oc does chroot, by both routes.
     ///
     /// # Upstream Reference
     ///
     /// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon && !am_chrooted`
+    /// - `clientserver.c:988` - the only assignment of `am_chrooted`
+    /// - `clientserver.c:1345-1357` - why the daemon chroot does not set it
     /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
     pub(crate) fn source_open(&self) -> open_source::SourceOpen {
         let confine_root = if self.config.connection.is_daemon_connection {
