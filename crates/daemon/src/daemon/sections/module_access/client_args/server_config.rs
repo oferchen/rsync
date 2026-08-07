@@ -1,5 +1,5 @@
 // Construction of the `ServerConfig` from the parsed client arguments: server
-// role detection, compact-flag verbosity clamping, and the main
+// role detection, per-module output-verbosity limiting, and the main
 // `build_server_config` assembly that wires module directives into the config.
 /// Determines the server role based on client arguments.
 ///
@@ -13,45 +13,57 @@ fn determine_server_role(client_args: &[String]) -> ServerRole {
     }
 }
 
-/// Clamps `v` (verbose) characters in a compact flag string to respect `max_verbosity`.
+/// Largest verbosity level the `info_verbosity[]` / `debug_verbosity[]` tables
+/// describe. upstream: options.c:247 `#define MAX_VERBOSITY ((int)(sizeof
+/// debug_verbosity / sizeof debug_verbosity[0]) - 1)`, whose table
+/// (options.c:238-245) runs 0..=5.
+const MAX_VERBOSITY: u8 = 5;
+
+/// Caps the client's requested verbosity at the module's `max verbosity`,
+/// yielding the effective per-connection output level.
 ///
-/// When `max_verbosity` is 0 or negative, all `v` characters are removed.
-/// When positive, at most `max_verbosity` occurrences of `v` are retained.
+/// This limits the LEVEL only: the client's option string is never rewritten,
+/// so the `-e.<caps>` capability payload it carries reaches the capability
+/// decoder byte-for-byte.
 ///
-/// upstream: clientserver.c - the daemon clamps `verbose` to `lp_max_verbosity(i)`
-/// after parsing client args.
-fn clamp_verbose_flags(flag_string: &str, max_verbosity: i32) -> String {
-    if max_verbosity < 0 {
-        return flag_string.replace('v', "");
+/// upstream: clientserver.c:1141 `limit_output_verbosity(lp_max_verbosity(i))`
+/// runs after `parse_arguments()` and only lowers the entries of the
+/// `info_levels[]` / `debug_levels[]` output arrays (options.c:537-560); it
+/// leaves `verbose` and the parsed argv untouched. A `level` above
+/// `MAX_VERBOSITY` returns early (options.c:542-543), applying no limit at all.
+fn limit_output_verbosity(requested: u8, max_verbosity: i32) -> u8 {
+    if max_verbosity > i32::from(MAX_VERBOSITY) {
+        return requested;
     }
-
-    let max = max_verbosity as usize;
-    let mut count = 0usize;
-    flag_string
-        .chars()
-        .filter(|&ch| {
-            if ch == 'v' {
-                count += 1;
-                count <= max
-            } else {
-                true
-            }
-        })
-        .collect()
+    let max = u8::try_from(max_verbosity).unwrap_or(0);
+    requested.min(max)
 }
 
-/// Counts the `v` (verbose) characters in an already-clamped flag string,
-/// yielding the effective per-connection verbosity level.
+/// Applies the module's `max verbosity` to a freshly parsed [`ServerConfig`]
+/// and returns the effective output level.
 ///
-/// The input is expected to be the output of [`clamp_verbose_flags`], so the
-/// count already respects the module's `max verbosity`. The result seeds the
-/// worker thread's [`logging::VerbosityConfig`] via `apply_verbosity`,
-/// matching upstream's `limit_output_verbosity(lp_max_verbosity(i))`
-/// (clientserver.c:1127). Saturates at [`u8::MAX`].
-fn clamped_verbose_level(flag_string: &str) -> u8 {
-    let count = flag_string.chars().filter(|&ch| ch == 'v').count();
-    u8::try_from(count).unwrap_or(u8::MAX)
+/// The requested level is whatever `ParsedServerFlags` counted, and that scan
+/// stops at the `-e` capability separator, so the `v` that
+/// `maybe_add_e_option` (options.c:3040) always appends inside `-e.<caps>` is
+/// never mistaken for a `-v`. That letter is the client's
+/// `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
+/// (compat.c:730-733); upstream's popt hands everything after `-e` to
+/// `shell_cmd` (options.c:823 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}`)
+/// and only ever `strchr`es it, so nothing here may read it as option letters
+/// and nothing may rewrite it - `cfg.flag_string` stays byte-identical to what
+/// the client sent.
+///
+/// `cfg.flags` is capped alongside the returned level because oc gates some
+/// server-side output on the flags rather than on the thread-local
+/// `logging::VerbosityConfig`, while upstream's single capped `info_levels[]`
+/// array governs every output decision.
+fn apply_output_verbosity_limit(cfg: &mut ServerConfig, max_verbosity: i32) -> u8 {
+    let level = limit_output_verbosity(cfg.flags.verbose_level, max_verbosity);
+    cfg.flags.verbose_level = level;
+    cfg.flags.verbose = level > 0;
+    level
 }
+
 /// Applies module directives that force transfer-time behavior onto the
 /// per-session [`ServerConfig`], mirroring the daemon-only overrides upstream
 /// applies in `rsync_module()` after the client argv is parsed.
@@ -141,19 +153,6 @@ fn build_server_config(
         .cloned()
         .unwrap_or_default();
 
-    // upstream: clientserver.c - clamp verbose to lp_max_verbosity(i)
-    let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
-
-    // upstream: clientserver.c:1141 `limit_output_verbosity(lp_max_verbosity(i))`
-    // caps the per-connection log verbosity once the module is selected. Each
-    // oc-rsync connection runs on its own worker thread whose thread-local
-    // `logging::VerbosityConfig` starts at level 0, so seed it from the clamped
-    // client request here. Without this, daemon-side `info_log!`/`debug_log!`
-    // emissions during the transfer stay silent regardless of the client's
-    // `-v`/`-vv` and the module's `max verbosity`, since the daemon's own
-    // startup `apply_verbosity` only seeded the main accept-loop thread.
-    crate::daemon::apply_verbosity(clamped_verbose_level(&flag_string));
-
     // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
     // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
@@ -191,6 +190,18 @@ fn build_server_config(
         positional_args,
     ) {
         Ok(mut cfg) => {
+            // upstream: clientserver.c:1141 `limit_output_verbosity(lp_max_verbosity(i))`
+            // caps the per-connection log verbosity once the module is selected.
+            // Each oc-rsync connection runs on its own worker thread whose
+            // thread-local `logging::VerbosityConfig` starts at level 0, so seed
+            // it here; without that, daemon-side `info_log!`/`debug_log!`
+            // emissions stay silent regardless of the client's `-v`, since the
+            // daemon's startup `apply_verbosity` only seeded the accept loop.
+            crate::daemon::apply_verbosity(apply_output_verbosity_limit(
+                &mut cfg,
+                module.max_verbosity,
+            ));
+
             // Parse long-form arguments that upstream rsync sends via server_options()
             // (options.c:2737-2980). The compact flag string only covers single-char
             // flags; these long-form options must be parsed separately.

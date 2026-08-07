@@ -97,7 +97,9 @@ pub struct ParsedServerFlags {
     pub perms: bool,
     /// Recursive transfer (`r` flag, `--recursive`).
     pub recursive: bool,
-    /// Remote shell specified (`e` flag, `--rsh`).
+    /// Remote shell specified (`-e`, `--rsh`). Set when the compact bundle
+    /// carries an `-e` capability argument; the argument itself is opaque
+    /// payload decoded by `setup::capability`, never option letters.
     pub rsh: bool,
     /// Archive mode shorthand (`a` flag, `--archive`).
     pub archive: bool,
@@ -524,23 +526,44 @@ impl ParsedServerFlags {
 
         let mut flags = ParsedServerFlags::default();
 
-        for &byte in &bytes[1..] {
-            // The only `.` in a compact server flag string is the `-e`
-            // capability separator emitted by upstream `maybe_add_e_option`
-            // (options.c:3021), which appends `e.<caps>` after the transfer
-            // letters, e.g. `-logDtpre.iLsfxCIvu`. Everything from the `.`
-            // onward is the `-e` argument - upstream's `client_info`
-            // (compat.c:165-169, which `strdup`s the payload after the `e`) - a
-            // capability string that upstream only `strchr`s for its OWN known
-            // letters (compat.c:712-732) and never interprets as `--info`
-            // output flags. Genuine `--info`/itemize output rides separate
-            // long-form args (`--log-format=%i`, options.c:2770-2775), never as
-            // compact letters. The capability payload is decoded independently
-            // by the `setup::capability` module, so transfer-flag decoding
-            // stops at the separator; the letters after it are not info flags.
-            if byte == b'.' {
-                break;
+        // Split the bundle into the two namespaces upstream's popt keeps apart,
+        // rather than scanning one flat string.
+        //
+        // upstream: options.c:823 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, 0,
+        // 0, 0}` - `-e` TAKES AN ARGUMENT, so popt binds everything after it as
+        // a VALUE and it never re-enters option scanning. `-v` by contrast is
+        // `POPT_ARG_NONE` and is counted. The two namespaces happen to share the
+        // letter `v`: as an option it increments `verbose`; inside the `-e`
+        // argument it is `strchr(client_info, 'v')` -> `do_negotiated_strings`
+        // + `CF_VARINT_FLIST_FLAGS` (compat.c:730-733). Collapsing them is what
+        // lets a filter over the flat string mistake one for the other.
+        //
+        // The split point is the first `e`: `maybe_add_e_option`
+        // (options.c:3021) is the only writer of an `e` into `argstr`, and it
+        // appends last (options.c:2727) after every transfer letter, so the
+        // first `e` is always the capability introducer. The payload after it is
+        // upstream's `client_info` (compat.c:165-169) - opaque bytes that only
+        // `setup::capability` decodes, never option letters. Splitting at `e`
+        // rather than at the `.` also keeps a pre-release peer's `-e32.1iLsfx...`
+        // version prefix (options.c:3036) out of the transfer-letter scan.
+        let letters = match bytes[1..].iter().position(|&byte| byte == b'e') {
+            Some(pos) => {
+                // upstream: popt sets `shell_cmd` when `-e` carries an argument.
+                flags.rsh = true;
+                &bytes[1..1 + pos]
             }
+            // No `-e` at all: either a protocol 28/29 peer, for which
+            // `maybe_add_e_option` emits nothing (options.c:3025-3028), or a
+            // malformed bundle. A bare `.` with no preceding `e` is the second
+            // case - popt would reject `.` as an unknown option and abort, so
+            // stop there rather than feed a payload to the letter scan.
+            None => match bytes[1..].iter().position(|&byte| byte == b'.') {
+                Some(dot) => &bytes[1..1 + dot],
+                None => &bytes[1..],
+            },
+        };
+
+        for &byte in letters {
             flags.parse_transfer_flag(byte);
         }
 
@@ -571,7 +594,6 @@ impl ParsedServerFlags {
             b'U' => self.atimes = true,
             b'p' => self.perms = true,
             b'r' => self.recursive = true,
-            b'e' => self.rsh = true,
             b'a' => self.archive = true,
             b'v' => {
                 self.verbose = true;
@@ -737,6 +759,34 @@ mod tests {
                 "`e` still sets rsh before the capability payload"
             );
         }
+    }
+
+    /// The `-e` argument boundary is the `e`, not the `.`.
+    ///
+    /// upstream: options.c:823 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}` -
+    /// popt binds EVERYTHING after `-e` as the option's argument. A pre-release
+    /// peer emits its `VER.SUB` in front of the capability letters
+    /// (`maybe_add_e_option`, options.c:3036: `snprintf(buf + x, ..., "%d.%d",
+    /// PROTOCOL_VERSION, SUBPROTOCOL_VERSION)`), so the payload can begin with
+    /// digits and the `.` is no longer the first byte after the `e`. Stopping the
+    /// transfer-letter scan at the `.` instead would feed those digits to
+    /// `parse_transfer_flag`; stopping at the `e` is what upstream does.
+    #[test]
+    fn pre_release_version_prefix_is_part_of_the_e_argument() {
+        // `-e32.1<caps>` - a 3.5.0dev-style peer advertising protocol 32 sub 1.
+        let flags = ParsedServerFlags::parse("-logDtpre32.1iLsfxCIvu").unwrap();
+
+        assert!(flags.rsh, "the `-e` argument is present");
+        assert!(flags.links && flags.owner && flags.group && flags.recursive);
+        assert_eq!(
+            flags.verbose_level, 0,
+            "no `-v` was requested: the `v` lives inside the -e argument",
+        );
+        assert_eq!(
+            flags.info_flags,
+            InfoFlags::default(),
+            "nothing after the `e` may reach the option-letter scan",
+        );
     }
 
     /// Sanity floor for the guard above: a genuine itemize request, modeled the
