@@ -313,7 +313,9 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
     let report = collect_violations(workspace)?;
     if report.violations.is_empty() {
         eprintln!(
-            "citations: {} checked across {} file(s), all in range",
+            "citations: {} checked across {} file(s) - all name a line that \
+             exists. This does NOT mean the cited line says what the comment \
+             claims; nothing here checks that.",
             report.citations_checked, report.files_read
         );
         return Ok(());
@@ -422,6 +424,24 @@ mod tests {
     /// THE GATE. Every upstream citation in the workspace must name a line the
     /// cited file actually has. Runs from the committed manifest, so it is not
     /// silently skipped in the cell that lacks the upstream tarball.
+    ///
+    /// WHAT GREEN HERE DOES NOT MEAN. This proves only that the coordinates are
+    /// reachable. It does not check that the cited line says what the comment
+    /// claims, and it does not catch an off-by-N or a citation landing in the
+    /// wrong region of the right file. Measured, not assumed: a sibling branch
+    /// audited 26 of its own citations and found SIX naming the wrong line -
+    /// every one of them in range, so every one of them green here. Four of the
+    /// six had been copied from existing comments, which is how one wrong number
+    /// reaches seven call sites (see the `rsync.c:954` case in the module docs).
+    ///
+    /// Four broader designs were measured and rejected as hard gates, each
+    /// dominated by correct documentation idioms rather than defects: quoted
+    /// text anywhere in the file (27-52% fail depending on matcher), the cited
+    /// line falling inside the named function's body (14%), and requiring a
+    /// uniquely-spelled quoted token to sit at the citation (21% - an option
+    /// name legitimately cited at its popt table entry is spelled uniquely at
+    /// the forwarding site instead). Each would need 130-250 in-source
+    /// exemptions, and an exemption written that often stops being read.
     #[test]
     fn every_upstream_citation_names_a_line_that_exists() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
