@@ -156,7 +156,9 @@ pub(super) fn try_clone(
     context.record_hard_link(metadata, destination);
     context
         .summary_mut()
-        .record_file(file_size, file_size, None);
+        // A whole-file clone/copy is all literal: no signature was
+        // consulted, so nothing was matched.
+        .record_file(file_size, file_size, crate::local_copy::MATCHED_NONE, None);
     context
         .summary_mut()
         .record_copy_method(CopyMethodKind::from_platform(clone_method));
