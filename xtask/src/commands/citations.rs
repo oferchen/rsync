@@ -434,14 +434,21 @@ mod tests {
     /// six had been copied from existing comments, which is how one wrong number
     /// reaches seven call sites (see the `rsync.c:954` case in the module docs).
     ///
-    /// Four broader designs were measured and rejected as hard gates, each
+    /// Five broader designs were measured and rejected as hard gates, each
     /// dominated by correct documentation idioms rather than defects: quoted
     /// text anywhere in the file (27-52% fail depending on matcher), the cited
-    /// line falling inside the named function's body (14%), and requiring a
+    /// line falling inside the named function's body (14%), requiring a
     /// uniquely-spelled quoted token to sit at the citation (21% - an option
     /// name legitimately cited at its popt table entry is spelled uniquely at
-    /// the forwarding site instead). Each would need 130-250 in-source
-    /// exemptions, and an exemption written that often stops being read.
+    /// the forwarding site instead), and the reverse direction, requiring the
+    /// cited line to share an identifier with the comment (44%, the worst of
+    /// the five). The reverse fails hardest because it penalises the
+    /// best-written comments: `options.c:2392` is
+    /// `if (daemon_bwlimit && (!bwlimit || bwlimit > daemon_bwlimit))` and its
+    /// comment reads "min(client, daemon) wins" - a paraphrase that explains
+    /// the rule instead of restating the identifiers, which is what a good
+    /// comment does. Each design would need 130-250 in-source exemptions, and
+    /// an exemption written that often stops being read.
     #[test]
     fn every_upstream_citation_names_a_line_that_exists() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
