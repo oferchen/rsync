@@ -580,7 +580,7 @@ fn refused_option_copy_and_write_devices_vital_survive_wildcard() {
     // `refuse options = *` neither un-refuses them nor is even consulted for
     // them - they remain refused by the daemon default.
     //
-    // upstream: options.c:971-974 marks both as `descrip = "a="` (exact-match
+    // upstream: options.c:973-978 marks both as `descrip = "a="` (exact-match
     // only, wild-match disabled) and options.c:984-987 refuses them by default.
     let module = ModuleDefinition {
         refuse_options: vec!["*".to_owned()],

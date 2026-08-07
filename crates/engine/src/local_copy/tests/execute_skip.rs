@@ -2196,7 +2196,7 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
 }
 
 /// Update with modify-window: destination 1s newer with 2s window.
-/// Upstream `generator.c:2502`: `source - dest = -1 < 2` -> skip.
+/// Upstream `generator.c:1721-1722`: `source - dest = -1 < 2` -> skip.
 /// The destination is genuinely newer, so --update skips regardless of window.
 #[test]
 fn execute_skip_update_respects_modify_window() {

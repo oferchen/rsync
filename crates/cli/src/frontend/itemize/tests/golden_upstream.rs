@@ -14,7 +14,7 @@ fn golden_deleting_format_is_eleven_chars() {
 
 #[test]
 fn golden_direction_sent() {
-    // upstream: log.c:703 - `!local_server && *op == 's' ? '<'`
+    // upstream: log.c:710 - `!local_server && *op == 's' ? '<'`
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Sent)
         .with_file_type(FileType::RegularFile)
@@ -24,7 +24,7 @@ fn golden_direction_sent() {
 
 #[test]
 fn golden_direction_received() {
-    // upstream: log.c:704 - default is '>'
+    // upstream: log.c:710 - default is '>'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -34,7 +34,7 @@ fn golden_direction_received() {
 
 #[test]
 fn golden_direction_local_change() {
-    // upstream: log.c:701-702 - ITEM_LOCAL_CHANGE without ITEM_XNAME_FOLLOWS = 'c'
+    // upstream: log.c:707-708 - ITEM_LOCAL_CHANGE without ITEM_XNAME_FOLLOWS = 'c'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Created)
         .with_file_type(FileType::Directory)
@@ -44,7 +44,7 @@ fn golden_direction_local_change() {
 
 #[test]
 fn golden_direction_hardlink() {
-    // upstream: log.c:702 - ITEM_LOCAL_CHANGE with ITEM_XNAME_FOLLOWS = 'h'
+    // upstream: log.c:708 - ITEM_LOCAL_CHANGE with ITEM_XNAME_FOLLOWS = 'h'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::HardLink)
         .with_file_type(FileType::RegularFile)
@@ -54,7 +54,7 @@ fn golden_direction_hardlink() {
 
 #[test]
 fn golden_direction_not_updated() {
-    // upstream: log.c:703 - !(iflags & ITEM_TRANSFER) = '.'
+    // upstream: log.c:709 - !(iflags & ITEM_TRANSFER) = '.'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
         .with_file_type(FileType::RegularFile);
@@ -63,7 +63,7 @@ fn golden_direction_not_updated() {
 
 #[test]
 fn golden_filetype_regular() {
-    // upstream: log.c:714 - default = 'f'
+    // upstream: log.c:720 - default = 'f'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -73,7 +73,7 @@ fn golden_filetype_regular() {
 
 #[test]
 fn golden_filetype_directory() {
-    // upstream: log.c:712 - S_ISDIR = 'd'
+    // upstream: log.c:718 - S_ISDIR = 'd'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Directory)
@@ -83,7 +83,7 @@ fn golden_filetype_directory() {
 
 #[test]
 fn golden_filetype_symlink() {
-    // upstream: log.c:706 - S_ISLNK = 'L'
+    // upstream: log.c:712 - S_ISLNK = 'L'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Symlink)
@@ -93,7 +93,7 @@ fn golden_filetype_symlink() {
 
 #[test]
 fn golden_filetype_device() {
-    // upstream: log.c:714 - IS_DEVICE = 'D'
+    // upstream: log.c:720 - IS_DEVICE = 'D'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Device)
@@ -103,7 +103,7 @@ fn golden_filetype_device() {
 
 #[test]
 fn golden_filetype_special() {
-    // upstream: log.c:713 - IS_SPECIAL = 'S'
+    // upstream: log.c:719 - IS_SPECIAL = 'S'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Special)
@@ -113,7 +113,7 @@ fn golden_filetype_special() {
 
 #[test]
 fn golden_symlink_never_shows_size() {
-    // upstream: log.c:707 - `c[3] = '.';` unconditionally for symlinks
+    // upstream: log.c:713 - `c[3] = '.';` unconditionally for symlinks
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Symlink)
@@ -125,7 +125,7 @@ fn golden_symlink_never_shows_size() {
 
 #[test]
 fn golden_file_shows_size_when_changed() {
-    // upstream: log.c:715 - non-symlink: `c[3] = 's'` when ITEM_REPORT_SIZE
+    // upstream: log.c:721 - non-symlink: `c[3] = 's'` when ITEM_REPORT_SIZE
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -135,7 +135,7 @@ fn golden_file_shows_size_when_changed() {
 
 #[test]
 fn golden_new_file_all_plus() {
-    // upstream: log.c:731 - `ch = '+';` for ITEM_IS_NEW
+    // upstream: log.c:737 - `ch = '+';` for ITEM_IS_NEW
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -145,7 +145,7 @@ fn golden_new_file_all_plus() {
 
 #[test]
 fn golden_missing_data_all_question() {
-    // upstream: log.c:731 - `ch = '?';` for ITEM_MISSING_DATA
+    // upstream: log.c:737 - `ch = '?';` for ITEM_MISSING_DATA
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -155,7 +155,7 @@ fn golden_missing_data_all_question() {
 
 #[test]
 fn golden_collapse_dots_for_not_updated() {
-    // upstream: log.c:735 - `c[0] == '.'` triggers collapse
+    // upstream: log.c:741 - `c[0] == '.'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
         .with_file_type(FileType::RegularFile);
@@ -164,7 +164,7 @@ fn golden_collapse_dots_for_not_updated() {
 
 #[test]
 fn golden_collapse_dots_for_hardlink_unchanged() {
-    // upstream: log.c:735 - `c[0] == 'h'` triggers collapse
+    // upstream: log.c:741 - `c[0] == 'h'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::HardLink)
         .with_file_type(FileType::RegularFile);
@@ -173,7 +173,7 @@ fn golden_collapse_dots_for_hardlink_unchanged() {
 
 #[test]
 fn golden_collapse_dots_for_created_unchanged() {
-    // upstream: log.c:735 - `c[0] == 'c'` triggers collapse
+    // upstream: log.c:741 - `c[0] == 'c'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Created)
         .with_file_type(FileType::RegularFile);
@@ -182,7 +182,7 @@ fn golden_collapse_dots_for_created_unchanged() {
 
 #[test]
 fn golden_no_collapse_for_sent() {
-    // upstream: log.c:735 - '<' is NOT in the collapse set
+    // upstream: log.c:741 - '<' is NOT in the collapse set
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Sent)
         .with_file_type(FileType::RegularFile);
@@ -191,7 +191,7 @@ fn golden_no_collapse_for_sent() {
 
 #[test]
 fn golden_no_collapse_for_received() {
-    // upstream: log.c:735 - '>' is NOT in the collapse set
+    // upstream: log.c:741 - '>' is NOT in the collapse set
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile);
@@ -200,7 +200,7 @@ fn golden_no_collapse_for_received() {
 
 #[test]
 fn golden_partial_change_prevents_collapse() {
-    // upstream: log.c:737-738 - if any position is not '.', no collapse
+    // upstream: log.c:743-744 - if any position is not '.', no collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
         .with_file_type(FileType::RegularFile)
@@ -210,7 +210,7 @@ fn golden_partial_change_prevents_collapse() {
 
 #[test]
 fn golden_all_attributes_changed() {
-    // upstream: log.c:719-727 - all flags set produces `cstpogbax`
+    // upstream: log.c:725-733 - all flags set produces `cstpogbax`
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -229,7 +229,7 @@ fn golden_all_attributes_changed() {
 
 #[test]
 fn golden_atime_only_shows_u() {
-    // upstream: log.c:725 - `iflags & ITEM_REPORT_ATIME ? 'u'`
+    // upstream: log.c:731 - `iflags & ITEM_REPORT_ATIME ? 'u'`
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -239,7 +239,7 @@ fn golden_atime_only_shows_u() {
 
 #[test]
 fn golden_crtime_only_shows_n() {
-    // upstream: log.c:725 - fallback to 'n' for ITEM_REPORT_CRTIME only
+    // upstream: log.c:731 - fallback to 'n' for ITEM_REPORT_CRTIME only
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -249,7 +249,7 @@ fn golden_crtime_only_shows_n() {
 
 #[test]
 fn golden_both_atime_crtime_shows_b() {
-    // upstream: log.c:724 - BITS_SET both = 'b'
+    // upstream: log.c:730 - BITS_SET both = 'b'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -260,7 +260,7 @@ fn golden_both_atime_crtime_shows_b() {
 
 #[test]
 fn golden_time_lowercase_t() {
-    // upstream: log.c:717 - preserve_mtimes => 't'
+    // upstream: log.c:723 - preserve_mtimes => 't'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -270,7 +270,7 @@ fn golden_time_lowercase_t() {
 
 #[test]
 fn golden_time_uppercase_t() {
-    // upstream: log.c:716 - !preserve_mtimes => 'T'
+    // upstream: log.c:722 - !preserve_mtimes => 'T'
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -280,7 +280,7 @@ fn golden_time_uppercase_t() {
 
 #[test]
 fn golden_time_uppercase_t_takes_precedence() {
-    // upstream: log.c:716-717 - T overrides t when both conditions apply
+    // upstream: log.c:722-723 - T overrides t when both conditions apply
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -291,7 +291,7 @@ fn golden_time_uppercase_t_takes_precedence() {
 
 #[test]
 fn golden_all_outputs_are_eleven_chars() {
-    // upstream: log.c:728 - `c[11] = '\0'` - always exactly 11 characters
+    // upstream: log.c:734 - `c[11] = '\0'` - always exactly 11 characters
     let cases: Vec<(ItemizeChange, &str)> = vec![
         (
             ItemizeChange::new()
@@ -341,7 +341,7 @@ fn golden_all_outputs_are_eleven_chars() {
 
 #[test]
 fn golden_symlink_size_only_collapses_to_spaces() {
-    // upstream: log.c:707 - symlink c[3] = '.', so if size_changed is the only flag,
+    // upstream: log.c:713 - symlink c[3] = '.', so if size_changed is the only flag,
     // all rendered positions 2-10 are dots, and the collapse rule applies.
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
@@ -353,7 +353,7 @@ fn golden_symlink_size_only_collapses_to_spaces() {
 
 #[test]
 fn golden_symlink_checksum_without_size() {
-    // upstream: log.c:707 forces c[3]='.' for symlinks, but checksum at c[2] is independent
+    // upstream: log.c:713 forces c[3]='.' for symlinks, but checksum at c[2] is independent
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Symlink)

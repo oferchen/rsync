@@ -59,7 +59,7 @@ mod workspace;
 
 use crate::cli::{Cli, Command, CommandExt};
 use crate::commands::{
-    benchmark, branding, cross_check, doc_package, docs, gap_report, interop, man_page,
+    benchmark, branding, citations, cross_check, doc_package, docs, gap_report, interop, man_page,
     no_binaries, no_placeholders, package, preflight, readme_version, release, release_notes, sbom,
     test, validate,
 };
@@ -104,6 +104,13 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
     match cli.command {
         Command::Benchmark(args) => benchmark::execute(&workspace, args.into()),
         Command::Branding(args) => branding::execute(&workspace, args.into()),
+        Command::Citations(args) => {
+            if args.write_manifest {
+                citations::write_manifest(&workspace)
+            } else {
+                citations::execute(&workspace)
+            }
+        }
         Command::CrossCheck => cross_check::execute(&workspace),
         Command::Docs(args) => docs::execute(&workspace, args.into()),
         Command::DocPackage(args) => doc_package::execute(&workspace, args.into()),

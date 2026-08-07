@@ -340,7 +340,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     /// `Some(meta)` when the destination existed at transfer start;
     /// `None` for a brand-new destination. Used by
     /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
-    /// upstream `rsync.c:954-965` chmod-on-rename loop.
+    /// upstream `receiver.c:964` + `rsync.c:489-682` chmod-on-rename loop.
     pre_transfer_meta: Option<&'a fs::Metadata>,
 
     #[cfg(unix)]

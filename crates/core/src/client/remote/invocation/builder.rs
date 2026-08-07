@@ -944,7 +944,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `safe_arg("--usermap", value)` which escapes shell + wildcard
         // characters so a downstream `eval "$@"` does not glob-expand them.
         // We rely on `protect_args` being the default for SSH transports
-        // (matching upstream's `old_style_args = -1` default at options.c:325),
+        // (matching upstream's `old_style_args = -1` default at options.c:110),
         // so the verbatim form is correct and the wildcard `*` survives.
         //
         // upstream: options.c:2911-2917 - both --usermap and --groupmap sit

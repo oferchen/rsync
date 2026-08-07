@@ -37,7 +37,7 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
-        // upstream: rsync.c:954-965 dest_mode() runs against the PRE-transfer
+        // upstream: receiver.c:964 dest_mode() runs against the PRE-transfer
         // destination stat. When metadata is applied to a temp/staged file
         // (target_path != final path), the final destination still holds the
         // file it had before this transfer, so stat it to reproduce

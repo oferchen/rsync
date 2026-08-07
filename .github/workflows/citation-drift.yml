@@ -1,0 +1,72 @@
+# Guard: `// upstream: <file>.c:<line>` comments must keep pointing at the
+# pinned upstream rsync source.
+#
+# The Rust tree cites specific line numbers in rsync 3.4.4. Those numbers go
+# stale whenever the pinned upstream release is bumped, and a stale citation is
+# worse than none: it sends a reader verifying protocol fidelity to a line that
+# says something else. Three of the citations repaired in the 3.4.4 sweep did
+# exactly that - they named a construct upstream keeps somewhere else entirely.
+#
+# `tools/ci/citation_drift_audit.py` locates a distinctive quoted C string from
+# each comment in the upstream source and flags citations whose cited line is
+# far from where that string lives.
+#
+# RATCHET, NOT A HARD GATE. The audit is false-positive-prone by construction:
+# a comment may cite a range or a definition while quoting a construct that
+# lives at the range end or at a use site. Roughly twenty such citations are
+# correct today. `--ratchet` fails only when a crate's count rises above
+# tools/ci/citation_drift_baseline.json, so new drift is caught while the
+# standing false positives cost nothing. A gate at zero would be switched off
+# the first time a legitimate citation tripped it.
+#
+# No cargo, no build lock: fetch a 1.2 MB tarball and scan text.
+
+name: Citation drift
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**/*.rs'
+      - 'tools/ci/citation_drift_audit.py'
+      - 'tools/ci/citation_drift_baseline.json'
+      - '.github/workflows/citation-drift.yml'
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: citation-drift-${{ github.ref }}
+  # Superseded pull request pushes cancel; pushes to master do not, so every
+  # merge commit keeps a completed run for bisection.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  check:
+    name: Upstream citations track 3.4.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache upstream source
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/interop/upstream-src/rsync-3.4.4
+          key: upstream-src-rsync-3.4.4
+
+      - name: Fetch upstream rsync 3.4.4
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop/upstream-src
+          curl -fsSL --retry 3 --retry-delay 5 \
+            https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz \
+            | tar xz -C target/interop/upstream-src
+
+      - name: Audit citations against the baseline
+        run: python3 tools/ci/citation_drift_audit.py --ratchet

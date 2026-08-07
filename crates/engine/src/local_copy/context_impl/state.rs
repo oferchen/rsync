@@ -333,7 +333,7 @@ impl<'a> CopyContext<'a> {
             destination_previously_existed,
         );
 
-        // upstream: rsync.c:954-965 - when `-p`/`--chmod` are off, the
+        // upstream: receiver.c:964 - when `-p`/`--chmod` are off, the
         // receiver rewrites `file->mode` via `dest_mode()` BEFORE the
         // transfer; `set_file_attrs()` then chmods the freshly-renamed
         // temp file to that mode. Reproduce that chmod here so a re-
@@ -1285,7 +1285,7 @@ impl<'a> CopyContext<'a> {
                     file_type: path_context.file_type,
                     destination_previously_existed: path_context.destination_previously_existed,
                 },
-                // upstream: rsync.c:954-965 - deferred updates have already
+                // upstream: receiver.c:964 - deferred updates have already
                 // committed the rename + applied dest_mode at the original
                 // commit site, so there is no pre-transfer stat to recover
                 // here.

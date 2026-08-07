@@ -188,7 +188,7 @@ fn compute_dest_mode(
 /// already drive the chmod through `metadata.permissions().mode()` or the
 /// chmod modifier chain.
 ///
-/// upstream: rsync.c:954-965 (`dest_mode()` invocation) + rsync.c:457-465
+/// upstream: receiver.c:964 (`dest_mode()` invocation) + rsync.c:449-472
 /// (`dest_mode()` body)
 #[cfg(unix)]
 pub fn apply_dest_mode_pre_transfer(
@@ -970,7 +970,7 @@ pub(super) fn apply_permissions_from_entry(
         use std::os::unix::fs::PermissionsExt;
 
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
-            // upstream: rsync.c:954-965 - even when `!preserve_perms` and
+            // upstream: receiver.c:964 - even when `!preserve_perms` and
             // `!preserve_executability`, the receiver mutates `file->mode` via
             // `dest_mode()` and `set_file_attrs()` chmods the post-rename
             // destination to it. For an existing destination this preserves

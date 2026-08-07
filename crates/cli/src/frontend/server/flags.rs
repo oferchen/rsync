@@ -226,7 +226,7 @@ pub(super) struct ServerLongFlags {
     pub(super) compression_level: Option<String>,
     /// Log format forwarded by the client (upstream: `--log-format=FMT`).
     ///
-    /// upstream: options.c:2750-2762 - the client sends `--log-format=%i`
+    /// upstream: options.c:2768-2780 - the client sends `--log-format=%i`
     /// (or `%i%I`, `%o`, `X`) so the server knows whether the generator
     /// should produce itemize data. The server does not use the full format
     /// string - it only inspects it for `%i` / `%o` tokens to set
@@ -780,7 +780,7 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     // explicit compression level so the server codec matches the client.
     } else if let Some(value) = s.strip_prefix("--compress-level=") {
         flags.compression_level = Some(value.to_owned());
-    // upstream: options.c:2750-2762 - client forwards --log-format=%i (or %o,
+    // upstream: options.c:2768-2780 - client forwards --log-format=%i (or %o,
     // %i%I, X) so the server knows whether to generate itemize data.
     } else if s.strip_prefix("--only-write-batch=").is_some() {
         // upstream: options.c:2850-2851 - server_options() always emits the

@@ -109,7 +109,7 @@ pub(super) fn render_placeholder_value(
                         rendered.extend_from_slice(&escape_path(target, allow_8bit));
                         Some(rendered)
                     }
-                    // upstream: log.c:648-654 - the `case 'L'` else-branch sets n
+                    // upstream: log.c:650-654 - the `case 'L'` else-branch sets n
                     // = "" for a non-link/non-hardlink entry. With no width
                     // modifier upstream breaks with the empty string (matched here
                     // by returning None); with a width modifier it copies four
@@ -176,7 +176,9 @@ pub(super) fn render_placeholder_value(
 /// local-copy path transfers are always whole-file, so the header is empty
 /// (count=0) and its size is the constant 16 bytes the sender reads back.
 ///
-/// upstream: rsync.h:200 `struct sum_struct`; match.c:380 `write_sum_head()`.
+/// upstream: rsync.h:987 `struct sum_struct`; io.c:2072 `write_sum_head()`,
+/// which emits `s2length` only for `protocol_version >= 27` (always true for
+/// the protocol range oc-rsync speaks).
 const SUM_HEAD_WIRE_BYTES: u64 = 16;
 
 /// Resolves the byte count for `%b` / `%c`, selecting the direction the way

@@ -78,7 +78,7 @@ pub struct FilterRule {
     /// `/` modifier on a merge / dir-merge rule: FILTRULE_ABS_PATH. Anchors the
     /// merged rules to the transfer root rather than the merge file's directory.
     ///
-    /// upstream: exclude.c:1215-1216 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
+    /// upstream: exclude.c:1238-1240 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
     pub(crate) abs_path: bool,
     /// `w` modifier on a merge / dir-merge rule: FILTRULE_WORD_SPLIT. The
     /// referenced file is tokenised on any whitespace (space, tab, newline)
@@ -90,13 +90,15 @@ pub struct FilterRule {
     /// Consumes the merged file's lines as literal patterns instead of running
     /// them through the prefix dispatch.
     ///
-    /// upstream: exclude.c:1197-1213 - `case '-'`/`case '+'`.
+    /// upstream: exclude.c:1227-1237 - the merge-file modifier `case '-'`/
+    /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
     pub(crate) no_prefixes: bool,
     /// Pairs with [`Self::no_prefixes`] to select the `+` (include) variant.
     /// When both are set, literal lines become include rules; the `-` variant
     /// leaves this false and lines become exclude rules.
     ///
-    /// upstream: exclude.c:1210-1213 - `+` also sets FILTRULE_INCLUDE.
+    /// upstream: exclude.c:1232-1237 - the merge-file `+` modifier sets
+    /// `FILTRULE_NO_PREFIXES | FILTRULE_INCLUDE`.
     pub(crate) no_prefixes_include: bool,
 }
 
@@ -553,7 +555,7 @@ impl FilterRule {
     /// On merge / dir-merge rules this anchors the merged rules to the transfer
     /// root instead of the merge file's own directory.
     ///
-    /// upstream: exclude.c:1215-1216 - `case '/'`
+    /// upstream: exclude.c:1238-1240 - `case '/'` sets `FILTRULE_ABS_PATH`
     #[must_use]
     pub const fn is_abs_path(&self) -> bool {
         self.abs_path
@@ -570,7 +572,8 @@ impl FilterRule {
     /// modifier and, via the second element, whether it is the `+` (include)
     /// variant.
     ///
-    /// upstream: exclude.c:1197-1213 - `case '-'`/`case '+'`
+    /// upstream: exclude.c:1227-1237 - the merge-file modifier `case '-'`/
+    /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
     #[must_use]
     pub const fn no_prefixes(&self) -> (bool, bool) {
         (self.no_prefixes, self.no_prefixes_include)
