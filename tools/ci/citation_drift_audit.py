@@ -52,8 +52,9 @@ def anchors(comment):
     return [x for x in out if len(x) >= 8]
 
 def audit(crate):
-    checked = miss = 0; ex = []
+    checked = miss = read = 0; ex = []
     for rs in glob.glob(f"crates/{crate}/src/**/*.rs", recursive=True):
+        read += 1
         for ln in open(rs, errors="replace"):
             if "upstream" not in ln.lower():
                 continue
@@ -80,7 +81,7 @@ def audit(crate):
     print(f"{crate}: string-anchored={checked} suspected-drift={miss} ({miss/max(1,checked):.0%})")
     for e in ex:
         print("  ", e)
-    return checked, miss
+    return checked, miss, read
 
 BASELINE = "tools/ci/citation_drift_baseline.json"
 
@@ -121,11 +122,33 @@ if __name__ == "__main__":
         sys.exit(f"upstream source missing: {S} (run tools/ci/run_interop.sh to fetch)")
     crates = args or sorted(os.path.basename(os.path.dirname(p))
                             for p in glob.glob("crates/*/src"))
+    if not crates:
+        sys.exit(
+            "refusing to report: resolved ZERO crates to audit. This tool once "
+            "collapsed every crate name to the literal 'crates' and printed a "
+            "clean 0/0 for months without opening a file; examining nothing is "
+            "a failure, not a pass."
+        )
     counts = {}
+    files_read = 0
     for c in crates:
-        checked, miss = audit(c)
+        checked, miss, read = audit(c)
+        files_read += read
         if checked:
             counts[c] = miss
+    if files_read == 0:
+        sys.exit(
+            f"refusing to report: opened ZERO Rust files across {len(crates)} "
+            f"crate(s) {sorted(crates)}. Either the crate names do not resolve "
+            "to crates/<name>/src or the tool is being run outside the "
+            "workspace root."
+        )
+    if not counts:
+        sys.exit(
+            f"refusing to report: read {files_read} file(s) but string-anchored "
+            "ZERO citations. The anchor extractor or the upstream source lookup "
+            "is broken; a clean result here would be meaningless."
+        )
     if "--write-baseline" in flags:
         import json
         # Merge, never replace. Two traps this avoids: `--write-baseline engine`

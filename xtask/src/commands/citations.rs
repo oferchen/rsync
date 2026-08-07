@@ -180,11 +180,14 @@ pub fn citations_in_line(line: &str) -> Vec<(String, Vec<usize>)> {
     out
 }
 
-/// Collects every out-of-range citation in `contents`.
+/// Collects every out-of-range citation in `contents`, and counts how many
+/// citations were actually resolved and checked. The count is what lets callers
+/// tell "clean" apart from "examined nothing".
 pub fn scan_contents(
     source: &str,
     contents: &str,
     manifest: &BTreeMap<String, usize>,
+    checked: &mut usize,
 ) -> Vec<Violation> {
     let mut out = Vec::new();
     for (lineno, line) in contents.lines().enumerate() {
@@ -195,6 +198,7 @@ pub fn scan_contents(
             let Some(resolved) = resolve_upstream_path(&cited_path, manifest) else {
                 continue;
             };
+            *checked += 1;
             let actual = manifest[&resolved];
             for n in nums {
                 if n > actual {
@@ -213,22 +217,60 @@ pub fn scan_contents(
     out
 }
 
+/// What one full scan of the workspace saw.
+#[derive(Debug, Default)]
+pub struct ScanReport {
+    /// Citations naming a line the cited file does not have.
+    pub violations: Vec<Violation>,
+    /// Rust sources opened.
+    pub files_read: usize,
+    /// Citations that resolved to a pinned upstream file and were range-checked.
+    pub citations_checked: usize,
+}
+
 /// Scans every tracked Rust source for out-of-range upstream citations.
-pub fn collect_violations(workspace: &Path) -> TaskResult<Vec<Violation>> {
+///
+/// Refuses to return a clean report it did not earn. An empty manifest, a
+/// source list that resolves to nothing, or a citation extractor that stopped
+/// matching would each leave `violations` empty and look identical to success -
+/// which is precisely how the Python audit this replaces reported healthy for
+/// months while reading zero files.
+pub fn collect_violations(workspace: &Path) -> TaskResult<ScanReport> {
     let manifest = load_manifest(workspace)?;
-    let mut out = Vec::new();
+    if manifest.is_empty() {
+        return Err(validation_error(format!(
+            "{MANIFEST_PATH} parsed to zero entries; every citation would resolve \
+             to nothing and the check would pass without examining anything"
+        )));
+    }
+    let mut report = ScanReport::default();
     for relative in list_rust_sources_via_git(workspace)? {
         let contents = match fs::read_to_string(workspace.join(&relative)) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        out.extend(scan_contents(
+        report.files_read += 1;
+        report.violations.extend(scan_contents(
             &relative.display().to_string(),
             &contents,
             &manifest,
+            &mut report.citations_checked,
         ));
     }
-    Ok(out)
+    if report.files_read == 0 {
+        return Err(validation_error(
+            "read zero Rust sources; `git ls-files` returned nothing, so a clean \
+             result would mean nothing",
+        ));
+    }
+    if report.citations_checked == 0 {
+        return Err(validation_error(format!(
+            "read {} Rust source(s) but resolved ZERO upstream citations; the \
+             citation extractor or {MANIFEST_PATH} is broken",
+            report.files_read
+        )));
+    }
+    Ok(report)
 }
 
 /// Rewrites the manifest from the pinned source. Needed only when the upstream
@@ -268,23 +310,34 @@ pub fn write_manifest(workspace: &Path) -> TaskResult<()> {
 
 /// Executes the `citations` command.
 pub fn execute(workspace: &Path) -> TaskResult<()> {
-    let violations = collect_violations(workspace)?;
-    if violations.is_empty() {
+    let report = collect_violations(workspace)?;
+    if report.violations.is_empty() {
+        eprintln!(
+            "citations: {} checked across {} file(s), all in range",
+            report.citations_checked, report.files_read
+        );
         return Ok(());
     }
-    for v in &violations {
+    for v in &report.violations {
         eprintln!("{v}");
     }
     Err(validation_error(format!(
         "{} upstream citation(s) name a line the cited file does not have; \
          re-locate the construct in {PINNED_SOURCE_DIR} and correct the number",
-        violations.len()
+        report.violations.len()
     )))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `scan_contents` with the check-counter discarded, for tests that only
+    /// care about the violations.
+    fn scan(source: &str, contents: &str, m: &BTreeMap<String, usize>) -> Vec<Violation> {
+        let mut checked = 0;
+        scan_contents(source, contents, m, &mut checked)
+    }
 
     fn manifest() -> BTreeMap<String, usize> {
         parse_manifest("# c\nrsync.c\t831\nflist.c\t3500\nlib/wildmatch.c\t100\n")
@@ -340,7 +393,7 @@ mod tests {
 
     #[test]
     fn flags_a_line_past_the_end_of_the_file() {
-        let v = scan_contents("a.rs", &cite("rsync.c", "954-965"), &manifest());
+        let v = scan("a.rs", &cite("rsync.c", "954-965"), &manifest());
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].cited, 954);
         assert_eq!(v[0].actual, 831);
@@ -350,20 +403,20 @@ mod tests {
     fn flags_a_range_whose_end_overruns() {
         // The start is inside the file, so only checking the first number
         // would miss this.
-        let v = scan_contents("a.rs", &cite("rsync.c", "820-900"), &manifest());
+        let v = scan("a.rs", &cite("rsync.c", "820-900"), &manifest());
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].cited, 900);
     }
 
     #[test]
     fn accepts_an_in_range_citation() {
-        assert!(scan_contents("a.rs", &cite("rsync.c", "457-465"), &manifest()).is_empty());
+        assert!(scan("a.rs", &cite("rsync.c", "457-465"), &manifest()).is_empty());
     }
 
     #[test]
     fn ignores_lines_that_are_not_upstream_citations() {
         let not_a_citation = format!("let x = foo.c;\n// see rsync.{}9999\n", "c:");
-        assert!(scan_contents("a.rs", &not_a_citation, &manifest()).is_empty());
+        assert!(scan("a.rs", &not_a_citation, &manifest()).is_empty());
     }
 
     /// THE GATE. Every upstream citation in the workspace must name a line the
@@ -372,16 +425,52 @@ mod tests {
     #[test]
     fn every_upstream_citation_names_a_line_that_exists() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
-        let violations = collect_violations(&workspace).expect("scan succeeds");
+        let report = collect_violations(&workspace).expect("scan succeeds");
         assert!(
-            violations.is_empty(),
+            report.violations.is_empty(),
             "upstream citations name lines their files do not have:\n{}",
-            violations
+            report
+                .violations
                 .iter()
                 .map(|v| format!("  {v}"))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+        // A green run must have been earned. `collect_violations` already
+        // refuses to return an unearned clean report; this pins the floor so a
+        // future change that quietly narrows the scan cannot pass as success.
+        assert!(
+            report.citations_checked > 100,
+            "only {} citations checked across {} file(s) - the scan collapsed, \
+             and an empty violation list here would mean nothing",
+            report.citations_checked,
+            report.files_read
+        );
+    }
+
+    #[test]
+    fn an_empty_manifest_is_an_error_not_a_clean_run() {
+        // Every citation would resolve to nothing, so violations would be empty
+        // and the gate would pass having checked nothing. That is the failure
+        // mode this whole check exists to make impossible.
+        let m: BTreeMap<String, usize> = parse_manifest("# only comments\n");
+        assert!(m.is_empty());
+        let mut checked = 0;
+        let v = scan_contents("a.rs", &cite("rsync.c", "954-965"), &m, &mut checked);
+        assert!(v.is_empty(), "no manifest means nothing resolves");
+        assert_eq!(checked, 0, "and nothing was checked - the tell");
+    }
+
+    #[test]
+    fn a_resolved_citation_is_counted_as_checked() {
+        let mut checked = 0;
+        scan_contents(
+            "a.rs",
+            &cite("rsync.c", "457-465"),
+            &manifest(),
+            &mut checked,
+        );
+        assert_eq!(checked, 1);
     }
 
     /// Proves the committed manifest still describes the real pinned source.
