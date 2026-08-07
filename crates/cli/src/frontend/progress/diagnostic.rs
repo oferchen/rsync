@@ -41,51 +41,6 @@ pub fn msgs_to_stderr() -> bool {
 /// error and warning codes (log.c:309-316), the silent return taken by an
 /// FLOG message with no log destination (log.c:306-307), and the fatal
 /// "Bad logcode" default arm (log.c:325-327).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ClientStream {
-    /// The client's stdout, unless `--msgs-to-stderr` moves it (log.c:254).
-    Stdout,
-    /// The client's stderr, whatever `--msgs-to-stderr` says (log.c:315).
-    Stderr,
-    /// Never reaches the client at all (log.c:306-307).
-    Dropped,
-    /// Not a code `rwrite()` accepts; upstream reports it and exits
-    /// `RERR_MESSAGEIO` (log.c:325-327).
-    Invalid,
-}
-
-/// Classify a [`logging::LogCode`] the way upstream's `rwrite()` does.
-///
-/// The match is exhaustive on purpose: a log code added to the vocabulary
-/// later must be classified here rather than inheriting stdout by default.
-// upstream: log.c:281-328 rwrite()
-const fn client_stream(code: logging::LogCode) -> ClientStream {
-    use logging::LogCode;
-
-    match code {
-        // FERROR_SOCKET is simplified to FERROR and FERROR_UTF8 becomes
-        // FERROR before the switch (log.c:281-286), so all five error and
-        // warning codes reach `f = stderr` (log.c:310-316).
-        LogCode::ErrorXfer
-        | LogCode::Error
-        | LogCode::Warning
-        | LogCode::ErrorSocket
-        | LogCode::ErrorUtf8 => ClientStream::Stderr,
-        // FCLIENT is rewritten to FINFO (log.c:288-289) and FINFO keeps the
-        // stdout default (log.c:317-320).
-        LogCode::Info | LogCode::Client => ClientStream::Stdout,
-        // An FLOG message goes to the log file when one is active and is
-        // otherwise discarded; it never reaches the client's stdout/stderr
-        // (log.c:290-307). The log-file sink consumes FLOG events via
-        // `logging::drain_events_coded` before this renderer runs, so any
-        // FLOG event still queued here has no log destination.
-        LogCode::Log => ClientStream::Dropped,
-        // FNONE is "never sent" (rsync.h:276) and falls into rwrite()'s
-        // default arm (log.c:325-327).
-        LogCode::None => ClientStream::Invalid,
-    }
-}
-
 /// Render diagnostic events to the stream their log code selects.
 ///
 /// Error and warning codes go to stderr, info codes to stdout, and FLOG
@@ -118,12 +73,32 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
         // upstream: rwrite() prints debug traces through rprintf(FINFO, ...)
         // with no flag-category bracket, so info and debug events differ only
         // in the code they carry, never in their rendering.
-        match client_stream(code) {
-            ClientStream::Stderr => writeln!(err, "{message}")?,
-            ClientStream::Stdout if msgs2stderr => writeln!(err, "{message}")?,
-            ClientStream::Stdout => writeln!(out, "{message}")?,
-            ClientStream::Dropped => {}
-            ClientStream::Invalid => {
+        // upstream: log.c:251 rwrite() is the sole chooser of a stream. The
+        // decision lives in `logging::message_stream` so that this renderer
+        // and every other diagnostic emitter share one implementation of the
+        // rule; a second copy here is what made #352 and #357 two separate
+        // bugs instead of one.
+        let ctx = logging::StreamContext {
+            // This renderer runs after the CLI has already folded `--quiet`
+            // into the verbosity level, so the events that reach it are
+            // pre-filtered; passing `quiet: false` keeps that behaviour
+            // unchanged. Wiring the real flag through is task #346.
+            quiet: false,
+            // `Never` and `Default` select the same stream (log.c:253 keys on
+            // `== 1`), so a caller that only knows the boolean loses nothing
+            // here. The tri-state is available for callers that have it.
+            msgs2stderr: if msgs2stderr {
+                logging::Msgs2Stderr::Always
+            } else {
+                logging::Msgs2Stderr::Default
+            },
+            log_destination: false,
+        };
+        match logging::message_stream(code, ctx) {
+            Ok(logging::MessageStream::Stderr) => writeln!(err, "{message}")?,
+            Ok(logging::MessageStream::Stdout) => writeln!(out, "{message}")?,
+            Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {}
+            Err(_) => {
                 // upstream: log.c:325-327 reports the bad code on stderr and
                 // exits RERR_MESSAGEIO. A renderer cannot exit, so it reports
                 // and hands the failure back to its caller.
@@ -347,22 +322,67 @@ mod tests {
         assert!(stdout.is_empty());
     }
 
-    /// Pins the classification of every code in the vocabulary, so adding a
-    /// variant forces a deliberate choice here as well as in the match.
+    /// This renderer must DELEGATE the stream choice, never re-derive it.
+    ///
+    /// The classification itself is pinned in `logging::stream` - including
+    /// across the `--quiet` / `--msgs2stderr` cross-product, which a
+    /// leaf-crate copy never covered. What is asserted here is the property
+    /// that copy violated: for every code, where the renderer actually puts
+    /// the bytes agrees with what the shared funnel decided. Re-deriving the
+    /// rule here, however faithfully, fails this.
     #[test]
-    fn test_client_stream_classification_is_total() {
+    fn test_renderer_delegates_every_code_to_the_shared_funnel() {
         for code in LogCode::ALL {
-            let expected = match code {
-                LogCode::ErrorXfer
-                | LogCode::Error
-                | LogCode::Warning
-                | LogCode::ErrorSocket
-                | LogCode::ErrorUtf8 => ClientStream::Stderr,
-                LogCode::Info | LogCode::Client => ClientStream::Stdout,
-                LogCode::Log => ClientStream::Dropped,
-                LogCode::None => ClientStream::Invalid,
-            };
-            assert_eq!(client_stream(code), expected, "{code}");
+            for msgs2stderr in [false, true] {
+                let ctx = logging::StreamContext {
+                    quiet: false,
+                    msgs2stderr: if msgs2stderr {
+                        logging::Msgs2Stderr::Always
+                    } else {
+                        logging::Msgs2Stderr::Default
+                    },
+                    log_destination: false,
+                };
+                let events = vec![DiagnosticEvent::Info {
+                    flag: InfoFlag::Misc,
+                    level: 1,
+                    code,
+                    message: "probe".to_owned(),
+                }];
+                let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+                let result =
+                    render_diagnostic_events(&events, &mut stdout, &mut stderr, msgs2stderr);
+
+                match logging::message_stream(code, ctx) {
+                    Ok(logging::MessageStream::Stdout) => {
+                        assert!(result.is_ok(), "{code} must render");
+                        assert!(
+                            String::from_utf8_lossy(&stdout).contains("probe"),
+                            "{code} belongs on stdout with msgs2stderr={msgs2stderr}",
+                        );
+                        assert!(stderr.is_empty(), "{code} must not also hit stderr");
+                    }
+                    Ok(logging::MessageStream::Stderr) => {
+                        assert!(result.is_ok(), "{code} must render");
+                        assert!(
+                            String::from_utf8_lossy(&stderr).contains("probe"),
+                            "{code} belongs on stderr with msgs2stderr={msgs2stderr}",
+                        );
+                        assert!(stdout.is_empty(), "{code} must not also hit stdout");
+                    }
+                    Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {
+                        assert!(result.is_ok(), "{code} must render");
+                        assert!(
+                            stdout.is_empty() && stderr.is_empty(),
+                            "{code} must emit nothing"
+                        );
+                    }
+                    Err(_) => {
+                        assert!(result.is_err(), "{code} must be rejected, not rendered");
+                        assert!(stdout.is_empty(), "a rejected code must not reach stdout");
+                    }
+                }
+            }
         }
     }
 
