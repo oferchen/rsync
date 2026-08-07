@@ -43,7 +43,13 @@ use transfer::setup::{ProtocolRestrictionFlags, apply_protocol_restrictions};
 const SERVER_FLAGS_NO_ACL_NO_XATTR: &str = "-logDtpre.iLsfxC";
 
 /// Compact flag string from a modern peer that DOES support ACLs and xattrs.
-const SERVER_FLAGS_WITH_ACL_AND_XATTR: &str = "-logDtpreAX.iLsfxC";
+///
+/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2695-2703,
+/// well ahead of `maybe_add_e_option`, which appends the `e.<caps>` suffix last
+/// (options.c:2727). The `-e` argument is the tail of the bundle by
+/// construction, so no peer - upstream or oc - ever places a transfer letter
+/// after it. `crates/core/.../flags.rs` emits the same order.
+const SERVER_FLAGS_WITH_ACL_AND_XATTR: &str = "-logDtpAXre.iLsfxC";
 
 /// When the remote peer's server flag string lacks `A`, parsing must report
 /// `acls = false` regardless of what the local side requested. This is the
