@@ -434,6 +434,22 @@ mod tests {
     /// six had been copied from existing comments, which is how one wrong number
     /// reaches seven call sites (see the `rsync.c:954` case in the module docs).
     ///
+    /// The sharpest instance came out of this gate's own sweep.
+    /// `cli/frontend/server/flags.rs` cited `options.c:2750-2762` for
+    /// "client forwards --log-format=%i" at BOTH :229 and :783. That range is
+    /// the `--no-r` guard, the `--compress-level` asprintf and the `--devices`
+    /// note - the --log-format block is 2768-2780. The sweep corrected :229 and
+    /// left :783, in a file it had already edited, while specifically hunting
+    /// wrong citations. Nothing here caught it; a person reading origin/master
+    /// did.
+    ///
+    /// THE REMEDIATION RULE THAT FOLLOWS, which costs one grep. A finder only
+    /// surfaces what its heuristic matched - this audit flagged :229 because an
+    /// anchor happened to match there and never saw :783. So working a finding
+    /// list is not a sweep. After correcting a flagged instance, grep the tree
+    /// for the same defect STRING before closing, or the siblings the finder
+    /// could not see survive the pass that was meant to remove them.
+    ///
     /// Five broader designs were measured and rejected as hard gates, each
     /// dominated by correct documentation idioms rather than defects: quoted
     /// text anywhere in the file (27-52% fail depending on matcher), the cited
