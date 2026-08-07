@@ -46,7 +46,7 @@ struct PendingChecksum {
     /// into, never as an absolute path.
     ///
     /// upstream: receiver.c:706 - `fname = local_name ? local_name : f_name(file, fbuf)`
-    /// upstream: receiver.c:1089 - `local_name ? f_name(file, NULL) : fname`, so
+    /// upstream: receiver.c:1090 - `local_name ? f_name(file, NULL) : fname`, so
     /// the flist name is printed in both the `local_name` and the plain case.
     flist_name: PathBuf,
     /// File list index for this file, used to identify which file to redo.
@@ -57,7 +57,7 @@ struct PendingChecksum {
     /// in-place update is "retained" rather than "discarded", because the
     /// destination inode was overwritten and cannot be rolled back.
     ///
-    /// upstream: receiver.c:1073-1078 - `!inplace` gates the "discarded" word.
+    /// upstream: receiver.c:1074-1079 - `!inplace` gates the "discarded" word.
     is_inplace: bool,
 }
 
@@ -123,7 +123,7 @@ pub struct PipelinedReceiver {
     /// config before it is moved into the disk thread. Selects the upstream
     /// `keptstr` wording on a verification failure.
     ///
-    /// upstream: receiver.c:1073-1078 - `keep_partial`/`partial_dir` gating.
+    /// upstream: receiver.c:1074-1079 - `keep_partial`/`partial_dir` gating.
     partial_mode: PartialMode,
     /// Daemon module served by this process, captured from the disk-commit
     /// config. Gates the ` (in MODULE)` suffix that `full_fname()` appends to
@@ -172,12 +172,12 @@ pub struct VerifyReport {
 
 /// Selects the upstream verification-failure `keptstr` wording for a file.
 ///
-/// Mirrors the branch at `receiver.c:1073-1078`: a temp update with no partial
+/// Mirrors the branch at `receiver.c:1074-1079`: a temp update with no partial
 /// retention and no in-place write is "discarded"; a `--partial-dir` transfer
 /// keeps it "put into partial-dir"; anything else (plain `--partial` or an
 /// in-place/append write to the live destination) leaves it "retained".
 ///
-/// upstream: receiver.c:1073-1078 keptstr selection.
+/// upstream: receiver.c:1074-1079 keptstr selection.
 fn verification_kept_str(partial_mode: &PartialMode, is_inplace: bool) -> &'static str {
     if matches!(partial_mode, PartialMode::None) && !is_inplace {
         "discarded"
@@ -230,8 +230,8 @@ fn reports_verify_warning(report: VerifyReport) -> bool {
 ///
 /// - `receiver.c:1071` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
 /// - `receiver.c:1072` - the emit gate, mirrored by [`reports_verify_warning`].
-/// - `receiver.c:1073-1078` - `keptstr`, mirrored by [`verification_kept_str`].
-/// - `receiver.c:1079-1086` - `errstr` and `redostr`.
+/// - `receiver.c:1074-1079` - `keptstr`, mirrored by [`verification_kept_str`].
+/// - `receiver.c:1080-1087` - `errstr` and `redostr`.
 /// - `receiver.c:1088-1091` - the format string reproduced verbatim below.
 fn verification_failure_report(
     name: &std::path::Path,
@@ -1633,7 +1633,7 @@ mod tests {
     /// The phase-2 form is a `FERROR_XFER`, which short-circuits the emit gate,
     /// so it prints at default verbosity and carries no retry suffix.
     ///
-    /// upstream: receiver.c:1071-1072,1083-1084 - `msgtype == FERROR_XFER` is the
+    /// upstream: receiver.c:1071-1072,1081-1082 - `msgtype == FERROR_XFER` is the
     /// first disjunct, and `redostr = ""` on that branch.
     #[test]
     fn phase2_error_is_ungated_and_has_no_retry_suffix() {
@@ -1647,7 +1647,7 @@ mod tests {
         );
     }
 
-    /// The `keptstr` selection must mirror upstream `receiver.c:1073-1078`: a
+    /// The `keptstr` selection must mirror upstream `receiver.c:1074-1079`: a
     /// plain temp update is "discarded", an in-place/append write is "retained"
     /// (the destination inode was already overwritten), `--partial` retains the
     /// temp, and `--partial-dir` reports "put into partial-dir".

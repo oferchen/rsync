@@ -547,7 +547,7 @@ where
 /// only about who set it - a client's own `--out-format` versus a forwarded
 /// `--log-format` - and every reader of upstream's `stdout_format_has_i` must
 /// see the same answer either way. The readers are the generator's itemize
-/// decision (generator.c:575-576), the receiver's `created directory` notice
+/// decision (generator.c:582-583), the receiver's `created directory` notice
 /// (main.c:807-808, which a server receiver reaches through main.c:1213) and its
 /// `failed verification` warning (receiver.c:1072); the latter two were silent
 /// on a server under a client's `-i` while `out_format_forwards_i` stayed unset.
@@ -556,7 +556,7 @@ where
 ///
 /// - `options.c:2345-2358` - the server's `--log-format` parse sets
 ///   `stdout_format_has_i`.
-/// - `options.c:164-175` - `server_options()` forwards `%i%I` for `-ii`.
+/// - `options.c:2772-2775` - `server_options()` forwards `%i%I` for `-ii`.
 fn apply_log_format_itemize(fmt: &str, info: &mut core::server::InfoFlags) {
     if fmt.contains("%i") || fmt.contains("%I") {
         info.itemize = true;
@@ -839,7 +839,7 @@ mod log_format_itemize_tests {
     /// `-ii` forwards `%i%I`; the extra `%I` is `has_i > 1`, which additionally
     /// itemizes unchanged entries.
     ///
-    /// upstream: options.c:164-175 `server_options()`, generator.c:575-576.
+    /// upstream: options.c:2772-2775 `server_options()`, generator.c:582-583.
     #[test]
     fn percent_i_uppercase_adds_the_unchanged_level() {
         let info = derive("%i%I");

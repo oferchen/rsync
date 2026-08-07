@@ -603,7 +603,7 @@ impl ReceiverContext {
                     result.expected_checksum,
                     result.checksum_len,
                     file_path,
-                    // upstream: receiver.c:1089 - the verification-failure line
+                    // upstream: receiver.c:1090 - the verification-failure line
                     // names `f_name(file, ..)`, not the joined destination path.
                     file_entry.path().clone(),
                     file_idx,
