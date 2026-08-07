@@ -248,8 +248,11 @@ impl ReceiverContext {
                 if !redo_indices.is_empty() {
                     setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-                    // upstream: generator.c:1939 - the phase-2 redo re-itemizes with
-                    // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
+                    // upstream: generator.c:2200 - the phase-2 redo re-enters the
+                    // ordinary recv_generator() for the redo index, so the retry
+                    // is a full re-request: ITEM_TRANSFER (generator.c:1940), a
+                    // re-stat of the destination, and a fresh block signature
+                    // built from it (generator.c:1967).
                     let redo_files: Vec<(usize, PathBuf, u32)> = redo_indices
                         .iter()
                         .filter_map(|&idx| {
