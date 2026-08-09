@@ -43,8 +43,24 @@ runs:
         $exe = Join-Path $cargoBin 'cargo-nextest.exe'
 
         function Get-NextestVersion($path) {
-          # `cargo-nextest --version` prints e.g. "cargo-nextest 0.9.114 (ff4ee9a ...)".
-          (& $path --version) -replace '^cargo-nextest\s+([0-9][0-9.]*).*$', '$1'
+          # `cargo-nextest --version` prints a MULTI-LINE block, not one line:
+          #
+          #   cargo-nextest 0.9.114
+          #   release: 0.9.114
+          #   commit-hash: 9daab1c50cd0389236508435f71434f01aa2eca1
+          #   commit-date: 2025-11-19
+          #   host: x86_64-pc-windows-msvc
+          #
+          # So `& $path --version` yields a string ARRAY. Taking the first line
+          # is load-bearing: `-replace` over an array returns an array (only the
+          # first element matches, the rest pass through untouched), and `-ne`
+          # against an array FILTERS rather than compares, so a non-empty result
+          # is truthy and the equality guard below fires on a correct install.
+          # `@(...)` forces an array even for single-line output, so [0] is
+          # always safe. Indexing rather than `Select-Object -First 1` avoids
+          # terminating the native command's pipeline early.
+          $lines = @(& $path --version)
+          ($lines[0] -replace '^cargo-nextest\s+([0-9][0-9.]*).*$', '$1').Trim()
         }
 
         if (Test-Path $exe) {
