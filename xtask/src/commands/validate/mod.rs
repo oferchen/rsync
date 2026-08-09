@@ -135,6 +135,8 @@ mod checks;
 mod comparison;
 #[cfg(unix)]
 mod oracle;
+
+mod skips;
 #[cfg(unix)]
 mod support;
 #[cfg(unix)]
@@ -322,6 +324,33 @@ mod unix_impl {
             outcomes.extend(check.run(&ctx));
         }
         report(&outcomes);
+
+        // Account for skipped cells before anything else can end the run: a
+        // skipped cell is not a passing cell, and a run that skipped most of
+        // the matrix must not be readable as success.
+        let ledger = skips::SkipLedger::from_outcomes(&outcomes, skips::ExpectedSkips::DEFAULT);
+        report_skips(&ledger);
+
+        // A cell that produced no outcome at all is invisible to the skip
+        // ledger, so the cell count is checked separately. Only a full,
+        // unnarrowed selection has a meaningful floor.
+        let full_selection = options.transports.is_empty() && options.flags.is_empty();
+        let shortfall =
+            skips::cell_shortfall(outcomes.len(), skips::EXPECTED_CELLS, full_selection);
+        eprintln!(
+            "cells accounted: {}{}",
+            outcomes.len(),
+            if full_selection {
+                format!(" (floor {})", skips::EXPECTED_CELLS)
+            } else {
+                " (narrowed run; floor not applied)".to_owned()
+            }
+        );
+        match ledger.write_artifact(&work) {
+            Ok(path) => eprintln!("skip detail: {}", path.display()),
+            Err(e) => eprintln!("warning: could not write skip detail: {e}"),
+        }
+
         report_categories(&checks, &selected);
 
         if options.bench {
@@ -343,6 +372,14 @@ mod unix_impl {
             return Err(crate::error::TaskError::Validation(format!(
                 "{failed} fidelity check(s) diverged from upstream"
             )));
+        }
+        if let Some(msg) = shortfall {
+            return Err(crate::error::TaskError::Validation(msg));
+        }
+        if ledger.exceeds_budget() {
+            return Err(crate::error::TaskError::Validation(
+                ledger.budget_diagnostic(),
+            ));
         }
         cross_result
     }
@@ -370,6 +407,17 @@ mod unix_impl {
             }
         }
         eprintln!("\n=== {pass} passed, {fail} failed, {skip} skipped ===");
+    }
+
+    /// Print the skip ledger: the count against its declared budget, and every
+    /// reason with how many cells it cost.
+    ///
+    /// Printed after the totals line and before the verdict so a run that
+    /// skipped most of the matrix cannot be read as a success by anyone who
+    /// looks at the tail of the output.
+    fn report_skips(ledger: &skips::SkipLedger) {
+        eprintln!("\n=== skipped cells ===");
+        eprintln!("{}", ledger.summary());
     }
 
     /// Summarize how many of the run checks fall in each selected category.

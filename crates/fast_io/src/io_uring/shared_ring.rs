@@ -305,6 +305,13 @@ impl SharedRing {
     ///
     /// Wraps [`io_uring::IoUring::submit_and_wait`] so the caller does not
     /// have to import the underlying type.
+    ///
+    /// The returned count is the number of SQEs consumed from the submission
+    /// queue, *not* the number of completions. Once an earlier call has
+    /// drained the queue, a later call legitimately returns `Ok(0)` after
+    /// blocking for `wait_for` CQEs. Callers must therefore measure progress
+    /// by draining [`reap`](Self::reap) and must never treat this value as a
+    /// completion count.
     pub fn submit_and_wait(&mut self, wait_for: usize) -> io::Result<usize> {
         self.ring.submit_and_wait(wait_for)
     }

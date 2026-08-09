@@ -227,6 +227,12 @@ pub(in crate::disk_commit) fn process_file(
     // temp+rename path instead backs up at commit time (see commit_file).
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
 
+    // upstream: rsync.c:449-472 dest_mode() reads the PRE-transfer destination
+    // stat. An inplace open writes through the destination itself, so capture
+    // that stat now - once the open below runs, the prior mode is gone and the
+    // metadata apply would fall back to the brand-new-file formula.
+    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
+
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
         Err(open_err) => {
@@ -287,6 +293,16 @@ pub(in crate::disk_commit) fn process_file(
     sum_append_prefix(config, &begin, &mut checksum_verifier)?;
 
     let mut bytes_written: u64 = 0;
+    // Literal bytes only - matched basis copies are excluded. This is upstream's
+    // `cleanup_got_literal`, which decides whether an interrupted temp is worth
+    // keeping. `bytes_written` cannot serve: it also counts basis copies, so a
+    // delta transfer with zero literal data would look like progress and get
+    // renamed over a complete destination.
+    //
+    // upstream: `receiver.c:392-403` sets the latch only in the literal branch;
+    // `cleanup.c:159` gates retention on it and `cleanup.c:199-200` unlinks the
+    // temp otherwise.
+    let mut literal_bytes: u64 = 0;
     // Tracks whether the temp's cleanup entry has been upgraded to name a
     // partial destination (see the `cleanup_got_literal` gate at the loop tail).
     let mut partial_registered = false;
@@ -304,7 +320,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
-                if bytes_written > 0 && needs_rename {
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -317,8 +333,16 @@ pub(in crate::disk_commit) fn process_file(
             }
         };
 
+        // Read the literal length before the match moves the payload. Matched
+        // basis copies contribute 0, which is what keeps them out of the
+        // retention gate below.
+        let literal_len = match &msg {
+            FileMessage::Chunk(data) => data.len() as u64,
+            _ => 0,
+        };
+
         match msg {
-            FileMessage::Chunk(data) => {
+            FileMessage::Chunk(data) | FileMessage::MatchedChunk(data) => {
                 // Update per-file checksum before writing (mirrors upstream
                 // receiver.c:315 which hashes each token before writing).
                 if let Some(ref mut verifier) = checksum_verifier {
@@ -331,6 +355,7 @@ pub(in crate::disk_commit) fn process_file(
                     output.write_chunk(&data)?;
                 }
                 bytes_written += data.len() as u64;
+                literal_bytes += literal_len;
                 // Return the buffer for reuse. Ignore errors - the network
                 // thread may have moved on (e.g. after an error).
                 let _ = buf_return_tx.try_send(data);
@@ -411,7 +436,12 @@ pub(in crate::disk_commit) fn process_file(
                 // file is already correct when it appears at the final
                 // path. For inplace/device, metadata is applied after.
                 let pre_meta_error = if needs_rename {
-                    apply_file_metadata(cleanup_guard.path(), &begin, config)
+                    apply_file_metadata(
+                        cleanup_guard.path(),
+                        &begin,
+                        config,
+                        inplace_pre_transfer.as_ref(),
+                    )
                 } else {
                     None
                 };
@@ -445,11 +475,16 @@ pub(in crate::disk_commit) fn process_file(
                         .delayed_path
                         .as_ref()
                         .expect("delayed_path is Some on the staged-partial path");
-                    apply_file_metadata(staged, &begin, config)
+                    apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
                 } else if needs_rename && !outcome.was_copy {
                     pre_meta_error
                 } else {
-                    apply_file_metadata(&begin.file_path, &begin, config)
+                    apply_file_metadata(
+                        &begin.file_path,
+                        &begin,
+                        config,
+                        inplace_pre_transfer.as_ref(),
+                    )
                 };
 
                 return Ok(CommitResult {
@@ -470,12 +505,13 @@ pub(in crate::disk_commit) fn process_file(
                 // finish() takes `self`, closing the file handle before
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
-                // upstream: cleanup.c:105-115 - on abort, retain temp file
-                // if partial mode is enabled and literal data was received.
-                // bytes_written > 0 is a proxy for upstream's got_literal:
-                // if any data was written, the transfer made progress worth
-                // retaining for later resume.
-                if bytes_written > 0 && needs_rename {
+                // upstream: cleanup.c:159 - on abort, retain the temp only if
+                // LITERAL data was received. Matched basis copies do not count:
+                // upstream sets `cleanup_got_literal` solely in the literal
+                // branch (receiver.c:392-403), so a temp built entirely from
+                // basis blocks is unlinked (cleanup.c:199-200) rather than
+                // renamed over an intact destination.
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -491,7 +527,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
-                if bytes_written > 0 && needs_rename {
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -517,7 +553,7 @@ pub(in crate::disk_commit) fn process_file(
         // gate the Abort/Shutdown/disconnect branches above apply; recorded in
         // the registry here so the process-wide abort path reaches the same
         // decision without the disk thread unwinding.
-        if needs_rename && !partial_registered && bytes_written > 0 {
+        if needs_rename && !partial_registered && literal_bytes > 0 {
             register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, true);
             partial_registered = true;
         }
@@ -548,6 +584,9 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: generator.c:1862,1898 - copy the pre-transfer contents aside
     // before rewriting the destination in place (see process_file).
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
+
+    // See `inplace_pre_transfer_stat`: capture before the open destroys it.
+    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
 
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
@@ -642,7 +681,12 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: rsync.c:748 finish_transfer() - apply metadata to the
     // temp file before rename (see process_file for full rationale).
     let pre_meta_error = if needs_rename {
-        apply_file_metadata(cleanup_guard.path(), &begin, config)
+        apply_file_metadata(
+            cleanup_guard.path(),
+            &begin,
+            config,
+            inplace_pre_transfer.as_ref(),
+        )
     } else {
         None
     };
@@ -665,11 +709,16 @@ pub(in crate::disk_commit) fn process_whole_file(
             .delayed_path
             .as_ref()
             .expect("delayed_path checked is_some above");
-        apply_file_metadata(staged, &begin, config)
+        apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
     } else if needs_rename && !outcome.was_copy {
         pre_meta_error
     } else {
-        apply_file_metadata(&begin.file_path, &begin, config)
+        apply_file_metadata(
+            &begin.file_path,
+            &begin,
+            config,
+            inplace_pre_transfer.as_ref(),
+        )
     };
 
     Ok(CommitResult {
@@ -710,7 +759,11 @@ fn discard_file_on_open_failure(
 ) -> io::Result<CommitResult> {
     loop {
         match file_rx.recv() {
-            Ok(FileMessage::Chunk(data) | FileMessage::SkipMatched(data)) => {
+            Ok(
+                FileMessage::Chunk(data)
+                | FileMessage::MatchedChunk(data)
+                | FileMessage::SkipMatched(data),
+            ) => {
                 // Recycle the buffer for the network thread; drop the bytes.
                 let _ = buf_return_tx.try_send(data);
             }
@@ -767,6 +820,41 @@ fn make_inplace_backup(
         return Ok(None);
     };
     make_backup_copy(&begin.file_path, backup_config, config)
+}
+
+/// Stats the destination before an inplace write so `dest_mode()` keeps its
+/// permission bits.
+///
+/// Upstream computes the destination mode BEFORE opening the output file:
+///
+/// ```text
+/// int exists = fd1 != -1;                                     // receiver.c:955
+/// file->mode = dest_mode(file->mode, st.st_mode, dflt_perms, exists);
+/// if (inplace || one_inplace) { ... }                         // receiver.c:967
+/// ```
+///
+/// and for an existing destination `dest_mode()` returns
+/// `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)` - the destination's
+/// own permission bits (rsync.c:449-472).
+///
+/// oc instead applies metadata at commit time. For the temp+rename path that is
+/// still equivalent, because the final path is untouched until the rename. An
+/// inplace write has no such luxury: it writes through the destination, so by
+/// commit time the pre-transfer stat is unrecoverable. Capture it here and hand
+/// it to [`super::metadata::apply_file_metadata`].
+///
+/// Returns `None` when the destination does not exist, which is upstream's
+/// `exists == 0` and selects `flist_mode & (~CHMOD_BITS | dflt_perms)`.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:955-965` - `dest_mode()` invocation before the output open
+/// - `rsync.c:449-472` - `dest_mode()` body
+fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
+    if !begin.is_inplace || begin.is_device_target {
+        return None;
+    }
+    fs::symlink_metadata(&begin.file_path).ok()
 }
 
 /// Opens the output file using device write, inplace, or temp+rename strategy.
