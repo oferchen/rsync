@@ -1,9 +1,18 @@
 //! Unit tests for [`DirSandbox`](super::DirSandbox).
 //!
-//! Exercise the stack/cache invariants on tempdirs and confirm the
-//! symlink-rejection policy fires at both the root open
-//! ([`secure_open_dir`](crate::secure_open_dir::secure_open_dir)) and
-//! the descent open ([`super::DirSandbox::enter`]).
+//! Exercise the stack/cache invariants on tempdirs and pin the two
+//! *different* policies that apply at the two opens.
+//!
+//! The root open ([`secure_open_dir`](crate::secure_open_dir::secure_open_dir))
+//! is a bootstrap against `AT_FDCWD` with an absolute path, so it refuses
+//! symlinks outright.
+//!
+//! The descent open ([`super::DirSandbox::enter`]) is anchored on a dirfd and
+//! discriminates by destination instead: an in-tree symlink is followed, an
+//! escape is refused with `EXDEV`. That mirrors upstream `ds_descend()`
+//! (`syscall.c:2891`). Earlier revisions of this file asserted the descent
+//! refused every symlink; that was stricter than upstream and the assertion
+//! pinned the divergence rather than the contract.
 
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::symlink;
@@ -98,23 +107,52 @@ fn exit_on_empty_stack_is_noop() {
     assert_eq!(sandbox.depth(), 0);
 }
 
+/// An **in-tree** symlinked subdirectory must be descended, not refused.
+///
+/// upstream: `syscall.c:2891` `ds_descend()` splices a relative in-tree
+/// symlink target back into the walk. Refusing it is stricter than upstream
+/// and turns an ordinary destination layout into a hard failure.
+///
+/// ⚠ The symlink target must be **relative**. An absolute target is refused
+/// under `RESOLVE_BENEATH` even when it resolves inside the anchor, and
+/// upstream refuses absolute targets too (`syscall.c:2953`) - so a fixture
+/// built with `symlink(root.join("real"), ...)` passes for the wrong reason
+/// and proves nothing about this contract.
 #[test]
-fn enter_rejects_symlink_child() {
+fn enter_follows_in_tree_symlink_child() {
     let (_keep, root) = canonical_tempdir();
-    let real = root.join("real");
-    std::fs::create_dir(&real).expect("create real dir");
-    symlink(&real, root.join("link")).expect("symlink");
+    std::fs::create_dir(root.join("real")).expect("create real dir");
+    symlink("real", root.join("link")).expect("relative in-tree symlink");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    sandbox
+        .enter(std::ffi::OsStr::new("link"))
+        .expect("in-tree symlinked subdirectory must be descended");
+    assert_eq!(sandbox.depth(), 1);
+    sandbox.exit();
+    assert_eq!(sandbox.depth(), 0);
+}
+
+/// A **relative** symlink whose target escapes the anchor must still fail,
+/// and fail as an escape (`EXDEV`) rather than as "there was a symlink".
+///
+/// This is the negative half of [`enter_follows_in_tree_symlink_child`]: the
+/// two together say the policy discriminates by *destination*, not by the
+/// mere presence of a symlink.
+#[test]
+fn enter_refuses_relative_symlink_that_escapes() {
+    let (_keep, root) = canonical_tempdir();
+    symlink("../outside", root.join("esc")).expect("relative escaping symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     let err = sandbox
-        .enter(std::ffi::OsStr::new("link"))
-        .expect_err("symlink child must be rejected");
+        .enter(std::ffi::OsStr::new("esc"))
+        .expect_err("a symlink leaving the anchor must be refused");
     let code = err.raw_os_error();
     assert!(
-        code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
-        "expected ELOOP or ENOTDIR for symlink child, got: {err}"
+        code == Some(libc::EXDEV) || code == Some(libc::ELOOP) || code == Some(libc::ENOENT),
+        "expected an escape refusal, got: {err}"
     );
-    // Stack must be untouched when the open fails.
     assert_eq!(sandbox.depth(), 0);
 }
 

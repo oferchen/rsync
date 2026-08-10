@@ -181,7 +181,7 @@ impl DirSandbox {
                     return Err(io::Error::from_raw_os_error(libc::EXDEV));
                 }
             };
-            fd = descend_beneath(fd.as_fd(), name)?;
+            fd = openat_dir(fd.as_fd(), name)?;
         }
 
         Ok(Self {
@@ -385,48 +385,30 @@ impl DirSandbox {
     }
 }
 
-/// Open `child_name` as a directory off `parent_fd` using the strictest
-/// resolution policy the running kernel supports.
+/// Descend one component beneath `parent_fd`, following an in-tree symlink
+/// and refusing an escape.
 ///
-/// On Linux 5.6+ this uses `openat2(2)` with
-/// `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`; otherwise it falls back to
-/// `openat(2)` with `O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` via `rustix`.
-fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
-    #[cfg(target_os = "linux")]
-    {
-        if openat2_supported()
-            && let Some(fd) = linux::openat2_beneath(
-                parent_fd,
-                child_name,
-                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS,
-            )?
-        {
-            return Ok(fd);
-        }
-    }
-    // Suppress the unused-import warning on non-Linux Unix targets.
-    let _ = openat2_supported;
-
-    openat_nofollow(parent_fd, child_name)
-}
-
-/// Descend one component of a peer-supplied path beneath `parent_fd`.
+/// This is the single beneath-semantics primitive. Both the per-entry
+/// descent and the peer-tail walk under an operator anchor go through it, so
+/// there is one implementation of one upstream rule.
 ///
-/// Unlike [`openat_dir`], this follows an in-tree symlink and refuses only
-/// an escape (`EXDEV`) or a magic link. That is upstream's rule for a
-/// peer-supplied remainder resolved under an operator anchor: `ds_descend()`
-/// (`syscall.c:2891`) splices a relative in-tree symlink target back into the
-/// walk and refuses an absolute target or a climb above the anchor.
+/// The policy is upstream's `ds_descend()` (`syscall.c:2891`): a relative
+/// in-tree symlink target is spliced back into the walk, while an absolute
+/// target or a climb above the anchor is refused. `RESOLVE_BENEATH` gives
+/// exactly that, and `RESOLVE_NO_MAGICLINKS` blocks the `/proc` magic-link
+/// detour. It is the same mask the peer-path parent anchor already uses
+/// (`at_syscalls/nested.rs:201`), whose rationale this now shares rather
+/// than contradicts.
 ///
-/// `RESOLVE_NO_MAGICLINKS` matches the mask the peer-path parent anchor
-/// already uses (`at_syscalls/nested.rs:201`).
+/// `RESOLVE_NO_SYMLINKS` is deliberately *not* set. It refuses every symlink
+/// component, including the in-tree ones upstream resolves, which turns a
+/// symlinked subdirectory inside the destination tree into a hard failure.
 ///
 /// Where `openat2(2)` is unavailable the walk degrades to `O_NOFOLLOW` per
 /// component, which refuses in-tree symlinks the kernel path would follow.
-/// That is stricter than upstream and is the same portable-fallback gap
-/// tracked for the rest of the sandbox.
-#[cfg(unix)]
-fn descend_beneath(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
+/// That is stricter than upstream and is the portable-fallback gap tracked
+/// for the rest of the sandbox.
+fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     #[cfg(target_os = "linux")]
     {
         if openat2_supported()
@@ -439,6 +421,7 @@ fn descend_beneath(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<
             return Ok(fd);
         }
     }
+    // Suppress the unused-import warning on non-Linux Unix targets.
     let _ = openat2_supported;
 
     openat_nofollow(parent_fd, child_name)
@@ -509,8 +492,13 @@ mod linux {
         #[allow(unsafe_code)]
         let raw = unsafe {
             let mut how: libc::open_how = std::mem::zeroed();
-            how.flags =
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
+            // `O_NOFOLLOW` is deliberately absent. It refuses a symlink at the
+            // final component, and every caller here passes a single component,
+            // so the leaf *is* the whole path - it would refuse the in-tree
+            // symlinks `RESOLVE_BENEATH` is here to let through, and it does so
+            // before any `resolve` flag is consulted. Confinement is the
+            // caller's `resolve` mask; an escape still fails with `EXDEV`.
+            how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
             how.mode = 0;
             how.resolve = resolve;
 
