@@ -3,10 +3,16 @@
 //! [`secure_open_dir`] returns a directory file descriptor that callers can
 //! anchor subsequent `*at` syscalls against. The resolution policy refuses to
 //! follow symlinks at the leaf on every Unix target, and on Linux 5.6+ kernels
-//! it upgrades to `openat2(2)` with
-//! `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` so that **any** symlink anywhere in
-//! the path - not just at the leaf - and any `..` traversal outside the open
-//! point are rejected with `EXDEV` / `ELOOP`.
+//! it upgrades to `openat2(2)` with `RESOLVE_NO_SYMLINKS`, so that **any**
+//! symlink anywhere in the path - not just at the leaf - is rejected with
+//! `ELOOP`.
+//!
+//! `RESOLVE_BENEATH` is deliberately NOT set; the reasoning is on `how.resolve`
+//! in the `linux` submodule below. This helper *produces* an anchor, and
+//! `AT_FDCWD` plus an absolute path would make `RESOLVE_BENEATH` refuse every
+//! path outside the process cwd. Confining a path beneath an anchor belongs to
+//! the `*at` walk that uses the fd this returns. A `..` component is therefore
+//! **not** rejected here, and this function never returns `EXDEV`.
 //!
 //! This module is Unix-only. Windows callers use NTFS handle-based APIs
 //! (see the SEC-1.l audit), which sidestep path TOCTOU naturally; they
@@ -19,9 +25,9 @@
 //! [`openat2_supported`](crate::linux_capabilities::openat2_supported) probe
 //! caches that result and we use plain
 //! `open(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` thereafter. The plain `open`
-//! path still rejects a symlink at the leaf - it just cannot reject `..`
-//! traversal mid-path, which is the marginal extra confinement
-//! `RESOLVE_BENEATH` gives us.
+//! path still rejects a symlink at the leaf - it just cannot reject symlinks
+//! in interior components, which is the extra confinement
+//! `RESOLVE_NO_SYMLINKS` gives us.
 //!
 //! # Single unsafe block
 //!
@@ -35,19 +41,17 @@ use std::path::Path;
 /// Open `path` as a directory file descriptor with strict resolution
 /// semantics.
 ///
-/// On Linux 5.6+ this uses `openat2` with
-/// `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` for full path-component
-/// confinement. On older Linux, macOS, and other Unix targets, this falls
-/// back to `open(O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)`, which
-/// only rejects a symlink at the leaf.
+/// On Linux 5.6+ this uses `openat2` with `RESOLVE_NO_SYMLINKS`, which
+/// refuses a symlink in any path component. On older Linux, macOS, and other
+/// Unix targets, this falls back to
+/// `open(O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)`, which only rejects
+/// a symlink at the leaf.
 ///
 /// # Errors
 ///
 /// - `ELOOP` when the leaf is a symlink (plain `open` path) or any path
 ///   component is a symlink (`openat2` path with `RESOLVE_NO_SYMLINKS`).
 /// - `ENOTDIR` when the path resolves to a non-directory.
-/// - `EXDEV` (Linux only) when `openat2` rejects a `..` component that would
-///   escape the open point under `RESOLVE_BENEATH`.
 /// - `ENOENT` when the path does not exist.
 /// - `EACCES` / `EPERM` per the usual `open(2)` semantics.
 pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
