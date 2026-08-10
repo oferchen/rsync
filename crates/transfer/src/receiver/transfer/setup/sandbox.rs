@@ -98,6 +98,88 @@ pub(super) fn open_sandbox_for_dest_strict(
     }
 }
 
+/// Open a daemon receiver's destination as an operator anchor plus a
+/// confined peer tail.
+///
+/// `dest_dir` reaches this module as a single flattened string built by
+/// `resolve_receiver_dest_path` as `module_root.join(peer_tail)`
+/// (`client_args/path_resolution.rs`). The two halves carry different
+/// trust: the module root is named by the operator in `oc-rsyncd.conf`,
+/// while the tail is whatever the client sent on the wire. Applying one
+/// resolve policy to the fused string cannot express that, so this splits
+/// them back apart and gives each half the mechanism upstream gives it:
+///
+/// - the anchor is opened with a plain `open(2)`, because an operator who
+///   writes `path = /srv/backup` has authorised every component of it,
+///   symlinked or not;
+/// - each tail component is walked with `RESOLVE_BENEATH`, so an in-tree
+///   symlink is followed and anything leaving the module fails `EXDEV`.
+///
+/// Re-anchoring the tail is what keeps this a bug fix rather than a hole:
+/// opening the root plainly and then re-joining the tail into a path-based
+/// open would let a symlinked tail component walk straight out of the
+/// module.
+///
+/// `ENOENT` stays a soft failure (`Ok(None)`) so a first-run push still
+/// creates the tree through `ensure_relative_parents`. An escape refusal
+/// is fatal.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:85-90` - `open_anchor_dirfd()` uses a plain `openat`; the
+///   comment at `syscall.c:3189-3193` records why ("Absolute basedir:
+///   operator-trusted").
+/// - `syscall.c:2891` - `ds_descend()` walks the untrusted remainder, and
+///   `syscall.c:2961` splices a *relative* in-tree symlink target back
+///   into the walk rather than refusing it.
+/// - `main.c:765` - the daemon reaches the same state by `change_dir()`
+///   onto the module root before serving.
+#[cfg(unix)]
+pub(super) fn open_sandbox_for_dest_anchored(
+    module_root: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> io::Result<Option<Arc<fast_io::DirSandbox>>> {
+    let peer_tail = dest_dir.strip_prefix(module_root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "destination '{}' is not under module root '{}'",
+                dest_dir.display(),
+                module_root.display(),
+            ),
+        )
+    })?;
+
+    match fast_io::DirSandbox::open_dest_anchor(module_root, peer_tail) {
+        Ok(sandbox) => Ok(Some(Arc::new(sandbox))),
+        Err(err) => {
+            let code = err.raw_os_error();
+            if matches!(code, Some(libc::EXDEV)) {
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!(
+                        "refusing destination '{}': the client-supplied path \
+                         '{}' escapes module root '{}' (errno={})",
+                        dest_dir.display(),
+                        peer_tail.display(),
+                        module_root.display(),
+                        code.unwrap_or(0),
+                    ),
+                ));
+            }
+            logging::debug_log!(
+                Recv,
+                2,
+                "DirSandbox::open_dest_anchor({}, {}) failed: {err}; \
+                 falling back to path-based syscalls",
+                module_root.display(),
+                peer_tail.display()
+            );
+            Ok(None)
+        }
+    }
+}
+
 // upstream: clientserver.c:1018 - use_secure_symlinks gating that the
 // chdir-symlink-race fix mirrors. Tests below verify the strict daemon
 // branch refuses a leaf-symlink at the destination while the legacy
@@ -173,6 +255,119 @@ mod symlink_race_tests {
             result.is_some(),
             "strict mode must hand back a sandbox when the dest is a real dir"
         );
+    }
+
+    /// The operator's own module root may sit behind a symlink - `path =
+    /// /srv/backup` where `/srv -> /mnt/srv` is an ordinary layout. Upstream
+    /// opens that anchor with a plain `openat` (`syscall.c:85-90`), so every
+    /// transfer through it must succeed.
+    ///
+    /// ⚠ The symlink is planted **explicitly**. A bare `TempDir` proves
+    /// nothing about symlinked ancestors on either CI platform: on macOS
+    /// `/tmp -> private/tmp` means every tempdir already has one (and the
+    /// leaf-only non-Linux arm never inspects interior components anyway),
+    /// while on Linux CI tempdirs sit under a real `/tmp` so the interior
+    /// check is never reached. The platform that has the condition cannot
+    /// detect it; the platform that can detect it never has it.
+    #[test]
+    fn anchored_mode_accepts_a_symlinked_module_root() {
+        let (_keep, root) = canonical_tempdir();
+        let real_store = root.join("mnt-srv");
+        std::fs::create_dir(&real_store).expect("create real store");
+        std::fs::create_dir(real_store.join("backup")).expect("create module dir");
+
+        // The operator's configured root reaches its target through a link.
+        let srv = root.join("srv");
+        symlink(&real_store, &srv).expect("symlink srv -> mnt-srv");
+        let module_root = srv.join("backup");
+
+        let result = open_sandbox_for_dest_anchored(&module_root, &module_root)
+            .expect("a symlinked module root is operator-trusted and must open");
+        assert!(
+            result.is_some(),
+            "plain-open anchor must hand back a sandbox; a resolve policy \
+             applied to the operator's own root refuses every transfer"
+        );
+
+        // Control: the same fixture through the pre-fix path. Without this
+        // the assertion above passes on a build that never had the bug, and
+        // the test would be evidence of nothing.
+        //
+        // Linux-only. The bug needs an *interior* component check, which
+        // only the `openat2(RESOLVE_NO_SYMLINKS)` arm performs; the
+        // non-Linux arm is leaf-only `O_NOFOLLOW`, and the leaf here
+        // (`backup`) is a real directory, so the old path succeeds there
+        // for a reason unrelated to the fix.
+        #[cfg(target_os = "linux")]
+        {
+            let old = open_sandbox_for_dest_strict(&module_root, true);
+            assert!(
+                old.is_err(),
+                "control failed: the pre-fix path accepted this layout, so \
+                 the assertion above cannot be evidence of the fix"
+            );
+        }
+    }
+
+    /// The peer half keeps `RESOLVE_BENEATH`. A client-supplied tail whose
+    /// component is a symlink out of the module must not open, or the
+    /// plain-open anchor above would have turned an availability bug into a
+    /// module escape.
+    #[test]
+    fn anchored_mode_refuses_a_peer_tail_that_escapes_the_module() {
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside).expect("create outside dir");
+
+        // Relative target: an absolute one is refused under RESOLVE_BENEATH
+        // even when it lands inside, so it would pass for the wrong reason.
+        symlink("../outside", module_root.join("escape")).expect("symlink escape -> ../outside");
+
+        let err = open_sandbox_for_dest_anchored(&module_root, &module_root.join("escape"))
+            .expect_err("a peer tail leaving the module must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("escapes module root"),
+            "expected the escape refusal, got: {err}"
+        );
+        assert!(
+            msg.contains(&format!("errno={}", libc::EXDEV)),
+            "escape must be refused as an escape (EXDEV), not merely as \
+             'there was a symlink', got: {err}"
+        );
+    }
+
+    /// The other half of the same policy: a symlinked *subdirectory* inside
+    /// the module is ordinary content and must transfer. upstream:
+    /// `ds_descend()` splices a relative in-tree target back into the walk
+    /// (`syscall.c:2961`) rather than refusing it.
+    #[test]
+    fn anchored_mode_follows_an_in_tree_symlinked_subdirectory() {
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+        std::fs::create_dir(module_root.join("real")).expect("create real subdir");
+        symlink("real", module_root.join("link")).expect("symlink link -> real");
+
+        let result = open_sandbox_for_dest_anchored(&module_root, &module_root.join("link"))
+            .expect("an in-tree symlinked subdirectory must not be refused");
+        assert!(
+            result.is_some(),
+            "a symlinked subdirectory inside the module is ordinary content"
+        );
+    }
+
+    #[test]
+    fn anchored_mode_soft_fails_when_the_tail_is_missing() {
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+
+        let result = open_sandbox_for_dest_anchored(&module_root, &module_root.join("not-yet"))
+            .expect("ENOENT must stay a soft failure - first-run push mkdirs later");
+        assert!(result.is_none());
     }
 
     #[test]
