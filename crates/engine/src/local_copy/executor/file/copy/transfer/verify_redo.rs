@@ -144,14 +144,13 @@ fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
 /// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1072) and carries the
 /// transfer-relative name, never an absolute path.
 ///
-/// `keptstr` is unconditionally `"retained"`. Upstream reaches that string
-/// because `--append` implies `--inplace` (options.c:2400-2411), which takes
-/// receiver.c:1073-1078 past both the `"discarded"` and the
-/// `"put into partial-dir"` leg. The local executor arrives at the same place by
-/// a different route: this warning is reachable only when `append_offset > 0`,
-/// which pins `select_write_strategy` to `WriteStrategy::Append`, and that
-/// strategy writes straight into the destination - so the update is retained
-/// there no matter what `--partial-dir` says.
+/// `keptstr` is unconditionally `"retained"`, and the local executor reaches it
+/// by upstream's own route rather than a parallel one. `--append` promotes
+/// `--inplace` (options.c:2400-2411), which carries receiver.c:1073-1078 past
+/// both the `"discarded"` and the `"put into partial-dir"` leg. oc materialises
+/// that implication in the client config, so `options().inplace_enabled()` is
+/// already true on this path - that flag, not any local append state, is the
+/// input the string is derived from.
 ///
 /// `redostr` is `" (will try again)"` because the local executor never replays a
 /// batch, and the code is `FWARNING` rather than `FERROR_XFER` because the redo
