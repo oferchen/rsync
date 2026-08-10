@@ -47,6 +47,12 @@ use std::path::Path;
 /// `open(O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)`, which only rejects
 /// a symlink at the leaf.
 ///
+/// `RESOLVE_BENEATH` is **not** set, so a `..` component is not rejected and
+/// this never returns `EXDEV`. That is deliberate: this call produces the
+/// anchor, and `AT_FDCWD` with an absolute path would make `RESOLVE_BENEATH`
+/// refuse every path outside the process cwd. Confinement beneath an anchor
+/// belongs to the `*at` walk that uses the returned fd.
+///
 /// # Errors
 ///
 /// - `ELOOP` when the leaf is a symlink (plain `open` path) or any path
