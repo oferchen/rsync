@@ -134,6 +134,63 @@ struct DirFrame {
 }
 
 impl DirSandbox {
+    /// Open a receiver destination root, splitting operator trust from peer
+    /// trust.
+    ///
+    /// `anchor` is operator-supplied - a daemon module root from the config
+    /// file, or the destination operand of a local/remote-shell run. It is
+    /// opened with ordinary resolution via [`open_trusted_dir`], so an
+    /// operator layout like `/srv -> /mnt/srv` resolves normally.
+    ///
+    /// `peer_tail` is the module-relative remainder the *peer* asked for. It
+    /// is resolved component-by-component beneath the anchor descriptor, so
+    /// it can neither climb above the anchor nor follow a planted symlink out
+    /// of the served tree.
+    ///
+    /// Fusing the two into one absolute path and applying a single policy is
+    /// what this method exists to prevent: confining the anchor breaks
+    /// ordinary deployments, and trusting the tail is a module escape.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:85-90` `open_anchor_dirfd()` - plain `openat` for an
+    ///   operator anchor.
+    /// - `syscall.c:3189-3193` - "Absolute basedir: operator-trusted."
+    /// - `syscall.c:2891` `ds_descend()` - the per-component walk that
+    ///   confines the peer-supplied remainder.
+    ///
+    /// # Errors
+    ///
+    /// - Ordinary `open(2)` errors for `anchor` (`ENOENT`, `ENOTDIR`,
+    ///   `EACCES`).
+    /// - `EXDEV` when a `peer_tail` component would escape the anchor.
+    /// - `ELOOP` when a `peer_tail` component is a symlink that cannot be
+    ///   resolved beneath the anchor.
+    #[cfg(unix)]
+    pub fn open_dest_anchor(anchor: &Path, peer_tail: &Path) -> io::Result<Self> {
+        let mut fd = crate::secure_dir::open_trusted_dir(anchor)?;
+
+        for component in peer_tail.components() {
+            let name = match component {
+                std::path::Component::Normal(name) => name,
+                // `.` is a no-op; anything else (`..`, a root, a prefix) has
+                // no business in a peer-supplied module-relative tail and is
+                // refused rather than normalised away.
+                std::path::Component::CurDir => continue,
+                _ => {
+                    return Err(io::Error::from_raw_os_error(libc::EXDEV));
+                }
+            };
+            fd = descend_beneath(fd.as_fd(), name)?;
+        }
+
+        Ok(Self {
+            root: Arc::new(fd),
+            stack: Vec::new(),
+            secondaries: DashMap::new(),
+        })
+    }
+
     /// Open `root` and seed an empty descent stack.
     ///
     /// The root is opened through [`secure_open_dir`] so the bootstrap
@@ -338,12 +395,50 @@ fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<Owned
     #[cfg(target_os = "linux")]
     {
         if openat2_supported()
-            && let Some(fd) = linux::openat2_beneath(parent_fd, child_name)?
+            && let Some(fd) = linux::openat2_beneath(
+                parent_fd,
+                child_name,
+                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS,
+            )?
         {
             return Ok(fd);
         }
     }
     // Suppress the unused-import warning on non-Linux Unix targets.
+    let _ = openat2_supported;
+
+    openat_nofollow(parent_fd, child_name)
+}
+
+/// Descend one component of a peer-supplied path beneath `parent_fd`.
+///
+/// Unlike [`openat_dir`], this follows an in-tree symlink and refuses only
+/// an escape (`EXDEV`) or a magic link. That is upstream's rule for a
+/// peer-supplied remainder resolved under an operator anchor: `ds_descend()`
+/// (`syscall.c:2891`) splices a relative in-tree symlink target back into the
+/// walk and refuses an absolute target or a climb above the anchor.
+///
+/// `RESOLVE_NO_MAGICLINKS` matches the mask the peer-path parent anchor
+/// already uses (`at_syscalls/nested.rs:201`).
+///
+/// Where `openat2(2)` is unavailable the walk degrades to `O_NOFOLLOW` per
+/// component, which refuses in-tree symlinks the kernel path would follow.
+/// That is stricter than upstream and is the same portable-fallback gap
+/// tracked for the rest of the sandbox.
+#[cfg(unix)]
+fn descend_beneath(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
+    #[cfg(target_os = "linux")]
+    {
+        if openat2_supported()
+            && let Some(fd) = linux::openat2_beneath(
+                parent_fd,
+                child_name,
+                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS,
+            )?
+        {
+            return Ok(fd);
+        }
+    }
     let _ = openat2_supported;
 
     openat_nofollow(parent_fd, child_name)
@@ -381,6 +476,7 @@ mod linux {
     pub(super) fn openat2_beneath(
         parent_fd: BorrowedFd<'_>,
         child_name: &OsStr,
+        resolve: u64,
     ) -> io::Result<Option<OwnedFd>> {
         let c_name = CString::new(child_name.as_bytes()).map_err(|_| {
             io::Error::new(
@@ -416,7 +512,7 @@ mod linux {
             how.flags =
                 (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
             how.mode = 0;
-            how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+            how.resolve = resolve;
 
             libc::syscall(
                 libc::SYS_openat2,
