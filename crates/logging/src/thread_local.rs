@@ -126,17 +126,17 @@ pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String
 ///
 /// A warning is not gated on verbosity: upstream's `FWARNING` is a
 /// first-class log code that `rwrite()` dispatches on its own
-/// (`log.c:341`), and it is carried over the socket for protocols >= 30
-/// (`rsync.h:285`, `rsync.h:296` `MSG_WARNING = FWARNING`). Emitting it at
+/// (`log.c:314`), and it is carried over the socket for protocols >= 30
+/// (`rsync.h:278`, `rsync.h:289` `MSG_WARNING = FWARNING`). Emitting it at
 /// `level` 0 keeps [`info_gte`] trivially true, so the message is produced
 /// whatever the operator passed for `-v`.
 ///
 /// The event carries [`LogCode::Warning`], which the stream router sends to
 /// stderr (see `stream.rs`). The
 /// `rsync warning: … (code N) at file(line)` trailer upstream renders at
-/// `log.c:956` is deliberately not applied here; that formatting belongs to
+/// `log.c:909` is deliberately not applied here; that formatting belongs to
 /// the single logcode-to-stream funnel, not to the emitter.
-// upstream: log.c:341 rwrite() `case FWARNING:`
+// upstream: log.c:314 rwrite() `case FWARNING:`
 pub fn emit_warning(message: String) {
     emit_info_coded(InfoFlag::Misc, 0, LogCode::Warning, message);
 }
