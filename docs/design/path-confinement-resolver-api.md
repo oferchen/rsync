@@ -25,7 +25,7 @@ Two findings from that walk drive the API shape:
 
 ## 2. Upstream mechanism
 
-`struct dirstack` (`syscall.c:2803-2811`):
+`struct dirstack` (`rsync-3.5.0/syscall.c:2803-2811`):
 
 ```c
 struct dirstack {
@@ -40,14 +40,14 @@ Three properties matter for the API:
 1. **`fds[0]` is borrowed.** `secure_walk_at` does not close the anchor; the caller
    owns it. A resolver that took ownership would break every caller that reuses a
    held module-root fd.
-2. **`abspath` is seeded only when the anchor path is absolute** (`syscall.c:2989-2991`).
+2. **`abspath` is seeded only when the anchor path is absolute** (`rsync-3.5.0/syscall.c:2989-2991`).
    Unseeded means the exclude-aware refusal is disabled and, in upstream's words,
    "non-daemon callers pay nothing". The trust policy is *data*, not a branch.
 3. **Depth and symlink hops are bounded** - `DS_MAXDEPTH` is 1024, and `hops` is a
    single budget shared across the whole walk, passed by pointer so a symlink target
    that itself contains symlinks draws from the same allowance.
 
-`ds_descend` (`syscall.c:2891-2965`) is the per-component step:
+`ds_descend` (`rsync-3.5.0/syscall.c:2891-2965`) is the per-component step:
 
 - `.` is a no-op; `..` pops to the held parent fd and returns `ELOOP` at `top == 0`
   rather than rising above the anchor.
@@ -120,7 +120,7 @@ compiles the check out of an operator-trusted walk completely.
 That is the load-bearing consequence, and §4.4 gives the impossibility result behind
 it. It also converges on upstream's own semantics from the opposite direction:
 upstream seeds `ds.abspath` only for an absolute anchor and notes that unseeded means
-"non-daemon callers pay nothing" (`syscall.c:2989-2991`). Reaching the same property
+"non-daemon callers pay nothing" (`rsync-3.5.0/syscall.c:2989-2991`). Reaching the same property
 through Rust's type system rather than through a runtime seed check is evidence the
 shape is right rather than merely compliant.
 
@@ -205,7 +205,7 @@ one.
 visible tree. Checking that against the nominal path is exactly what a symlink
 defeats - which is the case the check exists for. Upstream can ask the question only
 because it performs the following itself and extends `ds.abspath` component by
-component (`syscall.c:2891-2965`).
+component (`rsync-3.5.0/syscall.c:2891-2965`).
 
 So the exclude-aware refusal is not merely awkward on top of `openat2`; it is
 **unimplementable** there. That is why the policy selects the mechanism.
@@ -228,6 +228,37 @@ but does not eliminate it.
 
 This is written down so a later reader who finds a hand-rolled walk beside a
 kernel-atomic one does not reasonably conclude the hand-rolled one is a mistake.
+
+### 4.5 A second, independent requirement lands on the same boundary
+
+Section 4.4 justifies the split from the exclude check. The **hop budget** justifies
+it again, by an unrelated route - and two independent requirements arriving at the
+same seam is the strongest defence the split has.
+
+Upstream's `ds_walk_path` passes `hops` **by pointer** (`rsync-3.5.0/syscall.c:2966`), so it is a
+single budget spent across the whole walk rather than a per-component allowance. A
+chain of nested symlinks therefore exhausts one shared budget; resetting it per
+descend would let an attacker chain arbitrarily many hops while no single component
+ever appeared to exceed the limit.
+
+That budget **only exists if oc does the walking.** Under `RESOLVE_BENEATH` the
+kernel resolves symlinks internally and enforces its own limit: oc passes no budget,
+observes no intermediate hops, and holds nothing it could make cumulative. So the
+per-descend-reset defect is
+
+- **unreachable** in the `NoExclude` / `BENEATH` arm - there is no oc-side counter to
+  get wrong, and
+- **mandatory to get right** in the oracle arm - the counter exists precisely because
+  oc took over the walk.
+
+This is the same boundary the exclude check draws, reached from a completely
+different direction. A seam that only the exclude check demanded could reasonably be
+called convenient; one that the hop budget demands as well is structural.
+
+The practical consequence for sequencing: the shared-budget rule, and the test that
+pins it (nested symlinks whose hops sum past the limit while no single component
+does), belong with the manual walk. Writing that test before the walk exists would
+pin behaviour with no subject - the same orphan shape one level down.
 
 ## 5. The cache contract
 
