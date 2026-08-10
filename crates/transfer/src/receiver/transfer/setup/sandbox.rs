@@ -167,13 +167,36 @@ pub(super) fn open_sandbox_for_dest_anchored(
                     ),
                 ));
             }
-            logging::debug_log!(
-                Recv,
-                2,
-                "DirSandbox::open_dest_anchor({}, {}) failed: {err}; \
-                 falling back to path-based syscalls",
-                module_root.display(),
-                peer_tail.display()
+            if matches!(code, Some(libc::ENOENT)) {
+                // First-run push: the tail is created later by
+                // `ensure_relative_parents`. Ordinary, and not worth an
+                // operator's attention.
+                logging::debug_log!(
+                    Recv,
+                    2,
+                    "DirSandbox::open_dest_anchor({}, {}) got ENOENT; \
+                     the tail will be created during the transfer",
+                    module_root.display(),
+                    peer_tail.display()
+                );
+                return Ok(None);
+            }
+            // Anything else means a daemon receiver just lost its anchored
+            // dirfd and will fall back to path-based syscalls - it keeps
+            // running, but without the per-component confinement its role
+            // is supposed to have. Upstream confines exactly this role
+            // (`use_secure_symlinks = am_daemon && !am_chrooted`,
+            // clientserver.c:1018), so degrading is worth saying out loud.
+            //
+            // Warning, not debug: `debug_log!` here is unreachable at every
+            // verbosity an operator can actually set, which made this
+            // condition unobservable in the field. upstream: FWARNING is
+            // dispatched by rwrite() (log.c:341) and is not verbosity-gated.
+            logging::warn_log!(
+                "receiver: could not anchor destination '{}' under module \
+                 root '{}': {err}; continuing without path confinement",
+                peer_tail.display(),
+                module_root.display()
             );
             Ok(None)
         }
