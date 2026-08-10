@@ -1,0 +1,179 @@
+//! Parallel drain implementations for [`WorkQueueReceiver`].
+//!
+//! Provides [`drain_parallel`](WorkQueueReceiver::drain_parallel) for collecting
+//! results into a `Vec` and [`drain_parallel_into`](WorkQueueReceiver::drain_parallel_into)
+//! for streaming results through a channel as workers complete. Both share a
+//! `rayon::scope` based dispatch pattern with per-thread sharded buffers to
+//! minimise contention across the rayon thread pool.
+
+use crossbeam_channel::Sender;
+
+use super::bounded::{PermitGuard, WorkQueueReceiver};
+use crate::concurrent_delta::DeltaWork;
+
+impl WorkQueueReceiver {
+    /// Drains the queue in parallel, applying `f` to each item via `rayon::scope`.
+    ///
+    /// Spawns one rayon task per [`DeltaWork`] item, allowing the rayon thread
+    /// pool to work-steal across all items. The bounded queue provides natural
+    /// backpressure - the iterator blocks when the queue is empty and the
+    /// producer blocks when the queue is full.
+    ///
+    /// Results are collected in arbitrary order (determined by worker completion
+    /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
+    /// ordering is required.
+    ///
+    /// Internally, results are sharded across one mutex-guarded `Vec` per rayon
+    /// thread, indexed by [`rayon::current_thread_index`]. Because `rayon::scope`
+    /// runs at most one task per pool thread at any instant, each shard is only
+    /// ever touched by a single thread at a time: the shard locks are uncontended
+    /// by construction, not merely low-contention. Threads outside the rayon pool
+    /// fall back to a thread-ID hash so they do not all collapse onto shard 0.
+    /// After all tasks complete, the per-shard buffers are flattened into a
+    /// single `Vec`.
+    ///
+    /// The sharded shape is deliberate, not an oversight. The
+    /// `drain_parallel_alternatives` benchmark compares it against a single
+    /// lock-free MPSC channel and against per-thread chunked accumulation. The
+    /// single MPSC channel is 20-35% slower at every measured thread count, since
+    /// its shared tail atomic contends across all producers - collapsing the
+    /// shards onto one lock-free queue would be a regression. The collector is
+    /// not the cost center here: rayon's per-item task dispatch dominates, so an
+    /// uncontended sharded `Vec` is preferred over a shared queue.
+    ///
+    /// This method consumes the receiver. It returns once the sender is dropped
+    /// and all queued items have been processed.
+    ///
+    /// [`ReorderBuffer`]: crate::concurrent_delta::reorder::ReorderBuffer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use engine::concurrent_delta::work_queue;
+    /// use engine::concurrent_delta::DeltaWork;
+    /// use std::path::PathBuf;
+    ///
+    /// let (tx, rx) = work_queue::bounded();
+    ///
+    /// std::thread::spawn(move || {
+    ///     for i in 0..10 {
+    ///         tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)).unwrap();
+    ///     }
+    /// });
+    ///
+    /// let indices: Vec<u32> = rx.drain_parallel(|w| w.ndx().get());
+    /// assert_eq!(indices.len(), 10);
+    /// ```
+    pub fn drain_parallel<F, R>(self, f: F) -> Vec<R>
+    where
+        F: Fn(DeltaWork) -> R + Send + Sync,
+        R: Send,
+    {
+        let WorkQueueReceiver { rx, release } = self;
+        let num_shards = rayon::current_num_threads();
+        let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_shards)
+            .map(|_| std::sync::Mutex::new(Vec::new()))
+            .collect();
+
+        rayon::scope(|s| {
+            while let Ok(work) = rx.recv() {
+                let f = &f;
+                let shards = &shards;
+                // One permit per admitted item; released when this task
+                // completes or unwinds (see `PermitGuard`).
+                let permit = PermitGuard(release.clone());
+                s.spawn(move |_| {
+                    let _permit = permit;
+                    let result = f(work);
+                    let idx = rayon::current_thread_index().unwrap_or_else(|| {
+                        // Outside rayon pool: hash thread ID to distribute
+                        // across shards instead of collapsing to shard 0.
+                        let id = std::thread::current().id();
+                        let mut hasher = std::hash::DefaultHasher::new();
+                        std::hash::Hash::hash(&id, &mut hasher);
+                        std::hash::Hasher::finish(&hasher) as usize
+                    });
+                    shards[idx % num_shards].lock().unwrap().push(result);
+                });
+            }
+        });
+
+        shards
+            .into_iter()
+            .flat_map(|shard| shard.into_inner().unwrap())
+            .collect()
+    }
+
+    /// Streams results through a channel as workers complete, enabling
+    /// incremental consumption without waiting for all items to finish.
+    ///
+    /// Unlike [`drain_parallel`](Self::drain_parallel) which collects all
+    /// results into a `Vec`, this method sends each result through `tx` as
+    /// soon as its worker finishes. This enables pipeline overlap - the
+    /// consumer can process results (e.g., reorder and write to disk) while
+    /// delta computation continues for remaining items.
+    ///
+    /// The bounded `Sender` provides backpressure: if the consumer falls behind,
+    /// workers block on `tx.send()` rather than accumulating unbounded results
+    /// in memory.
+    ///
+    /// This method blocks until the sender is dropped and all queued items
+    /// have been processed. The `tx` channel is dropped when this method
+    /// returns, signaling completion to the receiver.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use engine::concurrent_delta::work_queue;
+    /// use engine::concurrent_delta::DeltaWork;
+    /// use std::path::PathBuf;
+    ///
+    /// let (work_tx, work_rx) = work_queue::bounded();
+    /// let (result_tx, result_rx) = crossbeam_channel::bounded(16);
+    ///
+    /// // Producer thread
+    /// std::thread::spawn(move || {
+    ///     for i in 0..100 {
+    ///         work_tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)).unwrap();
+    ///     }
+    /// });
+    ///
+    /// // Drain thread - sends results as workers complete
+    /// std::thread::spawn(move || {
+    ///     work_rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
+    /// });
+    ///
+    /// // Consumer thread - processes results incrementally
+    /// for ndx in result_rx {
+    ///     // Process each result as it arrives
+    /// }
+    /// ```
+    pub fn drain_parallel_into<F, R>(self, f: F, tx: Sender<R>)
+    where
+        F: Fn(DeltaWork) -> R + Send + Sync,
+        R: Send,
+    {
+        let WorkQueueReceiver { rx, release } = self;
+        rayon::scope(|s| {
+            while let Ok(work) = rx.recv() {
+                let f = &f;
+                let tx = tx.clone();
+                // One permit per admitted item. The guard drops at the end of
+                // the task closure - after `tx.send` - so admission stays
+                // closed while a worker blocks on a saturated result channel,
+                // giving the controller a true backpressure signal. Releasing
+                // on unwind keeps the pairing exact even if `f` panics.
+                let permit = PermitGuard(release.clone());
+                s.spawn(move |_| {
+                    let _permit = permit;
+                    let result = f(work);
+                    // If the receiver is dropped, silently stop - the consumer
+                    // has decided it doesn't need more results.
+                    let _ = tx.send(result);
+                });
+            }
+        });
+        // `tx` (the original, not clones) is dropped here, closing the channel
+        // after all rayon tasks complete.
+    }
+}

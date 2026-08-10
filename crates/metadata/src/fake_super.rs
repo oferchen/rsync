@@ -1,0 +1,633 @@
+//! Fake super-user mode for preserving privileged metadata without root.
+//!
+//! When `--fake-super` is enabled, privileged file attributes (ownership,
+//! device numbers, special file types) are stored in extended attributes
+//! instead of being applied directly. This allows backup/restore operations
+//! without requiring root privileges.
+//!
+//! # Wire Format
+//!
+//! The `user.rsync.%stat` xattr stores metadata in the format matching upstream:
+//! ```text
+//! <mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>
+//! ```
+//!
+//! Examples:
+//! - Regular file: `100644 0,0 1000:1000`
+//! - Device file: `60660 8,0 0:6` (block device major 8, minor 0)
+//! - Symlink: `120777 0,0 1000:1000`
+
+use std::fs::Metadata;
+use std::io;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+
+/// The xattr name used to store fake-super metadata.
+pub const FAKE_SUPER_XATTR: &str = "user.rsync.%stat";
+
+/// Parsed fake-super metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakeSuperStat {
+    /// File mode (type + permissions).
+    pub mode: u32,
+    /// Owner user ID.
+    pub uid: u32,
+    /// Owner group ID.
+    pub gid: u32,
+    /// Device number (major, minor) for special files.
+    pub rdev: Option<(u32, u32)>,
+}
+
+impl FakeSuperStat {
+    /// Creates a new `FakeSuperStat` from file metadata.
+    ///
+    /// On Unix, extracts mode, uid, gid, and device numbers from the metadata.
+    /// On non-Unix, returns default values (regular file owned by uid/gid 0)
+    /// since Windows metadata lacks POSIX ownership fields.
+    #[cfg(unix)]
+    pub fn from_metadata(metadata: &Metadata) -> Self {
+        let mode = metadata.mode();
+        let uid = metadata.uid();
+        let gid = metadata.gid();
+
+        // upstream: xattrs.c:set_stat_xattr() - includes rdev for device files
+        let rdev = if is_device_file(mode) {
+            let rdev = metadata.rdev();
+            Some((major(rdev), minor(rdev)))
+        } else {
+            None
+        };
+
+        Self {
+            mode,
+            uid,
+            gid,
+            rdev,
+        }
+    }
+
+    /// Creates a new `FakeSuperStat` from file metadata (non-Unix fallback).
+    ///
+    /// Returns default values since non-Unix platforms lack POSIX
+    /// ownership and mode semantics.
+    #[cfg(not(unix))]
+    pub fn from_metadata(_metadata: &Metadata) -> Self {
+        Self {
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        }
+    }
+
+    /// Encodes the stat to the wire format used in xattrs.
+    ///
+    /// Format: `<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>`
+    ///
+    /// This matches upstream rsync's `set_stat_xattr()` in `xattrs.c`.
+    pub fn encode(&self) -> String {
+        let (major, minor) = self.rdev.unwrap_or((0, 0));
+        format!(
+            "{:o} {},{} {}:{}",
+            self.mode, major, minor, self.uid, self.gid
+        )
+    }
+
+    /// Decodes the stat from the wire format.
+    ///
+    /// Format: `<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>`
+    ///
+    /// This matches upstream rsync's `get_stat_xattr()` in `xattrs.c`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the format is invalid.
+    pub fn decode(s: &str) -> io::Result<Self> {
+        let parts: Vec<&str> = s.split_whitespace().collect();
+
+        if parts.len() != 3 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid fake-super format: expected 3 parts, got {}",
+                    parts.len()
+                ),
+            ));
+        }
+
+        let mode = u32::from_str_radix(parts[0], 8).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid mode '{}': {}", parts[0], e),
+            )
+        })?;
+
+        let rdev_parts: Vec<&str> = parts[1].split(',').collect();
+        if rdev_parts.len() != 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev format: '{}'", parts[1]),
+            ));
+        }
+
+        let major: u32 = rdev_parts[0].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev major '{}': {}", rdev_parts[0], e),
+            )
+        })?;
+
+        let minor: u32 = rdev_parts[1].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev minor '{}': {}", rdev_parts[1], e),
+            )
+        })?;
+
+        let rdev = if major == 0 && minor == 0 {
+            None
+        } else {
+            Some((major, minor))
+        };
+
+        let uid_gid: Vec<&str> = parts[2].split(':').collect();
+        if uid_gid.len() != 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid uid:gid format: '{}'", parts[2]),
+            ));
+        }
+
+        let uid: u32 = uid_gid[0].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid uid '{}': {}", uid_gid[0], e),
+            )
+        })?;
+
+        let gid: u32 = uid_gid[1].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid gid '{}': {}", uid_gid[1], e),
+            )
+        })?;
+
+        Ok(Self {
+            mode,
+            uid,
+            gid,
+            rdev,
+        })
+    }
+
+    /// Returns `true` when the encoded mode denotes a regular file.
+    ///
+    /// Under `--fake-super` a device/FIFO/socket is stored as a regular
+    /// on-disk placeholder, so the placeholder's own `fs::Metadata` always
+    /// reports a regular file. The *effective* type - which drives non-regular
+    /// handling such as hard-link cohort leader selection - must come from the
+    /// `%stat`-encoded mode. Mirrors upstream, where `x_lstat()` layers
+    /// `get_stat_xattr()` over `lstat()` so hlink/generator see the recorded
+    /// type rather than the placeholder's regular mode.
+    // upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+    pub const fn is_regular_file(&self) -> bool {
+        const S_IFMT: u32 = 0o170000;
+        const S_IFREG: u32 = 0o100000;
+        self.mode & S_IFMT == S_IFREG
+    }
+}
+
+/// Stores metadata as fake-super xattr on a file.
+///
+/// This is called when `--fake-super` is enabled and we need to preserve
+/// privileged metadata that we cannot apply directly (ownership, devices).
+#[cfg(all(unix, feature = "xattr"))]
+pub fn store_fake_super(path: &Path, stat: &FakeSuperStat) -> io::Result<()> {
+    let value = stat.encode();
+    xattr::set(path, FAKE_SUPER_XATTR, value.as_bytes())
+}
+
+/// Retrieves fake-super metadata from a file's xattr.
+///
+/// Returns `None` if the xattr doesn't exist.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
+    match xattr::get(path, FAKE_SUPER_XATTR) {
+        Ok(Some(value)) => {
+            let s = String::from_utf8(value).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid UTF-8 in fake-super xattr: {e}"),
+                )
+            })?;
+            Ok(Some(FakeSuperStat::decode(&s)?))
+        }
+        Ok(None) => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Returns `true` when `err` reports that the target xattr is already absent.
+///
+/// Removing a non-existent xattr reports `ENODATA` on Linux and `ENOATTR` on
+/// BSD/macOS (on Linux the two are the same errno). Either way the attribute is
+/// already gone, so the removal is a benign no-op. Mirrors the tolerant handling
+/// in `xattr_unix.rs` and upstream, which only removes `%stat` when it exists
+/// (upstream: xattrs.c:1229 `if (xst.st_mode && sys_lremovexattr(...))`).
+#[cfg(all(unix, feature = "xattr"))]
+fn is_absent_xattr(err: &io::Error) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let absent = libc::ENODATA;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let absent = libc::ENOATTR;
+    err.raw_os_error() == Some(absent)
+}
+
+/// Removes fake-super metadata from a file.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn remove_fake_super(path: &Path) -> io::Result<()> {
+    match xattr::remove(path, FAKE_SUPER_XATTR) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) if is_absent_xattr(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Computes the *effective* fake-super stat for a source file.
+///
+/// Under `--fake-super`, a source placeholder file may already carry a
+/// `user.rsync.%stat` xattr recorded by an earlier fake-super receive. When
+/// present it holds the real mode/uid/gid/rdev the placeholder stands in for,
+/// so it - not the placeholder's own `fs::Metadata` - is the source of truth
+/// for what to preserve onto the destination. When absent (a first-time
+/// fake-super send of a real file), fall back to [`FakeSuperStat::from_metadata`].
+///
+/// This mirrors upstream rsync's `x_lstat()`, which layers `get_stat_xattr()`
+/// over the raw `lstat()` so the placeholder appears to have the recorded
+/// ownership/type on every subsequent read.
+// upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+#[cfg(all(unix, feature = "xattr"))]
+pub fn effective_source_stat(source: &Path, metadata: &Metadata) -> FakeSuperStat {
+    match load_fake_super(source) {
+        Ok(Some(stat)) => stat,
+        _ => FakeSuperStat::from_metadata(metadata),
+    }
+}
+
+/// Non-xattr fallback: the effective stat is always derived from `fs::Metadata`.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn effective_source_stat(_source: &Path, metadata: &Metadata) -> FakeSuperStat {
+    FakeSuperStat::from_metadata(metadata)
+}
+
+/// Checks if the file mode indicates a device file.
+#[cfg(unix)]
+const fn is_device_file(mode: u32) -> bool {
+    const S_IFMT: u32 = 0o170000;
+    const S_IFBLK: u32 = 0o060000;
+    const S_IFCHR: u32 = 0o020000;
+
+    let file_type = mode & S_IFMT;
+    file_type == S_IFBLK || file_type == S_IFCHR
+}
+
+/// Extracts the major device number from a combined rdev value.
+///
+/// # Linux Encoding (GLIBC)
+///
+/// Linux uses a split encoding where major spans non-contiguous bits:
+/// ```text
+/// rdev bits:  63..44  43..32  31..20  19..12  11..8   7..0
+/// meaning:    unused  major   unused  minor   major   minor
+///                     (high)          (high)  (low)   (low)
+/// ```
+///
+/// Formula: `major = bits[11:8] | bits[43:32]`
+#[cfg(all(unix, target_os = "linux"))]
+const fn major(rdev: u64) -> u32 {
+    ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
+}
+
+/// Extracts the major device number from a combined rdev value.
+///
+/// # BSD/macOS Encoding
+///
+/// Uses a simpler layout with major in the high byte:
+/// ```text
+/// rdev bits:  31..24    23..0
+/// meaning:    major     minor
+/// ```
+#[cfg(all(unix, not(target_os = "linux")))]
+fn major(rdev: u64) -> u32 {
+    (rdev >> 24) as u32
+}
+
+/// Extracts the minor device number from a combined rdev value.
+///
+/// # Linux Encoding (GLIBC)
+///
+/// Minor spans non-contiguous bits:
+/// ```text
+/// rdev bits:  19..12   7..0
+/// meaning:    minor    minor
+///             (high)   (low)
+/// ```
+///
+/// Formula: `minor = bits[7:0] | bits[19:12]`
+#[cfg(all(unix, target_os = "linux"))]
+const fn minor(rdev: u64) -> u32 {
+    (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
+}
+
+/// Extracts the minor device number from a combined rdev value.
+///
+/// # BSD/macOS Encoding
+///
+/// Minor occupies the low 24 bits.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn minor(rdev: u64) -> u32 {
+    (rdev & 0xffffff) as u32
+}
+
+/// Returns `Unsupported` on platforms without xattr support, since fake-super
+/// requires the `user.rsync.%stat` extended attribute.
+///
+/// upstream: `xattrs.c` - fake-super requires `SUPPORT_XATTRS`.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "fake-super requires xattr support",
+    ))
+}
+
+/// Always returns `Ok(None)` on platforms without xattr support.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
+    Ok(None)
+}
+
+/// No-op on platforms without xattr support.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_regular_file() {
+        let stat = FakeSuperStat {
+            mode: 0o100644,
+            uid: 1000,
+            gid: 1000,
+            rdev: None,
+        };
+        // Upstream format: mode rdev uid:gid
+        assert_eq!(stat.encode(), "100644 0,0 1000:1000");
+    }
+
+    #[test]
+    fn test_encode_directory() {
+        let stat = FakeSuperStat {
+            mode: 0o40755,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        assert_eq!(stat.encode(), "40755 0,0 0:0");
+    }
+
+    #[test]
+    fn test_encode_block_device() {
+        let stat = FakeSuperStat {
+            mode: 0o60660,
+            uid: 0,
+            gid: 6,
+            rdev: Some((8, 0)),
+        };
+        // Upstream format: mode rdev uid:gid
+        assert_eq!(stat.encode(), "60660 8,0 0:6");
+    }
+
+    #[test]
+    fn test_encode_char_device() {
+        let stat = FakeSuperStat {
+            mode: 0o20666,
+            uid: 0,
+            gid: 0,
+            rdev: Some((1, 3)),
+        };
+        assert_eq!(stat.encode(), "20666 1,3 0:0");
+    }
+
+    #[test]
+    fn test_encode_symlink() {
+        let stat = FakeSuperStat {
+            mode: 0o120777,
+            uid: 1000,
+            gid: 1000,
+            rdev: None,
+        };
+        assert_eq!(stat.encode(), "120777 0,0 1000:1000");
+    }
+
+    #[test]
+    fn test_decode_regular_file() {
+        let stat = FakeSuperStat::decode("100644 0,0 1000:1000").unwrap();
+        assert_eq!(stat.mode, 0o100644);
+        assert_eq!(stat.uid, 1000);
+        assert_eq!(stat.gid, 1000);
+        assert_eq!(stat.rdev, None);
+    }
+
+    #[test]
+    fn test_decode_block_device() {
+        let stat = FakeSuperStat::decode("60660 8,0 0:6").unwrap();
+        assert_eq!(stat.mode, 0o60660);
+        assert_eq!(stat.uid, 0);
+        assert_eq!(stat.gid, 6);
+        assert_eq!(stat.rdev, Some((8, 0)));
+    }
+
+    #[test]
+    fn test_decode_roundtrip() {
+        let original = FakeSuperStat {
+            mode: 0o100755,
+            uid: 500,
+            gid: 500,
+            rdev: None,
+        };
+
+        let encoded = original.encode();
+        let decoded = FakeSuperStat::decode(&encoded).unwrap();
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_decode_roundtrip_with_rdev() {
+        let original = FakeSuperStat {
+            mode: 0o60660,
+            uid: 0,
+            gid: 6,
+            rdev: Some((8, 1)),
+        };
+
+        let encoded = original.encode();
+        let decoded = FakeSuperStat::decode(&encoded).unwrap();
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_decode_invalid_format() {
+        assert!(FakeSuperStat::decode("").is_err());
+        assert!(FakeSuperStat::decode("100644").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0").is_err()); // Missing uid:gid
+        assert!(FakeSuperStat::decode("invalid 0,0 1000:1000").is_err());
+        assert!(FakeSuperStat::decode("100644 invalid 1000:1000").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0 invalid").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0 1000,1000").is_err()); // Wrong separator for uid/gid
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_device_file() {
+        assert!(!is_device_file(0o100644)); // Regular file
+        assert!(!is_device_file(0o40755)); // Directory
+        assert!(!is_device_file(0o120777)); // Symlink
+        assert!(is_device_file(0o60660)); // Block device
+        assert!(is_device_file(0o20666)); // Char device
+    }
+
+    // Verifies the local-copy fake-super source read: a placeholder that
+    // already carries a `user.rsync.%stat` xattr must forward the RECORDED
+    // uid/gid/mode/rdev, not the placeholder's own on-disk stat. This is the
+    // exact round-trip a `--fake-super` local copy of a previously-received
+    // placeholder must preserve. upstream: xattrs.c:get_stat_xattr().
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn effective_source_stat_prefers_recorded_xattr() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("placeholder");
+        std::fs::write(&path, b"placeholder body").expect("write");
+
+        let recorded = FakeSuperStat {
+            mode: 0o60644,
+            uid: 5000,
+            gid: 5002,
+            rdev: Some((42, 69)),
+        };
+        // Skip when the FS can't hold user xattrs (e.g. tmpfs without support).
+        if store_fake_super(&path, &recorded).is_err() {
+            return;
+        }
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        let effective = effective_source_stat(&path, &meta);
+        assert_eq!(
+            effective, recorded,
+            "recorded %stat must win over the placeholder's real stat"
+        );
+    }
+
+    // Without a recorded xattr, the effective stat falls back to the file's
+    // real `fs::Metadata` (first-time fake-super send of a real file).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn effective_source_stat_falls_back_to_metadata() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("real");
+        std::fs::write(&path, b"real body").expect("write");
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        let effective = effective_source_stat(&path, &meta);
+        assert_eq!(effective, FakeSuperStat::from_metadata(&meta));
+        assert_eq!(effective.uid, meta.uid());
+        assert_eq!(effective.gid, meta.gid());
+    }
+
+    /// Removing fake-super metadata from a file that never had a `%stat` xattr
+    /// must succeed. The removexattr syscall reports `ENODATA` (Linux) or
+    /// `ENOATTR` (BSD/macOS), which must be treated as a benign no-op rather
+    /// than a hard error (upstream: xattrs.c:1229 only removes when present).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn remove_fake_super_absent_xattr_is_ok() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Confirm the FS supports user xattrs at all; skip on tmpfs without it,
+        // where every xattr op returns ENOTSUP rather than the ENODATA we test.
+        let probe = temp.path().join("probe");
+        std::fs::write(&probe, b"probe").expect("write");
+        let stat = FakeSuperStat {
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        if store_fake_super(&probe, &stat).is_err() {
+            return;
+        }
+
+        // A fresh file that never carried user.rsync.%stat: removal reports
+        // ENODATA/ENOATTR internally and must surface as Ok, not an error.
+        let path = temp.path().join("no-stat");
+        std::fs::write(&path, b"body").expect("write");
+        remove_fake_super(&path).expect("remove of absent fake-super xattr must be Ok");
+    }
+
+    #[cfg(not(all(unix, feature = "xattr")))]
+    mod stub_tests {
+        use super::*;
+        use std::path::Path;
+
+        #[test]
+        fn store_fake_super_stub_returns_unsupported() {
+            let path = Path::new("/nonexistent/file");
+            let stat = FakeSuperStat {
+                mode: 0o100644,
+                uid: 1000,
+                gid: 1000,
+                rdev: None,
+            };
+            let err = store_fake_super(path, &stat).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+            assert!(err.to_string().contains("xattr"));
+        }
+
+        #[test]
+        fn load_fake_super_stub_returns_none() {
+            let path = Path::new("/nonexistent/file");
+            let result = load_fake_super(path).unwrap();
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn remove_fake_super_stub_returns_ok() {
+            let path = Path::new("/nonexistent/file");
+            let result = remove_fake_super(path);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn from_metadata_non_unix_returns_defaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"content").expect("write");
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        let stat = FakeSuperStat::from_metadata(&metadata);
+        assert_eq!(stat.mode, 0o100644);
+        assert_eq!(stat.uid, 0);
+        assert_eq!(stat.gid, 0);
+        assert_eq!(stat.rdev, None);
+    }
+}

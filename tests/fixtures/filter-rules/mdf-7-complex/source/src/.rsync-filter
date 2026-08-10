@@ -1,0 +1,10 @@
+# MDF-7 fixture: src/.rsync-filter
+# Exercises: short-form `.` (one-shot merge) directive merging a sibling
+# rule file once at parse time. Upstream reference: exclude.c:1186-1188
+# (FILTRULE_MERGE_FILE).
+
+# One-shot merge of build-artifact exclusions from the dotfile next door.
+. .build-excludes
+
+# Direct exclude rule confirming the merge happens BEFORE this rule.
+- *.bak

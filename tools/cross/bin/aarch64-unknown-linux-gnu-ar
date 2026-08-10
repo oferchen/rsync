@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+CROSS_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+. "${CROSS_DIR}/lib.sh"
+
+for candidate in \
+    "${AARCH64_LINUX_GNU_AR:-}" \
+    "/usr/bin/aarch64-linux-gnu-ar" \
+    "/usr/local/bin/aarch64-linux-gnu-ar" \
+    "/opt/homebrew/bin/aarch64-linux-gnu-ar" \
+    "/opt/local/bin/aarch64-linux-gnu-ar"
+do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
+
+ZIG_BIN=$(resolve_zig_binary "$CROSS_DIR")
+exec "$ZIG_BIN" ar -target aarch64-linux-gnu "$@"

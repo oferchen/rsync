@@ -1,0 +1,821 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'xtask/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
+      - '.github/workflows/_interop-macos.yml'
+      - '.github/workflows/_interop-windows.yml'
+      - '.github/workflows/_upstream-testsuite.yml'
+      - 'docker/**'
+      - 'Cross.toml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'xtask/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
+      - '.github/workflows/_interop-macos.yml'
+      - '.github/workflows/_interop-windows.yml'
+      - '.github/workflows/_upstream-testsuite.yml'
+      - 'docker/**'
+      - 'Cross.toml'
+  workflow_dispatch:
+  schedule:
+    # Run nightly to exercise beta/nightly toolchains (not run on PRs)
+    - cron: '30 3 * * *'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  # ===========================================================================
+  # Lint Job - Fast feedback on formatting and clippy issues
+  # ===========================================================================
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      # Regenerate Cargo.lock against Cargo.toml at job start so workspace
+      # metadata bumps that didn't refresh the lockfile don't block CI.
+      # Runs in --offline mode so no network fetch is required.
+      # continue-on-error: cold rust-cache leaves the registry index
+      # unavailable, which causes --offline regen to fail with "no matching
+      # package" even when the lockfile is already in sync; the subsequent
+      # --locked cargo commands surface any real lockfile mismatch loudly.
+      - name: Regenerate Cargo.lock
+        run: cargo update --workspace --offline
+        continue-on-error: true
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
+
+      # BPF-5: Detects BufferPool cap-touching tests that mutate
+      # `OC_RSYNC_BUFFER_POOL_*` env vars without `platform::env::EnvGuard`.
+      # Runs in warn-only mode until BPF-3 (#2821) closes the existing
+      # gap; flip the workflow to strict via `OC_RSYNC_ENVGUARD_LINT_STRICT=1`
+      # in a follow-up. EOL plan in `docs/design/bpf-4-envguard-ci-lint-spec.md`.
+      - name: Install ripgrep (required by EnvGuard lint)
+        run: sudo apt-get install -y ripgrep
+
+      - name: EnvGuard lint (BPF-5)
+        run: bash tools/ci/check_envguard.sh
+
+      # IUR-6.c: Prevent reintroduction of Arc<Mutex<IoUring>> serialization
+      # in hot-path io_uring factory modules. The per-thread ring migration
+      # (IUR-3) eliminated this bottleneck; this lint keeps it gone.
+      - name: Shared-ring removal guard (IUR-6.c)
+        run: bash tools/ci/check_shared_ring_removal.sh
+
+  # ===========================================================================
+  # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
+  # ---------------------------------------------------------------------------
+  # Runs `tools/audit/unsafe_safety_comment_audit.py` to surface `unsafe { ... }`
+  # blocks that lack a SAFETY justification or whose justification is a
+  # placeholder (TODO/FIXME/empty). Marked `continue-on-error: true` while the
+  # outstanding `fast_io` and `checksums` violations documented in
+  # `docs/audits/unsafe-safety-comment-audit.md` are being addressed. Promote to
+  # a required check once the violation count reaches zero (or a documented
+  # threshold) and the script exits non-zero on regression.
+  # ===========================================================================
+  unsafe-safety-comment-audit:
+    name: unsafe-safety-comment-audit (informational)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    timeout-minutes: 5
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Run unsafe SAFETY comment audit
+        run: python3 tools/audit/unsafe_safety_comment_audit.py
+
+  # ===========================================================================
+  # Test Job - Full test suite on Linux with toolchain matrix
+  # ===========================================================================
+  test:
+    name: nextest (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 120
+    # Stable gates merge; beta/nightly are informational so a churning
+    # nightly compiler does not block PR throughput. Branch protection
+    # should pin the required check to `nextest (stable)`.
+    continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-chrome-stable \
+            firefox powershell mono-devel libgl1-mesa-dri google-cloud-cli 2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: test
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      # See lint job comment above re: continue-on-error on cold rust-cache.
+      - name: Regenerate Cargo.lock
+        run: cargo update --workspace --offline
+        continue-on-error: true
+
+      - name: Run tests
+        run: cargo nextest run --locked --profile ci --workspace --all-features
+
+      - name: Set up SSH loopback
+        if: matrix.toolchain == 'stable'
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Run SSH integration tests
+        if: matrix.toolchain == 'stable'
+        continue-on-error: true
+        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-linux-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync
+            target/debug/xtask
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Feature Flags - Test various feature combinations (reusable workflow)
+  # ===========================================================================
+  feature-flags:
+    name: Feature flag combinations
+    needs: lint
+    uses: ./.github/workflows/_test-features.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+
+  # ===========================================================================
+  # Windows Test - Platform-specific testing with toolchain matrix
+  # ===========================================================================
+  windows-test:
+    name: Windows (${{ matrix.toolchain }})
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 45
+    continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for taiki-e/install-action bash startup failures on the
+          # Windows partner runners (actions/partner-runner-images#169). Download
+          # the prebuilt cargo-nextest binary via PowerShell so we never invoke
+          # bash during install.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      - name: Test
+        run: |
+          # Run Windows-specific crates only (core, engine, cli have platform code)
+          # Full test suite runs on Linux; Windows validates platform-specific paths
+          cargo nextest run --locked -p core -p engine -p cli --all-features
+
+      # Pin the Windows crtime (NTFS creation-time via SetFileTime), NTFS
+      # sparse (FSCTL_SET_SPARSE) and IOCP read-parity tests on the required
+      # Windows cell. These live in `metadata` (crtime) and `fast_io` (sparse,
+      # IOCP) - crates the main Test step above does not run - so without this
+      # step the Windows regression signal for those paths sits only in the
+      # separate windows-acl-xattr / windows-iocp jobs. The filter matches the
+      # crtime conversion and skip-flag tests, the mark_file_sparse probe, the
+      # IOCP-vs-std read-path parity tests, and the network receiver's Windows
+      # symlink materialization (directory link -> junction fallback, file link
+      # -> skip-with-soft-error), which lives in `transfer` - another crate the
+      # main Test step does not run.
+      - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
+        shell: bash
+        run: cargo nextest run --locked -p metadata -p fast_io -p transfer -E 'test(crtime) | test(sparse) | test(iocp_read_parity) | test(junction) | test(file_symlink_reports) | test(windows_receiver_symlink)'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-windows-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync.exe
+            target/debug/xtask.exe
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Windows IOCP - Explicit `--features iocp` coverage (issue #1900)
+  # ---------------------------------------------------------------------------
+  # Default features already include `iocp` so the main `windows-test` job
+  # exercises it implicitly. This job pins the feature explicitly to guarantee
+  # beta-grade Windows confidence: the IOCP code path (PRs #1717-#1721) must
+  # build and pass tests on its own without relying on other default features
+  # masking regressions. Tests target `fast_io` (the crate that owns IOCP) and
+  # `transfer` (the primary consumer of fast_io's async file I/O).
+  # ===========================================================================
+  windows-iocp:
+    name: Windows IOCP (--features iocp)
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-iocp
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the workspace with iocp explicitly enabled. The feature is in
+      # defaults but pinning it here protects against future default changes
+      # silently dropping iocp coverage from CI.
+      - name: Build workspace (--features iocp)
+        run: cargo build --locked --workspace --features iocp
+
+      # Build fast_io with only iocp enabled (no other default features) so
+      # the IOCP code path is verified in isolation.
+      - name: Build fast_io (--no-default-features --features iocp)
+        run: cargo build --locked -p fast_io --no-default-features --features iocp
+
+      # Build fast_io with iocp plus the opt-in `transmitfile` feature. The
+      # Windows `TransmitFile()` zero-copy file-to-socket primitive
+      # (fast_io::iocp::transmit_file, WindowsTransmitFile) depends on `iocp`
+      # but is not in the default feature set, so no other CI cell compiles
+      # it. Pinning it here keeps the TransmitFile path building on
+      # `windows-latest` instead of only ever compiling on a nightly run.
+      - name: Build fast_io (--features iocp,transmitfile)
+        run: cargo build --locked -p fast_io --features iocp,transmitfile
+
+      # Run the iocp test suite. fast_io owns the IOCP modules; transfer
+      # exercises the consumer side via fast_io's path dependency. The
+      # `transmitfile` feature is enabled so the TransmitFile module's own
+      # tests run alongside the core IOCP suite.
+      - name: Test fast_io (--features iocp,transmitfile)
+        run: cargo nextest run --locked -p fast_io --no-default-features --features iocp,transmitfile
+
+      # transfer has no own iocp feature; it picks up iocp transitively
+      # through fast_io's default features (which include iocp). Running with
+      # `--all-features` here ensures the full transfer surface compiles and
+      # passes against the iocp-enabled fast_io.
+      - name: Test transfer (iocp via fast_io defaults)
+        run: cargo nextest run --locked -p transfer --all-features
+
+  # ===========================================================================
+  # Windows ACL/xattr - Explicit ACL and xattr coverage (issue #1869)
+  # ---------------------------------------------------------------------------
+  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
+  # `metadata` crate (which owns Windows ACL via Win32 GetSecurityInfo and
+  # Windows xattr via NTFS Alternate Data Streams) is never exercised on
+  # `windows-latest`. This job adds explicit coverage for those code paths so
+  # master CI catches Windows ACL/ADS regressions.
+  # ===========================================================================
+  windows-acl-xattr:
+    name: Windows ACL/xattr
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-acl-xattr
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build metadata with ACL + xattr explicitly enabled so the Win32
+      # GetSecurityInfo / SetSecurityInfo and ADS code paths are exercised.
+      - name: Build metadata (--features acl,xattr)
+        run: cargo build --locked -p metadata --features acl,xattr
+
+      # Build oc-rsync.exe so the metadata integration tests that spawn the
+      # binary as a subprocess (windows_ads_xattrs_roundtrip,
+      # windows_symlink_junction_transfer) exercise the real transfer path
+      # rather than skipping. Builds at the default debug profile to keep
+      # the CI run fast; the integration tests probe target/debug first.
+      # Tests that require admin privileges (e.g. `mklink /d` for directory
+      # symlinks) still skip cleanly on the unelevated stock runner.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
+      # Run the full metadata test suite with both features enabled. This
+      # covers acl_windows::tests (DACL round-trip), xattr_windows::tests
+      # (NTFS Alternate Data Streams), and the end-to-end reparse-point
+      # transfer tests in windows_symlink_junction_transfer.rs. Symlink
+      # cases skip cleanly without `SeCreateSymbolicLinkPrivilege`; the
+      # junction case runs unconditionally (`mklink /j` does not require
+      # elevation on Windows 10+).
+      - name: Test metadata (--features acl,xattr)
+        run: cargo nextest run --locked -p metadata --features acl,xattr
+
+      # Filtered workspace run that pins the ACL/ADS test sets in case future
+      # tests land outside the metadata crate. Uses nextest expression syntax
+      # to match `acl`, `xattr`, `ads`, and `stream` (NTFS ADS test names).
+      # `shell: bash` is required so the single-quoted -E expression survives
+      # without PowerShell-specific escaping.
+      - name: Test ACL/xattr/ADS filter (workspace)
+        shell: bash
+        run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
+
+  # ===========================================================================
+  # Windows daemon - Build and test the daemon crate at PR time.
+  # ---------------------------------------------------------------------------
+  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
+  # `daemon` crate (which carries Windows-specific code in its TCP listener,
+  # name converter, xfer-exec, and module-access paths) never builds on
+  # `windows-latest` at PR time. Daemon Windows coverage lived only in the
+  # nightly `windows-nightly-daemon.yml` schedule, so a Windows-only daemon
+  # regression could merge and sit unnoticed until the next nightly run. This
+  # job promotes that coverage to PR time so it is caught before merge.
+  # ===========================================================================
+  windows-daemon:
+    name: Windows daemon
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-daemon-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-daemon
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the daemon crate first so the nextest step links against an
+      # already-warm build artifact. Default features only; the cross-OS
+      # feature rows in _test-features.yml cover the async, tracing,
+      # concurrent-sessions, and iconv variants.
+      - name: Build daemon crate
+        run: cargo build --locked -p daemon
+
+      # Run the daemon-crate test suite on Windows so the Windows-gated
+      # listener, name-converter, and xfer-exec paths are exercised at PR
+      # time rather than only on the nightly schedule.
+      - name: Test daemon crate
+        run: cargo nextest run --locked -p daemon --no-fail-fast
+
+  # ===========================================================================
+  # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
+  # ===========================================================================
+  windows-gnu-cross-check:
+    name: Windows GNU cross-check
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check compilation
+        run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
+
+  # ===========================================================================
+  # macOS Test - Platform-specific testing with toolchain matrix
+  # ===========================================================================
+  macos-test:
+    name: macOS (${{ matrix.toolchain }})
+    runs-on: macos-latest
+    needs: lint
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      # Invoke through `rustup run` to bypass the cargo proxy shim, which on
+      # macOS GitHub runners can resolve to rustup-init directly and fail with
+      # `error: unexpected argument 'build' found` when rust-toolchain.toml
+      # pins a toolchain that was not pre-installed.
+      - name: Test
+        run: |
+          # Run macOS-specific crates only (core, engine, cli have platform code).
+          # Full test suite runs on Linux; macOS validates platform-specific paths.
+          # metadata covers the Darwin acl_exacl branch and the macOS timestamp
+          # path in crates/metadata/src/apply/timestamps.rs. apple-fs covers the
+          # AppleDouble round-trip plus the macOS-only resource fork pipeline.
+          # Tests that need root self-skip via geteuid() (see acl_handling.rs)
+          # and the resource-fork test probes xattr support and skips on
+          # filesystems that do not support it (e.g. FAT-mounted /tmp).
+          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs --all-features
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-macos-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync
+            target/debug/xtask
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Linux musl Test - Static musl binary build and test with toolchain matrix
+  # ===========================================================================
+  linux-musl:
+    name: Linux musl (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean || true
+          df -h /
+
+      # Pre-warm the toolchain download with a short-timeout retry loop so a
+      # transient rustup fetch failure (DNS hang or TCP connect timeout to the
+      # static.rust-lang.org CDN edge) self-heals fast instead of failing the
+      # job. Each attempt is wall-clock capped so a hung connect is killed and
+      # retried rather than eating the job budget. dtolnay/rust-toolchain below
+      # then hits the local cache. 2 retries is plenty; more is wasted time.
+      - name: Pre-install toolchain (short-timeout retry on transient fetch)
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
+                --profile minimal --no-self-update \
+                --target x86_64-unknown-linux-musl; then
+              exit 0
+            fi
+            echo "::warning::rustup toolchain install attempt ${attempt}/3 failed or timed out; retrying"
+            sleep 5
+          done
+          echo "::error::rustup toolchain install failed after 2 retries"
+          exit 1
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: x86_64-unknown-linux-musl
+
+      - name: Ensure musl target on active toolchain
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build
+        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+
+      - name: Test
+        run: cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+
+      - name: Verify static linking
+        run: |
+          set -euo pipefail
+          BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
+          if [ -f "${BINARY}" ]; then
+            file "${BINARY}"
+            if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
+              printf 'Binary is statically linked\n'
+            else
+              printf 'Warning: binary may not be fully statically linked\n'
+              ldd "${BINARY}" || true
+            fi
+          fi
+
+  # ===========================================================================
+  # Interop Tests - Compatibility with upstream rsync (reusable workflow)
+  # ===========================================================================
+  interop-upstream:
+    name: interop
+    needs: lint
+    uses: ./.github/workflows/_interop.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
+      timeout_minutes: 30
+
+  # ===========================================================================
+  # macOS Interop - Smoke parity with Homebrew upstream rsync (audit G5)
+  # ---------------------------------------------------------------------------
+  # Required check. Runs the portable harness in
+  # `tools/ci/run_interop_smoke.sh` against `brew install rsync`. Skips
+  # Linux-only scenarios (xattr/ACL/daemon/SSH loopback); those stay in
+  # `interop-upstream`.
+  # ===========================================================================
+  interop-upstream-macos:
+    name: interop (macOS)
+    needs: lint
+    uses: ./.github/workflows/_interop-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      timeout_minutes: 25
+
+  # ===========================================================================
+  # Windows Interop - Best-effort smoke parity with MSYS2 rsync (audit G5)
+  # ---------------------------------------------------------------------------
+  # Non-required check (the reusable workflow sets `continue-on-error:
+  # true`). Validates the Windows oc-rsync.exe binary against the
+  # MSYS2/Cygwin upstream rsync for the basic push/pull/delta scenarios.
+  # Promote to required once baseline parity is green on master.
+  # ===========================================================================
+  interop-upstream-windows:
+    name: interop (Windows, best-effort)
+    needs: lint
+    uses: ./.github/workflows/_interop-windows.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      timeout_minutes: 30
+
+  # ===========================================================================
+  # Upstream Testsuite - Drive upstream rsync's own testsuite/*.test corpus
+  # against oc-rsync (reusable workflow)
+  # ---------------------------------------------------------------------------
+  # Required check. The harness exits non-zero only on UNEXPECTED failures
+  # (tests not in tools/ci/upstream_testsuite_known_failures.conf) or
+  # UNEXPECTED passes (known-failure tests that start passing); both surface
+  # regressions worth blocking on. The ci-skip umbrella emits the matching
+  # `upstream-testsuite / upstream testsuite` context on doc-only PRs so this
+  # required check never deadlocks.
+  # ===========================================================================
+  upstream-testsuite:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
+
+  # ===========================================================================
+  # DG-3.e: concurrent_register_and_dispatch stress (#2694)
+  # ---------------------------------------------------------------------------
+  # Runs the 1000-thread x 10K-iter stress in
+  # `crates/engine/tests/parallel_apply_dg3_stress.rs` on Linux + Windows +
+  # macOS to validate the DG-3 SlotData/BarrierState split fixes the
+  # `finish_file` Arc::try_unwrap release race that previously needed the
+  # spin-then-yield workaround. Non-required so a flake (e.g. CI runner
+  # thread-limit pressure) does not block merges; surfaces regressions in
+  # the post-DG-3 applier under fan-out load that the standard nextest cell
+  # would never reach with its smaller per-test thread budgets.
+  # ===========================================================================
+  dg3-stress:
+    name: DG-3 stress (${{ matrix.os }}, non-required)
+    needs: lint
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-dg3-stress-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: dg3-stress
+
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Mirrors the workaround used by `windows-test` and `windows-iocp`
+          # for actions/partner-runner-images#169.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the engine crate with the `dg-stress` feature so the stress
+      # test under `#[cfg(feature = "dg-stress")]` is compiled in.
+      - name: Build engine (--features dg-stress)
+        run: cargo build --locked -p engine --tests --features dg-stress
+
+      # Run only the stress test. `--no-tests=pass` keeps the cell green if
+      # the test ever gets renamed or moved (the filter would match zero
+      # tests). 1000 threads x 10K iter = 10M cycles; in-memory sinks make
+      # the per-iter cost a few atomic adds plus the applier's mutex path.
+      - name: Run DG-3 stress (--features dg-stress)
+        run: cargo nextest run --locked -p engine --features dg-stress --no-tests=pass -E 'test(concurrent_register_and_dispatch_stress)'

@@ -1,0 +1,1037 @@
+//! Directory entry planning and action classification.
+//!
+//! Determines how each directory entry should be handled (copy, skip, link)
+//! based on file type, filter rules, and command-line options. Mirrors the
+//! decision logic in upstream `flist.c:make_file()` and `flist.c:flist_sort_and_clean()`.
+
+use std::borrow::Cow;
+use std::ffi::OsStr;
+#[cfg(test)]
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::local_copy::{
+    CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, delete_extraneous_entries,
+    follow_symlink_metadata,
+};
+
+use super::super::{
+    emit_cannot_convert_filename, name_is_convertible, non_empty_path, symlink_target_is_safe,
+    transcode_filename_component,
+};
+use super::support::{DirectoryEntry, is_device, is_fifo};
+
+/// Action to take for a directory entry during recursive copy.
+// upstream: generator.c:recv_generator() - entry dispatch
+#[derive(Clone, Copy)]
+pub(crate) enum EntryAction {
+    /// Entry excluded by filter rules.
+    SkipExcluded,
+    /// Entry is a non-regular file type that is not being preserved.
+    SkipNonRegular,
+    /// Entry is on a different filesystem and `--one-file-system` is active.
+    SkipMountPoint,
+    /// Recurse into the directory.
+    CopyDirectory,
+    /// Copy the regular file.
+    CopyFile,
+    /// Recreate the symbolic link.
+    CopySymlink,
+    /// Recreate the FIFO (named pipe).
+    CopyFifo,
+    /// Recreate the device node.
+    CopyDevice,
+    /// Copy a device node as a regular file (`--copy-devices`).
+    CopyDeviceAsFile,
+}
+
+/// A directory entry paired with its planned action and computed relative path.
+pub(crate) struct PlannedEntry<'a> {
+    pub(crate) entry: &'a DirectoryEntry,
+    pub(crate) relative: PathBuf,
+    pub(crate) action: EntryAction,
+    pub(crate) metadata_override: Option<fs::Metadata>,
+}
+
+impl<'a> PlannedEntry<'a> {
+    /// Returns the effective metadata, preferring the override when present.
+    pub(crate) fn metadata(&self) -> &fs::Metadata {
+        self.metadata_override
+            .as_ref()
+            .unwrap_or(&self.entry.metadata)
+    }
+}
+
+/// Result of planning all entries in a directory for the recursive copy.
+pub(crate) struct DirectoryPlan<'a> {
+    pub(crate) planned_entries: Vec<PlannedEntry<'a>>,
+    /// Names of entries to keep when deleting extraneous files.
+    ///
+    /// When `--iconv` is not configured this borrows the
+    /// `DirectoryEntry::file_name` fields zero-copy. With `--iconv` the
+    /// destination filename is the iconv-converted form (LOCAL -> REMOTE),
+    /// so the keep-list must hold the converted bytes for the deletion
+    /// step to compare them against the actual on-disk destination
+    /// entries. The `Cow` keeps the no-iconv hot path allocation-free
+    /// while letting the iconv path own the transcoded `OsString`.
+    pub(crate) keep_names: Vec<Cow<'a, OsStr>>,
+    pub(crate) deletion_enabled: bool,
+    pub(crate) delete_timing: Option<DeleteTiming>,
+}
+
+/// Centralized decision policy for how to treat a directory entry.
+///
+/// This encapsulates the "strategy" for turning the entry type + context
+/// into an [`EntryAction`] and whether the name should be preserved for
+/// deletion tracking.
+///
+/// When `prune_empty_dirs` is active and a directory is excluded by a
+/// non-directory-specific filter rule (e.g., `*` rather than `cache/`),
+/// we still return [`EntryAction::CopyDirectory`] so the directory is
+/// descended into. This allows file-level include rules to be evaluated
+/// inside the directory; the pruning logic in [`copy_directory_recursive`]
+/// removes the directory afterwards if no children survive filtering.
+/// This matches upstream rsync behavior where the sender includes all
+/// directories in the file list and the receiver prunes empty ones
+/// post-hoc in `flist_sort_and_clean()`.
+fn decide_entry_action(
+    context: &CopyContext,
+    relative_path: &Path,
+    entry_type: fs::FileType,
+    effective_type: fs::FileType,
+    keep_name: &mut bool,
+) -> Result<EntryAction, LocalCopyError> {
+    if !context.allows(relative_path, effective_type.is_dir()) {
+        // upstream: flist.c:flist_sort_and_clean() - when -m is active,
+        // directories excluded by non-dir-specific rules are still traversed
+        // so that file-level include rules can rescue their contents.
+        if effective_type.is_dir()
+            && context.prune_empty_dirs_enabled()
+            && context.excluded_dir_by_non_dir_rule(relative_path)
+        {
+            return Ok(EntryAction::CopyDirectory);
+        }
+
+        // upstream: a file absent from the sender flist (sender-side hide, or any
+        // exclude under --delete-excluded) is extraneous at the receiver and is
+        // removed by --del/--delete-during. Drop it from the keep-set exactly when
+        // the delete-side filter permits deletion. Protective both-sides excludes
+        // keep allows_deletion() == false, so they stay in the keep-set and are
+        // never deleted (e.g. a per-dir `- *.deep` still protects nodel.deep).
+        if context.allows_deletion(relative_path, effective_type.is_dir()) {
+            *keep_name = false;
+        }
+        return Ok(EntryAction::SkipExcluded);
+    }
+
+    if entry_type.is_dir() {
+        return Ok(EntryAction::CopyDirectory);
+    }
+
+    if effective_type.is_file() {
+        return Ok(EntryAction::CopyFile);
+    }
+
+    if effective_type.is_dir() {
+        return Ok(EntryAction::CopyDirectory);
+    }
+
+    // Only treat as a symlink when the effective type is still a symlink
+    // (i.e., --copy-links did NOT resolve it to the referent).  When
+    // --copy-links is active and the target is a FIFO or device, we must
+    // fall through to the FIFO / device branches below.
+    // upstream: generator.c:1155 list_file_entry() lists every flist entry, so
+    // `--list-only` records symlinks, FIFOs, and devices (dry-run only reports
+    // them) even without `--links`/`--specials`/`--devices`; a real transfer
+    // without those flags still skips the non-regular entry.
+    let list_only = context.list_only_enabled();
+
+    if entry_type.is_symlink() && effective_type.is_symlink() {
+        if context.links_enabled() || list_only {
+            return Ok(EntryAction::CopySymlink);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    if is_fifo(effective_type) {
+        if context.specials_enabled() || list_only {
+            return Ok(EntryAction::CopyFifo);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    if is_device(effective_type) {
+        if context.copy_devices_as_files_enabled() {
+            return Ok(EntryAction::CopyDeviceAsFile);
+        }
+        if context.devices_enabled() || list_only {
+            return Ok(EntryAction::CopyDevice);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    Err(LocalCopyError::invalid_argument(
+        LocalCopyArgumentError::UnsupportedFileType,
+    ))
+}
+
+/// Plans actions for all entries in a directory.
+///
+/// Iterates over pre-sorted directory entries, applies filter rules,
+/// resolves symlinks when `--copy-links` or `--copy-dirlinks` is active,
+/// and determines the appropriate action for each entry.
+// upstream: flist.c:send_directory() - builds file list from directory
+pub(crate) fn plan_directory_entries<'a>(
+    context: &mut CopyContext,
+    entries: &'a [DirectoryEntry],
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+) -> Result<DirectoryPlan<'a>, LocalCopyError> {
+    let deletion_enabled = context.options().delete_extraneous();
+    let delete_timing = context.delete_timing();
+    let mut keep_names = if deletion_enabled {
+        Vec::with_capacity(entries.len())
+    } else {
+        Vec::new()
+    };
+    let mut planned_entries = Vec::with_capacity(entries.len());
+
+    // Reusable buffer for building relative paths. When a base relative
+    // path is provided, we push each entry name and pop it after use,
+    // avoiding a per-entry PathBuf allocation from Path::join.
+    let mut relative_buf = relative.map(Path::to_path_buf);
+
+    for entry in entries {
+        context.enforce_timeout()?;
+        context.register_progress();
+
+        let file_name = &entry.file_name;
+        let entry_metadata = &entry.metadata;
+        let entry_type = entry_metadata.file_type();
+
+        // upstream: flist.c:make_file() - skip entries with bogus zero st_mode
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if entry_metadata.mode() == 0 {
+                continue;
+            }
+        }
+
+        let mut metadata_override = None;
+        let mut effective_type = entry_type;
+
+        if entry_type.is_symlink()
+            && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+        {
+            match follow_symlink_metadata(entry.path.as_path()) {
+                Ok(target_metadata) => {
+                    let target_type = target_metadata.file_type();
+                    if context.copy_links_enabled()
+                        || (context.copy_dirlinks_enabled() && target_type.is_dir())
+                    {
+                        effective_type = target_type;
+                        metadata_override = Some(target_metadata);
+                    }
+                }
+                Err(error) => {
+                    if context.copy_links_enabled() {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+
+        let relative_path = if let Some(buf) = &mut relative_buf {
+            buf.push(Path::new(&file_name));
+            buf.clone()
+        } else {
+            PathBuf::from(Path::new(&file_name))
+        };
+
+        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // strictly transcoded under --iconv is dropped from the flist with a
+        // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
+        // sets io_error before this directory's delete pass runs, so deletions
+        // are suppressed exactly as upstream's build-then-generate order does;
+        // the entry never enters the plan (no copy, no keep-name, no ndx).
+        if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
+            emit_cannot_convert_filename(relative_path.as_os_str());
+            context.record_iconv_conversion_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
+        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+
+        let mut keep_name = true;
+        let mut action = decide_entry_action(
+            context,
+            relative_path.as_path(),
+            entry_type,
+            effective_type,
+            &mut keep_name,
+        )?;
+
+        // When --copy-unsafe-links is active, the planner must dereference
+        // unsafe symlinks before the executor sees them.  When only
+        // --safe-links is active (without --copy-unsafe-links), we leave
+        // the CopySymlink action in place so that copy_symlink() can
+        // handle it and record the SkippedUnsafeSymlink event properly.
+        if matches!(action, EntryAction::CopySymlink) && context.copy_unsafe_links_enabled() {
+            match fs::read_link(entry.path.as_path()) {
+                Ok(target) => {
+                    let safety_rel = context.strip_safety_prefix(relative_path.as_path());
+                    if !symlink_target_is_safe(&target, safety_rel) {
+                        match follow_symlink_metadata(entry.path.as_path()) {
+                            Ok(target_metadata) => {
+                                let target_type = target_metadata.file_type();
+                                if target_type.is_dir() {
+                                    action = EntryAction::CopyDirectory;
+                                    metadata_override = Some(target_metadata);
+                                } else if target_type.is_file() {
+                                    action = EntryAction::CopyFile;
+                                    metadata_override = Some(target_metadata);
+                                } else if is_fifo(target_type) {
+                                    if context.specials_enabled() {
+                                        action = EntryAction::CopyFifo;
+                                        metadata_override = Some(target_metadata);
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else if is_device(target_type) {
+                                    if context.copy_devices_as_files_enabled() {
+                                        action = EntryAction::CopyDeviceAsFile;
+                                        metadata_override = Some(target_metadata);
+                                    } else if context.devices_enabled() {
+                                        action = EntryAction::CopyDevice;
+                                        metadata_override = Some(target_metadata);
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else {
+                                    keep_name = false;
+                                    action = EntryAction::SkipNonRegular;
+                                    metadata_override = None;
+                                }
+                            }
+                            Err(_) => {
+                                // upstream: flist.c:1277-1282 - dangling symlink
+                                // whose target was to be dereferenced by
+                                // --copy-unsafe-links; log and skip.
+                                eprintln!("symlink has no referent: {}", entry.path.display());
+                                context.record_io_error();
+                                keep_name = false;
+                                action = EntryAction::SkipNonRegular;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Cannot read symlink target - skip with I/O error.
+                    eprintln!("symlink has no referent: {}", entry.path.display());
+                    context.record_io_error();
+                    keep_name = false;
+                    action = EntryAction::SkipNonRegular;
+                }
+            }
+        }
+
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
+                entry.path.as_path(),
+                metadata_override.as_ref().unwrap_or(entry_metadata),
+            )
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
+        }
+
+        if deletion_enabled && keep_name {
+            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // entry found in the source file list via
+            // flist_find_ignore_dirness(), regardless of file type or delete
+            // timing. --delete-before shares that keep decision with
+            // --delete-during/-after (all drive delete_in_dir), so an in-source
+            // regular file must stay in the keep-set. Restricting
+            // --delete-before to directories deleted then re-transferred every
+            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // the receiver hits the filesystem with the iconv-converted name;
+            // align the keep-list so deletion does not wipe freshly-written
+            // entries when --iconv is configured.
+            keep_names.push(transcode_filename_component(
+                file_name.as_os_str(),
+                context.options().iconv(),
+            ));
+        }
+
+        planned_entries.push(PlannedEntry {
+            entry,
+            relative: relative_path,
+            action,
+            metadata_override,
+        });
+        if let Some(buf) = &mut relative_buf {
+            buf.pop();
+        }
+    }
+
+    Ok(DirectoryPlan {
+        planned_entries,
+        keep_names,
+        deletion_enabled,
+        delete_timing,
+    })
+}
+
+/// Reorders each hard-link cohort so the *last* name-sorted member is the
+/// transferred data-holder and the earlier members follow it as aliases.
+///
+/// upstream: `hlink.c:match_gnums()` sorts a cohort by group number then by
+/// name-sorted index and links the members into a list "from last to first",
+/// tagging the highest-index (last name-sorted) member `FLAG_HLINK_LAST`.
+/// `generator.c:1803-1806` then defers every non-last member whose destination
+/// is absent (`statret != 0 && F_HLINK_NOT_LAST`) and only transfers the last
+/// member; `finish_hard_link()` (`hlink.c:474-521`) walks the `F_HL_PREV` chain
+/// (last -> ... -> first) creating the aliases, so the itemize stream emits the
+/// holder first (`>f`) followed by the remaining members in descending name
+/// order, each pointing at the holder (`hf ... => <holder>`).
+///
+/// This reorder reproduces that ordering for the local-copy executor, whose
+/// per-inode [`HardLinkTracker`](crate::local_copy::HardLinkTracker) otherwise
+/// makes the first-processed (first name-sorted) member the data-holder.
+///
+/// The deferral is gated on the destination being absent, mirroring upstream's
+/// `statret != 0` guard: on a no-change rerun every member's destination exists,
+/// so upstream processes them in name order with the first member itemized `.f`
+/// and the rest blank `hf`. Only cohorts with two or more members whose
+/// destinations are missing are reordered.
+///
+/// The reorder is skipped entirely when a `--link-dest`/`--copy-dest`/
+/// `--compare-dest` basis is configured. Upstream's LAST-member deferral lives
+/// at `generator.c:1803`, *after* the alt-dest handling (`generator.c:995-1052`
+/// try_dests_reg); a cohort member satisfied from a basis is placed in name
+/// order and never reaches the deferral, so the FIRST name-sorted member stays
+/// the holder (e.g. `hf f1` / `hf f2 => f1`). Reordering those would swap the
+/// holder name while leaving the alt-dest followers correctly blank, so it is
+/// suppressed to preserve upstream fidelity.
+#[cfg(unix)]
+pub(crate) fn reorder_hardlink_group_holders(
+    hard_links_enabled: bool,
+    has_reference_directories: bool,
+    fake_super_enabled: bool,
+    destination: &Path,
+    planned: &mut Vec<PlannedEntry<'_>>,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    use rustc_hash::FxHashMap;
+
+    if !hard_links_enabled || has_reference_directories {
+        return;
+    }
+
+    // Group regular-file copies with more than one link by (device, inode),
+    // preserving the name-sorted index order the planner already produced.
+    //
+    // The LAST-member data-holder rule only applies to regular files: upstream
+    // defers the last name-sorted member at generator.c:1803 gated on
+    // `F_HLINK_NOT_LAST`, while non-regular cohorts (devices/FIFOs/sockets) are
+    // created FIRST-member-concrete via the `F_HLINK_NOT_FIRST` path
+    // (generator.c:1551). Under `--fake-super` a special file is stored as a
+    // regular on-disk placeholder, so its `fs::Metadata` reports a regular
+    // file; resolve the effective type from the `%stat`-encoded mode
+    // (upstream x_lstat -> get_stat_xattr) so a fake-super device cohort keeps
+    // the FIRST-member-concrete rule like a real device instead of being
+    // wrongly reordered to LAST-member-concrete.
+    let mut groups: FxHashMap<(u64, u64), Vec<usize>> = FxHashMap::default();
+    for (idx, entry) in planned.iter().enumerate() {
+        if !matches!(entry.action, EntryAction::CopyFile) {
+            continue;
+        }
+        let meta = entry.metadata();
+        let effective_regular = if fake_super_enabled {
+            ::metadata::effective_source_stat(&entry.entry.path, meta).is_regular_file()
+        } else {
+            meta.file_type().is_file()
+        };
+        if effective_regular && meta.nlink() > 1 {
+            groups
+                .entry((meta.dev(), meta.ino()))
+                .or_default()
+                .push(idx);
+        }
+    }
+
+    // For each cohort, keep only the members whose destination is missing
+    // (upstream's `statret != 0` deferral guard). The last such member is the
+    // data-holder; the earlier ones are deferred to immediately after it.
+    let mut holder_followers: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut deferred: FxHashMap<usize, ()> = FxHashMap::default();
+    for indices in groups.values() {
+        let fresh: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| {
+                fs::symlink_metadata(destination.join(&planned[i].entry.file_name)).is_err()
+            })
+            .collect();
+        if fresh.len() < 2 {
+            continue;
+        }
+        let (holder, followers) = fresh.split_last().expect("fresh has >= 2 members");
+        for &follower in followers {
+            deferred.insert(follower, ());
+        }
+        holder_followers.insert(*holder, followers.to_vec());
+    }
+
+    if deferred.is_empty() {
+        return;
+    }
+
+    // Rebuild the plan: drop each deferred member from its natural slot and, when
+    // the holder is reached, emit it followed by its deferred members in
+    // descending name order (the `F_HL_PREV` walk order).
+    let mut slots: Vec<Option<PlannedEntry<'_>>> = planned.drain(..).map(Some).collect();
+    let mut reordered = Vec::with_capacity(slots.len());
+    for idx in 0..slots.len() {
+        if deferred.contains_key(&idx) {
+            continue;
+        }
+        if let Some(entry) = slots[idx].take() {
+            reordered.push(entry);
+        }
+        if let Some(followers) = holder_followers.get(&idx) {
+            for &follower in followers.iter().rev() {
+                if let Some(entry) = slots[follower].take() {
+                    reordered.push(entry);
+                }
+            }
+        }
+    }
+
+    *planned = reordered;
+}
+
+/// No-op on platforms without inode metadata: source-side hard-link cohorts are
+/// not detected there (see [`HardLinkTracker`](crate::local_copy::HardLinkTracker)),
+/// so there is no holder to reorder.
+#[cfg(not(unix))]
+pub(crate) fn reorder_hardlink_group_holders(
+    _hard_links_enabled: bool,
+    _has_reference_directories: bool,
+    _fake_super_enabled: bool,
+    _destination: &Path,
+    _planned: &mut Vec<PlannedEntry<'_>>,
+) {
+}
+
+/// Applies pre-transfer deletions when `--delete-before` is active.
+// upstream: generator.c:do_delete_pass() - pre-transfer deletion
+pub(crate) fn apply_pre_transfer_deletions(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    plan: &DirectoryPlan<'_>,
+) -> Result<(), LocalCopyError> {
+    if plan.deletion_enabled && matches!(plan.delete_timing, Some(DeleteTiming::Before)) {
+        delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
+    }
+    Ok(())
+}
+
+/// Plans directory entries with parallel metadata prefetching.
+///
+/// When the `parallel` feature is enabled and the context options require
+/// expensive metadata operations (symlink following, device checks), this
+/// function prefetches the metadata in parallel before running the sequential
+/// planning logic.
+///
+/// # Performance
+///
+/// For directories with many symlinks or when `--one-file-system` is enabled,
+/// this can provide significant speedup by parallelizing filesystem syscalls.
+#[allow(dead_code)] // Prepared for integration with parallel directory traversal
+pub(crate) fn plan_directory_entries_parallel<'a>(
+    context: &mut CopyContext,
+    entries: &'a [DirectoryEntry],
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+) -> Result<DirectoryPlan<'a>, LocalCopyError> {
+    use super::parallel_planner::{PrefetchConfig, prefetch_entry_metadata};
+
+    let config = PrefetchConfig {
+        follow_symlinks: context.copy_links_enabled() || context.copy_dirlinks_enabled(),
+        read_symlink_targets: context.copy_unsafe_links_enabled(),
+        check_devices: context.one_file_system_enabled() && root_device.is_some(),
+    };
+
+    let prefetched = prefetch_entry_metadata(entries, config);
+
+    plan_directory_entries_with_prefetch(context, entries, relative, root_device, &prefetched)
+}
+
+/// Plans directory entries using prefetched metadata.
+///
+/// This is the sequential planning phase that uses pre-gathered metadata
+/// to avoid blocking on filesystem syscalls.
+fn plan_directory_entries_with_prefetch<'a>(
+    context: &mut CopyContext,
+    entries: &'a [DirectoryEntry],
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+    prefetched: &[super::parallel_planner::PrefetchedEntryData],
+) -> Result<DirectoryPlan<'a>, LocalCopyError> {
+    let deletion_enabled = context.options().delete_extraneous();
+    let delete_timing = context.delete_timing();
+    let mut keep_names = if deletion_enabled {
+        Vec::with_capacity(entries.len())
+    } else {
+        Vec::new()
+    };
+    let mut planned_entries = Vec::with_capacity(entries.len());
+
+    // Reusable buffer for building relative paths (same optimization as
+    // plan_directory_entries).
+    let mut relative_buf = relative.map(Path::to_path_buf);
+
+    for (entry, prefetch) in entries.iter().zip(prefetched.iter()) {
+        context.enforce_timeout()?;
+        context.register_progress();
+
+        let file_name = &entry.file_name;
+        let entry_metadata = &entry.metadata;
+        let entry_type = entry_metadata.file_type();
+
+        // upstream: flist.c:make_file() - skip entries with bogus zero st_mode
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if entry_metadata.mode() == 0 {
+                continue;
+            }
+        }
+
+        let mut metadata_override = None;
+        let mut effective_type = entry_type;
+
+        if entry_type.is_symlink()
+            && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+        {
+            if let Some(ref result) = prefetch.symlink_target_metadata {
+                match result {
+                    Ok(target_metadata) => {
+                        let target_type = target_metadata.file_type();
+                        if context.copy_links_enabled()
+                            || (context.copy_dirlinks_enabled() && target_type.is_dir())
+                        {
+                            effective_type = target_type;
+                            metadata_override = Some(target_metadata.clone());
+                        }
+                    }
+                    Err(_) if context.copy_links_enabled() => {
+                        // Re-fetch to get the actual error for reporting
+                        return Err(follow_symlink_metadata(entry.path.as_path()).unwrap_err());
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        let relative_path = if let Some(buf) = &mut relative_buf {
+            buf.push(Path::new(&file_name));
+            buf.clone()
+        } else {
+            PathBuf::from(Path::new(&file_name))
+        };
+
+        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // strictly transcoded under --iconv is dropped from the flist with a
+        // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
+        // sets io_error before this directory's delete pass runs, so deletions
+        // are suppressed exactly as upstream's build-then-generate order does;
+        // the entry never enters the plan (no copy, no keep-name, no ndx).
+        if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
+            emit_cannot_convert_filename(relative_path.as_os_str());
+            context.record_iconv_conversion_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
+        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+
+        let mut keep_name = true;
+        let mut action = decide_entry_action(
+            context,
+            relative_path.as_path(),
+            entry_type,
+            effective_type,
+            &mut keep_name,
+        )?;
+
+        // Handle --copy-unsafe-links with prefetched symlink target.
+        // When only --safe-links is active (no --copy-unsafe-links), we
+        // leave CopySymlink so that copy_symlink() records
+        // SkippedUnsafeSymlink properly.
+        if matches!(action, EntryAction::CopySymlink) && context.copy_unsafe_links_enabled() {
+            if let Some(ref result) = prefetch.symlink_target {
+                match result {
+                    Ok(target) => {
+                        let safety_rel = context.strip_safety_prefix(relative_path.as_path());
+                        if !symlink_target_is_safe(target, safety_rel) {
+                            // Use prefetched metadata or re-fetch; dangling
+                            // symlinks yield None and are skipped below.
+                            let fetched_meta;
+                            let target_metadata =
+                                if let Some(ref meta_result) = prefetch.symlink_target_metadata {
+                                    meta_result.as_ref().ok()
+                                } else {
+                                    match follow_symlink_metadata(entry.path.as_path()) {
+                                        Ok(m) => {
+                                            fetched_meta = m;
+                                            Some(&fetched_meta)
+                                        }
+                                        Err(_) => None,
+                                    }
+                                };
+
+                            if let Some(target_metadata) = target_metadata {
+                                let target_type = target_metadata.file_type();
+                                if target_type.is_dir() {
+                                    action = EntryAction::CopyDirectory;
+                                    metadata_override = Some(target_metadata.clone());
+                                } else if target_type.is_file() {
+                                    action = EntryAction::CopyFile;
+                                    metadata_override = Some(target_metadata.clone());
+                                } else if is_fifo(target_type) {
+                                    if context.specials_enabled() {
+                                        action = EntryAction::CopyFifo;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else if is_device(target_type) {
+                                    if context.copy_devices_as_files_enabled() {
+                                        action = EntryAction::CopyDeviceAsFile;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else if context.devices_enabled() {
+                                        action = EntryAction::CopyDevice;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else {
+                                    keep_name = false;
+                                    action = EntryAction::SkipNonRegular;
+                                    metadata_override = None;
+                                }
+                            } else {
+                                // upstream: flist.c:1277-1282 - dangling symlink
+                                // whose target was to be dereferenced by
+                                // --copy-unsafe-links; log and skip.
+                                eprintln!("symlink has no referent: {}", entry.path.display());
+                                context.record_io_error();
+                                keep_name = false;
+                                action = EntryAction::SkipNonRegular;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Cannot read symlink target - skip with I/O error.
+                        eprintln!("symlink has no referent: {}", entry.path.display());
+                        context.record_io_error();
+                        keep_name = false;
+                        action = EntryAction::SkipNonRegular;
+                    }
+                }
+            }
+        }
+
+        #[cfg(unix)]
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = prefetch.device_id
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
+        }
+
+        #[cfg(not(unix))]
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
+                entry.path.as_path(),
+                metadata_override.as_ref().unwrap_or(entry_metadata),
+            )
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
+        }
+
+        if deletion_enabled && keep_name {
+            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // entry found in the source file list via
+            // flist_find_ignore_dirness(), regardless of file type or delete
+            // timing. --delete-before shares that keep decision with
+            // --delete-during/-after (all drive delete_in_dir), so an in-source
+            // regular file must stay in the keep-set. Restricting
+            // --delete-before to directories deleted then re-transferred every
+            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // the receiver hits the filesystem with the iconv-converted name;
+            // align the keep-list so deletion does not wipe freshly-written
+            // entries when --iconv is configured.
+            keep_names.push(transcode_filename_component(
+                file_name.as_os_str(),
+                context.options().iconv(),
+            ));
+        }
+
+        planned_entries.push(PlannedEntry {
+            entry,
+            relative: relative_path,
+            action,
+            metadata_override,
+        });
+        if let Some(buf) = &mut relative_buf {
+            buf.pop();
+        }
+    }
+
+    Ok(DirectoryPlan {
+        planned_entries,
+        keep_names,
+        deletion_enabled,
+        delete_timing,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_action_clone() {
+        let action = EntryAction::CopyFile;
+        let cloned = action;
+        assert!(matches!(cloned, EntryAction::CopyFile));
+    }
+
+    #[test]
+    fn entry_action_copy() {
+        let action = EntryAction::CopyDirectory;
+        let copied = action;
+        assert!(matches!(action, EntryAction::CopyDirectory));
+        assert!(matches!(copied, EntryAction::CopyDirectory));
+    }
+
+    #[test]
+    fn entry_action_skip_excluded() {
+        let action = EntryAction::SkipExcluded;
+        assert!(matches!(action, EntryAction::SkipExcluded));
+    }
+
+    #[test]
+    fn entry_action_skip_non_regular() {
+        let action = EntryAction::SkipNonRegular;
+        assert!(matches!(action, EntryAction::SkipNonRegular));
+    }
+
+    #[test]
+    fn entry_action_skip_mount_point() {
+        let action = EntryAction::SkipMountPoint;
+        assert!(matches!(action, EntryAction::SkipMountPoint));
+    }
+
+    #[test]
+    fn entry_action_copy_symlink() {
+        let action = EntryAction::CopySymlink;
+        assert!(matches!(action, EntryAction::CopySymlink));
+    }
+
+    #[test]
+    fn entry_action_copy_fifo() {
+        let action = EntryAction::CopyFifo;
+        assert!(matches!(action, EntryAction::CopyFifo));
+    }
+
+    #[test]
+    fn entry_action_copy_device() {
+        let action = EntryAction::CopyDevice;
+        assert!(matches!(action, EntryAction::CopyDevice));
+    }
+
+    #[test]
+    fn entry_action_copy_device_as_file() {
+        let action = EntryAction::CopyDeviceAsFile;
+        assert!(matches!(action, EntryAction::CopyDeviceAsFile));
+    }
+
+    #[test]
+    fn directory_plan_default_values() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+        assert!(plan.planned_entries.is_empty());
+        assert!(plan.keep_names.is_empty());
+        assert!(!plan.deletion_enabled);
+        assert!(plan.delete_timing.is_none());
+    }
+
+    #[test]
+    fn directory_plan_deletion_enabled() {
+        let names = [OsString::from("keep_me")];
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: names.iter().map(|n| Cow::Borrowed(n.as_os_str())).collect(),
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::Before),
+        };
+        assert!(plan.deletion_enabled);
+        assert!(matches!(plan.delete_timing, Some(DeleteTiming::Before)));
+        assert_eq!(plan.keep_names.len(), 1);
+    }
+
+    #[test]
+    fn directory_plan_delete_timing_after() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: Vec::new(),
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::After),
+        };
+        assert!(matches!(plan.delete_timing, Some(DeleteTiming::After)));
+    }
+
+    #[test]
+    fn directory_plan_multiple_keep_names() {
+        let names = [
+            OsString::from("file1.txt"),
+            OsString::from("file2.txt"),
+            OsString::from("dir"),
+        ];
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: names.iter().map(|n| Cow::Borrowed(n.as_os_str())).collect(),
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::During),
+        };
+        assert_eq!(plan.keep_names.len(), 3);
+    }
+
+    #[cfg(unix)]
+    fn planned_copy_file<'a>(entry: &'a DirectoryEntry) -> PlannedEntry<'a> {
+        PlannedEntry {
+            entry,
+            relative: PathBuf::from(&entry.file_name),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn dir_entry(dir: &Path, name: &str) -> DirectoryEntry {
+        let path = dir.join(name);
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        DirectoryEntry {
+            file_name: OsString::from(name),
+            path,
+            metadata,
+        }
+    }
+
+    /// Regular-file hard-link cohorts must reorder so the *last* name-sorted
+    /// member is the data-holder, mirroring upstream's `F_HLINK_NOT_LAST`
+    /// deferral (generator.c:1803). This is the unchanged control for the
+    /// fake-super fix below.
+    ///
+    /// upstream: hlink.c:match_gnums / generator.c:1803-1806
+    #[cfg(unix)]
+    #[test]
+    fn reorder_regular_hardlink_group_uses_last_member_holder() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let f1 = src.path().join("f1");
+        let f2 = src.path().join("f2");
+        fs::write(&f1, b"payload").unwrap();
+        fs::hard_link(&f1, &f2).unwrap();
+
+        let e1 = dir_entry(src.path(), "f1");
+        let e2 = dir_entry(src.path(), "f2");
+        let mut planned = vec![planned_copy_file(&e1), planned_copy_file(&e2)];
+
+        // fake_super enabled but no %stat xattr present: the effective type
+        // falls back to the on-disk regular mode, so the LAST-member rule
+        // still applies.
+        reorder_hardlink_group_holders(true, false, true, dst.path(), &mut planned);
+
+        assert_eq!(
+            planned[0].entry.file_name,
+            OsString::from("f2"),
+            "last name-sorted member must become the data-holder"
+        );
+        assert_eq!(planned[1].entry.file_name, OsString::from("f1"));
+    }
+
+    /// A `--fake-super` special-file cohort is stored as regular on-disk
+    /// placeholders carrying a device `%stat` xattr. The reorder must resolve
+    /// the effective type from `%stat` and keep the FIRST name-sorted member
+    /// as the concrete node (like a real device), NOT reorder to last-concrete.
+    ///
+    /// upstream: hlink.c non-regular cohorts are FIRST-member-concrete
+    /// (generator.c:1551 `F_HLINK_NOT_FIRST`); x_lstat layers get_stat_xattr.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn reorder_fake_super_device_hardlink_group_keeps_first_member_holder() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let b3 = src.path().join("block3");
+        let b35 = src.path().join("block3.5");
+        fs::write(&b3, b"").unwrap();
+        fs::hard_link(&b3, &b35).unwrap();
+
+        // Encode a block device (S_IFBLK | 0644, rdev 105,73) in the shared
+        // %stat xattr, exactly as `--fake-super` records a special file.
+        let stat = ::metadata::FakeSuperStat {
+            mode: 0o60644,
+            uid: 0,
+            gid: 0,
+            rdev: Some((105, 73)),
+        };
+        ::metadata::store_fake_super(&b3, &stat).unwrap();
+
+        let e1 = dir_entry(src.path(), "block3");
+        let e2 = dir_entry(src.path(), "block3.5");
+        let mut planned = vec![planned_copy_file(&e1), planned_copy_file(&e2)];
+
+        reorder_hardlink_group_holders(true, false, true, dst.path(), &mut planned);
+
+        assert_eq!(
+            planned[0].entry.file_name,
+            OsString::from("block3"),
+            "fake-super device cohort must stay FIRST-member-concrete"
+        );
+        assert_eq!(planned[1].entry.file_name, OsString::from("block3.5"));
+    }
+}

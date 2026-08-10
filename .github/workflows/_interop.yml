@@ -1,0 +1,581 @@
+name: Interop Tests
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      upstream_rsync_version:
+        description: 'Upstream rsync version for cache key'
+        type: string
+        default: '3.4.4'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  interop:
+    name: interop with upstream rsync
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: interop
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+          version: ${{ inputs.cache_version }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Building upstream rsync ${{ inputs.upstream_rsync_version }}..."
+          bash tools/ci/run_interop.sh build-only
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: |
+          UPSTREAM="target/interop/upstream-src/rsync-3.4.4/rsync"
+          if [ -f "$UPSTREAM" ]; then
+            sudo cp "$UPSTREAM" /usr/local/bin/rsync
+          fi
+
+      - name: Run interop tests
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop
+          bash tools/ci/run_interop.sh 2>&1 | tee target/interop/interop-output.log
+          # pipefail ensures the exit code of run_interop.sh propagates
+
+      # RP28.c - rsync 2.6.9 push interop cell (protocol-28 cutoff peer).
+      # The 2.6.9 binary is built and cached by `run_interop.sh build-only`
+      # (RP28.b) but is not yet wired into the main scenario matrix because
+      # protocol < 30 daemon behaviour is still being audited under the RP28
+      # umbrella. This step exercises a simple push (oc-rsync sender ->
+      # rsync 2.6.9 receiver daemon) and asserts byte-identical contents on
+      # the receiver. Non-blocking until the RP28 series is ready to gate CI
+      # on pre-30 parity (RP28.k); promote to required by removing
+      # `continue-on-error: true` once the parity baseline is green.
+      - name: Run rsync 2.6.9 push interop (RP28.c)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          UP_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$UP_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $UP_269; skipping RP28.c push cell" >&2
+            exit 0
+          fi
+          echo "rsync 2.6.9: $($UP_269 --version 2>&1 | head -1)"
+
+          OC_RSYNC="target/dist/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at $OC_RSYNC" >&2
+            exit 1
+          fi
+
+          WORKDIR=$(mktemp -d)
+          UP_PID=""
+          cleanup() {
+            [[ -n "$UP_PID" ]] && kill "$UP_PID" 2>/dev/null || true
+            rm -rf "$WORKDIR"
+          }
+          trap cleanup EXIT
+
+          SRC="$WORKDIR/src"
+          DST="$WORKDIR/dst"
+          mkdir -p "$SRC" "$DST"
+
+          # Small file tree exercising regular files and a nested directory.
+          printf 'hello 2.6.9\n' > "$SRC/hello.txt"
+          printf 'line1\nline2\n' > "$SRC/multiline.txt"
+          dd if=/dev/urandom of="$SRC/binary.dat" bs=1K count=8 2>/dev/null
+          mkdir -p "$SRC/subdir"
+          printf 'nested\n' > "$SRC/subdir/nested.txt"
+
+          # Allocate an ephemeral port for the 2.6.9 daemon.
+          UP_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+          UP_CONF="$WORKDIR/rsyncd-269.conf"
+          UP_PID_FILE="$WORKDIR/rsyncd-269.pid"
+          UP_LOG="$WORKDIR/rsyncd-269.log"
+          {
+            printf 'pid file = %s\n' "$UP_PID_FILE"
+            printf 'port = %s\n' "$UP_PORT"
+            printf 'use chroot = false\n'
+            printf '[interop]\n'
+            printf '    path = %s\n' "$DST"
+            printf '    comment = rsync 2.6.9 receiver (RP28.c)\n'
+            printf '    read only = false\n'
+          } > "$UP_CONF"
+
+          "$UP_269" --daemon --config "$UP_CONF" --no-detach --log-file "$UP_LOG" </dev/null &
+          UP_PID=$!
+
+          # Wait up to 10s for the daemon port to bind.
+          for _ in $(seq 1 20); do
+            if (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          if ! (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+            echo "FATAL: rsync 2.6.9 daemon failed to bind port $UP_PORT" >&2
+            cat "$UP_LOG" || true
+            exit 1
+          fi
+
+          echo "=== RP28.c push: oc-rsync sender -> rsync 2.6.9 daemon ==="
+          if ! timeout 60 "$OC_RSYNC" -av --timeout=30 \
+              "$SRC/" "rsync://127.0.0.1:$UP_PORT/interop" 2>&1; then
+            echo "FAIL: oc-rsync push to rsync 2.6.9 daemon" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+
+          if ! diff -r "$SRC" "$DST"; then
+            echo "FAIL: receiver contents diverged from source" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+          echo "PASS: oc-rsync -> rsync 2.6.9 push produced byte-identical tree."
+
+      # RP28.d - rsync 2.6.9 pull interop cell (protocol-28 cutoff peer).
+      # Symmetric to the RP28.c push cell: here rsync 2.6.9 acts as the
+      # sender daemon and oc-rsync is the receiver client pulling from it.
+      # Same small file tree (regular files, 8 KiB random blob, nested
+      # directory) to keep the matrix symmetric. Non-blocking until the
+      # RP28 series is ready to gate CI on pre-30 parity (RP28.k); promote
+      # to required by removing `continue-on-error: true` once the parity
+      # baseline is green. Exits 0 gracefully when the 2.6.9 binary is
+      # absent so the cell is a no-op without RP28.b cache.
+      - name: Run rsync 2.6.9 pull interop (RP28.d)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          UP_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$UP_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $UP_269; skipping RP28.d pull cell" >&2
+            exit 0
+          fi
+          echo "rsync 2.6.9: $($UP_269 --version 2>&1 | head -1)"
+
+          OC_RSYNC="target/dist/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at $OC_RSYNC" >&2
+            exit 1
+          fi
+
+          WORKDIR=$(mktemp -d)
+          UP_PID=""
+          cleanup() {
+            [[ -n "$UP_PID" ]] && kill "$UP_PID" 2>/dev/null || true
+            rm -rf "$WORKDIR"
+          }
+          trap cleanup EXIT
+
+          SRC="$WORKDIR/src"
+          DST="$WORKDIR/dst"
+          mkdir -p "$SRC" "$DST"
+
+          # Same small file tree as RP28.c push cell for matrix symmetry.
+          printf 'hello 2.6.9\n' > "$SRC/hello.txt"
+          printf 'line1\nline2\n' > "$SRC/multiline.txt"
+          dd if=/dev/urandom of="$SRC/binary.dat" bs=1K count=8 2>/dev/null
+          mkdir -p "$SRC/subdir"
+          printf 'nested\n' > "$SRC/subdir/nested.txt"
+
+          # Allocate an ephemeral port for the 2.6.9 daemon.
+          UP_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+          UP_CONF="$WORKDIR/rsyncd-269.conf"
+          UP_PID_FILE="$WORKDIR/rsyncd-269.pid"
+          UP_LOG="$WORKDIR/rsyncd-269.log"
+          {
+            printf 'pid file = %s\n' "$UP_PID_FILE"
+            printf 'port = %s\n' "$UP_PORT"
+            printf 'use chroot = false\n'
+            printf '[interop]\n'
+            printf '    path = %s\n' "$SRC"
+            printf '    comment = rsync 2.6.9 sender (RP28.d)\n'
+            printf '    read only = true\n'
+          } > "$UP_CONF"
+
+          "$UP_269" --daemon --config "$UP_CONF" --no-detach --log-file "$UP_LOG" </dev/null &
+          UP_PID=$!
+
+          # Wait up to 10s for the daemon port to bind.
+          for _ in $(seq 1 20); do
+            if (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          if ! (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+            echo "FATAL: rsync 2.6.9 daemon failed to bind port $UP_PORT" >&2
+            cat "$UP_LOG" || true
+            exit 1
+          fi
+
+          echo "=== RP28.d pull: rsync 2.6.9 daemon -> oc-rsync receiver ==="
+          if ! timeout 60 "$OC_RSYNC" -av --timeout=30 \
+              "rsync://127.0.0.1:$UP_PORT/interop/" "$DST/" 2>&1; then
+            echo "FAIL: oc-rsync pull from rsync 2.6.9 daemon" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+
+          if ! diff -r "$SRC" "$DST"; then
+            echo "FAIL: receiver contents diverged from sender" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+          echo "PASS: rsync 2.6.9 -> oc-rsync pull produced byte-identical tree."
+
+      # RP28.e.2 - daemon-mode interop with rsync 2.6.9 as the client.
+      # Inverts the RP28.c/RP28.d topology: oc-rsync runs `--daemon
+      # --no-detach` and the 2.6.9 binary issues pulls and pushes against
+      # the `[test]` module. Exercises the D1-D10 fixture matrix from
+      # `docs/design/rp28-e-1-daemon-2-6-9-client-harness.md` (spec
+      # shipped in RP28.e.1, PR #4928). Reuses the 2.6.9 binary built
+      # by the earlier `Build upstream rsync` step under
+      # `target/interop/upstream-install/2.6.9/bin/rsync`; if absent we
+      # build it inline via the RP28.b.1 helper to keep the cell
+      # self-sufficient. The harness exits 77 when either binary is
+      # missing so the cell becomes a no-op rather than a false failure.
+      # Blocking: the pre-30 daemon-sender end-of-transfer stats deadlock is
+      # fixed (proto < 30 now emits fixed 4-byte longint stats, matching
+      # `write_varlong30`), so the full D1-D10 matrix passes against 2.6.9.
+      - name: Run rsync 2.6.9 daemon-mode client interop (RP28.e.2)
+        run: |
+          set -euo pipefail
+          RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$RSYNC_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via RP28.b.1 helper" >&2
+            sudo bash scripts/build_rsync_2_6_9.sh
+            RSYNC_269="/usr/local/bin/rsync-2.6.9"
+          fi
+
+          OC_RSYNC="target/release/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            OC_RSYNC="target/dist/oc-rsync"
+          fi
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at target/release/oc-rsync and target/dist/oc-rsync" >&2
+            exit 1
+          fi
+
+          # Outer wall-clock guard: bound total runtime so an unexpected stall in
+          # any fixture cannot consume the whole job budget. The harness traps
+          # SIGTERM to stop its daemon; a timeout here surfaces as a hard failure.
+          timeout --signal=TERM --kill-after=30 360 \
+            bash scripts/rp28_e_1_run.sh \
+            --oc-rsync "$OC_RSYNC" \
+            --rsync-2-6-9 "$RSYNC_269"
+
+      - name: Capture RP28.e.2 daemon log on failure
+        if: failure()
+        run: |
+          if [[ -f /tmp/rp28-e/daemon.log ]]; then
+            echo "--- /tmp/rp28-e/daemon.log ---"
+            cat /tmp/rp28-e/daemon.log
+          else
+            echo "no /tmp/rp28-e/daemon.log to capture"
+          fi
+
+      # RP28.f.2 - client-mode interop with rsync 2.6.9 as the daemon.
+      # Inverse of RP28.e.2: rsync 2.6.9 runs `--daemon --no-detach` on an
+      # ephemeral 127.0.0.1 port and oc-rsync issues pulls and pushes
+      # against the `[legacy]` module. Exercises the F1-F12 fixture
+      # matrix from `docs/design/rp28-f-1-client-2-6-9-daemon-harness.md`
+      # (spec shipped in RP28.f.1, PR #4929). Reuses the cached 2.6.9
+      # binary published by the RP28.b.3 cache step (PR #4947) under
+      # `target/interop/upstream-install/2.6.9/bin/rsync`; falls back to
+      # the RP28.b.1 build helper if the cache is cold. The harness
+      # exits 77 when either binary is missing so the cell becomes a
+      # no-op rather than a false failure. Blocking: the pre-30 stats
+      # deadlock that stalled the proto-29 legs is fixed, so the full
+      # F1-F12 matrix passes with 2.6.9 as the daemon.
+      - name: Run rsync 2.6.9 client-mode daemon interop (RP28.f.2)
+        run: |
+          set -euo pipefail
+          RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$RSYNC_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via RP28.b.1 helper" >&2
+            sudo bash scripts/build_rsync_2_6_9.sh
+            RSYNC_269="/usr/local/bin/rsync-2.6.9"
+          fi
+
+          OC_RSYNC="target/release/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            OC_RSYNC="target/dist/oc-rsync"
+          fi
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at target/release/oc-rsync and target/dist/oc-rsync" >&2
+            exit 1
+          fi
+
+          # Outer wall-clock guard (see RP28.e.2 cell): bound total runtime so an
+          # unexpected stall in any fixture cannot consume the job budget. The
+          # harness traps SIGTERM to stop its daemon; a timeout is a hard failure.
+          timeout --signal=TERM --kill-after=30 360 \
+            bash scripts/rp28_f_1_run.sh \
+            --oc-rsync "$OC_RSYNC" \
+            --rsync-2-6-9 "$RSYNC_269"
+
+      - name: Capture RP28.f.2 daemon log on failure
+        if: failure()
+        run: |
+          if [[ -f /tmp/rp28-f/daemon.log ]]; then
+            echo "--- /tmp/rp28-f/daemon.log ---"
+            cat /tmp/rp28-f/daemon.log
+          else
+            echo "no /tmp/rp28-f/daemon.log to capture"
+          fi
+
+      # Drive upstream rsync's own `testsuite/*.test` corpus against
+      # oc-rsync as `$RSYNC`. The harness sources upstream's `rsync.fns`
+      # and reuses its helper tools (`tls`, `getgroups`, `support/lsh.sh`),
+      # so this is the canonical "does oc-rsync look like rsync from
+      # upstream's perspective" check. Expected failures are tracked in
+      # `tools/ci/upstream_testsuite_known_failures.conf` and reported as
+      # XFAIL. Non-blocking initially via `continue-on-error: true`;
+      # promote to required once the known-failure roster is stable.
+      - name: Run upstream rsync testsuite against oc-rsync
+        continue-on-error: true
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ inputs.upstream_rsync_version }}
+        run: |
+          set -euo pipefail
+          # Ensure release oc-rsync exists for the harness.
+          if [[ ! -x target/release/oc-rsync ]]; then
+            cargo build --locked --release --bin oc-rsync
+          fi
+          bash tools/ci/run_upstream_testsuite.sh
+
+      - name: Upload upstream testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-testsuite-logs
+          path: target/interop/upstream-testsuite/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # V61D-3 - daemon-push interop with the gated `sender-inc-recurse`
+      # feature enabled. The flag flips the `inc_recursive_send` builder
+      # default ON so push transfers advertise the `'i'` capability bit
+      # (ISI.b, #2739). The full default-OFF interop run already happened
+      # above; this cell rebuilds oc-rsync with `--features
+      # sender-inc-recurse` and re-runs `run_interop.sh` so the
+      # daemon-push scenarios exercise the sender-INC_RECURSE path that
+      # ISI.h will eventually make the default. Non-blocking: failures
+      # surface regressions early but must not gate PRs until ISI.h
+      # flips the default. Memory note:
+      # [[project_v061_daemon_push_increcurse_disable]]. Linux-only
+      # because the harness only runs on Linux runners anyway. Restores
+      # the default-OFF binary at the end so the downstream SSH cell
+      # observes the same binary it would have without this step.
+      - name: Run interop tests with sender-inc-recurse feature (V61D-3)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Stash the default-OFF dist binary so we can put it back
+          # before the SSH interop cell runs (do not change existing
+          # cell behaviour).
+          ORIG_BIN=""
+          if [[ -x target/dist/oc-rsync ]]; then
+            ORIG_BIN=$(mktemp)
+            cp target/dist/oc-rsync "$ORIG_BIN"
+          fi
+          restore_default_bin() {
+            if [[ -n "$ORIG_BIN" && -f "$ORIG_BIN" ]]; then
+              cp "$ORIG_BIN" target/dist/oc-rsync
+              chmod +x target/dist/oc-rsync
+              rm -f "$ORIG_BIN"
+            fi
+          }
+          trap restore_default_bin EXIT
+
+          # Force a rebuild with the feature so `ensure_workspace_binaries`
+          # inside `run_interop.sh` re-links oc-rsync with
+          # `--features sender-inc-recurse` instead of reusing the
+          # default-OFF binary from the earlier interop step.
+          rm -f target/dist/oc-rsync
+          cargo build --locked --profile dist --bin oc-rsync --features sender-inc-recurse
+          target/dist/oc-rsync --version 2>&1 | head -1
+          bash tools/ci/run_interop.sh
+
+      - name: Run SSH interop tests
+        run: |
+          set -euo pipefail
+          OC_RSYNC="target/dist/oc-rsync"
+          SRC=$(mktemp -d)
+          DST=$(mktemp -d)
+          DST2=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST" "$DST2"' EXIT
+
+          # Create test data
+          for i in $(seq 1 10); do
+            dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
+          done
+          mkdir -p "$SRC/subdir"
+          echo "nested" > "$SRC/subdir/nested.txt"
+
+          # Verify binaries
+          echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
+          echo "upstream rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync path: $(which rsync)"
+
+          # Baseline: upstream rsync → upstream rsync via SSH
+          echo "=== Baseline: upstream rsync SSH pull ==="
+          timeout 60 rsync -av --timeout=30 "localhost:$SRC/" "$DST2/" 2>&1
+          diff -r "$SRC" "$DST2"
+          echo "PASS: upstream SSH pull baseline"
+
+          # SSH push: oc-rsync client → upstream rsync server
+          echo "=== SSH push: oc-rsync → upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH push failed with exit $RC"
+
+            # Show oc-rsync diagnostic output (eprintln goes to stderr)
+            echo "--- Attempting push with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_push_stdout.txt || true
+
+            # Diagnostic: manually invoke remote rsync with strace to see what it reads
+            echo "--- Remote rsync manual test ---"
+            echo "Remote rsync args that oc-rsync would send:"
+            "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
+
+            # Test: upstream rsync client → upstream rsync server (same args)
+            echo "--- Baseline upstream push for comparison ---"
+            timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
+
+            # Capture what upstream rsync server sees from oc-rsync via raw pipe
+            echo "--- Raw protocol capture ---"
+            ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
+            echo "Remote rsync args: rsync $ARGS"
+            # Send oc-rsync's output through a pipe to see what the server gets
+            timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
+            echo "=== strace output (first 100 lines) ==="
+            head -100 /tmp/strace_out.txt || true
+
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH push initial sync"
+
+          # SSH pull: oc-rsync client ← upstream rsync server
+          rm -rf "$DST"/*
+          echo "=== SSH pull: oc-rsync ← upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH pull failed with exit $RC"
+
+            # Show oc-rsync diagnostic output
+            echo "--- Attempting pull with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_pull_stdout.txt || true
+
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH pull initial sync"
+
+          # SSH pull no-change
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
+          echo "PASS: SSH pull no-change sync"
+
+          echo "All SSH interop tests passed."
+
+      - name: Regenerate interop compatibility matrix
+        if: always()
+        run: |
+          set -euo pipefail
+          LOG="target/interop/interop-output.log"
+          if [[ -f "$LOG" ]]; then
+            python3 tools/ci/regenerate_interop_matrix.py "$LOG"
+            echo "Matrix regenerated from interop log."
+          else
+            echo "No interop log found; skipping matrix regeneration."
+          fi
+
+      - name: Upload interop matrix
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-compatibility-matrix
+          path: docs/user/interop-compatibility-matrix.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload interop log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-output-log
+          path: target/interop/interop-output.log
+          if-no-files-found: ignore
+          retention-days: 14
+

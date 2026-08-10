@@ -1,0 +1,6 @@
+include *.rs
+exclude *.tmp
+protect /vendor/**
+risk /vendor/build/
+hide secrets/
+show secrets/public.txt

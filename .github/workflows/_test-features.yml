@@ -1,0 +1,217 @@
+name: Test Feature Combinations
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 45
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Cross-OS feature rows.
+  #
+  # Promoted to a cross-OS strategy matrix per the cross-platform CI coverage
+  # audit (gap G6). Every row in this matrix exercises code that compiles on
+  # Linux, macOS, and Windows. To keep within the runtime budget, only the
+  # rows that the audit flagged as OS-agnostic but Linux-only today are run
+  # across all three OS; the remaining rows stay Linux-only (they overlap
+  # with the per-OS --all-features jobs already in ci.yml).
+  # ---------------------------------------------------------------------------
+  feature-flags-cross-os:
+    name: ${{ matrix.row.name }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        row:
+          - name: async
+            args: "-p daemon -p core -p protocol -p engine --features async"
+          - name: tracing
+            args: "-p daemon -p core -p engine --features tracing"
+          - name: serde
+            args: "-p logging -p protocol -p flist --features serde"
+          - name: concurrent-sessions
+            args: "-p daemon --features concurrent-sessions"
+          - name: iconv
+            args: "-p protocol -p transfer -p engine -p core -p cli -p daemon --features iconv"
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean || true
+          df -h /
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: features-${{ matrix.row.name }}-${{ matrix.os }}
+
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      - name: Test (${{ matrix.row.name }})
+        run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
+
+  # ---------------------------------------------------------------------------
+  # Linux-only feature rows.
+  #
+  # Includes:
+  # - Pre-existing rows that test the original Linux-only matrix and the
+  #   platform-gated I/O features (io_uring, copy_file_range).
+  # - New crypto / deflate backend rows (openssl, openssl-vendored, zlib-ng,
+  #   zlib-rs) per the audit's G1/G2 recommendation. Linux-only initially:
+  #   the openssl rows depend on system libssl (already pre-installed on
+  #   ubuntu-latest); zlib-ng links against libz-ng-dev. macOS/Windows can
+  #   follow once the equivalent staging is validated; tracking via the
+  #   audit's section 7 follow-ups.
+  # ---------------------------------------------------------------------------
+  feature-flags-linux:
+    name: ${{ matrix.name }} (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # PFF-6: Verify the default-features build compiles and passes
+          # tests. The main CI test job uses --all-features which may mask
+          # regressions in the default feature set.
+          - name: default-features
+            args: "--workspace"
+            apt: ""
+          - name: parallel
+            args: "-p checksums -p flist --features parallel"
+            apt: ""
+          - name: incremental-flist
+            args: "-p transfer --features incremental-flist"
+            apt: ""
+          - name: compression
+            args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
+            apt: ""
+          - name: io_uring
+            args: "-p transfer -p fast_io --features io_uring"
+            apt: ""
+          - name: copy_file_range
+            args: "-p fast_io --features copy_file_range"
+            apt: ""
+          - name: landlock
+            args: "-p fast_io --features landlock"
+            apt: ""
+          - name: openssl
+            args: "-p checksums --features openssl"
+            apt: "libssl-dev pkg-config"
+          - name: openssl-vendored
+            args: "-p checksums --features openssl-vendored"
+            apt: "pkg-config"
+          - name: zlib-ng
+            args: "-p compress -p protocol --features zlib-ng"
+            apt: "zlib1g-dev"
+          - name: zlib-rs
+            args: "-p compress -p protocol --no-default-features --features zlib-rs"
+            apt: ""
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean || true
+          df -h /
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Install APT packages
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: features-${{ matrix.name }}-linux
+
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      - name: Test (${{ matrix.name }})
+        run: cargo nextest run --locked --profile ci ${{ matrix.args }}

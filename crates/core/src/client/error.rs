@@ -1,0 +1,984 @@
+use std::fmt;
+use std::io;
+use std::path::Path;
+
+use thiserror::Error;
+
+use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
+use crate::message::{Message, Role};
+use crate::rsync_error;
+use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, upstream_io_error};
+
+// upstream: errcode.h - Exit code definitions
+
+/// Exit code returned when client functionality is unavailable.
+pub const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = ExitCode::Syntax.as_i32();
+/// Exit code returned when a daemon violates the protocol.
+pub const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = ExitCode::Protocol.as_i32();
+/// Exit code returned for errors selecting input/output files or directories.
+pub const FILE_SELECTION_EXIT_CODE: i32 = ExitCode::FileSelect.as_i32();
+/// Exit code returned when starting client-server protocol fails.
+pub const CLIENT_SERVER_PROTOCOL_EXIT_CODE: i32 = ExitCode::StartClient.as_i32();
+/// Exit code returned when socket I/O fails.
+pub const SOCKET_IO_EXIT_CODE: i32 = ExitCode::SocketIo.as_i32();
+/// Exit code returned when file I/O fails.
+pub const FILE_IO_EXIT_CODE: i32 = ExitCode::FileIo.as_i32();
+/// Exit code returned for IPC errors (inter-process communication).
+pub const IPC_EXIT_CODE: i32 = ExitCode::Ipc.as_i32();
+/// Exit code used when a copy partially or wholly fails.
+pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = ExitCode::PartialTransfer.as_i32();
+/// Exit code returned when remote command is not found.
+pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = ExitCode::CommandNotFound.as_i32();
+
+/// Error returned when the client orchestration fails.
+///
+/// Uses the centralized `ExitCode` enum to ensure exit codes match
+/// upstream rsync behavior. Exit codes are defined in upstream `errcode.h`
+/// and mapped to string names in `log.c`.
+#[derive(Clone, Debug, Error)]
+#[error("{message}")]
+pub struct ClientError {
+    exit_code: ExitCode,
+    message: Message,
+}
+
+impl ClientError {
+    /// Creates a new [`ClientError`] from the supplied exit code and message.
+    pub(crate) const fn with_code(exit_code: ExitCode, message: Message) -> Self {
+        Self { exit_code, message }
+    }
+
+    /// Creates a new [`ClientError`] from an i32 exit code and message.
+    ///
+    /// If the exit code doesn't map to a known `ExitCode` variant,
+    /// [`ExitCode::PartialTransfer`] is used as a fallback.
+    ///
+    /// This is the primary constructor for backward compatibility with
+    /// existing code that uses i32 exit codes.
+    pub(crate) fn new(exit_code: i32, message: Message) -> Self {
+        let code = ExitCode::from_i32(exit_code).unwrap_or(ExitCode::PartialTransfer);
+        Self::with_code(code, message)
+    }
+
+    /// Returns the exit code associated with this error.
+    #[must_use]
+    pub const fn code(&self) -> ExitCode {
+        self.exit_code
+    }
+
+    /// Returns the exit code as an i32 for backward compatibility.
+    #[must_use]
+    pub const fn exit_code(&self) -> i32 {
+        self.exit_code.as_i32()
+    }
+
+    /// Returns the formatted diagnostic message that should be emitted.
+    pub const fn message(&self) -> &Message {
+        &self.message
+    }
+}
+
+impl HasExitCode for ClientError {
+    fn exit_code(&self) -> ExitCode {
+        self.exit_code
+    }
+}
+
+impl ErrorCodification for ClientError {
+    fn error_code(&self) -> u32 {
+        match self.exit_code {
+            ExitCode::Ok => 0,
+            ExitCode::Syntax => 100,
+            ExitCode::Protocol => 200,
+            ExitCode::FileSelect => 300,
+            ExitCode::Unsupported => 400,
+            ExitCode::StartClient => 500,
+            ExitCode::LogFileAppend => 600,
+            ExitCode::SocketIo => 1000,
+            ExitCode::FileIo => 1100,
+            ExitCode::StreamIo => 1200,
+            ExitCode::MessageIo => 1300,
+            ExitCode::Ipc => 1400,
+            ExitCode::Crashed => 1500,
+            ExitCode::Terminated => 1600,
+            ExitCode::Signal1 => 1900,
+            ExitCode::Signal => 2000,
+            ExitCode::WaitChild => 2100,
+            ExitCode::Malloc => 2200,
+            ExitCode::PartialTransfer => 2300,
+            ExitCode::Vanished => 2400,
+            ExitCode::DeleteLimit => 2500,
+            ExitCode::Timeout => 3000,
+            ExitCode::ConnectionTimeout => 3500,
+            ExitCode::CommandFailed => 12400,
+            ExitCode::CommandKilled => 12500,
+            ExitCode::CommandRun => 12600,
+            ExitCode::CommandNotFound => 12700,
+            // A raw child/remote status with no named RERR_* code; encode the
+            // raw value into a distinct diagnostic range.
+            ExitCode::Other(code) => 900_000u32.wrapping_add(code as u32),
+        }
+    }
+
+    fn user_message(&self) -> String {
+        self.message.to_string()
+    }
+
+    fn error_code_name(&self) -> &'static str {
+        match self.exit_code {
+            ExitCode::Ok => "RERR_OK",
+            ExitCode::Syntax => "RERR_SYNTAX",
+            ExitCode::Protocol => "RERR_PROTOCOL",
+            ExitCode::FileSelect => "RERR_FILESELECT",
+            ExitCode::Unsupported => "RERR_UNSUPPORTED",
+            ExitCode::StartClient => "RERR_STARTCLIENT",
+            ExitCode::LogFileAppend => "RERR_LOG_FAILURE",
+            ExitCode::SocketIo => "RERR_SOCKETIO",
+            ExitCode::FileIo => "RERR_FILEIO",
+            ExitCode::StreamIo => "RERR_STREAMIO",
+            ExitCode::MessageIo => "RERR_MESSAGEIO",
+            ExitCode::Ipc => "RERR_IPC",
+            ExitCode::Crashed => "RERR_CRASHED",
+            ExitCode::Terminated => "RERR_TERMINATED",
+            ExitCode::Signal1 => "RERR_SIGNAL1",
+            ExitCode::Signal => "RERR_SIGNAL",
+            ExitCode::WaitChild => "RERR_WAITCHILD",
+            ExitCode::Malloc => "RERR_MALLOC",
+            ExitCode::PartialTransfer => "RERR_PARTIAL",
+            ExitCode::Vanished => "RERR_VANISHED",
+            ExitCode::DeleteLimit => "RERR_DEL_LIMIT",
+            ExitCode::Timeout => "RERR_TIMEOUT",
+            ExitCode::ConnectionTimeout => "RERR_CONTIMEOUT",
+            ExitCode::CommandFailed => "RERR_CMD_FAILED",
+            ExitCode::CommandKilled => "RERR_CMD_KILLED",
+            ExitCode::CommandRun => "RERR_CMD_RUN",
+            ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
+            // upstream: log.c:905 - an unrecognized code has no RERR_* name.
+            ExitCode::Other(_) => "RERR_UNKNOWN",
+        }
+    }
+}
+
+#[cold]
+pub(crate) fn missing_operands_error() -> ClientError {
+    // upstream: exit code 23 (RERR_PARTIAL) for missing source operands.
+    let code = ExitCode::PartialTransfer;
+    let message = rsync_error!(
+        code.as_i32(),
+        "missing source operands: supply at least one source and a destination"
+    )
+    .with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+/// Creates an invalid argument error from an i32 exit code.
+///
+/// If the exit code doesn't map to a known `ExitCode` variant,
+/// [`ExitCode::PartialTransfer`] is used as a fallback.
+#[cold]
+pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError {
+    let code = ExitCode::from_i32(exit_code).unwrap_or(ExitCode::PartialTransfer);
+    let message = rsync_error!(code.as_i32(), "{}", text).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+/// Creates an invalid argument error with a typed exit code.
+#[cold]
+pub(crate) fn invalid_argument_error_typed(text: &str, exit_code: ExitCode) -> ClientError {
+    invalid_argument_error_typed_with_role(text, exit_code, Role::Client)
+}
+
+/// Creates a typed-exit-code error tagged with an explicit trailer role.
+///
+/// upstream: log.c:912 log_exit() tags the diagnostic with who_am_i()
+/// (rsync.c:823), the local process role, never a bare "client". Remote SSH
+/// paths pass the direction-derived role so a push reports `[sender]` and a
+/// pull `[receiver]`.
+#[cold]
+pub(crate) fn invalid_argument_error_typed_with_role(
+    text: &str,
+    exit_code: ExitCode,
+    role: Role,
+) -> ClientError {
+    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(role);
+    ClientError::with_code(exit_code, message)
+}
+
+/// Builds the final `rsync error:` line for a remote/child process exit.
+///
+/// upstream: log.c:890-914 log_exit() renders the winning exit code by its
+/// rerr_name (log.c:903) - or "unexplained error" for an unknown raw code
+/// (log.c:904-905) - as `rsync error: <name> (code N) at ... [<role>=<ver>]`.
+/// The role is who_am_i() (rsync.c:823): the local process role, not "client".
+/// `context` carries any captured remote stderr and is appended verbatim.
+#[cold]
+pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role, context: &str) -> ClientError {
+    let text = format!("{}{context}", exit_code.description());
+    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(role);
+    ClientError::with_code(exit_code, message)
+}
+
+#[cold]
+pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
+    let exit_code_i32 = error.exit_code();
+    match error.into_kind() {
+        LocalCopyErrorKind::MissingSourceOperands => missing_operands_error(),
+        LocalCopyErrorKind::InvalidArgument(reason) => {
+            invalid_argument_error(reason.message(), exit_code_i32)
+        }
+        LocalCopyErrorKind::Io {
+            action,
+            path,
+            source,
+        } => io_error(action, &path, source),
+        LocalCopyErrorKind::LinkStatFailed { path, source } => {
+            // upstream: flist.c send_file_list() - a missing source argument is
+            // reported by the sender as `link_stat "%s" failed: %s` and exits
+            // RERR_PARTIAL (23). Deliberately not routed through io_error(),
+            // whose NotFound branch maps to RERR_VANISHED (24) for files that
+            // disappear mid-transfer.
+            let code = ExitCode::PartialTransfer;
+            let text = format!(
+                "link_stat \"{}\" failed: {}",
+                path.display(),
+                upstream_io_error(&source)
+            );
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
+        LocalCopyErrorKind::Timeout { duration } => {
+            let code = ExitCode::Timeout;
+            let text = format!(
+                "transfer timed out after {:.3} seconds without progress",
+                duration.as_secs_f64()
+            );
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+            ClientError::with_code(code, message)
+        }
+        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            // upstream: generator.c:2431 - the generator emits
+            // `Deletions stopped due to --max-delete limit (%d skipped)` via
+            // rprintf(FWARNING, ...) with no pluralized noun, so who_am_i()
+            // yields the `generator` role.
+            let code = ExitCode::DeleteLimit;
+            let text = format!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Generator);
+            ClientError::with_code(code, message)
+        }
+        LocalCopyErrorKind::StopAtReached { .. } => {
+            let code = ExitCode::from_i32(exit_code_i32).unwrap_or(ExitCode::PartialTransfer);
+            let message =
+                rsync_error!(code.as_i32(), "stopping at requested limit").with_role(Role::Client);
+            ClientError::with_code(code, message)
+        }
+        LocalCopyErrorKind::PartialTransfer => {
+            // upstream: main.c:1356 - `some files/attrs were not transferred
+            // (see previous errors)` is printed by the sending half when
+            // `io_error` is set (e.g. an unconvertible --iconv filename), so
+            // who_am_i() tags the diagnostic `[sender]`. The per-entry cause
+            // was already emitted at the skip site.
+            let code = ExitCode::PartialTransfer;
+            let message = rsync_error!(
+                code.as_i32(),
+                "some files/attrs were not transferred (see previous errors)"
+            )
+            .with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
+        LocalCopyErrorKind::FilterSyntax { message } => {
+            let code = ExitCode::Syntax;
+            let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
+            ClientError::with_code(code, msg)
+        }
+        LocalCopyErrorKind::Interrupted => signal_interrupt_error(),
+    }
+}
+
+/// Builds the single signal-abort diagnostic emitted when a transfer is
+/// interrupted by SIGINT/SIGTERM/SIGHUP.
+///
+/// upstream: `rsync.c:sig_int()` calls `exit_cleanup(RERR_SIGNAL)` (20), and
+/// `cleanup.c:_exit_cleanup()` routes it through `log.c:log_exit()`, which
+/// renders the fixed `rerr_names` entry for `RERR_SIGNAL` (log.c:95) as
+/// `rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at ... [<role>]`.
+/// The three interrupt signals share one message; upstream never names the
+/// specific signal here. who_am_i() tags the sending half `[sender]`.
+#[cold]
+pub(crate) fn signal_interrupt_error() -> ClientError {
+    let code = ExitCode::Signal;
+    let message =
+        rsync_error!(code.as_i32(), "received SIGINT, SIGTERM, or SIGHUP").with_role(Role::Sender);
+    ClientError::with_code(code, message)
+}
+
+#[cold]
+pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> ClientError {
+    let code = ExitCode::Syntax;
+    let text = format!("failed to compile filter pattern '{pattern}': {error}");
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+#[cold]
+pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
+    // upstream: main.c:1338-1345 - NotFound maps to RERR_VANISHED (24),
+    // all other I/O errors map to RERR_PARTIAL (23).
+    let code = if error.kind() == io::ErrorKind::NotFound {
+        ExitCode::Vanished
+    } else {
+        ExitCode::PartialTransfer
+    };
+    let path_display = path.display();
+    // upstream: flist.c:1317 / sender.c:389 - rprintf(c, "file has vanished: %s\n",
+    // full_fname(...)). full_fname() wraps the path in double quotes (util1.c:1228).
+    // Both call sites (send_file_list building the flist and send_files opening a
+    // source file) run under am_sender, so who_am_i() yields the `sender` role for
+    // vanished (RERR_VANISHED) and per-file read I/O (RERR_PARTIAL) errors alike.
+    let text = if error.kind() == io::ErrorKind::NotFound {
+        format!("file has vanished: \"{path_display}\"")
+    } else {
+        format!(
+            "failed to {action} '{path_display}': {}",
+            upstream_io_error(&error)
+        )
+    };
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
+    ClientError::with_code(code, message)
+}
+
+#[cold]
+pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
+    // upstream: main.c:751 change_dir validation returns FileSelect (3) for
+    // destination directory access errors.
+    let code = ExitCode::FileSelect;
+    let path_display = path.display();
+    let text = format!(
+        "failed to access destination directory '{path_display}': {}",
+        upstream_io_error(&error)
+    );
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+#[cold]
+pub(crate) fn socket_error(
+    action: &str,
+    target: impl fmt::Display,
+    error: io::Error,
+) -> ClientError {
+    let code = ExitCode::SocketIo;
+    let text = format!("failed to {action} {target}: {}", upstream_io_error(&error));
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+/// Builds the canonical "connection unexpectedly closed" diagnostic that
+/// upstream rsync emits when the protocol stream reaches EOF mid-transfer.
+///
+/// The wording mirrors `whine_about_eof()` in upstream `io.c`:
+///
+/// ```text
+/// rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]
+/// ```
+///
+/// The diagnostic carries `RERR_STREAMIO` (exit code 12), matching upstream's
+/// `exit_cleanup(RERR_STREAMIO)` call at the end of the routine.
+///
+/// # Upstream Reference
+///
+/// - `io.c:228-232` (rsync 3.4.1) - `whine_about_eof()` prints this line and
+///   exits with `RERR_STREAMIO`.
+#[cold]
+pub fn connection_unexpectedly_closed_error(bytes_received: u64, role: Role) -> ClientError {
+    let code = ExitCode::StreamIo;
+    let text = format!("connection unexpectedly closed ({bytes_received} bytes received so far)");
+    let message = rsync_error!(code.as_i32(), text).with_role(role);
+    ClientError::with_code(code, message)
+}
+
+/// Creates a daemon error from an i32 exit code.
+///
+/// If the exit code doesn't map to a known `ExitCode` variant,
+/// [`ExitCode::PartialTransfer`] is used as a fallback.
+#[cold]
+pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientError {
+    let code = ExitCode::from_i32(exit_code).unwrap_or(ExitCode::PartialTransfer);
+    let message = rsync_error!(code.as_i32(), "{}", text.into()).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
+#[cold]
+pub(crate) fn daemon_protocol_error(text: &str) -> ClientError {
+    daemon_error(
+        format!("unexpected response from daemon: {text}"),
+        PROTOCOL_INCOMPATIBLE_EXIT_CODE,
+    )
+}
+
+#[cold]
+pub(crate) fn daemon_authentication_required_error(reason: &str) -> ClientError {
+    let detail = if reason.is_empty() {
+        "daemon requires authentication for module listing".to_owned()
+    } else {
+        format!("daemon requires authentication for module listing: {reason}")
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}
+
+#[cold]
+pub(crate) fn daemon_authentication_failed_error(reason: Option<&str>) -> ClientError {
+    let detail = match reason {
+        Some(text) if !text.is_empty() => {
+            format!("daemon rejected provided credentials: {text}")
+        }
+        _ => "daemon rejected provided credentials".to_owned(),
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}
+
+#[cold]
+pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
+    let detail = if reason.is_empty() {
+        "daemon denied access to module listing".to_owned()
+    } else {
+        format!("daemon denied access to module listing: {reason}")
+    };
+
+    daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
+}
+
+#[cold]
+pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
+    let trimmed = reason.trim();
+    let detail = if trimmed.is_empty() {
+        "daemon refused module listing".to_owned()
+    } else {
+        format!("daemon refused module listing: {trimmed}")
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}
+
+/// Enables idiomatic error conversion using the `?` operator.
+///
+/// # Examples
+///
+/// ```ignore
+/// fn do_local_copy() -> Result<(), ClientError> {
+///     let result: Result<(), LocalCopyError> = local_copy_plan.execute();
+///     result?; // Automatically converts LocalCopyError to ClientError
+///     Ok(())
+/// }
+/// ```
+impl From<LocalCopyError> for ClientError {
+    fn from(error: LocalCopyError) -> Self {
+        map_local_copy_error(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn upstream_io_error_uses_bare_errno_suffix() {
+        // upstream rsync renders "<strerror> (<errno>)" (log.c:473), not Rust's
+        // "<strerror> (os error <errno>)".
+        let err = io::Error::from_raw_os_error(2);
+        let text = upstream_io_error(&err);
+        assert!(text.ends_with(" (2)"), "got: {text}");
+        assert!(!text.contains("os error"), "got: {text}");
+
+        // Errors without an OS errno fall back to the Display string verbatim.
+        let custom = io::Error::other("boom");
+        assert_eq!(upstream_io_error(&custom), "boom");
+    }
+
+    mod exit_codes_tests {
+        use super::*;
+
+        #[test]
+        fn exit_codes_have_expected_values() {
+            assert_eq!(FEATURE_UNAVAILABLE_EXIT_CODE, 1);
+            assert_eq!(PROTOCOL_INCOMPATIBLE_EXIT_CODE, 2);
+            assert_eq!(FILE_SELECTION_EXIT_CODE, 3);
+            assert_eq!(CLIENT_SERVER_PROTOCOL_EXIT_CODE, 5);
+            assert_eq!(SOCKET_IO_EXIT_CODE, 10);
+            assert_eq!(FILE_IO_EXIT_CODE, 11);
+            assert_eq!(IPC_EXIT_CODE, 14);
+            assert_eq!(PARTIAL_TRANSFER_EXIT_CODE, 23);
+            assert_eq!(ExitCode::DeleteLimit.as_i32(), 25);
+            assert_eq!(REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, 127);
+        }
+    }
+
+    mod client_error_tests {
+        use super::*;
+
+        #[test]
+        fn new_and_accessors() {
+            let code = ExitCode::StartClient;
+            let message = rsync_error!(code.as_i32(), "test error").with_role(Role::Client);
+            let error = ClientError::with_code(code, message);
+
+            assert_eq!(error.exit_code(), code.as_i32());
+            assert_eq!(error.code(), code);
+            let _ = error.message();
+        }
+
+        #[test]
+        fn clone() {
+            let code = ExitCode::SocketIo;
+            let message = rsync_error!(code.as_i32(), "socket error").with_role(Role::Client);
+            let error = ClientError::with_code(code, message);
+            let cloned = error.clone();
+
+            assert_eq!(error.exit_code(), cloned.exit_code());
+            assert_eq!(error.code(), cloned.code());
+        }
+
+        #[test]
+        fn debug_format() {
+            let code = ExitCode::Syntax;
+            let message = rsync_error!(code.as_i32(), "debug test").with_role(Role::Client);
+            let error = ClientError::with_code(code, message);
+            let debug = format!("{error:?}");
+
+            assert!(debug.contains("ClientError"));
+            assert!(debug.contains("exit_code"));
+        }
+
+        #[test]
+        fn display_format() {
+            let code = ExitCode::Syntax;
+            let message =
+                rsync_error!(code.as_i32(), "display test message").with_role(Role::Client);
+            let error = ClientError::with_code(code, message);
+            let display = format!("{error}");
+
+            assert!(display.contains("display test message"));
+        }
+
+        #[test]
+        fn new_uses_fallback_for_unknown_code() {
+            let message = rsync_error!(999, "unknown code").with_role(Role::Client);
+            let error = ClientError::new(999, message);
+
+            assert_eq!(error.code(), ExitCode::PartialTransfer);
+        }
+
+        #[test]
+        fn has_exit_code_trait() {
+            let code = ExitCode::Protocol;
+            let message = rsync_error!(code.as_i32(), "test").with_role(Role::Client);
+            let error = ClientError::with_code(code, message);
+
+            let trait_code: ExitCode = HasExitCode::exit_code(&error);
+            assert_eq!(trait_code, code);
+        }
+
+        #[test]
+        fn from_local_copy_error() {
+            let local_error = LocalCopyError::missing_operands();
+            let client_error: ClientError = local_error.into();
+
+            // upstream: missing_operands maps to PartialTransfer (23) in
+            // ClientError, even though LocalCopyError uses Syntax (1).
+            assert_eq!(client_error.code(), ExitCode::PartialTransfer);
+        }
+
+        #[test]
+        fn from_local_copy_error_timeout() {
+            use std::time::Duration;
+
+            let local_error = LocalCopyError::timeout(Duration::from_secs(30));
+            let client_error: ClientError = local_error.into();
+
+            assert_eq!(client_error.code(), ExitCode::Timeout);
+            assert!(client_error.to_string().contains("timed out"));
+        }
+
+        #[test]
+        fn from_local_copy_error_delete_limit() {
+            let local_error = LocalCopyError::delete_limit_exceeded(5);
+            let client_error: ClientError = local_error.into();
+
+            assert_eq!(client_error.code(), ExitCode::DeleteLimit);
+            assert!(client_error.to_string().contains("max-delete"));
+        }
+    }
+
+    mod error_factory_tests {
+        use super::*;
+
+        #[test]
+        fn missing_operands_error_uses_correct_code() {
+            let error = missing_operands_error();
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            assert!(error.to_string().contains("missing source operands"));
+        }
+
+        #[test]
+        fn invalid_argument_error_uses_provided_code() {
+            let error = invalid_argument_error("invalid option", FILE_SELECTION_EXIT_CODE);
+            assert_eq!(error.exit_code(), FILE_SELECTION_EXIT_CODE);
+            assert_eq!(error.code(), ExitCode::FileSelect);
+            assert!(error.to_string().contains("invalid option"));
+        }
+
+        #[test]
+        fn invalid_argument_error_uses_fallback_for_unknown() {
+            let error = invalid_argument_error("unknown code", 999);
+            assert_eq!(error.code(), ExitCode::PartialTransfer);
+            assert!(error.to_string().contains("unknown code"));
+        }
+
+        #[test]
+        fn invalid_argument_error_typed_uses_exit_code() {
+            let error = invalid_argument_error_typed("typed error", ExitCode::FileSelect);
+            assert_eq!(error.code(), ExitCode::FileSelect);
+            assert!(error.to_string().contains("typed error"));
+        }
+
+        #[test]
+        fn compile_filter_error_uses_correct_code() {
+            let pattern = "*.txt";
+            let parse_error = "invalid regex";
+            let error = compile_filter_error(pattern, &parse_error);
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to compile filter pattern"));
+            assert!(msg.contains(pattern));
+            assert!(msg.contains(parse_error));
+        }
+
+        /// upstream: main.c:1338-1345 - non-NotFound I/O errors map to
+        /// RERR_PARTIAL (exit code 23). The per-file read failure is detected
+        /// by the sender (sender.c:393 send_files), so it carries the
+        /// `[sender]` role, not `[client]`.
+        #[test]
+        fn io_error_non_notfound_uses_partial_transfer_code_and_sender_role() {
+            let io_err = io::Error::new(ErrorKind::PermissionDenied, "permission denied");
+            let error = io_error("read", Path::new("/test/file.txt"), io_err);
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to read"));
+            assert!(msg.contains("/test/file.txt"));
+            assert!(msg.contains("[sender="), "{msg}");
+        }
+
+        /// upstream: main.c:1338-1345 - NotFound I/O errors map to
+        /// RERR_VANISHED (exit code 24). Upstream emits `file has vanished`
+        /// from the sender (flist.c:1317 / sender.c:389), so who_am_i() tags
+        /// the diagnostic `[sender]`, not `[client]`.
+        #[test]
+        fn io_error_notfound_uses_vanished_code_and_sender_role() {
+            let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+            let error = io_error("read", Path::new("/test/file.txt"), io_err);
+
+            assert_eq!(error.exit_code(), ExitCode::Vanished.as_i32());
+            let msg = error.to_string();
+            assert!(msg.contains("file has vanished"));
+            assert!(msg.contains("/test/file.txt"));
+            assert!(msg.contains("[sender="), "{msg}");
+        }
+
+        /// upstream: flist.c send_file_list() - a missing source argument
+        /// (failed link_stat) exits RERR_PARTIAL (23) with `link_stat "%s"
+        /// failed`, NOT the RERR_VANISHED (24) "file has vanished" path used
+        /// for files that disappear mid-transfer.
+        #[test]
+        fn map_link_stat_failed_uses_partial_not_vanished() {
+            let io_err = io::Error::new(ErrorKind::NotFound, "No such file or directory");
+            let local_error =
+                LocalCopyError::link_stat_failed(Path::new("/tmp/nope").to_path_buf(), io_err);
+            let client_error = map_local_copy_error(local_error);
+
+            assert_eq!(client_error.code(), ExitCode::PartialTransfer);
+            let msg = client_error.to_string();
+            assert!(msg.contains("link_stat \"/tmp/nope\" failed"), "{msg}");
+            assert!(!msg.contains("file has vanished"), "{msg}");
+        }
+
+        /// upstream: rsync.c:sig_int -> exit_cleanup(RERR_SIGNAL) (20);
+        /// log.c:log_exit renders the fixed log.c:95 rerr_names entry
+        /// `received SIGINT, SIGTERM, or SIGHUP (code 20)` once, tagged with the
+        /// sending half's role. The per-file RERR_PARTIAL (23) must not leak
+        /// into the code shown, and the wording must not read "interrupted by
+        /// signal".
+        #[test]
+        fn map_interrupted_uses_signal_code_and_upstream_wording() {
+            let client_error = map_local_copy_error(LocalCopyError::interrupted());
+
+            assert_eq!(client_error.code(), ExitCode::Signal);
+            assert_eq!(client_error.exit_code(), 20);
+            let msg = client_error.to_string();
+            assert!(msg.contains("received SIGINT, SIGTERM, or SIGHUP"), "{msg}");
+            assert!(msg.contains("(code 20)"), "{msg}");
+            assert!(msg.contains("[sender="), "{msg}");
+            assert!(!msg.contains("interrupted by signal"), "{msg}");
+            assert!(!msg.contains("(code 23)"), "{msg}");
+        }
+
+        #[test]
+        fn signal_interrupt_error_matches_map_output() {
+            let direct = signal_interrupt_error();
+            assert_eq!(direct.code(), ExitCode::Signal);
+            assert_eq!(
+                direct.to_string(),
+                map_local_copy_error(LocalCopyError::interrupted()).to_string()
+            );
+        }
+
+        #[test]
+        fn destination_access_error_uses_correct_code() {
+            let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
+            let error = destination_access_error(Path::new("/var/dest"), io_err);
+
+            assert_eq!(error.exit_code(), FILE_SELECTION_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to access destination directory"));
+            assert!(msg.contains("/var/dest"));
+        }
+
+        #[test]
+        fn socket_error_uses_correct_code() {
+            let io_err = io::Error::new(ErrorKind::ConnectionRefused, "connection refused");
+            let error = socket_error("connect to", "localhost:873", io_err);
+
+            assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to connect to localhost:873"));
+        }
+
+        /// Pins the canonical upstream wording from `io.c:228-232`
+        /// (`whine_about_eof()`). Backup and monitoring tools grep for the
+        /// "connection unexpectedly closed (N bytes received so far) [role]"
+        /// substring, so the rendered diagnostic must contain it verbatim.
+        ///
+        /// upstream: io.c:228-232 (rsync 3.4.1):
+        ///   rprintf(FERROR, RSYNC_NAME ": connection unexpectedly closed "
+        ///       "(%s bytes received so far) [%s]\n",
+        ///       big_num(stats.total_read), who_am_i());
+        ///   exit_cleanup(RERR_STREAMIO);
+        #[test]
+        fn connection_unexpectedly_closed_matches_upstream_wording() {
+            let error = connection_unexpectedly_closed_error(1024, Role::Receiver);
+
+            assert_eq!(error.exit_code(), ExitCode::StreamIo.as_i32());
+            assert_eq!(error.code(), ExitCode::StreamIo);
+
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("connection unexpectedly closed (1024 bytes received so far)"),
+                "missing upstream wording: {rendered}"
+            );
+            assert!(
+                rendered.contains("[receiver="),
+                "missing role trailer: {rendered}"
+            );
+        }
+
+        #[test]
+        fn connection_unexpectedly_closed_zero_bytes_includes_count() {
+            let error = connection_unexpectedly_closed_error(0, Role::Generator);
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("connection unexpectedly closed (0 bytes received so far)"),
+                "missing zero-byte wording: {rendered}"
+            );
+            assert!(rendered.contains("[generator="));
+        }
+
+        #[test]
+        fn connection_unexpectedly_closed_supports_sender_role() {
+            let error = connection_unexpectedly_closed_error(42, Role::Sender);
+            let rendered = error.to_string();
+            assert!(rendered.contains("(42 bytes received so far)"));
+            assert!(rendered.contains("[sender="));
+        }
+
+        /// A raw remote/child exit (`ExitCode::Other`) must render upstream's
+        /// canonical `log_exit()` line: the rerr_name fallback "unexplained
+        /// error" plus the raw `(code N)` suffix, tagged with the local process
+        /// role - never a bare `[client]`.
+        ///
+        /// upstream: log.c:912 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
+        /// where the name comes from rerr_name()/"unexplained error" (log.c:903)
+        /// and the role from who_am_i() (rsync.c:823).
+        #[test]
+        fn remote_exit_error_renders_unexplained_error_with_sender_role() {
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, "");
+
+            assert_eq!(error.exit_code(), 42);
+            assert_eq!(error.code(), ExitCode::Other(42));
+
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("unexplained error (code 42)"),
+                "missing upstream phrasing: {rendered}"
+            );
+            assert!(
+                rendered.contains("[sender="),
+                "must carry the local role, not [client]: {rendered}"
+            );
+            assert!(
+                !rendered.contains("connection unexpectedly closed"),
+                "must not merge the EOF whine into the error line: {rendered}"
+            );
+        }
+
+        /// A pull tags the diagnostic with the receiver role, and a named exit
+        /// code (here RERR_STREAMIO) renders its rerr_name, mirroring
+        /// `log_exit()` for both winning-code paths.
+        #[test]
+        fn remote_exit_error_uses_receiver_role_and_named_rerr() {
+            let error = remote_exit_error(ExitCode::StreamIo, Role::Receiver, "");
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("error in rsync protocol data stream (code 12)"),
+                "missing rerr_name: {rendered}"
+            );
+            assert!(rendered.contains("[receiver="), "missing role: {rendered}");
+        }
+
+        /// Captured remote stderr context is appended after the rerr_name so
+        /// the leading upstream phrasing still matches.
+        #[test]
+        fn remote_exit_error_appends_stderr_context() {
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, ": boom");
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("unexplained error: boom (code 42)"),
+                "context must trail the rerr_name: {rendered}"
+            );
+        }
+
+        #[test]
+        fn daemon_error_uses_provided_code() {
+            let code = ExitCode::Crashed.as_i32();
+            let error = daemon_error("test daemon error", code);
+            assert_eq!(error.exit_code(), code);
+            assert_eq!(error.code(), ExitCode::Crashed);
+            assert!(error.to_string().contains("test daemon error"));
+        }
+
+        #[test]
+        fn daemon_error_uses_fallback_for_unknown() {
+            let error = daemon_error("unknown daemon error", 999);
+            assert_eq!(error.code(), ExitCode::PartialTransfer);
+            assert!(error.to_string().contains("unknown daemon error"));
+        }
+
+        #[test]
+        fn daemon_protocol_error_uses_correct_code() {
+            let error = daemon_protocol_error("malformed response");
+
+            assert_eq!(error.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("unexpected response from daemon"));
+            assert!(msg.contains("malformed response"));
+        }
+
+        #[test]
+        fn daemon_authentication_required_error_with_empty_reason() {
+            let error = daemon_authentication_required_error("");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon requires authentication for module listing"));
+            assert!(!msg.contains("module listing: "));
+        }
+
+        #[test]
+        fn daemon_authentication_required_error_with_reason() {
+            let error = daemon_authentication_required_error("password required");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("module listing: password required"));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_none() {
+            let error = daemon_authentication_failed_error(None);
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon rejected provided credentials"));
+            assert!(!msg.contains("credentials: "));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_empty_string() {
+            let error = daemon_authentication_failed_error(Some(""));
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon rejected provided credentials"));
+            assert!(!msg.contains("credentials: "));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_reason() {
+            let error = daemon_authentication_failed_error(Some("wrong password"));
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("credentials: wrong password"));
+        }
+
+        #[test]
+        fn daemon_access_denied_error_with_empty_reason() {
+            let error = daemon_access_denied_error("");
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon denied access to module listing"));
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_access_denied_error_with_reason() {
+            let error = daemon_access_denied_error("IP not allowed");
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("listing: IP not allowed"));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_empty_reason() {
+            let error = daemon_listing_unavailable_error("");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon refused module listing"));
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_whitespace_reason() {
+            let error = daemon_listing_unavailable_error("   ");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon refused module listing"));
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_reason() {
+            let error = daemon_listing_unavailable_error("listing disabled");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("listing: listing disabled"));
+        }
+    }
+}

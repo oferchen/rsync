@@ -1,0 +1,32 @@
+[package]
+name = "platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Platform-specific unsafe code isolation for oc-rsync"
+repository.workspace = true
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+nix = { workspace = true, features = ["fs", "process", "user"] }
+signal-hook = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_Security",
+    "Win32_Security_Authentication_Identity",
+    "Win32_System_Console",
+    "Win32_System_Services",
+    "Win32_System_EventLog",
+] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

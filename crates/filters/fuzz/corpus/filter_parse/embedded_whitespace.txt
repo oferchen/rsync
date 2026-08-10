@@ -1,0 +1,3 @@
+- foo bar/baz
++ path with spaces/file
+- /two  spaces/

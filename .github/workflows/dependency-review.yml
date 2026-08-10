@@ -1,0 +1,34 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'crates/*/Cargo.toml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v4
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-3.0-only, AGPL-3.0-or-later
+          # GHSA-f5v4-2wr6-hqmg: russh 0.45 keyboard-interactive pre-auth DoS.
+          # The embedded-ssh feature is opt-in and not in the default build set;
+          # the auth path is only reachable when a user explicitly enables it.
+          # Bumping russh 0.45 -> 0.60.1 is a 15-minor-version API rewrite
+          # tracked separately; allowlist here keeps dependency review green.
+          allow-ghsas: GHSA-f5v4-2wr6-hqmg

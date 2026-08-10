@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - 'Formula/**'
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.github/CODEOWNERS'
+      - '.github/dependabot.yml'
+      - '.github/FUNDING.yml'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/RELEASE_NOTES_BETA.md'
+      - '.github/RELEASE_TEMPLATE.md'
+      - '.github/release.yml'
+      - '.github/scripts/**'
+      - 'scripts/**'
+      - 'packaging/**'
+      - 'dist-workspace.toml'
+      - '.dockerignore'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'deny.toml'
+
+concurrency:
+  group: ci-skip-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  test:
+    name: nextest (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  windows-test:
+    name: Windows (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  macos-test:
+    name: macOS (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  musl-test:
+    name: Linux musl (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  interop:
+    name: interop
+    uses: ./.github/workflows/_ci-skip-interop.yml
+
+  interop-macos:
+    name: interop (macOS)
+    uses: ./.github/workflows/_ci-skip-interop-macos.yml
+
+  interop-windows:
+    name: interop (Windows, best-effort)
+    uses: ./.github/workflows/_ci-skip-interop-windows.yml
+
+  upstream-testsuite:
+    uses: ./.github/workflows/_ci-skip-upstream-testsuite.yml

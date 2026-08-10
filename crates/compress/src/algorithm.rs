@@ -1,0 +1,472 @@
+//! Shared enumeration describing compression algorithms supported by the workspace.
+//!
+//! This module also defines default compression level constants for each
+//! algorithm, matching upstream rsync defaults.
+
+use ::core::str::FromStr;
+use std::num::NonZeroU8;
+
+use thiserror::Error;
+
+/// Default zlib compression level matching upstream rsync.
+/// upstream: token.c - `Z_DEFAULT_COMPRESSION` resolves to 6.
+pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
+
+/// Maximum zstd compression level accepted by `--compress-level`.
+/// upstream: token.c:74 - `ZSTD_maxCLevel()` returns 22 (ultra levels enabled).
+pub const ZSTD_MAX_LEVEL: i32 = 22;
+
+/// Default zstd compression level.
+/// upstream: token.c - `ZSTD_CLEVEL_DEFAULT` is 3.
+pub const ZSTD_DEFAULT_LEVEL: i32 = 3;
+
+/// Fastest zstd compression level used for the `Fast` variant.
+pub const ZSTD_FAST_LEVEL: i32 = 1;
+
+/// Best zstd compression level used for the `Best` variant.
+/// upstream: token.c - maximum level capped at 19 (ZSTD_maxCLevel without ultra).
+pub const ZSTD_BEST_LEVEL: i32 = 19;
+
+/// Default lz4 acceleration factor. Higher values trade compression ratio for speed.
+pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
+
+/// Compression algorithms recognised by the workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum CompressionAlgorithm {
+    /// Classic zlib/deflate compression.
+    Zlib,
+    /// LZ4 frame compression (`--compress-choice=lz4`).
+    #[cfg(feature = "lz4")]
+    Lz4,
+    /// Zstandard compression (`--compress-choice=zstd`).
+    #[cfg(feature = "zstd")]
+    Zstd,
+}
+
+impl CompressionAlgorithm {
+    /// Returns the canonical display name used for version output and diagnostics.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            CompressionAlgorithm::Zlib => "zlib",
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => "lz4",
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => "zstd",
+        }
+    }
+
+    // upstream: compat.c:valid_compressions_items[] - zstd first, then lz4, zlibx, zlib
+    /// Returns the default compression algorithm used when callers enable `--compress`.
+    ///
+    /// Matches upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib.
+    #[must_use]
+    pub const fn default_algorithm() -> Self {
+        #[cfg(feature = "zstd")]
+        {
+            CompressionAlgorithm::Zstd
+        }
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        {
+            CompressionAlgorithm::Lz4
+        }
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        {
+            CompressionAlgorithm::Zlib
+        }
+    }
+
+    /// Returns the set of algorithms available in the current build.
+    #[must_use]
+    pub const fn available() -> &'static [CompressionAlgorithm] {
+        #[cfg(all(feature = "zstd", feature = "lz4"))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] = &[
+                CompressionAlgorithm::Zlib,
+                CompressionAlgorithm::Lz4,
+                CompressionAlgorithm::Zstd,
+            ];
+            ALGORITHMS
+        }
+
+        #[cfg(all(feature = "zstd", not(feature = "lz4")))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] =
+                &[CompressionAlgorithm::Zlib, CompressionAlgorithm::Zstd];
+            ALGORITHMS
+        }
+
+        #[cfg(all(feature = "lz4", not(feature = "zstd")))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] =
+                &[CompressionAlgorithm::Zlib, CompressionAlgorithm::Lz4];
+            ALGORITHMS
+        }
+
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] = &[CompressionAlgorithm::Zlib];
+            ALGORITHMS
+        }
+    }
+
+    /// Clamps a requested `--compress-level` value into this codec's valid
+    /// range, mirroring upstream `token.c:init_compression_level()`.
+    ///
+    /// Upstream never rejects an out-of-range level - it saturates the value to
+    /// the codec's `min_level`/`max_level` ("We don't bother with any errors or
+    /// warnings -- just make sure that the values are valid."). Returns `None`
+    /// when the level disables compression (zlib `off_level` of `0`); `Some`
+    /// with the clamped level otherwise.
+    #[must_use]
+    pub fn clamp_level(self, level: i32) -> Option<NonZeroU8> {
+        match self {
+            CompressionAlgorithm::Zlib => clamp_zlib_level(level),
+            #[cfg(feature = "lz4")]
+            // upstream: token.c:81-87 - lz4 forces min/max/def to 0 and never
+            // disables; oc represents this as the fastest expressible level.
+            CompressionAlgorithm::Lz4 => Some(clamped(1)),
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => Some(clamp_zstd_level(level)),
+        }
+    }
+}
+
+/// Wraps an already-clamped, guaranteed non-zero level.
+fn clamped(level: u8) -> NonZeroU8 {
+    NonZeroU8::new(level).expect("clamped level is non-zero")
+}
+
+/// Clamps into the zlib range, mirroring `token.c:59-70`.
+///
+/// `Z_DEFAULT_COMPRESSION` (`-1`) remaps to the real default level (6); `0` is
+/// upstream's `off_level` and disables compression; all other values saturate
+/// to `1..=9`.
+fn clamp_zlib_level(level: i32) -> Option<NonZeroU8> {
+    if level == -1 {
+        return Some(clamped(ZLIB_DEFAULT_LEVEL as u8));
+    }
+    if level == 0 {
+        return None;
+    }
+    Some(clamped(level.clamp(1, 9) as u8))
+}
+
+/// Clamps into the zstd range, mirroring `token.c:72-79`.
+///
+/// `0` selects `ZSTD_CLEVEL_DEFAULT` (3); zstd's `off_level` is
+/// `CLVL_NOT_SPECIFIED`, so `0` never disables. The representable range is
+/// `1..=ZSTD_MAX_LEVEL`.
+#[cfg(feature = "zstd")]
+fn clamp_zstd_level(level: i32) -> NonZeroU8 {
+    if level == 0 {
+        return clamped(ZSTD_DEFAULT_LEVEL as u8);
+    }
+    clamped(level.clamp(1, ZSTD_MAX_LEVEL) as u8)
+}
+
+impl Default for CompressionAlgorithm {
+    fn default() -> Self {
+        Self::default_algorithm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn available_algorithms_always_include_zlib() {
+        let available = CompressionAlgorithm::available();
+        assert!(available.contains(&CompressionAlgorithm::Zlib));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn available_algorithms_include_zstd_when_feature_enabled() {
+        let available = CompressionAlgorithm::available();
+        assert!(available.contains(&CompressionAlgorithm::Zstd));
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn available_algorithms_include_lz4_when_feature_enabled() {
+        let available = CompressionAlgorithm::available();
+        assert!(available.contains(&CompressionAlgorithm::Lz4));
+    }
+
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+    #[test]
+    fn available_algorithms_only_include_zlib_when_no_optional_features_enabled() {
+        let available = CompressionAlgorithm::available();
+        assert_eq!(available, &[CompressionAlgorithm::Zlib]);
+    }
+
+    fn level(algorithm: CompressionAlgorithm, raw: i32) -> Option<u8> {
+        algorithm.clamp_level(raw).map(NonZeroU8::get)
+    }
+
+    #[test]
+    fn zlib_clamp_saturates_and_disables_like_upstream() {
+        // upstream: token.c:init_compression_level() zlib branch.
+        assert_eq!(level(CompressionAlgorithm::Zlib, 0), None, "0 disables");
+        assert_eq!(
+            level(CompressionAlgorithm::Zlib, -1),
+            Some(6),
+            "-1 = default"
+        );
+        assert_eq!(level(CompressionAlgorithm::Zlib, -5), Some(1), "below min");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 5), Some(5), "in range");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 9), Some(9), "max");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 10), Some(9), "above max");
+        assert_eq!(
+            level(CompressionAlgorithm::Zlib, 99),
+            Some(9),
+            "far above max"
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn zstd_clamp_uses_wider_range_like_upstream() {
+        // upstream: token.c:init_compression_level() zstd branch - 0 selects the
+        // default (3), max_level is ZSTD_maxCLevel() (22), and 0 never disables.
+        assert_eq!(level(CompressionAlgorithm::Zstd, 0), Some(3), "0 = default");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 15), Some(15), "in range");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 22), Some(22), "max");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 99), Some(22), "above max");
+        assert_eq!(level(CompressionAlgorithm::Zstd, -5), Some(1), "below min");
+    }
+
+    #[test]
+    fn parsing_accepts_known_algorithms() {
+        assert_eq!(
+            "zlib".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+        assert_eq!(
+            "zlibx".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn parsing_accepts_lz4() {
+        assert_eq!(
+            "lz4".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Lz4
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn parsing_accepts_zstd() {
+        assert_eq!(
+            "zstd".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zstd
+        );
+    }
+
+    #[test]
+    fn parsing_rejects_unknown_algorithms() {
+        let err = "brotli"
+            .parse::<CompressionAlgorithm>()
+            .expect_err("brotli unsupported");
+        assert_eq!(err.input(), "brotli");
+    }
+
+    #[test]
+    fn compression_algorithm_name_zlib() {
+        assert_eq!(CompressionAlgorithm::Zlib.name(), "zlib");
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn compression_algorithm_name_lz4() {
+        assert_eq!(CompressionAlgorithm::Lz4.name(), "lz4");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn compression_algorithm_name_zstd() {
+        assert_eq!(CompressionAlgorithm::Zstd.name(), "zstd");
+    }
+
+    #[test]
+    fn default_algorithm_matches_upstream_precedence() {
+        let default = CompressionAlgorithm::default_algorithm();
+        #[cfg(feature = "zstd")]
+        assert_eq!(default, CompressionAlgorithm::Zstd);
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        assert_eq!(default, CompressionAlgorithm::Lz4);
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        assert_eq!(default, CompressionAlgorithm::Zlib);
+        assert_eq!(CompressionAlgorithm::default(), default);
+    }
+
+    #[test]
+    fn compression_algorithm_clone() {
+        let algo = CompressionAlgorithm::Zlib;
+        let cloned = algo;
+        assert_eq!(algo, cloned);
+    }
+
+    #[test]
+    fn compression_algorithm_copy() {
+        let algo = CompressionAlgorithm::Zlib;
+        let copied = algo;
+        assert_eq!(algo, copied);
+    }
+
+    #[test]
+    fn compression_algorithm_debug() {
+        let debug = format!("{:?}", CompressionAlgorithm::Zlib);
+        assert!(debug.contains("Zlib"));
+    }
+
+    #[test]
+    fn compression_algorithm_eq() {
+        assert_eq!(CompressionAlgorithm::Zlib, CompressionAlgorithm::Zlib);
+    }
+
+    #[test]
+    fn compression_algorithm_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(CompressionAlgorithm::Zlib);
+        assert!(set.contains(&CompressionAlgorithm::Zlib));
+    }
+
+    #[test]
+    fn parsing_trims_whitespace() {
+        assert_eq!(
+            "  zlib  ".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+    }
+
+    #[test]
+    fn parsing_case_insensitive() {
+        assert_eq!(
+            "ZLIB".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+        assert_eq!(
+            "ZlIb".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+    }
+
+    #[test]
+    fn parse_error_new() {
+        let error = CompressionAlgorithmParseError::new("test");
+        assert_eq!(error.input(), "test");
+    }
+
+    #[test]
+    fn parse_error_display() {
+        let error = CompressionAlgorithmParseError::new("invalid");
+        let display = error.to_string();
+        assert!(display.contains("invalid"));
+        assert!(display.contains("unsupported"));
+    }
+
+    #[test]
+    fn parse_error_debug() {
+        let error = CompressionAlgorithmParseError::new("test");
+        let debug = format!("{error:?}");
+        assert!(debug.contains("CompressionAlgorithmParseError"));
+    }
+
+    #[test]
+    fn parse_error_eq() {
+        let a = CompressionAlgorithmParseError::new("test");
+        let b = CompressionAlgorithmParseError::new("test");
+        let c = CompressionAlgorithmParseError::new("other");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn parse_error_clone() {
+        let error = CompressionAlgorithmParseError::new("test");
+        let cloned = error.clone();
+        assert_eq!(error, cloned);
+    }
+
+    #[test]
+    fn available_is_not_empty() {
+        assert!(!CompressionAlgorithm::available().is_empty());
+    }
+
+    #[test]
+    fn zlib_default_level_matches_upstream() {
+        assert_eq!(ZLIB_DEFAULT_LEVEL, 6);
+    }
+
+    #[test]
+    fn zstd_default_level_matches_upstream() {
+        assert_eq!(ZSTD_DEFAULT_LEVEL, 3);
+    }
+
+    #[test]
+    fn zstd_fast_level_is_minimum_positive() {
+        assert_eq!(ZSTD_FAST_LEVEL, 1);
+    }
+
+    #[test]
+    fn zstd_best_level_matches_upstream_max() {
+        assert_eq!(ZSTD_BEST_LEVEL, 19);
+    }
+
+    #[test]
+    fn lz4_default_acceleration_is_standard() {
+        assert_eq!(LZ4_DEFAULT_ACCELERATION, 1);
+    }
+
+    #[test]
+    fn compression_level_ordering() {
+        let (fast, default, best) = (ZSTD_FAST_LEVEL, ZSTD_DEFAULT_LEVEL, ZSTD_BEST_LEVEL);
+        assert!(fast < default);
+        assert!(default < best);
+    }
+}
+
+/// Error returned when attempting to parse an unsupported compression algorithm.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unsupported compression algorithm: {input}")]
+pub struct CompressionAlgorithmParseError {
+    input: String,
+}
+
+impl CompressionAlgorithmParseError {
+    /// Creates a parse error capturing the original input.
+    #[must_use]
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+        }
+    }
+
+    /// Input string that failed to parse as a compression algorithm.
+    #[must_use]
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+}
+
+impl FromStr for CompressionAlgorithm {
+    type Err = CompressionAlgorithmParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "zlib" | "zlibx" => Ok(CompressionAlgorithm::Zlib),
+            #[cfg(feature = "lz4")]
+            "lz4" => Ok(CompressionAlgorithm::Lz4),
+            #[cfg(feature = "zstd")]
+            "zstd" => Ok(CompressionAlgorithm::Zstd),
+            other => Err(CompressionAlgorithmParseError::new(other.to_owned())),
+        }
+    }
+}

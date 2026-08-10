@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+# RPM post-install hook intentionally left minimal: oc-rsync does not register
+# alternatives and coexists with any system-provided rsync binaries.
+
+exit 0

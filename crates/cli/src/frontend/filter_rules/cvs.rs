@@ -1,0 +1,246 @@
+use std::env;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
+
+use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use core::message::{Message, Role};
+use core::rsync_error;
+use protocol::SUPPORTED_PROTOCOL_BOUNDS;
+
+use crate::frontend::defaults::CVS_EXCLUDE_PATTERNS;
+
+pub(crate) fn append_cvs_exclude_rules(
+    destination: &mut Vec<FilterRuleSpec>,
+) -> Result<(), Message> {
+    let mut cvs_rules = cvs_default_exclude_rules()?;
+
+    let options = DirMergeOptions::default()
+        .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+        .use_whitespace()
+        .allow_comments(false)
+        .inherit(false)
+        .allow_list_clearing(true);
+    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
+
+    destination.extend(cvs_rules);
+    Ok(())
+}
+
+/// Builds the global CVS default exclude rules: the built-in pattern list,
+/// `$HOME/.cvsignore`, and the `$CVSIGNORE` environment variable, in that
+/// order. Unlike [`append_cvs_exclude_rules`], this does NOT add the
+/// per-directory `.cvsignore` dir-merge - that layer is contributed
+/// separately by a `:C` filter rule.
+///
+/// upstream: exclude.c:1340 get_cvs_excludes() - the `-C` convenience filter
+/// rule (FILTRULE_CVS_IGNORE without a merge flag) populates the global cvs
+/// list from these three sources only; the per-directory merge is the
+/// separate `:C` rule.
+pub(crate) fn cvs_default_exclude_rules() -> Result<Vec<FilterRuleSpec>, Message> {
+    // upstream: exclude.c:1350 get_cvs_excludes() - the built-in default_cvsignore()
+    // list is parsed with the perishable template only when `protocol_version >= 30`.
+    // The `-C` rules are assembled at argument-parse time (before negotiation), so
+    // key the gate on the newest protocol oc negotiates with a modern peer
+    // (SUPPORTED_PROTOCOL_BOUNDS.1 == 32), which is always >= 30.
+    let perishable = SUPPORTED_PROTOCOL_BOUNDS.1 >= 30;
+    let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
+        .iter()
+        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(perishable))
+        .collect();
+
+    // upstream: exclude.c:1393-1402 scopes FILTRULE_CLEAR_LIST ('!') to the
+    // local list section. Parse ~/.cvsignore and $CVSIGNORE into per-scope
+    // buffers so a '!' inside either source cannot wipe the default
+    // CVS_EXCLUDE_PATTERNS already collected in `cvs_rules`.
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let path = Path::new(&home).join(".cvsignore");
+        match fs::read(&path) {
+            Ok(contents) => {
+                let owned = String::from_utf8_lossy(&contents).into_owned();
+                let mut local = Vec::new();
+                append_cvsignore_tokens(&mut local, owned.split_whitespace());
+                cvs_rules.extend(local);
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                let text = format!(
+                    "failed to read '{}' for --cvs-exclude: {error}",
+                    path.display()
+                );
+                return Err(rsync_error!(1, text).with_role(Role::Client));
+            }
+        }
+    }
+
+    if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
+        let owned = value.to_string_lossy().into_owned();
+        let mut local = Vec::new();
+        append_cvsignore_tokens(&mut local, owned.split_whitespace());
+        cvs_rules.extend(local);
+    }
+
+    Ok(cvs_rules)
+}
+
+fn append_cvsignore_tokens<'a, I>(destination: &mut Vec<FilterRuleSpec>, tokens: I)
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    for token in tokens {
+        let trimmed = token.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed == "!" {
+            destination.clear();
+            continue;
+        }
+
+        if let Some(remainder) = trimmed.strip_prefix('!') {
+            if remainder.is_empty() {
+                continue;
+            }
+            remove_cvs_pattern(destination, remainder);
+            continue;
+        }
+
+        // upstream: exclude.c:1355-1357 get_cvs_excludes() - the `$HOME/.cvsignore`
+        // and `$CVSIGNORE` sources are parsed with a plain `rule_template(rflags)`,
+        // NOT the perishable template. Only the built-in `default_cvsignore()`
+        // list (exclude.c:1350) carries FILTRULE_PERISHABLE, so these rules must
+        // not be perishable.
+        destination.push(FilterRuleSpec::exclude(trimmed.to_owned()));
+    }
+}
+
+fn remove_cvs_pattern(rules: &mut Vec<FilterRuleSpec>, pattern: &str) {
+    rules.retain(|rule| {
+        !(matches!(rule.kind(), FilterRuleKind::Exclude) && rule.pattern() == pattern)
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_cvsignore_tokens_adds_basic_pattern() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o"].iter().copied());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].kind(), FilterRuleKind::Exclude);
+        assert_eq!(rules[0].pattern(), "*.o");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_adds_multiple_patterns() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a", "*.so"].iter().copied());
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.a");
+        assert_eq!(rules[2].pattern(), "*.so");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_skips_empty_tokens() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_skips_hash_comments() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "# comment", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_handles_bang_clear() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        append_cvsignore_tokens(&mut rules, ["!"].iter().copied());
+        assert_eq!(rules.len(), 0);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_handles_bang_removal() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a", "*.so"].iter().copied());
+        assert_eq!(rules.len(), 3);
+        append_cvsignore_tokens(&mut rules, ["!*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.so");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_ignores_empty_bang() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o"].iter().copied());
+        append_cvsignore_tokens(&mut rules, ["!"].iter().copied());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_trims_whitespace() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["  *.o  ", "  *.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.a");
+    }
+
+    #[test]
+    fn remove_cvs_pattern_removes_matching_exclude() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.a".to_owned()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern(), "*.a");
+    }
+
+    #[test]
+    fn remove_cvs_pattern_preserves_non_matching() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.a".to_owned()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.xyz");
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn remove_cvs_pattern_preserves_include_rules() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::include("*.o".to_owned()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].kind(), FilterRuleKind::Include);
+    }
+
+    #[test]
+    fn remove_cvs_pattern_removes_all_matching() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn remove_cvs_pattern_empty_rules() {
+        let mut rules: Vec<FilterRuleSpec> = Vec::new();
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert!(rules.is_empty());
+    }
+}

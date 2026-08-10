@@ -1,0 +1,2 @@
+Excluded by `- anchored-here.txt` (the `+ /anchored-here.txt` rule is
+anchored to anchored/, so this deeper file does not match the include).

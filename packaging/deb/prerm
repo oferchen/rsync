@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+# No alternative symlinks are registered by oc-rsync, so removal simply needs
+# to succeed without touching the system rsync binaries.
+
+exit 0

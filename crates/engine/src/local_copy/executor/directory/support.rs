@@ -1,0 +1,639 @@
+//! Directory entry reading, sorting, and file type classification.
+//!
+//! Provides parallel metadata prefetching for directory traversal and
+//! helper predicates for identifying special file types (devices, FIFOs).
+
+use std::cmp::Ordering;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
+
+use crate::local_copy::LocalCopyError;
+
+/// A directory entry with its pre-fetched metadata, used for sorted traversal.
+#[derive(Debug)]
+pub(crate) struct DirectoryEntry {
+    pub(crate) file_name: OsString,
+    pub(crate) path: PathBuf,
+    pub(crate) metadata: fs::Metadata,
+}
+
+/// Minimum number of entries to justify parallel metadata fetching.
+/// Below this threshold, the overhead of thread synchronization exceeds
+/// the benefit of parallelism.
+const PARALLEL_THRESHOLD: usize = 32;
+
+/// Reads directory entries and fetches metadata, using parallel stat calls
+/// when entry count exceeds the threshold, falling back to sequential for
+/// small directories.
+#[cfg(test)]
+fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+    let mut pending = Vec::new();
+    read_directory_entries_sorted_reuse(path, &mut pending)
+}
+
+/// Reads directory entries into a reusable `pending` buffer, avoiding a fresh
+/// heap allocation for the intermediate `(OsString, PathBuf)` collection on
+/// every directory visited during recursive traversal.
+pub(crate) fn read_directory_entries_sorted_reuse(
+    path: &Path,
+    pending: &mut Vec<(OsString, PathBuf)>,
+) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+    read_directory_entries_sorted_parallel(path, pending)
+}
+
+/// Sequential implementation: reads entries and fetches metadata one at a time.
+#[cfg(test)]
+fn read_directory_entries_sorted_sequential(
+    path: &Path,
+) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+    let mut entries = Vec::new();
+    let read_dir =
+        fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
+
+    for entry in read_dir {
+        let entry =
+            entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
+            LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
+        })?;
+        entries.push(DirectoryEntry {
+            file_name: entry.file_name(),
+            path: entry_path,
+            metadata,
+        });
+    }
+
+    entries.sort_unstable_by(compare_directory_entries);
+    Ok(entries)
+}
+
+/// Parallel implementation: enumerates paths first, then fetches metadata in parallel.
+///
+/// This splits the work into two phases:
+/// 1. Sequential directory enumeration (read_dir must be sequential)
+/// 2. Parallel metadata fetching using rayon's thread pool
+///
+/// For directories with many entries, this significantly reduces wall-clock time
+/// by overlapping multiple stat() syscalls across CPU cores.
+///
+/// The `pending` buffer is cleared and refilled each call, reusing the heap
+/// allocation across recursive directory traversal instead of allocating a
+/// fresh `Vec` per directory.
+fn read_directory_entries_sorted_parallel(
+    path: &Path,
+    pending: &mut Vec<(OsString, PathBuf)>,
+) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+    // Phase 1: Collect paths sequentially - read_dir iteration is inherently
+    // sequential on every platform.
+    let read_dir =
+        fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
+
+    pending.clear();
+    for entry in read_dir {
+        let entry =
+            entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
+        pending.push((entry.file_name(), entry.path()));
+    }
+
+    if pending.len() < PARALLEL_THRESHOLD {
+        let mut entries = Vec::with_capacity(pending.len());
+        for (file_name, entry_path) in pending.drain(..) {
+            let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
+                LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
+            })?;
+            entries.push(DirectoryEntry {
+                file_name,
+                path: entry_path,
+                metadata,
+            });
+        }
+        entries.sort_unstable_by(compare_directory_entries);
+        return Ok(entries);
+    }
+
+    // Parallel metadata fetch loses traversal order; sort is applied after
+    // collection so local copies stay deterministic.
+    //
+    // Take elements into a temporary Vec for rayon's into_par_iter.
+    // Reserve capacity afterwards so the buffer stays reusable across
+    // recursive directory visits without re-allocating.
+    let capacity = pending.len();
+    let batch = std::mem::take(pending);
+    pending.reserve(capacity);
+    let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = batch
+        .into_par_iter()
+        .map(
+            |(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
+                Ok(metadata) => Ok(DirectoryEntry {
+                    file_name,
+                    path: entry_path,
+                    metadata,
+                }),
+                Err(error) => Err((entry_path, error)),
+            },
+        )
+        .collect();
+
+    let mut entries = Vec::with_capacity(results.len());
+    for result in results {
+        match result {
+            Ok(entry) => entries.push(entry),
+            Err((entry_path, error)) => {
+                return Err(LocalCopyError::io(
+                    "inspect directory entry",
+                    entry_path,
+                    error,
+                ));
+            }
+        }
+    }
+
+    entries.sort_unstable_by(compare_directory_entries);
+    Ok(entries)
+}
+
+/// Compares two filenames using platform-native byte ordering.
+///
+/// On Unix, uses raw byte comparison for consistency with C `strcmp`.
+/// On Windows, uses wide-character comparison via `encode_wide`.
+// upstream: flist.c:file_compare() - filename ordering
+fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        left.as_bytes().cmp(right.as_bytes())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        // Iterator comparison avoids two Vec allocations per call.
+        left.encode_wide().cmp(right.encode_wide())
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        left.to_string_lossy().cmp(&right.to_string_lossy())
+    }
+}
+
+/// Orders directory entries to match upstream rsync's file-list sort.
+///
+/// Upstream `f_name_cmp()` keys on the entry type before the name: with
+/// `protocol_version >= 29` a directory is `t_PATH` and every non-directory is
+/// `t_ITEM`, and the type test runs first - `if (type1 != type2) return type1
+/// == t_PATH ? 1 : -1` - so within a single directory non-directories sort
+/// *before* subdirectories. Walking that order emits each directory's own
+/// entries immediately after it and before descending into child directories,
+/// producing the interleaved itemize stream (`cd dir/`, `>f dir/file`, `cd
+/// dir/sub/`, ...). The directory type is taken from the lstat'd metadata, so
+/// an unfollowed symlink-to-directory is a non-directory here, matching
+/// upstream's `S_ISDIR` test on the flist entry.
+// upstream: flist.c:3299 f_name_cmp() - type-then-name ordering
+fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> Ordering {
+    // `false < true`, so non-directories (is_dir == false) sort first.
+    a.metadata
+        .is_dir()
+        .cmp(&b.metadata.is_dir())
+        .then_with(|| compare_file_names(&a.file_name, &b.file_name))
+}
+
+/// Returns `true` when the given file type represents a "special" file
+/// eligible for the `--specials` flag.
+///
+/// In upstream rsync, `--specials` covers both named pipes (FIFOs) and
+/// Unix-domain sockets.  Sockets cannot carry data in the same way as
+/// FIFOs, but rsync still recreates the socket node at the destination
+/// when `--specials` is active.
+pub(crate) fn is_fifo(file_type: fs::FileType) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+
+        file_type.is_fifo() || file_type.is_socket()
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file_type;
+        false
+    }
+}
+
+/// Returns `true` when the file type is a block or character device.
+pub(crate) fn is_device(file_type: fs::FileType) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+
+        file_type.is_char_device() || file_type.is_block_device()
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file_type;
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_file_names_equal() {
+        let a = OsStr::new("file.txt");
+        let b = OsStr::new("file.txt");
+        assert_eq!(compare_file_names(a, b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_file_names_less() {
+        let a = OsStr::new("a.txt");
+        let b = OsStr::new("b.txt");
+        assert_eq!(compare_file_names(a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_file_names_greater() {
+        let a = OsStr::new("z.txt");
+        let b = OsStr::new("a.txt");
+        assert_eq!(compare_file_names(a, b), Ordering::Greater);
+    }
+
+    #[test]
+    fn compare_file_names_prefix_is_less() {
+        let a = OsStr::new("file");
+        let b = OsStr::new("file.txt");
+        assert_eq!(compare_file_names(a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_file_names_empty_is_less() {
+        let a = OsStr::new("");
+        let b = OsStr::new("a");
+        assert_eq!(compare_file_names(a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_file_names_both_empty() {
+        let a = OsStr::new("");
+        let b = OsStr::new("");
+        assert_eq!(compare_file_names(a, b), Ordering::Equal);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compare_file_names_case_sensitive() {
+        let a = OsStr::new("A");
+        let b = OsStr::new("a");
+        // On Unix, 'A' (65) < 'a' (97) in byte comparison
+        assert_eq!(compare_file_names(a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_file_names_numeric_order() {
+        let a = OsStr::new("file1");
+        let b = OsStr::new("file2");
+        assert_eq!(compare_file_names(a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn is_fifo_returns_false_for_regular_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("file.txt");
+        std::fs::write(&path, b"content").expect("write");
+
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        assert!(!is_fifo(metadata.file_type()));
+    }
+
+    #[test]
+    fn is_fifo_returns_false_for_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let metadata = std::fs::metadata(temp.path()).expect("metadata");
+        assert!(!is_fifo(metadata.file_type()));
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))
+    ))]
+    #[test]
+    fn is_fifo_returns_true_for_fifo() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.fifo");
+        mknodat(
+            CWD,
+            &path,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600u32),
+            makedev(0, 0),
+        )
+        .expect("mknodat fifo");
+
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(is_fifo(metadata.file_type()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_fifo_returns_true_for_socket() {
+        use std::os::unix::net::UnixListener;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.sock");
+        let _listener = UnixListener::bind(&path).expect("bind socket");
+
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(is_fifo(metadata.file_type()));
+    }
+
+    #[test]
+    fn is_device_returns_false_for_regular_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("file.txt");
+        std::fs::write(&path, b"content").expect("write");
+
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        assert!(!is_device(metadata.file_type()));
+    }
+
+    #[test]
+    fn is_device_returns_false_for_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let metadata = std::fs::metadata(temp.path()).expect("metadata");
+        assert!(!is_device(metadata.file_type()));
+    }
+
+    #[test]
+    fn directory_entry_debug_contains_file_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"content").expect("write");
+
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        let entry = DirectoryEntry {
+            file_name: OsString::from("test.txt"),
+            path,
+            metadata,
+        };
+
+        let debug = format!("{entry:?}");
+        assert!(debug.contains("DirectoryEntry"));
+        assert!(debug.contains("test.txt"));
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_empty_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = read_directory_entries_sorted(temp.path());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_single_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("single.txt");
+        std::fs::write(&path, b"content").expect("write");
+
+        let result = read_directory_entries_sorted(temp.path());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file_name, OsString::from("single.txt"));
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_multiple_files_sorted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("c.txt"), b"c").expect("write");
+        std::fs::write(temp.path().join("a.txt"), b"a").expect("write");
+        std::fs::write(temp.path().join("b.txt"), b"b").expect("write");
+
+        let result = read_directory_entries_sorted(temp.path());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].file_name, OsString::from("a.txt"));
+        assert_eq!(entries[1].file_name, OsString::from("b.txt"));
+        assert_eq!(entries[2].file_name, OsString::from("c.txt"));
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_includes_subdirectory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("subdir")).expect("mkdir");
+        std::fs::write(temp.path().join("file.txt"), b"content").expect("write");
+
+        let result = read_directory_entries_sorted(temp.path());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 2);
+        // Check both entries exist (order depends on byte comparison)
+        let names: Vec<_> = entries.iter().map(|e| e.file_name.clone()).collect();
+        assert!(names.contains(&OsString::from("file.txt")));
+        assert!(names.contains(&OsString::from("subdir")));
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_error_on_nonexistent() {
+        let result = read_directory_entries_sorted(Path::new("/nonexistent/path/12345"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_metadata_is_populated() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("file.txt");
+        std::fs::write(&path, b"test content").expect("write");
+
+        let result = read_directory_entries_sorted(temp.path());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 1);
+
+        // Check metadata is valid
+        let entry = &entries[0];
+        assert!(entry.metadata.is_file());
+        assert_eq!(entry.metadata.len(), 12); // "test content" is 12 bytes
+    }
+
+    #[test]
+    fn parallel_and_sequential_produce_identical_results() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Create enough files to trigger parallel path (> PARALLEL_THRESHOLD)
+        for i in 0..50 {
+            let name = format!("file_{i:03}.txt");
+            std::fs::write(temp.path().join(&name), format!("content {i}")).expect("write");
+        }
+        // Add some directories too
+        for i in 0..10 {
+            let name = format!("dir_{i:02}");
+            std::fs::create_dir(temp.path().join(&name)).expect("mkdir");
+        }
+
+        let parallel =
+            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new()).unwrap();
+        let sequential = read_directory_entries_sorted_sequential(temp.path()).unwrap();
+
+        assert_eq!(parallel.len(), sequential.len());
+        for (p, s) in parallel.iter().zip(sequential.iter()) {
+            assert_eq!(p.file_name, s.file_name);
+            assert_eq!(p.path, s.path);
+            assert_eq!(p.metadata.len(), s.metadata.len());
+            assert_eq!(p.metadata.is_file(), s.metadata.is_file());
+            assert_eq!(p.metadata.is_dir(), s.metadata.is_dir());
+        }
+    }
+
+    #[test]
+    fn parallel_small_directory_uses_sequential_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Create fewer files than PARALLEL_THRESHOLD
+        for i in 0..5 {
+            std::fs::write(temp.path().join(format!("file_{i}.txt")), b"content").expect("write");
+        }
+
+        // Should still work correctly (uses sequential path internally)
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn parallel_maintains_sort_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Create files with names that would be out of order if not sorted
+        let names = ["zebra.txt", "apple.txt", "mango.txt", "banana.txt"];
+        for name in &names {
+            std::fs::write(temp.path().join(name), b"content").expect("write");
+        }
+
+        // Also create enough files to potentially trigger parallel path
+        for i in 0..40 {
+            std::fs::write(temp.path().join(format!("file_{i:02}.txt")), b"content")
+                .expect("write");
+        }
+
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
+        assert!(result.is_ok());
+        let entries = result.unwrap();
+
+        // Verify entries are sorted
+        for i in 1..entries.len() {
+            let prev = &entries[i - 1].file_name;
+            let curr = &entries[i].file_name;
+            assert!(
+                compare_file_names(prev, curr) != Ordering::Greater,
+                "entries not sorted: {prev:?} > {curr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn directory_entries_sort_non_directories_before_subdirectories() {
+        // upstream: flist.c:3299 f_name_cmp() - within a directory, every
+        // non-directory sorts before any subdirectory. Plain byte ordering
+        // would interleave these as a_dir, b_file, c_dir, d_file; the upstream
+        // key yields the two files first, then the two directories.
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("a_dir")).expect("create a_dir");
+        std::fs::write(temp.path().join("b_file"), b"x").expect("write b_file");
+        std::fs::create_dir(temp.path().join("c_dir")).expect("create c_dir");
+        std::fs::write(temp.path().join("d_file"), b"x").expect("write d_file");
+
+        let entries = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new())
+            .expect("read entries");
+        let order: Vec<String> = entries
+            .iter()
+            .map(|e| e.file_name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(order, ["b_file", "d_file", "a_dir", "c_dir"]);
+    }
+
+    #[test]
+    fn parallel_handles_symlinks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Create target files
+        for i in 0..35 {
+            std::fs::write(temp.path().join(format!("target_{i}.txt")), b"content").expect("write");
+        }
+
+        // Create symlinks on Unix
+        #[cfg(unix)]
+        {
+            for i in 0..10 {
+                let target = temp.path().join(format!("target_{i}.txt"));
+                let link = temp.path().join(format!("link_{i}.txt"));
+                std::os::unix::fs::symlink(&target, &link).expect("symlink");
+            }
+        }
+
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
+        assert!(result.is_ok());
+        let _entries = result.unwrap();
+
+        // Verify symlinks are included with correct metadata (symlink_metadata, not target)
+        #[cfg(unix)]
+        {
+            let symlink_entries: Vec<_> = _entries
+                .iter()
+                .filter(|e| e.file_name.to_string_lossy().starts_with("link_"))
+                .collect();
+            assert_eq!(symlink_entries.len(), 10);
+            for entry in symlink_entries {
+                assert!(entry.metadata.file_type().is_symlink());
+            }
+        }
+    }
+
+    #[test]
+    fn reuse_buffer_preserves_capacity_across_directories() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir_a = temp.path().join("a");
+        let dir_b = temp.path().join("b");
+        std::fs::create_dir(&dir_a).expect("mkdir a");
+        std::fs::create_dir(&dir_b).expect("mkdir b");
+
+        for i in 0..10 {
+            std::fs::write(dir_a.join(format!("file_{i}.txt")), b"content").expect("write a");
+        }
+        for i in 0..3 {
+            std::fs::write(dir_b.join(format!("file_{i}.txt")), b"content").expect("write b");
+        }
+
+        let mut buf = Vec::new();
+        assert_eq!(buf.capacity(), 0);
+
+        let entries_a = super::read_directory_entries_sorted_reuse(&dir_a, &mut buf).unwrap();
+        assert_eq!(entries_a.len(), 10);
+        // After draining, the buffer keeps its heap capacity.
+        assert!(buf.capacity() >= 10);
+
+        let saved_capacity = buf.capacity();
+        let entries_b = super::read_directory_entries_sorted_reuse(&dir_b, &mut buf).unwrap();
+        assert_eq!(entries_b.len(), 3);
+        // Capacity stays at the high-water mark from the larger directory.
+        assert_eq!(buf.capacity(), saved_capacity);
+    }
+}

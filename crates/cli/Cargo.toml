@@ -1,0 +1,125 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["zstd", "lz4", "xattr"]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
+zstd = ["core/zstd", "compress/zstd"]
+lz4 = ["core/lz4", "compress/lz4"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+xattr = ["core/xattr"]
+acl = ["core/acl"]
+
+# ============================================================================
+# Character Encoding Conversion
+# ============================================================================
+# Filename encoding conversion (--iconv). When disabled, --iconv=LOCAL,REMOTE
+# is rejected at config build with a hard error rather than silently no-opping.
+iconv = ["core/iconv"]
+
+# ============================================================================
+# Performance Optimization Features
+# ============================================================================
+
+# Parallel file operations - enables rayon-based parallelism for checksum mode
+# Also enables engine optimization features for maximum performance
+parallel = ["engine/lazy-metadata", "checksums/parallel"]
+
+# ============================================================================
+# Daemon Accept Path
+# ============================================================================
+# Compiles the daemon's hybrid tokio accept path. Opt-in and default-off; the
+# shipping binary still runs the synchronous accept loop unless the operator
+# also sets OC_RSYNC_ASYNC_DAEMON at runtime. Enables the async-vs-sync daemon
+# concurrency benchmark.
+async-daemon = ["daemon/async-daemon"]
+
+# EXPERIMENTAL (default-off): route the per-connection daemon transfer through
+# the tokio driver. Forwards to both `core` and `daemon` so the callee signature
+# (`run_server_with_handshake`, re-exported from `core`) and the daemon call-site
+# cfg gates stay in lockstep - selecting `-p cli --all-features` must not enable
+# `core/tokio-transfer` (which changes the signature) without also enabling
+# `daemon/tokio-transfer` (which selects the matching call site).
+tokio-transfer = ["async-daemon", "core/tokio-transfer", "daemon/tokio-transfer"]
+
+# BENCHMARK-ONLY (default-off): the gated async-receiver daemon path. Forwards to
+# both `core` and `daemon` for the same lockstep reason as `tokio-transfer`.
+# Also requires OC_RSYNC_ASYNC_BENCH=1 at runtime; production builds unaffected.
+async-bench = ["tokio-transfer", "core/async-bench", "daemon/async-bench"]
+
+
+[dependencies]
+bandwidth = { path = "../bandwidth" }
+clap = { workspace = true }
+core = { path = "../core", default-features = false }
+engine = { path = "../engine", default-features = false }
+filters = { path = "../filters" }
+logging = { path = "../logging", features = ["tracing"] }
+logging-sink = { path = "../logging-sink" }
+protocol = { path = "../protocol" }
+compress = { path = "../compress", default-features = false }
+metadata = { path = "../metadata", default-features = false }
+platform = { path = "../platform" }
+rsync_io = { path = "../rsync_io", package = "rsync_io" }
+rayon = { workspace = true }
+time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
+tempfile = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+uzers = "0.12"
+xattr = { workspace = true }
+daemon = { path = "../daemon" }
+
+# fast_io's `landlock` feature carries the rust-landlock dispatch used by
+# the `--server` receiver sandbox in `frontend/server/run.rs`. Linux gets the
+# real LSM backend; on every other target the stub module compiles with the
+# same public surface and every call short-circuits to `Unavailable`, so
+# the wire-in does not need `#[cfg]` branching at the call site.
+[target.'cfg(target_os = "linux")'.dependencies]
+fast_io = { path = "../fast_io", default-features = false, features = ["landlock"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+fast_io = { path = "../fast_io", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = "3.1"
+filetime = { workspace = true }
+tempfile = { workspace = true }
+test-support = { path = "../test-support" }
+rustix = { workspace = true, features = ["fs"] }
+base64 = { workspace = true }
+libc = { workspace = true }
+apple-fs = { path = "../apple-fs" }
+serial_test = "3.5"
+criterion = { workspace = true }
+toml = { workspace = true }
+
+[[bench]]
+name = "startup_benchmark"
+harness = false

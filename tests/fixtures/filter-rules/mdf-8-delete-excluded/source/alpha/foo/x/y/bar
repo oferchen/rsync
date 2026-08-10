@@ -1,0 +1,1 @@
+deep `bar` matched by `- foo/**/bar` (UTS-DD-exclude.5: no double `**/` companion)

@@ -1,0 +1,20 @@
+name: Build oc-rsync (release)
+description: >
+  Build the oc-rsync release binary with `cargo build --locked --release`.
+  Accepts an optional `features` input for future reuse; omit it to get the
+  bare release build used by the standard CI matrix.
+
+inputs:
+  features:
+    description: Comma-separated feature flags to pass via --features (optional).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Build oc-rsync
+      shell: bash
+      run: >
+        cargo build --locked --release --bin oc-rsync
+        ${{ inputs.features && format('--features {0}', inputs.features) || '' }}

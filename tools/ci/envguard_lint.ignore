@@ -1,0 +1,14 @@
+# BPF-5: EnvGuard CI lint ignore list.
+#
+# Format: one entry per line as `<repo-relative-path>::<test_fn_name>`.
+# A bare `<repo-relative-path>` (no `::<fn>`) ignores the whole file.
+# Blank lines and lines beginning with `#` are skipped.
+#
+# Add an entry only when a test legitimately touches an
+# `OC_RSYNC_BUFFER_POOL_*` cap-token without an `EnvGuard` (for
+# example, the `EnvGuard` self-tests exercising raw env mutation to
+# prove the guard restores state on drop).
+#
+# BPF-3 (#2821) is the task that wraps the BPF-2 gap list with
+# `EnvGuard`; until it merges, the lint runs in warn-only mode.
+# See `docs/design/bpf-4-envguard-ci-lint-spec.md` section 4.2.

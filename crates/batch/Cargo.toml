@@ -1,0 +1,23 @@
+[package]
+name = "batch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Batch mode support for offline rsync transfer workflows"
+repository.workspace = true
+
+[features]
+# Compression algorithm features forwarded from protocol crate.
+zstd = ["protocol/zstd"]
+
+[dependencies]
+thiserror = { workspace = true }
+protocol = { path = "../protocol" }
+metadata = { path = "../metadata" }
+filetime = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+protocol = { path = "../protocol" }

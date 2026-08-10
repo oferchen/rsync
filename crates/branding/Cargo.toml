@@ -1,0 +1,24 @@
+[package]
+name = "branding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Centralised branding and workspace metadata for the Rust rsync implementation"
+repository.workspace = true
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }
+
+[build-dependencies]
+toml = { workspace = true }

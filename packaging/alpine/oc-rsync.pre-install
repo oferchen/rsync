@@ -1,0 +1,5 @@
+#!/bin/sh
+# Create oc-rsyncd group and user if they don't exist
+addgroup -S oc-rsyncd 2>/dev/null || true
+adduser -S -D -H -h /var/empty -s /sbin/nologin -G oc-rsyncd oc-rsyncd 2>/dev/null || true
+exit 0

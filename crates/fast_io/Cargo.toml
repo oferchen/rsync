@@ -1,0 +1,377 @@
+[package]
+name = "fast_io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance I/O abstractions for rsync"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+rayon = { workspace = true }
+logging = { path = "../logging" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Cached sorting with Schwartzian transform
+permutation = "0.4"
+
+# filetime is used universally: by syscall_batch's cfg(not(unix)) path and by
+# the unix-side utimensat_via_sandbox_or_fallback multi-component fallback (SEC-1.i)
+filetime = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Memory-mapped I/O (unix-only; runtime fallback to buffered I/O)
+memmap2 = "0.9"
+
+# libc is used for copy_file_range syscall on Linux (always compiled, runtime detection)
+libc = { workspace = true }
+
+# rustix is used for statx syscall on Linux (always compiled, runtime detection)
+rustix = { workspace = true, features = ["fs"] }
+
+# Concurrent hash map for the DirSandbox secondary-operand side cache
+# (SEC-1.e); read-mostly lookups by canonical operand path.
+dashmap = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Optional: io_uring support (Linux 5.6+)
+io-uring = { version = "0.7", optional = true }
+
+# Optional: Landlock LSM defense-in-depth allowlist (Linux 5.13+).
+# Used by the daemon receiver path after privilege drop to enforce a
+# kernel-level allowlist layered above the SEC-1 *at* helpers. Best-effort
+# downgrade picks the highest ABI the running kernel exposes.
+landlock = { version = "0.4", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Optional: Objective-C block support for the Grand Central Dispatch
+# `dispatch_io` async file I/O primitives (macos-gcd feature). Only pulled in
+# on macOS and only when the feature is enabled; `block2` builds an ABI-correct
+# heap block that `dispatch_io_read`/`dispatch_io_write` invoke on completion.
+block2 = { version = "0.6", optional = true }
+
+[features]
+default = ["io_uring", "iocp", "sqpoll-mlock-basis"]
+
+# SQM-3: pin (`mlock(2)`) the mmap'd basis-file window before each SQPOLL
+# submission so the kthread cannot fault on a page the userspace task has
+# not yet touched. With the feature on, `IoUringConfig::build_ring` keeps
+# SQPOLL even when an mmap basis reader is active because
+# `WiredBasisWindow` closes the race surface structurally; with the feature
+# off, the long-standing defensive disable refuses SQPOLL+mmap pairings and
+# the build falls back to a regular ring. Operators flip the feature off
+# when downgrade-class `mlock` errors exceed the 5% SQM-2.b threshold (see
+# `docs/design/sqm-2b-implementation-design.md`). Linux-only at runtime;
+# non-Linux builds compile a zero-cost stub.
+sqpoll-mlock-basis = []
+
+# ============================================================================
+# I/O Optimization Features
+# ============================================================================
+
+# io_uring support for Linux 5.6+ with automatic fallback to standard I/O
+# Requirements: Linux 5.6+ kernel (runtime detection and fallback)
+# Benefits: 20-40% faster I/O via batched syscalls
+# Trade-offs: Linux-only, adds dependency on io-uring crate
+io_uring = ["dep:io-uring"]
+
+# Opt-in sender/reader-side io_uring slurp wrapper (IUD-6 #2366).
+# Activates `IoUringFileReader` + `read_file_with_io_uring`, the basis-file
+# fast path that submits `IORING_OP_READ_FIXED` against a `RegisteredBufferPool`
+# slot. Disabled by default so production reads stay byte-identical to the
+# stdlib path; consumers opt in through their own passthrough features
+# (e.g. `engine/iouring-data-reads`).
+iouring-data-reads = ["io_uring"]
+
+# Windows I/O Completion Ports for async file reads and writes
+# Requirements: Windows Vista+ (runtime detection and fallback)
+# Benefits: Overlapped async I/O with completion port batching
+# Trade-offs: Windows-only, adds complexity for async file operations
+iocp = []
+
+# Windows TransmitFile() zero-copy file-to-socket primitive (#2301)
+# Requirements: Windows + iocp feature; sockets opened with WSA_FLAG_OVERLAPPED
+# Benefits: Single kernel-mode DMA from page cache straight to NIC, no
+#   user-space copy. Pairs with Linux sendfile(2) on the corresponding path.
+# Trade-offs: Returns ERROR_NOT_SUPPORTED on SMB/DFS shares and encrypted
+#   volumes; the caller must fall back to regular WSASend. See
+#   docs/design/windows-transmitfile-zerocopy.md for the integration plan.
+transmitfile = ["iocp"]
+
+# copy_file_range: Always compiled with runtime detection (no longer a feature gate)
+# The copy_file_range module is always available; it uses runtime detection on Linux
+# and automatic fallback to read/write on other platforms or when syscall fails.
+# This feature is kept as an empty alias for compatibility.
+copy_file_range = []
+
+# syscall_batch: Always compiled with runtime detection (no longer a feature gate)
+# The syscall_batch module is always available; it uses runtime detection for
+# batching threshold and platform-specific syscalls (statx on Linux).
+# This feature is kept as an empty alias for compatibility.
+syscall_batch = []
+
+# vmsplice: Linux-only zero-copy file writer that moves a userspace buffer to a
+# regular file via `vmsplice(2)` + `splice(2)`. Default off until benchmarks on
+# the trigger workload (kernel < 5.6 or io_uring disabled, large literal tokens,
+# splice-capable filesystem) justify promotion. See
+# docs/design/splice-vmsplice-zero-copy.md.
+vmsplice = []
+
+# dontcache: Linux-only uncached bulk file writer that lands literal chunks via
+# `pwritev2(2)` with `RWF_DONTCACHE` (kernel 6.14+), so large transfers do not
+# evict the page cache working set. Default off until eviction/throughput
+# benchmarks on the >RAM workload justify promotion; falls back to a buffered
+# `write(2)` on kernels or filesystems that reject the flag.
+dontcache = []
+
+# macos-gcd: macOS-only Grand Central Dispatch `dispatch_io` async file I/O
+# primitives (MFAST-1). Activates `fast_io::gcd` with `GcdQueue`, `GcdReader`,
+# and `GcdWriter`: safe wrappers that drive `dispatch_io_read`/`dispatch_io_write`
+# to completion and bridge the async completion back to the crate's blocking,
+# threaded call model via a condvar. Default off; pulls in the `block2` crate
+# for the completion block. These are the primitives only - no transfer path
+# consumes them yet (that is MFAST-3/4/5). On non-macOS targets the feature is
+# inert (the module is not compiled).
+macos-gcd = ["dep:block2"]
+
+# EXPERIMENTAL: SMR-3c - per-file adaptive basis-read dispatch with throughput
+# feedback. Tracks rolling EWMA throughput of the mmap and io_uring backends
+# per process and picks whichever has won lately. Falls back to the SMR-3b
+# size-threshold heuristic when no samples are recorded yet. Default off
+# pending hardware validation; promote only after the SMR-1 bench harness
+# demonstrates a consistent win over the static threshold.
+adaptive-basis-dispatch = []
+
+# iouring-send-zc: Linux-only opt-in dispatch for IORING_OP_SEND_ZC on the
+# socket-send path. Requires the `io_uring` feature. When enabled, the
+# transport send path routes payloads >= 4 KiB through `ZeroCopySender`,
+# which submits the zero-copy send opcode against a registered buffer pool
+# so the kernel can DMA pages directly without a userspace copy. Default
+# off; IUS-4 (docs/design/ius-4-decision-2026-05-22.md) kept this opt-in
+# under the data-missing branch of the framing rule because the IUS-3
+# multi-kernel bench numbers have not been captured. Promotion to the
+# default feature set requires >= 10% throughput on >= 2 of 4 IUS-3
+# workloads, no workload regressing by > 2%, and release-policy sign-off
+# to raise the io_uring socket-send floor from 5.6 to 6.0. See
+# docs/design/iouring-send-zc.md for the full design and
+# docs/design/ius-4-decision-2026-05-22.md for the keep-opt-in rationale.
+iouring-send-zc = ["io_uring"]
+
+# landlock: Linux-only opt-in dispatch for the Landlock LSM allowlist used by
+# the daemon receiver path (SEC-1.p) as defense-in-depth above the SEC-1 *at*
+# helpers. When enabled, the helper requests `AccessFs::from_all(ABI::V3)`
+# with best-effort downgrade so older kernels (5.13/5.19) accept the v1/v2
+# subset. Default off pending the daemon wire-in opting into the feature.
+# See docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md for the
+# full design.
+landlock = ["dep:landlock"]
+
+# iouring-data-writes: opt-in dispatch that routes large file writes through
+# the production io_uring writer wrapper (`fast_io::write_file_with_io_uring`).
+# Wired by IUD-5; declared here so the `nvme_data_path_production` bench
+# (IUD-9 #2369) can list it under `required-features`. Linux-only at runtime;
+# on every other platform the entry point returns `io::ErrorKind::Unsupported`.
+iouring-data-writes = ["io_uring"]
+
+# EXPERIMENTAL: SMR-3a - drop mmap for all basis reads. When enabled, the
+# basis-read dispatch in `engine::concurrent_delta::strategy` skips the mmap
+# branch entirely and forces io_uring (where available) or a `BufReader<File>`
+# fallback. Default off because Option 2 (size-threshold heuristic) is the
+# provisional default per `docs/design/mmap-vs-sqpoll-conflict-resolution.md`
+# until SMR-1 hardware numbers validate Option 1. See the same document for
+# the rationale and the trigger table that gates a future default flip.
+mmap-free-basis = []
+block2 = ["dep:block2"]
+
+[target.'cfg(windows)'.dependencies]
+# CopyFileExW for Windows-optimized file copy with no-buffering support;
+# Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
+# Win32_System_Pipes added for CreatePipe-based tests of anonymous-handle
+# rejection in writer_from_file (#1929).
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "io_optimizations"
+harness = false
+
+[[bench]]
+name = "platform_copy"
+harness = false
+
+[[bench]]
+name = "splice_pipe"
+harness = false
+
+# Linux-only bench: per-file vs shared io_uring ring on a 100K small-file
+# workload. Gated by the OC_RSYNC_BENCH_IOURING_RING=1 env var because each
+# iteration writes 100K files. See the file's module doc for the run recipe
+# and what the numbers inform on task #2243.
+[[bench]]
+name = "iouring_per_file_vs_shared"
+harness = false
+required-features = ["io_uring"]
+
+# Linux-only bench: io_uring SQPOLL vs regular submission vs std::fs on a
+# 100K small-file workload. Gated by OC_RSYNC_BENCH_IOURING_RING=1 (for the
+# io_uring groups) and OC_RSYNC_BENCH_IOURING_SQPOLL=1 (for the SQPOLL group)
+# because SQPOLL needs CAP_SYS_NICE on pre-5.13 kernels. See the file's
+# module doc for the run recipe and what the numbers inform on #1626 / #2243
+# / #2045.
+[[bench]]
+name = "iouring_sqpoll_vs_regular"
+harness = false
+required-features = ["io_uring"]
+
+# Linux-only bench: mmap vs IORING_OP_READ_FIXED + SQPOLL on sequential
+# basis-file reads at 4 MiB / 64 MiB / 1 GiB. Gated by
+# OC_RSYNC_BENCH_IOURING_RING=1 and OC_RSYNC_BENCH_IOURING_SQPOLL=1 (the
+# latter only for the read_fixed cells; the mmap cells need no gate),
+# plus OC_RSYNC_BENCH_LARGE=1 to enable the 1 GiB rows. SMR-1 harness
+# only; the hardware run that picks Option 1/2/3 from the design doc is
+# tracked separately as SMR-2. See
+# docs/design/mmap-vs-sqpoll-conflict-resolution.md (follow-up to #2158).
+[[bench]]
+name = "mmap_vs_read_fixed_basis"
+harness = false
+
+# Windows-only bench: IOCP writer path (IocpDiskBatch) vs std::fs and
+# BufWriter baselines across 4 KiB / 64 KiB / 1 MiB payloads. The bench
+# file is cfg-gated to `target_os = "windows"` and the `iocp` feature; on
+# every other host it compiles to a stub `main` that prints a skip line.
+# See the file's module doc for the run recipe and what the numbers inform
+# on #1899.
+[[bench]]
+name = "iocp_vs_stdio"
+harness = false
+
+# Cross-platform matched-workload bench: IOCP (Windows) vs io_uring (Linux)
+# both compared against the same std::fs baseline so per-host throughput
+# can be normalised before cross-host comparison. The bench file compiles
+# on every platform but each kernel-async cell is cfg-gated to its host;
+# every host also produces the std_baseline row as a common reference.
+# Linux io_uring cells are env-gated via OC_RSYNC_BENCH_IOURING_RING=1
+# (and OC_RSYNC_BENCH_IOURING_SQPOLL=1 for the sqpoll cell). See the
+# file's module doc for the run recipe and what the numbers inform on
+# #1868.
+[[bench]]
+name = "iocp_vs_iouring_matched"
+harness = false
+
+# Cross-platform synchronous copy-path bench: per-host throughput of the
+# unified DefaultPlatformCopy dispatcher (FICLONE / copy_file_range on
+# Linux, clonefile / fcopyfile on macOS, CopyFileExW / ReFS reflink on
+# Windows) against the std::fs::copy baseline. The bench file compiles
+# on every platform; the actual CopyMethod picked per cell is recorded
+# on stderr at bench start so each host's Criterion report can be
+# cross-referenced against the kernel path that ran. See the file's
+# module doc for the run recipe and what the numbers inform on #1386.
+[[bench]]
+name = "platform_copy_gap"
+harness = false
+
+# Linux-only bench: NVMe-heavy data-path stdlib write vs io_uring
+# WRITE_FIXED on a 10 x 1 GiB workload. Quantifies the headroom the
+# iouring-data-writes cutover (docs/design/iouring-receive-data-path.md)
+# would close on a real NVMe mount. Gated by
+# OC_RSYNC_BENCH_NVME_DATA_PATH=1; optionally OC_RSYNC_BENCH_NVME_PATH
+# pins the scratch dir to a real NVMe mount instead of the default
+# TempDir location. See the file's module doc for the run recipe and
+# what the numbers inform on #2364.
+[[bench]]
+name = "nvme_data_path"
+harness = false
+
+# Linux-only bench: production io_uring data-path wrappers
+# (`fast_io::write_file_with_io_uring`, `fast_io::read_file_with_io_uring`)
+# vs stdlib baselines on the IUD-4 workload (10 x 1 GiB). Gated by the
+# OC_RSYNC_BENCH_NVME_DATA_PATH=1 env var because each iteration moves 10 GiB
+# of data. Companion to the prototype-path `nvme_data_path` bench so the
+# after-change number can be checked against the IUD-4 projection. See the
+# file's module doc for the run recipe and what the numbers inform on #2369.
+[[bench]]
+name = "nvme_data_path_production"
+harness = false
+required-features = ["iouring-data-writes", "iouring-data-reads"]
+
+# Linux-only bench: multi-GB single-file io_uring scale measurement (IUB-4).
+# Measures streaming write and read throughput at 2 GiB, 10 GiB, and 50 GiB
+# to determine whether io_uring pays off at production file sizes. Gated by
+# BENCH_LARGE=1 (for 2/10 GiB) and BENCH_LARGE_50G=1 (for the 50 GiB tier).
+# See the file's module doc for the run recipe and what the numbers inform.
+[[bench]]
+name = "iouring_multi_gb_scale"
+harness = false
+required-features = ["iouring-data-writes", "iouring-data-reads"]
+
+# Linux-only bench: IORING_OP_SEND_ZC vs plain IORING_OP_SEND on a loopback
+# TCP pair across four workload shapes (16 KiB x 10000, 256 KiB x 1000,
+# 1 MiB x 100, mixed 4 KiB-1 MiB x 1000). The send_plain group needs only
+# the `io_uring` feature (default on); the send_zc group is cfg-compiled in
+# only when `iouring-send-zc` is also enabled and skips at runtime on
+# kernels < 6.0. Gated by OC_RSYNC_BENCH_IUS_3=1 because each iteration
+# rebuilds the ring + loopback pair and the full sweep runs for several
+# minutes. See docs/design/ius-3-send-zc-bench-design-2026-05-21.md for the
+# bench design + decision criteria; numbers capture on the kernel matrix
+# (5.15 / 5.19 / 6.0 / 6.6 / 6.12) is the followup PR.
+[[bench]]
+name = "ius_3_send_zc_vs_send"
+harness = false
+required-features = ["io_uring"]
+
+# Linux-only bench: high-file-count io_uring statx batching measurement
+# (IUB-5). Compares IORING_OP_STATX batch submission against sequential
+# std::fs::metadata and syscall_batch at 100K and 1M file counts where
+# the hypothesis predicts io_uring statx batching pays off. Gated by
+# BENCH_HIGH_FILE_COUNT=1 (100K tier) and BENCH_HIGH_FILE_COUNT_1M=1
+# (1M tier). See the file's module doc for the run recipe and what the
+# numbers inform.
+[[bench]]
+name = "iouring_high_file_count"
+harness = false
+required-features = ["io_uring"]
+
+# Linux-only bench: SZC.c - IORING_OP_SEND_ZC vs plain IORING_OP_SEND at
+# 100K-file high-IOPS scale (1-4 KiB per file). Complements the IUS-3
+# bench which covered four chunk-shape workloads; this bench targets the
+# many-small-file regime where per-file overhead dominates throughput.
+# Gated by OC_RSYNC_BENCH_SZC_C=1. The send_plain group needs only the
+# `io_uring` feature; the send_zc group requires `iouring-send-zc` and
+# skips at runtime on kernels < 6.0.
+[[bench]]
+name = "szcc_send_zc_100k_iops"
+harness = false
+required-features = ["io_uring"]
+
+# Cross-platform bench: copy_basis_range (IUD-10 zero-copy fast path for
+# delta-apply COPY tokens) vs portable pread+write baseline. Measures
+# throughput across sequential, random, and overlapping access patterns at
+# 1 MB, 100 MB, and optionally 1 GB (OC_RSYNC_BENCH_LARGE=1). See the
+# file's module doc for the run recipe and what the numbers inform on #2609.
+[[bench]]
+name = "copy_basis_range_delta"
+harness = false
+
+# Linux-only bench: URV-5.c.4 - per-connection Landlock setup overhead
+# measured at the `is_supported` probe + `restrict_to_module_paths` setup
+# layer (1 / 2 / 4 allowlist roots). Compiles to a no-op stub on non-Linux
+# hosts and when the `landlock` feature is off, so the bench list stays
+# cross-platform. Gates the URV-5.c.5 default-on flip; pair with the
+# macro-bench in `scripts/landlock_overhead_macro.sh` for the 100K-file
+# daemon receive comparison. See
+# docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md for the
+# defense-in-depth rationale and PR #5601 for the allowlist widening.
+[[bench]]
+name = "landlock_overhead"
+harness = false

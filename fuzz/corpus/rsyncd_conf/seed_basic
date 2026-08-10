@@ -1,0 +1,8 @@
+# Minimal rsyncd.conf
+port = 873
+log file = /var/log/rsyncd.log
+
+[public]
+path = /srv/public
+comment = Public files
+read only = yes

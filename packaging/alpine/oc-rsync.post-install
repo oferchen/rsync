@@ -1,0 +1,5 @@
+#!/bin/sh
+echo "oc-rsync installed. To start the daemon:"
+echo "  rc-update add oc-rsyncd default"
+echo "  rc-service oc-rsyncd start"
+exit 0

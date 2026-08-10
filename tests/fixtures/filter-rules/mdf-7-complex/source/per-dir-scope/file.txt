@@ -1,0 +1,1 @@
+In scope: included by `+ file.txt` in this directory's .rsync-filter.

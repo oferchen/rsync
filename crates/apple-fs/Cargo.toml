@@ -1,0 +1,26 @@
+[package]
+name = "apple-fs"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+libc = { workspace = true }
+
+# Unix-only syscall wrappers. `nix` itself carries `#![cfg(unix)]` so it is
+# inert on Windows, but matching the per-crate convention used by `core` and
+# `platform` keeps cross-platform intent explicit at the manifest level.
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, features = ["fs"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+unicode-normalization = "0.1"
+# Safe wrapper for getxattr(2)/setxattr(2). Used to access the macOS-native
+# `com.apple.ResourceFork` and `com.apple.FinderInfo` extended attributes
+# without introducing unsafe FFI inside this crate (per workspace policy).
+xattr = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

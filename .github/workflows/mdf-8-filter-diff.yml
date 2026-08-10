@@ -1,0 +1,90 @@
+# MDF-8 - filter-decision diff harness
+#
+# Builds oc-rsync, runs the diff harness in scripts/mdf_8_filter_diff_harness.sh
+# against upstream rsync and the MDF-7 complex fixture, and uploads the diff
+# log as an artifact. Advisory until the default-mode diff hits zero across
+# one release cycle (see docs/design/mdf-8-filter-diff-harness.md).
+
+name: MDF-8 Filter Diff
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: 'Pass --strict to compare level-2+ FILTER traces (expected to fail today).'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: mdf-8-filter-diff-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  diff:
+    name: filter-diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install upstream rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+          /usr/bin/rsync --version | head -n 1
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Build oc-rsync (release)
+        uses: ./.github/actions/build-oc-rsync
+
+      - name: Run MDF-8 diff harness
+        run: |
+          ARGS=()
+          if [[ "${{ inputs.strict }}" == "true" ]]; then
+              ARGS+=(--strict)
+          fi
+          bash scripts/mdf_8_filter_diff_harness.sh \
+              --upstream /usr/bin/rsync \
+              --oc-rsync target/release/oc-rsync \
+              "${ARGS[@]}"
+
+      - name: Upload diff artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mdf-8-filter-diff
+          path: /tmp/mdf-8-diff/
+          if-no-files-found: warn
+
+      # FIL-AUD-4 MDF-8.a: parallel run on the delete-excluded fixture so the
+      # diff harness catches UTS-DD-exclude.1/.4/.5 regressions in CI. Output
+      # goes to a separate directory so the artifact uploads stay distinct.
+      - name: Run MDF-8.a delete-excluded diff harness
+        run: |
+          ARGS=()
+          if [[ "${{ inputs.strict }}" == "true" ]]; then
+              ARGS+=(--strict)
+          fi
+          bash scripts/mdf_8_filter_diff_harness.sh \
+              --upstream /usr/bin/rsync \
+              --oc-rsync target/release/oc-rsync \
+              --fixture tests/fixtures/filter-rules/mdf-8-delete-excluded/source \
+              --output /tmp/mdf-8-delete-excluded-diff \
+              --delete-excluded \
+              "${ARGS[@]}"
+
+      - name: Upload delete-excluded diff artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mdf-8-delete-excluded-diff
+          path: /tmp/mdf-8-delete-excluded-diff/
+          if-no-files-found: warn

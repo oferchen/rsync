@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+CROSS_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+. "${CROSS_DIR}/lib.sh"
+
+ZIG_BIN=$(resolve_zig_binary "$CROSS_DIR")
+exec "$ZIG_BIN" dlltool "$@"

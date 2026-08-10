@@ -1,0 +1,28 @@
+[package]
+name = "filters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pattern filtering helpers for the Rust rsync workspace"
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+globset = { workspace = true }
+logging = { path = "../logging" }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+tracing = ["dep:tracing"]
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+test-support = { path = "../test-support" }

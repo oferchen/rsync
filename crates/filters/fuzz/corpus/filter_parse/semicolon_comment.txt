@@ -1,0 +1,4 @@
+; semicolon comment line
++ keep
+; another comment
+- drop

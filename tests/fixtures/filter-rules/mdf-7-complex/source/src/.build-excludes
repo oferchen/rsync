@@ -1,0 +1,8 @@
+# MDF-7 fixture: src/.build-excludes (merged via `. .build-excludes`).
+# Rules below are spliced into the parent chain once at parse time.
+
+# Exclude the build/ output subtree.
+- build/
+
+# Exclude object files anywhere under src/.
+- *.o

@@ -1,0 +1,38 @@
+[package]
+name = "compress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Compression primitives for the Rust rsync implementation"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["zstd", "lz4", "zlib-ng"]
+zstd = ["dep:zstd"]
+# Enables zstd multithreaded compression (ZSTD_c_nbWorkers / --compress-threads).
+# Adds a small build-time C dependency in zstd-sys; off by default to keep
+# minimal builds lean. Enable to honour `--compress-threads=N > 0`.
+zstdmt = ["zstd", "zstd/zstdmt"]
+lz4 = ["dep:lz4_flex"]
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - matches upstream rsync performance
+zlib-ng = ["flate2/zlib-ng"]
+# Pure Rust fallback - no C compiler required, slower than zlib-ng
+zlib-rs = ["flate2/zlib-rs"]
+
+[dependencies]
+# Default: miniz_oxide (pure Rust fallback). zlib-ng/zlib-rs override via features.
+flate2 = { workspace = true }
+zstd = { workspace = true, optional = true }
+lz4_flex = { workspace = true, optional = true, features = ["frame", "safe-encode", "safe-decode"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -1,0 +1,48 @@
+//! Transfer statistics emission for the generator role.
+//!
+//! Contains `send_stats`, which writes total_read/total_written/total_size
+//! plus flist build/xfer times to the client after the transfer loop ends.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:347-357` - `handle_stats()` server-sender write path
+
+use std::io::{self, Write};
+
+use protocol::TransferStats;
+
+use super::super::{GeneratorContext, TransferLoopResult};
+
+impl GeneratorContext {
+    /// Sends transfer statistics to the client after the transfer loop completes.
+    ///
+    /// Only called in server mode (daemon sender). Writes total_read,
+    /// total_written, total_size as varlong30 values, plus flist_buildtime
+    /// and flist_xfertime for protocol >= 29.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:347-357` - `handle_stats()` server-sender write path
+    /// - `main.c:960-962` - `do_server_sender()` calls `handle_stats(f_out)`
+    pub(super) fn send_stats<W: Write>(
+        &self,
+        writer: &mut W,
+        transfer_result: &TransferLoopResult,
+        flist_buildtime_ms: u64,
+        flist_xfertime_ms: u64,
+    ) -> io::Result<()> {
+        // upstream: stats.total_size is the sum of all file sizes in the transfer
+        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+
+        let stats = TransferStats::with_bytes(
+            self.timing.total_bytes_read,
+            transfer_result.bytes_sent,
+            total_size,
+        )
+        .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
+
+        stats.write_to(writer, self.protocol)?;
+        writer.flush()?;
+        Ok(())
+    }
+}

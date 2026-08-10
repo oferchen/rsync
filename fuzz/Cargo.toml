@@ -1,0 +1,249 @@
+[package]
+name = "oc-rsync-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.88"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+tempfile = "3.15"
+filetime = "0.2"
+
+[dependencies.protocol]
+path = "../crates/protocol"
+
+[dependencies.daemon]
+path = "../crates/daemon"
+default-features = false
+
+[dependencies.checksums]
+path = "../crates/checksums"
+
+[dependencies.filters]
+path = "../crates/filters"
+
+[dependencies.compress]
+path = "../crates/compress"
+default-features = false
+features = ["zstd", "zlib-ng"]
+
+[dependencies.batch]
+path = "../crates/batch"
+
+[dependencies.metadata]
+path = "../crates/metadata"
+
+[dependencies.bandwidth]
+path = "../crates/bandwidth"
+default-features = false
+
+[dependencies.engine]
+path = "../crates/engine"
+default-features = false
+
+[dependencies.sha2]
+version = "0.10"
+default-features = false
+features = ["std"]
+
+[dependencies.transfer]
+path = "../crates/transfer"
+default-features = false
+
+[[bin]]
+name = "protocol_wire"
+path = "fuzz_targets/protocol_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "simd_checksum_parity"
+path = "fuzz_targets/simd_checksum_parity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_differential"
+path = "fuzz_targets/filter_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_rules_vs_upstream"
+path = "fuzz_targets/filter_rules_vs_upstream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multiplex_frame_parse"
+path = "fuzz_targets/multiplex_frame_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flist_entry_decode"
+path = "fuzz_targets/flist_entry_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompressor_zstd"
+path = "fuzz_targets/decompressor_zstd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompressor_zlib"
+path = "fuzz_targets/decompressor_zlib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zlib_token_decode"
+path = "fuzz_targets/zlib_token_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_list_wire"
+path = "fuzz_targets/filter_list_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ndx_codec"
+path = "fuzz_targets/ndx_codec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "batch_reader"
+path = "fuzz_targets/batch_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "acl_xattr_wire"
+path = "fuzz_targets/acl_xattr_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rsyncd_conf"
+path = "fuzz_targets/rsyncd_conf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_response"
+path = "fuzz_targets/auth_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "incremental_flist"
+path = "fuzz_targets/incremental_flist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "legacy_greeting"
+path = "fuzz_targets/legacy_greeting.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "daemon_greeting"
+path = "fuzz_targets/daemon_greeting.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "varint_decode"
+path = "fuzz_targets/varint_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capability_flags"
+path = "fuzz_targets/capability_flags.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vstring"
+path = "fuzz_targets/vstring.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bwlimit"
+path = "fuzz_targets/bwlimit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_outcome"
+path = "fuzz_targets/differential_outcome.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_multiplex"
+path = "fuzz_targets/differential_multiplex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_flist"
+path = "fuzz_targets/differential_flist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parallel_receive_delta_adversarial"
+path = "fuzz_targets/parallel_receive_delta_adversarial.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "buffered_map"
+path = "fuzz_targets/buffered_map.rs"
+test = false
+doc = false
+bench = false
+
+# Standalone workspace - excluded from the root workspace so that
+# `cargo build` does not pull libfuzzer-sys into ordinary builds.
+[workspace]

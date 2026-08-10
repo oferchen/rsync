@@ -1,0 +1,36 @@
+[package]
+name = "flist"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "File list generation and traversal for the Rust rsync implementation (mirrors upstream flist.c)"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+logging = { path = "../logging" }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+# For Unix syscalls (fstatat, statx) in batched_stat module
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+test-support = { path = "../test-support" }
+
+[features]
+default = []
+# Parallel file list processing using rayon and batched syscalls
+parallel = ["dep:rayon", "dep:libc"]
+# Serialization support for file list types
+serde = ["dep:serde"]

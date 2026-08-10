@@ -1,0 +1,269 @@
+//! File copy orchestration - entry point for single-file transfers.
+//!
+//! Coordinates pre-copy checks (existing, update, hard-link, reference dirs),
+//! dry-run simulation, and the actual transfer pipeline. Mirrors the top-level
+//! per-file logic in upstream `receiver.c:recv_files()`.
+
+mod dry_run;
+mod existing;
+mod links;
+mod transfer;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use logging::{debug_log, info_log};
+
+use crate::local_copy::{
+    CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
+};
+
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use transfer::take_fsync_call_count;
+use transfer::{TransferFlags, execute_transfer};
+
+/// Copies a single file from source to destination.
+///
+/// Returns `Ok(true)` when the file was processed (transferred, matched, or
+/// otherwise kept in the destination).  Returns `Ok(false)` when the file
+/// was silently skipped due to size-based filters (`--min-size` /
+/// `--max-size`), which is relevant for `--prune-empty-dirs` accounting.
+pub(crate) fn copy_file(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    relative: Option<&Path>,
+) -> Result<bool, LocalCopyError> {
+    context.enforce_timeout()?;
+    let mut metadata_options = context.metadata_options();
+    let mode = context.mode();
+    let file_type = metadata.file_type();
+
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    let preserve_acls = context.acls_enabled();
+
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| source.file_name().map(PathBuf::from))
+        .unwrap_or_else(|| {
+            destination
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
+    // upstream: flist.c:1419-1424 - `--copy-devices` streams a device as a
+    // regular file, so its readable length (not the zero stat size) drives the
+    // size checks, stats, and the copy byte count.
+    let device_as_file_size = context.copy_device_as_file_size(source, metadata);
+    let file_size = device_as_file_size.unwrap_or(metadata.len());
+    debug_log!(
+        Send,
+        3,
+        "copy_file {} ({} bytes)",
+        record_path.display(),
+        file_size
+    );
+    context.summary_mut().record_regular_file_total();
+    context.summary_mut().record_total_bytes(file_size);
+
+    // upstream: generator.c:recv_generator() - skip files outside size range
+    if let Some(min_limit) = context.min_file_size_limit()
+        && file_size < min_limit
+    {
+        info_log!(Skip, 1, "{} is under min-size", record_path.display());
+        return Ok(false);
+    }
+
+    if let Some(max_limit) = context.max_file_size_limit()
+        && file_size > max_limit
+    {
+        info_log!(Skip, 1, "{} is over max-size", record_path.display());
+        return Ok(false);
+    }
+
+    // Reuse the destination lstat gathered by the checksum-mode prefetch when
+    // present; otherwise lstat here. This keeps checksum mode at one generator
+    // link_stat per destination instead of two. upstream: generator.c:recv_generator().
+    let mut existing_metadata = match context.take_cached_destination_metadata(destination) {
+        Some(cached) => Some(cached),
+        None => match fs::symlink_metadata(destination) {
+            Ok(existing) => Some(existing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        },
+    };
+
+    let mut destination_previously_existed = existing_metadata.is_some();
+
+    if let Some(existing) = existing_metadata.as_ref()
+        && existing.file_type().is_dir()
+    {
+        // upstream: generator.c:1734-1739 recv_generator() - a regular file is
+        // arriving over a destination directory. Upstream calls
+        // delete_item(fname, mode, del_opts | DEL_FOR_FILE) to make room, with
+        // del_opts carrying DEL_RECURSE only under --delete/--force. So a
+        // conflicting destination directory is removed to make way for the file
+        // under those modes and the file is created in its place.
+        //
+        // Multi-source merges are the exception: flist.c:3067-3081
+        // flist_sort_and_clean() drops the colliding regular file and keeps the
+        // directory, so a file contributed by one source must never blow away a
+        // directory contributed by another. Guard the delete-mode removal on
+        // !multi_source to preserve that, keeping the explicit --force override.
+        let replace_conflicting_directory = context.force_replacements_enabled()
+            || (!context.multi_source() && context.options().delete_extraneous());
+        if replace_conflicting_directory {
+            context.force_remove_destination(destination, relative, existing)?;
+            // The conflicting directory is gone, so the incoming file is created
+            // fresh: upstream sets statret = -1 after the make-room delete
+            // (generator.c:1737), so dest_mode() applies new-file permissions and
+            // the itemize row reports a creation (`>f+++++++++`) rather than an
+            // update against the removed directory.
+            destination_previously_existed = false;
+            existing_metadata = None;
+        } else {
+            // Mirror upstream's goto cleanup: no error, no destination mutation.
+            return Ok(true);
+        }
+    }
+
+    if context.existing_only_enabled() && existing_metadata.is_none() {
+        context.summary_mut().record_regular_file_skipped_missing();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::SkippedMissingDestination,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        return Ok(true);
+    }
+
+    // Dry-run check must precede parent directory preparation: in dry-run mode
+    // no filesystem mutations occur, so materializing the parent is
+    // unnecessary and would create real directories.
+    if mode.is_dry_run() {
+        dry_run::handle_dry_run(
+            context,
+            dry_run::DryRunRequest {
+                source,
+                destination,
+                metadata,
+                record_path: record_path.as_path(),
+                existing_metadata: existing_metadata.as_ref(),
+            },
+        )?;
+        return Ok(true);
+    }
+
+    if let Some(parent) = destination.parent() {
+        context.prepare_parent_directory(parent)?;
+    }
+
+    if existing::handle_existing_skips(
+        context,
+        destination,
+        metadata,
+        record_path.as_path(),
+        existing_metadata.as_ref(),
+    )? {
+        return Ok(true);
+    }
+
+    // upstream: receiver.c:receive_data() keeps sparse writes active alongside
+    // `--preallocate` and `--inplace`: write_sparse() punches holes inside the
+    // preallocated / existing extent (guided by preallocated_len) instead of
+    // seeking, so those modes still produce sparse output. Append mode is the
+    // exception - upstream flips `sparse_files` off during the append pass
+    // (receiver.c:761,771) so the pre-existing prefix is never hole-punched.
+    let use_sparse_writes = context.sparse_enabled() && !context.append_enabled();
+    let partial_enabled = context.partial_enabled();
+    let inplace_enabled = context.inplace_enabled();
+    let checksum_enabled = context.checksum_enabled();
+    let size_only_enabled = context.size_only_enabled();
+    let ignore_times_enabled = context.ignore_times_enabled();
+    let append_allowed = context.append_enabled();
+    let append_verify = context.append_verify_enabled();
+    let whole_file_enabled = context.whole_file_enabled();
+    let compress_enabled = context.should_compress(record_path.as_path());
+    let relative_for_link = relative.unwrap_or(record_path.as_path());
+
+    // upstream: rsync.c:dest_mode() uses `exists` to apply umask-masked source
+    // permissions for new files vs keeping existing permissions for updates.
+    metadata_options = metadata_options.with_destination_is_new(!destination_previously_existed);
+
+    let link_outcome = links::process_links(
+        context,
+        source,
+        destination,
+        metadata,
+        record_path.as_path(),
+        relative_for_link,
+        metadata_options.clone(),
+        existing_metadata.as_ref(),
+        destination_previously_existed,
+        file_type,
+        size_only_enabled,
+        ignore_times_enabled,
+        checksum_enabled,
+        mode,
+        #[cfg(all(unix, feature = "xattr"))]
+        preserve_xattrs,
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        preserve_acls,
+    )?;
+
+    if link_outcome.completed {
+        return Ok(true);
+    }
+
+    let transfer_flags = TransferFlags {
+        append_allowed,
+        append_verify,
+        whole_file_enabled,
+        inplace_enabled,
+        partial_enabled,
+        use_sparse_writes,
+        compress_enabled,
+        size_only_enabled,
+        ignore_times_enabled,
+        checksum_enabled,
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
+        preserve_xattrs,
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        preserve_acls,
+    };
+
+    execute_transfer(
+        context,
+        source,
+        destination,
+        metadata,
+        metadata_options,
+        record_path.as_path(),
+        existing_metadata.as_ref(),
+        destination_previously_existed,
+        file_type,
+        relative,
+        transfer_flags,
+        mode,
+        link_outcome.copy_source_override,
+        link_outcome.reference_basis,
+    )?;
+    Ok(true)
+}

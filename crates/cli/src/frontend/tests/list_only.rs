@@ -1,0 +1,1572 @@
+use super::common::*;
+use super::*;
+
+#[test]
+fn list_only_lists_entries_without_copying() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    fs::create_dir(&source_dir).expect("create src dir");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"contents").expect("write source file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let link_path = source_dir.join("link.txt");
+        symlink("file.txt", &link_path).expect("create symlink");
+    }
+    let destination_dir = tmp.path().join("dest");
+    fs::create_dir(&destination_dir).expect("create dest dir");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--links"),
+        source_dir.into_os_string(),
+        destination_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    assert!(rendered.contains("file.txt"));
+    #[cfg(unix)]
+    {
+        assert!(rendered.contains("link.txt -> file.txt"));
+    }
+    assert!(!destination_dir.join("file.txt").exists());
+}
+
+#[test]
+fn list_only_formats_directory_without_trailing_slash() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_dir.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    let mut directory_line = None;
+    for line in rendered.lines() {
+        if line.ends_with("src") {
+            directory_line = Some(line.to_owned());
+            break;
+        }
+    }
+
+    let directory_line = directory_line.expect("directory entry present");
+    assert!(directory_line.starts_with('d'));
+    assert!(!directory_line.ends_with('/'));
+}
+
+/// `--list-only <dir>` with no `-r`/`-d` and no trailing slash must still list
+/// the directory operand's own entry, mirroring upstream's
+/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2203). Without this,
+/// `xfer_dirs` stays 0 and `flist.c:2451` skips the bare directory, so the
+/// listing is empty - diverging from upstream which prints the `src` row.
+#[test]
+fn list_only_lists_bare_directory_without_recursion_or_slash() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        source_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    let directory_line = rendered
+        .lines()
+        .find(|line| line.ends_with("src"))
+        .expect("bare directory operand entry present");
+    assert!(directory_line.starts_with('d'));
+    assert!(!directory_line.ends_with('/'));
+    // Without -r the directory's children must not be listed.
+    assert!(!rendered.contains("file.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn list_only_matches_rsync_format_for_regular_file() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("data.bin");
+    fs::write(&file_path, vec![0u8; 1_234]).expect("write source file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
+        .expect("set file permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.clone().into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("data.bin"))
+        .expect("file entry present");
+
+    let expected_permissions = "-rw-r--r--";
+    let expected_size = format_list_size(1_234, HumanReadableMode::Grouped);
+    let system_time = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"))
+        + Duration::from_nanos(u64::from(timestamp.nanoseconds()));
+    let expected_timestamp = format_list_timestamp(Some(system_time));
+    let expected = format!("{expected_permissions} {expected_size} {expected_timestamp} data.bin");
+
+    assert_eq!(file_line, expected);
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--human-readable"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let human_line = rendered
+        .lines()
+        .find(|line| line.ends_with("data.bin"))
+        .expect("file entry present");
+    let expected_human_size = format_list_size(1_234, HumanReadableMode::DecimalUnits);
+    let expected_human =
+        format!("{expected_permissions} {expected_human_size} {expected_timestamp} data.bin");
+    assert_eq!(human_line, expected_human);
+}
+
+#[cfg(unix)]
+#[test]
+fn list_only_formats_special_permission_bits_like_rsync() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let sticky_exec = source_dir.join("exec-special");
+    let sticky_plain = source_dir.join("plain-special");
+
+    fs::write(&sticky_exec, b"exec").expect("write exec file");
+    fs::write(&sticky_plain, b"plain").expect("write plain file");
+
+    fs::set_permissions(&sticky_exec, fs::Permissions::from_mode(0o7777))
+        .expect("set permissions with execute bits");
+    fs::set_permissions(&sticky_plain, fs::Permissions::from_mode(0o7666))
+        .expect("set permissions without execute bits");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&sticky_exec, timestamp, timestamp).expect("set exec times");
+    set_file_times(&sticky_plain, timestamp, timestamp).expect("set plain times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let system_time = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"))
+        + Duration::from_nanos(u64::from(timestamp.nanoseconds()));
+    let expected_timestamp = format_list_timestamp(Some(system_time));
+
+    let expected_exec = format!(
+        "-rwsrwsrwt {} {expected_timestamp} exec-special",
+        format_list_size(4, HumanReadableMode::Grouped)
+    );
+    let expected_plain = format!(
+        "-rwSrwSrwT {} {expected_timestamp} plain-special",
+        format_list_size(5, HumanReadableMode::Grouped)
+    );
+
+    let mut exec_line = None;
+    let mut plain_line = None;
+    for line in rendered.lines() {
+        if line.ends_with("exec-special") {
+            exec_line = Some(line.to_owned());
+        } else if line.ends_with("plain-special") {
+            plain_line = Some(line.to_owned());
+        }
+    }
+
+    assert_eq!(exec_line.expect("exec entry"), expected_exec);
+    assert_eq!(plain_line.expect("plain entry"), expected_plain);
+}
+
+/// Verifies that every line emitted by `--list-only` matches the upstream rsync
+/// format: `<permissions> <size_15_chars> <YYYY/MM/DD HH:MM:SS> <name>`.
+#[cfg(unix)]
+#[test]
+fn list_only_output_lines_match_upstream_regex_pattern() {
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::write(source_dir.join("file.txt"), b"hello").expect("write file");
+    fs::set_permissions(
+        source_dir.join("file.txt"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .expect("set perms");
+    fs::create_dir(source_dir.join("subdir")).expect("create subdir");
+    symlink("file.txt", source_dir.join("link.txt")).expect("create symlink");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--links"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    assert!(!rendered.is_empty(), "output should not be empty");
+
+    // Upstream rsync format: <type+perms 10 chars> <14-char size> <YYYY/MM/DD HH:MM:SS> <name>
+    // The fields are separated by single spaces.
+    for line in rendered.lines() {
+        let perm_field = &line[..10];
+        assert!(
+            perm_field.len() == 10,
+            "permission field should be 10 chars: {line:?}"
+        );
+        let type_char = perm_field.chars().next().unwrap();
+        assert!(
+            "-dlpcbs?".contains(type_char),
+            "type char should be one of -dlpcbs?, got {type_char:?} in {line:?}"
+        );
+
+        assert_eq!(
+            line.as_bytes()[10],
+            b' ',
+            "space after permissions in {line:?}"
+        );
+
+        let size_field = &line[11..25];
+        assert_eq!(
+            size_field.len(),
+            14,
+            "size field should be 14 chars: {line:?}"
+        );
+        let size_trimmed = size_field.trim();
+        assert!(
+            !size_trimmed.is_empty(),
+            "size field should not be empty: {line:?}"
+        );
+        assert!(
+            size_trimmed == "?"
+                || size_trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
+            "size field should be numeric with commas: {size_trimmed:?} in {line:?}"
+        );
+
+        assert_eq!(line.as_bytes()[25], b' ', "space after size in {line:?}");
+
+        let timestamp_field = &line[26..45];
+        assert_eq!(
+            timestamp_field.len(),
+            19,
+            "timestamp field should be 19 chars: {line:?}"
+        );
+        assert_eq!(
+            timestamp_field.as_bytes()[4],
+            b'/',
+            "first separator should be / in {line:?}"
+        );
+        assert_eq!(
+            timestamp_field.as_bytes()[7],
+            b'/',
+            "second separator should be / in {line:?}"
+        );
+        assert_eq!(
+            timestamp_field.as_bytes()[10],
+            b' ',
+            "date/time separator should be space in {line:?}"
+        );
+        assert_eq!(
+            timestamp_field.as_bytes()[13],
+            b':',
+            "hour/minute separator should be : in {line:?}"
+        );
+        assert_eq!(
+            timestamp_field.as_bytes()[16],
+            b':',
+            "minute/second separator should be : in {line:?}"
+        );
+
+        assert_eq!(
+            line.as_bytes()[45],
+            b' ',
+            "space after timestamp in {line:?}"
+        );
+        let name_field = &line[46..];
+        assert!(
+            !name_field.is_empty(),
+            "name field should not be empty: {line:?}"
+        );
+    }
+}
+
+/// Verifies that symlinks in `--list-only` output show ` -> target` suffix,
+/// matching upstream rsync format exactly.
+#[cfg(unix)]
+#[test]
+fn list_only_symlink_shows_arrow_target_in_exact_format() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::write(source_dir.join("target.txt"), b"target").expect("write target");
+    symlink("target.txt", source_dir.join("mylink")).expect("create symlink");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    // Set time on the target file; symlink mtime comes from symlink_metadata
+    set_file_times(source_dir.join("target.txt"), timestamp, timestamp).expect("set times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--links"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let link_line = rendered
+        .lines()
+        .find(|line| line.contains("mylink"))
+        .expect("symlink entry present");
+
+    assert!(
+        link_line.starts_with('l'),
+        "symlink line should start with 'l': {link_line:?}"
+    );
+
+    assert!(
+        link_line.ends_with("mylink -> target.txt"),
+        "symlink line should end with 'mylink -> target.txt': {link_line:?}"
+    );
+
+    assert!(
+        link_line.contains(" -> "),
+        "symlink line should contain ' -> ' arrow: {link_line:?}"
+    );
+}
+
+/// Verifies that zero-byte files are formatted correctly in `--list-only` output.
+#[cfg(unix)]
+#[test]
+fn list_only_zero_byte_file_shows_zero_size() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("empty.txt");
+    fs::write(&file_path, b"").expect("write empty file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("empty.txt"))
+        .expect("empty file entry present");
+
+    let expected_permissions = "-rw-r--r--";
+    let expected_size = format_list_size(0, HumanReadableMode::Grouped);
+    let system_time = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
+    let expected_timestamp = format_list_timestamp(Some(system_time));
+    let expected = format!("{expected_permissions} {expected_size} {expected_timestamp} empty.txt");
+
+    assert_eq!(file_line, expected);
+}
+
+/// Verifies that directories in `--list-only` output start with 'd' permission type
+/// and show size 0 (matching upstream rsync behavior for directory size field).
+#[cfg(unix)]
+#[test]
+fn list_only_directory_permissions_start_with_d() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let subdir = source_dir.join("testdir");
+    fs::create_dir(&subdir).expect("create subdir");
+    fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755)).expect("set dir permissions");
+
+    let timestamp = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&subdir, timestamp, timestamp).expect("set dir times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let dir_line = rendered
+        .lines()
+        .find(|line| line.contains("testdir"))
+        .expect("directory entry present");
+
+    assert!(
+        dir_line.starts_with("drwxr-xr-x"),
+        "directory should have drwxr-xr-x permissions: {dir_line:?}"
+    );
+
+    let system_time = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
+    let expected_timestamp = format_list_timestamp(Some(system_time));
+    assert!(
+        dir_line.contains(&expected_timestamp),
+        "directory should contain timestamp {expected_timestamp:?}: {dir_line:?}"
+    );
+}
+
+/// Verifies the size field is right-aligned in a fixed 14-character column.
+#[cfg(unix)]
+#[test]
+fn list_only_size_field_right_aligned_in_14_chars() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let small = source_dir.join("small.txt");
+    fs::write(&small, b"x").expect("write small");
+    fs::set_permissions(&small, fs::Permissions::from_mode(0o644)).expect("set perms small");
+
+    let medium = source_dir.join("medium.txt");
+    fs::write(&medium, vec![0u8; 12_345]).expect("write medium");
+    fs::set_permissions(&medium, fs::Permissions::from_mode(0o644)).expect("set perms medium");
+
+    let large = source_dir.join("large.txt");
+    fs::write(&large, vec![0u8; 1_234_567]).expect("write large");
+    fs::set_permissions(&large, fs::Permissions::from_mode(0o644)).expect("set perms large");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&small, timestamp, timestamp).expect("set times small");
+    set_file_times(&medium, timestamp, timestamp).expect("set times medium");
+    set_file_times(&large, timestamp, timestamp).expect("set times large");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    for line in rendered.lines() {
+        let size_field = &line[11..25];
+        assert_eq!(
+            size_field.len(),
+            14,
+            "size field should always be 14 chars: {line:?}"
+        );
+
+        // Right-alignment leaves leading spaces and trailing digits/commas.
+        let trimmed = size_field.trim_start();
+        if trimmed != "?" {
+            assert!(
+                trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
+                "size field should have right-aligned numeric content: {size_field:?}"
+            );
+        }
+    }
+}
+
+/// Verifies that `--list-only` with `--recursive` shows nested directory contents.
+#[cfg(unix)]
+#[test]
+fn list_only_recursive_shows_nested_paths() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::create_dir(source_dir.join("level1")).expect("create level1");
+    fs::create_dir(source_dir.join("level1").join("level2")).expect("create level2");
+    fs::write(source_dir.join("top.txt"), b"top").expect("write top");
+    fs::write(source_dir.join("level1").join("mid.txt"), b"mid").expect("write mid");
+    fs::write(
+        source_dir.join("level1").join("level2").join("deep.txt"),
+        b"deep",
+    )
+    .expect("write deep");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    assert!(
+        rendered.lines().any(|l| l.ends_with("top.txt")),
+        "top-level file should appear in listing"
+    );
+    assert!(
+        rendered.lines().any(|l| l.contains("level1")),
+        "level1 directory should appear in listing"
+    );
+    assert!(
+        rendered.lines().any(|l| l.ends_with("mid.txt")),
+        "mid-level file should appear in listing"
+    );
+    assert!(
+        rendered.lines().any(|l| l.contains("level2")),
+        "level2 directory should appear in listing"
+    );
+    assert!(
+        rendered.lines().any(|l| l.ends_with("deep.txt")),
+        "deeply nested file should appear in listing"
+    );
+
+    assert!(!dest_dir.join("top.txt").exists());
+    assert!(!dest_dir.join("level1").exists());
+}
+
+/// Verifies that large file sizes are formatted with thousands separators.
+#[cfg(unix)]
+#[test]
+fn list_only_large_file_size_has_thousands_separators() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("big.bin");
+    fs::write(&file_path, vec![0u8; 1_234_567]).expect("write large file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("big.bin"))
+        .expect("large file entry present");
+
+    let expected_size = format_list_size(1_234_567, HumanReadableMode::Grouped);
+    assert!(
+        file_line.contains(&expected_size),
+        "large file should have formatted size with separators: {file_line:?}"
+    );
+
+    assert!(
+        expected_size.contains("1,234,567"),
+        "size should contain thousands separators: {expected_size:?}"
+    );
+}
+
+/// Verifies that `--list-only` combined with `--verbose` still produces the
+/// listing format (not the verbose transfer format).
+#[cfg(unix)]
+#[test]
+fn list_only_with_verbose_still_shows_listing_format() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("verbose_test.txt");
+    fs::write(&file_path, b"verbose test content").expect("write file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--verbose"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("verbose_test.txt"))
+        .expect("file entry present");
+
+    assert!(
+        file_line.starts_with('-'),
+        "list-only with verbose should still use listing format: {file_line:?}"
+    );
+    assert_eq!(
+        &file_line[..10],
+        "-rw-r--r--",
+        "permissions should be present in listing format: {file_line:?}"
+    );
+}
+
+/// Verifies that `--list-only` produces correct output for read-only files.
+#[cfg(unix)]
+#[test]
+fn list_only_read_only_file_permissions() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("readonly.txt");
+    fs::write(&file_path, b"readonly").expect("write file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o444))
+        .expect("set read-only permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("readonly.txt"))
+        .expect("readonly file entry present");
+
+    assert!(
+        file_line.starts_with("-r--r--r--"),
+        "read-only file should show -r--r--r-- permissions: {file_line:?}"
+    );
+}
+
+/// Verifies that `--list-only` correctly formats an executable file.
+#[cfg(unix)]
+#[test]
+fn list_only_executable_file_permissions() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("script.sh");
+    fs::write(&file_path, b"#!/bin/sh\necho hello\n").expect("write script");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755))
+        .expect("set executable permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("script.sh"))
+        .expect("script file entry present");
+
+    assert!(
+        file_line.starts_with("-rwxr-xr-x"),
+        "executable file should show -rwxr-xr-x permissions: {file_line:?}"
+    );
+}
+
+/// Verifies that `--list-only` with `--human-readable` changes the size field
+/// to show human-readable values while keeping the same overall line format.
+#[cfg(unix)]
+#[test]
+fn list_only_human_readable_size_format() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("hr.bin");
+    fs::write(&file_path, vec![0u8; 2_500_000]).expect("write large file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--human-readable"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("hr.bin"))
+        .expect("file entry present");
+
+    let expected_hr_size = format_list_size(2_500_000, HumanReadableMode::DecimalUnits);
+    assert!(
+        file_line.contains(&expected_hr_size),
+        "human-readable size should be in listing: expected {expected_hr_size:?}, line: {file_line:?}"
+    );
+
+    assert!(
+        file_line.starts_with("-rw-r--r--"),
+        "human-readable mode should still show permissions: {file_line:?}"
+    );
+}
+
+/// Verifies that `--list-only` with multiple files shows each file on its own line,
+/// with consistent column alignment across all entries.
+#[cfg(unix)]
+#[test]
+fn list_only_multiple_files_have_consistent_column_alignment() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+
+    let files = [
+        ("tiny.txt", 1_u64),
+        ("small.txt", 100),
+        ("medium.txt", 10_000),
+        ("bigger.txt", 1_000_000),
+    ];
+
+    for (name, size) in &files {
+        let path = source_dir.join(name);
+        fs::write(&path, vec![0u8; *size as usize]).expect("write file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("set perms");
+        set_file_times(&path, timestamp, timestamp).expect("set times");
+    }
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    assert!(
+        lines.len() >= files.len(),
+        "should have at least {} file entries, got {}",
+        files.len(),
+        lines.len()
+    );
+
+    // All lines should have the same structure: permissions end at column 10,
+    // size occupies columns 11-24, timestamp at 26-44, name starts at 46
+    for line in &lines {
+        assert!(
+            line.len() >= 46,
+            "each line should be at least 47 chars: {line:?}"
+        );
+        assert!(
+            line[..10].chars().all(|c| "drwxlpcbs-?SsTt".contains(c)),
+            "permission field should contain valid permission chars: {line:?}"
+        );
+        assert_eq!(
+            line.as_bytes()[10],
+            b' ',
+            "separator after perms in {line:?}"
+        );
+        assert_eq!(
+            &line[11..25].len(),
+            &14,
+            "size field should be 14 chars: {line:?}"
+        );
+        assert_eq!(
+            line.as_bytes()[25],
+            b' ',
+            "separator after size in {line:?}"
+        );
+        assert_eq!(
+            &line[26..45].len(),
+            &19,
+            "timestamp should be 19 chars: {line:?}"
+        );
+        assert_eq!(
+            line.as_bytes()[45],
+            b' ',
+            "separator before name in {line:?}"
+        );
+    }
+}
+
+/// Verifies that `--list-only` lists entries without transferring any files.
+///
+/// upstream: options.c:2366-2367 - list_only does NOT set dry_run, but the
+/// receiver skips destination writes under list_only independently
+/// (`run_client` mode selection + `TransferFlags::skip_dest_writes`).
+#[test]
+fn list_only_no_files_transferred() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::write(source_dir.join("a.txt"), b"aaa").expect("write a");
+    fs::write(source_dir.join("b.txt"), b"bbb").expect("write b");
+    fs::write(source_dir.join("c.txt"), b"ccc").expect("write c");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    assert!(rendered.contains("a.txt"), "a.txt should be listed");
+    assert!(rendered.contains("b.txt"), "b.txt should be listed");
+    assert!(rendered.contains("c.txt"), "c.txt should be listed");
+
+    let dest_entries: Vec<_> = fs::read_dir(&dest_dir).expect("read dest").collect();
+    assert_eq!(
+        dest_entries.len(),
+        0,
+        "destination should be empty since --list-only skips destination writes"
+    );
+}
+
+/// Verifies that FIFO entries show 'p' type character in `--list-only` output.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
+#[test]
+fn list_only_fifo_shows_pipe_type() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let fifo_path = source_dir.join("testpipe");
+    mkfifo_for_tests(&fifo_path, 0o644).expect("create fifo");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--specials"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let fifo_line = rendered
+        .lines()
+        .find(|line| line.contains("testpipe"))
+        .expect("FIFO entry should be present");
+
+    assert!(
+        fifo_line.starts_with('p'),
+        "FIFO entry should start with 'p' type char: {fifo_line:?}"
+    );
+}
+
+/// Verifies that `--list-only` with `--stats` appends the stats summary
+/// after the listing, matching upstream behavior.
+#[cfg(unix)]
+#[test]
+fn list_only_with_stats_appends_summary() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("statsfile.txt");
+    fs::write(&file_path, b"stats content").expect("write file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--stats"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    assert!(
+        rendered.contains("statsfile.txt"),
+        "file listing should be present"
+    );
+
+    assert!(
+        rendered.contains("Number of files:"),
+        "stats summary should contain 'Number of files:'"
+    );
+    assert!(
+        rendered.contains("Total file size:"),
+        "stats summary should contain 'Total file size:'"
+    );
+}
+
+/// Verifies that the `--list-only` timestamp field matches the exact YYYY/MM/DD HH:MM:SS
+/// format for a known timestamp.
+#[cfg(unix)]
+#[test]
+fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
+    use filetime::{FileTime, set_file_times};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file_path = source_dir.join("ts.txt");
+    fs::write(&file_path, b"timestamp test").expect("write file");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
+
+    // Use a known timestamp: 2023-11-14 22:13:20 UTC
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+    let file_line = rendered
+        .lines()
+        .find(|line| line.ends_with("ts.txt"))
+        .expect("timestamp test file entry present");
+
+    let timestamp_field = &file_line[26..45];
+
+    assert!(
+        timestamp_field[0..4].chars().all(|c| c.is_ascii_digit()),
+        "year should be 4 digits: {timestamp_field:?}"
+    );
+    assert_eq!(&timestamp_field[4..5], "/", "year/month separator");
+    assert!(
+        timestamp_field[5..7].chars().all(|c| c.is_ascii_digit()),
+        "month should be 2 digits: {timestamp_field:?}"
+    );
+    assert_eq!(&timestamp_field[7..8], "/", "month/day separator");
+    assert!(
+        timestamp_field[8..10].chars().all(|c| c.is_ascii_digit()),
+        "day should be 2 digits: {timestamp_field:?}"
+    );
+    assert_eq!(&timestamp_field[10..11], " ", "date/time separator");
+    assert!(
+        timestamp_field[11..13].chars().all(|c| c.is_ascii_digit()),
+        "hours should be 2 digits: {timestamp_field:?}"
+    );
+    assert_eq!(&timestamp_field[13..14], ":", "hour/minute separator");
+    assert!(
+        timestamp_field[14..16].chars().all(|c| c.is_ascii_digit()),
+        "minutes should be 2 digits: {timestamp_field:?}"
+    );
+    assert_eq!(&timestamp_field[16..17], ":", "minute/second separator");
+    assert!(
+        timestamp_field[17..19].chars().all(|c| c.is_ascii_digit()),
+        "seconds should be 2 digits: {timestamp_field:?}"
+    );
+
+    let system_time = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
+    let expected = format_list_timestamp(Some(system_time));
+    assert_eq!(
+        timestamp_field, expected,
+        "timestamp field should match format_list_timestamp output"
+    );
+}
+
+/// Verifies that `--list-only` with `--verbose` still adds totals line at the end
+/// matching upstream behavior.
+#[cfg(unix)]
+#[test]
+fn list_only_verbose_appends_totals() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::write(source_dir.join("vt.txt"), b"verbose totals").expect("write file");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--verbose"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    assert!(
+        rendered.contains("vt.txt"),
+        "file listing should be present"
+    );
+
+    assert!(
+        rendered.contains("sent") && rendered.contains("bytes"),
+        "verbose mode should include totals line with 'sent ... bytes': {rendered}"
+    );
+    assert!(
+        rendered.contains("total size is"),
+        "verbose mode should include 'total size is' line: {rendered}"
+    );
+}
+
+/// Verifies that `--list-only` output handles multiple file types in the same listing.
+#[cfg(unix)]
+#[test]
+fn list_only_mixed_file_types_in_single_listing() {
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    let dest_dir = tmp.path().join("dst");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    fs::write(source_dir.join("regular.txt"), b"regular").expect("write regular");
+    fs::set_permissions(
+        source_dir.join("regular.txt"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .expect("set regular perms");
+
+    fs::create_dir(source_dir.join("mydir")).expect("create dir");
+
+    symlink("regular.txt", source_dir.join("mylink")).expect("create symlink");
+
+    let mut source_arg = source_dir.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("--recursive"),
+        OsString::from("--links"),
+        source_arg,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    let regular_line = rendered
+        .lines()
+        .find(|l| l.ends_with("regular.txt") && !l.contains("->"))
+        .expect("regular file line present");
+    let dir_line = rendered
+        .lines()
+        .find(|l| l.contains("mydir"))
+        .expect("directory line present");
+    let link_line = rendered
+        .lines()
+        .find(|l| l.contains("mylink"))
+        .expect("symlink line present");
+
+    assert!(
+        regular_line.starts_with('-'),
+        "regular file should start with '-': {regular_line:?}"
+    );
+    assert!(
+        dir_line.starts_with('d'),
+        "directory should start with 'd': {dir_line:?}"
+    );
+    assert!(
+        link_line.starts_with('l'),
+        "symlink should start with 'l': {link_line:?}"
+    );
+}
+
+/// Verifies the ATIME/CRTIME columns rendered by `emit_list_only` when
+/// `-U`/`--atimes` and `--crtimes` are active.
+///
+/// upstream: generator.c list_file_entry() - the atime field is blanked for
+/// directories (`!S_ISDIR(f->mode)`) while the crtime field is shown for all
+/// entry types. Both fields are right-justified in a width of `1 +
+/// strlen(timestamp)` (20 for the 19-char "YYYY/MM/DD HH:MM:SS" form), so a
+/// value carries one leading space and a blank fills the whole column.
+/// upstream: generator.c:1183 list_file_entry() - the ` -> <target>` arrow is
+/// gated on `preserve_links`. Without `-l` the symlink is still listed (perms
+/// start with `l`, size is the target length) but no target string is shown.
+/// FIFOs, sockets, and devices render their own permstring type char.
+#[test]
+fn list_only_renders_specials_and_symlink_arrow_gate() {
+    use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
+    use std::path::PathBuf;
+
+    use crate::frontend::progress::emit_list_only;
+
+    fn fields(mode: u32, size: u64, target: Option<&str>) -> ListOnlyEntryFields {
+        ListOnlyEntryFields {
+            mode,
+            size,
+            mtime: 1_700_000_000,
+            mtime_nsec: 0,
+            atime: 0,
+            atime_nsec: 0,
+            crtime: 0,
+            crtime_nsec: 0,
+            symlink_target: target.map(PathBuf::from),
+            is_symlink: target.is_some(),
+        }
+    }
+
+    fn render(fields: &ListOnlyEntryFields, name: &str, preserve_links: bool) -> String {
+        let meta = ClientEntryMetadata::from_list_only_entry(fields);
+        let event = ClientEvent::from_list_only_entry(PathBuf::from(name), meta);
+        let mut out = Vec::new();
+        emit_list_only(
+            std::slice::from_ref(&event),
+            &mut out,
+            HumanReadableMode::Grouped,
+            false,
+            false,
+            false,
+            preserve_links,
+        )
+        .expect("render");
+        String::from_utf8(out).expect("utf8").trim_end().to_owned()
+    }
+
+    // Symlink: target length is the size column (6 = len("target")).
+    let link = fields(0o120_777, 6, Some("target"));
+
+    let with_links = render(&link, "link.txt", true);
+    assert!(
+        with_links.starts_with('l') && with_links.ends_with("link.txt -> target"),
+        "preserve_links must render the arrow: {with_links:?}"
+    );
+
+    let without_links = render(&link, "link.txt", false);
+    assert!(
+        without_links.starts_with('l') && without_links.ends_with("link.txt"),
+        "symlink still listed without -l: {without_links:?}"
+    );
+    assert!(
+        !without_links.contains("->"),
+        "no arrow without preserve_links: {without_links:?}"
+    );
+
+    // FIFO / socket / char device carry distinct permstring type chars.
+    let fifo = render(&fields(0o010_644, 0, None), "pipe", false);
+    assert!(fifo.starts_with('p'), "FIFO renders as 'p': {fifo:?}");
+
+    let sock = render(&fields(0o140_755, 0, None), "sock", false);
+    assert!(sock.starts_with('s'), "socket renders as 's': {sock:?}");
+
+    let chr = render(&fields(0o020_644, 0, None), "chr", false);
+    assert!(chr.starts_with('c'), "char device renders as 'c': {chr:?}");
+}
+
+#[test]
+fn list_only_renders_atime_and_crtime_columns() {
+    use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
+    use std::path::PathBuf;
+
+    use crate::frontend::progress::emit_list_only;
+
+    // A non-zero atime/crtime so the columns carry real timestamps.
+    const ATIME: i64 = 1_700_000_100;
+    const CRTIME: i64 = 1_700_000_200;
+
+    let file_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o100_644,
+        size: 8,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
+    let file_event = ClientEvent::from_list_only_entry(PathBuf::from("file.txt"), file_meta);
+
+    let dir_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o040_755,
+        size: 0,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
+    let dir_event = ClientEvent::from_list_only_entry(PathBuf::from("sub"), dir_meta);
+
+    let events = vec![file_event, dir_event];
+
+    let mut out = Vec::new();
+    emit_list_only(
+        &events,
+        &mut out,
+        HumanReadableMode::Grouped,
+        true,
+        true,
+        false,
+        true,
+    )
+    .expect("render");
+    let rendered = String::from_utf8(out).expect("utf8");
+
+    let file_line = rendered
+        .lines()
+        .find(|l| l.contains("file.txt"))
+        .expect("file line present");
+    let dir_line = rendered
+        .lines()
+        .find(|l| l.ends_with("sub"))
+        .expect("dir line present");
+
+    let atime_str = format_list_timestamp(Some(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(u64::try_from(ATIME).expect("positive")),
+    ));
+    let crtime_str = format_list_timestamp(Some(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(u64::try_from(CRTIME).expect("positive")),
+    ));
+
+    // The file line shows both populated atime and crtime columns.
+    assert!(
+        file_line.contains(&atime_str),
+        "file line should carry the atime column: {file_line:?}"
+    );
+    assert!(
+        file_line.contains(&crtime_str),
+        "file line should carry the crtime column: {file_line:?}"
+    );
+
+    // The directory line blanks the atime column but still shows crtime.
+    assert!(
+        !dir_line.contains(&atime_str),
+        "directory atime column must be blank: {dir_line:?}"
+    );
+    assert!(
+        dir_line.contains(&crtime_str),
+        "directory crtime column must be shown: {dir_line:?}"
+    );
+}
