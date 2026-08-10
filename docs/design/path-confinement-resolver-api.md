@@ -116,6 +116,14 @@ trait and stays dependency-free, the daemon supplies the implementation, and the
 per-component loop monomorphises with no dynamic dispatch. `ConfinePolicy::<NoExclude>`
 compiles the check out of an operator-trusted walk completely.
 
+**The monomorphisation selects the resolution *mechanism*, not only the call shape.**
+That is the load-bearing consequence, and §4.4 gives the impossibility result behind
+it. It also converges on upstream's own semantics from the opposite direction:
+upstream seeds `ds.abspath` only for an absolute anchor and notes that unseeded means
+"non-daemon callers pay nothing" (`syscall.c:2989-2991`). Reaching the same property
+through Rust's type system rather than through a runtime seed check is evidence the
+shape is right rather than merely compliant.
+
 `ConfinePolicy::operator_trusted()` yields the unseeded policy. `ConfinePolicy::module()`
 yields the confined one. The activation predicate (task 600) becomes a choice of
 constructor at the session boundary rather than a branch inside each call site.
@@ -184,6 +192,42 @@ downstream protocol symptom. Measured 2026-08-14: on a daemon push into an escap
 symlink, upstream reports `change_dir#3 "sub" (in m) failed: Invalid cross-device
 link (18)` and exits 3, while oc exits 23 with `multiplexed frame truncated`. Both
 correctly refuse the escape; only one says why. Task 666.
+
+### 4.4 Why the oracle arm cannot use `openat2`, and what it costs
+
+**The impossibility result.** `RESOLVE_BENEATH` resolves symlinks inside the kernel.
+The caller receives an fd that is guaranteed to have stayed beneath the anchor, and
+learns nothing about *where the symlink landed*. Any absolute path the caller could
+maintain alongside that walk is the **nominal** path the peer named, not the resolved
+one.
+
+`abspath_outside_confinement` asks whether the **resolved** path left the module's
+visible tree. Checking that against the nominal path is exactly what a symlink
+defeats - which is the case the check exists for. Upstream can ask the question only
+because it performs the following itself and extends `ds.abspath` component by
+component (`syscall.c:2891-2965`).
+
+So the exclude-aware refusal is not merely awkward on top of `openat2`; it is
+**unimplementable** there. That is why the policy selects the mechanism.
+
+**The cost, recorded as a decision rather than left to emerge.** A manual
+per-component walk gives up `openat2`'s atomicity. Between the resolver's own
+`openat` calls there is a window in which a component can be replaced - a TOCTOU
+window the kernel currently closes for the BENEATH arm. The manual walk narrows it
+(every step is `openat` from a held dirfd with `O_NOFOLLOW`, never a path re-walk)
+but does not eliminate it.
+
+**oc accepts that trade in the oracle arm, and only there**, because:
+
+1. Upstream makes the same trade for the same reason - `ds_descend` is a hand-rolled
+   walk precisely so the exclude check can exist. Matching upstream's security
+   posture is the project's contract.
+2. The alternative is not "atomic and exclude-aware"; it is "atomic with **no**
+   exclude check", which is strictly weaker against the attack the check addresses.
+3. Every path without an oracle keeps `openat2` and its atomicity unchanged.
+
+This is written down so a later reader who finds a hand-rolled walk beside a
+kernel-atomic one does not reasonably conclude the hand-rolled one is a mistake.
 
 ## 5. The cache contract
 
