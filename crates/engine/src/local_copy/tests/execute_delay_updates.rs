@@ -534,7 +534,6 @@ fn delay_updates_dry_run_does_not_modify_existing() {
 /// Test that delay_updates works with --delete to remove extraneous files.
 /// TODO: Fix implementation - delay_updates with delete has partial file finalization issue.
 #[test]
-#[ignore = "delay_updates with delete: partial file finalization not yet working"]
 fn delay_updates_with_delete_removes_extraneous() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
