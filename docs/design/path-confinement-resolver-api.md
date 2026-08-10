@@ -18,9 +18,7 @@ The API is designed against a measured consumer set, not an estimate:
 Two findings from that walk drive the API shape:
 
 - `engine::local_copy` is reached only from `crates/core/src/client/`; `crates/daemon`
-  has zero references to it. The local-copy sites are therefore operator-trusted and
-  need no confinement. The peer-facing alt-dest code is a *separate* implementation in
-  `transfer/src/receiver/transfer/setup/sandbox.rs` and `receiver/quick_check.rs`.
+  has zero references to it. Those sites are operator-trusted and need no confinement.
 - The sender traversal performs `link_stat`/`readlink_stat` per directory entry
   relative to an anchor it has already entered. A one-shot `resolve(path) -> fd` API
   would force a full per-component re-walk for every entry.
@@ -64,7 +62,7 @@ Three properties matter for the API:
 
 ## 3. The central constraint: resolve masks cannot express this
 
-oc currently resolves with `openat2` and `RESOLVE_NO_SYMLINKS`
+oc resolves the non-anchored root with `openat2` and `RESOLVE_NO_SYMLINKS`
 (`crates/fast_io/src/secure_dir.rs:153`). That cannot implement the contract above,
 for a reason that is not a matter of picking a different mask:
 
@@ -75,28 +73,37 @@ for a reason that is not a matter of picking a different mask:
   symlinks**. Building refuse-all would break a plain local `oc-rsync -a src/ dst/`
   where `dst/sub` is a symlink.
 
-`RESOLVE_BENEATH` alone is closer on the symlink question, but it still cannot carry
-the per-component exclude check. The manual walk is therefore required, and `openat2`
-is at best an optimisation for the sub-case with no confinement root - not the
-mechanism. This supersedes the "refuse-all" framing in the original 4a spec.
+`RESOLVE_BENEATH` alone is closer on the symlink question - and is in fact what the
+anchored peer-tail walk already uses - but it still cannot carry the per-component
+exclude check. The manual walk is therefore required, and `openat2` is at best an
+optimisation for the sub-case with no confinement root, not the mechanism. This
+supersedes the "refuse-all" framing in the original 4a spec.
 
 ## 4. Proposed API
 
 oc already has the stack. `DirSandbox` (`crates/fast_io/src/dir_sandbox/mod.rs`)
-provides `open_root`, `current_dirfd`, `root_dirfd`, `enter`, `exit`, `depth`,
-`lstat_at`, `unlinkat_at`. The design extends that type rather than introducing a
-parallel one.
+provides `open_root`, `open_dest_anchor`, `current_dirfd`, `root_dirfd`, `enter`,
+`exit`, `depth`, `lstat_at`, `unlinkat_at`. The design extends that type rather than
+introducing a parallel one.
 
 ### 4.1 Trust policy as injected data
 
 ```rust
+/// Consulted per descended component when the walk is confined.
+pub trait ConfinementOracle {
+    /// True when `abspath` has left the served tree.
+    fn outside_confinement(&self, abspath: &Path) -> bool;
+}
+
+/// Zero-sized oracle for operator-trusted walks. Monomorphises away entirely.
+pub struct NoExclude;
+
 /// How a walk treats components it did not itself name.
-pub struct ConfinePolicy {
+pub struct ConfinePolicy<O: ConfinementOracle = NoExclude> {
     /// Absolute path of the anchor. `None` disables exclude-aware refusal, so a
     /// non-daemon caller pays nothing. Mirrors upstream's unseeded `ds.abspath`.
     anchor_abspath: Option<PathBuf>,
-    /// Consulted per descended component when `anchor_abspath` is set.
-    exclude: Option<Arc<dyn ConfinementOracle>>,
+    exclude: Option<O>,
     /// Shared symlink-hop budget for one walk.
     hops: u32,
     /// Maximum retained depth.
@@ -104,11 +111,35 @@ pub struct ConfinePolicy {
 }
 ```
 
-`ConfinePolicy::operator_trusted()` yields the unseeded policy - no oracle, no
-abspath tracking. `ConfinePolicy::module(root, oracle)` yields the confined one.
-The activation predicate (task 600) becomes a choice of constructor at the session
-boundary, not a branch inside each call site. That is what makes the two alt-dest
-implementations expressible in one resolver: same operation, different policy.
+The oracle is a **generic parameter, not a trait object**: `fast_io` defines the
+trait and stays dependency-free, the daemon supplies the implementation, and the
+per-component loop monomorphises with no dynamic dispatch. `ConfinePolicy::<NoExclude>`
+compiles the check out of an operator-trusted walk completely.
+
+`ConfinePolicy::operator_trusted()` yields the unseeded policy. `ConfinePolicy::module()`
+yields the confined one. The activation predicate (task 600) becomes a choice of
+constructor at the session boundary rather than a branch inside each call site.
+
+#### Worked example: the alt-dest family, which exists twice
+
+`--link-dest` / `--copy-dest` / `--compare-dest` is the case that makes injected
+policy necessary rather than merely tidy. The same operation is implemented in two
+places under two different trust models:
+
+| implementation | who names the path | policy |
+|---|---|---|
+| `engine/src/local_copy/executor/reference.rs` | the **operator**, on the local-copy path | `operator_trusted()` - no abspath seed, no oracle |
+| `transfer/src/receiver/transfer/setup/sandbox.rs`, `receiver/quick_check.rs` | the **peer**, under a daemon | `module()` - seeded abspath, oracle consulted per component |
+
+A branch inside the resolver would have to ask "am I a daemon?" at a layer that has
+no business knowing. A boolean parameter would push the same question onto every
+caller, where it is one forgotten argument away from being wrong. Passing the policy
+as a value lets both implementations call the *same* walk and differ only in what
+they constructed at the session boundary.
+
+This is also why the confinement work must touch both: fixing only the
+`engine/local_copy` sites and calling CVE-2026-53795 closed would leave the
+peer-facing half unconfined (tasks 608, 609, 604).
 
 ### 4.2 Retained anchor handle
 
@@ -116,7 +147,10 @@ implementations expressible in one resolver: same operation, different policy.
 impl DirSandbox {
     /// Borrow an existing anchor without taking ownership. Mirrors
     /// `secure_relative_open_at`, which does not close `anchor_fd`.
-    pub fn borrow_anchor(anchor: BorrowedFd<'_>, policy: ConfinePolicy) -> io::Result<Self>;
+    pub fn borrow_anchor<O: ConfinementOracle>(
+        anchor: BorrowedFd<'_>,
+        policy: ConfinePolicy<O>,
+    ) -> io::Result<Self>;
 
     /// One per-component step: `.`, `..`, a real subdirectory, or a followed
     /// relative symlink. Mirrors `ds_descend`.
@@ -127,38 +161,61 @@ impl DirSandbox {
 }
 ```
 
-The traversal consumers keep one `DirSandbox` per directory and call `descend`/`exit`
+Traversal consumers keep one `DirSandbox` per directory and call `descend`/`exit`
 around the entry loop, so a sender walk over N entries costs N `openat` calls rather
-than N full re-walks. This is the anchor-lifetime requirement, and task 640 reaches
-it independently: upstream prefers `dup(module_dirfd)` because re-traversal as the
-dropped-privilege uid `EACCES`es under a non-traversable parent.
+than N full re-walks. Task 640 reaches the same requirement independently: upstream
+prefers `dup(module_dirfd)` because re-traversal as the dropped-privilege uid
+`EACCES`es under a non-traversable parent.
 
 ### 4.3 Error model
 
 `ConfineError` must distinguish refusal from absence, because the caller's response
 differs: a refusal is fatal and reportable, a missing component is often a normal
-`ENOENT`. Upstream collapses both into errno and relies on the caller; oc should
-keep them separate at the type level and map to upstream's errno only at the
-syscall boundary, so the wire-visible behaviour is unchanged.
+`ENOENT`. Upstream collapses both into errno; oc should keep them separate at the
+type level and map to upstream's errno only at the syscall boundary, so wire-visible
+behaviour is unchanged.
 
 Distinguished cases: `Escape` (`..` above anchor, absolute symlink target, or
 outside-confinement), `HopBudgetExhausted`, `DepthExceeded`, `NotFound`,
 `NotADirectory`, `Io`.
 
-## 5. Explicitly out of scope
+⚠ A refusal must reach the operator naming the **component and the cause**, not a
+downstream protocol symptom. Measured 2026-08-14: on a daemon push into an escaping
+symlink, upstream reports `change_dir#3 "sub" (in m) failed: Invalid cross-device
+link (18)` and exits 3, while oc exits 23 with `multiplexed frame truncated`. Both
+correctly refuse the escape; only one says why. Task 666.
 
-- **`MUTATE_UNLINK` is not touched.** oc's delete path is dirfd-anchored ungated,
+## 5. The cache contract
+
+The resolver's contract is **not** "resolve this path". It is:
+
+> **Resolve this path, and no consumer may substitute a previously observed result
+> for it.**
+
+Stating it as a contract rather than as a ban on one mechanism matters, because a
+ban on `HashMap<PathBuf, Metadata>` is satisfiable by any number of other things
+with the same hazard - a memoised `stat` helper, a directory listing captured once
+and indexed later, a `PathBuf`-keyed negative-existence set. Each would silently
+defeat per-component confinement for every consumer that hits it, because the
+confinement decision lives in the *act of resolving*, not in the value returned.
+
+Any cache that survives across a resolution must therefore key on a **resolved
+handle** (an fd, or an anchor plus a single component) rather than on a path string.
+`crates/flist`'s `BatchedStatCache` (`HashMap<PathBuf, Arc<fs::Metadata>>`) is the
+concrete instance to watch: it is currently unreached, and wiring it without
+re-keying would breach this contract (task 656).
+
+## 6. Explicitly out of scope
+
+- **The unlink path is not touched.** oc's delete path is dirfd-anchored ungated,
   deliberately stronger than upstream (tasks 470/606). The resolver must not weaken
   it to fit a uniform signature.
 - **No anchor threading through operation signatures.** Upstream passes
   `basedir = NULL` at every `do_chmod_at`/`do_lchown_at`/utimes site and lets
   `secure_relative_open` substitute the module root itself. Confinement comes from
   the resolver knowing the root, not from N callers passing it correctly.
-- **No path-keyed caching in front of the resolver.** A cached result is reused
-  without re-resolving, which defeats per-component confinement. If a stat cache is
-  ever wired, it must key on a resolved fd, not a `PathBuf`.
 
-## 6. Cross-platform
+## 7. Cross-platform
 
 The NOFOLLOW-hit errno differs by platform - upstream's `NOFOLLOW_HIT_SYMLINK` covers
 `ELOOP` on Linux, `EMLINK` on FreeBSD, `EFTYPE` on NetBSD/OpenBSD - and macOS/BSD
@@ -166,7 +223,7 @@ evaluate `O_DIRECTORY` before `O_NOFOLLOW`, yielding `ENOTDIR`. The probe must t
 all of these as "may be a symlink, fall through to `readlinkat`", exactly as upstream
 does. Task 613 owns the macOS/BSD arm; Windows is a separate decision (task 614).
 
-## 7. Test plan
+## 8. Test plan
 
 The resolver's unit suite (task 602) gates any wiring. Each case below is a refusal
 or an acceptance that a mask-based implementation would get wrong:
@@ -182,14 +239,13 @@ or an acceptance that a mask-based implementation would get wrong:
 9. anchor fd is still open and usable after the sandbox is dropped
 
 Cross-implementation (task 612): the same scenarios against the real 3.5.0 binary,
-since a shared wrong belief about upstream is exactly what this epic keeps finding.
+since a shared wrong belief about upstream is what this epic keeps finding.
 
-## 8. Open questions
+## 9. Deferred with an owner
 
-1. **`ConfinementOracle` ownership.** The exclude check needs module filter state.
-   Does it live in `filters` and get injected, or does `fast_io` grow a trait the
-   daemon implements? The latter keeps `fast_io` dependency-free; the former avoids
-   a trait object in a hot loop.
-2. **Descriptor pressure.** Holding one dirfd per component is a real cost upstream
-   warns about explicitly. oc's traversal is parallel in places, multiplying it. This
-   wants a measurement before the ceiling is fixed, not an arbitrary constant.
+**Descriptor pressure (task 663).** Holding one dirfd per component is a cost
+upstream warns about in code, emitting a one-shot `FWARNING` naming `ulimit -n`.
+That warning is operator-visible output and falls under the output-fidelity
+contract, so it must be mirrored rather than invented. oc's traversal is parallel
+where upstream's is not, so the peak is components x concurrent walks - which wants
+a measurement against `getrlimit`, not a constant.
