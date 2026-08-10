@@ -322,3 +322,33 @@ fn enter_to_legitimate_subdir_returns_ok() {
     sandbox.exit();
     assert_eq!(sandbox.depth(), 0);
 }
+
+/// The seam, exercised through the arm that is already live.
+///
+/// An operator-trusted policy must resolve a peer tail exactly as the
+/// unpolicied walk does today: an in-tree relative symlink is followed.
+/// This pins the `NoExclude` arm to `RESOLVE_BENEATH` semantics so the
+/// oracle arm (tasks 599/600), which replaces the mechanism, cannot
+/// silently change this one.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:2891` `ds_descend()` - follows a relative in-tree target.
+#[test]
+fn operator_trusted_policy_follows_a_relative_in_tree_symlink() {
+    let (_guard, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("real")).expect("mkdir real");
+    std::fs::write(root.join("real").join("marker"), b"x").expect("write marker");
+    symlink("real", root.join("sub")).expect("symlink sub -> real");
+
+    let sandbox = DirSandbox::open_dest_anchor_with_policy(
+        &root,
+        std::path::Path::new("sub"),
+        super::ConfinePolicy::operator_trusted(),
+    )
+    .expect("an in-tree relative symlink must resolve under the operator-trusted policy");
+
+    sandbox
+        .lstat_at(std::ffi::OsStr::new("marker"))
+        .expect("the sandbox must be anchored at real/, reached through sub");
+}

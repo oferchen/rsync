@@ -168,6 +168,24 @@ impl DirSandbox {
     ///   resolved beneath the anchor.
     #[cfg(unix)]
     pub fn open_dest_anchor(anchor: &Path, peer_tail: &Path) -> io::Result<Self> {
+        Self::open_dest_anchor_with_policy(anchor, peer_tail, ConfinePolicy::operator_trusted())
+    }
+
+    /// [`open_dest_anchor`](Self::open_dest_anchor) with the trust policy made
+    /// explicit.
+    ///
+    /// `policy` decides how components the peer named are resolved. The
+    /// [`NoExclude`] arm implemented here keeps the kernel walk and is
+    /// therefore behaviour-identical to the unpolicied entry point; the oracle
+    /// arm replaces the mechanism and lands with its consumer in tasks
+    /// 599/600.
+    #[cfg(unix)]
+    pub fn open_dest_anchor_with_policy(
+        anchor: &Path,
+        peer_tail: &Path,
+        policy: ConfinePolicy<NoExclude>,
+    ) -> io::Result<Self> {
+        let ConfinePolicy { exclude } = policy;
         let mut fd = crate::secure_dir::open_trusted_dir(anchor)?;
 
         for component in peer_tail.components() {
@@ -182,6 +200,12 @@ impl DirSandbox {
                 }
             };
             fd = openat_dir(fd.as_fd(), name)?;
+            // Under `NoExclude` this is a constant `false`. A real oracle
+            // cannot be honoured here at all - the kernel resolved the
+            // component, so the only path available is the nominal one.
+            if exclude.outside_confinement(Path::new(name)) {
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
         }
 
         Ok(Self {
@@ -525,5 +549,61 @@ mod linux {
             return Ok(None);
         }
         Err(err)
+    }
+}
+
+/// Consulted per descended component when a walk is confined to a module.
+///
+/// Only the manual per-component resolver can honour this: `openat2` resolves
+/// symlinks in the kernel, so a `RESOLVE_BENEATH` walk never learns where a
+/// symlink landed and could only offer the *nominal* path - which is exactly
+/// what a symlink defeats. See `docs/design/path-confinement-resolver-api.md`
+/// section 4.4.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:2891-2965` `ds_descend()` - extends `ds.abspath` per component
+///   and refuses when `abspath_outside_confinement()` says the resolved path
+///   left the module.
+pub trait ConfinementOracle {
+    /// True when `abspath` has left the served tree.
+    fn outside_confinement(&self, abspath: &Path) -> bool;
+}
+
+/// The oracle for an operator-trusted walk: there is nothing to exclude.
+///
+/// Zero-sized, so a `ConfinePolicy<NoExclude>` carries no state and the
+/// exclude check compiles out entirely. This mirrors upstream leaving
+/// `ds.abspath` unseeded for a non-daemon caller, where the comment at
+/// `syscall.c:2989-2991` notes such callers "pay nothing".
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoExclude;
+
+impl ConfinementOracle for NoExclude {
+    fn outside_confinement(&self, _abspath: &Path) -> bool {
+        false
+    }
+}
+
+/// How a walk treats components it did not itself name.
+///
+/// The policy selects the *resolution mechanism*, not merely the call shape:
+/// `NoExclude` keeps the kernel walk (`RESOLVE_BENEATH`), while a real oracle
+/// requires the manual per-component resolver, because the exclude check is
+/// unimplementable on top of `openat2`.
+///
+/// The type parameter arrives with the oracle arm (tasks 599/600). Today only
+/// the `NoExclude` instantiation exists, so it is spelled concretely rather
+/// than speculatively generalised.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConfinePolicy<O = NoExclude> {
+    exclude: O,
+}
+
+impl ConfinePolicy<NoExclude> {
+    /// The operator named every component; nothing is confined.
+    #[must_use]
+    pub const fn operator_trusted() -> Self {
+        Self { exclude: NoExclude }
     }
 }
