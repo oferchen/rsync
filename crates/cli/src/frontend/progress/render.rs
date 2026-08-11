@@ -739,7 +739,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
-    // upstream: main.c:437 `if (stats.flist_buildtime)` gates both timing
+    // upstream: main.c:446 `if (stats.flist_buildtime)` gates both timing
     // lines. The upstream counter is a millisecond integer, so sub-millisecond
     // durations suppress the lines just as on the C side.
     if file_list_generation_ms > 0 {

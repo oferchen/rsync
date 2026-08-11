@@ -1,0 +1,23 @@
+{
+  "_1_what": "Per-crate suspected-drift counts accepted by `citation_drift_audit.py --ratchet`. The gate fails only when a crate RISES above its number here.",
+  "_2_lowering_is_mandatory": "A number above zero is an accepted debt, not a passing grade. If you FIX citations in a crate, you MUST lower its number in the SAME commit. Skip that and the ratchet keeps accepting the old count, and the next real regression in that crate slips through under your unclaimed headroom.",
+  "_3_raising_needs_a_reason": "Raise a number only for a confirmed false positive - a comment citing a range or a definition while quoting a construct that lives at the range end or at a use site. Say which citation and why in the commit message. Never raise one to make a red gate go green.",
+  "_4_engine_and_transfer": "engine=1 and transfer=6 are the deferred half of the 3.4.4 sweep, excluded to avoid colliding with concurrent edits in those crates. They are UNREVIEWED - nobody has confirmed they are false positives. Whoever sweeps them lowers these two numbers in the same commit.",
+  "_5_regenerate": "python3 tools/ci/citation_drift_audit.py --write-baseline [crate ...]  (merges, so a crate subset will not drop the others or these notes)",
+  "bandwidth": 0,
+  "batch": 0,
+  "checksums": 0,
+  "cli": 7,
+  "compress": 0,
+  "core": 5,
+  "daemon": 7,
+  "engine": 1,
+  "filters": 0,
+  "matching": 0,
+  "metadata": 1,
+  "platform": 0,
+  "protocol": 2,
+  "rsync_io": 0,
+  "signature": 0,
+  "transfer": 6
+}
