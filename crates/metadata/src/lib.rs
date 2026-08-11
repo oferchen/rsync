@@ -283,7 +283,7 @@ pub use apply::group_is_settable;
 #[cfg(unix)]
 pub use apply::{
     apply_dest_mode_pre_transfer, apply_file_metadata_with_fd,
-    apply_file_metadata_with_fd_if_changed, transfer_root_chmod_self_lock,
+    apply_file_metadata_with_fd_if_changed, init_orig_umask, transfer_root_chmod_self_lock,
 };
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
