@@ -119,6 +119,14 @@ impl<'a> CopyContext<'a> {
         // match_report()).
         let mut probe = ProbeCounters::default();
         let mut file_matches = 0u64;
+        // Accumulated where matches are produced, never derived from
+        // `total_size - literal_bytes`. upstream: match.c:121 `matched()` is the
+        // only place `stats.matched_data` grows, so a byte counts as matched
+        // exactly when a block match emitted it - bytes that are neither
+        // literal nor matched (the prefix an append skips over) count as
+        // neither. upstream: match.c:389-390 sets `last_match = s->flength;
+        // s->count = 0;` so append mode never reaches `matched()` at all.
+        let mut matched_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
         sparse_state.set_preallocated_len(preallocated_len);
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
@@ -281,6 +289,7 @@ impl<'a> CopyContext<'a> {
                 }
 
                 total_bytes = total_bytes.saturating_add(block_len as u64);
+                matched_bytes = matched_bytes.saturating_add(block_len as u64);
                 let progressed = initial_bytes.saturating_add(total_bytes);
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
                 window.clear();
@@ -395,6 +404,7 @@ impl<'a> CopyContext<'a> {
             }
 
             total_bytes = total_bytes.saturating_add(block_len as u64);
+            matched_bytes = matched_bytes.saturating_add(block_len as u64);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
             window.clear();
@@ -477,9 +487,9 @@ impl<'a> CopyContext<'a> {
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
             self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
+            FileCopyOutcome::new(literal_bytes, matched_bytes, Some(compressed_total))
         } else {
-            FileCopyOutcome::new(literal_bytes, None)
+            FileCopyOutcome::new(literal_bytes, matched_bytes, None)
         };
 
         Ok(outcome)
