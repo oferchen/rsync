@@ -42,10 +42,10 @@ pub(super) fn negotiation_failure(
     peer_list: &str,
     own_candidates: &[&str],
 ) -> io::Error {
-    // upstream: compat.c:381 rprintf(FERROR, "Failed to negotiate a %s choice.\n", ...)
+    // upstream: compat.c:387 rprintf(FERROR, "Failed to negotiate a %s choice.\n", ...)
     let mut msg = format!("Failed to negotiate a {kind} choice.");
 
-    // upstream: compat.c:382 - only `!am_server || !do_negotiated_strings`
+    // upstream: compat.c:384 - only `!am_server || !do_negotiated_strings`
     // prints the offered lists.
     if !is_server || !do_negotiated {
         let (peer_label, own_label) = if is_server {
@@ -54,7 +54,7 @@ pub(super) fn negotiation_failure(
             ("Server", "Client")
         };
 
-        // upstream: compat.c:384 rprintf(FERROR, "%s list: %s\n", peer, tmpbuf)
+        // upstream: compat.c:388 rprintf(FERROR, "%s list: %s\n", peer, tmpbuf)
         msg.push('\n');
         msg.push_str(peer_label);
         msg.push_str(" list: ");

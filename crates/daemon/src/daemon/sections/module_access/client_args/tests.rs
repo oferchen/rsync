@@ -119,74 +119,156 @@ mod iconv_charset_converter_tests {
 }
 
 #[cfg(test)]
-mod clamped_verbosity_tests {
-    use super::{clamp_verbose_flags, clamped_verbose_level};
+mod output_verbosity_limit_tests {
+    use super::{ServerConfig, ServerRole, apply_output_verbosity_limit};
     use crate::daemon::apply_verbosity;
     use logging::{InfoFlag, info_gte};
+    use std::ffi::OsString;
 
     // WHY: upstream gates per-connection log floods with
-    // `limit_output_verbosity(lp_max_verbosity(i))` (clientserver.c:1127). Each
-    // oc-rsync connection runs on its own worker thread, so the clamped client
-    // request must seed that thread's `logging::VerbosityConfig` or every
-    // `info_log!`/`debug_log!` emission stays silent. These tests pin the
-    // observable gate (`info_gte`) rather than the intermediate count so they
-    // fail if the clamp-then-seed chain ever stops controlling log output.
+    // `limit_output_verbosity(lp_max_verbosity(i))` (clientserver.c:1141), which
+    // lowers the `info_levels[]`/`debug_levels[]` OUTPUT arrays
+    // (options.c:537-560) and leaves the client's option string untouched. Two
+    // separate invariants ride on that shape and both are pinned here:
     //
-    // Each subtest spawns a fresh thread because `apply_verbosity` writes
-    // thread-local state; sharing the harness thread would leak the level into
+    //   1. The `v` inside the `-e.<caps>` payload is NOT a `-v`. It is the
+    //      client's `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
+    //      (compat.c:730-733), and upstream's popt gives everything after `-e`
+    //      to `shell_cmd` (options.c:823) rather than treating it as option
+    //      letters. Counting it inflates every connection's verbosity by one.
+    //   2. Limiting must not rewrite the option string. A rewrite that dropped
+    //      that `v` would silently strip the peer's capability advertisement -
+    //      a wire divergence, not a logging one.
+    //
+    // Each subtest that seeds the thread-local `logging::VerbosityConfig` spawns
+    // a fresh thread; sharing the harness thread would leak the level into
     // sibling tests.
 
-    fn seed_from_client(flag_string: &str, max_verbosity: i32) {
-        let clamped = clamp_verbose_flags(flag_string, max_verbosity);
-        apply_verbosity(clamped_verbose_level(&clamped));
+    // The exact compact bundle an oc/upstream client sends at DEFAULT verbosity
+    // for `-a` over a daemon transport, capability suffix included.
+    const DEFAULT_CLIENT_BUNDLE: &str = "-logDtpre.iLsfxCIvu";
+
+    fn parse(flag_string: &str) -> ServerConfig {
+        ServerConfig::from_flag_string_and_args(
+            ServerRole::Generator,
+            flag_string.to_owned(),
+            vec![OsString::from(".")],
+        )
+        .expect("server flag string parses")
     }
 
     #[test]
-    fn level0_request_suppresses_level1_message() {
-        // Client asked for no `-v`; a level-1 INFO (e.g. NAME) must not fire.
-        std::thread::spawn(|| {
-            seed_from_client("-logDtpr", 1);
-            assert!(
-                !info_gte(InfoFlag::Name, 1),
-                "verbosity 0 must suppress the level-1 NAME info message",
-            );
-        })
-        .join()
-        .expect("level0 thread");
+    fn capability_suffix_v_is_not_a_verbose_request() {
+        let mut cfg = parse(DEFAULT_CLIENT_BUNDLE);
+        let level = apply_output_verbosity_limit(&mut cfg, 1);
+        assert_eq!(
+            level, 0,
+            "the `v` in the -e.<caps> payload is the client's CF_VARINT_FLIST_FLAGS \
+             advertisement, not a -v: a default-verbosity connection must run at level 0",
+        );
+        assert!(!cfg.flags.verbose);
     }
 
     #[test]
-    fn level1_request_emits_level1_message() {
-        // Client asked for `-v` and the module permits it; level-1 INFO fires.
-        std::thread::spawn(|| {
-            seed_from_client("-logDtprv", 1);
+    fn limiting_never_rewrites_the_capability_suffix() {
+        // `max verbosity = 0` is the strongest limit an operator can set; it
+        // must still leave the `-e` payload byte-identical, because that payload
+        // is what the capability decoder turns into the compat flags written on
+        // the wire (compat.c:712-738).
+        // `1` is the shipped default (upstream daemon-parm.txt:49), `0` the
+        // strongest limit an operator can set, `-1` the below-zero arm.
+        for max_verbosity in [-1, 0, 1, 2, 5, 9] {
+            for bundle in [
+                DEFAULT_CLIENT_BUNDLE,
+                "-vlogDtpre.iLsfxCIvu",
+                "-vvvlogDtpre.iLsfxCIvu",
+            ] {
+                let mut cfg = parse(bundle);
+                apply_output_verbosity_limit(&mut cfg, max_verbosity);
+                assert_eq!(
+                    cfg.flag_string, bundle,
+                    "max verbosity {max_verbosity} must cap the level, not edit the \
+                     client's option string",
+                );
+                // Spelled out rather than left implicit in the equality above:
+                // every capability letter the peer advertised has to survive,
+                // because each one is a compat-flag bit (compat.c:720-733).
+                let payload = cfg
+                    .flag_string
+                    .split_once('e')
+                    .expect("bundle carries an -e argument")
+                    .1;
+                for letter in ['i', 'L', 's', 'f', 'x', 'C', 'I', 'v', 'u'] {
+                    assert!(
+                        payload.contains(letter),
+                        "capability letter `{letter}` was stripped at \
+                         max verbosity {max_verbosity}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn max_verbosity_caps_a_higher_client_request() {
+        // Client stacked `-vvv` but the module caps `max verbosity` at 1.
+        let mut cfg = parse("-vvvlogDtpre.iLsfxCIvu");
+        assert_eq!(cfg.flags.verbose_level, 3, "client asked for -vvv");
+        let level = apply_output_verbosity_limit(&mut cfg, 1);
+        assert_eq!(level, 1, "max verbosity 1 caps the client's -vvv");
+        assert_eq!(cfg.flag_string, "-vvvlogDtpre.iLsfxCIvu");
+
+        std::thread::spawn(move || {
+            apply_verbosity(level);
             assert!(
                 info_gte(InfoFlag::Name, 1),
-                "verbosity 1 must emit the level-1 NAME info message",
-            );
-        })
-        .join()
-        .expect("level1 thread");
-    }
-
-    #[test]
-    fn max_verbosity_clamps_higher_client_request() {
-        // Client stacked `-vvv` but the module caps `max verbosity` at 1: the
-        // effective level is 1, so a level-2 message stays suppressed even
-        // though the client requested far more.
-        std::thread::spawn(|| {
-            seed_from_client("-logDtprvvv", 1);
-            assert!(
-                info_gte(InfoFlag::Name, 1),
-                "clamped verbosity 1 must still emit the level-1 message",
+                "capped verbosity 1 must still emit the level-1 NAME message",
             );
             assert!(
                 !info_gte(InfoFlag::Name, 2),
-                "max verbosity 1 must clamp the client's -vvv down to level 1",
+                "max verbosity 1 must suppress the level-2 NAME message",
             );
         })
         .join()
-        .expect("clamp thread");
+        .expect("cap thread");
+    }
+
+    #[test]
+    fn zero_max_verbosity_silences_a_verbose_client() {
+        let mut cfg = parse("-vlogDtpre.iLsfxCIvu");
+        let level = apply_output_verbosity_limit(&mut cfg, 0);
+        assert_eq!(level, 0);
+        assert!(!cfg.flags.verbose);
+
+        std::thread::spawn(move || {
+            apply_verbosity(level);
+            assert!(
+                !info_gte(InfoFlag::Name, 1),
+                "max verbosity 0 must suppress the level-1 NAME info message",
+            );
+        })
+        .join()
+        .expect("zero thread");
+    }
+
+    #[test]
+    fn permissive_max_verbosity_passes_the_request_through() {
+        // upstream: options.c:542-543 - `limit_output_verbosity` returns without
+        // applying any limit once the module's cap exceeds MAX_VERBOSITY, so the
+        // client's own level survives intact.
+        let mut cfg = parse("-vlogDtpre.iLsfxCIvu");
+        assert_eq!(apply_output_verbosity_limit(&mut cfg, 9), 1);
+
+        let mut cfg = parse("-vvlogDtpre.iLsfxCIvu");
+        assert_eq!(apply_output_verbosity_limit(&mut cfg, 5), 2);
+    }
+
+    #[test]
+    fn negative_max_verbosity_silences_the_connection() {
+        // A negative `max verbosity` makes upstream's `for (j = 0; j <= level;)`
+        // loop body never run (options.c:548), leaving every limit at zero.
+        let mut cfg = parse("-vvlogDtpre.iLsfxCIvu");
+        assert_eq!(apply_output_verbosity_limit(&mut cfg, -1), 0);
     }
 }
 

@@ -314,6 +314,17 @@ fetch_upstream_tarball() {
   return 1
 }
 
+# Configure + make the source tree in the current directory with one candidate
+# C dialect. Returns non-zero instead of exiting so the caller can try another
+# dialect; the caller reports the failure once every candidate is exhausted.
+try_upstream_build() {
+  local build_log=$1 attempt_cflags=$2
+  shift 2
+  make distclean >/dev/null 2>&1 || true
+  CFLAGS="${CFLAGS:-} ${attempt_cflags}" ./configure "$@" >"${build_log}" 2>&1 \
+    && make -j"$(build_jobs)" >>"${build_log}" 2>&1
+}
+
 build_upstream_from_source() {
   local version=$1
   local src_dir="${upstream_src_root}/rsync-${version}"
@@ -391,13 +402,30 @@ build_upstream_from_source() {
   # wrong arity etc.). Restoring the historical "warn, don't error" defaults
   # keeps the conftest results accurate without touching newer rsync builds.
   local extra_cflags="-O2 -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion"
-  if ! CFLAGS="${CFLAGS:-} ${extra_cflags}" ./configure "${configure_args[@]}" >"${build_log}" 2>&1; then
-    echo "Upstream rsync ${version} configure failed; see ${build_log}" >&2
-    tail -n 50 "${build_log}" >&2 || true
-    exit 1
-  fi
 
-  if ! make -j"$(build_jobs)" >>"${build_log}" 2>&1; then
+  # gcc >= 14 also applies the C23 rule that an empty parameter list declares a
+  # function taking NO arguments. Releases through 3.1.3 declare helpers
+  # K&R-style - syscall.c's "off64_t lseek64();" and lib/pool_alloc.c's
+  # "void (*bomb)();" - so that rule turns them into hard "conflicting types"
+  # and "too many arguments" errors that no -Wno- flag suppresses. Compiling
+  # those releases in the dialect they were written for clears the whole class
+  # at once. Modern releases need the opposite: 3.4.4 uses C99 for-loop
+  # declarations that gnu89 rejects. The two dialects are mutually exclusive
+  # across the supported range, so probe rather than keep a version table -
+  # try the compiler default first and fall back to gnu89 only if it fails.
+  #
+  # The fallback also turns _FORTIFY_SOURCE off, which those releases need for
+  # a separate reason. Their bundled popt carves one malloc into the argv array
+  # plus its string storage (popt/poptparse.c poptDupArgv), so
+  # __builtin_object_size under-reports the destination. glibc 2.38 made
+  # strlcpy fortifiable, and the resulting mis-sized __strlcpy_chk aborts
+  # rsync 3.1.3 with "buffer overflow detected" as soon as it parses --daemon.
+  # That binary still compiles and prints its version, so without this the
+  # harness gets a silently broken oracle. This suppresses a false positive
+  # against a 2013 allocation idiom, not a defect in rsync's transfer logic.
+  local legacy_cflags="$extra_cflags -std=gnu89 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  if ! try_upstream_build "$build_log" "$extra_cflags" "${configure_args[@]}" \
+    && ! try_upstream_build "$build_log" "$legacy_cflags" "${configure_args[@]}"; then
     echo "Upstream rsync ${version} build failed; see ${build_log}" >&2
     tail -n 50 "${build_log}" >&2 || true
     exit 1
@@ -406,6 +434,18 @@ build_upstream_from_source() {
   if ! make install >>"${build_log}" 2>&1; then
     echo "Upstream rsync ${version} install failed; see ${build_log}" >&2
     tail -n 50 "${build_log}" >&2 || true
+    exit 1
+  fi
+
+  # A binary that compiles and prints its version can still be unusable. The
+  # fortified-strlcpy abort described above fires inside popt's option parsing,
+  # so it only appears once --daemon is on the command line: a plain transfer
+  # exits 0 while every daemon scenario dies with "connection refused". Parsing
+  # the daemon options here turns that into one clear failure at build time
+  # instead of dozens of misleading scenario failures later.
+  if ! "${install_dir}/bin/rsync" --daemon --help >>"${build_log}" 2>&1; then
+    echo "Upstream rsync ${version} built but cannot parse --daemon options; see ${build_log}" >&2
+    tail -n 20 "${build_log}" >&2 || true
     exit 1
   fi
 
@@ -11754,8 +11794,13 @@ run_comprehensive_interop_case() {
   # compat.c:655-668), so the legs below only apply at proto 30+.
   local eff_proto="$fp"
   if [[ -z "$eff_proto" ]]; then
+    # Native PROTOCOL_VERSION per release (rsync.h). 3.0.x is 30, NOT 28 - the
+    # earlier value here silently failed the "proto >= 30" gate below, so the
+    # 3.0.9 ACL leg was skipped under a message blaming the host instead of
+    # running. 2.6.9 is 29 and previously fell through to the 32 default.
     case "$version" in
-      3.0.*) eff_proto=28 ;;
+      2.6.*) eff_proto=29 ;;
+      3.0.*) eff_proto=30 ;;
       3.1.*) eff_proto=31 ;;
       *) eff_proto=32 ;;
     esac
@@ -11883,8 +11928,18 @@ done
 # follow-up tasks (extra_build_versions) so the binary is on disk and on PATH
 # even when no scenarios reference it yet.
 mkdir -p "$upstream_src_root" "$upstream_install_root"
-for version in "${versions[@]}" "${extra_build_versions[@]}"; do
+for version in "${versions[@]}"; do
   ensure_upstream_build "$version"
+done
+# Cache-warming versions have no scenarios wired, so a build failure costs
+# coverage nothing and must not abort the versions that do. Run each in a
+# subshell: ensure_upstream_build exits on failure, and without the subshell
+# that exit would take the whole harness down. Failures for the versions above
+# stay fatal.
+for version in "${extra_build_versions[@]}"; do
+  if ! (ensure_upstream_build "$version"); then
+    echo "warning: upstream rsync ${version} failed to build; it has no scenarios wired, continuing" >&2
+  fi
 done
 
 # If build-only mode, exit after building upstream binaries
