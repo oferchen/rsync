@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn list_emissions_gate_at_level_two_client() {
-        // upstream: compat.c:373/521 - `DEBUG_GTE(NSTR, 2)` for client.
+        // upstream: compat.c:374/522 - `DEBUG_GTE(NSTR, 2)` for client.
         init_at(1);
         trace_send_list(NstrSide::Client, NstrCategory::Checksum, "md5");
         trace_recv_list(NstrSide::Client, NstrCategory::Checksum, "md5");
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn summary_emissions_gate_at_level_one_client() {
-        // upstream: checksum.c:206, compat.c:213 - `DEBUG_GTE(NSTR, 1)`
+        // upstream: checksum.c:206, compat.c:214 - `DEBUG_GTE(NSTR, 1)`
         // for client.
         init_at(0);
         trace_checksum_summary(NstrSide::Client, true, "md5");

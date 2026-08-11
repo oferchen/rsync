@@ -834,7 +834,7 @@ fn apply_permissions_from_entry_no_change_when_disabled() {
 /// silently kept the temp file's `0o600` mode over ssh/daemon (e.g. a source
 /// 0o644 file corrupted to 0o600), while a local copy and upstream both land
 /// the umask-masked source mode.
-// upstream: rsync.c:449-472 dest_mode() + rsync.c:954-965 set_file_attrs().
+// upstream: rsync.c:449-472 dest_mode() + rsync.c:489-682 set_file_attrs().
 #[cfg(unix)]
 #[test]
 fn no_perms_new_file_from_entry_gets_umask_masked_source_mode() {

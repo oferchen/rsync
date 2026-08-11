@@ -446,7 +446,7 @@ impl ClientSummary {
     ///
     /// Used by the CLI to emit upstream's `created directory <dest>` notice
     /// before per-entry itemize lines when itemize-changes is enabled.
-    /// upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`.
     #[must_use]
     pub const fn destination_root_created(&self) -> bool {
