@@ -19,6 +19,11 @@ pub fn pinned_binary(install_root: &Path, version: &str) -> PathBuf {
 }
 
 /// First line of `binary --version`, or `None` if it cannot be run.
+///
+/// Unix-only: the sole consumer is the fidelity matrix's oracle resolution
+/// (`commands::validate::oracle`), and `validate` declares `mod oracle` behind
+/// `#[cfg(unix)]`. Without the gate this is dead code on Windows.
+#[cfg(unix)]
 pub fn version_banner(binary: &Path) -> Option<String> {
     let out = std::process::Command::new(binary)
         .arg("--version")
@@ -37,6 +42,9 @@ pub fn version_banner(binary: &Path) -> Option<String> {
 /// any binary, and `/usr/bin/rsync` on macOS is openrsync. Mirrors
 /// `upstream_release_version()` in `tools/ci/run_interop.sh`, which parses the
 /// banner for the same reason.
+///
+/// Unix-only for the same reason as [`version_banner`].
+#[cfg(unix)]
 pub fn parse_release_version(banner: &str) -> Option<&str> {
     let rest = banner.strip_prefix("rsync")?.trim_start();
     let rest = rest.strip_prefix("version")?.trim_start();
