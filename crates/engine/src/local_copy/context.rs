@@ -401,14 +401,27 @@ impl<'a> FinalizeMetadataParams<'a> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FileCopyOutcome {
     literal_bytes: u64,
+    matched_bytes: u64,
     compressed_bytes: Option<u64>,
 }
 
+/// Matched-byte count for copy paths that never match a basis block.
+///
+/// A whole-file copy, a sparse whole-file copy, and an append all reach the
+/// destination without consulting a signature, so nothing is "matched" even
+/// though most of the resulting file may not be literal either. upstream:
+/// match_sums() only reaches `matched()` (match.c:121) via `hash_search()`,
+/// which is skipped when `s->count == 0` - the whole-file case - and append
+/// mode zeroes `s->count` outright (match.c:389-390).
+pub(crate) const MATCHED_NONE: u64 = 0;
+
 impl FileCopyOutcome {
-    /// Creates a new outcome with the given literal and optional compressed byte counts.
-    const fn new(literal_bytes: u64, compressed_bytes: Option<u64>) -> Self {
+    /// Creates a new outcome with the given literal, matched, and optional
+    /// compressed byte counts.
+    const fn new(literal_bytes: u64, matched_bytes: u64, compressed_bytes: Option<u64>) -> Self {
         Self {
             literal_bytes,
+            matched_bytes,
             compressed_bytes,
         }
     }
@@ -416,6 +429,16 @@ impl FileCopyOutcome {
     /// Returns the number of literal (unmatched) bytes transferred.
     pub(crate) const fn literal_bytes(self) -> u64 {
         self.literal_bytes
+    }
+
+    /// Returns the number of bytes supplied by block matches against the basis.
+    ///
+    /// Reported by the copy paths that actually emit matches, never inferred
+    /// from the file size. upstream: match.c:121 - `stats.matched_data` grows
+    /// only inside `matched()`, so a whole-file copy and an append both leave
+    /// it at zero even though most of their bytes were not literal.
+    pub(crate) const fn matched_bytes(self) -> u64 {
+        self.matched_bytes
     }
 
     /// Returns the compressed byte count, if compression was used.
@@ -997,21 +1020,21 @@ mod tests {
 
     #[test]
     fn file_copy_outcome_new_stores_values() {
-        let outcome = FileCopyOutcome::new(1000, Some(500));
+        let outcome = FileCopyOutcome::new(1000, 0, Some(500));
         assert_eq!(outcome.literal_bytes(), 1000);
         assert_eq!(outcome.compressed_bytes(), Some(500));
     }
 
     #[test]
     fn file_copy_outcome_new_without_compression() {
-        let outcome = FileCopyOutcome::new(2000, None);
+        let outcome = FileCopyOutcome::new(2000, 0, None);
         assert_eq!(outcome.literal_bytes(), 2000);
         assert!(outcome.compressed_bytes().is_none());
     }
 
     #[test]
     fn file_copy_outcome_zero_bytes() {
-        let outcome = FileCopyOutcome::new(0, Some(0));
+        let outcome = FileCopyOutcome::new(0, 0, Some(0));
         assert_eq!(outcome.literal_bytes(), 0);
         assert_eq!(outcome.compressed_bytes(), Some(0));
     }
@@ -1025,7 +1048,7 @@ mod tests {
 
     #[test]
     fn file_copy_outcome_clone() {
-        let outcome = FileCopyOutcome::new(100, Some(50));
+        let outcome = FileCopyOutcome::new(100, 0, Some(50));
         let cloned = outcome;
         assert_eq!(cloned.literal_bytes(), 100);
         assert_eq!(cloned.compressed_bytes(), Some(50));
@@ -1033,7 +1056,7 @@ mod tests {
 
     #[test]
     fn file_copy_outcome_debug_format() {
-        let outcome = FileCopyOutcome::new(100, None);
+        let outcome = FileCopyOutcome::new(100, 0, None);
         let debug = format!("{outcome:?}");
         assert!(debug.contains("FileCopyOutcome"));
         assert!(debug.contains("100"));
@@ -1041,9 +1064,9 @@ mod tests {
 
     #[test]
     fn file_copy_outcome_eq() {
-        let a = FileCopyOutcome::new(100, Some(50));
-        let b = FileCopyOutcome::new(100, Some(50));
-        let c = FileCopyOutcome::new(100, Some(60));
+        let a = FileCopyOutcome::new(100, 0, Some(50));
+        let b = FileCopyOutcome::new(100, 0, Some(50));
+        let c = FileCopyOutcome::new(100, 0, Some(60));
         assert_eq!(a, b);
         assert_ne!(a, c);
     }

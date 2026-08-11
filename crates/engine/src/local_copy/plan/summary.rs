@@ -783,17 +783,28 @@ impl LocalCopySummary {
         }
     }
 
+    /// Records one transferred file's contribution to the summary.
+    ///
+    /// `matched_bytes` is supplied by the copy path that produced the matches,
+    /// never inferred here. It used to be derived as `file_size -
+    /// literal_bytes`, which silently assumed every non-literal byte came from
+    /// a block match. Append mode falsifies that: the pre-existing prefix is
+    /// neither literal nor matched, so the derivation counted the whole prefix
+    /// as matched while upstream reports zero. upstream: match.c:121 grows
+    /// `stats.matched_data` only inside `matched()`, and append mode never
+    /// reaches it (match.c:389-390 sets `last_match = s->flength; s->count =
+    /// 0;` and the hash loop is skipped).
     pub(in crate::local_copy) fn record_file(
         &mut self,
         file_size: u64,
         literal_bytes: u64,
+        matched_bytes: u64,
         compressed: Option<u64>,
     ) {
         self.files_copied = self.files_copied.saturating_add(1);
         self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
         self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
-        let matched = file_size.saturating_sub(literal_bytes);
-        self.matched_bytes = self.matched_bytes.saturating_add(matched);
+        self.matched_bytes = self.matched_bytes.saturating_add(matched_bytes);
         let transmitted = compressed.unwrap_or(literal_bytes);
         // A local copy emulates the protocol sender: it writes the file data
         // (counted as sent) but receives no data payload back. Counting the data
@@ -1348,7 +1359,7 @@ mod tests {
     #[test]
     fn record_file_increments_counters() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1000, 800, None);
+        summary.record_file(1000, 800, 200, None);
 
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.transferred_file_size(), 1000);
@@ -1361,7 +1372,7 @@ mod tests {
     #[test]
     fn record_file_with_compression() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1000, 800, Some(400));
+        summary.record_file(1000, 800, 200, Some(400));
 
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.compressed_bytes(), 400);
@@ -1392,8 +1403,8 @@ mod tests {
     #[test]
     fn record_multiple_files_accumulates() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(100, 80, None);
-        summary.record_file(200, 150, None);
+        summary.record_file(100, 80, 20, None);
+        summary.record_file(200, 150, 50, None);
 
         assert_eq!(summary.files_copied(), 2);
         assert_eq!(summary.transferred_file_size(), 300);
@@ -1600,7 +1611,7 @@ mod tests {
         // `bytes_sent` untouched - that data-only figure is what upstream's
         // `Total bytes sent` is built on for a local copy.
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1_000, 1_000, None);
+        summary.record_file(1_000, 1_000, 0, None);
         summary.record_file_list_entry(40);
         assert_eq!(summary.bytes_sent(), 1_000);
 
