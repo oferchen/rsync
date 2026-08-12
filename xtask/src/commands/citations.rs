@@ -27,7 +27,7 @@
 //! skips in the one place it must run is not a gate. `tools/ci/
 //! upstream-3.4.4-lines.tsv` carries one line count per upstream file. rsync
 //! 3.4.4 is a released tarball and is immutable, so the manifest cannot drift
-//! from it; [`tests::manifest_matches_the_pinned_source`] re-derives it wherever
+//! from it; `tests::manifest_matches_the_pinned_source` re-derives it wherever
 //! the source is present.
 
 use crate::error::TaskResult;
