@@ -149,6 +149,44 @@ fn authoritative_payload() -> Vec<u8> {
     (0..SOURCE_LEN).map(|i| (i % 251) as u8).collect()
 }
 
+/// Deterministic payload with no two equal signature blocks.
+///
+/// [`authoritative_payload`] repeats with period 251, so a block at source
+/// offset X is byte-identical to a basis block at offset Y whenever
+/// `X == Y (mod 251)`. That is harmless when only the reconstructed bytes are
+/// asserted, but it lets a delta match blocks the retained tail never covered -
+/// measured at 204,400 matched bytes on a first run - which destroys any bound
+/// on *which* bytes the redo matched. [`daemon_pull_redo_redeltas_against_the_retained_basis`]
+/// needs distinct blocks; derived purely from the index by a fixed integer hash,
+/// so the fixture stays reproducible.
+fn distinct_block_payload() -> Vec<u8> {
+    (0..SOURCE_LEN)
+        .map(|i| {
+            let x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            ((x >> 24) ^ x) as u8
+        })
+        .collect()
+}
+
+/// Value of one `--stats` label, with grouping commas and the trailing ` bytes`
+/// unit stripped, so `Literal data: 205,300 bytes` reads back as `205300`.
+fn stat_field(stdout: &str, label: &str) -> Option<u64> {
+    stdout.lines().find_map(|line| {
+        let (found, rest) = line.split_once(':')?;
+        if found.trim() != label {
+            return None;
+        }
+        let trimmed = rest.trim();
+        let unitless = trimmed.strip_suffix("bytes").unwrap_or(trimmed).trim_end();
+        unitless
+            .chars()
+            .filter(|c| *c != ',')
+            .collect::<String>()
+            .parse()
+            .ok()
+    })
+}
+
 /// Write an `rsyncd.conf` exposing one module rooted at `module_root`.
 ///
 /// `read_only` distinguishes the pull cell (client reads the module) from the
@@ -584,3 +622,155 @@ fn rsh_pull_forced_verification_failure_recovers_via_redo() {
 // mode, so this fixture produces one clean whole-file transfer and no
 // verification failure to recover from. A test here could only assert an
 // outcome the redo never produced.
+
+/// The phase-2 redo must re-delta against the RETAINED partial, not re-send the
+/// whole file as literal data.
+///
+/// Upstream re-enters the ordinary `recv_generator()` for a redo index
+/// (`generator.c:2200`). That re-stats the destination - which still holds the
+/// phase-1 update, because `--append` implies `--inplace` (`options.c:2411`) and
+/// `receiver.c:1029` finishes the transfer in place even when `recv_ok == 0` -
+/// and re-sends a block signature built from it (`generator.c:1967`). Only
+/// `csum_length` (`:2178`) and the sign of `append_mode` (`:2186`) differ from
+/// phase 1; the latter is what stops the redo tripping the append short-circuit
+/// at `generator.c:1842`, where the destination now equals `F_LENGTH`.
+///
+/// Before the fix the receiver requested every redo index with a null sum head,
+/// so the sender fell into `match.c:403-409`'s literal branch and re-sent all
+/// 204,800 bytes: literal 307,200 / matched 0. The bytes still landed correctly,
+/// which is why every other cell in this file passes either way - the cost is
+/// invisible unless the delta split is asserted.
+#[test]
+fn daemon_pull_redo_redeltas_against_the_retained_basis() {
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(scratch) = DaemonScratch::new() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+
+    let module_root = scratch.root.join("source");
+    let dest_dir = scratch.root.join("dest");
+    fs::create_dir_all(&module_root).expect("create module root");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+    // Not `seed_fixture`: this cell bounds *which* bytes were matched, so it
+    // needs the distinct-block payload (see `distinct_block_payload`).
+    let payload = distinct_block_payload();
+    fs::write(module_root.join("payload.bin"), &payload).expect("seed authoritative source");
+    fs::write(dest_dir.join("payload.bin"), vec![0u8; BAD_PREFIX_LEN])
+        .expect("seed wrong-prefix basis");
+
+    write_daemon_config(
+        &scratch.config,
+        &scratch.pid,
+        &scratch.log,
+        "data",
+        &module_root,
+        true,
+    )
+    .expect("write daemon config");
+
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
+            return;
+        }
+    };
+
+    let src_url = OsString::from(format!("rsync://127.0.0.1:{port}/data/payload.bin"));
+    let dest_arg = dest_dir.join("payload.bin").into_os_string();
+    let args: &[&OsStr] = &[
+        OsStr::new("--append-verify"),
+        OsStr::new("--ignore-times"),
+        OsStr::new("--stats"),
+        OsStr::new(VERBOSE),
+        &src_url,
+        &dest_arg,
+    ];
+
+    let outcome = run_oc_rsync_deadlined(&oc_bin, args).expect("run daemon-pull redo client");
+    // The shared oracle first: exit 0, byte-correct destination, upstream's
+    // verbatim warning on stderr and nowhere else, and the two transfers that
+    // prove the redo ran at all.
+    assert_recovered(
+        "daemon pull delta split",
+        &outcome,
+        &dest_dir.join("payload.bin"),
+        &payload,
+    );
+
+    let literal = stat_field(&outcome.stdout, "Literal data").expect("--stats prints Literal data");
+    let matched = stat_field(&outcome.stdout, "Matched data").expect("--stats prints Matched data");
+
+    // Frame: phase 1 appends the tail as literal, phase 2 re-transfers the whole
+    // file as some literal/matched split, so the two phases together always
+    // account for exactly this many bytes however the redo is delta'd. Pinning
+    // the sum keeps the bounds below honest - a redo that silently skipped bytes
+    // would satisfy a lone lower bound on `matched`.
+    let appended_tail = (SOURCE_LEN - BAD_PREFIX_LEN) as u64;
+    assert_eq!(
+        literal + matched,
+        appended_tail + SOURCE_LEN as u64,
+        "phase-1 append plus phase-2 resend must account for every byte \
+         (literal {literal}, matched {matched})\nstdout:\n{}",
+        outcome.stdout,
+    );
+
+    // The redo's basis is the destination as phase 1 left it: BAD_PREFIX_LEN
+    // zeros followed by the correctly appended tail, SOURCE_LEN bytes in all.
+    // Derive its block geometry the way the receiver does rather than hardcoding
+    // it (upstream: generator.c:sum_sizes_sqroot()).
+    let layout = signature::calculate_signature_layout(signature::SignatureLayoutParams::new(
+        SOURCE_LEN as u64,
+        None,
+        protocol::ProtocolVersion::NEWEST,
+        std::num::NonZeroU8::new(16).expect("redo strong-sum length"),
+    ))
+    .expect("basis layout");
+    let block_len = u64::from(layout.block_length().get());
+
+    // Non-vacuous guard for the ceiling below: with duplicate basis blocks a
+    // source block outside the retained tail could legitimately match one inside
+    // it, and no upper bound on `matched` would hold.
+    let mut seen_blocks = std::collections::HashSet::new();
+    for block in payload.chunks(block_len as usize) {
+        assert!(
+            seen_blocks.insert(block),
+            "fixture payload has duplicate {block_len}-byte blocks, so the \
+             matched-data ceiling would assert nothing",
+        );
+    }
+
+    // Every FULL basis block lying entirely inside the correctly-appended region
+    // is byte-identical to the source at the same offset, so the redo must match
+    // all of them. The first starts at the first block boundary at or after
+    // BAD_PREFIX_LEN; the last ends at the last boundary at or before SOURCE_LEN.
+    let first_full = (BAD_PREFIX_LEN as u64).div_ceil(block_len);
+    let full_blocks = SOURCE_LEN as u64 / block_len - first_full;
+    let full_block_bytes = full_blocks * block_len;
+    assert!(
+        full_blocks > 0,
+        "fixture geometry no longer yields whole matchable blocks",
+    );
+
+    assert!(
+        matched >= full_block_bytes,
+        "the phase-2 redo did not re-delta against the retained basis: matched \
+         {matched} < {full_block_bytes} (the {full_blocks} whole basis blocks \
+         inside the retained tail). A null sum head on the redo request reports \
+         matched 0.\nstdout:\n{}",
+        outcome.stdout,
+    );
+
+    // Upper bound: the zero prefix must NOT be counted as matched (upstream's
+    // append pass never calls matched() for the retained prefix - match.c:389-390
+    // sets `last_match = s->flength` and zeroes `s->count`). The only byte range
+    // matchable beyond the whole blocks is the basis's trailing short block.
+    assert!(
+        matched <= full_block_bytes + u64::from(layout.remainder()),
+        "matched {matched} exceeds the retained tail plus its short trailing \
+         block - the redo counted unmatchable bytes\nstdout:\n{}",
+        outcome.stdout,
+    );
+}
