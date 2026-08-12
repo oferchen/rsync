@@ -397,6 +397,57 @@ fn is_vital_option_rejects_non_vitals() {
     assert!(!is_vital_option("archive"));
 }
 
+/// A `[a-z]` RANGE in a refuse rule must match the range, not the three
+/// literal bytes `a`, `-`, `z`.
+///
+/// upstream: `options.c:921-924` matches refuse rules with `wildmatch()`, and
+/// `dowild` handles ranges at `lib/wildmatch.c:156-166`.
+///
+/// This is the fail-OPEN direction. oc's previous hand-written glob compared
+/// `[...]` by literal byte membership, so `refuse options = --[a-c]*` accepted
+/// `--compress` - the option the rule was written to block. Every other
+/// refuse-options divergence over-refuses and so fails closed; this one did not.
+#[test]
+fn refused_client_arg_honors_a_character_range() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["[a-c]*".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["--server".to_owned(), "--compress".to_owned()];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--compress".to_owned()),
+        "a range rule must refuse an option inside the range"
+    );
+
+    // The range must still bound: an option outside it stays allowed.
+    let allowed = vec!["--server".to_owned(), "--times".to_owned()];
+    assert_eq!(
+        refused_client_arg(&module, &allowed),
+        None,
+        "a range rule must not refuse an option outside the range"
+    );
+}
+
+/// A NEGATED class `[!...]` must invert, per `dowild`.
+///
+/// upstream: `lib/wildmatch.c:139-143` - `special = p_ch == NEGATE_CLASS`.
+/// The previous glob had no negation at all, so the leading `!` was compared
+/// as a literal byte and the rule matched nothing.
+#[test]
+fn refused_client_arg_honors_a_negated_class() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["[!x]*".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["--server".to_owned(), "--compress".to_owned()];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--compress".to_owned()),
+        "a negated class must refuse an option whose first char is not excluded"
+    );
+}
+
 #[test]
 fn refused_client_arg_matches_long_form() {
     // upstream: clientserver.c rejects `--compress` when the module's
@@ -415,21 +466,112 @@ fn refused_client_arg_matches_long_form() {
 #[test]
 fn refused_client_arg_expands_bundled_short() {
     // upstream: the daemon expands `-z` inside a packed short-letter
-    // server argstr (e.g. `-vlogDtprez.iLsfxCIvu`) into `--compress` via
-    // popt's longName mapping, then matches against the refuse list.
+    // server argstr into `--compress` via popt's longName mapping, then
+    // matches against the refuse list.
+    //
+    // The letter order matters and is NOT arbitrary: upstream appends `z`
+    // (options.c:2722-2723) and only then calls `maybe_add_e_option()`
+    // (options.c:2728), so `e` is always LAST - everything after it is `-e`'s
+    // argument. oc emits the same order (the capability suffix is appended
+    // last, `invocation/builder.rs:233`). This fixture previously wrote
+    // `...ez.iLsfxCIvu`, an order no conforming rsync produces.
     let module = ModuleDefinition {
         refuse_options: vec!["compress".to_owned()],
         ..Default::default()
     };
     let args = vec![
         "--server".to_owned(),
-        "-vlogDtprez.iLsfxCIvu".to_owned(),
+        "-vlogDtprze.iLsfxCIvu".to_owned(),
         ".".to_owned(),
         "no-compress/".to_owned(),
     ];
     assert_eq!(
         refused_client_arg(&module, &args),
         Some("--compress".to_owned())
+    );
+}
+
+#[test]
+fn refused_client_arg_scans_past_non_option_bytes() {
+    // A non-option byte must NOT end the bundle scan. Upstream is
+    // position-independent by construction: refusal rewrites `op->val` to
+    // OPT_REFUSED_BASE+idx (options.c:1040) and popt returns the refused entry
+    // (options.c:1934) wherever it sits.
+    //
+    // Breaking at the first non-alphabetic byte let a client prefix its bundle
+    // with any digit and slip the rest past the refuse list SILENTLY - `-4z`
+    // enabled compression with `refuse options = compress` in force.
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned()],
+        ..Default::default()
+    };
+    for arg in ["-4z", "-6z", "-8z", "-0z", "-@z"] {
+        assert_eq!(
+            refused_client_arg(&module, &[arg.to_owned()]),
+            Some("--compress".to_owned()),
+            "bundle {arg} must not bypass the refuse list",
+        );
+    }
+}
+
+#[test]
+fn refused_client_arg_examines_every_letter_the_decoder_acts_on() {
+    // THE invariant while oc has two readers of a compact bundle: this scanner
+    // must examine a SUPERSET of what the code that APPLIES the options acts
+    // on. Anything less is a refusal bypass.
+    //
+    // The applying decoder is `transfer::flags::ParsedServerFlags::parse`,
+    // which walks EVERY byte up to the `.` separator with no option-argument
+    // (arity) logic. Upstream can afford arity because one popt pass both
+    // parses and marks refusals, so they cannot disagree; oc's two readers can.
+    //
+    // Concretely: teaching only this scanner that `-B` takes a value made it
+    // skip the rest of `-B...z`, while the decoder still saw the `z` and turned
+    // compression on - a silent bypass strictly worse than the one it fixed.
+    // Over-refusing a byte that is really part of an argument fails CLOSED and
+    // is the acceptable direction.
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned()],
+        ..Default::default()
+    };
+    // Every one of these has `z` AFTER a letter that upstream popt would treat
+    // as value-taking. The decoder sets compress for all of them, so all must
+    // be refused.
+    for arg in ["-B4096z", "-T/tmpz", "-M--fooz", "-@z", "-fz"] {
+        assert_eq!(
+            refused_client_arg(&module, &[arg.to_owned()]),
+            Some("--compress".to_owned()),
+            "{arg}: decoder sets compress here, so the refuse scan must see it",
+        );
+    }
+
+    // The one place the scan DOES stop is the `.` capability separator - and it
+    // stops there because the decoder stops there too (flags.rs:531 `if byte ==
+    // b'.' { break; }`). Same rule, same boundary.
+    let fuzzy_module = ModuleDefinition {
+        refuse_options: vec!["fuzzy".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&fuzzy_module, &["-e.LsfxCIvuy".to_owned()]),
+        None,
+        "letters after the `.` are the -e capability payload, not options",
+    );
+}
+
+#[test]
+fn refused_client_arg_matches_modify_window_short_form() {
+    // `refuse options = modify-window` must match the short wire form `-@-1`,
+    // which oc's OWN client emits (invocation/builder.rs:477, mirroring
+    // options.c:2873-2875). `@` was missing from the short-letter map, so this
+    // silently failed to refuse.
+    let module = ModuleDefinition {
+        refuse_options: vec!["modify-window".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&module, &["-@-1".to_owned()]),
+        Some("--modify-window".to_owned())
     );
 }
 
