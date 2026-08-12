@@ -764,7 +764,7 @@ impl DeltaSignatureIndex {
     ///
     /// The scan is not narrowed to the last block even though the wire and
     /// local signature builders both put the only short block there. This is a
-    /// public API over a [`FileSignature`], and `SignatureBlock::from_raw_parts`
+    /// public API over a [`signature::FileSignature`], and `SignatureBlock::from_raw_parts`
     /// lets a caller hand over blocks of any length in any order, so a
     /// last-block-only check would be an unsound assumption rather than an
     /// optimization.
