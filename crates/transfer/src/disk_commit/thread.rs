@@ -262,6 +262,7 @@ fn disk_thread_main(
                 }
             }
             FileMessage::Chunk(_)
+            | FileMessage::MatchedChunk(_)
             | FileMessage::SkipMatched(_)
             | FileMessage::Commit { .. }
             | FileMessage::Abort { .. } => {
