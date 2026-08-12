@@ -71,17 +71,8 @@ jobs:
           shared-key: ci-windows-openssh-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
           key: windows-nightly-openssh
 
-      - name: Install cargo-nextest (Windows direct download)
-        shell: pwsh
-        run: |
-          # Workaround for actions/partner-runner-images#169 on Windows.
-          $ErrorActionPreference = 'Stop'
-          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
-          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
-          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
-          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
-          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
-          & "$cargoBin\cargo-nextest.exe" --version
+      - name: Install cargo-nextest (Windows)
+        uses: ./.github/actions/install-cargo-nextest-windows
 
       # Build the rsync_io crate first so the nextest step links
       # against an already-warm build artifact. Default features only;
