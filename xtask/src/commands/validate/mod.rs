@@ -135,7 +135,7 @@ mod checks;
 mod comparison;
 #[cfg(unix)]
 mod oracle;
-
+#[cfg(unix)]
 mod skips;
 #[cfg(unix)]
 mod support;
