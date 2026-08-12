@@ -374,7 +374,16 @@ impl ReceiverContext {
                         .map(|(idx, path, iflags)| (idx, self.file_list[idx].clone(), path, iflags))
                         .collect();
 
-                    if !batch.is_empty() && !is_redo_pass {
+                    // The phase-2 redo takes this same path: upstream re-enters
+                    // the ordinary `recv_generator()` for a redo index
+                    // (generator.c:2200), so the redo re-stats the destination,
+                    // re-runs the basis selection, and re-sends a block
+                    // signature via `generate_and_send_sums()` (generator.c:1967)
+                    // - only with `csum_length = SUM_LENGTH` and `append_mode`
+                    // negated (generator.c:2178,2186), both already applied by
+                    // the caller and by `request_config` above. The retained
+                    // in-place partial IS the redo's basis.
+                    if !batch.is_empty() {
                         // Extract basis config fields for the closure to avoid
                         // capturing &self across rayon worker boundaries.
                         let fuzzy_level = self.config.flags.fuzzy_level;
@@ -486,51 +495,6 @@ impl ReceiverContext {
                                 basis_result.basis_path,
                                 basis_result.fnamecmp_type,
                                 basis_result.xname.as_deref(),
-                                file_entry.size(),
-                                base_iflags,
-                                &request_config,
-                                xattr_request.as_ref(),
-                            )?;
-
-                            pipeline.push(pending);
-                            pending_files_info.push_back((
-                                file_idx,
-                                file_path,
-                                file_entry,
-                                base_iflags,
-                            ));
-                        }
-                    } else {
-                        // Redo pass or empty batch: no basis files, skip signatures.
-                        for (file_idx, file_entry, file_path, base_iflags) in batch {
-                            if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
-                                self.send_no_transfer_itemize(
-                                    writer,
-                                    &mut *ndx_write_codec,
-                                    &mut pipeline,
-                                    &mut pending_files_info,
-                                    file_idx,
-                                    file_entry,
-                                    file_path,
-                                    base_iflags,
-                                )?;
-                                continue;
-                            }
-                            // upstream: generator.c:575,598 - with no basis the
-                            // xattr diff runs against an empty list, so every
-                            // abbreviated value is requested. This keeps a large
-                            // xattr on a new or redo'd file from being dropped
-                            // for lack of a local copy to resolve it against.
-                            let xattr_request = self.build_xattr_request(&file_entry, None);
-                            let pending = send_file_request_xattr(
-                                writer,
-                                &mut *ndx_write_codec,
-                                self.flat_to_wire_ndx(file_idx),
-                                file_path.clone(),
-                                None,
-                                None,
-                                protocol::FnameCmpType::Fname,
-                                None,
                                 file_entry.size(),
                                 base_iflags,
                                 &request_config,
