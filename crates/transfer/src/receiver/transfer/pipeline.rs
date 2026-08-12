@@ -89,6 +89,47 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Delivers the diagnostics the pipelined receiver queued (failed
+    /// verification, per-file transfer errors) to the sink upstream's
+    /// `rwrite()` selects for this process.
+    ///
+    /// A SERVER receiver (the far end of a push) frames each line for the
+    /// client; a CLIENT receiver (a pull) owns the terminal and writes to its
+    /// own stdout/stderr. Sending a frame from a client receiver is not merely
+    /// a cosmetic slip: the peer is a `--server --sender` whose stdout IS the
+    /// wire, so the text it renders lands in the middle of the multiplexed
+    /// stream and desyncs the very phase-2 redo the warning announces.
+    ///
+    /// The queued text carries no trailing newline (it is asserted verbatim by
+    /// the queueing unit tests); upstream's `rprintf` format strings end in
+    /// `\n`, so the terminator is appended here, at the single point where the
+    /// line becomes output.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:251-346` - `rwrite()`: `am_server` sends the frame and returns,
+    ///   otherwise `FERROR_XFER`/`FWARNING` go to stderr and `FINFO` to stdout
+    /// - `receiver.c:1088-1091` - the `failed verification` warning/error text
+    fn emit_pipeline_messages<W>(
+        &self,
+        writer: &mut W,
+        messages: Vec<(protocol::MessageCode, String)>,
+    ) where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        for (code, text) in messages {
+            let line = format!("{text}\n");
+            // A diagnostic that cannot be delivered must not abort the
+            // transfer; upstream's rwrite() likewise ignores the write result.
+            let _ = match code {
+                protocol::MessageCode::ErrorXfer => self.emit_error_xfer_line(writer, &line),
+                protocol::MessageCode::Warning => self.emit_warning_line(writer, &line),
+                protocol::MessageCode::Error => self.emit_error_line(writer, &line),
+                _ => self.emit_info_line(writer, &line),
+            };
+        }
+    }
+
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
@@ -97,16 +138,15 @@ impl ReceiverContext {
     /// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn run_pipeline_loop_decoupled<
-        'a,
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &'a self,
+        &mut self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &'a FileEntry, PathBuf, u32)>,
+        files_to_transfer: Vec<(usize, PathBuf, u32)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
@@ -125,7 +165,7 @@ impl ReceiverContext {
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
-        use crate::pipeline::receiver::PipelinedReceiver;
+        use crate::pipeline::receiver::{PipelinedReceiver, VerifyReport};
         use crate::shared::TransferDeadline;
 
         // upstream: generator.c:582-593 - itemize() also writes NDX + iflags
@@ -148,12 +188,12 @@ impl ReceiverContext {
             for item in files_to_transfer {
                 while let Some(&(idx, iflags)) = rows.peek().filter(|&&(idx, _)| idx < item.0) {
                     rows.next();
-                    merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+                    merged.push((idx, PathBuf::new(), u32::from(iflags)));
                 }
                 merged.push(item);
             }
             for (idx, iflags) in rows {
-                merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+                merged.push((idx, PathBuf::new(), u32::from(iflags)));
             }
             merged
         };
@@ -220,7 +260,10 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, u32)> =
+        // Stage 0: the in-flight window OWNS its FileEntry (cloned at push,
+        // bounded to the pipeline window = O(window)), so the loop no longer
+        // holds a borrow into `self.file_list`.
+        let mut pending_files_info: VecDeque<(usize, PathBuf, FileEntry, u32)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         // upstream: receiver.c:784 stats.total_transferred_size += F_LENGTH(file),
@@ -281,7 +324,14 @@ impl ReceiverContext {
             daemon_module_root: self.config.connection.daemon_module_root.clone(),
             ..DiskCommitConfig::default()
         };
-        let mut pipelined_receiver = PipelinedReceiver::new(disk_config)?;
+        // upstream: receiver.c:1072,1085 - `stdout_format_has_i` and `read_batch`
+        // are globals in `recv_files()`; here they travel with the mediator that
+        // owns the verification result.
+        let mut pipelined_receiver =
+            PipelinedReceiver::new(disk_config)?.with_verify_report(VerifyReport {
+                out_format_forwards_i: self.config.flags.info_flags.out_format_forwards_i,
+                read_batch: self.local_replay,
+            });
         if is_redo_pass {
             let _ = pipelined_receiver.take_redo_indices();
         }
@@ -314,12 +364,26 @@ impl ReceiverContext {
                 {
                     use rayon::prelude::*;
 
-                    let batch: Vec<_> = file_iter
+                    // Stage 0: resolve each queued flist index to an owned
+                    // FileEntry clone as it enters the window (bounded by
+                    // available_slots <= window size), releasing the borrow on
+                    // `self.file_list` before the rest of the loop body.
+                    let batch: Vec<(usize, FileEntry, PathBuf, u32)> = file_iter
                         .by_ref()
                         .take(pipeline.available_slots())
+                        .map(|(idx, path, iflags)| (idx, self.file_list[idx].clone(), path, iflags))
                         .collect();
 
-                    if !batch.is_empty() && !is_redo_pass {
+                    // The phase-2 redo takes this same path: upstream re-enters
+                    // the ordinary `recv_generator()` for a redo index
+                    // (generator.c:2200), so the redo re-stats the destination,
+                    // re-runs the basis selection, and re-sends a block
+                    // signature via `generate_and_send_sums()` (generator.c:1967)
+                    // - only with `csum_length = SUM_LENGTH` and `append_mode`
+                    // negated (generator.c:2178,2186), both already applied by
+                    // the caller and by `request_config` above. The retained
+                    // in-place partial IS the redo's basis.
+                    if !batch.is_empty() {
                         // Extract basis config fields for the closure to avoid
                         // capturing &self across rayon worker boundaries.
                         let fuzzy_level = self.config.flags.fuzzy_level;
@@ -419,7 +483,7 @@ impl ReceiverContext {
                             // --link-dest / --compare-dest / --partial-dir bases
                             // drive the resolution in upstream's priority order.
                             let xattr_request = self.build_xattr_request(
-                                file_entry,
+                                &file_entry,
                                 basis_result.basis_path.as_deref(),
                             );
                             let pending = send_file_request_xattr(
@@ -431,51 +495,6 @@ impl ReceiverContext {
                                 basis_result.basis_path,
                                 basis_result.fnamecmp_type,
                                 basis_result.xname.as_deref(),
-                                file_entry.size(),
-                                base_iflags,
-                                &request_config,
-                                xattr_request.as_ref(),
-                            )?;
-
-                            pipeline.push(pending);
-                            pending_files_info.push_back((
-                                file_idx,
-                                file_path,
-                                file_entry,
-                                base_iflags,
-                            ));
-                        }
-                    } else {
-                        // Redo pass or empty batch: no basis files, skip signatures.
-                        for (file_idx, file_entry, file_path, base_iflags) in batch {
-                            if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
-                                self.send_no_transfer_itemize(
-                                    writer,
-                                    &mut *ndx_write_codec,
-                                    &mut pipeline,
-                                    &mut pending_files_info,
-                                    file_idx,
-                                    file_entry,
-                                    file_path,
-                                    base_iflags,
-                                )?;
-                                continue;
-                            }
-                            // upstream: generator.c:575,598 - with no basis the
-                            // xattr diff runs against an empty list, so every
-                            // abbreviated value is requested. This keeps a large
-                            // xattr on a new or redo'd file from being dropped
-                            // for lack of a local copy to resolve it against.
-                            let xattr_request = self.build_xattr_request(file_entry, None);
-                            let pending = send_file_request_xattr(
-                                writer,
-                                &mut *ndx_write_codec,
-                                self.flat_to_wire_ndx(file_idx),
-                                file_path.clone(),
-                                None,
-                                None,
-                                protocol::FnameCmpType::Fname,
-                                None,
                                 file_entry.size(),
                                 base_iflags,
                                 &request_config,
@@ -534,7 +553,7 @@ impl ReceiverContext {
                     dest_dir: Some(setup.dest_dir.as_path()),
                 };
 
-                let xattr_list = self.resolve_xattr_list(file_entry);
+                let xattr_list = self.resolve_xattr_list(&file_entry);
                 let is_device_target = self.config.write.write_devices && file_entry.is_device();
                 let result = process_file_response_streaming(
                     reader,
@@ -545,7 +564,7 @@ impl ReceiverContext {
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
                     file_idx,
-                    file_entry,
+                    &file_entry,
                     is_device_target,
                     xattr_list,
                     &mut token_reader,
@@ -555,6 +574,9 @@ impl ReceiverContext {
                     result.expected_checksum,
                     result.checksum_len,
                     file_path,
+                    // upstream: receiver.c:1089 - the verification-failure line
+                    // names `f_name(file, ..)`, not the joined destination path.
+                    file_entry.path().clone(),
                     file_idx,
                     result.is_inplace,
                 );
@@ -569,17 +591,7 @@ impl ReceiverContext {
                 // just confirmed committed.
                 self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
 
-                // Route accumulated warnings through the multiplexed writer
-                // instead of eprintln (which deadlocks in daemon handler threads).
-                // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
-                // got_xfer_error (exit 23); everything else is MSG_INFO.
-                for (code, warning) in pipelined_receiver.drain_warnings() {
-                    let _ = if code == protocol::MessageCode::ErrorXfer {
-                        writer.send_msg_error_xfer(warning.as_bytes())
-                    } else {
-                        writer.send_msg_info(warning.as_bytes())
-                    };
-                }
+                self.emit_pipeline_messages(writer, pipelined_receiver.drain_warnings());
 
                 // upstream: io.c:820 stats.total_read only counts bytes read
                 // off the wire. Matched-from-basis bytes never traverse the
@@ -634,7 +646,7 @@ impl ReceiverContext {
                         // produces a client-visible row (record_itemize gates on
                         // client_mode), so this stays the no-op it already was,
                         // whether or not deferral is active.
-                        let _ = self.emit_or_record_itemize(writer, file_idx, &iflags, file_entry);
+                        let _ = self.emit_or_record_itemize(writer, file_idx, &iflags, &file_entry);
                     }
                 }
 
@@ -664,16 +676,7 @@ impl ReceiverContext {
             // sender unlinks their --remove-source-files sources.
             self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
 
-            // Route accumulated warnings through the multiplexed writer.
-            // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
-            // got_xfer_error (exit 23); everything else is MSG_INFO.
-            for (code, warning) in pipelined_receiver.drain_warnings() {
-                let _ = if code == protocol::MessageCode::ErrorXfer {
-                    writer.send_msg_error_xfer(warning.as_bytes())
-                } else {
-                    writer.send_msg_info(warning.as_bytes())
-                };
-            }
+            self.emit_pipeline_messages(writer, pipelined_receiver.drain_warnings());
 
             // upstream: generator.c:2169 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
@@ -730,14 +733,14 @@ impl ReceiverContext {
     /// - `generator.c:584-587` - `write_ndx()` + `write_shortint(iflags)`
     /// - `sender.c:292-294` - the sender logs the row, then echoes the attrs
     #[allow(clippy::too_many_arguments)]
-    fn send_no_transfer_itemize<'a, W: Write + ?Sized>(
+    fn send_no_transfer_itemize<W: Write + ?Sized>(
         &self,
         writer: &mut W,
         ndx_write_codec: &mut impl protocol::codec::NdxCodec,
         pipeline: &mut PipelineState,
-        pending_files_info: &mut VecDeque<(usize, PathBuf, &'a FileEntry, u32)>,
+        pending_files_info: &mut VecDeque<(usize, PathBuf, FileEntry, u32)>,
         file_idx: usize,
-        file_entry: &'a FileEntry,
+        file_entry: FileEntry,
         file_path: PathBuf,
         base_iflags: u32,
     ) -> io::Result<()> {

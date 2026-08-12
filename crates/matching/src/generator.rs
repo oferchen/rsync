@@ -11,7 +11,7 @@
 
 use std::io::{self, Cursor, Read};
 
-use checksums::RollingChecksum;
+use checksums::{RollingChecksum, RollingDigest};
 use logging::debug_log;
 use rayon::prelude::*;
 
@@ -66,6 +66,22 @@ fn flush_seq_match_run(
         }
     }
     *run_len = 0;
+}
+
+/// Length of the basis's final block when it is shorter than a full block.
+///
+/// The signature layout only ever leaves the *last* block short (every earlier
+/// block spans a full `block_len`), which is why upstream derives its scan
+/// bound from that one block: `end = len + 1 - s->sums[s->count-1].len`
+/// (`match.c:174`). Returns `None` when the basis divides evenly into full
+/// blocks, in which case there is no short tail to match.
+fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Option<usize> {
+    let count = index.block_count();
+    if count == 0 {
+        return None;
+    }
+    let len = index.block(count - 1).len();
+    (len > 0 && len < block_len).then_some(len)
 }
 
 /// The single source of truth for the literal-flush cadence.
@@ -372,7 +388,9 @@ impl DeltaGenerator {
         let prune_matched = self.prune_matched;
         #[cfg(not(any(test, feature = "bench-internal")))]
         let prune_matched = true;
-        self.generate_with_prune(reader, index, prune_matched)
+        // `reader` is the whole source, so its EOF is the file's EOF and the
+        // short-final-block probe is in scope.
+        self.generate_with_prune(reader, index, prune_matched, true)
     }
 
     /// Reports whether emitting a `Copy` for basis block `idx` is safe at the
@@ -407,11 +425,17 @@ impl DeltaGenerator {
     /// only read-only lookups on `index` (no [`DeltaSignatureIndex::mark_consumed`]
     /// or [`DeltaSignatureIndex::reset_consumed`]), so a shared `&index` is safe
     /// to scan from multiple rayon workers concurrently.
+    ///
+    /// `tail_match` states whether `reader`'s EOF is the source file's EOF. Only
+    /// then may the short-final-block probe run: upstream reaches that block
+    /// solely at offset `len - s->sums[s->count-1].len` (`match.c:174`), so a
+    /// stripe that merely stops early must not claim it mid-file.
     fn generate_with_prune<R: Read>(
         &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
         prune_matched: bool,
+        tail_match: bool,
     ) -> io::Result<DeltaScript> {
         let block_len = index.block_length();
         let mut window = RingBuffer::with_capacity(block_len);
@@ -700,18 +724,94 @@ impl DeltaGenerator {
             }
         }
 
-        // Drain any bytes still in the window as literals (window held fewer
-        // than block_len bytes at EOF, so no further match is possible).
+        // EOF tail match, mirroring the three cooperating pieces of upstream's
+        // `hash_search()`:
         //
-        // Upstream rsync matches the basis's short final block here via
-        // `l = MIN(blength, len-offset)` (`match.c:222-224`), but on the wire
-        // sender path that would (a) fail signature-index construction for
-        // small single-partial-block files and (b) produce a token stream the
-        // upstream compressed-delta receiver rejects (`token.c:665`). The
-        // "trailing partial block emitted as literal" is a pre-existing wire
-        // efficiency gap, not a correctness issue - reconstruction is
-        // byte-exact either way - so the tail match stays confined to the
-        // local-copy delta path (`engine::local_copy`).
+        // - `end = len + 1 - s->sums[s->count-1].len` (`match.c:174`) derives the
+        //   scan bound from the LAST block's length, not from `blength`, so the
+        //   scan keeps going past `len - blength`.
+        // - the rolling window shrinks byte by byte once there is nothing left to
+        //   feed it (`--k` when `!more`, `match.c:321-331`).
+        // - a candidate is accepted only when `l = MIN(blength, len-offset)`
+        //   equals `s->sums[i].len` (`match.c:222-224`).
+        //
+        // Together those admit exactly one short match, at offset
+        // `len - tail_len` with a `tail_len`-byte window: every other shrunk
+        // window has a length no basis block carries. So probe just that one
+        // position - the source's trailing `tail_len` bytes - and let everything
+        // ahead of it drain as literals, which is what upstream's scan does over
+        // those offsets anyway.
+        //
+        // That derivation is also what keeps the cost honest. `find_tail_match`
+        // is O(block_count): a short block cannot live in the BitHash or the
+        // compact lookup, which are keyed on full-block rolling sums, so it has
+        // to be found by scan. This block sits OUTSIDE the scan loop and so runs
+        // at most once per call; probing per window would be quadratic.
+        if tail_match {
+            if let Some(tail_len) = short_final_block_len(index, block_len) {
+                if window.len() >= tail_len {
+                    while window.len() > tail_len {
+                        if let Some(byte) = window.pop_front() {
+                            pending_literals.push(byte);
+                            offset += 1;
+                        }
+                    }
+                    let tail_hit = {
+                        let tail = window.as_slice();
+                        let digest = RollingDigest::from_bytes(tail);
+                        index
+                            .find_tail_match(
+                                digest,
+                                tail,
+                                &[],
+                                prune_matched.then_some(&matched_blocks),
+                            )
+                            // upstream: match.c:211 - the in-place guard applies
+                            // to the tail candidate like any other.
+                            .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
+                    };
+                    if let Some(tail_idx) = tail_hit {
+                        matches += 1;
+                        debug_log!(
+                            Deltasum,
+                            3,
+                            "potential match at {} i={} len={}",
+                            offset,
+                            tail_idx,
+                            tail_len
+                        );
+                        if !pending_literals.is_empty() {
+                            literal_bytes += pending_literals.len() as u64;
+                            total_bytes += pending_literals.len() as u64;
+                            let filled = std::mem::replace(
+                                &mut pending_literals,
+                                Vec::with_capacity(block_len),
+                            );
+                            tokens.push(DeltaToken::Literal(filled));
+                        }
+                        let block = index.block(tail_idx);
+                        // The short block is emitted as its OWN Copy carrying its
+                        // TRUE length, never folded into a seq-match run:
+                        // `flush_seq_match_run` models a run as
+                        // `run_len * block_len`, so absorbing a shorter block
+                        // would over-state the run and desync the receiver's
+                        // compressed-token dictionary (`token.c:see_deflate_token`).
+                        tokens.push(DeltaToken::Copy {
+                            index: block.index(),
+                            len: block.len(),
+                        });
+                        total_bytes += block.len() as u64;
+                        matched_blocks.mark_matched(tail_idx);
+                        if prune_matched {
+                            index.mark_consumed(tail_idx as u32);
+                        }
+                        window.clear();
+                    }
+                }
+            }
+        }
+
+        // Drain whatever the tail probe left behind as literals.
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
@@ -732,16 +832,13 @@ impl DeltaGenerator {
             matches
         );
 
-        // upstream: match.c match_report() equivalent.
-        debug_log!(
-            Deltasum,
-            1,
-            "delta: {} tokens, {} total, {} literal, {} matched",
-            tokens.len(),
-            total_bytes,
-            literal_bytes,
-            total_bytes.saturating_sub(literal_bytes)
-        );
+        // Nothing is printed at DELTASUM level 1 here. upstream's only level-1
+        // delta diagnostic is match_report()'s `total:` line (match.c:439-448),
+        // which the sender emits ONCE for the whole run - not once per file -
+        // from a single place (sender.c:491). oc renders that one line from the
+        // client summary; a per-file line here would both invent output
+        // upstream never prints and land dead-last through the deferred
+        // diagnostic flush.
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }
@@ -932,6 +1029,16 @@ impl DeltaGenerator {
         }
 
         // Drain any residual window bytes as literals.
+        //
+        // The ungated scan probes the basis's short final block here
+        // (`match.c:222-224`); this path deliberately does not. Its whole premise
+        // is that a halved strong sum is only trustworthy when a neighbouring
+        // block corroborates the match, and the final short block has no
+        // successor to corroborate it. Admitting it would mean a second, weaker
+        // acceptance rule on the one path whose checksums are half-length.
+        // Sending the tail as a literal stays byte-exact, only larger, and this
+        // path is opt-in on both peers (`OC_CONSECUTIVE_MATCH`) so the default
+        // wire is unaffected.
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
@@ -1062,9 +1169,15 @@ impl DeltaGenerator {
             .collect();
 
         // Scan every stripe concurrently against the shared read-only index.
+        // Only a stripe that runs to `n` sees the file's real EOF, so only it may
+        // claim the basis's short final block; a stripe that stops at a boundary
+        // would otherwise place that block mid-file, where upstream's
+        // `l = MIN(blength, len-offset)` test (`match.c:222-224`) never admits it.
         let scripts: Vec<io::Result<DeltaScript>> = ranges
             .par_iter()
-            .map(|&(s, e)| self.generate_with_prune(Cursor::new(&source[s..e]), index, false))
+            .map(|&(s, e)| {
+                self.generate_with_prune(Cursor::new(&source[s..e]), index, false, e == n)
+            })
             .collect();
 
         // Lift every worker `Copy` to an absolute source offset. Literals are
@@ -1581,8 +1694,12 @@ mod tests {
                 _ => None,
             })
             .sum();
+        // The fallback is the ungated scan, which also takes the short final
+        // block through its EOF tail probe (`match.c:222-224`), so the whole
+        // basis is Copied: the full block plus the 200-byte tail.
         assert_eq!(
-            copied, BLOCK_LEN as usize,
+            copied,
+            basis.len(),
             "the full block must be Copied, not demoted to a literal"
         );
         assert_eq!(reconstruct(&basis, &index, &script), basis);

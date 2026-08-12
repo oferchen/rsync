@@ -67,6 +67,23 @@ impl Task for ReleaseTask {
     }
 }
 
+/// Verifies upstream C citations against the pinned source line counts.
+pub struct CitationsTask;
+
+impl Task for CitationsTask {
+    fn name(&self) -> &'static str {
+        "citations"
+    }
+
+    fn description(&self) -> &'static str {
+        "Verify upstream citations name lines that exist"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(2))
+    }
+}
+
 /// Scans for placeholder code.
 pub struct NoPlaceholdersTask;
 

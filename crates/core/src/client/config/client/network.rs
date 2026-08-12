@@ -304,7 +304,8 @@ mod tests {
     fn ssh_io_timeout_absent_or_disabled_stays_off() {
         // WHY: io_timeout == 0 (unset or --no-timeout) disables the check, so
         // the SSH watchdog must remain in its default-off state and never abort
-        // an otherwise-healthy transfer. upstream: io.c:1153 `if (!io_timeout)`.
+        // an otherwise-healthy transfer. upstream: io.c:179-180 - `check_timeout()`
+        // returns immediately on `if (!io_timeout)`.
         let default = default_config();
         assert_eq!(default.ssh_io_timeout(), None);
 

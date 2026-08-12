@@ -4,8 +4,14 @@ use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file
 use std::collections::VecDeque;
 use std::num::NonZeroU8;
 
+/// A basis smaller than one block still yields a usable index.
+///
+/// Upstream runs `build_hash_table()` + `hash_search()` for any `s->count > 0`
+/// (`match.c:match_sums()`), and the short-block rule at `match.c:222-224`
+/// matches that lone block. Refusing to build the index here made the sender
+/// re-send every sub-block-size file entirely as literal data.
 #[test]
-fn from_signature_returns_none_without_full_blocks() {
+fn from_signature_indexes_a_lone_partial_block() {
     let params = SignatureLayoutParams::new(
         64,
         None,
@@ -17,7 +23,17 @@ fn from_signature_returns_none_without_full_blocks() {
     let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
         .expect("signature");
 
-    assert!(DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).is_none());
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+    assert_eq!(index.block_count(), 1);
+    assert_eq!(index.block(0).len(), 64);
+    // The lone short block stays out of the fast-path tables; only the EOF
+    // tail probe can reach it.
+    assert!(
+        index
+            .find_match_bytes(index.block(0).rolling(), data.as_slice())
+            .is_none()
+    );
 }
 
 #[test]
@@ -72,6 +88,90 @@ fn find_match_window_handles_split_buffers() {
         .find_match_window(digest, &window, &mut scratch)
         .expect("match");
     assert_eq!(found, 0);
+}
+
+/// The counted probe must tally `hash_hits`/`false_alarms` for the `-vv`
+/// `total:` line WITHOUT changing which block it matches: upstream's
+/// `hash_search()` (match.c:180-244) maintains the counters as a pure side
+/// effect of the same scan. A counted probe that returned a different index
+/// than the uncounted one would let a debug-only diagnostic alter the bytes the
+/// delta reuses, so this pins both the counts and the returned index.
+#[test]
+fn find_match_window_counted_tallies_probe_diagnostics() {
+    let data = vec![b'a'; 2048];
+    let params = SignatureLayoutParams::new(
+        data.len() as u64,
+        None,
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+        .expect("signature");
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+
+    let digest = index.block(0).rolling();
+    let mut window = VecDeque::with_capacity(index.block_length());
+    let mut scratch = Vec::with_capacity(index.block_length());
+    for &byte in &data[..index.block_length()] {
+        window.push_back(byte);
+    }
+
+    let uncounted = index
+        .find_match_window(digest, &window, &mut scratch)
+        .expect("uncounted match");
+    let mut counters = ProbeCounters::default();
+    assert_eq!(
+        index.find_match_window_counted(digest, &window, &mut scratch, &mut counters),
+        Some(uncounted),
+        "counting must not change the matched block"
+    );
+    assert_eq!(counters.hash_hits, 1, "one bithash-prefilter positive");
+    assert_eq!(counters.false_alarms, 0, "exact verify confirmed the match");
+
+    // Counters accumulate across probes: the probe does not consume the block.
+    index
+        .find_match_window_counted(digest, &window, &mut scratch, &mut counters)
+        .expect("second match");
+    assert_eq!(counters.hash_hits, 2, "counters accumulate across probes");
+    assert_eq!(counters.false_alarms, 0);
+}
+
+/// A window whose rolling sum belongs to no basis block must not be counted as
+/// a hash hit: upstream only bumps `hash_hits` once the coarse lookup admits a
+/// candidate (match.c:202), so an unrelated window is rejected before any
+/// counter moves.
+#[test]
+fn find_match_window_counted_leaves_counters_untouched_on_a_clean_miss() {
+    let data = vec![b'a'; 2048];
+    let params = SignatureLayoutParams::new(
+        data.len() as u64,
+        None,
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+        .expect("signature");
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+
+    let foreign = vec![b'z'; index.block_length()];
+    let mut rolling = checksums::RollingChecksum::new();
+    rolling.update(&foreign);
+    let mut window = VecDeque::with_capacity(index.block_length());
+    for &byte in &foreign {
+        window.push_back(byte);
+    }
+    let mut scratch = Vec::with_capacity(index.block_length());
+
+    let mut counters = ProbeCounters::default();
+    assert_eq!(
+        index.find_match_window_counted(rolling.digest(), &window, &mut scratch, &mut counters),
+        None
+    );
+    assert_eq!(counters, ProbeCounters::default());
 }
 
 #[test]
