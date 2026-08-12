@@ -738,6 +738,10 @@ impl ServerConfig {
     /// # Upstream Reference
     ///
     /// - `options.c:2400-2411` - `if (append_mode) { ...; inplace = 1; }`.
+    /// - `options.c:2413-2419` - `if (write_devices) { ...; inplace = 1; }`, the
+    ///   adjacent block carrying the same implication for `--write-devices`.
+    ///   Both are evaluated here through [`implies_inplace`] so the two options
+    ///   cannot drift apart the way they did when only `--append` was handled.
     /// - `receiver.c:968` - `if (inplace || one_inplace)` selects the live
     ///   destination as the write target instead of a temp file.
     /// - `receiver.c:496` - `inplace_sizing` truncates the destination to the
@@ -748,11 +752,15 @@ impl ServerConfig {
     /// - `sender.c:337` - `updating_basis_file` gates `match.c:211`.
     /// - `compat.c:688` - protocol < 29 refuses a basis dir with `inplace`.
     pub(crate) fn apply_append_implies_inplace(&mut self) {
-        if self.flags.append {
-            self.write.inplace = true;
-        }
+        self.write.inplace = engine::write_strategy::implies_inplace(
+            self.write.inplace,
+            self.flags.append,
+            self.write.write_devices,
+        );
     }
+}
 
+impl ServerConfig {
     /// Promotes plain `--append` to `--append-verify` semantics for legacy
     /// (protocol < 30) peers.
     ///
