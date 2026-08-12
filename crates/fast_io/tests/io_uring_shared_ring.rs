@@ -289,6 +289,58 @@ mod linux_only {
         }
     }
 
+    /// `submit_and_wait` returns the number of SQEs consumed from the
+    /// submission queue, never a completion count. A caller that conflates
+    /// the two breaks as soon as the kernel delivers CQEs piecemeal: the
+    /// follow-up call finds the queue already drained and returns 0 while
+    /// completions are still waiting to be reaped. That is a load-dependent
+    /// failure in the wild, so it is pinned here deterministically - the two
+    /// reads are awaited but deliberately not reaped, which makes the
+    /// submission queue provably empty while the completion queue provably
+    /// holds entries.
+    #[test]
+    fn submit_and_wait_returns_zero_once_the_submission_queue_is_drained() {
+        if !is_io_uring_available() {
+            eprintln!("skipping drained-queue test: io_uring unavailable");
+            return;
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("drained_queue.bin");
+        std::fs::write(&path, vec![0x5au8; 512]).expect("write payload");
+        let file = std::fs::File::open(&path).expect("open payload");
+        let (sock, _peer) = UnixStream::pair().expect("socketpair");
+
+        let cfg = SharedRingConfig::default();
+        let mut ring = match SharedRing::try_new(file.as_raw_fd(), sock.as_raw_fd(), &cfg) {
+            Some(r) => r,
+            None => {
+                eprintln!("skipping drained-queue test: SharedRing::try_new returned None");
+                return;
+            }
+        };
+
+        let mut first = vec![0u8; 256];
+        let mut second = vec![0u8; 256];
+        ring.submit_read(1, 0, &mut first).expect("submit read 1");
+        ring.submit_read(2, 256, &mut second)
+            .expect("submit read 2");
+        ring.submit_and_wait(2).expect("first submit_and_wait");
+
+        // Both CQEs are now available and the submission queue is empty, so
+        // this call submits nothing and returns immediately.
+        assert_eq!(
+            ring.submit_and_wait(1).expect("second submit_and_wait"),
+            0,
+            "a drained submission queue must report zero SQEs submitted"
+        );
+        assert_eq!(
+            ring.reap().expect("reap").len(),
+            2,
+            "both completions must survive the zero-submit call"
+        );
+    }
+
     /// `OpTag::encode` followed by `OpTag::decode` must be lossless for the
     /// full 56-bit op_id range. This is a stronger version of the unit test
     /// in the live module - it picks a few values across the boundary so

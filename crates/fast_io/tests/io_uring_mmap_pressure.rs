@@ -182,14 +182,20 @@ fn submit_and_verify_reads(
     let mut received = 0usize;
     let mut seen = vec![false; target];
     while received < target {
-        let n = ring
-            .submit_and_wait(1)
+        // The return value counts SQEs consumed from the submission queue,
+        // not completions: after the first iteration the queue is empty and
+        // this legitimately returns 0 while still blocking for a CQE. Progress
+        // is asserted on the reap, which is what actually advances the loop.
+        ring.submit_and_wait(1)
             .unwrap_or_else(|e| panic!("{label}: submit_and_wait failed: {e}"));
-        assert!(n > 0, "{label}: submit_and_wait returned 0");
 
         let completions = ring
             .reap()
             .unwrap_or_else(|e| panic!("{label}: reap failed: {e}"));
+        assert!(
+            !completions.is_empty(),
+            "{label}: submit_and_wait(1) returned with nothing to reap"
+        );
         for c in completions {
             match c {
                 SharedCompletion::Read { op_id, result } => {
