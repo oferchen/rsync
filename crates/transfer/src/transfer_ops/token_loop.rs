@@ -203,10 +203,17 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     // bytes are still hashed on the disk thread (upstream's
                     // sum_update runs regardless), so the file checksum and
                     // final size stay byte-identical to a full rewrite.
+                    // Matched bytes are never `Chunk`: `Chunk` means literal
+                    // data received from the sender, and the disk thread arms
+                    // `--partial` retention off that. upstream sets
+                    // `cleanup_got_literal` only in the literal branch
+                    // (receiver.c:392-403), so a temp holding nothing but basis
+                    // copies is unlinked on abort (cleanup.c:159, :199-200)
+                    // rather than renamed over a complete destination.
                     let msg = if updating_basis && offset == total_bytes {
                         FileMessage::SkipMatched(buf)
                     } else {
-                        FileMessage::Chunk(buf)
+                        FileMessage::MatchedChunk(buf)
                     };
                     file_tx.send(msg).map_err(|_| {
                         io::Error::new(
