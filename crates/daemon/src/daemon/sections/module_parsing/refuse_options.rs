@@ -357,7 +357,10 @@ fn is_option_refused(
     // as refused before applying the module's rules. Start from that default so
     // the loop below can only un-refuse them via an explicit negated exact match.
     let mut refused = DEFAULT_REFUSED_OPTIONS.contains(&long_name);
-    let short_lower = short_letter.map(|c| c.to_ascii_lowercase().to_string());
+    // Compared in its ORIGINAL case: upstream passes `shortName` to `wildmatch`
+    // verbatim (options.c:924). `-O` and `-o` are separate table rows
+    // (omit-dir-times vs owner) and a rule naming one must not reach the other.
+    let short_str = short_letter.map(|c| c.to_string());
 
     for rule in &module.refuse_options {
         let (negated, pattern_raw) = if let Some(rest) = rule.strip_prefix('!') {
@@ -386,22 +389,17 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:921-933 - the rule is tried against both
-        // `op->longName` and `op->shortName` so `!verbose` and `!v` refer to
-        // the same option. Glob patterns additionally need the original-case
-        // short letter (so `[ardlptgoD]` matches `-D` via the upper-case `D`).
+        // upstream: options.c:921-924 - the rule is tried against both
+        // `op->longName` and `op->shortName`, so `!verbose` and `!v` name the
+        // same option. Both comparisons are case-SENSITIVE; that is what keeps
+        // `[ardlptgoD]` matching `-D` while leaving `-d` alone.
         let matches = if is_glob {
             refuse_glob_match(&pattern, long_name)
-                || short_lower
+                || short_str
                     .as_deref()
                     .is_some_and(|s| refuse_glob_match(&pattern, s))
-                || short_letter.is_some_and(|c| {
-                    let mut buf = [0u8; 4];
-                    let original = c.encode_utf8(&mut buf);
-                    refuse_glob_match(&pattern, original)
-                })
         } else {
-            pattern == long_name || short_lower.as_deref() == Some(pattern.as_str())
+            pattern == long_name || short_str.as_deref() == Some(pattern.as_str())
         };
 
         if matches {
@@ -447,13 +445,11 @@ fn is_option_vital(long_name: &str, short_letter: Option<char>) -> bool {
         if is_vital_option(as_str) {
             return true;
         }
-        let lower = letter.to_ascii_lowercase();
-        if lower != letter {
-            let lower_str = lower.encode_utf8(&mut buf);
-            if is_vital_option(lower_str) {
-                return true;
-            }
-        }
+        // No case-folded retry. Vitality is a property of one long_options[]
+        // ROW, and the case-paired letters are different rows: `-n` (dry-run)
+        // is vital, `-N` (crtimes) is not. Folding made `-N` inherit `-n`'s
+        // immunity, so `refuse options = *` silently spared it - an
+        // UNDER-refusal, the direction that fails open.
     }
     false
 }
@@ -499,5 +495,12 @@ fn canonical_option(text: &str) -> String {
         .split([' ', '\t', '='])
         .next()
         .unwrap_or("");
-    token.to_ascii_lowercase()
+    // Case is PRESERVED. upstream matches refuse rules with `wildmatch`
+    // (options.c:923-924), not `iwildmatch` - the case-folding variant exists
+    // (lib/wildmatch.c:307-318, `force_lower_case = 1`) and is deliberately not
+    // used here, and no `tolower`/`strcasecmp` appears anywhere in the refuse
+    // path. Folding merged distinct options: `refuse options = O` also refused
+    // `-o`, so a rule aimed at `--omit-dir-times` silently blocked `--owner`
+    // and broke every `-a` transfer.
+    token.to_owned()
 }

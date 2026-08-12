@@ -23,11 +23,17 @@ fn parse_daemon_option_rejects_invalid_values() {
     assert!(parse_daemon_option("OPTION   ").is_none());
 }
 
+/// `canonical_option` strips the dashes and any `=value`, and PRESERVES case.
+///
+/// upstream matches refuse rules with `wildmatch` (options.c:923-924), not the
+/// case-folding `iwildmatch` (lib/wildmatch.c:307-318). This test previously
+/// asserted `"--Delete" -> "delete"` and pinned the folding.
 #[test]
-fn canonical_option_trims_prefix_and_normalises_case() {
-    assert_eq!(canonical_option("--Delete"), "delete");
-    assert_eq!(canonical_option(" -P --info"), "p");
-    assert_eq!(canonical_option("   CHECKSUM=md5"), "checksum");
+fn canonical_option_trims_prefix_and_preserves_case() {
+    assert_eq!(canonical_option("--Delete"), "Delete");
+    assert_eq!(canonical_option(" -P --info"), "P");
+    assert_eq!(canonical_option("   CHECKSUM=md5"), "CHECKSUM");
+    assert_eq!(canonical_option("--delete"), "delete");
 }
 
 #[test]
@@ -225,14 +231,65 @@ fn refused_option_empty_list_allows_all() {
     assert_eq!(refused_option(&module, &options), None);
 }
 
+/// Refuse matching is case-SENSITIVE, mirroring upstream.
+///
+/// upstream: `options.c:923-924` uses `wildmatch`; the case-folding
+/// `iwildmatch` (lib/wildmatch.c:307-318, `force_lower_case = 1`) exists and is
+/// deliberately not used, and no `tolower`/`strcasecmp` appears in the refuse
+/// path.
+///
+/// This test previously asserted the OPPOSITE - that `refuse options = DELETE`
+/// refuses `--delete` - and so pinned the divergence. The folding was not
+/// merely cosmetic: it merged distinct options, so `refuse options = O`
+/// (--omit-dir-times) also refused `-o` (--owner) and broke every `-a`
+/// transfer against that module.
 #[test]
-fn refused_option_case_insensitive() {
-    let module = ModuleDefinition {
-        refuse_options: vec!["DELETE".to_owned()],
-        ..Default::default()
-    };
-    let options = vec!["--delete".to_owned()];
-    assert_eq!(refused_option(&module, &options), Some("--delete"));
+fn refused_option_is_case_sensitive() {
+    let upper_rule = module_with_refuse(vec!["DELETE".to_owned()]);
+    assert_eq!(
+        refused_option(&upper_rule, &["--delete".to_owned()]),
+        None,
+        "an upper-case rule must not match the lower-case option name"
+    );
+    assert_eq!(
+        refused_option(&upper_rule, &["--DELETE".to_owned()]),
+        Some("--DELETE"),
+        "it must still match its own spelling"
+    );
+
+    // The load-bearing case: `-O` and `-o` are separate long_options[] rows.
+    let omit_dir_times = module_with_refuse(vec!["O".to_owned()]);
+    assert_eq!(
+        refused_option(&omit_dir_times, &["-O".to_owned()]),
+        Some("-O"),
+        "`refuse options = O` must refuse --omit-dir-times"
+    );
+    assert_eq!(
+        refused_option(&omit_dir_times, &["-o".to_owned()]),
+        None,
+        "`refuse options = O` must NOT refuse --owner - that broke -a transfers"
+    );
+}
+
+/// Vitality belongs to one table row, so it must not leak across letter case.
+///
+/// `-n` (dry-run) is vital and immune to `refuse options = *`; `-N` (crtimes)
+/// is a different row and is not. The previous case-folded vital lookup let
+/// `-N` inherit `-n`'s immunity, so a wildcard rule silently spared it -
+/// under-refusal, the fail-open direction.
+#[test]
+fn wildcard_all_refuses_crtimes_but_spares_dry_run() {
+    let module = module_with_refuse(vec!["*".to_owned()]);
+    assert_eq!(
+        refused_option(&module, &["-n".to_owned()]),
+        None,
+        "-n (dry-run) is vital and survives a wildcard rule"
+    );
+    assert_eq!(
+        refused_option(&module, &["-N".to_owned()]),
+        Some("-N"),
+        "-N (crtimes) is NOT vital and must be refused by a wildcard rule"
+    );
 }
 
 #[test]
