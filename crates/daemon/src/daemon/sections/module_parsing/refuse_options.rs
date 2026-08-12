@@ -97,116 +97,111 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
 ///
 /// upstream: options.c long_options[] - the canonical short/long pairing the
 /// daemon's popt-based refuse check uses to compare against `refuse options`.
-fn short_option_long_name(letter: char) -> &'static str {
-    match letter {
-        'v' => "verbose",
-        'q' => "quiet",
-        'h' => "human-readable",
-        'n' => "dry-run",
-        'a' => "archive",
-        'r' => "recursive",
-        'd' => "dirs",
-        'p' => "perms",
-        'E' => "executability",
-        'A' => "acls",
-        'X' => "xattrs",
-        't' => "times",
-        'U' => "atimes",
-        'N' => "crtimes",
-        'O' => "omit-dir-times",
-        'J' => "omit-link-times",
-        'o' => "owner",
-        'g' => "group",
-        'D' => "devices",
-        'l' => "links",
-        'L' => "copy-links",
-        'k' => "copy-dirlinks",
-        'K' => "keep-dirlinks",
-        'H' => "hard-links",
-        'R' => "relative",
-        'I' => "ignore-times",
-        'x' => "one-file-system",
-        'u' => "update",
-        'S' => "sparse",
-        'F' => "filter",
-        'C' => "cvs-exclude",
-        'W' => "whole-file",
-        'c' => "checksum",
-        'y' => "fuzzy",
-        'z' => "compress",
-        'P' => "partial",
-        'm' => "prune-empty-dirs",
-        'i' => "itemize-changes",
-        'b' => "backup",
-        's' => "secluded-args",
-        'V' => "version",
-        'B' => "block-size",
-        'T' => "temp-dir",
-        'M' => "remote-option",
-        'f' => "filter",
-        'e' => "e",
-        _ => "",
-    }
+/// One row of upstream's `long_options[]` as the refuse matcher needs it.
+///
+/// `long_options[]` is a single table that popt reads in both directions; oc
+/// previously transcribed it into two independent `match` blocks that had
+/// already drifted apart (46 arms one way, 41 the other). This is that one
+/// table, so the two lookups below cannot disagree again.
+///
+/// upstream: `options.c:600-857` - the `shortName` and `longName` columns.
+struct ShortOption {
+    letter: char,
+    /// `None` for rows whose `longName` is NULL, matched by letter only.
+    long_name: Option<&'static str>,
+}
+
+/// Upstream's complete short-option column: all 51 letters.
+///
+/// Verified letter-for-letter against `options.c:600-856` (`long_options[]`,
+/// terminator at :855): oc lacks none of upstream's letters and invents none.
+/// `long_daemon_options[]` at :858 is deliberately out of scope - upstream's
+/// own refuse scan walks only `long_options` (`options.c:921`).
+///
+/// THREE rows deliberately keep an oc-specific `long_name` where upstream has
+/// NULL - `D` (options.c:670), `F` (:737) and `P` (:771). Each over-refuses
+/// relative to upstream, which fails CLOSED, so they are an operator-visible
+/// policy decision rather than a bug fix; see the per-row comments below.
+const SHORT_OPTIONS: &[ShortOption] = &[
+    ShortOption { letter: '@', long_name: Some("modify-window") },
+    ShortOption { letter: '0', long_name: Some("from0") },
+    ShortOption { letter: '4', long_name: Some("ipv4") },
+    ShortOption { letter: '6', long_name: Some("ipv6") },
+    ShortOption { letter: '8', long_name: Some("8-bit-output") },
+    ShortOption { letter: 'a', long_name: Some("archive") },
+    ShortOption { letter: 'A', long_name: Some("acls") },
+    ShortOption { letter: 'b', long_name: Some("backup") },
+    ShortOption { letter: 'B', long_name: Some("block-size") },
+    ShortOption { letter: 'c', long_name: Some("checksum") },
+    ShortOption { letter: 'C', long_name: Some("cvs-exclude") },
+    ShortOption { letter: 'd', long_name: Some("dirs") },
+    // upstream longName is NULL: `-D` is its own row meaning
+    // `--devices --specials`. oc keeps the `devices` association, which
+    // over-refuses (a `refuse options = devices` rule also blocks `-D`).
+    // That fails CLOSED, so it is left alone here.
+    ShortOption { letter: 'D', long_name: Some("devices") },
+    ShortOption { letter: 'e', long_name: Some("rsh") },
+    ShortOption { letter: 'E', long_name: Some("executability") },
+    ShortOption { letter: 'f', long_name: Some("filter") },
+    // upstream longName is NULL: `-F` is the repeated-filter shortcut. Same
+    // fails-closed reasoning as `-D`.
+    ShortOption { letter: 'F', long_name: Some("filter") },
+    ShortOption { letter: 'g', long_name: Some("group") },
+    ShortOption { letter: 'h', long_name: Some("human-readable") },
+    ShortOption { letter: 'H', long_name: Some("hard-links") },
+    ShortOption { letter: 'i', long_name: Some("itemize-changes") },
+    ShortOption { letter: 'I', long_name: Some("ignore-times") },
+    ShortOption { letter: 'J', long_name: Some("omit-link-times") },
+    ShortOption { letter: 'k', long_name: Some("copy-dirlinks") },
+    ShortOption { letter: 'K', long_name: Some("keep-dirlinks") },
+    ShortOption { letter: 'l', long_name: Some("links") },
+    ShortOption { letter: 'L', long_name: Some("copy-links") },
+    ShortOption { letter: 'm', long_name: Some("prune-empty-dirs") },
+    ShortOption { letter: 'M', long_name: Some("remote-option") },
+    ShortOption { letter: 'n', long_name: Some("dry-run") },
+    ShortOption { letter: 'N', long_name: Some("crtimes") },
+    ShortOption { letter: 'o', long_name: Some("owner") },
+    ShortOption { letter: 'O', long_name: Some("omit-dir-times") },
+    ShortOption { letter: 'p', long_name: Some("perms") },
+    // upstream longName is NULL: `-P` means `--partial --progress`.
+    ShortOption { letter: 'P', long_name: Some("partial") },
+    ShortOption { letter: 'q', long_name: Some("quiet") },
+    ShortOption { letter: 'r', long_name: Some("recursive") },
+    ShortOption { letter: 'R', long_name: Some("relative") },
+    ShortOption { letter: 's', long_name: Some("secluded-args") },
+    ShortOption { letter: 'S', long_name: Some("sparse") },
+    ShortOption { letter: 't', long_name: Some("times") },
+    ShortOption { letter: 'T', long_name: Some("temp-dir") },
+    ShortOption { letter: 'u', long_name: Some("update") },
+    ShortOption { letter: 'U', long_name: Some("atimes") },
+    ShortOption { letter: 'v', long_name: Some("verbose") },
+    ShortOption { letter: 'V', long_name: Some("version") },
+    ShortOption { letter: 'W', long_name: Some("whole-file") },
+    ShortOption { letter: 'x', long_name: Some("one-file-system") },
+    ShortOption { letter: 'X', long_name: Some("xattrs") },
+    ShortOption { letter: 'y', long_name: Some("fuzzy") },
+    ShortOption { letter: 'z', long_name: Some("compress") },
+];
+
+/// Looks up one short option, or `None` when the byte is not an option letter.
+fn lookup_short(letter: char) -> Option<&'static ShortOption> {
+    SHORT_OPTIONS.iter().find(|opt| opt.letter == letter)
 }
 
 /// Maps a canonical long-option name to its single-letter short form, when one
 /// exists in upstream's `long_options[]` table.
 ///
-/// Inverse of `short_option_long_name` for the subset of options that have a
-/// short-letter alias. Used by the refuse-list matcher so rules can reference
-/// either the long or short form (`!verbose` and `!v` are equivalent).
+/// Inverse of [`lookup_short`], derived from the same table. Used by
+/// the refuse-list matcher so rules can reference either form (`refuse options
+/// = verbose` and `= v` are equivalent).
 ///
-/// upstream: options.c:604-... - the `shortName` column on each `long_options[]`
-/// entry; upstream's `parse_one_refuse_match` calls `wildmatch(ref, shortName)`
-/// as a fallback when the long-name comparison fails.
+/// upstream: `options.c:907` `parse_one_refuse_match()` - compares the rule
+/// against BOTH the `longName` and the `shortName` of every entry.
 fn long_option_short_letter(long_name: &str) -> Option<char> {
-    match long_name {
-        "verbose" => Some('v'),
-        "quiet" => Some('q'),
-        "human-readable" => Some('h'),
-        "dry-run" => Some('n'),
-        "archive" => Some('a'),
-        "recursive" => Some('r'),
-        "dirs" => Some('d'),
-        "perms" => Some('p'),
-        "executability" => Some('E'),
-        "acls" => Some('A'),
-        "xattrs" => Some('X'),
-        "times" => Some('t'),
-        "atimes" => Some('U'),
-        "crtimes" => Some('N'),
-        "omit-dir-times" => Some('O'),
-        "omit-link-times" => Some('J'),
-        "owner" => Some('o'),
-        "group" => Some('g'),
-        "devices" => Some('D'),
-        "links" => Some('l'),
-        "copy-links" => Some('L'),
-        "copy-dirlinks" => Some('k'),
-        "keep-dirlinks" => Some('K'),
-        "hard-links" => Some('H'),
-        "relative" => Some('R'),
-        "ignore-times" => Some('I'),
-        "one-file-system" => Some('x'),
-        "update" => Some('u'),
-        "sparse" => Some('S'),
-        "cvs-exclude" => Some('C'),
-        "whole-file" => Some('W'),
-        "checksum" => Some('c'),
-        "fuzzy" => Some('y'),
-        "compress" => Some('z'),
-        "partial" => Some('P'),
-        "prune-empty-dirs" => Some('m'),
-        "itemize-changes" => Some('i'),
-        "backup" => Some('b'),
-        "secluded-args" => Some('s'),
-        "version" => Some('V'),
-        "block-size" => Some('B'),
-        "temp-dir" => Some('T'),
-        "remote-option" => Some('M'),
-        "filter" => Some('f'),
-        _ => None,
-    }
+    SHORT_OPTIONS
+        .iter()
+        .find(|opt| opt.long_name == Some(long_name))
+        .map(|opt| opt.letter)
 }
 
 /// Checks whether any client argument is refused by the module's refuse list.
@@ -263,22 +258,44 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
             // option-argument that follows a letter (e.g. `e.LsfxCIvu`).
             let letters = rest.split('.').next().unwrap_or("");
             for letter in letters.chars() {
-                if !letter.is_ascii_alphabetic() {
-                    break;
-                }
-                let long = short_option_long_name(letter);
-                let long_canonical = if long.is_empty() {
-                    letter.to_ascii_lowercase().to_string()
-                } else {
-                    long.to_owned()
+                let Some(option) = lookup_short(letter) else {
+                    // Not an option letter. Upstream is position-independent -
+                    // popt marks a refused entry wherever it sits in the bundle
+                    // (options.c:1040 rewrites `op->val`, options.c:1934
+                    // returns it) - so an unrecognised byte must NOT end the
+                    // scan. Breaking here let a client prefix its bundle with
+                    // any non-letter and slip the rest past the refuse list
+                    // entirely: `-4z` set compress with `refuse options =
+                    // compress` in force, silently.
+                    continue;
                 };
-                let short_letter = if long.is_empty() { None } else { Some(letter) };
-                if is_option_refused(module, &long_canonical, short_letter) {
-                    return Some(if long.is_empty() {
-                        format!("-{letter}")
-                    } else {
-                        format!("--{long}")
-                    });
+
+                // NOTE: no option-argument (arity) handling here, deliberately.
+                // Upstream can skip a value because ONE popt pass both parses
+                // and marks refusals, so the two can never disagree. oc has two
+                // readers of this bundle, and the one that actually APPLIES the
+                // options - `transfer::flags::ParsedServerFlags::parse` - walks
+                // every byte up to the `.` with no arity logic at all. Teaching
+                // only this scanner about arity would make it skip letters the
+                // decoder still acts on, which is a refusal BYPASS: `-B4096`
+                // would hide a trailing flag that still took effect.
+                //
+                // The safe invariant while two readers exist: this scanner must
+                // examine a SUPERSET of what the decoder acts on. Over-refusing
+                // a byte that is really part of an argument fails CLOSED and is
+                // acceptable; under-refusing is a security hole. Collapsing the
+                // two readers onto one shared option table is task 138.
+
+                // `long_name` is `None` only for rows upstream leaves NULL, in
+                // which case the rule can only have named the bare letter.
+                let refused = match option.long_name {
+                    Some(long) => is_option_refused(module, long, Some(letter))
+                        .then(|| format!("--{long}")),
+                    None => is_option_refused(module, &letter.to_string(), Some(letter))
+                        .then(|| format!("-{letter}")),
+                };
+                if let Some(reported) = refused {
+                    return Some(reported);
                 }
             }
         }
@@ -340,7 +357,10 @@ fn is_option_refused(
     // as refused before applying the module's rules. Start from that default so
     // the loop below can only un-refuse them via an explicit negated exact match.
     let mut refused = DEFAULT_REFUSED_OPTIONS.contains(&long_name);
-    let short_lower = short_letter.map(|c| c.to_ascii_lowercase().to_string());
+    // Compared in its ORIGINAL case: upstream passes `shortName` to `wildmatch`
+    // verbatim (options.c:924). `-O` and `-o` are separate table rows
+    // (omit-dir-times vs owner) and a rule naming one must not reach the other.
+    let short_str = short_letter.map(|c| c.to_string());
 
     for rule in &module.refuse_options {
         let (negated, pattern_raw) = if let Some(rest) = rule.strip_prefix('!') {
@@ -369,22 +389,17 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:921-933 - the rule is tried against both
-        // `op->longName` and `op->shortName` so `!verbose` and `!v` refer to
-        // the same option. Glob patterns additionally need the original-case
-        // short letter (so `[ardlptgoD]` matches `-D` via the upper-case `D`).
+        // upstream: options.c:921-924 - the rule is tried against both
+        // `op->longName` and `op->shortName`, so `!verbose` and `!v` name the
+        // same option. Both comparisons are case-SENSITIVE; that is what keeps
+        // `[ardlptgoD]` matching `-D` while leaving `-d` alone.
         let matches = if is_glob {
             refuse_glob_match(&pattern, long_name)
-                || short_lower
+                || short_str
                     .as_deref()
                     .is_some_and(|s| refuse_glob_match(&pattern, s))
-                || short_letter.is_some_and(|c| {
-                    let mut buf = [0u8; 4];
-                    let original = c.encode_utf8(&mut buf);
-                    refuse_glob_match(&pattern, original)
-                })
         } else {
-            pattern == long_name || short_lower.as_deref() == Some(pattern.as_str())
+            pattern == long_name || short_str.as_deref() == Some(pattern.as_str())
         };
 
         if matches {
@@ -430,13 +445,11 @@ fn is_option_vital(long_name: &str, short_letter: Option<char>) -> bool {
         if is_vital_option(as_str) {
             return true;
         }
-        let lower = letter.to_ascii_lowercase();
-        if lower != letter {
-            let lower_str = lower.encode_utf8(&mut buf);
-            if is_vital_option(lower_str) {
-                return true;
-            }
-        }
+        // No case-folded retry. Vitality is a property of one long_options[]
+        // ROW, and the case-paired letters are different rows: `-n` (dry-run)
+        // is vital, `-N` (crtimes) is not. Folding made `-N` inherit `-n`'s
+        // immunity, so `refuse options = *` silently spared it - an
+        // UNDER-refusal, the direction that fails open.
     }
     false
 }
@@ -446,73 +459,30 @@ fn is_vital_option(canonical: &str) -> bool {
     VITAL_OPTIONS.contains(&canonical)
 }
 
-/// Matches a refuse-list glob pattern against a candidate option name.
+/// Matches a refuse-list pattern against a candidate option name.
 ///
-/// Supports `*` (zero or more chars), `?` (one char), and `[...]` character
-/// classes (case-sensitive, no negation `[!...]` since upstream's
-/// `[ardlptgoD]` expansion never uses one). Falls back to the daemon's shared
-/// `wildcard_match` when no character class is present so non-class globs keep
-/// going through a single, well-tested matcher.
+/// Delegates to oc's `wildmatch`, which is the port of upstream's `dowild`
+/// (`lib/wildmatch.c:78-296`). Upstream matches refuse rules with exactly that
+/// function and nothing else - `options.c:921-924` calls
+/// `wildmatch(ref, op->longName)` and `wildmatch(ref, shortName)`
+/// unconditionally, for wild and non-wild rules alike.
+///
+/// This previously carried a second, hand-written glob that implemented `[...]`
+/// as literal byte membership. That silently dropped two constructs `dowild`
+/// supports:
+///
+/// - ranges, `[a-z]` (`wildmatch.c:156-166`)
+/// - negation, `[!...]` (`wildmatch.c:139-143`)
+///
+/// and its doc claimed negation was unnecessary "since upstream's `[ardlptgoD]`
+/// expansion never uses one" - which describes oc's own expansion, not what an
+/// operator may write in `rsyncd.conf`. The direction of that error is what
+/// made it serious: every other refuse divergence OVER-refuses and so fails
+/// closed, but a range rule such as `refuse options = [A-Z]*` matched only the
+/// literal bytes `A`, `-` and `Z`, so the options it was meant to block were
+/// ACCEPTED. Delegating removes the divergence and the duplicate matcher.
 fn refuse_glob_match(pattern: &str, text: &str) -> bool {
-    if !pattern.contains('[') {
-        return wildcard_match(pattern, text);
-    }
-
-    let pat = pattern.as_bytes();
-    let txt = text.as_bytes();
-    let mut p = 0usize;
-    let mut t = 0usize;
-    let mut star_p: Option<usize> = None;
-    let mut star_t = 0usize;
-
-    while t < txt.len() {
-        if p < pat.len() {
-            match pat[p] {
-                b'?' => {
-                    p += 1;
-                    t += 1;
-                    continue;
-                }
-                b'*' => {
-                    star_p = Some(p);
-                    star_t = t;
-                    p += 1;
-                    continue;
-                }
-                b'[' => {
-                    let class_end = pat[p + 1..].iter().position(|&b| b == b']');
-                    if let Some(end) = class_end {
-                        let class = &pat[p + 1..p + 1 + end];
-                        if class.contains(&txt[t]) {
-                            p += end + 2;
-                            t += 1;
-                            continue;
-                        }
-                    }
-                    // Unterminated or non-matching class: fall through to backtrack.
-                }
-                ch if ch == txt[t] => {
-                    p += 1;
-                    t += 1;
-                    continue;
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(sp) = star_p {
-            p = sp + 1;
-            star_t += 1;
-            t = star_t;
-        } else {
-            return false;
-        }
-    }
-
-    while p < pat.len() && pat[p] == b'*' {
-        p += 1;
-    }
-    p == pat.len()
+    filters::wildmatch(pattern.as_bytes(), text.as_bytes())
 }
 
 /// Extracts the canonical form of an option name for refuse-list matching.
@@ -525,5 +495,12 @@ fn canonical_option(text: &str) -> String {
         .split([' ', '\t', '='])
         .next()
         .unwrap_or("");
-    token.to_ascii_lowercase()
+    // Case is PRESERVED. upstream matches refuse rules with `wildmatch`
+    // (options.c:923-924), not `iwildmatch` - the case-folding variant exists
+    // (lib/wildmatch.c:307-318, `force_lower_case = 1`) and is deliberately not
+    // used here, and no `tolower`/`strcasecmp` appears anywhere in the refuse
+    // path. Folding merged distinct options: `refuse options = O` also refused
+    // `-o`, so a rule aimed at `--omit-dir-times` silently blocked `--owner`
+    // and broke every `-a` transfer.
+    token.to_owned()
 }
