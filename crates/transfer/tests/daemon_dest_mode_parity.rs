@@ -193,22 +193,16 @@ fn existing_destination_keeps_its_mode_on_every_write_path() {
 /// cannot silently regress the other - the two share a single code path and a
 /// single upstream rule.
 ///
-/// IGNORED - this cell currently FAILS, and the failure is real. It is a
-/// SEPARATE defect from the one this PR fixes, so it is registered here rather
-/// than deleted: the assertion is correct and upstream-derived, and un-ignoring
-/// it is the acceptance gate for that fix.
-///
-/// Measured: built `--all-features` across the WORKSPACE (what CI does), a new
-/// destination lands mode 000 on every write path, because `entry.permissions()`
-/// reaches the commit as 0 - a source chmod'd 0777 still lands 000, so the
-/// formula is fine and the entry mode is not. A default-feature build of the
-/// same source gives the correct 0600, and upstream 3.4.4 gives 0600 in both.
-/// Ruled out: incremental-flist (`--no-inc-recursive` still yields 000),
-/// `default_perms_for_dir` (faithful to acls.c:1084-1139), and `cached_umask`.
-/// The remaining work is to find which workspace feature drops the mode from the
-/// receiver's flist entry.
+/// This cell regressed under a workspace `--all-features` build, which is the
+/// only configuration that enables `daemon-seccomp`. `umask(2)` is absent from
+/// the worker allowlist, and a non-allowlisted syscall is answered with EPERM,
+/// so the receiver's first (lazy) umask read returned -1. Cached as `u32::MAX`,
+/// that made `dflt_perms` = `0o777 & !u32::MAX` = 0, collapsing this branch's
+/// `flist_mode & (~CHMOD_BITS | dflt_perms)` to mode 000 on every write path.
+/// The existing-destination cell was unaffected because its branch never reads
+/// `dflt_perms`. Fixed by capturing the umask at startup as upstream does
+/// (`main.c:1797`), before any sandbox is installed.
 #[test]
-#[ignore = "separate unfixed defect: entry.permissions() is 0 under a workspace --all-features build; see the doc comment"]
 fn new_destination_takes_the_masked_source_mode_on_every_write_path() {
     let expected = masked_source_mode();
     for extra in [&[][..], &["--inplace"][..], &["--append-verify"][..]] {
