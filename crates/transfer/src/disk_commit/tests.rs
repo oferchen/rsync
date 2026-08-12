@@ -372,6 +372,159 @@ fn write_and_commit_file() {
     h.join_handle.join().unwrap();
 }
 
+/// Sends matched basis blocks only, then aborts via `abort`, and asserts the
+/// pre-existing destination survives untouched.
+///
+/// Shared by the abort paths because they all consult the same retention gate:
+/// fixing one and leaving the siblings is exactly how this class of bug
+/// survives a single-path regression test.
+fn matched_only_abort_must_not_clobber_dest(
+    name: &str,
+    abort: impl FnOnce(&crate::disk_commit::DiskThreadHandle),
+) {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join(name);
+
+    // A complete, correct destination. The transfer below is a delta whose
+    // tokens are ALL basis matches - no literal data is received.
+    const ORIGINAL: &[u8] = b"COMPLETE-AND-CORRECT-DESTINATION";
+    fs::write(&file_path, ORIGINAL).unwrap();
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: ORIGINAL.len() as u64,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            // temp+rename, NOT in-place: the path where matched blocks are
+            // still written, and the one that renames over the destination.
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        })))
+        .unwrap();
+
+    // Basis copies only. Enough bytes that any byte-count-based gate would fire.
+    h.file_tx
+        .send(FileMessage::MatchedChunk(b"COMPLETE-AND-".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::MatchedChunk(b"CORRECT-".to_vec()))
+        .unwrap();
+
+    abort(&h);
+
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        ORIGINAL,
+        "a matched-block-only transfer received NO literal data, so upstream \
+         unlinks the temp (cleanup.c:159, :199-200) and leaves the destination \
+         intact; renaming a truncated basis copy over it destroys a good file",
+    );
+}
+
+/// Interrupting a `--partial` delta transfer whose tokens are all basis matches
+/// must leave the destination untouched.
+///
+/// WHY: upstream arms partial retention from `cleanup_got_literal`, set ONLY in
+/// the literal branch (`receiver.c:392-403`); the matched branch at
+/// `receiver.c:413+` deliberately never sets it. `cleanup.c:159` keeps the temp
+/// only when that latch is set and `cleanup.c:199-200` unlinks it otherwise, so
+/// "no literal data received" means the destination is never disturbed.
+///
+/// oc stood that latch in with a plain written-byte counter. Because a
+/// temp+rename delta writes matched basis blocks through the same channel as
+/// literal data, the counter went non-zero with zero literal bytes, and an
+/// interrupted transfer renamed a partial basis copy over a complete file - a
+/// silent data-loss bug on the most common delta shape there is (a large,
+/// mostly-unchanged file).
+#[test]
+fn partial_matched_only_abort_preserves_destination() {
+    matched_only_abort_must_not_clobber_dest("matched_abort.dat", |h| {
+        h.file_tx
+            .send(FileMessage::Abort {
+                reason: "interrupted".into(),
+            })
+            .unwrap();
+        assert!(h.result_rx.recv().unwrap().is_err());
+    });
+}
+
+/// Shutdown-path sibling of [`partial_matched_only_abort_preserves_destination`].
+#[test]
+fn partial_matched_only_shutdown_preserves_destination() {
+    matched_only_abort_must_not_clobber_dest("matched_shutdown.dat", |h| {
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        // The disk thread finalises the in-flight file before exiting.
+        let _ = h.result_rx.recv();
+    });
+}
+
+/// Literal data MUST still be retained. The fix narrows the retention gate;
+/// this pins that it was not narrowed to nothing - deleting the retention logic
+/// outright would otherwise pass both tests above.
+#[test]
+fn partial_literal_data_is_still_retained_on_abort() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("literal_retained.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 64,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        })))
+        .unwrap();
+
+    // A matched block FOLLOWED by literal data: the literal bytes arm the gate
+    // even though the matched block alone must not.
+    h.file_tx
+        .send(FileMessage::MatchedChunk(b"basis-".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"literal".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "interrupted".into(),
+        })
+        .unwrap();
+    assert!(h.result_rx.recv().unwrap().is_err());
+
+    assert!(
+        file_path.exists(),
+        "literal data was received, so upstream keeps the partial (cleanup.c:159)",
+    );
+    assert_eq!(fs::read(&file_path).unwrap(), b"basis-literal");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
 /// A `SkipMatched` message in an in-place update must SEEK past the matched
 /// bytes, not rewrite them. This is upstream's `skip_matched()` optimization
 /// (receiver.c:468-474 -> fileio.c:202-209): a block that already sits at its
