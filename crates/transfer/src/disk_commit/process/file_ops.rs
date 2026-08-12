@@ -293,6 +293,16 @@ pub(in crate::disk_commit) fn process_file(
     sum_append_prefix(config, &begin, &mut checksum_verifier)?;
 
     let mut bytes_written: u64 = 0;
+    // Literal bytes only - matched basis copies are excluded. This is upstream's
+    // `cleanup_got_literal`, which decides whether an interrupted temp is worth
+    // keeping. `bytes_written` cannot serve: it also counts basis copies, so a
+    // delta transfer with zero literal data would look like progress and get
+    // renamed over a complete destination.
+    //
+    // upstream: `receiver.c:392-403` sets the latch only in the literal branch;
+    // `cleanup.c:159` gates retention on it and `cleanup.c:199-200` unlinks the
+    // temp otherwise.
+    let mut literal_bytes: u64 = 0;
     // Tracks whether the temp's cleanup entry has been upgraded to name a
     // partial destination (see the `cleanup_got_literal` gate at the loop tail).
     let mut partial_registered = false;
@@ -310,7 +320,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
-                if bytes_written > 0 && needs_rename {
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -323,8 +333,16 @@ pub(in crate::disk_commit) fn process_file(
             }
         };
 
+        // Read the literal length before the match moves the payload. Matched
+        // basis copies contribute 0, which is what keeps them out of the
+        // retention gate below.
+        let literal_len = match &msg {
+            FileMessage::Chunk(data) => data.len() as u64,
+            _ => 0,
+        };
+
         match msg {
-            FileMessage::Chunk(data) => {
+            FileMessage::Chunk(data) | FileMessage::MatchedChunk(data) => {
                 // Update per-file checksum before writing (mirrors upstream
                 // receiver.c:315 which hashes each token before writing).
                 if let Some(ref mut verifier) = checksum_verifier {
@@ -337,6 +355,7 @@ pub(in crate::disk_commit) fn process_file(
                     output.write_chunk(&data)?;
                 }
                 bytes_written += data.len() as u64;
+                literal_bytes += literal_len;
                 // Return the buffer for reuse. Ignore errors - the network
                 // thread may have moved on (e.g. after an error).
                 let _ = buf_return_tx.try_send(data);
@@ -486,12 +505,13 @@ pub(in crate::disk_commit) fn process_file(
                 // finish() takes `self`, closing the file handle before
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
-                // upstream: cleanup.c:105-115 - on abort, retain temp file
-                // if partial mode is enabled and literal data was received.
-                // bytes_written > 0 is a proxy for upstream's got_literal:
-                // if any data was written, the transfer made progress worth
-                // retaining for later resume.
-                if bytes_written > 0 && needs_rename {
+                // upstream: cleanup.c:159 - on abort, retain the temp only if
+                // LITERAL data was received. Matched basis copies do not count:
+                // upstream sets `cleanup_got_literal` solely in the literal
+                // branch (receiver.c:392-403), so a temp built entirely from
+                // basis blocks is unlinked (cleanup.c:199-200) rather than
+                // renamed over an intact destination.
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -507,7 +527,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
-                if bytes_written > 0 && needs_rename {
+                if literal_bytes > 0 && needs_rename {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -533,7 +553,7 @@ pub(in crate::disk_commit) fn process_file(
         // gate the Abort/Shutdown/disconnect branches above apply; recorded in
         // the registry here so the process-wide abort path reaches the same
         // decision without the disk thread unwinding.
-        if needs_rename && !partial_registered && bytes_written > 0 {
+        if needs_rename && !partial_registered && literal_bytes > 0 {
             register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, true);
             partial_registered = true;
         }
@@ -739,7 +759,11 @@ fn discard_file_on_open_failure(
 ) -> io::Result<CommitResult> {
     loop {
         match file_rx.recv() {
-            Ok(FileMessage::Chunk(data) | FileMessage::SkipMatched(data)) => {
+            Ok(
+                FileMessage::Chunk(data)
+                | FileMessage::MatchedChunk(data)
+                | FileMessage::SkipMatched(data),
+            ) => {
                 // Recycle the buffer for the network thread; drop the bytes.
                 let _ = buf_return_tx.try_send(data);
             }
