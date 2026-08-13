@@ -73,21 +73,21 @@ jobs:
         id: cache-rsync
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: target/interop/upstream-src/rsync-3.4.4
-          key: upstream-rsync-3.4.4-${{ runner.os }}-full
+          path: target/interop/upstream-src/rsync-3.5.0
+          key: upstream-rsync-3.5.0-${{ runner.os }}-full
 
-      - name: Build upstream rsync 3.4.4
+      - name: Build upstream rsync 3.5.0
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p target/interop/upstream-src
           cd target/interop/upstream-src
 
-          if [ ! -d rsync-3.4.4 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
+          if [ ! -d rsync-3.5.0 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz | tar xz
           fi
 
-          cd rsync-3.4.4
+          cd rsync-3.5.0
           if [ ! -f rsync ]; then
             ./configure
             make -j$(nproc)
@@ -103,7 +103,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no localhost true
 
       - name: Install upstream rsync to PATH
-        run: sudo cp target/interop/upstream-src/rsync-3.4.4/rsync /usr/local/bin/rsync
+        run: sudo cp target/interop/upstream-src/rsync-3.5.0/rsync /usr/local/bin/rsync
 
       - name: Run benchmark
         id: benchmark
@@ -121,7 +121,9 @@ jobs:
         # renderers are exercised against synthetic results before the real
         # ones are drawn. A metric regression here fails the tag build
         # instead of shipping a misleading chart to the release page.
-        run: python3 tools/ci/tests/test_benchmark_chart.py
+        run: |
+          python3 tools/ci/tests/test_benchmark_chart.py
+          python3 tools/ci/tests/test_benchmark_report.py
 
       - name: Generate benchmark chart
         run: |
@@ -231,8 +233,8 @@ jobs:
 
   # macOS throughput sniff: runs on tag, weekly schedule, and manual
   # dispatch. Best-effort (continue-on-error in the reusable workflow);
-  # not wired into branch protection. Builds upstream rsync 3.4.4 from
+  # not wired into branch protection. Builds upstream rsync 3.5.0 from
   # source and compares against oc-rsync release build.
   macos-throughput:
-    name: macOS throughput (vs upstream rsync 3.4.4)
+    name: macOS throughput (vs upstream rsync 3.5.0)
     uses: ./.github/workflows/_benchmark-macos.yml
