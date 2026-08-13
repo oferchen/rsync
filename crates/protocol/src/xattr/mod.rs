@@ -63,6 +63,23 @@ pub const MAX_FULL_DATUM: usize = 32;
 /// Uses MD5 (16 bytes) for compatibility with upstream rsync.
 pub const MAX_XATTR_DIGEST_LEN: usize = 16;
 
+/// Hard ceiling on a single peer-supplied xattr value.
+///
+/// upstream: `xattrs.c:51` `MAX_XATTR_VALUE_BYTES`, enforced in
+/// `receive_xattr()` and `recv_xattr_request()`, which abort with
+/// `exit_cleanup(RERR_PROTOCOL)` rather than truncating. This is independent
+/// of - and stricter than - the `--max-alloc` allocation guard: a peer that
+/// raised `--max-alloc` still cannot exceed it.
+pub const MAX_XATTR_VALUE_BYTES: usize = 128 * 1024 * 1024;
+
+/// Hard ceiling on the summed name and value bytes of one file's xattr list.
+///
+/// upstream: `xattrs.c:50` `MAX_XATTR_LIST_BYTES`, accumulated into
+/// `total_xattr_bytes` across the entry loop in `receive_xattr()`. Bounds the
+/// aggregate a peer can drive with many individually-legal entries, which no
+/// per-value cap can constrain on its own.
+pub const MAX_XATTR_LIST_BYTES: usize = 512 * 1024 * 1024;
+
 /// Rsync xattr namespace prefix for special attributes.
 #[cfg(target_os = "linux")]
 pub const RSYNC_PREFIX: &str = "user.rsync.";
