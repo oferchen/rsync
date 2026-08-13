@@ -158,13 +158,13 @@ impl FileListReader {
         match converter.remote_to_local(&name) {
             Ok(converted) => Ok(converted.into_owned()),
             Err(_) => {
-                // upstream: flist.c:759-762 - FERROR_UTF8 message, io_error, and
+                // upstream: flist.c:759-762 - the FERROR_UTF8 message, then
                 // `outbuf.len = 0` empties the name.
                 eprintln!(
                     "{}",
                     crate::iconv::cannot_convert_filename_message("receiver", &name)
                 );
-                // upstream: flist.c:841 sets `io_error |= IOERR_GENERAL` with
+                // upstream: flist.c:758 sets `io_error |= IOERR_GENERAL` with
                 // no `ignore_errors` check, so this is a LOCAL error and is
                 // never suppressed by --ignore-errors.
                 self.local_io_error |= crate::io_error::IOERR_GENERAL;
