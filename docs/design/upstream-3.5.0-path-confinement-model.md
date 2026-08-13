@@ -77,6 +77,23 @@ This is a security-critical asymmetry. An implementation that threads a single
 distinguishing daemon from non-daemon provenance, hands a client the ability to
 turn off the daemon's confinement.
 
+**The enforcement mechanism is the refuse-options list, not an ad-hoc check.**
+`options.c:1087` adds it unconditionally when serving a module:
+
+```c
+/* A client must never disable the daemon's symlink confinement:
+ * --insecure-links is a local-only flag, so the daemon hard-refuses it
+ * (dropping the connection).  The daemon's own opt-out is the
+ * "insecure links" module parameter, not this flag. */
+parse_one_refuse_match(0, "insecure-links", list_end);
+```
+
+**And the flag is never forwarded to a remote peer** (`options.c:3068-3071`).
+It is a local-only opt-out: a remote-shell peer that wants it must be given it
+on its own side, e.g. via `--rsync-path`. So there are three separate rules to
+mirror — the daemon refuses it inbound, the client does not send it outbound,
+and the daemon's own opt-out is a different mechanism entirely.
+
 ## 3. What the confinement root is
 
 `confinement_root()` (`syscall.c:136-147`):
@@ -152,15 +169,26 @@ Other `do_*_at` wrappers on the same walk: `do_unlink_at`, `do_lchown_at`,
 - **Pre-`AT_FDCWD` / no-`O_NOFOLLOW` systems fall back to a plain `open()`** —
   upstream's own comment calls this "best-effort". The confinement is simply
   absent there.
-- The refusal errno set widened in 3.5.0 (`rsync.h:438`):
+- The refusal-errno predicate is **entirely new in 3.5.0** — `NOFOLLOW_HIT_SYMLINK`
+  does not exist in 3.4.4, and neither does any `EFTYPE` handling. It is defined
+  in `rsync.h:437-441`, gated on whether the platform defines `EFTYPE` at all:
 
   ```c
-  #define NOFOLLOW_HIT_SYMLINK(e) ((e) == ELOOP || (e) == EMLINK || (e) == EFTYPE)
+  #ifdef EFTYPE
+  # define NOFOLLOW_HIT_SYMLINK(e) ((e) == ELOOP || (e) == EMLINK || (e) == EFTYPE)
+  #else
+  # define NOFOLLOW_HIT_SYMLINK(e) ((e) == ELOOP || (e) == EMLINK)
+  #endif
   ```
 
-  `EFTYPE` is new, for the BSDs/macOS. Getting this set wrong turns a *refusal*
-  into a generic I/O error, which is an observable difference the upstream tests
-  assert on.
+  Per upstream's own comment the three errnos map to **ELOOP on Linux, EMLINK on
+  FreeBSD, EFTYPE on NetBSD/OpenBSD** — so this is not a "BSD" special case but
+  three distinct platform spellings of the same event. Upstream also notes that a
+  genuine `EMLINK` (too many hard links) is harmless here, because callers fall
+  through to a `readlink`/`lstat` that restores the real error.
+
+  Getting this set wrong turns a *refusal* into a generic I/O error, which is an
+  observable difference the upstream tests assert on.
 - `NEWS.md` states the platform goal: the resolver "follows in-tree directory
   symlinks uniformly on every platform via a single race-free per-component
   `O_NOFOLLOW` walk, so `-K` / `-L` / `-k` and `-R` through an in-tree symlinked
