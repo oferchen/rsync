@@ -4,8 +4,32 @@ All notable changes to oc-rsync are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-oc-rsync is wire-compatible with upstream rsync 3.4.4 (protocol 32). Release
-tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
+oc-rsync is wire-compatible with upstream rsync 3.5.0 and the 3.4.x series
+(protocol 32). Release tags are mirrored on GitHub at
+<https://github.com/oferchen/rsync/releases>.
+
+## [Unreleased]
+
+### Changed
+
+- Tracked upstream reference moved to rsync 3.5.0 (released 13 Aug 2026) in
+  prose, comparison docs and the release benchmark. 3.5.0 carries the same wire
+  protocol as 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged
+  `errcode.h`), so wire compatibility is unaffected; the release is behavioural,
+  covering 33 CVEs in path handling and the daemon.
+- Release benchmarks now compare against upstream rsync 3.5.0 and report **peak
+  RSS alongside elapsed time for every mode**. The measurement was already being
+  collected for each run and discarded for all but the memory mode, so a speed
+  win paid for in memory was invisible in the published numbers.
+- Added rsync 3.5.0 to the interop harness as a built-and-cached oracle binary.
+  The "this release has no distro package, build from source" fact is now stated
+  once in a shared list instead of being duplicated across two dispatch tables.
+
+### Added
+
+- Regression tests for the benchmark report renderer, covering the peak-RSS
+  columns, the missing-measurement fallback, and the requirement that a bytes
+  metric is not described in duration language ("higher", not "slower").
 
 ## [0.6.4] - 2026-07-18
 
