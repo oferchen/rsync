@@ -45,8 +45,8 @@ struct PendingChecksum {
     /// receiver does - relative to the destination root it `change_dir()`ed
     /// into, never as an absolute path.
     ///
-    /// upstream: receiver.c:706 - `fname = local_name ? local_name : f_name(file, fbuf)`
-    /// upstream: receiver.c:1089 - `local_name ? f_name(file, NULL) : fname`, so
+    /// upstream: receiver.c:882 - `fname = local_name ? local_name : f_name(file, fbuf)`
+    /// upstream: receiver.c:1352 - `local_name ? f_name(file, NULL) : fname`, so
     /// the flist name is printed in both the `local_name` and the plain case.
     flist_name: PathBuf,
     /// File list index for this file, used to identify which file to redo.
@@ -129,14 +129,14 @@ pub struct PipelinedReceiver {
     /// config. Gates the ` (in MODULE)` suffix that `full_fname()` appends to
     /// the quoted path in the `mkstemp` failure line.
     ///
-    /// upstream: util1.c:1290 - `if (module_id >= 0)` in `full_fname()`.
+    /// upstream: util1.c:1453 - `if (module_id >= 0)` in `full_fname()`.
     daemon_module: Option<String>,
     /// Module root and destination directory, i.e. upstream's `module_dir` and
     /// the `curr_dir` the receiver `chdir()`ed into (`main.c:815`
     /// `change_dir(dest_path, ..)`). Together they make the `mkstemp` failure
     /// name its temp file relative to the module root.
     ///
-    /// upstream: util1.c:1285 - `p1 = curr_dir + module_dirlen`.
+    /// upstream: util1.c:1448 - `p1 = curr_dir + module_dirlen`.
     daemon_module_root: Option<PathBuf>,
     dest_dir: Option<PathBuf>,
     /// Session state behind the verification-failure report, seeded by
@@ -165,7 +165,7 @@ pub struct VerifyReport {
     /// upstream's `read_batch`. Selects the retry wording: a batch replay may
     /// only *try* the redo, because the recorded stream may not carry it.
     ///
-    /// upstream: receiver.c:1085 - `redostr = read_batch ? " (may try again)"
+    /// upstream: receiver.c:1347 - `redostr = read_batch ? " (may try again)"
     /// : " (will try again)"`.
     pub read_batch: bool,
 }
@@ -552,7 +552,7 @@ impl PipelinedReceiver {
     /// main thread surfaces them here, so the `info_log!` guard runs against
     /// the correct verbosity configuration.
     ///
-    /// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n",
+    /// upstream: backup.c:433 - `rprintf(FINFO, "backed up %s to %s\n",
     /// fname, buf)` on the `success:` label of `make_backup()`.
     fn emit_backup_notice(result: &CommitResult) {
         if let Some(ref notice) = result.backup_notice {
@@ -1579,7 +1579,7 @@ mod tests {
     /// A `--read-batch` replay says "may try again": the recorded stream is not
     /// guaranteed to carry the redo the way a live sender does.
     ///
-    /// upstream: receiver.c:1085 - `redostr = read_batch ? " (may try again)"
+    /// upstream: receiver.c:1347 - `redostr = read_batch ? " (may try again)"
     /// : " (will try again)"`.
     #[test]
     fn read_batch_replay_says_may_try_again() {
@@ -1601,7 +1601,7 @@ mod tests {
     /// The phase-2 form is a `FERROR_XFER`, which short-circuits the emit gate,
     /// so it prints at default verbosity and carries no retry suffix.
     ///
-    /// upstream: receiver.c:1071-1072,1083-1084 - `msgtype == FERROR_XFER` is the
+    /// upstream: receiver.c:1334-1335,1083-1084 - `msgtype == FERROR_XFER` is the
     /// first disjunct, and `redostr = ""` on that branch.
     #[test]
     fn phase2_error_is_ungated_and_has_no_retry_suffix() {

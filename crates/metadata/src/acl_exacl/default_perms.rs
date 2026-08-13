@@ -99,7 +99,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         // macOS and other targets without POSIX default ACLs: no emission,
-        // matches upstream's `#ifdef SUPPORT_ACLS` guard at generator.c:1349.
+        // matches upstream's `#ifdef SUPPORT_ACLS` guard at generator.c:1738.
         let _ = dir;
         default_perms
     }

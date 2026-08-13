@@ -373,7 +373,7 @@ fn info_name0_suppresses_verbose_output() {
 fn info_flist0_suppresses_incremental_banner_at_verbose() {
     use tempfile::tempdir;
 
-    // upstream: flist.c:2251 gates "sending incremental file list" on
+    // upstream: flist.c:2524 gates "sending incremental file list" on
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. `-v` raises FLIST to 1
     // (options.c info_verbosity[1]), so the banner normally prints; a following
     // `--info=flist0` drops FLIST back to 0 and must suppress the banner even
@@ -419,7 +419,7 @@ fn info_flist0_suppresses_incremental_banner_at_verbose() {
 fn info_name0_suppresses_created_directory_notice_at_verbose() {
     use tempfile::tempdir;
 
-    // upstream: main.c:807-808 gates `created directory %s` on
+    // upstream: main.c:816-817 gates `created directory %s` on
     // `INFO_GTE(NAME, 1) || stdout_format_has_i`. `-v` raises NAME to 1, so the
     // notice normally prints; `--info=name0` drops NAME to 0 and must suppress
     // it even at `-v`. The incremental-file-list banner stays because it is

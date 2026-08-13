@@ -285,7 +285,7 @@ impl BatchReader {
 
 /// Returns the default flist checksum length for a batch file.
 ///
-/// Upstream `flist.c:162` computes `flist_csum_len = csum_len_for_type(file_sum_nni->num, 1)`.
+/// Upstream `flist.c:168` computes `flist_csum_len = csum_len_for_type(file_sum_nni->num, 1)`.
 /// Without explicit checksum negotiation (which batch files bypass), the default
 /// file checksum algorithm is MD5 (protocol >= 30) or MD4 (protocol < 30). Both
 /// produce 16-byte digests. Protocol < 27 with `CSUM_MD4_ARCHAIC` uses 2 bytes

@@ -4,7 +4,7 @@ use super::round_up_1024;
 
 /// Upstream's raw input buffer size.
 ///
-/// upstream: `io.c:1401` `alloc_xbuf(&iobuf.in, ROUND_UP_1024(IO_BUFFER_SIZE))`
+/// upstream: `io.c:1561` `alloc_xbuf(&iobuf.in, ROUND_UP_1024(IO_BUFFER_SIZE))`
 /// with `IO_BUFFER_SIZE = 32*1024` (`rsync.h:160`). Never reallocated
 /// (io.c:579 "We never resize the circular input buffer."); a request larger
 /// than the buffer is a fatal protocol error, never a growth.

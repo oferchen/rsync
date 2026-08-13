@@ -72,7 +72,7 @@ fn assert_no_positional_leak(config: &ClientConfig, role: RemoteRole, paths: &[&
 
 #[test]
 fn bwlimit_does_not_leak_and_is_captured() {
-    // upstream: options.c:2799-2800 - `--bwlimit=%d` (whole KiB), emitted
+    // upstream: options.c:2966-2967 - `--bwlimit=%d` (whole KiB), emitted
     // unconditionally (both roles). The parser must recognise the joined form
     // AND capture its value.
     let config = ClientConfig::builder()
@@ -206,7 +206,7 @@ fn emitted_joined_value(built: &[OsString], prefix: &str) -> String {
 
 #[test]
 fn bwlimit_value_round_trips_through_the_server_parser() {
-    // upstream: options.c:2799 - `--bwlimit=%d` in whole KiB. server_option_kib()
+    // upstream: options.c:2966 - `--bwlimit=%d` in whole KiB. server_option_kib()
     // scales bytes/sec to KiB, so 4 MiB/s emits 4096; the parser must capture
     // that KiB string, not the byte count.
     let config = ClientConfig::builder()

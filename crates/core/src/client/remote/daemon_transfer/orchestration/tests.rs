@@ -59,7 +59,7 @@ mod protect_args_daemon_tests {
         assert!(!args.iter().any(|a| a == "-s"));
     }
 
-    // upstream: options.c:2069-2074 - `need_unsorted_flist = 1` fires only
+    // upstream: options.c:2191-2196 - `need_unsorted_flist = 1` fires only
     // while `protect_args != 2`, i.e. during phase 1's parse
     // (`clientserver.c:1080-1082` forces `protect_args = 2` only after phase
     // 1 returns). `--iconv` must therefore travel in phase 1, alongside

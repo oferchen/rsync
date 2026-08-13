@@ -950,7 +950,7 @@ where
         executability: preserve_executability,
         permissions: preserve_permissions,
         fake_super: fake_super.unwrap_or(false),
-        // upstream: options.c:90 - `am_root > 1` is set only by an explicit
+        // upstream: options.c:3018 - `am_root > 1` is set only by an explicit
         // --super (not by running as root). Forwarded on a push (options.c:2852).
         super_user: super_mode == Some(true),
         times: preserve_times,
@@ -1186,7 +1186,7 @@ fn explicit_batch_seed(parsed: Option<u32>) -> Option<i32> {
 
 /// Derives a checksum seed from the current time and pid.
 ///
-/// upstream: compat.c:812 `checksum_seed = time(NULL) ^ (getpid() << 6)`.
+/// upstream: compat.c:824 `checksum_seed = time(NULL) ^ (getpid() << 6)`.
 fn derive_batch_seed() -> i32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
@@ -1232,7 +1232,7 @@ mod tests {
         assert_eq!(resolve_old_args(Some(0), None), Some(0));
     }
 
-    /// upstream: options.c:1971 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
+    /// upstream: options.c:2082 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
     /// must reach level 2, the state where safe_arg disables all escaping. This
     /// is the env path that a boolean model collapsed to level 1, silently
     /// dropping the option-arg escaping upstream keeps only below level 2.
@@ -1298,7 +1298,7 @@ mod tests {
         );
     }
 
-    /// upstream: compat.c:811 `if (!checksum_seed)` treats an explicit
+    /// upstream: compat.c:823 `if (!checksum_seed)` treats an explicit
     /// `--checksum-seed=0` as unset, so it derives a fresh seed just like
     /// omitting the flag. Both must return `None` from the explicit-seed
     /// selector so the caller falls back to derivation.

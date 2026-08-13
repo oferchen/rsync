@@ -361,7 +361,7 @@ pub(super) fn build_full_daemon_args(
         None => {}
     }
 
-    // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
+    // upstream: options.c:2936-2948 - `if (stdout_format && am_sender)` the
     // server is told a little about the client's out-format via a `--log-format`
     // arg, in a first-match-wins chain. Only sent when the client is the sender
     // (push), matching upstream's `am_sender` guard. The `%i` branches key off
@@ -422,7 +422,7 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--timeout={}", secs.get()));
     }
 
-    // upstream: options.c:2799 - `--bwlimit=%d` forwards the rate in whole KiB
+    // upstream: options.c:2966 - `--bwlimit=%d` forwards the rate in whole KiB
     // (options.c:1718), NOT bytes: the remote peer re-parses the value with a
     // default `K` suffix, so a byte count would be scaled up 1024x and the
     // throttle would effectively vanish.
@@ -684,7 +684,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--copy-devices".to_owned());
     }
 
-    // upstream: options.c:2996-2997 - `if (mkpath_dest_arg && am_sender)`.
+    // upstream: options.c:3167-3168 - `if (mkpath_dest_arg && am_sender)`.
     // The dest-arg path creation is receiver-side, so forward `--mkpath` only
     // on a push (local client is the sender). `!is_sender` mirrors upstream's
     // `am_sender` here (see the module note above).
@@ -884,7 +884,7 @@ fn safe_arg_for_daemon(arg: &str) -> String {
 }
 
 /// Concatenation of `WILD_CHARS` + `SHELL_CHARS` used as the escape set for
-/// option values (upstream `options.c:2544` ternary `WILD_CHARS SHELL_CHARS`).
+/// option values (upstream `options.c:2698` ternary `WILD_CHARS SHELL_CHARS`).
 const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
 
 /// Builds `prefix + backslash_escaped(value)` using the given escape set.
@@ -920,7 +920,7 @@ fn escape_with(prefix: &str, value: &str, escapes: &str, is_filename_arg: bool) 
 
 /// Converts a [`compress::zlib::CompressionLevel`] to its signed wire value.
 ///
-/// upstream: options.c:2755-2756 - `--compress-level=%d` forwards the signed
+/// upstream: options.c:2922-2923 - `--compress-level=%d` forwards the signed
 /// `do_compression_level`, so a negative zstd "fast" level is preserved.
 fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> i32 {
     use compress::zlib::CompressionLevel;
@@ -1292,7 +1292,7 @@ mod server_option_fidelity_tests {
         assert!(!a.iter().any(|x| x == "--no-specials"));
     }
 
-    // upstream: options.c:2979 - `if (write_devices && am_sender)`. am_sender is
+    // upstream: options.c:3150 - `if (write_devices && am_sender)`. am_sender is
     // a PUSH (daemon receiver, is_sender=false); never forwarded on a PULL.
     #[test]
     fn write_devices_on_push_only() {
@@ -1309,7 +1309,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2987 - `if (copy_devices && !am_sender)`. !am_sender is
+    // upstream: options.c:3158 - `if (copy_devices && !am_sender)`. !am_sender is
     // a PULL (daemon sender, is_sender=true); never forwarded on a PUSH.
     #[test]
     fn copy_devices_on_pull_only() {
@@ -1521,7 +1521,7 @@ mod server_option_fidelity_tests {
         assert!(args(&config, false).iter().any(|a| a == "--timeout=60"));
     }
 
-    // WHY: upstream options.c:2799 forwards `--bwlimit=%d` in whole KiB
+    // WHY: upstream options.c:2966 forwards `--bwlimit=%d` in whole KiB
     // (options.c:1718 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The
     // remote peer re-parses the value with a default `K` suffix (options.c:1714
     // `parse_size_arg(bwlimit_arg, 'K', ...)`), so a byte count of 1048576 would
@@ -1673,7 +1673,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2976 - the `(!am_sender || protocol_version >= 30)`
+    // upstream: options.c:3147 - the `(!am_sender || protocol_version >= 30)`
     // half of the guard. A daemon PUSH below protocol 30 (reachable once
     // `--protocol=N` caps the `@RSYNCD:` negotiation) must not forward the
     // option to a peer that predates it; a PULL forwards it at every version.

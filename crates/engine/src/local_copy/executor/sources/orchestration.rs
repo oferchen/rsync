@@ -345,7 +345,7 @@ pub(crate) fn copy_sources(
         })?;
     }
 
-    // upstream: main.c:1763 `starttime = time(NULL)` - the transfer rate span
+    // upstream: main.c:1843 `starttime = time(NULL)` - the transfer rate span
     // is measured between two whole-second time_t marks, not a fractional clock.
     let run_start_secs = whole_unix_seconds();
     let destination_root = plan.destination_spec().path().to_path_buf();

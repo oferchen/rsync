@@ -676,7 +676,7 @@ impl BatchConfig {
     /// Set whether `--numeric-ids` was active for the batch invocation.
     ///
     /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
-    /// upstream sends no id-lists (`flist.c:2548` requires `numeric_ids <= 0`),
+    /// upstream sends no id-lists (`flist.c:2820` requires `numeric_ids <= 0`),
     /// so the writer omits them and the reader must not consume them
     /// (`uidlist.c:465,473`).
     ///

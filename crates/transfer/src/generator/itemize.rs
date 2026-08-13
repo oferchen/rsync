@@ -754,7 +754,7 @@ mod tests {
     /// `%L`'s ` => <hlink>` form wins over the symlink arrow when the entry
     /// carries a non-empty alternate-basis name (`ITEM_XNAME_FOLLOWS`).
     ///
-    /// upstream: log.c:643-655 - the `if (hlink && *hlink)` branch precedes the
+    /// upstream: log.c:676-688 - the `if (hlink && *hlink)` branch precedes the
     /// symlink case.
     #[test]
     fn name_line_hardlink_suffix_wins() {

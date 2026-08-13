@@ -42,7 +42,7 @@ fn run_daemon_rejects_unknown_hash_command() {
         .expect("send unknown command");
     stream.flush().expect("flush unknown command");
 
-    // upstream: clientserver.c:1429 - "@ERROR: Unknown command '%s'\n" keeps
+    // upstream: clientserver.c:1563 - "@ERROR: Unknown command '%s'\n" keeps
     // the leading `#`; it is NOT the "Unknown module" response.
     line.clear();
     reader.read_line(&mut line).expect("error message");

@@ -663,7 +663,7 @@ fn golden_test_all_ff() {
     let data = [0xFFu8; 16];
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
-    // upstream: checksum.c:285 reads bytes via `schar *buf`, so 0xFF == -1.
+    // upstream: checksum.c:307 reads bytes via `schar *buf`, so 0xFF == -1.
     // s1 = 16 * (-1) = -16, masked to u16 = 0xfff0
     // s2 = (-1)*16 + (-1)*15 + ... + (-1)*1 = -136, masked to u16 = 0xff78
     // value = (s2 << 16) | s1 = 0xff78_fff0

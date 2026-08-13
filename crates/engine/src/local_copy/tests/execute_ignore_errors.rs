@@ -375,7 +375,7 @@ fn ignore_errors_suppresses_io_error_skip_notice() {
     // With --ignore-errors the delete pass runs to completion, so the skip
     // notice must NOT appear and the extraneous file must be deleted. The
     // flag both silences the warning and re-enables deletion upstream.
-    // upstream: generator.c:298 `io_error & IOERR_GENERAL && !ignore_errors`.
+    // upstream: generator.c:304 `io_error & IOERR_GENERAL && !ignore_errors`.
     use logging::{DiagnosticEvent, drain_events, init, VerbosityConfig};
     use std::os::unix::fs::PermissionsExt;
 

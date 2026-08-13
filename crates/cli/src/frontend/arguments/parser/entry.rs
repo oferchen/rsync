@@ -44,7 +44,7 @@ use super::{
 const MAX_BASIS_DIRS: usize = 20;
 
 /// Maximum length of a `--write-batch`/`--only-write-batch`/`--read-batch`
-/// file name. upstream: options.c:225 `#define MAX_BATCH_NAME_LEN 256`
+/// file name. upstream: options.c:231 `#define MAX_BATCH_NAME_LEN 256`
 /// ("Must be less than MAXPATHLEN-13"). A longer name is rejected by
 /// `parse_arguments()` with `RERR_SYNTAX` (1). All three batch options write
 /// the same upstream `batch_name` variable, so the cap applies to whichever
@@ -175,7 +175,7 @@ where
         tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
     let atimes = leveled_flag_pair(&matches, "atimes", "no-atimes");
     let crtimes = tri_state_flag_negative_first(&matches, "crtimes", "no-crtimes");
-    // upstream: options.c:2366-2367 - only `dry_run` sets `do_xfers = 0` (and
+    // upstream: options.c:2509-2510 - only `dry_run` sets `do_xfers = 0` (and
     // thus the compact `n` letter); `list_only` does NOT (options.c:2634 "Note:
     // NOT dry_run!"). The receiver skips destination writes under `list_only`
     // independently (see `run_client` mode selection and
@@ -236,7 +236,7 @@ where
     let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
     // Last command-line index of `-a`, used to resolve every archive-implied
-    // dimension in argv order (upstream: options.c:1546 `case 'a'`). Gated on
+    // dimension in argv order (upstream: options.c:1653 `case 'a'`). Gated on
     // `archive` because clap's `SetTrue` args carry an implicit default whose
     // synthetic index `indices_of` reports even when `-a` was never supplied.
     let archive_index = if archive {
@@ -260,7 +260,7 @@ where
     } else {
         tri_state_flag_negative_first(&matches, "recursive", "no-recursive")
     };
-    // upstream: options.c:1546 `case 'a'` runs `if (!recurse) recurse = 1` in
+    // upstream: options.c:1653 `case 'a'` runs `if (!recurse) recurse = 1` in
     // argv order, so a `--no-recursive` that precedes `-a` is re-enabled by the
     // later `-a`, while one that follows it wins.
     let recursive = if old_dirs {

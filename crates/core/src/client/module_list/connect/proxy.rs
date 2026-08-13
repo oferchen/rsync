@@ -152,7 +152,7 @@ pub(crate) fn establish_proxy_tunnel(
 
 pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     match env::var("RSYNC_PROXY") {
-        // upstream: socket.c:202-203 - `proxied = h != NULL && *h != '\0';`
+        // upstream: socket.c:350-351 - `proxied = h != NULL && *h != '\0';`
         // only a zero-length value is treated as "unset"; a whitespace-only
         // value is proxied (and then fails to parse), not silently ignored.
         Ok(value) => {
@@ -212,7 +212,7 @@ pub(crate) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
 }
 
 /// Splits a `HOST:PORT` string at the first `:`, matching upstream's
-/// `strchr(h, ':')` (upstream: socket.c:228-234).
+/// `strchr(h, ':')` (upstream: socket.c:375-381).
 fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
     let idx = input.find(':').ok_or_else(|| {
         proxy_configuration_error("invalid proxy specification: should be HOST:PORT")

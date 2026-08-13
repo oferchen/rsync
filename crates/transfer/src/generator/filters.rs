@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_leading_dot_anchor_sets_implied_dot() {
-        // upstream: flist.c:2368 - `*fn == '.' && fn[1] == '/' && fn[2]`. A
+        // upstream: flist.c:2640 - `*fn == '.' && fn[1] == '/' && fn[2]`. A
         // leading `./foo` files-from line (no embedded `/./`) marks the entry
         // so `--relative` mode emits a single FLAG_IMPLIED_DIR root `.`.
         let base = PathBuf::from("/src");

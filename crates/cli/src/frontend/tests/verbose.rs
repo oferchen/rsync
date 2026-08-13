@@ -306,7 +306,7 @@ fn verbose_human_readable_combined_formats_sizes() {
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
 /// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
-/// Upstream: options.c:2372 sets `stdout_format = "%n%L"`; log.c:603-659
+/// Upstream: options.c:2514 sets `stdout_format = "%n%L"`; log.c:603-659
 /// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
 /// The upstream testsuite `duplicates.test` greps `^name1$` to detect
 /// duplicate copies, so the per-file line must be bare.
@@ -1214,7 +1214,7 @@ fn verbose_dry_run_with_stats_shows_statistics() {
 /// bare `name1` line and exactly one `name2 -> target` line on -vv stdout.
 /// The test greps `^name1$` / `^name2 -> ` to detect duplicate copies, so
 /// any prefix (`copied:`, `symlink:`) or byte-count wrapper breaks interop.
-/// Upstream: `testsuite/duplicates.test`, options.c:2372 (`stdout_format = "%n%L"`).
+/// Upstream: `testsuite/duplicates.test`, options.c:2514 (`stdout_format = "%n%L"`).
 #[cfg(unix)]
 #[test]
 fn duplicates_testsuite_emits_bare_name_lines() {
@@ -1676,7 +1676,7 @@ fn verbose_directory_listing_has_trailing_slash_and_root_row() {
 /// summary (misordered) - so the output showed both a bare name and a trailing
 /// duplicate. Encodes the ordering + text contract, not merely presence.
 ///
-/// upstream: delete.c:180 log_delete() -> log.c:873 fmt "deleting %n".
+/// upstream: delete.c:180 log_delete() -> log.c:920 fmt "deleting %n".
 #[test]
 fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
     use std::fs;

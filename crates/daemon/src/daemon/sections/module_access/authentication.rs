@@ -286,7 +286,7 @@ fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
 
 /// Sends an auth failure response to the client and closes the session.
 ///
-/// upstream: clientserver.c:762 - `@ERROR: auth failed on module %s\n`
+/// upstream: clientserver.c:812 - `@ERROR: auth failed on module %s\n`
 fn send_auth_failed(
     stream: &mut DaemonStream,
     module: &ModuleDefinition,

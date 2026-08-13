@@ -823,7 +823,7 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
     // upstream: compat.c:99 #define MAX_NSTR_STRLEN 256; the caller's bufsize.
     const MAX_NSTR_STRLEN: usize = 256;
-    // upstream: io.c:2011 `if (len >= bufsize)` - one byte is reserved for the
+    // upstream: io.c:2181 `if (len >= bufsize)` - one byte is reserved for the
     // NUL terminator, so the accepted data length maxes out at bufsize - 1.
     const MAX_VSTRING_LEN: usize = MAX_NSTR_STRLEN - 1;
 
@@ -841,7 +841,7 @@ pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
         first[0] as usize
     };
 
-    // upstream: io.c:2011-2015 - reject `len >= bufsize` (over-long vstring).
+    // upstream: io.c:2181-2185 - reject `len >= bufsize` (over-long vstring).
     if len > MAX_VSTRING_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

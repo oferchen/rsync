@@ -547,7 +547,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2799 - `--bwlimit=%d` forwards the rate in whole
+        // upstream: options.c:2966 - `--bwlimit=%d` forwards the rate in whole
         // KiB (options.c:1718), NOT bytes: the remote peer re-parses the value
         // with a default `K` suffix, so a byte count would be scaled up 1024x.
         if let Some(bwlimit) = self.config.bandwidth_limit() {
@@ -869,7 +869,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--preallocate"));
         }
 
-        // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
+        // upstream: options.c:2936-2948 - `if (stdout_format && am_sender)` the
         // server is told a little about the client's out-format via a
         // `--log-format` arg, in a first-match-wins chain. The `%i` branches key
         // off `stdout_format_has_i`, which upstream derives from the RESOLVED
@@ -944,7 +944,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `safe_arg("--usermap", value)` which escapes shell + wildcard
         // characters so a downstream `eval "$@"` does not glob-expand them.
         // We rely on `protect_args` being the default for SSH transports
-        // (matching upstream's `old_style_args = -1` default at options.c:110),
+        // (matching upstream's `old_style_args = -1` default at options.c:115),
         // so the verbatim form is correct and the wildcard `*` survives.
         //
         // upstream: options.c:2911-2917 - both --usermap and --groupmap sit
@@ -1349,7 +1349,7 @@ fn escape_shell_str(arg: &str, escape_leading_tilde: bool) -> String {
 
 /// Converts a `CompressionLevel` into its numeric representation for the wire.
 ///
-/// upstream: options.c:2755-2756 - `--compress-level=%d` forwards the signed
+/// upstream: options.c:2922-2923 - `--compress-level=%d` forwards the signed
 /// `do_compression_level`, so a negative zstd "fast" level reaches the server
 /// verbatim rather than being collapsed into an unsigned range.
 pub(super) fn compression_level_to_numeric(level: compress::zlib::CompressionLevel) -> i32 {

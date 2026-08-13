@@ -63,7 +63,7 @@ pub struct ReceiverContext {
     /// Each entry is `(flat_start, ndx_start)`.
     /// Without INC_RECURSE, contains a single entry `(0, 0)`.
     ///
-    /// upstream: flist.c:2966 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
+    /// upstream: flist.c:3268 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) ndx_segments: Vec<(usize, i32)>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
     ///
@@ -707,7 +707,7 @@ impl ReceiverContext {
 
     /// Snapshots the raw read counter at the start of a file-list span.
     ///
-    /// upstream: flist.c:2615 `start_read = stats.total_read;`
+    /// upstream: flist.c:2887 `start_read = stats.total_read;`
     pub(in crate::receiver) fn flist_span_start(&self) -> u64 {
         self.raw_read_counter
             .as_ref()
@@ -716,7 +716,7 @@ impl ReceiverContext {
 
     /// Accumulates the raw bytes read since `start` into `flist_size`.
     ///
-    /// upstream: flist.c:2789 `stats.flist_size += stats.total_read - start_read;`
+    /// upstream: flist.c:3091 `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) fn flist_span_end(&mut self, start: u64) {
         if let Some(counter) = &self.raw_read_counter {
             self.flist_size = self
@@ -1042,7 +1042,7 @@ impl ReceiverContext {
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
         if self.local_replay {
-            // upstream: main.c:1359 `if (!read_batch)` - the recorded batch
+            // upstream: main.c:1397 `if (!read_batch)` - the recorded batch
             // stream is never multiplexed, so keep the reader Plain.
             return false;
         }

@@ -1682,7 +1682,7 @@ fn protocol_30_allows_acls_and_xattrs() {
 /// for ACLs and xattrs. This mirrors upstream which only checks these
 /// restrictions for remote connections.
 ///
-/// upstream: compat.c:655,662 - `&& !local_server` guards
+/// upstream: compat.c:667,662 - `&& !local_server` guards
 #[test]
 fn local_server_allows_acls_and_xattrs_below_protocol_30() {
     let flags = ProtocolRestrictionFlags {

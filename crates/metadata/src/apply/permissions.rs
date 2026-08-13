@@ -183,8 +183,8 @@ fn default_perms_seed(parent: Option<&Path>) -> u32 {
 /// umask-derived seed when the parent is unknown or no default ACL is present.
 ///
 /// upstream: rsync.c:449-472 `dest_mode()`
-/// upstream: generator.c:1349-1351 `dflt_perms = default_perms_for_dir(dn)`
-/// upstream: generator.c:2297 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
+/// upstream: generator.c:1740-1742 `dflt_perms = default_perms_for_dir(dn)`
+/// upstream: generator.c:2770 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
 fn compute_dest_mode(
     source_mode: u32,
@@ -1155,7 +1155,7 @@ pub(super) fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // upstream: rsync.c:495+518 - `new_mode = file->mode` then
+            // upstream: rsync.c:510+518 - `new_mode = file->mode` then
             // `new_mode = tweak_mode(new_mode, daemon_chmod_modes)`. The
             // chmod baseline is the source file's mode (already collapsed
             // through `dest_mode()` in the generator at generator.c:1467 +

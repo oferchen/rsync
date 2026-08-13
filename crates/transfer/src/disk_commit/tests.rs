@@ -3047,7 +3047,7 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
 
 /// Redo pass with `backup: None` must not create a backup even under inplace.
 ///
-/// upstream: generator.c:2187 `make_backups = -make_backups` negates the flag
+/// upstream: generator.c:2659 `make_backups = -make_backups` negates the flag
 /// during the redo pass so the inplace pre-image copy is not repeated. If the
 /// backup were re-taken, it would overwrite the good phase-1 backup with the
 /// now-corrupted destination data - a data-loss bug.

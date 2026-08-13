@@ -751,7 +751,7 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
-    // upstream: options.c:2799 - the client forwards `--bwlimit=%d` (whole KiB)
+    // upstream: options.c:2966 - the client forwards `--bwlimit=%d` (whole KiB)
     // to the server. When this server is the sender (`--sender`), it paces its
     // own outbound socket writes (io.c:846,861); a receiver ignores it
     // (main.c:1068). Parse with the `--bwlimit` KiB default suffix

@@ -195,7 +195,7 @@ impl IoStallWatchdog {
                         return;
                     }
 
-                    // upstream: io.c:196 `if (t - chk >= io_timeout)` aborts.
+                    // upstream: io.c:243 `if (t - chk >= io_timeout)` aborts.
                     if thread_progress.idle() >= io_timeout {
                         thread_fired.store(true, Ordering::Release);
                         if let Some(action) = abort.take() {

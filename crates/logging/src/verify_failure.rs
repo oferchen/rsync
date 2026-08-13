@@ -27,13 +27,13 @@ pub struct VerifyFailure {
     /// message from `FWARNING` to `FERROR_XFER`, makes it unconditional, and
     /// drops the retry suffix - there is no retry left to promise.
     ///
-    /// upstream: receiver.c:1071 - `msgtype = redoing ? FERROR_XFER : FWARNING`.
+    /// upstream: receiver.c:1333 - `msgtype = redoing ? FERROR_XFER : FWARNING`.
     pub redoing: bool,
     /// The receiver is replaying a recorded batch (`--read-batch`). Upstream's
     /// `read_batch`: a replay may only *try* the redo, because the recorded
     /// stream need not carry it.
     ///
-    /// upstream: receiver.c:1085 - `redostr = read_batch ? " (may try again)"`.
+    /// upstream: receiver.c:1347 - `redostr = read_batch ? " (may try again)"`.
     pub read_batch: bool,
     /// The per-file output format carries `%i`. Upstream's
     /// `stdout_format_has_i`, the third disjunct of the emission gate.

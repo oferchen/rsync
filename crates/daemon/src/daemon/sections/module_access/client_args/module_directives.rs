@@ -3,7 +3,7 @@
 /// Resolves the daemon module's `charset =` directive into a
 /// [`FilenameConverter`] that mirrors upstream rsync's iconv setup.
 ///
-/// Upstream `clientserver.c:712-716` sets `iconv_opt = lp_charset(i)` and
+/// Upstream `clientserver.c:760-764` sets `iconv_opt = lp_charset(i)` and
 /// calls `setup_iconv()` whenever the value is non-empty. `setup_iconv()`
 /// (`rsync.c:87-140`) then opens two iconv handles:
 ///
