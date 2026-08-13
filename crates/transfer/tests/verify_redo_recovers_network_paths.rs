@@ -623,6 +623,184 @@ fn rsh_pull_forced_verification_failure_recovers_via_redo() {
 // verification failure to recover from. A test here could only assert an
 // outcome the redo never produced.
 
+/// The warning upstream emits for a file NESTED under the transfer root.
+///
+/// The flat `payload.bin` cells above cannot tell three renderings apart: the
+/// flist name, the basename, and a name relativised against the wrong root all
+/// collapse to the same string when the file sits at the top level. Only a
+/// nested fixture separates them.
+///
+/// Measured on rsync 3.4.4: identical on a local copy, a remote-shell push and
+/// a remote-shell pull, and unchanged by an absolute destination operand.
+const UPSTREAM_NESTED_WARNING: &str =
+    "WARNING: sub/deep/payload.bin failed verification -- update retained (will try again).";
+
+/// Seeds the same forced-failure fixture as [`seed_fixture`], nested two
+/// directories below the transfer root.
+fn seed_nested_fixture(source_root: &Path, dest_root: &Path) -> Vec<u8> {
+    let source_dir = source_root.join("sub").join("deep");
+    let dest_dir = dest_root.join("sub").join("deep");
+    fs::create_dir_all(&source_dir).expect("create nested source dir");
+    fs::create_dir_all(&dest_dir).expect("create nested dest dir");
+    let payload = authoritative_payload();
+    fs::write(source_dir.join("payload.bin"), &payload).expect("seed authoritative source");
+    fs::write(dest_dir.join("payload.bin"), vec![0u8; BAD_PREFIX_LEN])
+        .expect("seed wrong-prefix basis");
+    payload
+}
+
+/// The warning must name the file the way upstream's receiver does: relative to
+/// the transfer root, with its directory prefix, and never as the absolute
+/// destination path - even when the destination OPERAND is absolute.
+///
+/// Upstream's receiver has already `change_dir()`ed into the destination root
+/// (`main.c:815`) by the time it formats this line, so `fname` at
+/// `receiver.c:1089` is the file-list name however the operand was written.
+/// oc joins a destination root to reach the file on disk, so the absolute path
+/// is the value most readily to hand - which is exactly why it needs pinning.
+///
+/// An absolute destination operand is the discriminator: a joined path leaks
+/// there and nowhere else. The nesting is the second discriminator: a rendering
+/// that dropped the directory prefix would still pass every flat-name cell in
+/// this file.
+///
+/// upstream: receiver.c:1089 - `local_name ? f_name(file, NULL) : fname`.
+#[test]
+fn rsh_pull_verification_warning_carries_the_nested_flist_name() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    let oc_bin = test_support::oc_rsync_bin();
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+    let Ok(tmp) = tempdir() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+
+    let source_root = tmp.path().join("source");
+    let dest_root = tmp.path().join("dest");
+    let payload = seed_nested_fixture(&source_root, &dest_root);
+
+    let rsh_arg = OsString::from(format!("--rsh={}", stub.path().display()));
+    let rsync_path_arg = OsString::from(format!("--rsync-path={}", oc_bin.display()));
+    let src_arg = OsString::from(format!("localhost:{}/", source_root.display()));
+    // Absolute on purpose - see the doc comment.
+    let dest_arg = dest_root.clone().into_os_string();
+
+    let args: &[&OsStr] = &[
+        OsStr::new("--append-verify"),
+        OsStr::new("--ignore-times"),
+        OsStr::new("--stats"),
+        OsStr::new("-r"),
+        OsStr::new(VERBOSE),
+        &rsh_arg,
+        &rsync_path_arg,
+        &src_arg,
+        &dest_arg,
+    ];
+
+    let outcome = run_oc_rsync_deadlined(&oc_bin, args).expect("run nested-name redo client");
+    assert!(
+        outcome.status.success(),
+        "nested rsh pull exited non-zero: {:?}\nstdout:\n{}\nstderr:\n{}",
+        outcome.status,
+        outcome.stdout,
+        outcome.stderr,
+    );
+
+    let reconstructed = fs::read(dest_root.join("sub").join("deep").join("payload.bin"))
+        .expect("read reconstructed destination");
+    assert_eq!(
+        reconstructed, payload,
+        "nested rsh pull: destination not byte-correct after the phase-2 redo",
+    );
+
+    assert!(
+        outcome.stderr.contains(UPSTREAM_NESTED_WARNING),
+        "the warning must name the file as upstream does, with its directory \
+         prefix and no destination root\nwant: {UPSTREAM_NESTED_WARNING}\nstderr:\n{}",
+        outcome.stderr,
+    );
+
+    // Stated separately from the line match so a leak reports as a leak rather
+    // than as an opaque string mismatch.
+    let dest_root_text = dest_root.display().to_string();
+    assert!(
+        !outcome.stderr.contains(&dest_root_text),
+        "the destination root leaked into the diagnostic; upstream prints the \
+         file-list name because it change_dir()ed into that root\nroot: \
+         {dest_root_text}\nstderr:\n{}",
+        outcome.stderr,
+    );
+}
+
+/// The emission gate reads the resolved output FORMAT, not an `-i` boolean.
+///
+/// `options.c:2345-2358` feeds one variable, `stdout_format_has_i`, from two
+/// sources: an explicit `--out-format`/`--log-format` carrying `%i`, and `-i`,
+/// which REWRITES `stdout_format` to `"%i %n%L"`. So a bare `--out-format` with
+/// `%i` and no `-i` and no `-v` still enables this warning. A gate implemented
+/// as "did the user pass -i" is silent here, which is the divergence this cell
+/// exists to catch - it is the one input that separates the two spellings.
+///
+/// upstream: receiver.c:1072 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
+/// || stdout_format_has_i`.
+#[test]
+fn verification_warning_gate_reads_the_output_format_not_a_dash_i_flag() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    let oc_bin = test_support::oc_rsync_bin();
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+    let Ok(tmp) = tempdir() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    let payload = seed_fixture(&source_dir, &dest_dir);
+
+    let rsh_arg = OsString::from(format!("--rsh={}", stub.path().display()));
+    let rsync_path_arg = OsString::from(format!("--rsync-path={}", oc_bin.display()));
+    let src_arg = OsString::from(format!(
+        "localhost:{}",
+        source_dir.join("payload.bin").display()
+    ));
+    let dest_arg = dest_dir.join("payload.bin").into_os_string();
+
+    // No -v and no -i: the format alone must open the gate.
+    let args: &[&OsStr] = &[
+        OsStr::new("--append-verify"),
+        OsStr::new("--ignore-times"),
+        OsStr::new("--stats"),
+        OsStr::new("--out-format=%i%n"),
+        &rsh_arg,
+        &rsync_path_arg,
+        &src_arg,
+        &dest_arg,
+    ];
+
+    let outcome = run_oc_rsync_deadlined(&oc_bin, args).expect("run out-format gate client");
+    assert!(
+        outcome.status.success(),
+        "out-format gate cell exited non-zero: {:?}\nstdout:\n{}\nstderr:\n{}",
+        outcome.status,
+        outcome.stdout,
+        outcome.stderr,
+    );
+
+    let reconstructed = fs::read(dest_dir.join("payload.bin")).expect("read destination");
+    assert_eq!(
+        reconstructed, payload,
+        "out-format gate cell: destination not byte-correct after the redo",
+    );
+
+    assert!(
+        outcome.stderr.contains(UPSTREAM_WARNING),
+        "a format carrying %i must open the gate on its own, with no -v and no \
+         -i; a gate driven by an -i boolean is silent here\nwant: \
+         {UPSTREAM_WARNING}\nstdout:\n{}\nstderr:\n{}",
+        outcome.stdout,
+        outcome.stderr,
+    );
+}
 /// The phase-2 redo must re-delta against the RETAINED partial, not re-send the
 /// whole file as literal data.
 ///

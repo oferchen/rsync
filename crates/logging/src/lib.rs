@@ -83,6 +83,7 @@ mod macros;
 mod phase_timer;
 mod stream;
 mod thread_local;
+mod verify_failure;
 
 #[cfg(feature = "tracing")]
 mod tracing_bridge;
@@ -102,6 +103,7 @@ pub use thread_local::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events,
     drain_events_coded, emit_debug, emit_debug_coded, emit_info, emit_info_coded, info_gte, init,
 };
+pub use verify_failure::{VerifyFailure, verification_failure};
 
 #[cfg(feature = "tracing")]
 pub use tracing_bridge::{RsyncLayer, init_tracing, init_tracing_with_filter};
