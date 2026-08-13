@@ -1243,7 +1243,7 @@ mod delivery_classification {
     ///
     /// The exhaustive destructure below is the guard. Adding a field to
     /// `ParsedServerFlags` stops the build with `error[E0027]` until the author
-    /// puts it in one of the three groups, which forces the question "how does
+    /// puts it in one of the four groups, which forces the question "how does
     /// this reach the peer, and the LOCAL receiver on a pull?" to be answered
     /// once, here, instead of being discovered by an operator.
     ///
@@ -1254,6 +1254,12 @@ mod delivery_classification {
     /// returned 44 of 56 fields as "never assigned", including `compress`,
     /// `delete` and `dry_run` - obviously wrong. That is why these are hand
     /// classifications: the automation gives a confidently incorrect answer.
+    ///
+    /// ⚠ `build_server_flag_string` alone is NOT the wire. It is role-agnostic
+    /// on purpose, so measuring only through it makes the role-gated letters
+    /// look absent when they are emitted one layer up. Group 3 below is exactly
+    /// that set; check the role-aware emitters before concluding anything is
+    /// missing from the wire.
     #[test]
     fn every_parsed_server_flags_field_is_classified() {
         #[allow(unused_variables)]
@@ -1303,12 +1309,20 @@ mod delivery_classification {
             copy_devices,
             info_flags,
 
-            // -- ⚠ DECODER-CAPABLE BUT NEVER EMITTED. `parse_transfer_flag`
-            //    handles the letter, but build_server_flag_string never writes
-            //    it and no long arg is forwarded, so the peer is never told.
-            //    Upstream DOES pack all of these (options.c server_options:
-            //    K k L E y O J m). Tracked as task 650 - do not "fix" by
-            //    moving them to the bridge; the letter is the upstream rule.
+            // -- EMITTED ONLY BY THE ROLE-AWARE EMITTERS. Upstream packs these
+            //    inside the direction branches of server_options()
+            //    (options.c:2641-2660 `if (am_sender) { K m O J y } else { L k
+            //    }`, plus :2690-2693 `else if (preserve_executability &&
+            //    am_sender) 'E'`), so the letter's presence depends on which
+            //    side we are. `build_server_flag_string` is deliberately
+            //    role-agnostic and therefore cannot pack them; the two emitters
+            //    that know the role do:
+            //    `core::client::remote::invocation::builder` (SSH argv) and
+            //    `daemon_transfer::orchestration::arguments` (daemon argv,
+            //    where upstream's `am_sender` is oc's `!is_sender`).
+            //    A new field belonging here must be added to BOTH of those with
+            //    upstream's own condition - not to build_server_flag_string, and
+            //    not to the bridge, which would drop the role gate.
             keep_dirlinks,
             copy_dirlinks,
             copy_links,
