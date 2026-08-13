@@ -14,7 +14,7 @@ pub use commands::{
     run_cargo_tool_with_env,
 };
 pub use filesystem::{is_probably_binary, read_file_with_context, resolve_workspace_path};
-pub use git::{list_rust_sources_via_git, list_tracked_files};
+pub use git::{list_rust_sources_via_git, list_sources_via_git_unfiltered, list_tracked_files};
 
 use crate::error::{TaskError, TaskResult};
 

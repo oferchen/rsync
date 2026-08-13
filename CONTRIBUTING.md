@@ -181,6 +181,16 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
   Re-anchor each flagged citation individually against the new source. Never
   bulk-shift line numbers by a fixed offset: already-correct citations drift by
   different amounts (or not at all), so a blind shift corrupts them.
+- **The hard gate.** `cargo xtask citations` asserts that every citation in the
+  repository - not only under `crates/` - names a `.c`, `.h`, `.py` or `.sh`
+  file the pinned release actually has, at a line that file actually has. It
+  reads `tools/ci/upstream-3.4.4-lines.tsv` rather than the source tree, so it
+  runs everywhere, including under `nextest`. Regenerate that manifest with
+  `cargo xtask citations --write-manifest` when the pin moves. Citations
+  qualified by a directory the rsync tarball does not ship - zsync's
+  `librcksum/`, an explicitly-versioned `rsync-3.4.1/` path - name a different
+  upstream and are out of scope; write a bare name only when you mean a file of
+  the pinned release.
 
 ---
 
