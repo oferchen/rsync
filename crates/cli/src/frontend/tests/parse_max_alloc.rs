@@ -239,19 +239,22 @@ fn max_alloc_rejects_non_numeric() {
 }
 
 #[test]
-fn max_alloc_argument_resolution_accepts_zero_as_unlimited() {
-    // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a zero
-    // value is accepted and resolves to unlimited, not an error.
+fn max_alloc_argument_resolution_rejects_zero() {
+    // upstream: options.c:2069-2072 - `--max-alloc=0` used to resolve to
+    // SIZE_MAX and so disabled the allocation ceiling; 3.5.0 rejects it
+    // (CVE-2026-53794).
     use crate::frontend::execution::parse_max_alloc_argument;
-    assert_eq!(
-        parse_max_alloc_argument(OsStr::new("0")).expect("zero accepted"),
-        0
+    let error = parse_max_alloc_argument(OsStr::new("0")).expect_err("zero rejected");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("max-alloc must be greater than zero"),
+        "expected the upstream zero-rejection text, got: {rendered}"
     );
 }
 
 #[test]
 fn max_alloc_argument_resolution_rejects_below_one_mib() {
-    // upstream: options.c:1960 - parse_size_arg min value is 1 MiB, so "512K"
+    // upstream: options.c:2067 - parse_size_arg min value is 1 MiB, so "512K"
     // (below the minimum) is rejected as "too small".
     use crate::frontend::execution::parse_max_alloc_argument;
     let error = parse_max_alloc_argument(OsStr::new("512K")).expect_err("below 1 MiB rejected");
@@ -302,21 +305,81 @@ fn max_alloc_argument_resolution_rejects_excessive_value() {
 }
 
 #[test]
-fn max_alloc_zero_value_is_accepted_as_unlimited() {
-    // upstream: options.c:1966 - `--max-alloc=0` is accepted (unlimited), so it
-    // never triggers a max-alloc syntax error. Any exit here comes from the
-    // missing "source"/"dest" operands, not from option validation.
+fn max_alloc_zero_value_is_rejected() {
+    // upstream: options.c:2069-2072 - `--max-alloc=0` is refused with
+    // "max-alloc must be greater than zero" and `goto cleanup`, which
+    // `option_error()` reports before `exit_cleanup(RERR_SYNTAX)` (exit 1).
+    // Zero used to select SIZE_MAX and so removed the my_alloc() ceiling
+    // (CVE-2026-53794).
     let _guard = clear_rsync_rsh();
-    let (_code, _stdout, stderr) = run_with_args([
+    let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--max-alloc=0"),
         OsString::from("source"),
         OsString::from("dest"),
     ]);
     let stderr_text = String::from_utf8_lossy(&stderr);
+    assert_eq!(
+        code, 1,
+        "zero --max-alloc should exit 1, got: {stderr_text}"
+    );
     assert!(
-        !stderr_text.contains("--max-alloc"),
-        "zero --max-alloc must not raise a max-alloc error, got: {stderr_text}"
+        stderr_text.contains("max-alloc must be greater than zero"),
+        "expected the upstream zero-rejection text, got: {stderr_text}"
+    );
+}
+
+#[test]
+fn max_alloc_non_zero_value_still_transfers() {
+    // Positive control for `max_alloc_zero_value_is_rejected`: without it the
+    // rejection test would pass even if every --max-alloc value were refused.
+    // A valid cap must leave the run to succeed on its own merits.
+    let _guard = clear_rsync_rsh();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    std::fs::create_dir(&src).expect("create src");
+    std::fs::write(src.join("f.txt"), b"payload\n").expect("write source file");
+
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from("--max-alloc=2G"),
+        OsString::from(format!("{}/", src.display())),
+        OsString::from(format!("{}/", dst.display())),
+    ]);
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert_eq!(
+        code, 0,
+        "valid --max-alloc should succeed, got: {stderr_text}"
+    );
+    assert_eq!(
+        std::fs::read(dst.join("f.txt")).expect("read destination file"),
+        b"payload\n"
+    );
+}
+
+#[test]
+fn max_alloc_zero_from_the_environment_is_rejected() {
+    // upstream: options.c:2061-2073 - RSYNC_MAX_ALLOC seeds `max_alloc_arg`,
+    // so an environment-supplied zero reaches the same rejection as the flag.
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _rsh = clear_rsync_rsh();
+    let _env = EnvGuard::set("RSYNC_MAX_ALLOC", OsStr::new("0"));
+
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert_eq!(
+        code, 1,
+        "RSYNC_MAX_ALLOC=0 should exit 1, got: {stderr_text}"
+    );
+    assert!(
+        stderr_text.contains("max-alloc must be greater than zero"),
+        "expected the upstream zero-rejection text, got: {stderr_text}"
     );
 }
 
