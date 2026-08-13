@@ -1,0 +1,73 @@
+# Gate: every `upstream: <file>:<line>` citation must name a file the pinned
+# upstream rsync release has, at a line that file has.
+#
+# WHY THIS IS ITS OWN WORKFLOW, AND WHY IT HAS NO `paths:` FILTER.
+#
+# The check itself lives in `xtask/src/commands/citations.rs` and also runs as a
+# unit test, so it rides the `nextest` cell in ci.yml. But ci.yml is path-filtered
+# to code (`crates/**`, `xtask/**`, `tools/**`, ...) and lists no documentation
+# path, so a docs-only pull request triggers ci.yml not at all - and with it, the
+# citation gate.
+#
+# That is exactly backwards. `cargo xtask citations` scans every git-tracked file,
+# markdown included; documentation is where citations are least likely to be
+# checked by a compiler and most likely to be wrong. A docs-only PR is precisely
+# the change this gate exists to validate, and it was the one change that skipped
+# it. A green run on such a PR meant "nothing else broke", not "the new wording
+# was checked".
+#
+# Adding doc globs to ci.yml's filter would work until someone adds a doc
+# directory the list does not enumerate - a filter that must track every
+# documentation location is a filter that drifts back into this hole. Running
+# unfiltered removes the failure mode instead of re-describing it.
+#
+# The cost of running this on every pull request is small and was measured, not
+# assumed: `cargo xtask citations` builds 68 packages, where the workspace
+# nextest cell builds 490. It needs no upstream tarball either - the gate reads
+# the committed `tools/ci/upstream-3.4.4-lines.tsv` manifest, which is why the
+# manifest exists.
+#
+# This deliberately overlaps the copy that runs under nextest. The duplication is
+# cheap and the two have different trigger sets; the standalone job is the one
+# that covers docs-only changes.
+name: Citations
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: citations-${{ github.ref }}
+  # Superseded pull request pushes cancel; pushes to master do not, so every
+  # merge commit keeps a completed run for bisection.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  citations:
+    name: Upstream citations resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: citations-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check every citation resolves in the pinned upstream release
+        run: cargo xtask citations
