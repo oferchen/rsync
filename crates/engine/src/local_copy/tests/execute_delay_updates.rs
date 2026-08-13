@@ -531,20 +531,49 @@ fn delay_updates_dry_run_does_not_modify_existing() {
 }
 
 
-/// Test that delay_updates works with --delete to remove extraneous files.
-/// TODO: Fix implementation - delay_updates with delete has partial file finalization issue.
-#[test]
-#[ignore = "delay_updates with delete: partial file finalization not yet working"]
-fn delay_updates_with_delete_removes_extraneous() {
+/// Asserts the `--delay-updates` staging contract survives a deletion sweep.
+///
+/// `--delay-updates` writes every transferred file into a `.~tmp~` staging
+/// directory inside its destination directory and renames it into place only
+/// once the whole transfer has finished. A deletion sweep walks those same
+/// directories looking for entries the source does not have, so the staging
+/// directory is precisely the kind of entry it would remove - and removing it
+/// discards the pending updates without any error surfacing.
+///
+/// Upstream never lets the two collide. `generator.c:2409-2419` parks the
+/// generator on the receiver's phase-2 `MSG_DONE` - the acknowledgement that
+/// `handle_delayed_updates()` has renamed everything and dropped each staging
+/// directory - before running `do_delayed_deletions()` / `do_delete_pass()` at
+/// `generator.c:2425-2428`; and the delete-during sweep reaches a directory
+/// (`generator.c:1532-1535`) before any file inside it has been received, so
+/// no staging directory exists yet to be mistaken for extraneous.
+///
+/// What that guarantees observably - and what this pins, for every
+/// `--delete-WHEN` variant - is: the delayed content lands, extraneous entries
+/// go, and no staging directory is left behind.
+fn assert_delay_updates_finalizes_under_deletion(
+    timing: &str,
+    configure: impl FnOnce(LocalCopyOptions) -> LocalCopyOptions,
+) {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
-    fs::create_dir_all(&source_root).expect("source dir");
-    fs::create_dir_all(&dest_root).expect("dest dir");
+    let source_nested = source_root.join("nested");
+    let dest_nested = dest_root.join("nested");
+    fs::create_dir_all(&source_nested).expect("source dirs");
+    fs::create_dir_all(&dest_nested).expect("dest dirs");
 
+    // Destination sizes differ from the source so the quick-check cannot skip
+    // the transfer when both files are written within the same second.
     fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-    fs::write(dest_root.join("keep.txt"), b"old keep").expect("write existing");
-    fs::write(dest_root.join("delete_me.txt"), b"delete").expect("write extraneous");
+    fs::write(dest_root.join("keep.txt"), b"stale keep").expect("write stale keep");
+    fs::write(source_nested.join("keep.txt"), b"nested keep").expect("write nested keep");
+    fs::write(dest_nested.join("keep.txt"), b"stale nested keep")
+        .expect("write stale nested keep");
+
+    fs::write(dest_root.join("delete_me.txt"), b"extraneous").expect("write extraneous");
+    fs::write(dest_nested.join("delete_me.txt"), b"extraneous nested")
+        .expect("write nested extraneous");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -555,18 +584,73 @@ fn delay_updates_with_delete_removes_extraneous() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .delay_updates(true)
-                .delete(true),
+            configure(LocalCopyOptions::default().delay_updates(true)),
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join("keep.txt").exists());
+    assert_eq!(summary.files_copied(), 2, "{timing}: both files transfer");
+
+    // Content, not mere existence: both destination files already existed, so
+    // an `exists()` check would pass even if the delayed rename never ran.
+    assert_eq!(
+        fs::read(dest_root.join("keep.txt")).expect("read keep"),
+        b"keep",
+        "{timing}: delayed update must be renamed into place"
+    );
+    assert_eq!(
+        fs::read(dest_nested.join("keep.txt")).expect("read nested keep"),
+        b"nested keep",
+        "{timing}: delayed update in a nested directory must be renamed into place"
+    );
+
     assert!(
         !dest_root.join("delete_me.txt").exists(),
-        "extraneous file should be deleted"
+        "{timing}: extraneous file must be deleted"
     );
+    assert!(
+        !dest_nested.join("delete_me.txt").exists(),
+        "{timing}: extraneous nested file must be deleted"
+    );
+
+    for dir in [&dest_root, &dest_nested] {
+        let staging = dir.join(crate::local_copy::options::staging::DELAY_UPDATES_PARTIAL_DIR);
+        assert!(
+            !staging.exists(),
+            "{timing}: staging directory must not survive the transfer: {}",
+            staging.display()
+        );
+    }
+}
+
+#[test]
+fn delay_updates_with_delete_removes_extraneous() {
+    assert_delay_updates_finalizes_under_deletion("--delete", |options| options.delete(true));
+}
+
+#[test]
+fn delay_updates_with_delete_before_removes_extraneous() {
+    assert_delay_updates_finalizes_under_deletion("--delete-before", |options| {
+        options.delete_before(true)
+    });
+}
+
+#[test]
+fn delay_updates_with_delete_during_removes_extraneous() {
+    assert_delay_updates_finalizes_under_deletion("--delete-during", LocalCopyOptions::delete_during);
+}
+
+#[test]
+fn delay_updates_with_delete_delay_removes_extraneous() {
+    assert_delay_updates_finalizes_under_deletion("--delete-delay", |options| {
+        options.delete_delay(true)
+    });
+}
+
+#[test]
+fn delay_updates_with_delete_after_removes_extraneous() {
+    assert_delay_updates_finalizes_under_deletion("--delete-after", |options| {
+        options.delete_after(true)
+    });
 }
 
 #[test]

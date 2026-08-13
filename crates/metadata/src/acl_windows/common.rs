@@ -38,22 +38,27 @@ pub(super) fn warn_partial_apply() {
     });
 }
 
-/// Emits a per-file audit record naming the ACL entries whose principal
-/// could not be resolved to a Windows SID during apply.
+/// Emits a per-file audit record naming the ACL entries that were discarded,
+/// with `reason` supplying the direction-specific clause.
+///
+/// Both directions of the NTFS<->rsync ACL translation are lossy, and both
+/// report through this one funnel: the apply direction loses principals with
+/// no SID on the destination host, and the read direction loses every ACE the
+/// POSIX-style wire format cannot express (deny, audit, alarm, object).
+/// Lossiness is a documented scope choice; silence would not be.
 ///
 /// Unlike [`warn_partial_apply`], this diagnostic is not rate-limited and
-/// names each dropped principal: cross-domain transfers can lose different
+/// names each dropped entry: cross-domain transfers can lose different
 /// entries on different files, and operators need a complete per-file trail
-/// of exactly which entries were discarded rather than a single opaque
-/// warning. Mirrors the spirit of upstream `acls.c`, which warns when an id
-/// cannot be mapped to a destination account.
-pub(super) fn warn_dropped_aces(path: &Path, dropped: &[String]) {
+/// of exactly what was discarded rather than a single opaque warning. Mirrors
+/// the spirit of upstream `acls.c`, which warns when an id cannot be mapped to
+/// a destination account.
+pub(super) fn warn_dropped_aces(path: &Path, reason: &str, dropped: &[String]) {
     if dropped.is_empty() {
         return;
     }
     eprintln!(
-        "warning: {}: ACL entries could not be mapped to Windows SIDs and were dropped \
-         ({} total): {}",
+        "warning: {}: ACL entries {reason} and were dropped ({} total): {}",
         path.display(),
         dropped.len(),
         dropped.join(", "),
