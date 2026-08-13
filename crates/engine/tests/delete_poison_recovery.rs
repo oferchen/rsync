@@ -44,8 +44,8 @@
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
 use engine::delete::{DeleteEntry, DeleteEntryKind, DeletePlan};
@@ -79,6 +79,49 @@ fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Ordering barrier: the poisoner has left its scope, so survivors may assert
+/// the post-poison contract unambiguously.
+///
+/// Survivors block here rather than polling. The bounded spin this replaces
+/// yielded a fixed number of times and then asserted the flag was set, which
+/// is an assertion about scheduler latency rather than about the recovery
+/// contract: a loaded runner that had simply not scheduled the poisoner yet
+/// produced a failure indistinguishable from a real regression.
+///
+/// The signal is published from [`Drop`], so *every* exit path releases it -
+/// including an unexpected panic inside the poisoner. Survivors therefore
+/// cannot hang waiting on a poisoner that died early; that case surfaces as
+/// the poisoner's own panic plus the survivors' `is_poisoned` assertion, both
+/// of which fail loudly.
+#[derive(Default)]
+struct PoisonerFinished {
+    reached: Mutex<bool>,
+    signal: Condvar,
+}
+
+impl PoisonerFinished {
+    /// Blocks until the poisoner has left its scope.
+    fn wait(&self) {
+        let mut reached = lock_or_recover(&self.reached);
+        while !*reached {
+            reached = self
+                .signal
+                .wait(reached)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// Publishes [`PoisonerFinished`] when the poisoner's scope ends.
+struct PoisonerScope(Arc<PoisonerFinished>);
+
+impl Drop for PoisonerScope {
+    fn drop(&mut self) {
+        *lock_or_recover(&self.0.reached) = true;
+        self.0.signal.notify_all();
+    }
+}
+
 /// Builds a deterministic plan keyed by `worker_id` and `slot` so every
 /// directory path is unique and the final assertion can enumerate the
 /// expected set without storing it.
@@ -92,21 +135,12 @@ fn make_plan(worker_id: usize, slot: usize) -> DeletePlan {
     plan
 }
 
-// Ignored: the 10_000-yield bounded spin used to wait for the poisoner to
-// publish its flag (line 149-153) races on slow / heavily-loaded CI runners
-// and intermittently times out before the poisoner finishes panicking, which
-// then trips the survivor's "poisoner must signal" assertion at line 155 and
-// poisons every concurrent PR with a false-positive nextest failure. The
-// recovery contract under verification is exercised by the unit-level mutex
-// poison tests; restore this test once the synchronisation primitive switches
-// from a bounded spin to a condvar-backed wait.
-#[ignore = "flaky: bounded spin races the poisoner under CI load"]
 #[test]
 fn surviving_threads_keep_inserting_after_lock_poison() {
     let store: Arc<PlanStore> = Arc::new(Mutex::new(HashMap::new()));
     // The poisoner releases this gate only after it has poisoned the lock so
     // survivors observe the poisoned state on their very first acquisition.
-    let lock_poisoned = Arc::new(AtomicBool::new(false));
+    let poisoner_finished = Arc::new(PoisonerFinished::default());
     // All workers cross this barrier together so the poisoner is guaranteed
     // to win the race to the lock against fresh waiters.
     let start = Arc::new(Barrier::new(WORKERS));
@@ -116,7 +150,7 @@ fn surviving_threads_keep_inserting_after_lock_poison() {
     let mut handles = Vec::with_capacity(WORKERS);
     for worker_id in 0..WORKERS {
         let store = Arc::clone(&store);
-        let lock_poisoned = Arc::clone(&lock_poisoned);
+        let poisoner_finished = Arc::clone(&poisoner_finished);
         let start = Arc::clone(&start);
         let attempts = Arc::clone(&survivor_insert_attempts);
         let successes = Arc::clone(&survivor_insert_successes);
@@ -125,6 +159,11 @@ fn surviving_threads_keep_inserting_after_lock_poison() {
             start.wait();
 
             if worker_id == POISONER_ID {
+                // Release the survivors' gate on every exit path, so a
+                // poisoner that fails early fails loudly instead of hanging
+                // them.
+                let _scope = PoisonerScope(Arc::clone(&poisoner_finished));
+
                 // Publish a handful of plans cleanly so the test can verify
                 // that pre-panic state survives the poison.
                 for slot in 0..POISONER_PLANS_PRE_PANIC {
@@ -147,24 +186,13 @@ fn surviving_threads_keep_inserting_after_lock_poison() {
                     store.is_poisoned(),
                     "panic inside held guard must poison the mutex"
                 );
-                lock_poisoned.store(true, Ordering::SeqCst);
                 return;
             }
 
-            // Survivors wait for the poisoner to publish the poisoned state
-            // so the assertions below describe the post-poison behaviour
-            // unambiguously. A bounded spin avoids hanging the test if the
-            // poisoner thread dies before flipping the flag.
-            for _ in 0..10_000 {
-                if lock_poisoned.load(Ordering::SeqCst) {
-                    break;
-                }
-                thread::yield_now();
-            }
-            assert!(
-                lock_poisoned.load(Ordering::SeqCst),
-                "poisoner must signal the poisoned state before survivors run"
-            );
+            // Survivors block until the poisoner has finished, so the
+            // assertions below describe the post-poison behaviour
+            // unambiguously regardless of how the runner schedules threads.
+            poisoner_finished.wait();
             assert!(
                 store.is_poisoned(),
                 "survivors must observe a poisoned mutex"
