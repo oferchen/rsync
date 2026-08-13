@@ -1728,6 +1728,12 @@ mod local_copy_option_wiring_tests {
         );
     }
 
+    /// ⚠ Weaker than its sibling in `remote::flags`, which destructures
+    /// `DeletionConfig` exhaustively so the compiler rejects a newly added field
+    /// until someone decides how it crosses the bridge. `LocalCopyOptions` keeps
+    /// its fields private to `engine`, so this side can only assert an explicit
+    /// list - a new option added there will not fail here on its own.
+    ///
     /// CLASS GUARD: the deletion group must survive this bridge as a whole.
     /// `ignore_errors` was carried by neither of oc's two config bridges, so
     /// this asserts every deletion option together rather than one field.

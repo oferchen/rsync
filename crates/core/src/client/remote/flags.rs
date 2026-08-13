@@ -925,13 +925,22 @@ mod tests {
         );
     }
 
-    /// CLASS GUARD: every deletion option the client can set must survive the
-    /// bridge. `ignore_errors` was the third long-form-only flag to be dropped
-    /// here, so this asserts the whole group at once rather than one field -
-    /// a newly added `DeletionConfig` field that nobody carries fails here.
+    /// CLASS GUARD: every deletion option must survive the bridge.
+    ///
+    /// `ignore_errors` was the THIRD long-form-only flag dropped by this
+    /// function - `--preallocate` and `--remove-source-files` came before it,
+    /// and their fix comments sit a few lines above the fix for this one. A
+    /// per-flag test would have caught none of the three, so this asserts the
+    /// group rather than a field.
+    ///
+    /// The completeness half is enforced by the COMPILER, not by a hand-kept
+    /// list: the exhaustive destructure below stops building the moment a field
+    /// is added to `DeletionConfig`, forcing whoever adds it to decide how it
+    /// crosses the bridge instead of silently inheriting `Default`.
     #[test]
     fn apply_common_server_flags_carries_every_deletion_option() {
         let config = ClientConfig::builder()
+            .delete_after(true)
             .delete_excluded(true)
             .ignore_errors(true)
             .max_delete(Some(7))
@@ -939,9 +948,19 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
 
-        assert!(server_config.deletion.delete_excluded, "delete_excluded");
-        assert!(server_config.deletion.ignore_errors, "ignore_errors");
-        assert_eq!(server_config.deletion.max_delete, Some(7), "max_delete");
+        let ::transfer::config::DeletionConfig {
+            max_delete,
+            ignore_errors,
+            late_delete,
+            delete_after,
+            delete_excluded,
+        } = server_config.deletion;
+
+        assert_eq!(max_delete, Some(7), "max_delete");
+        assert!(ignore_errors, "ignore_errors");
+        assert!(late_delete, "late_delete");
+        assert!(delete_after, "delete_after");
+        assert!(delete_excluded, "delete_excluded");
     }
 
     #[test]
