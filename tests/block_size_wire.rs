@@ -44,9 +44,15 @@
 //!   remainder; only the first differs, so literal == 700 and the rest
 //!   (3396 bytes, INCLUDING the short final block) matches.
 //!
-//! The default case therefore does double duty: it is the non-vacuity control
-//! (a run that ignored `-B` would print these numbers for BOTH cases, which the
-//! `assert_ne!` below rejects) and it pins the short-final-block match.
+//! The default case is the non-vacuity control: a run that ignored `-B` would
+//! print those numbers for BOTH cases, which the `assert_ne!` below rejects.
+//!
+//! It is deliberately NOT a short-final-block pin, though it looks like one.
+//! The basis differs only in bytes 0..49, so the 596-byte tail is preceded by a
+//! four-block match run and is reachable by adjacency continuation alone. A
+//! build that could only reach a short final block by adjacency would pass this
+//! identically. Pinning standalone-tail reachability needs a fixture that shares
+//! ONLY the tail; that belongs with the tail-block work, not here.
 //!
 //! Skip conditions (test passes with a printed reason):
 //! - Not Unix (the remote-shell shim uses `/bin/sh`).
@@ -243,14 +249,17 @@ fn block_size_is_honoured_on_every_transport() {
 /// (rsync.h:25), which yields a DIFFERENT split. A path that ignores `-B`
 /// prints these numbers in both tests, so the `assert_ne!` is what turns the
 /// pair into a discriminating oracle.
+///
+/// The 3396 matched bytes include the 596-byte tail, but that does NOT pin
+/// standalone short-block reachability - see the module docs for why.
 #[test]
-fn default_block_size_differs_and_matches_the_short_final_block() {
+fn default_block_size_differs_from_an_explicit_one() {
     for transport in Transport::ALL {
         let split = run(transport, None);
         assert_eq!(
             (split.literal, split.matched),
             (700, 3396),
-            "{transport:?}: 5 x 700 + a 596-byte tail, first block dirty, tail matched",
+            "{transport:?}: 5 x 700 + a 596-byte tail, first block dirty",
         );
         assert_ne!(
             (split.literal, split.matched),
