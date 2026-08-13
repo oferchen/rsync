@@ -557,35 +557,68 @@ jobs:
 
       # Provide the x86_64-w64-mingw32-gcc C cross-compiler that the windows-gnu
       # build scripts of zstd-sys / libz-ng-sys invoke. The ubuntu-latest image
-      # does not reliably ship it, so install it - but a transient apt mirror
-      # failure must not fail the whole required job (observed: the install step
-      # failed all retries, skipping the compile). Hardening: skip if already
-      # present; install the small gcc-mingw-w64-x86-64 (not the large mingw-w64
-      # metapackage); apt-internal Acquire::Retries plus a bounded backoff loop;
-      # and verify the binary actually landed instead of trusting apt's exit code.
+      # does not reliably ship it, so it has to be installed.
+      #
+      # The .deb set is cached rather than re-fetched, so the common path does
+      # no network I/O at all and a transient apt-mirror failure cannot reach
+      # it. This replaces a 5-attempt backoff loop: re-attempting a download
+      # does not make a mirror healthy, it just spends up to 150s of runner
+      # time before failing anyway. Same shape as the cargo-nextest install.
+      - name: Restore mingw-w64 packages
+        id: mingw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/mingw-w64-debs
+          # The package set is pinned by the runner image, so the image label is
+          # part of the key: a new image re-resolves the set instead of
+          # installing stale .debs against a moved libc.
+          key: mingw-w64-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-v1
+
       - name: Install mingw-w64
         run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          debs="$HOME/mingw-w64-debs"
+
           if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            echo "mingw-w64 already present: $(x86_64-w64-mingw32-gcc --version | head -1)"
+            echo "mingw-w64 already in the image: $(x86_64-w64-mingw32-gcc --version | head -1)"
             exit 0
           fi
-          export DEBIAN_FRONTEND=noninteractive
-          for attempt in 1 2 3 4 5; do
-            if timeout 240 sudo apt-get update -o Acquire::Retries=3 \
-              && timeout 240 sudo apt-get install -y --no-install-recommends \
-                   -o Acquire::Retries=3 gcc-mingw-w64-x86-64; then
-              if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-                x86_64-w64-mingw32-gcc --version | head -1
-                exit 0
-              fi
-              echo "apt reported success but x86_64-w64-mingw32-gcc is still missing" >&2
+
+          # Cold miss only: resolve and download the package set once. There is
+          # no retry - a failure here fails the job immediately and loudly, with
+          # the apt diagnostics needed to tell a mirror outage from a package
+          # that has been renamed out from under us.
+          if ! compgen -G "$debs/*.deb" >/dev/null; then
+            # Empty apt's archive dir first so the copy below picks up only what
+            # this install resolves, never leftovers from the image build - an
+            # unrelated .deb swept into the cache would be dpkg -i'd on every
+            # later hit.
+            sudo apt-get clean
+            if ! sudo apt-get update; then
+              echo "apt-get update failed; mingw-w64 cannot be resolved" >&2
+              apt-cache policy gcc-mingw-w64-x86-64 2>&1 | head -30 >&2 || true
+              exit 1
             fi
-            echo "mingw-w64 install attempt ${attempt} failed; retrying in $((attempt * 10))s" >&2
-            sleep "$((attempt * 10))"
-          done
-          echo "mingw-w64 install failed after 5 attempts; diagnostics:" >&2
-          apt-cache policy gcc-mingw-w64-x86-64 mingw-w64 2>&1 | head -30 >&2 || true
-          exit 1
+            # gcc-mingw-w64-x86-64 is the small compiler package, not the large
+            # mingw-w64 metapackage. --download-only pulls it AND its
+            # dependencies, so the cached set is self-sufficient on a later hit.
+            sudo apt-get install -y --no-install-recommends --download-only \
+              gcc-mingw-w64-x86-64
+            mkdir -p "$debs"
+            sudo cp /var/cache/apt/archives/*.deb "$debs"/
+            sudo chown -R "$(id -u):$(id -g)" "$debs"
+          fi
+
+          sudo dpkg -i "$debs"/*.deb
+
+          # Verify the binary actually landed rather than trusting an exit code:
+          # apt has reported success while leaving the compiler absent.
+          if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+            echo "install reported success but x86_64-w64-mingw32-gcc is missing" >&2
+            exit 1
+          fi
+          x86_64-w64-mingw32-gcc --version | head -1
 
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
