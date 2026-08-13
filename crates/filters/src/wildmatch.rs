@@ -58,13 +58,30 @@ fn at(bytes: &[u8], i: usize) -> u8 {
     bytes.get(i).copied().unwrap_or(0)
 }
 
+/// Folds an upper-case ASCII byte to lower case when `fold` is set.
+///
+/// upstream: `lib/wildmatch.c dowild()` - `if (force_lower_case && ISUPPER(c))`.
+/// `ISASCII` is a no-op under `STDC_HEADERS`, so upstream's `isupper` runs in
+/// the C locale, where only ASCII `A`-`Z` qualify.
+#[inline]
+const fn maybe_fold(ch: u8, fold: bool) -> u8 {
+    if fold && ch.is_ascii_uppercase() {
+        ch.to_ascii_lowercase()
+    } else {
+        ch
+    }
+}
+
 /// Core recursive matcher. `p` is the remaining pattern, `text` the remaining
-/// candidate. Returns `TRUE`/`FALSE`/`ABORT_ALL`/`ABORT_TO_STARSTAR` exactly as
-/// upstream's `dowild()`.
+/// candidate. `fold` selects the case-insensitive mode, folding both the text
+/// and the pattern. Returns `TRUE`/`FALSE`/`ABORT_ALL`/`ABORT_TO_STARSTAR`
+/// exactly as upstream's `dowild()`.
 ///
 /// upstream: `lib/wildmatch.c:64` `static int dowild(...)` (single-string case;
-/// the `a` virtual-join array is always empty here).
-fn dowild(p: &[u8], text: &[u8]) -> i32 {
+/// the `a` virtual-join array is always empty here). `fold` stands in for
+/// upstream's `force_lower_case` file-static, which `iwildmatch()` raises
+/// around its `dowild()` call (`lib/wildmatch.c:298`).
+fn dowild(p: &[u8], text: &[u8], fold: bool) -> i32 {
     let mut pi = 0usize;
     let mut ti = 0usize;
 
@@ -78,12 +95,14 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
             return ABORT_ALL;
         }
 
+        t_ch = maybe_fold(t_ch, fold);
+
         match p_ch {
             b'\\' => {
                 // Literal match with following character. p[1]=='\0' falls to
                 // the default test below via p_ch becoming NUL.
                 pi += 1;
-                let esc = at(p, pi);
+                let esc = maybe_fold(at(p, pi), fold);
                 if t_ch != esc {
                     return FALSE;
                 }
@@ -120,7 +139,7 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
                     if t_ch == 0 {
                         break;
                     }
-                    let matched = dowild(&p[pi..], &text[ti..]);
+                    let matched = dowild(&p[pi..], &text[ti..], fold);
                     if matched != FALSE {
                         if !special || matched != ABORT_TO_STARSTAR {
                             return matched;
@@ -156,6 +175,7 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
                         if p_ch_class == 0 {
                             return ABORT_ALL;
                         }
+                        p_ch_class = maybe_fold(p_ch_class, fold);
                         if t_ch == p_ch_class {
                             matched = true;
                         }
@@ -173,6 +193,7 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
                                 return ABORT_ALL;
                             }
                         }
+                        p_ch_class = maybe_fold(p_ch_class, fold);
                         if t_ch <= p_ch_class && t_ch >= prev_ch {
                             matched = true;
                         }
@@ -209,8 +230,11 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
                             }
                             p_ch_class = 0; // makes prev_ch get set to 0
                         }
-                    } else if t_ch == p_ch_class {
-                        matched = true;
+                    } else {
+                        p_ch_class = maybe_fold(p_ch_class, fold);
+                        if t_ch == p_ch_class {
+                            matched = true;
+                        }
                     }
                     // } while (prev_ch = p_ch, (p_ch = *++p) != ']');
                     prev_ch = p_ch_class;
@@ -227,7 +251,7 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
                 ti += 1;
             }
             _ => {
-                if t_ch != p_ch {
+                if t_ch != maybe_fold(p_ch, fold) {
                     return FALSE;
                 }
                 pi += 1;
@@ -250,7 +274,30 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
 /// upstream: `lib/wildmatch.c:288` `int wildmatch(const char *pattern, const
 /// char *text)`.
 pub fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
-    dowild(pattern, text) == TRUE
+    dowild(pattern, text, false) == TRUE
+}
+
+/// Case-insensitive [`wildmatch`]: ASCII `A`-`Z` fold to lower case on **both**
+/// sides, including inside `[...]` bracket expressions.
+///
+/// Folding the pattern as well as the text is what makes the match symmetric.
+/// Before rsync 3.5.0 only the text was folded, so an upper-case token such as
+/// a `hosts deny` entry `*.BADDOMAIN.COM` never matched a lower-case peer name
+/// and the access check failed open. The same asymmetry hit bracket members, so
+/// `[A-Z]bc` did not match `abc`.
+///
+/// The fold applies to literal pattern bytes, escaped bracket members
+/// (`[\A]`), and both ends of a bracket range (`[A-Z]`; the low end is folded
+/// as the previous member before it becomes the range start). POSIX classes are
+/// deliberately *not* special-cased: they test the already-folded text byte, so
+/// `[[:upper:]]` never matches under this entry point, exactly as upstream.
+///
+/// upstream: `lib/wildmatch.c:298` `int iwildmatch(const char *pattern, const
+/// char *text)`. rsync 3.5.0 added the four pattern-side folds inside
+/// `dowild()`: the literal/escaped default arm, the escaped bracket member, the
+/// bracket range end, and the plain bracket member.
+pub fn iwildmatch(pattern: &[u8], text: &[u8]) -> bool {
+    dowild(pattern, text, true) == TRUE
 }
 
 #[cfg(test)]
@@ -458,6 +505,712 @@ mod tests {
         ),
     ];
 
+    /// Case-folding matrix generated from upstream rsync 3.5.0's own
+    /// `lib/wildmatch.c`. Each row is
+    /// `(pattern, text, iwildmatch_expected, wildmatch_expected)`.
+    ///
+    /// The first 518 rows sweep every bracket construct upstream's `dowild()` handles -
+    /// ranges (both directions), `[!...]`/`[^...]` negation, escaped members,
+    /// a literal `]` first in the set, POSIX classes, sets mixing ranges with
+    /// classes, and malformed sets - against a spread of upper-case,
+    /// lower-case, caseless and delimiter texts. The remaining rows are
+    /// upstream's own `t_iwildmatch.c` cases plus the bracket-bearing rows of
+    /// `wildtest.txt`, each permuted over as-is/upper/lower on both sides.
+    ///
+    /// The `wildmatch` column is generated from the same binary and is
+    /// identical under 3.4.4 and 3.5.0 (measured: 0 of 685 rows differ), so a
+    /// fold that leaked into the case-sensitive entry point fails here.
+    ///
+    /// upstream: `lib/wildmatch.c` (rsync 3.5.0), `t_iwildmatch.c`,
+    /// `wildtest.txt`.
+    const FOLD_VECTORS: &[(&[u8], &[u8], bool, bool)] = &[
+        (b"[a-z]x", b"ax", true, true),
+        (b"[a-z]x", b"Ax", true, false),
+        (b"[a-z]x", b"mx", true, true),
+        (b"[a-z]x", b"Mx", true, false),
+        (b"[a-z]x", b"zx", true, true),
+        (b"[a-z]x", b"Zx", true, false),
+        (b"[a-z]x", b"5x", false, false),
+        (b"[a-z]x", b"-x", false, false),
+        (b"[a-z]x", b"]x", false, false),
+        (b"[a-z]x", b"[x", false, false),
+        (b"[a-z]x", b"\\x", false, false),
+        (b"[a-z]x", b"_x", false, false),
+        (b"[a-z]x", b" x", false, false),
+        (b"[a-z]x", b"/x", false, false),
+        (b"[A-Z]x", b"ax", true, false),
+        (b"[A-Z]x", b"Ax", true, true),
+        (b"[A-Z]x", b"mx", true, false),
+        (b"[A-Z]x", b"Mx", true, true),
+        (b"[A-Z]x", b"zx", true, false),
+        (b"[A-Z]x", b"Zx", true, true),
+        (b"[A-Z]x", b"5x", false, false),
+        (b"[A-Z]x", b"-x", false, false),
+        (b"[A-Z]x", b"]x", false, false),
+        (b"[A-Z]x", b"[x", false, false),
+        (b"[A-Z]x", b"\\x", false, false),
+        (b"[A-Z]x", b"_x", false, false),
+        (b"[A-Z]x", b" x", false, false),
+        (b"[A-Z]x", b"/x", false, false),
+        (b"[a-Z]x", b"ax", true, true),
+        (b"[a-Z]x", b"Ax", true, false),
+        (b"[a-Z]x", b"mx", true, false),
+        (b"[a-Z]x", b"Mx", true, false),
+        (b"[a-Z]x", b"zx", true, false),
+        (b"[a-Z]x", b"Zx", true, false),
+        (b"[a-Z]x", b"5x", false, false),
+        (b"[a-Z]x", b"-x", false, false),
+        (b"[a-Z]x", b"]x", false, false),
+        (b"[a-Z]x", b"[x", false, false),
+        (b"[a-Z]x", b"\\x", false, false),
+        (b"[a-Z]x", b"_x", false, false),
+        (b"[a-Z]x", b" x", false, false),
+        (b"[a-Z]x", b"/x", false, false),
+        (b"[A-z]x", b"ax", true, true),
+        (b"[A-z]x", b"Ax", true, true),
+        (b"[A-z]x", b"mx", true, true),
+        (b"[A-z]x", b"Mx", true, true),
+        (b"[A-z]x", b"zx", true, true),
+        (b"[A-z]x", b"Zx", true, true),
+        (b"[A-z]x", b"5x", false, false),
+        (b"[A-z]x", b"-x", false, false),
+        (b"[A-z]x", b"]x", false, true),
+        (b"[A-z]x", b"[x", false, true),
+        (b"[A-z]x", b"\\x", false, true),
+        (b"[A-z]x", b"_x", false, true),
+        (b"[A-z]x", b" x", false, false),
+        (b"[A-z]x", b"/x", false, false),
+        (b"[!a-z]x", b"ax", false, false),
+        (b"[!a-z]x", b"Ax", false, true),
+        (b"[!a-z]x", b"mx", false, false),
+        (b"[!a-z]x", b"Mx", false, true),
+        (b"[!a-z]x", b"zx", false, false),
+        (b"[!a-z]x", b"Zx", false, true),
+        (b"[!a-z]x", b"5x", true, true),
+        (b"[!a-z]x", b"-x", true, true),
+        (b"[!a-z]x", b"]x", true, true),
+        (b"[!a-z]x", b"[x", true, true),
+        (b"[!a-z]x", b"\\x", true, true),
+        (b"[!a-z]x", b"_x", true, true),
+        (b"[!a-z]x", b" x", true, true),
+        (b"[!a-z]x", b"/x", false, false),
+        (b"[!A-Z]x", b"ax", false, true),
+        (b"[!A-Z]x", b"Ax", false, false),
+        (b"[!A-Z]x", b"mx", false, true),
+        (b"[!A-Z]x", b"Mx", false, false),
+        (b"[!A-Z]x", b"zx", false, true),
+        (b"[!A-Z]x", b"Zx", false, false),
+        (b"[!A-Z]x", b"5x", true, true),
+        (b"[!A-Z]x", b"-x", true, true),
+        (b"[!A-Z]x", b"]x", true, true),
+        (b"[!A-Z]x", b"[x", true, true),
+        (b"[!A-Z]x", b"\\x", true, true),
+        (b"[!A-Z]x", b"_x", true, true),
+        (b"[!A-Z]x", b" x", true, true),
+        (b"[!A-Z]x", b"/x", false, false),
+        (b"[^a-z]x", b"ax", false, false),
+        (b"[^a-z]x", b"Ax", false, true),
+        (b"[^a-z]x", b"mx", false, false),
+        (b"[^a-z]x", b"Mx", false, true),
+        (b"[^a-z]x", b"zx", false, false),
+        (b"[^a-z]x", b"Zx", false, true),
+        (b"[^a-z]x", b"5x", true, true),
+        (b"[^a-z]x", b"-x", true, true),
+        (b"[^a-z]x", b"]x", true, true),
+        (b"[^a-z]x", b"[x", true, true),
+        (b"[^a-z]x", b"\\x", true, true),
+        (b"[^a-z]x", b"_x", true, true),
+        (b"[^a-z]x", b" x", true, true),
+        (b"[^a-z]x", b"/x", false, false),
+        (b"[^A-Z]x", b"ax", false, true),
+        (b"[^A-Z]x", b"Ax", false, false),
+        (b"[^A-Z]x", b"mx", false, true),
+        (b"[^A-Z]x", b"Mx", false, false),
+        (b"[^A-Z]x", b"zx", false, true),
+        (b"[^A-Z]x", b"Zx", false, false),
+        (b"[^A-Z]x", b"5x", true, true),
+        (b"[^A-Z]x", b"-x", true, true),
+        (b"[^A-Z]x", b"]x", true, true),
+        (b"[^A-Z]x", b"[x", true, true),
+        (b"[^A-Z]x", b"\\x", true, true),
+        (b"[^A-Z]x", b"_x", true, true),
+        (b"[^A-Z]x", b" x", true, true),
+        (b"[^A-Z]x", b"/x", false, false),
+        (b"[abc]x", b"ax", true, true),
+        (b"[abc]x", b"Ax", true, false),
+        (b"[abc]x", b"mx", false, false),
+        (b"[abc]x", b"Mx", false, false),
+        (b"[abc]x", b"zx", false, false),
+        (b"[abc]x", b"Zx", false, false),
+        (b"[abc]x", b"5x", false, false),
+        (b"[abc]x", b"-x", false, false),
+        (b"[abc]x", b"]x", false, false),
+        (b"[abc]x", b"[x", false, false),
+        (b"[abc]x", b"\\x", false, false),
+        (b"[abc]x", b"_x", false, false),
+        (b"[abc]x", b" x", false, false),
+        (b"[abc]x", b"/x", false, false),
+        (b"[ABC]x", b"ax", true, false),
+        (b"[ABC]x", b"Ax", true, true),
+        (b"[ABC]x", b"mx", false, false),
+        (b"[ABC]x", b"Mx", false, false),
+        (b"[ABC]x", b"zx", false, false),
+        (b"[ABC]x", b"Zx", false, false),
+        (b"[ABC]x", b"5x", false, false),
+        (b"[ABC]x", b"-x", false, false),
+        (b"[ABC]x", b"]x", false, false),
+        (b"[ABC]x", b"[x", false, false),
+        (b"[ABC]x", b"\\x", false, false),
+        (b"[ABC]x", b"_x", false, false),
+        (b"[ABC]x", b" x", false, false),
+        (b"[ABC]x", b"/x", false, false),
+        (b"[aBc]x", b"ax", true, true),
+        (b"[aBc]x", b"Ax", true, false),
+        (b"[aBc]x", b"mx", false, false),
+        (b"[aBc]x", b"Mx", false, false),
+        (b"[aBc]x", b"zx", false, false),
+        (b"[aBc]x", b"Zx", false, false),
+        (b"[aBc]x", b"5x", false, false),
+        (b"[aBc]x", b"-x", false, false),
+        (b"[aBc]x", b"]x", false, false),
+        (b"[aBc]x", b"[x", false, false),
+        (b"[aBc]x", b"\\x", false, false),
+        (b"[aBc]x", b"_x", false, false),
+        (b"[aBc]x", b" x", false, false),
+        (b"[aBc]x", b"/x", false, false),
+        (b"[\\A]x", b"ax", true, false),
+        (b"[\\A]x", b"Ax", true, true),
+        (b"[\\A]x", b"mx", false, false),
+        (b"[\\A]x", b"Mx", false, false),
+        (b"[\\A]x", b"zx", false, false),
+        (b"[\\A]x", b"Zx", false, false),
+        (b"[\\A]x", b"5x", false, false),
+        (b"[\\A]x", b"-x", false, false),
+        (b"[\\A]x", b"]x", false, false),
+        (b"[\\A]x", b"[x", false, false),
+        (b"[\\A]x", b"\\x", false, false),
+        (b"[\\A]x", b"_x", false, false),
+        (b"[\\A]x", b" x", false, false),
+        (b"[\\A]x", b"/x", false, false),
+        (b"[\\a]x", b"ax", true, true),
+        (b"[\\a]x", b"Ax", true, false),
+        (b"[\\a]x", b"mx", false, false),
+        (b"[\\a]x", b"Mx", false, false),
+        (b"[\\a]x", b"zx", false, false),
+        (b"[\\a]x", b"Zx", false, false),
+        (b"[\\a]x", b"5x", false, false),
+        (b"[\\a]x", b"-x", false, false),
+        (b"[\\a]x", b"]x", false, false),
+        (b"[\\a]x", b"[x", false, false),
+        (b"[\\a]x", b"\\x", false, false),
+        (b"[\\a]x", b"_x", false, false),
+        (b"[\\a]x", b" x", false, false),
+        (b"[\\a]x", b"/x", false, false),
+        (b"[!\\A]x", b"ax", false, true),
+        (b"[!\\A]x", b"Ax", false, false),
+        (b"[!\\A]x", b"mx", true, true),
+        (b"[!\\A]x", b"Mx", true, true),
+        (b"[!\\A]x", b"zx", true, true),
+        (b"[!\\A]x", b"Zx", true, true),
+        (b"[!\\A]x", b"5x", true, true),
+        (b"[!\\A]x", b"-x", true, true),
+        (b"[!\\A]x", b"]x", true, true),
+        (b"[!\\A]x", b"[x", true, true),
+        (b"[!\\A]x", b"\\x", true, true),
+        (b"[!\\A]x", b"_x", true, true),
+        (b"[!\\A]x", b" x", true, true),
+        (b"[!\\A]x", b"/x", false, false),
+        (b"[]A-]x", b"ax", true, false),
+        (b"[]A-]x", b"Ax", true, true),
+        (b"[]A-]x", b"mx", false, false),
+        (b"[]A-]x", b"Mx", false, false),
+        (b"[]A-]x", b"zx", false, false),
+        (b"[]A-]x", b"Zx", false, false),
+        (b"[]A-]x", b"5x", false, false),
+        (b"[]A-]x", b"-x", true, true),
+        (b"[]A-]x", b"]x", true, true),
+        (b"[]A-]x", b"[x", false, false),
+        (b"[]A-]x", b"\\x", false, false),
+        (b"[]A-]x", b"_x", false, false),
+        (b"[]A-]x", b" x", false, false),
+        (b"[]A-]x", b"/x", false, false),
+        (b"[]a-]x", b"ax", true, true),
+        (b"[]a-]x", b"Ax", true, false),
+        (b"[]a-]x", b"mx", false, false),
+        (b"[]a-]x", b"Mx", false, false),
+        (b"[]a-]x", b"zx", false, false),
+        (b"[]a-]x", b"Zx", false, false),
+        (b"[]a-]x", b"5x", false, false),
+        (b"[]a-]x", b"-x", true, true),
+        (b"[]a-]x", b"]x", true, true),
+        (b"[]a-]x", b"[x", false, false),
+        (b"[]a-]x", b"\\x", false, false),
+        (b"[]a-]x", b"_x", false, false),
+        (b"[]a-]x", b" x", false, false),
+        (b"[]a-]x", b"/x", false, false),
+        (b"[]A-Z]x", b"ax", true, false),
+        (b"[]A-Z]x", b"Ax", true, true),
+        (b"[]A-Z]x", b"mx", true, false),
+        (b"[]A-Z]x", b"Mx", true, true),
+        (b"[]A-Z]x", b"zx", true, false),
+        (b"[]A-Z]x", b"Zx", true, true),
+        (b"[]A-Z]x", b"5x", false, false),
+        (b"[]A-Z]x", b"-x", false, false),
+        (b"[]A-Z]x", b"]x", true, true),
+        (b"[]A-Z]x", b"[x", false, false),
+        (b"[]A-Z]x", b"\\x", false, false),
+        (b"[]A-Z]x", b"_x", false, false),
+        (b"[]A-Z]x", b" x", false, false),
+        (b"[]A-Z]x", b"/x", false, false),
+        (b"[[:alpha:]]x", b"ax", true, true),
+        (b"[[:alpha:]]x", b"Ax", true, true),
+        (b"[[:alpha:]]x", b"mx", true, true),
+        (b"[[:alpha:]]x", b"Mx", true, true),
+        (b"[[:alpha:]]x", b"zx", true, true),
+        (b"[[:alpha:]]x", b"Zx", true, true),
+        (b"[[:alpha:]]x", b"5x", false, false),
+        (b"[[:alpha:]]x", b"-x", false, false),
+        (b"[[:alpha:]]x", b"]x", false, false),
+        (b"[[:alpha:]]x", b"[x", false, false),
+        (b"[[:alpha:]]x", b"\\x", false, false),
+        (b"[[:alpha:]]x", b"_x", false, false),
+        (b"[[:alpha:]]x", b" x", false, false),
+        (b"[[:alpha:]]x", b"/x", false, false),
+        (b"[[:upper:]]x", b"ax", false, false),
+        (b"[[:upper:]]x", b"Ax", false, true),
+        (b"[[:upper:]]x", b"mx", false, false),
+        (b"[[:upper:]]x", b"Mx", false, true),
+        (b"[[:upper:]]x", b"zx", false, false),
+        (b"[[:upper:]]x", b"Zx", false, true),
+        (b"[[:upper:]]x", b"5x", false, false),
+        (b"[[:upper:]]x", b"-x", false, false),
+        (b"[[:upper:]]x", b"]x", false, false),
+        (b"[[:upper:]]x", b"[x", false, false),
+        (b"[[:upper:]]x", b"\\x", false, false),
+        (b"[[:upper:]]x", b"_x", false, false),
+        (b"[[:upper:]]x", b" x", false, false),
+        (b"[[:upper:]]x", b"/x", false, false),
+        (b"[[:lower:]]x", b"ax", true, true),
+        (b"[[:lower:]]x", b"Ax", true, false),
+        (b"[[:lower:]]x", b"mx", true, true),
+        (b"[[:lower:]]x", b"Mx", true, false),
+        (b"[[:lower:]]x", b"zx", true, true),
+        (b"[[:lower:]]x", b"Zx", true, false),
+        (b"[[:lower:]]x", b"5x", false, false),
+        (b"[[:lower:]]x", b"-x", false, false),
+        (b"[[:lower:]]x", b"]x", false, false),
+        (b"[[:lower:]]x", b"[x", false, false),
+        (b"[[:lower:]]x", b"\\x", false, false),
+        (b"[[:lower:]]x", b"_x", false, false),
+        (b"[[:lower:]]x", b" x", false, false),
+        (b"[[:lower:]]x", b"/x", false, false),
+        (b"[[:digit:]]x", b"ax", false, false),
+        (b"[[:digit:]]x", b"Ax", false, false),
+        (b"[[:digit:]]x", b"mx", false, false),
+        (b"[[:digit:]]x", b"Mx", false, false),
+        (b"[[:digit:]]x", b"zx", false, false),
+        (b"[[:digit:]]x", b"Zx", false, false),
+        (b"[[:digit:]]x", b"5x", true, true),
+        (b"[[:digit:]]x", b"-x", false, false),
+        (b"[[:digit:]]x", b"]x", false, false),
+        (b"[[:digit:]]x", b"[x", false, false),
+        (b"[[:digit:]]x", b"\\x", false, false),
+        (b"[[:digit:]]x", b"_x", false, false),
+        (b"[[:digit:]]x", b" x", false, false),
+        (b"[[:digit:]]x", b"/x", false, false),
+        (b"[[:xdigit:]]x", b"ax", true, true),
+        (b"[[:xdigit:]]x", b"Ax", true, true),
+        (b"[[:xdigit:]]x", b"mx", false, false),
+        (b"[[:xdigit:]]x", b"Mx", false, false),
+        (b"[[:xdigit:]]x", b"zx", false, false),
+        (b"[[:xdigit:]]x", b"Zx", false, false),
+        (b"[[:xdigit:]]x", b"5x", true, true),
+        (b"[[:xdigit:]]x", b"-x", false, false),
+        (b"[[:xdigit:]]x", b"]x", false, false),
+        (b"[[:xdigit:]]x", b"[x", false, false),
+        (b"[[:xdigit:]]x", b"\\x", false, false),
+        (b"[[:xdigit:]]x", b"_x", false, false),
+        (b"[[:xdigit:]]x", b" x", false, false),
+        (b"[[:xdigit:]]x", b"/x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"ax", true, true),
+        (b"[a-c[:digit:]X-Z]x", b"Ax", true, false),
+        (b"[a-c[:digit:]X-Z]x", b"mx", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"Mx", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"zx", true, false),
+        (b"[a-c[:digit:]X-Z]x", b"Zx", true, true),
+        (b"[a-c[:digit:]X-Z]x", b"5x", true, true),
+        (b"[a-c[:digit:]X-Z]x", b"-x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"]x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"[x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"\\x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"_x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b" x", false, false),
+        (b"[a-c[:digit:]X-Z]x", b"/x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"ax", true, false),
+        (b"[A-C[:digit:]x-z]x", b"Ax", true, true),
+        (b"[A-C[:digit:]x-z]x", b"mx", false, false),
+        (b"[A-C[:digit:]x-z]x", b"Mx", false, false),
+        (b"[A-C[:digit:]x-z]x", b"zx", true, true),
+        (b"[A-C[:digit:]x-z]x", b"Zx", true, false),
+        (b"[A-C[:digit:]x-z]x", b"5x", true, true),
+        (b"[A-C[:digit:]x-z]x", b"-x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"]x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"[x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"\\x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"_x", false, false),
+        (b"[A-C[:digit:]x-z]x", b" x", false, false),
+        (b"[A-C[:digit:]x-z]x", b"/x", false, false),
+        (b"[--A]x", b"ax", true, false),
+        (b"[--A]x", b"Ax", true, true),
+        (b"[--A]x", b"mx", false, false),
+        (b"[--A]x", b"Mx", false, false),
+        (b"[--A]x", b"zx", false, false),
+        (b"[--A]x", b"Zx", false, false),
+        (b"[--A]x", b"5x", true, true),
+        (b"[--A]x", b"-x", true, true),
+        (b"[--A]x", b"]x", true, false),
+        (b"[--A]x", b"[x", true, false),
+        (b"[--A]x", b"\\x", true, false),
+        (b"[--A]x", b"_x", true, false),
+        (b"[--A]x", b" x", false, false),
+        (b"[--A]x", b"/x", false, false),
+        (b"[--a]x", b"ax", true, true),
+        (b"[--a]x", b"Ax", true, true),
+        (b"[--a]x", b"mx", false, false),
+        (b"[--a]x", b"Mx", false, true),
+        (b"[--a]x", b"zx", false, false),
+        (b"[--a]x", b"Zx", false, true),
+        (b"[--a]x", b"5x", true, true),
+        (b"[--a]x", b"-x", true, true),
+        (b"[--a]x", b"]x", true, true),
+        (b"[--a]x", b"[x", true, true),
+        (b"[--a]x", b"\\x", true, true),
+        (b"[--a]x", b"_x", true, true),
+        (b"[--a]x", b" x", false, false),
+        (b"[--a]x", b"/x", false, false),
+        (b"[A-\\\\]x", b"ax", true, false),
+        (b"[A-\\\\]x", b"Ax", true, true),
+        (b"[A-\\\\]x", b"mx", false, false),
+        (b"[A-\\\\]x", b"Mx", false, true),
+        (b"[A-\\\\]x", b"zx", false, false),
+        (b"[A-\\\\]x", b"Zx", false, true),
+        (b"[A-\\\\]x", b"5x", false, false),
+        (b"[A-\\\\]x", b"-x", false, false),
+        (b"[A-\\\\]x", b"]x", false, false),
+        (b"[A-\\\\]x", b"[x", false, true),
+        (b"[A-\\\\]x", b"\\x", false, true),
+        (b"[A-\\\\]x", b"_x", false, false),
+        (b"[A-\\\\]x", b" x", false, false),
+        (b"[A-\\\\]x", b"/x", false, false),
+        (b"[\\1-\\3]x", b"ax", false, false),
+        (b"[\\1-\\3]x", b"Ax", false, false),
+        (b"[\\1-\\3]x", b"mx", false, false),
+        (b"[\\1-\\3]x", b"Mx", false, false),
+        (b"[\\1-\\3]x", b"zx", false, false),
+        (b"[\\1-\\3]x", b"Zx", false, false),
+        (b"[\\1-\\3]x", b"5x", false, false),
+        (b"[\\1-\\3]x", b"-x", false, false),
+        (b"[\\1-\\3]x", b"]x", false, false),
+        (b"[\\1-\\3]x", b"[x", false, false),
+        (b"[\\1-\\3]x", b"\\x", false, false),
+        (b"[\\1-\\3]x", b"_x", false, false),
+        (b"[\\1-\\3]x", b" x", false, false),
+        (b"[\\1-\\3]x", b"/x", false, false),
+        (b"[A-EZ]x", b"ax", true, false),
+        (b"[A-EZ]x", b"Ax", true, true),
+        (b"[A-EZ]x", b"mx", false, false),
+        (b"[A-EZ]x", b"Mx", false, false),
+        (b"[A-EZ]x", b"zx", true, false),
+        (b"[A-EZ]x", b"Zx", true, true),
+        (b"[A-EZ]x", b"5x", false, false),
+        (b"[A-EZ]x", b"-x", false, false),
+        (b"[A-EZ]x", b"]x", false, false),
+        (b"[A-EZ]x", b"[x", false, false),
+        (b"[A-EZ]x", b"\\x", false, false),
+        (b"[A-EZ]x", b"_x", false, false),
+        (b"[A-EZ]x", b" x", false, false),
+        (b"[A-EZ]x", b"/x", false, false),
+        (b"[a-ez]x", b"ax", true, true),
+        (b"[a-ez]x", b"Ax", true, false),
+        (b"[a-ez]x", b"mx", false, false),
+        (b"[a-ez]x", b"Mx", false, false),
+        (b"[a-ez]x", b"zx", true, true),
+        (b"[a-ez]x", b"Zx", true, false),
+        (b"[a-ez]x", b"5x", false, false),
+        (b"[a-ez]x", b"-x", false, false),
+        (b"[a-ez]x", b"]x", false, false),
+        (b"[a-ez]x", b"[x", false, false),
+        (b"[a-ez]x", b"\\x", false, false),
+        (b"[a-ez]x", b"_x", false, false),
+        (b"[a-ez]x", b" x", false, false),
+        (b"[a-ez]x", b"/x", false, false),
+        (b"[!]-A]x", b"ax", false, true),
+        (b"[!]-A]x", b"Ax", false, true),
+        (b"[!]-A]x", b"mx", true, true),
+        (b"[!]-A]x", b"Mx", true, true),
+        (b"[!]-A]x", b"zx", true, true),
+        (b"[!]-A]x", b"Zx", true, true),
+        (b"[!]-A]x", b"5x", true, true),
+        (b"[!]-A]x", b"-x", true, true),
+        (b"[!]-A]x", b"]x", false, false),
+        (b"[!]-A]x", b"[x", true, true),
+        (b"[!]-A]x", b"\\x", true, true),
+        (b"[!]-A]x", b"_x", false, true),
+        (b"[!]-A]x", b" x", true, true),
+        (b"[!]-A]x", b"/x", false, false),
+        (b"[!]-a]x", b"ax", false, false),
+        (b"[!]-a]x", b"Ax", false, true),
+        (b"[!]-a]x", b"mx", true, true),
+        (b"[!]-a]x", b"Mx", true, true),
+        (b"[!]-a]x", b"zx", true, true),
+        (b"[!]-a]x", b"Zx", true, true),
+        (b"[!]-a]x", b"5x", true, true),
+        (b"[!]-a]x", b"-x", true, true),
+        (b"[!]-a]x", b"]x", false, false),
+        (b"[!]-a]x", b"[x", true, true),
+        (b"[!]-a]x", b"\\x", true, true),
+        (b"[!]-a]x", b"_x", false, false),
+        (b"[!]-a]x", b" x", true, true),
+        (b"[!]-a]x", b"/x", false, false),
+        (b"[Aa]x", b"ax", true, true),
+        (b"[Aa]x", b"Ax", true, true),
+        (b"[Aa]x", b"mx", false, false),
+        (b"[Aa]x", b"Mx", false, false),
+        (b"[Aa]x", b"zx", false, false),
+        (b"[Aa]x", b"Zx", false, false),
+        (b"[Aa]x", b"5x", false, false),
+        (b"[Aa]x", b"-x", false, false),
+        (b"[Aa]x", b"]x", false, false),
+        (b"[Aa]x", b"[x", false, false),
+        (b"[Aa]x", b"\\x", false, false),
+        (b"[Aa]x", b"_x", false, false),
+        (b"[Aa]x", b" x", false, false),
+        (b"[Aa]x", b"/x", false, false),
+        (b"[A]x", b"ax", true, false),
+        (b"[A]x", b"Ax", true, true),
+        (b"[A]x", b"mx", false, false),
+        (b"[A]x", b"Mx", false, false),
+        (b"[A]x", b"zx", false, false),
+        (b"[A]x", b"Zx", false, false),
+        (b"[A]x", b"5x", false, false),
+        (b"[A]x", b"-x", false, false),
+        (b"[A]x", b"]x", false, false),
+        (b"[A]x", b"[x", false, false),
+        (b"[A]x", b"\\x", false, false),
+        (b"[A]x", b"_x", false, false),
+        (b"[A]x", b" x", false, false),
+        (b"[A]x", b"/x", false, false),
+        (b"[a]x", b"ax", true, true),
+        (b"[a]x", b"Ax", true, false),
+        (b"[a]x", b"mx", false, false),
+        (b"[a]x", b"Mx", false, false),
+        (b"[a]x", b"zx", false, false),
+        (b"[a]x", b"Zx", false, false),
+        (b"[a]x", b"5x", false, false),
+        (b"[a]x", b"-x", false, false),
+        (b"[a]x", b"]x", false, false),
+        (b"[a]x", b"[x", false, false),
+        (b"[a]x", b"\\x", false, false),
+        (b"[a]x", b"_x", false, false),
+        (b"[a]x", b" x", false, false),
+        (b"[a]x", b"/x", false, false),
+        (b"[A-x", b"ax", false, false),
+        (b"[A-x", b"Ax", false, false),
+        (b"[A-x", b"mx", false, false),
+        (b"[A-x", b"Mx", false, false),
+        (b"[A-x", b"zx", false, false),
+        (b"[A-x", b"Zx", false, false),
+        (b"[A-x", b"5x", false, false),
+        (b"[A-x", b"-x", false, false),
+        (b"[A-x", b"]x", false, false),
+        (b"[A-x", b"[x", false, false),
+        (b"[A-x", b"\\x", false, false),
+        (b"[A-x", b"_x", false, false),
+        (b"[A-x", b" x", false, false),
+        (b"[A-x", b"/x", false, false),
+        (b"[!A-x", b"ax", false, false),
+        (b"[!A-x", b"Ax", false, false),
+        (b"[!A-x", b"mx", false, false),
+        (b"[!A-x", b"Mx", false, false),
+        (b"[!A-x", b"zx", false, false),
+        (b"[!A-x", b"Zx", false, false),
+        (b"[!A-x", b"5x", false, false),
+        (b"[!A-x", b"-x", false, false),
+        (b"[!A-x", b"]x", false, false),
+        (b"[!A-x", b"[x", false, false),
+        (b"[!A-x", b"\\x", false, false),
+        (b"[!A-x", b"_x", false, false),
+        (b"[!A-x", b" x", false, false),
+        (b"[!A-x", b"/x", false, false),
+        (b"[A]b]x", b"ax", false, false),
+        (b"[A]b]x", b"Ax", false, false),
+        (b"[A]b]x", b"mx", false, false),
+        (b"[A]b]x", b"Mx", false, false),
+        (b"[A]b]x", b"zx", false, false),
+        (b"[A]b]x", b"Zx", false, false),
+        (b"[A]b]x", b"5x", false, false),
+        (b"[A]b]x", b"-x", false, false),
+        (b"[A]b]x", b"]x", false, false),
+        (b"[A]b]x", b"[x", false, false),
+        (b"[A]b]x", b"\\x", false, false),
+        (b"[A]b]x", b"_x", false, false),
+        (b"[A]b]x", b" x", false, false),
+        (b"[A]b]x", b"/x", false, false),
+        (b"abc", b"ABC", true, false),
+        (b"abc", b"abc", true, true),
+        (b"ABC", b"ABC", true, true),
+        (b"ABC", b"abc", true, false),
+        (b"ABC", b"abd", false, false),
+        (b"ABC", b"ABD", false, false),
+        (b"abc", b"abd", false, false),
+        (b"abc", b"ABD", false, false),
+        (b"*.EXAMPLE.COM", b"foo.example.com", true, false),
+        (b"*.EXAMPLE.COM", b"FOO.EXAMPLE.COM", true, true),
+        (b"*.example.com", b"foo.example.com", true, true),
+        (b"*.example.com", b"FOO.EXAMPLE.COM", true, false),
+        (b"*.BADDOMAIN.COM", b"x.baddomain.com", true, false),
+        (b"*.BADDOMAIN.COM", b"X.BADDOMAIN.COM", true, true),
+        (b"*.baddomain.com", b"x.baddomain.com", true, true),
+        (b"*.baddomain.com", b"X.BADDOMAIN.COM", true, false),
+        (b"[A-Z]bc", b"abc", true, false),
+        (b"[A-Z]bc", b"ABC", true, false),
+        (b"[A-Z]BC", b"abc", true, false),
+        (b"[A-Z]BC", b"ABC", true, true),
+        (b"[a-z]bc", b"abc", true, true),
+        (b"[a-z]bc", b"ABC", true, false),
+        (b"[ABC]xy", b"bxy", true, false),
+        (b"[ABC]xy", b"BXY", true, false),
+        (b"[ABC]XY", b"bxy", true, false),
+        (b"[ABC]XY", b"BXY", true, true),
+        (b"[abc]xy", b"bxy", true, true),
+        (b"[abc]xy", b"BXY", true, false),
+        (b"x[A-Z]z", b"xyz", true, false),
+        (b"x[A-Z]z", b"XYZ", true, false),
+        (b"X[A-Z]Z", b"xyz", true, false),
+        (b"X[A-Z]Z", b"XYZ", true, true),
+        (b"x[a-z]z", b"xyz", true, true),
+        (b"x[a-z]z", b"XYZ", true, false),
+        (b"[a-z]BC", b"abc", true, false),
+        (b"[a-z]BC", b"ABC", true, false),
+        (b"[\\A]bc", b"abc", true, false),
+        (b"[\\A]bc", b"ABC", true, false),
+        (b"[\\A]BC", b"abc", true, false),
+        (b"[\\A]BC", b"ABC", true, true),
+        (b"[\\a]bc", b"abc", true, true),
+        (b"[\\a]bc", b"ABC", true, false),
+        (b"[A-Z]bc", b"5bc", false, false),
+        (b"[A-Z]bc", b"5BC", false, false),
+        (b"[A-Z]BC", b"5bc", false, false),
+        (b"[A-Z]BC", b"5BC", false, false),
+        (b"[a-z]bc", b"5bc", false, false),
+        (b"[a-z]bc", b"5BC", false, false),
+        (b"*[al]?", b"ball", true, true),
+        (b"*[al]?", b"BALL", true, false),
+        (b"*[AL]?", b"ball", true, false),
+        (b"*[AL]?", b"BALL", true, true),
+        (b"[ten]", b"ten", false, false),
+        (b"[ten]", b"TEN", false, false),
+        (b"[TEN]", b"ten", false, false),
+        (b"[TEN]", b"TEN", false, false),
+        (b"**[!te]", b"ten", true, true),
+        (b"**[!te]", b"TEN", true, true),
+        (b"**[!TE]", b"ten", true, true),
+        (b"**[!TE]", b"TEN", true, true),
+        (b"t[a-g]n", b"ten", true, true),
+        (b"t[a-g]n", b"TEN", true, false),
+        (b"T[A-G]N", b"ten", true, false),
+        (b"T[A-G]N", b"TEN", true, true),
+        (b"t[A-G]n", b"ten", true, false),
+        (b"t[A-G]n", b"TEN", true, false),
+        (b"t[!a-g]n", b"ton", true, true),
+        (b"t[!a-g]n", b"TON", true, false),
+        (b"T[!A-G]N", b"ton", true, false),
+        (b"T[!A-G]N", b"TON", true, true),
+        (b"t[!A-G]n", b"ton", true, true),
+        (b"t[!A-G]n", b"TON", true, false),
+        (b"t[^A-G]n", b"ton", true, true),
+        (b"t[^A-G]n", b"TON", true, false),
+        (b"T[^A-G]N", b"ton", true, false),
+        (b"T[^A-G]N", b"TON", true, true),
+        (b"t[^a-g]n", b"ton", true, true),
+        (b"t[^a-g]n", b"TON", true, false),
+        (b"a[]]b", b"a]b", true, true),
+        (b"a[]]b", b"A]B", true, false),
+        (b"A[]]B", b"a]b", true, false),
+        (b"A[]]B", b"A]B", true, true),
+        (b"a[]-]b", b"a-b", true, true),
+        (b"a[]-]b", b"A-B", true, false),
+        (b"A[]-]B", b"a-b", true, false),
+        (b"A[]-]B", b"A-B", true, true),
+        (b"a[]A-]b", b"aab", true, false),
+        (b"a[]A-]b", b"AAB", true, false),
+        (b"A[]A-]B", b"aab", true, false),
+        (b"A[]A-]B", b"AAB", true, true),
+        (b"a[]a-]b", b"aab", true, true),
+        (b"a[]a-]b", b"AAB", true, false),
+        (b"foo[/]bar", b"foo/bar", false, false),
+        (b"foo[/]bar", b"FOO/BAR", false, false),
+        (b"FOO[/]BAR", b"foo/bar", false, false),
+        (b"FOO[/]BAR", b"FOO/BAR", false, false),
+        (b"f[^EIU][^EIU][^EIU][^EIU][^EIU]r", b"foo-bar", true, true),
+        (b"f[^EIU][^EIU][^EIU][^EIU][^EIU]r", b"FOO-BAR", true, false),
+        (b"F[^EIU][^EIU][^EIU][^EIU][^EIU]R", b"foo-bar", true, false),
+        (b"F[^EIU][^EIU][^EIU][^EIU][^EIU]R", b"FOO-BAR", true, true),
+        (b"f[^eiu][^eiu][^eiu][^eiu][^eiu]r", b"foo-bar", true, true),
+        (b"f[^eiu][^eiu][^eiu][^eiu][^eiu]r", b"FOO-BAR", true, false),
+        (b"a[C-C]rt", b"acrt", true, false),
+        (b"a[C-C]rt", b"ACRT", true, false),
+        (b"A[C-C]RT", b"acrt", true, false),
+        (b"A[C-C]RT", b"ACRT", true, true),
+        (b"a[c-c]rt", b"acrt", true, true),
+        (b"a[c-c]rt", b"ACRT", true, false),
+        (b"[!]-]", b"a", true, true),
+        (b"[!]-]", b"A", true, true),
+        (b"[[]ab]", b"[ab]", true, true),
+        (b"[[]ab]", b"[AB]", true, false),
+        (b"[[]AB]", b"[ab]", true, false),
+        (b"[[]AB]", b"[AB]", true, true),
+        (b"[[:]ab]", b"[ab]", true, true),
+        (b"[[:]ab]", b"[AB]", true, false),
+        (b"[[:]AB]", b"[ab]", true, false),
+        (b"[[:]AB]", b"[AB]", true, true),
+        (b"[[:DIGIT]ab]", b"[ab]", true, true),
+        (b"[[:DIGIT]ab]", b"[AB]", true, false),
+        (b"[[:DIGIT]AB]", b"[ab]", true, false),
+        (b"[[:DIGIT]AB]", b"[AB]", true, true),
+        (b"[[:digit]ab]", b"[ab]", true, true),
+        (b"[[:digit]ab]", b"[AB]", true, false),
+        (b"[\\[:]ab]", b"[ab]", true, true),
+        (b"[\\[:]ab]", b"[AB]", true, false),
+        (b"[\\[:]AB]", b"[ab]", true, false),
+        (b"[\\[:]AB]", b"[AB]", true, true),
+        (b"[a-c[:digit:]x-z]", b"Y", true, false),
+        (b"[a-c[:digit:]x-z]", b"y", true, true),
+        (b"[A-C[:DIGIT:]X-Z]", b"Y", false, false),
+        (b"[A-C[:DIGIT:]X-Z]", b"y", false, false),
+        (b"**/T[O]", b"foo/bar/baz/to", true, false),
+        (b"**/T[O]", b"FOO/BAR/BAZ/TO", true, true),
+        (b"**/t[o]", b"foo/bar/baz/to", true, true),
+        (b"**/t[o]", b"FOO/BAR/BAZ/TO", true, false),
+        (b"[,-.]", b"-", true, true),
+        (b"[[-\\]]", b"\\", true, true),
+        (b"[\\\\,]", b"\\", true, true),
+        (b"[A-\\\\]", b"G", false, true),
+        (b"[A-\\\\]", b"g", false, false),
+        (b"[a-\\\\]", b"G", false, false),
+        (b"[a-\\\\]", b"g", false, false),
+        (b"HOST[0-9].EXAMPLE.COM", b"host7.example.com", true, false),
+        (b"HOST[0-9].EXAMPLE.COM", b"HOST7.EXAMPLE.COM", true, true),
+        (b"host[0-9].example.com", b"host7.example.com", true, true),
+        (b"host[0-9].example.com", b"HOST7.EXAMPLE.COM", true, false),
+        (b"*.[Ee]xample.[Cc]om", b"WWW.EXAMPLE.COM", true, false),
+        (b"*.[Ee]xample.[Cc]om", b"www.example.com", true, true),
+        (b"*.[EE]XAMPLE.[CC]OM", b"WWW.EXAMPLE.COM", true, true),
+        (b"*.[EE]XAMPLE.[CC]OM", b"www.example.com", true, false),
+        (b"*.[ee]xample.[cc]om", b"WWW.EXAMPLE.COM", true, false),
+        (b"*.[ee]xample.[cc]om", b"www.example.com", true, true),
+    ];
+
     #[test]
     fn upstream_wildtest_corpus() {
         for &(expected, text, pattern) in VECTORS {
@@ -470,6 +1223,120 @@ mod tests {
                 String::from_utf8_lossy(text),
             );
         }
+    }
+
+    /// WHY: before rsync 3.5.0 the case-insensitive matcher folded only the
+    /// text, so an upper-case pattern - including an upper-case bracket member
+    /// or range end - failed to match a lower-case candidate and a `hosts deny`
+    /// rule failed open. Both columns come from one upstream binary, so the
+    /// same run also proves the case-sensitive entry point is untouched.
+    #[test]
+    fn iwildmatch_matches_upstream_350_oracle() {
+        let mut fold_sensitive = 0usize;
+        for &(pattern, text, want_folded, want_exact) in FOLD_VECTORS {
+            let got_folded = iwildmatch(pattern, text);
+            assert_eq!(
+                got_folded,
+                want_folded,
+                "iwildmatch(pattern={:?}, text={:?}) = {got_folded}, want {want_folded}",
+                String::from_utf8_lossy(pattern),
+                String::from_utf8_lossy(text),
+            );
+
+            let got_exact = wildmatch(pattern, text);
+            assert_eq!(
+                got_exact,
+                want_exact,
+                "wildmatch(pattern={:?}, text={:?}) = {got_exact}, want {want_exact}",
+                String::from_utf8_lossy(pattern),
+                String::from_utf8_lossy(text),
+            );
+
+            if want_folded != want_exact {
+                fold_sensitive += 1;
+            }
+        }
+
+        // A matrix where folding never changed the answer would pass whatever
+        // the implementation did. Upstream separates the two entry points on
+        // 139 of these rows.
+        assert_eq!(
+            fold_sensitive, 139,
+            "matrix no longer discriminates folded from exact matching"
+        );
+    }
+
+    /// WHY: the 3.5.0 fix is not "one more comparison" but the invariant that
+    /// `iwildmatch` is blind to ASCII case on both sides. Asserting it across
+    /// every bracket form catches a future arm that folds the text and forgets
+    /// the pattern, which is exactly how the original defect survived.
+    ///
+    /// POSIX class names are excluded: they are matched by literal name, so
+    /// `[[:ALPHA:]]` is a malformed class rather than a case variant of
+    /// `[[:alpha:]]`, and upstream aborts the match instead of folding it.
+    #[test]
+    fn iwildmatch_is_case_blind_over_every_bracket_form() {
+        let mut checked = 0usize;
+        for &(pattern, text, _, _) in FOLD_VECTORS {
+            if pattern.windows(2).any(|pair| pair == b"[:") {
+                continue;
+            }
+
+            let want = iwildmatch(pattern, text);
+            for p in [
+                pattern.to_ascii_uppercase(),
+                pattern.to_ascii_lowercase(),
+                pattern.to_vec(),
+            ] {
+                for t in [
+                    text.to_ascii_uppercase(),
+                    text.to_ascii_lowercase(),
+                    text.to_vec(),
+                ] {
+                    let got = iwildmatch(&p, &t);
+                    assert_eq!(
+                        got,
+                        want,
+                        "iwildmatch is case-sensitive: ({:?}, {:?}) = {want} but ({:?}, {:?}) = {got}",
+                        String::from_utf8_lossy(pattern),
+                        String::from_utf8_lossy(text),
+                        String::from_utf8_lossy(&p),
+                        String::from_utf8_lossy(&t),
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(
+            checked > 4000,
+            "case-blindness sweep covered only {checked}"
+        );
+    }
+
+    /// WHY: `wildmatch()` is the filter-rule matcher, and every wire-visible
+    /// filter decision runs through it. Folding must stay confined to the
+    /// `iwildmatch` entry point, so the upstream corpus is re-checked for case
+    /// sensitivity: a case-varied pattern or text must still change the answer.
+    #[test]
+    fn wildmatch_stays_case_sensitive() {
+        let mut discriminating = 0usize;
+        for &(expected, text, pattern) in VECTORS {
+            let upper_pattern = pattern.to_ascii_uppercase();
+            let upper_text = text.to_ascii_uppercase();
+            if upper_pattern == pattern && upper_text == text {
+                continue;
+            }
+
+            if wildmatch(&upper_pattern, text) != expected
+                || wildmatch(pattern, &upper_text) != expected
+            {
+                discriminating += 1;
+            }
+        }
+        assert!(
+            discriminating > 0,
+            "no corpus row is case-discriminating; the guard is vacuous"
+        );
     }
 
     #[test]

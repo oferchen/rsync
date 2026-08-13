@@ -1,6 +1,6 @@
 /// A pattern for matching hosts in allow/deny lists.
 ///
-/// Supports wildcards (*), CIDR notation for IP addresses, and hostname patterns.
+/// Supports shell globs, CIDR notation for IP addresses, and hostname patterns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum HostPattern {
     /// Matches any host ("*" or "all").
@@ -287,7 +287,7 @@ impl HostnamePattern {
         let normalized = trimmed.trim_end_matches('.');
         let lower = normalized.to_ascii_lowercase();
 
-        if lower.contains('*') || lower.contains('?') {
+        if lower.bytes().any(is_wildmatch_metachar) {
             return Ok(Self {
                 kind: HostnamePatternKind::Wildcard(lower),
                 original,
@@ -348,48 +348,27 @@ impl HostnamePattern {
                         .get(hostname.len() - suffix.len() - 1)
                         .is_some_and(|byte| *byte == b'.')
             }
-            HostnamePatternKind::Wildcard(pattern) => wildcard_match(pattern, hostname),
+            // upstream: access.c:46 `iwildmatch(tok, host)` - the token is
+            // matched with the full shell-glob matcher, not a `*`/`?`-only
+            // one, so bracket expressions work in a host token.
+            HostnamePatternKind::Wildcard(pattern) => {
+                filters::iwildmatch(pattern.as_bytes(), hostname.as_bytes())
+            }
         }
     }
 }
 
-/// Matches a string against a pattern containing `*` and `?` wildcards.
+/// Returns whether `byte` makes a `hosts allow`/`hosts deny` token a glob
+/// rather than a literal name.
 ///
-/// `*` matches zero or more characters, `?` matches exactly one character.
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let pattern_bytes = pattern.as_bytes();
-    let text_bytes = text.as_bytes();
-
-    let mut pat_index = 0usize;
-    let mut text_index = 0usize;
-    let mut star_index: Option<usize> = None;
-    let mut match_index = 0usize;
-
-    while text_index < text_bytes.len() {
-        if pat_index < pattern_bytes.len()
-            && (pattern_bytes[pat_index] == b'?'
-                || pattern_bytes[pat_index] == text_bytes[text_index])
-        {
-            pat_index += 1;
-            text_index += 1;
-        } else if pat_index < pattern_bytes.len() && pattern_bytes[pat_index] == b'*' {
-            star_index = Some(pat_index);
-            pat_index += 1;
-            match_index = text_index;
-        } else if let Some(star_pos) = star_index {
-            pat_index = star_pos + 1;
-            match_index += 1;
-            text_index = match_index;
-        } else {
-            return false;
-        }
-    }
-
-    while pat_index < pattern_bytes.len() && pattern_bytes[pat_index] == b'*' {
-        pat_index += 1;
-    }
-
-    pat_index == pattern_bytes.len()
+/// upstream: access.c:53 `tok[strcspn(tok, ":/*?[")]` - `[` is a wildcard
+/// metacharacter, on equal footing with `*` and `?`, and disqualifies the token
+/// from forward DNS for exactly that reason. `\` joins them because
+/// `iwildmatch()` reads it as an escape. `:` and `/` are absent here: they
+/// never reach a hostname pattern, having been consumed as address or CIDR
+/// syntax by [`HostPattern::parse`].
+const fn is_wildmatch_metachar(byte: u8) -> bool {
+    matches!(byte, b'*' | b'?' | b'[' | b'\\')
 }
 
 /// Parses a host allow/deny list from a config directive value.
