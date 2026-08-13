@@ -100,22 +100,27 @@ impl LocalCopyOptions {
 
     /// Returns the effective deletion timing when deletion sweeps are enabled.
     ///
-    /// When `--delay-updates` is active, files are staged in `.~tmp~`
-    /// subdirectories during the transfer phase and renamed into place only
-    /// after all transfers complete.  Deleting with `During` timing would
-    /// treat those staging directories as extraneous and remove them before
-    /// the rename sweep runs, corrupting the transfer.  We therefore promote
-    /// `During` to `After` whenever `delay_updates` is set.
+    /// `--delay-updates` does not change *when* deletions happen. Upstream
+    /// resolves a bare `--delete` to delete-during without consulting
+    /// `delay_updates`, so `--delete --delay-updates` sweeps on the same
+    /// schedule as `--delete` alone; only an explicit `--delete-after`
+    /// defers it.
     ///
-    /// upstream: generator.c - delete_in_dir() is only invoked after the
-    /// receiver rename sweep completes when delay_updates is active.
+    /// The staging directories are safe without a timing change: the sweep of
+    /// a directory runs before any file in it has been staged into its
+    /// `.~tmp~`, so no staging directory exists yet to look extraneous.
+    /// Upstream relies on that same ordering, and guards its *late* passes
+    /// with a barrier rather than a mode change - the generator parks on the
+    /// receiver's phase-2 `MSG_DONE`, by which point `handle_delayed_updates()`
+    /// has renamed everything and dropped each staging directory.
+    ///
+    /// upstream: compat.c:672-677 - `delete_mode` with no `--delete-WHEN`
+    /// resolves to `delete_during = 1` at protocol >= 30, and `delay_updates`
+    /// is not consulted; generator.c:2409-2419 is the barrier and 2425-2428
+    /// the late passes it guards; generator.c:1532-1535 is the during sweep.
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
         if self.delete {
-            if self.delay_updates && matches!(self.delete_timing, DeleteTiming::During) {
-                Some(DeleteTiming::After)
-            } else {
-                Some(self.delete_timing)
-            }
+            Some(self.delete_timing)
         } else {
             None
         }
@@ -130,9 +135,7 @@ impl LocalCopyOptions {
     /// Reports whether deletions should occur after transfers instead of immediately.
     #[must_use]
     pub const fn delete_after_enabled(&self) -> bool {
-        self.delete
-            && (matches!(self.delete_timing, DeleteTiming::After)
-                || (self.delay_updates && matches!(self.delete_timing, DeleteTiming::During)))
+        self.delete && matches!(self.delete_timing, DeleteTiming::After)
     }
 
     /// Reports whether deletions are deferred until after transfers but determined during the walk.
@@ -144,7 +147,7 @@ impl LocalCopyOptions {
     /// Reports whether deletions should occur while processing directory entries.
     #[must_use]
     pub const fn delete_during_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::During) && self.delete && !self.delay_updates
+        matches!(self.delete_timing, DeleteTiming::During) && self.delete
     }
 
     /// Reports whether excluded paths should also be removed during deletion sweeps.
@@ -317,12 +320,39 @@ mod tests {
         assert_eq!(DeleteTiming::default(), DeleteTiming::During);
     }
 
+    /// `--delay-updates` must not change the delete schedule.
+    ///
+    /// Upstream resolves a bare `--delete` to delete-during without consulting
+    /// `delay_updates` (compat.c:672-677), so `--delete --delay-updates` sweeps
+    /// exactly like `--delete`. Promoting it to `After` here would silently
+    /// give the user `--delete-after` semantics they did not ask for, which is
+    /// observable: the `deleting` lines move to the end of the output.
     #[test]
-    fn delay_updates_promotes_during_to_after() {
+    fn delay_updates_leaves_during_timing_alone() {
         let opts = LocalCopyOptions::new().delete(true).delay_updates(true);
-        assert_eq!(opts.delete_timing(), Some(DeleteTiming::After));
-        assert!(opts.delete_after_enabled());
-        assert!(!opts.delete_during_enabled());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::During));
+        assert!(opts.delete_during_enabled());
+        assert!(!opts.delete_after_enabled());
+    }
+
+    /// The whole point of the rule above: `--delete --delay-updates` and
+    /// `--delete` must be indistinguishable in delete scheduling, so a change
+    /// to one that forgets the other fails here.
+    #[test]
+    fn delay_updates_delete_schedule_matches_plain_delete() {
+        let plain = LocalCopyOptions::new().delete(true);
+        let delayed = LocalCopyOptions::new().delete(true).delay_updates(true);
+        assert_eq!(plain.delete_timing(), delayed.delete_timing());
+        assert_eq!(
+            plain.delete_during_enabled(),
+            delayed.delete_during_enabled()
+        );
+        assert_eq!(plain.delete_after_enabled(), delayed.delete_after_enabled());
+        assert_eq!(
+            plain.delete_before_enabled(),
+            delayed.delete_before_enabled()
+        );
+        assert_eq!(plain.delete_delay_enabled(), delayed.delete_delay_enabled());
     }
 
     #[test]
