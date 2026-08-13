@@ -448,8 +448,11 @@ impl<R> MultiplexReader<R> {
     /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32`); any other size
-    /// is a fatal invalid message.
-    /// upstream: io.c:1542-1547 (`if (msg_bytes != 4) goto invalid_msg;`)
+    /// is a fatal invalid message. The value is reduced to `IOERR_VALID_MASK`
+    /// before it is accumulated, so a hostile peer cannot plant undefined bits
+    /// that would then be stored and re-forwarded to the next hop.
+    /// upstream: io.c:1703-1710 (`if (msg_bytes != 4) goto invalid_msg;` then
+    /// `val &= IOERR_VALID_MASK; io_error |= val;`)
     fn handle_io_error_msg(&mut self) {
         if !self.require_payload_len(&[4]) {
             return;
@@ -460,7 +463,7 @@ impl<R> MultiplexReader<R> {
             self.buffer[2],
             self.buffer[3],
         ]);
-        self.io_error |= val;
+        self.io_error |= protocol::sanitize_peer_io_error(val);
     }
 
     /// Handles a `MSG_REDO` payload by recording the file index.

@@ -132,6 +132,8 @@ pub mod fnamecmp;
 pub mod iconv;
 /// UID/GID mapping lists for name-based ownership transfer.
 pub mod idlist;
+/// `io_error` bit definitions and the peer-value sanitising mask.
+pub mod io_error;
 pub mod iobuf;
 mod legacy;
 /// Process-global `--max-alloc` allocation ceiling shared by wire decoders.
@@ -176,6 +178,9 @@ pub use fnamecmp::{FnameCmpType, InvalidFnameCmpType};
 pub use iconv::{
     ConversionError, EncodingConverter, EncodingError, EncodingPair, FilenameConverter,
     converter_from_locale,
+};
+pub use io_error::{
+    IOERR_DEL_LIMIT, IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED, sanitize_peer_io_error,
 };
 pub use legacy::{
     AdvertisedDigests, DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, EARLY_INPUT_CMD,

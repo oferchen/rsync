@@ -549,9 +549,11 @@ impl FileListReader {
         let flags = match self.read_flags(reader)? {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
-                // upstream: flist.c:recv_file_list() does `io_error |= err`
-                // and breaks the loop - it does NOT abort the transfer.
-                self.io_error |= code;
+                // upstream: flist.c:2950,2968 recv_file_list() does
+                // `io_error |= err & IOERR_VALID_MASK` and breaks the loop - it
+                // does NOT abort the transfer. The mask keeps a hostile peer
+                // from planting undefined bits in the local io_error.
+                self.io_error |= crate::io_error::sanitize_peer_io_error(code);
                 return Ok(None);
             }
             FlagsResult::Flags(f) => f,

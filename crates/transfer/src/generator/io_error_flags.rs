@@ -7,13 +7,10 @@
 //!
 //! - `rsync.h:168-170` - `IOERR_GENERAL`, `IOERR_VANISHED`, `IOERR_DEL_LIMIT`
 
-/// General I/O error occurred during file operations.
-/// Must be 1 for backward compatibility with upstream rsync.
-pub const IOERR_GENERAL: i32 = 1 << 0;
-/// A file or directory vanished (was deleted) during the transfer.
-pub const IOERR_VANISHED: i32 = 1 << 1;
-/// Delete limit was exceeded during --delete operations.
-pub const IOERR_DEL_LIMIT: i32 = 1 << 2;
+// The bit definitions and the peer-value mask live in `protocol` because they
+// are wire values shared with the file-list and multiplex decoders; re-exported
+// here so this module stays the generator's single view of `io_error`.
+pub use protocol::{IOERR_DEL_LIMIT, IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED};
 
 /// Converts an accumulated `io_error` bitfield into the corresponding rsync
 /// exit code.

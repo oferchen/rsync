@@ -101,6 +101,45 @@ fn receive_file_list_skips_io_error_for_proto30() {
     assert_eq!(ctx.flist_io_error, 0);
 }
 
+/// The pre-30 trailer is the third place a peer hands us an `io_error`, and it
+/// is decoded outside the file-list reader - so it needs its own mask. A value
+/// of purely undefined bits must accumulate to nothing, and defined bits must
+/// still survive.
+///
+/// upstream: flist.c:3068-3072 - `io_error |= err & IOERR_VALID_MASK`.
+#[test]
+fn receive_file_list_masks_hostile_io_error_for_proto28() {
+    for (wire_value, expected) in [
+        (0x7fff_fff8, 0),
+        (0x0100_0002, protocol::IOERR_VANISHED),
+        (-1, protocol::IOERR_VALID_MASK),
+    ] {
+        let handshake = test_handshake_with_protocol(28);
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(28u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                numeric_ids: NumericIds::Explicit,
+                ..Default::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let mut wire = vec![0x00u8];
+        wire.extend_from_slice(&i32::to_le_bytes(wire_value));
+
+        let mut cursor = Cursor::new(wire);
+        assert_eq!(ctx.receive_file_list(&mut cursor).unwrap(), 0);
+        assert_eq!(
+            ctx.flist_io_error, expected,
+            "wire value {wire_value:#x} must be masked to the defined IOERR_* bits"
+        );
+    }
+}
+
 /// Verifies that `ignore_errors` prevents accumulating the io_error flag.
 #[test]
 fn receive_file_list_ignore_errors_suppresses_io_error() {

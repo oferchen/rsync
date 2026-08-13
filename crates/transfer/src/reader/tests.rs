@@ -286,6 +286,86 @@ fn multiplex_reader_io_error_wrong_payload_length_aborts() {
     );
 }
 
+/// Feeds one `MSG_IO_ERROR` frame and returns what the reader accumulated.
+fn accumulate_one_msg_io_error(value: i32) -> i32 {
+    let mut stream = Vec::new();
+    protocol::send_msg(
+        &mut stream,
+        protocol::MessageCode::IoError,
+        &value.to_le_bytes(),
+    )
+    .unwrap();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"x").unwrap();
+
+    let mut mux = MultiplexReader::new(Cursor::new(stream));
+    let mut buf = [0u8; 1];
+    assert_eq!(mux.read(&mut buf).unwrap(), 1);
+    mux.take_io_error()
+}
+
+/// A peer controls all 32 bits of the `MSG_IO_ERROR` payload. Upstream reduces
+/// the value to the defined bits at the read site, so undefined bits are never
+/// stored locally and never re-forwarded to the next hop.
+///
+/// upstream: io.c:1703-1710 - `val &= IOERR_VALID_MASK; io_error |= val;`
+#[test]
+fn msg_io_error_masks_undefined_bits_from_a_hostile_peer() {
+    use protocol::{IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED};
+
+    // A value made entirely of undefined bits must accumulate to nothing.
+    assert_eq!(accumulate_one_msg_io_error(0x7fff_fff8), 0);
+    // Defined bits survive, undefined ones alongside them do not.
+    assert_eq!(accumulate_one_msg_io_error(-1), IOERR_VALID_MASK);
+    assert_eq!(
+        accumulate_one_msg_io_error(IOERR_VANISHED | 0x0100_0000),
+        IOERR_VANISHED
+    );
+    // The honest path is untouched.
+    assert_eq!(accumulate_one_msg_io_error(IOERR_GENERAL), IOERR_GENERAL);
+}
+
+/// CLASS-level guard: whatever 32-bit value a peer puts on the wire, the two
+/// consumers that the value steers - the delete-pass suppression guard
+/// (`io_error & IOERR_GENERAL`) and the exit-code mapping - must only ever see
+/// defined bits. Masking at one entry point but not the other is exactly the
+/// defect upstream fixed, so this asserts the property, not one call site.
+///
+/// upstream: rsync.h:195-200 (the mask's rationale), generator.c:304 (the
+/// delete guard), cleanup.c:213-218 (the exit-code mapping).
+#[test]
+fn no_peer_value_can_steer_the_delete_guard_or_exit_code_off_the_defined_bits() {
+    use crate::generator::io_error_flags::to_exit_code;
+    use protocol::IOERR_VALID_MASK;
+
+    const DOCUMENTED_EXIT_CODES: [i32; 4] = [0, 23, 24, 25];
+
+    for value in [
+        -1,
+        i32::MIN,
+        i32::MAX,
+        0x7fff_fff8,
+        42,
+        0x0100_0000,
+        0x0000_0008,
+    ] {
+        let accumulated = accumulate_one_msg_io_error(value);
+        assert_eq!(
+            accumulated & !IOERR_VALID_MASK,
+            0,
+            "undefined bits reached local io_error from wire value {value:#x}"
+        );
+        assert!(
+            DOCUMENTED_EXIT_CODES.contains(&to_exit_code(accumulated)),
+            "wire value {value:#x} produced an undocumented exit code"
+        );
+        assert_eq!(
+            accumulated,
+            value & IOERR_VALID_MASK,
+            "the surviving bits must be exactly the masked wire value"
+        );
+    }
+}
+
 #[test]
 fn server_reader_take_io_error_plain_returns_zero() {
     let mut reader = ServerReader::new_plain(Cursor::new(vec![]));
