@@ -78,6 +78,23 @@ pub(crate) fn establish_proxy_tunnel(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
+    // upstream: socket.c:63-70 (3.5.0) rejects the host before it can be
+    // interpolated into the CONNECT request line. A control byte in the host
+    // would otherwise close the request line early and let the remainder be
+    // read as attacker-chosen HTTP headers (CRLF request/header injection).
+    // The check is on raw bytes, not chars, so a multi-byte sequence cannot
+    // smuggle one past a char-wise scan.
+    if let Some(offset) = addr
+        .host()
+        .as_bytes()
+        .iter()
+        .position(|byte| *byte < 0x20 || *byte == 0x7f)
+    {
+        return Err(proxy_configuration_error(format!(
+            "invalid control character in proxy CONNECT host at byte {offset}"
+        )));
+    }
+
     let mut request = format!("CONNECT {}:{} HTTP/1.0\r\n", addr.host(), addr.port());
 
     if let Some(header) = proxy.authorization_header() {
@@ -679,6 +696,76 @@ mod tests {
         let result = read_proxy_line(&mut stream, &mut buffer, display);
         handle.join().expect("server thread");
         (result, buffer)
+    }
+
+    /// A control byte in the CONNECT host must be refused before any write.
+    ///
+    /// WHY: `DaemonAddress::new` only trims the ends, so an interior CRLF
+    /// survives into `format!("CONNECT {host}:{port} HTTP/1.0\r\n")`. Without
+    /// the guard the request line terminates at the injected newline and the
+    /// remainder of the host is read by the proxy as attacker-chosen headers.
+    /// Asserting that the socket saw ZERO bytes is what makes this a real
+    /// oracle: a test that only checked the error could still pass while a
+    /// poisoned request line went out on the wire.
+    #[test]
+    fn connect_host_with_embedded_crlf_is_refused_before_any_write() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let listen_addr = listener.local_addr().expect("listener address");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut seen = Vec::new();
+            // Returns as soon as the client closes; no sleep, no deadline race.
+            let _ = stream.read_to_end(&mut seen);
+            seen
+        });
+
+        let mut stream = TcpStream::connect(listen_addr).expect("connect to listener");
+        let addr = DaemonAddress::new("evil\r\nX-Injected: 1".to_owned(), 873)
+            .expect("interior control bytes survive the constructor's trim");
+        let proxy = ProxyConfig {
+            host: listen_addr.ip().to_string(),
+            port: listen_addr.port(),
+            credentials: None,
+        };
+
+        let err = establish_proxy_tunnel(&mut stream, &addr, &proxy)
+            .expect_err("a control byte in the CONNECT host must be refused");
+        assert!(
+            err.to_string().contains("control character"),
+            "expected a control-character refusal, got: {err}"
+        );
+
+        drop(stream);
+        let seen = handle.join().expect("server thread");
+        assert!(
+            seen.is_empty(),
+            "nothing may be written to the proxy once the host is rejected; saw {:?}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    /// The guard must not reject hosts rsync legitimately accepts.
+    ///
+    /// WHY: an IPv6 zone id carries `%`, and upstream deliberately keeps that
+    /// legal. A cap that also refused these would be a silent regression for
+    /// link-local targets, so the negative control is as load-bearing as the
+    /// positive one.
+    #[test]
+    fn connect_host_allows_ipv6_zone_id_and_ordinary_names() {
+        for host in ["fe80::1%eth0", "proxy.example.com", "192.0.2.10"] {
+            let addr = DaemonAddress::new(host.to_owned(), 873).expect("valid host");
+            assert!(
+                !addr
+                    .host()
+                    .as_bytes()
+                    .iter()
+                    .any(|byte| *byte < 0x20 || *byte == 0x7f),
+                "{host} must not trip the control-byte guard"
+            );
+        }
     }
 
     /// Deterministic xorshift64 stream so failures are reproducible from `seed`.

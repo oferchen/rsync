@@ -21,9 +21,33 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::io::{self, Read};
 
+use crate::max_alloc::effective_max_alloc;
 use crate::varint::read_varint;
 use crate::xattr::prefix::wire_to_local;
-use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, RSYNC_PREFIX, XattrEntry, XattrList};
+use crate::xattr::{
+    MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, MAX_XATTR_LIST_BYTES, MAX_XATTR_VALUE_BYTES,
+    RSYNC_PREFIX, XattrEntry, XattrList,
+};
+
+/// Converts a peer-supplied wire length to a `usize`, rejecting the values
+/// that must never reach an allocation.
+///
+/// upstream: `read_varint_size()` (io.c) aborts with
+/// `exit_cleanup(RERR_PROTOCOL)` on a negative length or one past the field
+/// maximum. A bare `as usize` cast instead widens a negative varint into a
+/// ~2^64 length, which sizes a `vec![0u8; len]` and aborts the process on
+/// capacity overflow. The ceiling is [`effective_max_alloc`] so a peer that
+/// raised `--max-alloc` is still honoured, matching the sibling decoders.
+fn checked_wire_len(raw: i32, what: &str) -> io::Result<usize> {
+    let max = effective_max_alloc();
+    if raw < 0 || raw as usize > max {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{what} {raw} out of range (maximum {max})"),
+        ));
+    }
+    Ok(raw as usize)
+}
 
 /// Cache of xattr sets, indexed for deduplication.
 ///
@@ -252,10 +276,50 @@ impl XattrCache {
         // after translation.
         let mut need_sort = false;
 
+        // upstream: xattrs.c:813 `size_t total_xattr_bytes = 0` - the running
+        // per-file aggregate checked against MAX_XATTR_LIST_BYTES below.
+        let mut total_xattr_bytes: usize = 0;
+
         for num in 1..=count {
-            // upstream: name_len = read_varint(f); datum_len = read_varint(f)
-            let name_len = read_varint(reader)? as usize;
-            let datum_len = read_varint(reader)? as usize;
+            // upstream: name_len/datum_len are read with read_varint_size
+            // (io.c), which aborts with exit_cleanup(RERR_PROTOCOL) on a
+            // negative or over-max value. A bare `as usize` here would widen a
+            // negative varint into a ~2^64 length, so both are range-checked
+            // before they can size an allocation.
+            let name_len = checked_wire_len(read_varint(reader)?, "xattr name_len")?;
+            let datum_len = checked_wire_len(read_varint(reader)?, "xattr datum_len")?;
+
+            // upstream: xattrs.c:839 - a single value above the hard per-value
+            // ceiling is a protocol error, not a truncation.
+            if datum_len > MAX_XATTR_VALUE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "xattr datum_len {datum_len} exceeds per-value limit {MAX_XATTR_VALUE_BYTES}"
+                    ),
+                ));
+            }
+
+            // upstream: xattrs.c:843-849 - the summed name+value bytes of one
+            // file's list are bounded, so a peer cannot drive an unbounded
+            // aggregate out of individually-legal entries.
+            total_xattr_bytes = total_xattr_bytes
+                .checked_add(name_len)
+                .and_then(|sum| sum.checked_add(datum_len))
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "xattr list byte total overflowed",
+                    )
+                })?;
+            if total_xattr_bytes > MAX_XATTR_LIST_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "xattr list total {total_xattr_bytes} exceeds per-file limit {MAX_XATTR_LIST_BYTES}"
+                    ),
+                ));
+            }
 
             // upstream: dget_len = datum_len > MAX_FULL_DATUM ? 1 + xattr_sum_len : datum_len
             let dget_len = if datum_len > MAX_FULL_DATUM {
@@ -587,6 +651,135 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("NUL"));
+    }
+
+    /// Builds a hostile literal-xattr frame carrying only declared lengths.
+    ///
+    /// Every entry declares `datum_len` above `MAX_FULL_DATUM`, so the decoder
+    /// reads just the abbreviated digest off the wire. That is precisely the
+    /// attacker-cheap shape the byte caps exist to stop: a few wire bytes
+    /// declare gigabytes.
+    fn abbreviated_entries_frame(entries: &[(usize, usize)]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap();
+        write_varint(&mut buf, i32::try_from(entries.len()).unwrap()).unwrap();
+        for (name_len, datum_len) in entries {
+            write_varint(&mut buf, i32::try_from(*name_len).unwrap()).unwrap();
+            write_varint(&mut buf, i32::try_from(*datum_len).unwrap()).unwrap();
+            let mut name = b"user.x".to_vec();
+            name.resize(name_len - 1, b'x');
+            name.push(0);
+            buf.extend_from_slice(&name);
+            buf.extend_from_slice(&[0u8; MAX_XATTR_DIGEST_LEN]);
+        }
+        buf
+    }
+
+    /// A negative `name_len` must surface as a typed error.
+    ///
+    /// WHY: the decoder sizes `vec![0u8; name_len]` from this value. Widening
+    /// a negative varint with `as usize` yields a ~2^64 length, which aborts
+    /// the process on capacity overflow - a hostile peer would get a remote
+    /// denial of service out of two wire bytes. upstream reads this through
+    /// `read_varint_size()`, which refuses a negative length outright.
+    #[test]
+    fn negative_name_len_is_rejected_not_fatal() {
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap();
+        write_varint(&mut buf, 1).unwrap();
+        write_varint(&mut buf, -1).unwrap();
+        write_varint(&mut buf, 1).unwrap();
+
+        let err = cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect_err("a negative name_len must be refused");
+        assert!(err.to_string().contains("name_len"), "{err}");
+    }
+
+    /// Same class as [`negative_name_len_is_rejected_not_fatal`] for the value
+    /// length, which reaches the abbreviated-vs-full branch and the datum
+    /// allocation.
+    #[test]
+    fn negative_datum_len_is_rejected_not_fatal() {
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap();
+        write_varint(&mut buf, 1).unwrap();
+        write_varint(&mut buf, 6).unwrap();
+        write_varint(&mut buf, -1).unwrap();
+
+        let err = cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect_err("a negative datum_len must be refused");
+        assert!(err.to_string().contains("datum_len"), "{err}");
+    }
+
+    /// One value above the hard per-value ceiling is a protocol error.
+    ///
+    /// WHY: upstream bounds this independently of `--max-alloc`, so raising
+    /// `--max-alloc` must not raise it. Declared-only: no payload is supplied,
+    /// proving the refusal happens before the allocation.
+    #[test]
+    fn single_value_above_per_value_cap_is_rejected() {
+        let mut cache = XattrCache::new();
+        let buf = abbreviated_entries_frame(&[(6, MAX_XATTR_VALUE_BYTES + 1)]);
+
+        let err = cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect_err("a value past the per-value cap must be refused");
+        assert!(err.to_string().contains("per-value limit"), "{err}");
+    }
+
+    /// Many individually-legal values must not sum past the per-file ceiling.
+    ///
+    /// WHY: this is the case no per-value cap can catch. Each entry here is
+    /// under `MAX_XATTR_VALUE_BYTES` and each costs the attacker ~25 wire
+    /// bytes, yet the declared total crosses `MAX_XATTR_LIST_BYTES`. Without
+    /// the running total the decoder would accept the whole list.
+    #[test]
+    fn summed_values_above_per_file_cap_are_rejected() {
+        let per_entry = MAX_XATTR_VALUE_BYTES;
+        let count = MAX_XATTR_LIST_BYTES / per_entry + 1;
+        let entries: Vec<(usize, usize)> = (0..count).map(|_| (6, per_entry)).collect();
+        let mut cache = XattrCache::new();
+
+        let err = cache
+            .receive_xattr(
+                &mut Cursor::new(abbreviated_entries_frame(&entries)),
+                false,
+                1,
+            )
+            .expect_err("a list past the per-file cap must be refused");
+        assert!(err.to_string().contains("per-file limit"), "{err}");
+    }
+
+    /// The boundary must not be off by one in the rejecting direction.
+    ///
+    /// WHY: a cap that also refuses legal lists is a silent interop break with
+    /// upstream, which accepts everything up to and including the limit.
+    #[test]
+    fn list_exactly_at_per_file_cap_is_accepted() {
+        let name_len = 6;
+        let count = MAX_XATTR_LIST_BYTES / MAX_XATTR_VALUE_BYTES;
+        // Each entry contributes name_len + datum_len, so shrink the value by
+        // the name to land the sum exactly on the limit rather than past it.
+        let per_entry = MAX_XATTR_VALUE_BYTES - name_len;
+        let total = count * (per_entry + name_len);
+        assert_eq!(
+            total, MAX_XATTR_LIST_BYTES,
+            "fixture must sit exactly on the cap, not merely under it"
+        );
+        let entries: Vec<(usize, usize)> = (0..count).map(|_| (name_len, per_entry)).collect();
+        let mut cache = XattrCache::new();
+
+        cache
+            .receive_xattr(
+                &mut Cursor::new(abbreviated_entries_frame(&entries)),
+                false,
+                1,
+            )
+            .expect("a list within both caps must still be accepted");
     }
 
     #[test]
