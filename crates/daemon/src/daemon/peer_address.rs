@@ -121,6 +121,13 @@ pub(in crate::daemon) fn remote_shell_peer_addr() -> RemoteShellPeer {
 ///
 /// upstream: clientname.c:47-74 - `client_sockaddr()` rewrites a V4MAPPED
 /// `sockaddr_in6` into a `sockaddr_in` before any lookup or comparison.
+///
+/// Gated to Unix because its only caller is [`inherited_socket_peer_addr`],
+/// which is itself Unix-only: a V4MAPPED peer can only arrive through the
+/// inetd stdin socket this module reads. Without the gate the function is dead
+/// on Windows, and `-D warnings` (set in `_interop-windows.yml` and
+/// `_test-features.yml`) turns that into a build failure.
+#[cfg(unix)]
 fn normalize_v4_mapped(addr: IpAddr) -> IpAddr {
     match addr {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(addr, IpAddr::V4),
@@ -225,6 +232,8 @@ mod tests {
     /// upstream: clientname.c:47-74 - a V4MAPPED peer is rewritten to IPv4
     /// before any ACL comparison, so `hosts allow = 192.0.2.0/24` matches an
     /// IPv4 client arriving on a dual-stack listener.
+    /// Unix-only for the same reason the function is: it has no Windows caller.
+    #[cfg(unix)]
     #[test]
     fn v4_mapped_ipv6_normalises_to_ipv4() {
         let mapped: IpAddr = "::ffff:192.0.2.128".parse().unwrap();
@@ -234,6 +243,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn genuine_ipv6_is_left_alone() {
         let v6: IpAddr = "2001:db8::1".parse().unwrap();
