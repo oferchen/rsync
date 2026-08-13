@@ -663,6 +663,17 @@ premises.
    option oc's client can send to a server appears in the table, and every
    intended denial is still a denial. `rrsync-debug-denied` is the model.
 
+   **This is the same drift problem as task 410** (daemon `refuse options`
+   `SHORT_OPTIONS` must match upstream `long_options[]` exactly), and the two
+   should share one mechanism rather than growing two tables that drift apart
+   independently. The difference is only in what is enumerated - task 410
+   enumerates upstream's `long_options[]`, this one enumerates what a client can
+   *send to a server*, which is the narrower set `packaging/cull-options`
+   scrapes. Both need the same shape of test: derive the expected set from the
+   upstream source at test time, diff it against the committed table, and fail
+   on either direction of difference. Settle the mechanism once, in whichever of
+   410 / 8e lands first.
+
 9. **A native subcommand is strictly better positioned than the Python script on
    one axis**, and this should be used rather than merely matched: oc-rsync
    controls both the wrapper and the server, in one process image if it wants.
