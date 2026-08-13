@@ -160,7 +160,15 @@ impl BatchReader {
         // Capture any I/O error accumulated during flist reading.
         // upstream: flist.c:recv_file_list() does `io_error |= err` when the
         // sender reports errors, then breaks the loop without aborting.
-        self.io_error = flist_reader.io_error();
+        //
+        // Both contributions are taken unconditionally here. Upstream gates the
+        // PEER half on `!ignore_errors` (flist.c:2949/2967/3070), but the batch
+        // reader has no `ignore_errors` plumbed to it - the option belongs to the
+        // replay invocation, not to the recorded stream - so applying the gate
+        // would mean inventing a policy this layer cannot see. Behaviour is
+        // unchanged from before the peer/local split; the gate arrives with the
+        // batch-replay reunification.
+        self.io_error = flist_reader.peer_io_error() | flist_reader.local_io_error();
 
         // upstream: flist.c:2761-2763 - recv_id_list(f, flist) when !inc_recurse
         // The batch stream contains uid/gid name mapping lists after the flist
@@ -261,7 +269,9 @@ impl BatchReader {
             }
         }
 
-        self.io_error |= flist_reader.io_error();
+        // See the note on the initial-segment drain above: unconditional here
+        // because the batch reader has no `ignore_errors` to consult.
+        self.io_error |= flist_reader.peer_io_error() | flist_reader.local_io_error();
         // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         // The current segment started at flist_next_ndx_start (set before
         // reset_for_new_segment). The next segment's ndx_start accounts for

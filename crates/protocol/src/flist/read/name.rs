@@ -164,7 +164,10 @@ impl FileListReader {
                     "{}",
                     crate::iconv::cannot_convert_filename_message("receiver", &name)
                 );
-                self.io_error |= 1;
+                // upstream: flist.c:841 sets `io_error |= IOERR_GENERAL` with
+                // no `ignore_errors` check, so this is a LOCAL error and is
+                // never suppressed by --ignore-errors.
+                self.local_io_error |= crate::io_error::IOERR_GENERAL;
                 Ok(Vec::new())
             }
         }

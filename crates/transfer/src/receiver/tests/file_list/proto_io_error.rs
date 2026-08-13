@@ -42,8 +42,9 @@ fn receive_file_list_reads_io_error_for_proto28() {
     let count = ctx.receive_file_list(&mut cursor).unwrap();
     assert_eq!(count, 0, "empty file list should have 0 entries");
     assert_eq!(
-        ctx.flist_io_error, io_error_value,
-        "io_error should be read from wire"
+        ctx.flist_reader_io_error(),
+        io_error_value,
+        "io_error should be read from wire and reach the value the drivers use"
     );
 }
 
@@ -71,7 +72,11 @@ fn receive_file_list_reads_io_error_for_proto29() {
     let mut cursor = Cursor::new(wire);
     let count = ctx.receive_file_list(&mut cursor).unwrap();
     assert_eq!(count, 0);
-    assert_eq!(ctx.flist_io_error, 0, "zero io_error should not set field");
+    assert_eq!(
+        ctx.flist_reader_io_error(),
+        0,
+        "zero io_error should not set field"
+    );
 }
 
 /// Verifies that protocol >= 30 does NOT read the 4-byte io_error (uses
@@ -98,7 +103,7 @@ fn receive_file_list_skips_io_error_for_proto30() {
     let mut cursor = Cursor::new(wire);
     let count = ctx.receive_file_list(&mut cursor).unwrap();
     assert_eq!(count, 0);
-    assert_eq!(ctx.flist_io_error, 0);
+    assert_eq!(ctx.flist_reader_io_error(), 0);
 }
 
 /// The pre-30 trailer is the third place a peer hands us an `io_error`, and it
@@ -134,7 +139,8 @@ fn receive_file_list_masks_hostile_io_error_for_proto28() {
         let mut cursor = Cursor::new(wire);
         assert_eq!(ctx.receive_file_list(&mut cursor).unwrap(), 0);
         assert_eq!(
-            ctx.flist_io_error, expected,
+            ctx.flist_reader_io_error(),
+            expected,
             "wire value {wire_value:#x} must be masked to the defined IOERR_* bits"
         );
     }
@@ -169,7 +175,91 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
     let count = ctx.receive_file_list(&mut cursor).unwrap();
     assert_eq!(count, 0);
     assert_eq!(
-        ctx.flist_io_error, 0,
+        ctx.flist_reader_io_error(),
+        0,
         "ignore_errors should suppress io_error accumulation"
+    );
+}
+
+/// `--ignore-errors` must suppress a PEER-supplied file-list trailer, and must
+/// NOT suppress an error this receiver generated itself.
+///
+/// upstream keeps the two apart: `flist.c:2949`, `:2967` and `:3070` accumulate
+/// the peer's trailer only `if (!ignore_errors)`, while `flist.c:841`'s
+/// filename-transcode failure is accumulated with no such check.
+///
+/// This asserts the value the four transfer drivers actually read
+/// (`TransferStats::io_error` is built from `flist_reader_io_error()`), not an
+/// intermediate field. Before the peer/local split those drivers bypassed the
+/// gate entirely: the value was filtered out of `flist_io_error` and then
+/// re-admitted through the reader cache, so `--ignore-errors` did not suppress
+/// it and the run still exited 23.
+#[test]
+fn ignore_errors_gates_the_peer_trailer_only() {
+    for &(ignore_errors, want) in &[(false, 3), (true, 0)] {
+        let handshake = test_handshake_with_protocol(28);
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(28u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                numeric_ids: NumericIds::Explicit,
+                ..Default::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.deletion.ignore_errors = ignore_errors;
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let mut wire = vec![0x00u8];
+        wire.extend_from_slice(&3i32.to_le_bytes());
+        let mut cursor = Cursor::new(wire);
+        ctx.receive_file_list(&mut cursor).unwrap();
+
+        assert_eq!(
+            ctx.flist_reader_io_error(),
+            want,
+            "peer trailer with --ignore-errors={ignore_errors}"
+        );
+    }
+}
+
+/// A locally-generated file-list error survives `--ignore-errors`.
+///
+/// upstream: `flist.c:841` has no `ignore_errors` check, so a filename this
+/// receiver could not transcode still exits 23. Before the split this was
+/// folded in through the same gate as the peer trailer and was wrongly
+/// suppressed.
+#[test]
+fn ignore_errors_does_not_suppress_a_local_error() {
+    let handshake = test_handshake_with_protocol(28);
+    let mut config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(28u8).unwrap(),
+        flag_string: "-logDtpre.".to_owned(),
+        flags: ParsedServerFlags {
+            numeric_ids: NumericIds::Explicit,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    config.deletion.ignore_errors = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let mut wire = vec![0x00u8];
+    wire.extend_from_slice(&0i32.to_le_bytes());
+    let mut cursor = Cursor::new(wire);
+    ctx.receive_file_list(&mut cursor).unwrap();
+
+    // The reader carries no local error in this stream, so the observable value
+    // is zero; the guard is that the local half is combined UNGATED, which
+    // `protocol::combine_flist_io_error` pins directly.
+    assert_eq!(ctx.flist_reader_io_error(), 0);
+    assert_eq!(
+        protocol::combine_flist_io_error(0, protocol::IOERR_GENERAL, true),
+        protocol::IOERR_GENERAL,
+        "a local decode error is never gated on --ignore-errors"
     );
 }
