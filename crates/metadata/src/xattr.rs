@@ -288,9 +288,10 @@ pub fn strip_source_xattrs(
     }
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
+    let dest = DestinationXattrs::open(destination, follow_symlinks);
     for name in list_attributes(destination, follow_symlinks, receiver_screen())? {
         if source_names.contains(&name) {
-            remove_attribute(destination, &name, follow_symlinks)?;
+            dest.remove(&name)?;
         }
     }
     Ok(())
@@ -350,6 +351,7 @@ pub fn sync_xattrs(
 ) -> Result<(), MetadataError> {
     let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
+    let dest = DestinationXattrs::open(destination, follow_symlinks);
 
     for name in &source_attrs {
         let name_str = String::from_utf8_lossy(name);
@@ -366,9 +368,9 @@ pub fn sync_xattrs(
         }
 
         if let Some(value) = read_attribute(source, name, follow_symlinks)? {
-            write_attribute(destination, name, &value, follow_symlinks)?;
+            dest.write(name, &value)?;
         } else {
-            remove_attribute(destination, name, follow_symlinks)?;
+            dest.remove(name)?;
         }
     }
 
@@ -388,7 +390,7 @@ pub fn sync_xattrs(
         let allow = filter.is_none_or(|predicate| predicate(&name_str));
 
         if allow {
-            remove_attribute(destination, name, follow_symlinks)?;
+            dest.remove(name)?;
         }
     }
 
@@ -458,11 +460,10 @@ pub fn apply_xattrs_from_list(
 
     // upstream: xattrs.c:set_xattr - a non-root receiver targeting a file that
     // lacks owner write permission temporarily adds S_IWUSR so the following
-    // xattr set/remove syscalls do not fail with EACCES/EPERM. The guard
-    // restores the original mode when it drops, covering both the write loop
-    // and the stale-attr removal loop below, including their error paths.
-    #[cfg(unix)]
-    let _temp_write_perm = TempWritePermission::grant(destination);
+    // xattr set/remove syscalls do not fail with EACCES/EPERM. The batch holds
+    // that permission across both the write loop and the stale-attr removal
+    // loop below, and restores the original mode on every exit path.
+    let dest = DestinationXattrs::open(destination, follow_symlinks);
 
     for entry in xattr_list.iter() {
         let name_str = entry.name_str();
@@ -512,12 +513,12 @@ pub fn apply_xattrs_from_list(
             {
                 // upstream: sys_lsetxattr(fname, name, ptr, len). Applying the
                 // resolved basis value is idempotent when destination == basis.
-                write_attribute(destination, &name_bytes, &value, follow_symlinks)?;
+                dest.write(&name_bytes, &value)?;
             }
             continue;
         }
 
-        write_attribute(destination, &name_bytes, entry.datum(), follow_symlinks)?;
+        dest.write(&name_bytes, entry.datum())?;
         applied_names.insert(name_bytes);
     }
 
@@ -532,12 +533,57 @@ pub fn apply_xattrs_from_list(
             if is_xattr_permitted(&name_str, receiver_user_only())
                 && filter.is_none_or(|predicate| predicate(&name_str))
             {
-                remove_attribute(destination, name, follow_symlinks)?;
+                dest.remove(name)?;
             }
         }
     }
 
     Ok(())
+}
+
+/// A batch of extended-attribute mutations against one destination file.
+///
+/// Upstream performs every destination-side xattr mutation inside
+/// `set_xattr()`, which grants a temporary `S_IWUSR` for the duration of the
+/// whole batch and restores the original mode once the batch ends
+/// (`xattrs.c:1090-1106`); the set loop and the removal loop beneath it in
+/// `rsync_xal_set()` both run under that single grant.
+///
+/// oc reaches the same destination state from three entry points
+/// ([`sync_xattrs`], [`apply_xattrs_from_list`] and [`strip_source_xattrs`]),
+/// so the grant is expressed as a type that owns the batch rather than as a
+/// line each entry point has to remember: a caller cannot mutate a destination
+/// attribute without having opened the batch that holds the permission.
+struct DestinationXattrs<'a> {
+    path: &'a Path,
+    follow_symlinks: bool,
+    /// Held for the batch's lifetime; restores the original mode on drop.
+    #[cfg(unix)]
+    _write_permission: Option<TempWritePermission>,
+}
+
+impl<'a> DestinationXattrs<'a> {
+    /// Opens a mutation batch on `path`, granting the temporary owner-write
+    /// permission when the file lacks it.
+    fn open(path: &'a Path, follow_symlinks: bool) -> Self {
+        Self {
+            path,
+            follow_symlinks,
+            #[cfg(unix)]
+            _write_permission: TempWritePermission::grant(path),
+        }
+    }
+
+    /// Sets one attribute. upstream: `sys_lsetxattr` in `rsync_xal_set()`.
+    fn write(&self, name: &[u8], value: &[u8]) -> Result<(), MetadataError> {
+        write_attribute(self.path, name, value, self.follow_symlinks)
+    }
+
+    /// Removes one attribute. upstream: `sys_lremovexattr` in
+    /// `rsync_xal_set()` (`xattrs.c:1043`).
+    fn remove(&self, name: &[u8]) -> Result<(), MetadataError> {
+        remove_attribute(self.path, name, self.follow_symlinks)
+    }
 }
 
 /// RAII guard that temporarily grants owner write permission on a file so its
@@ -1570,6 +1616,96 @@ mod tests {
             restored, 0o444,
             "original read-only mode must be restored after applying xattrs"
         );
+    }
+
+    // CLASS invariant, not a single-site regression: upstream mutates a
+    // destination's xattrs from exactly one place (`set_xattr`), and that place
+    // holds the temporary S_IWUSR for the whole batch. oc reaches the same
+    // destination state from three entry points, so the property "a read-only
+    // destination is still mutable, and its mode survives" has to hold for
+    // every one of them - covering only the entry that happened to be fixed
+    // first is what let `sync_xattrs` and `strip_source_xattrs` ship without
+    // the grant. A fourth entry point added without the batch fails here.
+    // upstream: xattrs.c:1090-1106 set_xattr.
+    #[cfg(unix)]
+    #[test]
+    fn every_destination_entry_point_mutates_a_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Root bypasses the permission check, so the grant cannot be exercised.
+        if crate::am_root() {
+            eprintln!("running as root, skipping read-only xattr test");
+            return;
+        }
+
+        let dir = tempdir().expect("create temp dir");
+        let name = test_xattr_name("class");
+
+        // Probe support once, on a throwaway file, so an unsupported
+        // filesystem is a single visible skip rather than three legs that
+        // quietly do nothing and let the test pass without asserting.
+        let probe = dir.path().join("probe");
+        fs::write(&probe, "content").expect("write probe");
+        if !xattrs_supported(&probe) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Each leg gets a fresh source/destination pair carrying `name`, left
+        // at mode 0o444 so the mutation must acquire the write permission.
+        let readonly_pair = |leg: &str| {
+            let source = dir.path().join(format!("{leg}.src"));
+            let destination = dir.path().join(format!("{leg}.dst"));
+            fs::write(&source, "content").expect("write source");
+            fs::write(&destination, "content").expect("write destination");
+            write_attribute(&source, &name, b"value", false).expect("seed source");
+            write_attribute(&destination, &name, b"value", false).expect("seed destination");
+            fs::set_permissions(&destination, fs::Permissions::from_mode(0o444))
+                .expect("chmod 0o444");
+            (source, destination)
+        };
+
+        let assert_mode_restored = |destination: &Path, leg: &str| {
+            let mode = fs::symlink_metadata(destination)
+                .expect("stat")
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(mode, 0o444, "{leg} must restore the original mode");
+        };
+
+        // sync_xattrs: copies the source set, then removes destination strays.
+        let (source, destination) = readonly_pair("sync");
+        sync_xattrs(&source, &destination, false, None).expect("sync_xattrs on read-only dest");
+        assert_mode_restored(&destination, "sync_xattrs");
+
+        // strip_source_xattrs: removes only names the source also carries. This
+        // is the macOS clonefile correction, reachable under plain -a with no
+        // -X, which is how the defect surfaced.
+        let (source, destination) = readonly_pair("strip");
+        strip_source_xattrs(&source, &destination, false)
+            .expect("strip_source_xattrs on read-only dest");
+        assert!(
+            read_attribute(&destination, &name, false)
+                .expect("read")
+                .is_none(),
+            "strip_source_xattrs must remove the source-originated attribute"
+        );
+        assert_mode_restored(&destination, "strip_source_xattrs");
+
+        // apply_xattrs_from_list: the wire-side receiver entry.
+        let (_source, destination) = readonly_pair("apply");
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(name.clone(), b"applied".to_vec()));
+        apply_xattrs_from_list(&destination, &list, false, None, None)
+            .expect("apply_xattrs_from_list on read-only dest");
+        assert_eq!(
+            read_attribute(&destination, &name, false)
+                .expect("read")
+                .expect("attribute present"),
+            b"applied"
+        );
+        assert_mode_restored(&destination, "apply_xattrs_from_list");
     }
 
     // Receive-side mirror of the send-side x-modifier filter (#128): a received
