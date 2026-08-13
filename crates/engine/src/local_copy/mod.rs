@@ -286,6 +286,10 @@ mod tests;
 mod filter_program_internal_tests;
 
 #[cfg(test)]
+#[path = "clean_fname_collapse_tests.rs"]
+mod clean_fname_collapse_tests;
+
+#[cfg(test)]
 pub(crate) mod test_support {
     #[allow(unused_imports)]
     pub(crate) use super::executor::take_fsync_call_count;

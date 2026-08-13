@@ -306,3 +306,53 @@ mod daemon_module_suffix_tests {
         assert_eq!(ServerConfig::default().connection.daemon_module, None);
     }
 }
+
+#[cfg(test)]
+mod daemon_clean_fname_collapse_tests {
+    use super::lexically_normalize;
+    use std::path::{Path, PathBuf};
+    use test_support::COLLAPSE_CASES;
+
+    /// Every upstream `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` case must
+    /// collapse identically here.
+    ///
+    /// `lexically_normalize` folds a client-supplied `--link-dest` /
+    /// `--copy-dest` / `--compare-dest` basis before
+    /// `confine_basis_under_module` tests it against the module root. The
+    /// containment check is a `starts_with` on the folded path, so a `..` that
+    /// fails to consume the component before it leaves a path that still
+    /// *looks* like it sits under the module while resolving elsewhere. That is
+    /// exactly the shape of upstream's off-by-one, which left the collapse dead
+    /// for every multi-component and absolute path.
+    ///
+    /// The table is shared (`test_support::COLLAPSE_CASES`) so a new edge case
+    /// is one row and reaches every oc-rsync copy of this rule at once.
+    // upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS; t_clean_fname.c
+    #[test]
+    fn upstream_collapse_cases_consume_the_preceding_component() {
+        for (input, expected) in COLLAPSE_CASES {
+            assert_eq!(
+                lexically_normalize(Path::new(input)),
+                PathBuf::from(expected),
+                "clean_fname collapse case {input:?}"
+            );
+        }
+    }
+
+    /// A `..` with nothing left to pop survives into the result so the
+    /// caller's `starts_with(module_root)` check sees the escape and rejects
+    /// the basis. Silently swallowing it would hand the caller a path that
+    /// passes containment while naming a directory outside the module.
+    // upstream: util1.c clean_fname() - "collapse '..' elements (except at the start)"
+    #[test]
+    fn unpoppable_leading_dot_dot_is_preserved_for_the_containment_check() {
+        assert_eq!(
+            lexically_normalize(Path::new("../outside")),
+            PathBuf::from("../outside")
+        );
+        assert_eq!(
+            lexically_normalize(Path::new("mod/../../outside")),
+            PathBuf::from("../outside")
+        );
+    }
+}
