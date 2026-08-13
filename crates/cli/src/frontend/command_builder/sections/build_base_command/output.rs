@@ -13,8 +13,7 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .short('v')
                 .help("Increase verbosity; may be supplied multiple times.")
                 .action(ArgAction::Count)
-                .overrides_with("no-verbose")
-                .overrides_with("quiet"),
+                .overrides_with("no-verbose"),
         )
         .arg(
             Arg::new("no-verbose")
@@ -29,8 +28,7 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .long("quiet")
                 .short('q')
                 .help("Suppress non-error messages.")
-                .action(ArgAction::SetTrue)
-                .overrides_with("verbose"),
+                .action(ArgAction::SetTrue),
         )
         .arg(
             // upstream: options.c:616 `{"human-readable", 'h', POPT_ARG_NONE, ...}`

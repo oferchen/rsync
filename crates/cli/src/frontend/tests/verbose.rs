@@ -1785,3 +1785,61 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
         "staledir should have been deleted"
     );
 }
+
+/// `--quiet` suppresses info output no matter where `-v` sits on the command
+/// line, and `-v` alone still produces output.
+///
+/// upstream: `-q` and `-v` are independent - `options.c:1598` just does
+/// `quiet++`, and the suppression happens once at the output funnel
+/// (`log.c:317-319` `case FINFO: if (quiet) return;`). Neither flag overrides
+/// the other during parsing, so the result does not depend on their order.
+///
+/// oc previously declared the two clap args as mutually `overrides_with` each
+/// other, which made them exclusive and last-one-wins: `-qv` cleared quiet and
+/// printed the whole listing plus the summary, while `-vq` printed nothing.
+///
+/// The `-v` leg is a positive control and is load-bearing: without it this test
+/// would still pass if verbosity were broken outright and every invocation went
+/// silent.
+#[test]
+fn quiet_suppresses_info_regardless_of_verbose_order() {
+    use tempfile::tempdir;
+
+    let run = |flags: &[&str]| {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("q.txt");
+        let destination = tmp.path().join("q.out");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let mut args = vec![OsString::from(RSYNC)];
+        args.extend(flags.iter().map(OsString::from));
+        args.push(source.into_os_string());
+        args.push(destination.clone().into_os_string());
+
+        let (code, stdout, stderr) = run_with_args(args);
+        assert_eq!(code, 0, "{flags:?} must succeed");
+        assert!(stderr.is_empty(), "{flags:?} must not warn");
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"payload",
+            "{flags:?} must still transfer the file"
+        );
+        stdout
+    };
+
+    for flags in [&["-q", "-v"][..], &["-v", "-q"][..], &["-q"][..]] {
+        let stdout = run(flags);
+        assert!(
+            stdout.is_empty(),
+            "{flags:?} must print nothing, got: {:?}",
+            String::from_utf8_lossy(&stdout)
+        );
+    }
+
+    let verbose_only = run(&["-v"]);
+    assert!(
+        !verbose_only.is_empty(),
+        "-v alone must still print; an always-silent build would make the \
+         quiet assertions above vacuous"
+    );
+}
