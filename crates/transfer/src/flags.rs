@@ -1228,3 +1228,110 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod delivery_classification {
+    use super::*;
+
+    /// CLASS GUARD for the "long-form-only flag was never bridged" defect.
+    ///
+    /// `ParsedServerFlags` exists to be *parsed from the compact flag string*.
+    /// That is what made the defect invisible three times: everything around a
+    /// given field arrives for free, so a field the string CANNOT carry looks
+    /// no different from one it can. `--preallocate`, `--remove-source-files`
+    /// and (in `DeletionConfig`) `--ignore-errors` were each dropped this way.
+    ///
+    /// The exhaustive destructure below is the guard. Adding a field to
+    /// `ParsedServerFlags` stops the build with `error[E0027]` until the author
+    /// puts it in one of the three groups, which forces the question "how does
+    /// this reach the peer, and the LOCAL receiver on a pull?" to be answered
+    /// once, here, instead of being discovered by an operator.
+    ///
+    /// The classification was MEASURED, not inspected: each option was set on a
+    /// `ClientConfig`, round-tripped through `build_server_flag_string` ->
+    /// `from_flag_string_and_args`, then through `apply_common_server_flags`.
+    /// An automated text-analysis pass over `parse()` was tried first and
+    /// returned 44 of 56 fields as "never assigned", including `compress`,
+    /// `delete` and `dry_run` - obviously wrong. That is why these are hand
+    /// classifications: the automation gives a confidently incorrect answer.
+    #[test]
+    fn every_parsed_server_flags_field_is_classified() {
+        #[allow(unused_variables)]
+        let ParsedServerFlags {
+            // -- DECODED FROM THE FLAG STRING (parse_transfer_flag assigns it,
+            //    and build_server_flag_string emits the letter). ------------
+            links,
+            owner,
+            group,
+            devices,
+            specials,
+            times,
+            atimes,
+            perms,
+            recursive,
+            rsh,
+            archive,
+            verbose,
+            verbose_level,
+            compress,
+            checksum,
+            hard_links,
+            acls,
+            xattrs,
+            xattrs_level,
+            dry_run,
+            dirs,
+            whole_file,
+            sparse,
+            one_file_system,
+            relative,
+            update,
+            crtimes,
+            ignore_times,
+            backup,
+            cvs_exclude,
+
+            // -- CARRIED BY apply_common_server_flags (no compact letter, so
+            //    the string cannot deliver it and a bridge is mandatory). ---
+            preallocate,
+            remove_source_files,
+            no_implied_dirs,
+            copy_unsafe_links,
+            safe_links,
+            append,
+            append_verify,
+            copy_devices,
+            info_flags,
+
+            // -- ⚠ DECODER-CAPABLE BUT NEVER EMITTED. `parse_transfer_flag`
+            //    handles the letter, but build_server_flag_string never writes
+            //    it and no long arg is forwarded, so the peer is never told.
+            //    Upstream DOES pack all of these (options.c server_options:
+            //    K k L E y O J m). Tracked as task 650 - do not "fix" by
+            //    moving them to the bridge; the letter is the upstream rule.
+            keep_dirlinks,
+            copy_dirlinks,
+            copy_links,
+            preserve_executability,
+            fuzzy_level,
+            omit_dir_times,
+            omit_link_times,
+            prune_empty_dirs,
+
+            // -- ⚠ NEITHER MECHANISM. No compact letter, no bridge. Each needs
+            //    a decision; tracked as task 647. `partial` is forwarded as a
+            //    long arg so it is delivered, just not through these two.
+            //    `parallel_delta_scan` is an oc extension with no upstream
+            //    letter, so a bridge is its only possible route.
+            partial,
+            parallel_delta_scan,
+            mkpath,
+            incremental_recursion,
+            msgs_to_stderr,
+            numeric_ids,
+            delete,
+            list_only,
+            only_write_batch,
+        } = ParsedServerFlags::default();
+    }
+}
