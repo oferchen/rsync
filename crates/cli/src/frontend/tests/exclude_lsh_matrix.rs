@@ -221,7 +221,6 @@ fn exclude_lsh_leg_2_exclude_from_delete_during() {
 }
 
 #[test]
-#[ignore = "UTS-V3.B.F.14 pending"]
 fn exclude_lsh_leg_3_merge_with_cvs_modifier_delete_excluded() {
     // upstream: exclude.test:173-174
     let (tmp, fromdir) = setup_fixture();
@@ -252,10 +251,7 @@ fn exclude_lsh_leg_3_merge_with_cvs_modifier_delete_excluded() {
         dest.clone().into_os_string(),
     ]);
 
-    // Leg 3 currently fails because the per-directory `:C` modifier
-    // interaction with `--delete-excluded` is still being landed
-    // (see UTS-V3.B.F.14). Surface the exit code as the test diagnostic.
-    assert_eq!(code, 0, "leg 3 exited non-zero (pending UTS-V3.B.F.14)");
+    assert_eq!(code, 0, "leg 3 exited non-zero");
     assert_dest_has(&dest, "bar/down/to/foo/file4.junk");
     assert_dest_missing(&dest, "bar/down/to/foo/file1.bak");
 }
