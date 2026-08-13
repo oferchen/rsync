@@ -8,6 +8,12 @@ a markdown table grouped by transfer mode to stdout.
 import json
 import sys
 
+# Both scripts live in .github/scripts and are invoked as
+# `python3 .github/scripts/<name>.py`, which puts that directory on sys.path[0].
+# benchmark_chart is pure stdlib, so importing its size formatter here keeps one
+# definition of the IEC convention rather than a second copy that can drift.
+from benchmark_chart import fmt_bytes
+
 MODE_LABELS = {
     "local": "Local Copy",
     "ssh_pull": "SSH Pull",
@@ -111,11 +117,49 @@ def highlight_lines(summary):
     return lines
 
 
+def memory_indicator(ratio):
+    """Ratio wording for a BYTES metric.
+
+    ratio_indicator() says "faster"/"slower", which is meaningless for peak
+    RSS -- memory is not fast. Using it here would repeat the unit conflation
+    benchmark_chart.py already had to fix, where a bytes metric was described
+    in duration language. Same 5% noise band as the timing indicator so the
+    two columns agree on what counts as a real difference.
+    """
+    if ratio < 0.95:
+        return "lower"
+    if ratio <= 1.05:
+        return "~same"
+    return "higher"
+
+
+def rss_cells(t):
+    """Return the three peak-RSS cells for a comparison row.
+
+    benchmark_rss() records `peak_rss_kb` for every mode, not just the memory
+    mode, so a throughput comparison can show what the speed cost in memory
+    without a second benchmark run. The measurement can still be absent -- a
+    run that timed out, or a platform whose /usr/bin/time output this parser
+    does not recognise -- so a missing value degrades to a dash rather than
+    inventing a number or dropping the row.
+    """
+    up_kb = t["upstream"].get("peak_rss_kb")
+    oc_kb = t["oc_rsync"].get("peak_rss_kb")
+    if not up_kb or not oc_kb:
+        return "-", "-", "-"
+    ratio = oc_kb / up_kb
+    return (
+        fmt_bytes(up_kb * 1024),
+        fmt_bytes(oc_kb * 1024),
+        f"{memory_indicator(ratio)} {ratio:.2f}x",
+    )
+
+
 def main():
     with open("benchmark_results.json") as f:
         data = json.load(f)
 
-    upstream_version = data.get("upstream_version") or "3.4.4"
+    upstream_version = data.get("upstream_version") or "3.5.0"
 
     print("## Benchmark Results\n")
     print(
@@ -138,15 +182,22 @@ def main():
             continue
 
         print(f"### {label}\n")
-        print(f"| Test | rsync {upstream_version} | oc-rsync | Ratio |")
-        print("|------|----------|----------|-------|")
+        print(
+            f"| Test | rsync {upstream_version} | oc-rsync | Time | "
+            f"rsync {upstream_version} RSS | oc-rsync RSS | Peak RSS |"
+        )
+        print("|------|----------|----------|------|----------|----------|----------|")
 
         for t in tests:
             up = t["upstream"]["mean"]
             oc = t["oc_rsync"]["mean"]
             ratio = t["ratio"]
             ind = ratio_indicator(ratio)
-            print(f"| {t['name']} | {up:.3f}s | {oc:.3f}s | {ind} {ratio:.2f}x |")
+            up_rss, oc_rss, rss_ratio = rss_cells(t)
+            print(
+                f"| {t['name']} | {up:.3f}s | {oc:.3f}s | {ind} {ratio:.2f}x "
+                f"| {up_rss} | {oc_rss} | {rss_ratio} |"
+            )
 
         print()
 
