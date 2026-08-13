@@ -203,6 +203,8 @@ pub struct LocalCopyOptions {
     pub(super) devices: bool,
     pub(super) copy_devices_as_files: bool,
     pub(super) specials: bool,
+    /// `--drop-D`: refuse to CREATE devices and specials.
+    pub(super) drop_devices: bool,
     pub(super) force_replacements: bool,
     pub(super) implied_dirs: bool,
     pub(super) mkpath: bool,
@@ -336,6 +338,7 @@ impl LocalCopyOptions {
             devices: false,
             copy_devices_as_files: false,
             specials: false,
+            drop_devices: false,
             force_replacements: false,
             implied_dirs: true,
             mkpath: false,

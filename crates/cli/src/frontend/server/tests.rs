@@ -1111,6 +1111,27 @@ fn long_flags_partial_default_none() {
 
 // upstream: options.c:2760-2765 - --specials / --no-specials convey
 // preserve_specials separately from the compact 'D' (devices) letter.
+/// `--drop-D` must be recognised on the SERVER side, because that is the only
+/// way it can reach a remote receiver: it is never forwarded automatically, so
+/// the operator sends it explicitly with `--remote-option` / `-M`
+/// (upstream `rsync.1.md:1786-1793`). A server that rejected the option would
+/// make `-M--drop-D` fail, which is upstream's documented remote usage.
+#[test]
+fn long_flags_drop_devices_round_trip() {
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--drop-D")]);
+    assert_eq!(flags.drop_devices, Some(true));
+
+    let flags =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-drop-D")]);
+    assert_eq!(flags.drop_devices, Some(false));
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert_eq!(
+        flags.drop_devices, None,
+        "absent means untouched, not implicitly off"
+    );
+}
+
 #[test]
 fn long_flags_specials_and_no_specials() {
     let flags =

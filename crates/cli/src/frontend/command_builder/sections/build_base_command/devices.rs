@@ -68,4 +68,22 @@ pub(super) fn add_device_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .conflicts_with("specials"),
         )
+        // Paired with `overrides_with` rather than `conflicts_with` because
+        // upstream declares both as POPT_ARG_VAL assignments to one variable
+        // (options.c:688-689), so a repeated pair is last-wins, not an error -
+        // the same shape `-D` / `--no-D` already uses above.
+        .arg(
+            Arg::new("drop-devices")
+                .long("drop-D")
+                .help("Receiver refuses to create device and special files.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-drop-devices"),
+        )
+        .arg(
+            Arg::new("no-drop-devices")
+                .long("no-drop-D")
+                .help("Let the receiver create device and special files (negates --drop-D).")
+                .action(ArgAction::SetTrue)
+                .overrides_with("drop-devices"),
+        )
 }
