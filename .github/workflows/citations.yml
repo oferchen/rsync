@@ -30,6 +30,20 @@
 # This deliberately overlaps the copy that runs under nextest. The duplication is
 # cheap and the two have different trigger sets; the standalone job is the one
 # that covers docs-only changes.
+#
+# ADVISORY, NOT REQUIRED - a deliberate choice, not an oversight.
+#
+# `Upstream citations resolve` is not in the master ruleset's required-status-check
+# list and is not being added to it. Master enforces strict up-to-date merges, so
+# every additional required context lengthens the serial merge queue; a docs-typo
+# pull request should not have to round-trip that queue behind a comment checker.
+# The failure being closed here is *invisibility* - a wrong citation currently
+# reaches master with nothing anywhere reporting on it - and an advisory red is
+# visible on the pull request, which is exactly what was missing.
+#
+# The identical assertion still runs REQUIRED inside `nextest (stable)` for any
+# change that touches code, so no code path loses enforcement. Promote this to
+# required only together with a decision about that merge-queue cost.
 name: Citations
 
 on:
