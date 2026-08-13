@@ -1052,6 +1052,7 @@ dependencies = [
  "seccompiler",
  "socket2",
  "tempfile",
+ "test-support",
  "tokio",
  "tracing",
  "windows",

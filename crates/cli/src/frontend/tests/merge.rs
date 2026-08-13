@@ -98,3 +98,55 @@ fn merge_directive_options_respect_child_overrides() {
     assert_eq!(merged.sender_side_override(), Some(false));
     assert_eq!(merged.receiver_side_override(), Some(true));
 }
+
+/// A merge-file name with a `..` in it is collapsed lexically before the file
+/// is opened, so `a/b/../rules.txt` reads `a/rules.txt` even though `a/b` does
+/// not exist.
+///
+/// This is upstream's rule, not a convenience: `parse_merge_name` cleans the
+/// name with `clean_fname(fn, CFN_COLLAPSE_DOT_DOT_DIRS)` *before* the open, so
+/// the `..` never reaches the kernel and the intermediate directory need not
+/// exist. Handing the raw name to the OS instead fails with ENOENT and the
+/// whole run aborts, which is what rsync did until 3.5.0 fixed the off-by-one
+/// that left this collapse dead for multi-component paths. Measured against a
+/// real rsync 3.5.0 build: it loads the rules and exits 0.
+// upstream: exclude.c parse_merge_name(); util1.c clean_fname()
+#[test]
+fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
+    use std::collections::HashSet;
+    use tempfile::tempdir;
+
+    let temp = tempdir().expect("tempdir");
+    std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
+    std::fs::write(temp.path().join("a/rules.txt"), "- *.log\n").expect("write merge rules");
+    // `a/b` deliberately does not exist: only the lexical collapse can find the
+    // file, so this fails if the raw name is passed through to open().
+
+    let directive = MergeDirective::new(OsString::from("a/b/../rules.txt"), None);
+    let mut rules = Vec::new();
+    let mut visited = HashSet::new();
+    apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).expect("apply merge");
+
+    assert!(
+        rules
+            .iter()
+            .any(|rule| { rule.kind() == FilterRuleKind::Exclude && rule.pattern() == "*.log" })
+    );
+}
+
+/// The collapse must not invent a file: a `..` name whose collapsed form does
+/// not exist still fails, so the rewrite cannot mask a genuinely bad rule.
+// upstream: exclude.c parse_merge_name(); util1.c clean_fname()
+#[test]
+fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
+    use std::collections::HashSet;
+    use tempfile::tempdir;
+
+    let temp = tempdir().expect("tempdir");
+    std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
+
+    let directive = MergeDirective::new(OsString::from("a/b/../missing.txt"), None);
+    let mut rules = Vec::new();
+    let mut visited = HashSet::new();
+    assert!(apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).is_err());
+}
