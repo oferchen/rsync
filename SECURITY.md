@@ -75,6 +75,32 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Not vulnerable | oc-rsync consumes the parent reference as `Option<usize>` and indexes into a bounds-checked `Vec` (`crates/protocol/src/flist/dir_tree.rs`). The validating entry point `DirectoryTree::try_add_directory` returns `DirTreeError::OutOfBoundsParent` on a malformed wire index; the unchecked `add_directory` aborts via Rust's bounds-check panic. Regression coverage: `try_add_directory_rejects_out_of_range_parent_idx`, `try_add_directory_rejects_boundary_off_by_one`, `add_directory_panics_safely_on_oob_parent_idx` in `crates/protocol/src/flist/dir_tree.rs`. SEC-4 closed. |
 | CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | **Fixed** | `read_proxy_line()` in `crates/core/src/client/module_list/connect/proxy.rs` reads byte-by-byte into a heap `Vec<u8>` and explicitly caps the response line at `MAX_PROXY_LINE_BYTES = 1023` bytes, matching upstream's 1024-byte `establish_proxy_connection()` stack buffer (socket.c:86). The C off-by-one stack-write is structurally impossible (bounds-checked `Vec::push`), and indefinite buffering is bounded by the explicit cap. Audit: SEC-2.a (PR #4609); upstream-parity alignment SEC-2.b (PR #4812). |
 
+### Upstream rsync 3.5.0 (13 Aug 2026) - triage in progress
+
+rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. Unlike the 3.4.2/3.4.3 batches below, this set is **not yet fully audited against oc-rsync**, and this section states that plainly rather than implying coverage that does not exist.
+
+**What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, which means neither "inherited" nor "not applicable" can be assumed for any of them - each needs its own evidence.
+
+**What is measured.** Running upstream's 3.5.0 test suite against oc-rsync reports 133 divergent tests. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence.
+
+**Highest-severity items and their oc-rsync bearing:**
+
+| CVE | Severity | Upstream issue | oc-rsync bearing |
+|-----|----------|----------------|------------------|
+| CVE-2026-53791 | CRITICAL | `proxy protocol = true` let a directly-connecting client forge a PROXY header and spoof its source address, defeating `hosts allow`/`hosts deny`. Fixed by a new `proxy protocol hosts` allow-list that fails **closed** when unset. | Related and independently tracked: oc-rsync's daemon currently derives a placeholder peer address on its stdio paths, which weakens `hosts allow`/`hosts deny` in the same direction. Being fixed as a prerequisite. |
+| CVE-2026-70452 | HIGH | `hosts deny` failed **open** when a configured hostname would not resolve. | Under audit. Same fail-open class as the above. |
+| CVE-2026-70464 | HIGH | An unauthenticated peer could complete the `@RSYNCD` handshake. | Under audit; 3.5.0 also adds an `auth digest` floor directive. |
+| CVE-2026-53784 / 53793 | HIGH | Daemon module-root chdir escape under `use chroot`, and a `/./` inner-module escape via a symlinked path. | Under audit. |
+| CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` **disabled path confinement entirely**. | Directly applicable: oc-rsync's confinement is narrower than 3.5.0's and is being widened to the new model. |
+| CVE-2026-53783 | HIGH | `rrsync` restricted-directory escape - each path was validated, but the validation could be walked out of. | oc-rsync ships no restricted-shell wrapper today; one is being added, enforcing through the same path resolver rather than a separate validator. |
+| CVE-2026-53790 | HIGH | Command / argument injection via unquoted peer- or config-supplied values. | Under audit. |
+| CVE-2026-70453 | HIGH | Quadratic CPU exhaustion in `hash_search()` from a long equal-weak-checksum chain. | Under audit; oc-rsync's block matcher differs from upstream's, so the bound must be reasoned about independently. |
+| CVE-2026-70455 / 70463 / 70461 / 70458 / 70456 | HIGH | Peer-controlled Zstandard thread count; `auth users` separator handling; three out-of-bounds heap writes. | The memory-safety trio has no direct Rust analogue, but each also has an observable half - whether malformed input is **rejected** rather than accepted with wrong state - which is being checked rather than assumed. |
+
+**New defensive surfaces in 3.5.0** that oc-rsync is adopting: `--confine-root=DIR`, `--insecure-links` / `--no-insecure-links`, and the `insecure links`, `proxy protocol hosts` and `auth digest` daemon directives.
+
+A Rust reimplementation is immune to the *memory-corruption* half of several of these by construction. It is **not** immune to the logic half - a fail-open access check, an unconfined path, or an unbounded peer-supplied count is equally reachable in safe Rust. This section will be updated per-CVE as each is closed or evidenced as non-applicable.
+
 ### Upstream rsync 3.4.3 audits (2026-05-20)
 
 rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs and a defense-in-depth batch. Per-CVE applicability is captured in the table above (CVE-2026-29518 / 43617 / 43618 / 43619 / 43620 / 45232). The defense-in-depth items were audited as follows:
@@ -118,7 +144,7 @@ Additionally shipped since the last update:
 
 **Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
 
-CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own `testsuite/*.test` corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.4 by default. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
+CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own testsuite corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.4 by default. A separate nightly job runs the rewritten 3.5.0 Python suite so the divergence set above stays measured rather than estimated. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
 
 ### Upstream rsync 3.4.2 audits
 

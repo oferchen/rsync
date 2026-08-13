@@ -1,8 +1,12 @@
-# Rust rsync vs Upstream rsync 3.4.4 Comparison
+# Rust rsync vs Upstream rsync 3.5.0 Comparison
 
-This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.4.4 (protocol 32), treating the upstream C source at `target/interop/upstream-src/rsync-3.4.4/` as the source of truth.
+This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.5.0 (protocol 32), treating the upstream C source at `target/interop/upstream-src/rsync-3.5.0/` as the source of truth.
 
-**Last verified:** 2026-07-22
+> **Retarget note (2026-08-13).** The comparisons below were verified line-by-line against rsync 3.4.4 and have been repointed at 3.5.0. That repoint is sound for everything protocol-level: 3.5.0 declares the same `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, ships a byte-identical `errcode.h`, and adds no `MSG_*`, `XMIT_*` or compat-flag constants, so every wire constant and algorithm claim here carries over unchanged.
+>
+> It is **not** a re-verification of the behavioural sections. 3.5.0 rewrote the path resolver and hardened the daemon across 33 CVEs, growing `syscall.c` by 85% and `generator.c`, `acls.c`, `sender.c`, `flist.c`, `exclude.c` and `receiver.c` substantially. Sections touching path resolution, symlink handling, chroot or daemon access control describe 3.4.4 behaviour until individually re-checked, and line-number citations point at 3.4.4 offsets.
+
+**Last verified:** 2026-07-22 (against 3.4.4; see retarget note above)
 **Validation commands:**
 ```sh
 cargo fmt --all -- --check \
@@ -541,7 +545,7 @@ pipeline: rayon workers compute per-directory delete plans in parallel
 (`compute_extras`), and a single emitter thread walks directories in
 upstream depth-first order to perform every `unlink`, emit every
 `*deleting` itemize line, and update every counter. The emitter
-preserves upstream rsync 3.4.4's wall-clock event sequence
+preserves upstream rsync 3.5.0's wall-clock event sequence
 byte-for-byte while keeping candidate computation parallel. See
 [`docs/architecture/delete-during.md`](architecture/delete-during.md)
 and the full specification in
@@ -874,7 +878,7 @@ delete pass, matching `delete.c:165-174`. The `make_backups && (backup_dir ||
 
 ## Summary
 
-The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.4.4:
+The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.5.0:
 
 1. **Protocol versions 28-32** fully supported with version-specific feature gates
 2. **All compatibility flags** match upstream bit positions
@@ -906,7 +910,7 @@ The Rust rsync implementation achieves **full wire protocol compatibility** with
 4. **ACL handling:** rsync-specific synchronization semantics
 5. **Filter rules:** rsync syntax differs from gitignore
 
-These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.4.4.
+These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.5.0.
 
 ---
 
@@ -944,4 +948,4 @@ These custom implementations are necessary for byte-level wire protocol compatib
 
 ---
 
-**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync 3.4.4 source code and comparing against the corresponding Rust implementation.
+**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync 3.5.0 source code and comparing against the corresponding Rust implementation.

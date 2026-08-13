@@ -19,6 +19,7 @@ on:
       - '.github/scripts/benchmark_chart.py'
       - '.github/scripts/benchmark_report.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
+      - 'tools/ci/tests/test_benchmark_report.py'
       - '.github/workflows/benchmark-tooling.yml'
   push:
     branches:
@@ -27,6 +28,7 @@ on:
       - '.github/scripts/benchmark_chart.py'
       - '.github/scripts/benchmark_report.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
+      - 'tools/ci/tests/test_benchmark_report.py'
       - '.github/workflows/benchmark-tooling.yml'
 
 permissions:
@@ -48,4 +50,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Self-test benchmark_chart.py and benchmark_report.py
-        run: python3 tools/ci/tests/test_benchmark_chart.py
+        run: |
+          python3 tools/ci/tests/test_benchmark_chart.py
+          python3 tools/ci/tests/test_benchmark_report.py

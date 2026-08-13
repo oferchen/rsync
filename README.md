@@ -2,12 +2,12 @@
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
 [![Upstream Testsuite (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
 [![Upstream Testsuite root (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
-[![Track 3.5.0dev Testsuite (RsyncProject master)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
+[![Testsuite (rsync 3.5.0, tracking)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.4 (and back-compat with 3.4.3 / 3.4.2 / 3.4.1, protocol 32), works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 (and with the whole 3.4.x series, protocol 32), works as a drop-in replacement.
 
 Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
 
@@ -15,9 +15,11 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.4.4 (and 3.4.3 / 3.4.2 / 3.4.1, protocols 28-32).
+**Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, and 3.4.4, with 2.6.9 built and cached for wire-byte regression coverage; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, and 3.4.4, with 2.6.9 and 3.5.0 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`; against the 3.4.4 corpus all tests pass and the known-failures roster is empty.
+
+**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, three new options (`--confine-root`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly: the 3.5.0 suite currently reports 133 divergences, measured nightly by the [3.5.0 testsuite tracker](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml). The gating upstream-testsuite check remains pinned to 3.4.4 until that set is closed or registered.
 
 | Component | Status |
 |-----------|--------|
@@ -73,7 +75,7 @@ See the [CHANGELOG](./CHANGELOG.md) for the full, per-release change history.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, and **3.4.4** in CI across protocols 28-32. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4, the latest conservative regression-fix release; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, and **3.4.4** in CI across protocols 28-32, with **3.5.0** built and cached as an oracle binary ahead of joining the gating matrix. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -81,7 +83,7 @@ oc-rsync negotiates `protocol_version` per upstream, defaults to 32, and support
 
 | Protocol | Upstream rsync version | Status in oc-rsync | Notes |
 |----------|------------------------|--------------------|-------|
-| 32       | 3.4.x (current)        | Full support        | Primary target; all features negotiated. Protocol 32 was introduced in rsync 3.4.0 |
+| 32       | 3.4.x, 3.5.0 (current) | Full support        | Primary target; all features negotiated. Protocol 32 was introduced in rsync 3.4.0 and is unchanged in 3.5.0 |
 | 31       | 3.1.x - 3.3.x          | Full support        | Verified via interop matrix (3.1.3); introduced in rsync 3.1.0 and used through the 3.2.x/3.3.x series |
 | 30       | 3.0.x                  | Full support        | Verified via interop matrix (3.0.9) |
 | 29       | 2.6.9                  | Full support        | Non-blocking interop against upstream 2.6.9 (RP28.c/RP28.d); sort.rs t_PATH/t_ITEM gate (RP28.h) |
@@ -99,6 +101,7 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 3.0.9                  | 30       | push, pull, daemon       | gating |
 | 3.1.3                  | 31       | push, pull, daemon       | gating |
 | 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
+| 3.5.0                  | 32       | push, pull, daemon, SSH  | built + cached (not yet gating) |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
 
@@ -137,9 +140,9 @@ See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
 
 ### Performance
 
-![Benchmark: oc-rsync vs upstream rsync 3.4.4](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
+![Benchmark: oc-rsync vs upstream rsync 3.5.0](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Benchmarked against upstream rsync 3.4.4 on each tagged release across local, SSH, and daemon transfer modes; the chart and a per-mode breakdown are attached to every [GitHub release](https://github.com/oferchen/rsync/releases/latest).
+Benchmarked against upstream rsync 3.5.0 on each tagged release across local, SSH, and daemon transfer modes. Every mode reports both **elapsed time** and **peak RSS**, so a throughput win bought with memory is visible rather than hidden; the chart, a per-mode breakdown and the exact upstream build string are attached to every [GitHub release](https://github.com/oferchen/rsync/releases/latest).
 
 Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported in `--version` output. See `oc-rsync(1)` for details.
 
@@ -189,7 +192,7 @@ Three one-shot warnings may appear on stderr (sync path) or via `tracing` target
 
 ### Known Limitations / Architectural Trade-offs
 
-oc-rsync is wire-compatible with upstream rsync 3.4.4, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
+oc-rsync is wire-compatible with upstream rsync 3.5.0, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
 
 - **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
 - **io_uring buffer pool.** The registered buffer pool defaults to 1024 × 4 KiB = 4 MiB and does not auto-adapt under sustained I/O pressure, though its slot count, memory cap, and block size are tunable at runtime via the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP`, and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables. Workloads with very high concurrent file fan-out may still see throughput plateau before saturating the device.
@@ -199,7 +202,7 @@ oc-rsync is wire-compatible with upstream rsync 3.4.4, but a few architectural c
 - **Daemon encryption.** The daemon protocol is plaintext, matching upstream rsync (authentication only, no encryption). oc-rsync has no built-in TLS client - the former `--ssl` / `client-tls` path was removed to match upstream. Encrypt with the SSH transport, or place the daemon behind a TLS-terminating proxy (`stunnel`, HAProxy, nginx) and reach it through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
 - **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports) and for the receive-side disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP backend is selected on Windows). An IOCP file *reader* also exists, but the per-file dispatch that would select it is behind the experimental, non-default `adaptive-basis-dispatch` feature, so default builds still read files via standard buffered I/O.
 - **`.rsync-filter` per-directory inheritance.** Per-directory merge inheritance passes upstream's `testsuite/*.test` filter corpus (the known-failures roster is empty), including nested merges and `!`-clear semantics; the deepest anchored-vs-unanchored corner cases remain an area of ongoing hardening.
-- **`--checksum-seed` / `--fuzzy`.** Both are implemented and honoured on the common path (`--fuzzy` ports upstream's `fuzzy_distance` basis selection); deeper corner-case conformance audits against upstream rsync 3.4.4 are tracked separately.
+- **`--checksum-seed` / `--fuzzy`.** Both are implemented and honoured on the common path (`--fuzzy` ports upstream's `fuzzy_distance` basis selection); deeper corner-case conformance audits against upstream rsync 3.5.0 are tracked separately.
 
 ---
 
