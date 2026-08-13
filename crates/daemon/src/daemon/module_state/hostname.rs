@@ -11,6 +11,49 @@ use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
 
+/// Host string reported when reverse lookup is switched off, so no name was
+/// ever sought.
+///
+/// upstream: clientserver.c:126 `const char undetermined_hostname[] =
+/// "UNDETERMINED";`, selected at clientserver.c:1525 when
+/// `lp_reverse_lookup(-1)` is false.
+pub(in crate::daemon) const UNDETERMINED_HOSTNAME: &str = "UNDETERMINED";
+
+/// Host string reported when a lookup WAS attempted and produced no usable
+/// name - the address is the `0.0.0.0` sentinel, the reverse lookup failed, or
+/// forward confirmation rejected the result.
+///
+/// upstream: clientname.c:34 `static const char default_name[] = "UNKNOWN";`,
+/// returned by `client_name()` on the `0.0.0.0` short-circuit (clientname.c:114)
+/// and on every lookup failure (clientname.c:127, :150).
+pub(in crate::daemon) const UNKNOWN_HOSTNAME: &str = "UNKNOWN";
+
+/// Renders the peer host the way every upstream daemon log escape and
+/// environment variable renders it.
+///
+/// The two sentinels are NOT interchangeable and the distinction is the whole
+/// point: `UNDETERMINED` means nobody asked, `UNKNOWN` means we asked and the
+/// answer was unusable. Collapsing them - as a bare `Option<&str>` does - loses
+/// the reason, which is why oc previously printed one lowercase `unknown` for
+/// both, the bare IP in one log line, and an empty string in
+/// `RSYNC_HOST_NAME`.
+///
+/// This is the display/logging rule only. Access control keeps consuming the
+/// `Option<&str>`: upstream does pass these sentinels to `allow_access()`
+/// (access.c:37-38, and clientname.c:93-95 documents `UNKNOWN` as usable in a
+/// `hosts allow` line), but adopting that would widen oc's ACL matching and is
+/// tracked separately.
+///
+/// upstream: clientserver.c:1525 `host = lp_reverse_lookup(-1) ?
+/// client_name(addr) : undetermined_hostname;`
+pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_lookup: bool) -> &str {
+    match resolved {
+        Some(name) => name,
+        None if reverse_lookup => UNKNOWN_HOSTNAME,
+        None => UNDETERMINED_HOSTNAME,
+    }
+}
+
 /// Resolves the peer's hostname for a module that requires hostname-based access control.
 ///
 /// Returns `None` when hostname lookup is disabled, the module has no hostname-based

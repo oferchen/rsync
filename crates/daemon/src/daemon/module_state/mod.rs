@@ -28,11 +28,15 @@ pub(crate) use auth::{
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::{GidSetting, ModuleDefinition};
 pub(crate) use hostname::module_peer_hostname;
-pub(in crate::daemon) use hostname::{forward_resolve, netgroup_contains, resolve_peer_hostname};
+pub(in crate::daemon) use hostname::{
+    forward_resolve, netgroup_contains, peer_host_display, resolve_peer_hostname,
+};
 pub(crate) use max_connections::MaxConnections;
 pub(in crate::daemon) use runtime::build_module_runtimes;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
 
+#[cfg(test)]
+pub(in crate::daemon) use hostname::UNKNOWN_HOSTNAME;
 #[cfg(test)]
 pub(crate) use hostname::{
     clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
