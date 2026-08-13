@@ -9,6 +9,10 @@
 //! Each check is a self-contained [`Check`] strategy that owns its fixture and
 //! comparison and reports one [`CheckOutcome`] per matrix cell; the runner just
 //! aggregates. This keeps checks independent and individually testable.
+//!
+//! The upstream side of every comparison is the pinned rsync build the interop
+//! harness installs, verified by its `--version` banner; see [`oracle`] for the
+//! resolution rules and the `OC_RSYNC_VALIDATE_UPSTREAM` override.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -129,6 +133,8 @@ mod bench;
 mod checks;
 #[cfg(unix)]
 mod comparison;
+#[cfg(unix)]
+mod oracle;
 #[cfg(unix)]
 mod skips;
 #[cfg(unix)]
@@ -270,7 +276,7 @@ mod unix_impl {
             .collect();
 
         let oc = crate::commands::interop::shared::oc_rsync::detect_oc_rsync_binary(workspace)?;
-        let upstream = pick_upstream(workspace)?;
+        let upstream = super::oracle::resolve(workspace)?;
         let transports = resolve_transports(&options.transports)?;
 
         let work = workspace.join("target/validate");
@@ -286,10 +292,14 @@ mod unix_impl {
             .map(|c| c.label())
             .collect();
         cats.sort_unstable();
+        // Print the oracle's path *and* its version banner before any result,
+        // so every PASS and FAIL below is attributable to a named upstream
+        // release rather than to whichever rsync the host happened to have.
+        eprintln!("[validate] upstream oracle: {}", upstream.banner);
         eprintln!(
             "[validate] oc-rsync={} vs upstream={} over [{}] categories [{}]",
             oc.binary_path().display(),
-            upstream.display(),
+            upstream.path.display(),
             transports
                 .iter()
                 .map(|t| t.label())
@@ -300,7 +310,7 @@ mod unix_impl {
 
         let ctx = ValidateCtx {
             oc: oc.binary_path(),
-            upstream: &upstream,
+            upstream: &upstream.path,
             work: &work,
             transports: &transports,
             flags: &options.flags,
@@ -372,43 +382,6 @@ mod unix_impl {
             ));
         }
         cross_result
-    }
-
-    /// Ground-truth upstream rsync: prefer the system `rsync` on `PATH` (the
-    /// real drop-in comparison target), else an interop-built binary (3.4.x
-    /// preferred).
-    fn pick_upstream(workspace: &Path) -> TaskResult<std::path::PathBuf> {
-        if let Some(system) = system_rsync() {
-            return Ok(system);
-        }
-        let all = crate::commands::interop::shared::upstream::detect_upstream_binaries(workspace)?;
-        let available: Vec<_> = all.into_iter().filter(|b| b.is_available()).collect();
-        let chosen = available
-            .iter()
-            .find(|b| b.version_string().starts_with("3.4"))
-            .or_else(|| available.first())
-            .ok_or_else(|| {
-                crate::error::TaskError::Validation("no upstream rsync binary found".into())
-            })?;
-        Ok(chosen.binary_path().to_path_buf())
-    }
-
-    /// Locate a working `rsync` on `PATH`.
-    fn system_rsync() -> Option<std::path::PathBuf> {
-        let path_var = std::env::var_os("PATH")?;
-        for dir in std::env::split_paths(&path_var) {
-            let candidate = dir.join("rsync");
-            if candidate.is_file()
-                && std::process::Command::new(&candidate)
-                    .arg("--version")
-                    .output()
-                    .map(|out| out.status.success())
-                    .unwrap_or(false)
-            {
-                return Some(candidate);
-            }
-        }
-        None
     }
 
     /// Print the matrix grouped by check, plus a summary line.
