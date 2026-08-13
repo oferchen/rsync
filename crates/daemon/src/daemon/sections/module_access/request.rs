@@ -634,7 +634,11 @@ fn respond_with_module_request(
         conn_state,
     };
 
-    if !module.permits(peer_ip, module_peer_host) {
+    // upstream: clientserver.c:773 `allow_access(addr, &host, i)` is handed the
+    // same never-empty host string the log lines use, sentinels included - so a
+    // `hosts allow = UNKNOWN` line works as clientname.c:93-95 documents.
+    let access_host = PeerHost::new(module_peer_host, module_reverse_lookup);
+    if !module.permits(peer_ip, access_host) {
         return handle_module_denied(&mut ctx, module);
     }
 

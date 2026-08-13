@@ -148,8 +148,15 @@ impl HostPattern {
         })
     }
 
-    /// Returns whether the given IP address and optional hostname match this pattern.
-    fn matches(&self, addr: IpAddr, hostname: Option<&str>) -> bool {
+    /// Returns whether the given IP address and peer hostname match this
+    /// pattern.
+    ///
+    /// `hostname` is never empty - it is either a resolved name or one of
+    /// upstream's `UNKNOWN`/`UNDETERMINED` sentinels - which is why the
+    /// hostname and netgroup arms match it unconditionally. upstream:
+    /// access.c:37-38 refuses only a NULL or empty `host`, a state upstream
+    /// never reaches either.
+    fn matches(&self, addr: IpAddr, hostname: &str) -> bool {
         match (self, addr) {
             (Self::Any, _) => true,
             (Self::Ipv4 { network, prefix }, IpAddr::V4(candidate)) => {
@@ -170,18 +177,14 @@ impl HostPattern {
                     (u128::from(candidate) & mask) == u128::from(*network)
                 }
             }
-            (Self::Hostname(pattern), _) => {
-                hostname.is_some_and(|name| pattern.matches(name))
-            }
+            (Self::Hostname(pattern), _) => pattern.matches(hostname),
             // upstream: access.c:41-42 `innetgr(tok + 1, host, NULL, NULL)` -
             // the client's resolved hostname is tested for netgroup membership.
             // Like the reverse-DNS name match, this needs a resolved hostname;
             // without one (access.c:37-38 `if (!host || !*host) return 0`) it
             // never matches. Resolution goes through the `module_state`
             // netgroup seam, a no-op returning false on musl/Windows.
-            (Self::Netgroup(name), _) => {
-                hostname.is_some_and(|host| module_state::netgroup_contains(name, host))
-            }
+            (Self::Netgroup(name), _) => module_state::netgroup_contains(name, hostname),
             _ => false,
         }
     }
@@ -327,6 +330,15 @@ impl HostnamePattern {
     }
 
     fn matches(&self, hostname: &str) -> bool {
+        // Every pattern kind is lowercased at parse time (mirroring upstream's
+        // `strlower(list2)`, access.c:251), so the comparison must fold the HOST
+        // too - upstream's matcher is `iwildmatch`, the case-INSENSITIVE form
+        // (access.c:46). Comparing directly worked only while every host arrived
+        // pre-lowercased by `normalize_hostname_owned`, and failed silently for
+        // `UNKNOWN`/`UNDETERMINED`, which upstream documents as usable in a
+        // `hosts allow` line (clientname.c:93-95) and which are uppercase.
+        let folded = hostname.to_ascii_lowercase();
+        let hostname = folded.as_str();
         match &self.kind {
             HostnamePatternKind::Exact(expected) => hostname == expected,
             HostnamePatternKind::Suffix(suffix) => {

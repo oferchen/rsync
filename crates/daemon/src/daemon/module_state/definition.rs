@@ -239,7 +239,7 @@ impl ModuleDefinition {
     /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
-    pub(crate) fn permits(&self, addr: std::net::IpAddr, hostname: Option<&str>) -> bool {
+    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
         // upstream: access.c:277-283 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
@@ -248,7 +248,7 @@ impl ModuleDefinition {
             if self
                 .hosts_allow
                 .iter()
-                .any(|pattern| self.host_matches(pattern, addr, hostname))
+                .any(|pattern| self.host_matches(pattern, addr, host))
             {
                 return true;
             }
@@ -257,14 +257,19 @@ impl ModuleDefinition {
             }
         }
 
-        // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution failed
-        // and any deny rule is hostname-based. Without this guard, a peer
-        // whose reverse DNS returns no name (e.g., because the daemon's
+        // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution produced
+        // no name and any deny rule is hostname-based. Without this guard, a
+        // peer whose reverse DNS returns no name (e.g., because the daemon's
         // chroot lacks `/etc/resolv.conf` and the NSS shared objects)
         // silently bypasses hostname-pattern deny rules. This guard only
         // fires on the deny path - the allow short-circuit above lets a
-        // matched peer through without depending on hostname state.
-        if hostname.is_none()
+        // matched peer through without depending on hostname state, which is
+        // what keeps `hosts allow = UNKNOWN` usable.
+        //
+        // Keyed on the SENTINEL, not on the string being absent: the host is
+        // now always a matchable name, so `is_resolved()` is the only thing
+        // that still distinguishes "DNS gave us this" from "nobody could".
+        if !host.is_resolved()
             && self
                 .hosts_deny
                 .iter()
@@ -276,7 +281,7 @@ impl ModuleDefinition {
         if self
             .hosts_deny
             .iter()
-            .any(|pattern| self.host_matches(pattern, addr, hostname))
+            .any(|pattern| self.host_matches(pattern, addr, host))
         {
             return false;
         }
@@ -297,9 +302,9 @@ impl ModuleDefinition {
         &self,
         pattern: &HostPattern,
         addr: std::net::IpAddr,
-        hostname: Option<&str>,
+        host: super::PeerHost<'_>,
     ) -> bool {
-        pattern.matches(addr, hostname)
+        pattern.matches(addr, host.as_str())
             || pattern.forward_resolve_matches(addr, self.forward_lookup)
     }
 

@@ -27,6 +27,7 @@ use crate::daemon::{
     ModuleConnectionError,
     ModuleDefinition,
     ModuleRuntime,
+    PeerHost,
     // From sections/cli_args.rs
     ProgramName,
     RERR_SYNTAX_EXIT_CODE,

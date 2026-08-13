@@ -247,7 +247,7 @@ use self::module_state::TEST_CONFIG_CANDIDATES;
 use self::module_state::build_module_runtimes;
 pub(crate) use self::module_state::{
     AuthUser, ConnectionLimiter, GidSetting, MaxConnections, ModuleConnectionError,
-    ModuleDefinition, ModuleRuntime, UserAccessLevel, module_peer_hostname,
+    ModuleDefinition, ModuleRuntime, PeerHost, UserAccessLevel, module_peer_hostname,
 };
 #[cfg(test)]
 pub(crate) use self::module_state::{

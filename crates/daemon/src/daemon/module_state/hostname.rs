@@ -38,11 +38,8 @@ pub(in crate::daemon) const UNKNOWN_HOSTNAME: &str = "UNKNOWN";
 /// both, the bare IP in one log line, and an empty string in
 /// `RSYNC_HOST_NAME`.
 ///
-/// This is the display/logging rule only. Access control keeps consuming the
-/// `Option<&str>`: upstream does pass these sentinels to `allow_access()`
-/// (access.c:37-38, and clientname.c:93-95 documents `UNKNOWN` as usable in a
-/// `hosts allow` line), but adopting that would widen oc's ACL matching and is
-/// tracked separately.
+/// Access control consumes the same string through [`PeerHost`], which keeps
+/// the resolved/sentinel distinction the ACL rules need.
 ///
 /// upstream: clientserver.c:1525 `host = lp_reverse_lookup(-1) ?
 /// client_name(addr) : undetermined_hostname;`
@@ -51,6 +48,57 @@ pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_looku
         Some(name) => name,
         None if reverse_lookup => UNKNOWN_HOSTNAME,
         None => UNDETERMINED_HOSTNAME,
+    }
+}
+
+/// The peer host as access control sees it: always a name to match against,
+/// plus whether that name came from DNS or is one of upstream's two sentinels.
+///
+/// Upstream passes a never-empty string into `allow_access()`, so a sentinel is
+/// matched like any other name - `match_hostname` bails only on `!host ||
+/// !*host` (access.c:37-38), and clientname.c:93-95 documents `UNKNOWN` as
+/// deliberately usable in a `hosts allow` line. Modelling the host as a bare
+/// `Option<&str>` made both sentinels unmatchable, so `hosts allow =
+/// UNDETERMINED` refused every peer.
+///
+/// The variant is still needed because oc keeps one rule upstream does not: a
+/// hostname-based DENY rule fails closed when no name was resolved. Upstream
+/// can rely on reverse DNS being available (it resolves before `daemon chroot`,
+/// so the result is cached); oc resolves per connection after a process-wide
+/// chroot, where a chroot without NSS configuration silently yields no name.
+/// Keying that guard on the sentinel rather than on `Option::is_none` is what
+/// lets the allow-side sentinels match without disarming it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PeerHost<'a> {
+    /// A name that reverse DNS produced (and forward-confirmed, when the
+    /// module's `forward lookup` is on).
+    Resolved(&'a str),
+    /// `UNDETERMINED` (no lookup was attempted) or `UNKNOWN` (one was, and
+    /// produced nothing usable).
+    Sentinel(&'a str),
+}
+
+impl<'a> PeerHost<'a> {
+    /// Builds the host exactly as the display path builds it, so the string an
+    /// ACL matches is the string the log line prints.
+    pub(crate) fn new(resolved: Option<&'a str>, reverse_lookup: bool) -> Self {
+        match resolved {
+            Some(name) => Self::Resolved(name),
+            None => Self::Sentinel(peer_host_display(None, reverse_lookup)),
+        }
+    }
+
+    /// The name to match patterns against - never empty, mirroring upstream's
+    /// `host` argument to `allow_access()`.
+    pub(crate) const fn as_str(&self) -> &'a str {
+        match self {
+            Self::Resolved(name) | Self::Sentinel(name) => name,
+        }
+    }
+
+    /// Whether the name came from DNS. Only the fail-closed deny guard may ask.
+    pub(crate) const fn is_resolved(&self) -> bool {
+        matches!(self, Self::Resolved(_))
     }
 }
 

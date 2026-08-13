@@ -20,13 +20,13 @@ fn module_hostname_wildcard_token_not_forward_resolved() {
     // refused.
     set_test_forward_override("*.trusted.example.com", &[peer]);
     assert!(
-        !module.permits(peer, None),
+        !module.permits(peer, PeerHost::new(None, true)),
         "a wildcarded token must not be forward-resolved"
     );
 
     // The wildcard still matches a reverse-DNS name the normal way.
     assert!(
-        module.permits(peer, Some("node.trusted.example.com")),
+        module.permits(peer, PeerHost::new(Some("node.trusted.example.com"), true)),
         "a wildcarded token must still match a reverse-DNS name"
     );
 

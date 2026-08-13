@@ -8,8 +8,8 @@
 fn module_definition_hostname_deny_short_circuited_by_wildcard_allow() {
     let module = module_with_host_patterns(&["*"], &["bad.example.com"]);
     let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    assert!(module.permits(peer, Some("bad.example.com")));
-    assert!(module.permits(peer, Some("good.example.com")));
+    assert!(module.permits(peer, PeerHost::new(Some("bad.example.com"), true)));
+    assert!(module.permits(peer, PeerHost::new(Some("good.example.com"), true)));
 }
 
 /// Hostname deny rules engage when the peer matches no allow pattern.
@@ -19,7 +19,7 @@ fn module_definition_hostname_deny_short_circuited_by_wildcard_allow() {
 fn module_definition_hostname_deny_applies_without_allow_match() {
     let module = module_with_host_patterns(&[], &["bad.example.com"]);
     let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    assert!(!module.permits(peer, Some("bad.example.com")));
-    assert!(module.permits(peer, Some("good.example.com")));
+    assert!(!module.permits(peer, PeerHost::new(Some("bad.example.com"), true)));
+    assert!(module.permits(peer, PeerHost::new(Some("good.example.com"), true)));
 }
 

@@ -27,6 +27,7 @@ pub(crate) use auth::{
 };
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::{GidSetting, ModuleDefinition};
+pub(crate) use hostname::PeerHost;
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{
     forward_resolve, netgroup_contains, peer_host_display, resolve_peer_hostname,
