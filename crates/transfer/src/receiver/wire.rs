@@ -10,7 +10,7 @@ use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
 use protocol::effective_max_alloc;
 use protocol::read_varint;
-use protocol::xattr::XattrList;
+use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
 
 /// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1944-1960).
 const MAX_XNAME_LEN: usize = 4096;
@@ -663,7 +663,11 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
 /// typed error instead of an unbounded allocation or a varint overflow panic.
 #[inline]
 fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
-    let max_datum = effective_max_alloc();
+    // upstream: xattrs.c:781 (3.5.0) additionally rejects any single value
+    // above MAX_XATTR_VALUE_BYTES with exit_cleanup(RERR_PROTOCOL). That
+    // ceiling is hard: unlike the --max-alloc guard it does not rise when the
+    // peer raises --max-alloc, so take whichever bound is tighter.
+    let max_datum = effective_max_alloc().min(MAX_XATTR_VALUE_BYTES);
     if raw_len < 0 || raw_len as usize > max_datum {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -790,6 +794,30 @@ mod xattr_abbrev_guard_tests {
         let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
         assert_eq!(err.kind(), ErrorKind::InvalidData);
         assert!(err.to_string().contains("accumulation overflow"));
+    }
+
+    /// A requested value above the hard per-value ceiling must be refused.
+    ///
+    /// WHY: upstream applies `MAX_XATTR_VALUE_BYTES` here independently of
+    /// `--max-alloc`, so the ceiling cannot be lifted by a peer that raised
+    /// `--max-alloc`. Declared-only: no payload bytes follow the length, so a
+    /// pass proves the refusal happened before the allocation rather than
+    /// after reading 128 MiB.
+    #[test]
+    fn datum_len_above_hard_per_value_cap_is_rejected() {
+        use protocol::xattr::MAX_XATTR_VALUE_BYTES;
+
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(1));
+        bytes.extend(encode_varint(
+            i32::try_from(MAX_XATTR_VALUE_BYTES + 1).expect("cap fits in i32"),
+        ));
+
+        let mut reader = Cursor::new(bytes);
+        let err = read_xattr_abbreviation_data(&mut reader)
+            .expect_err("a value past the hard cap must be refused");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("datum_len"), "{err}");
     }
 
     #[test]
