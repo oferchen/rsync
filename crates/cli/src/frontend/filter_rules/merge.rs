@@ -30,11 +30,18 @@ pub(crate) fn apply_merge_directive(
         (PathBuf::from("-"), String::from("-"), None)
     } else {
         let raw_path = PathBuf::from(directive.source());
-        let resolved = if raw_path.is_absolute() {
+        let joined = if raw_path.is_absolute() {
             raw_path
         } else {
             base_dir.join(raw_path)
         };
+        // upstream: exclude.c parse_merge_name() runs the merge-file name
+        // through `clean_fname(fn, CFN_COLLAPSE_DOT_DOT_DIRS)`, and again after
+        // joining it onto the filter dir, so `merge a/b/../test` opens
+        // `a/test`. The collapse is lexical and happens before the open, which
+        // is why it succeeds when `a/b` does not exist - handing the raw name
+        // to the OS instead fails with ENOENT.
+        let resolved = filters::collapse_dot_dot_dirs(&joined);
         let display = resolved.display().to_string();
         let canonical = std::fs::canonicalize(&resolved).ok();
         (resolved, display, canonical)
