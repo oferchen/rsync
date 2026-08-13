@@ -57,18 +57,25 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # the same wire protocol (proto 32). Testing the intermediate 3.4.x point
 # releases is redundant once 3.4.4 is green. 3.0.9 (proto 30) and 3.1.3
 # (proto 31, xattrs/ACL wire baseline) remain as protocol-level anchors.
-versions=(3.0.9 3.1.3 3.4.4)
+#
+# 3.5.0 is the current upstream release and runs the full scenario matrix. It
+# does NOT replace 3.4.4: this list is a set of peers we must interoperate
+# with, not a single "supported version", so an operator still running 3.4.4
+# stays covered. The 3.4.x collapse above was sound because those releases
+# share a wire protocol AND a behaviour baseline; 3.5.0 shares the protocol
+# (rsync.h: PROTOCOL_VERSION 32, SUBPROTOCOL_VERSION 0, unchanged) but rewrites
+# the path resolver and hardens the daemon, so it earns its own cells.
+#
+# Scope note: these cells exercise WIRE interoperability. 3.5.0's behavioural
+# divergences are a separate axis measured by the upstream testsuite, and are
+# deliberately not gated here - a wire-compatible peer with different local
+# path-resolution rules should pass interop and fail testsuite cells, and
+# conflating the two would hide which one broke.
+versions=(3.0.9 3.1.3 3.4.4 3.5.0)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
-#
-# 3.5.0 is the current upstream release. It carries the same wire protocol as
-# 3.4.4 (rsync.h: PROTOCOL_VERSION 32, SUBPROTOCOL_VERSION 0) but rewrites the
-# path resolver and hardens the daemon, so it is built and cached here first to
-# validate the fetch/configure/build path and give the follow-up triage a real
-# 3.5.0 oracle binary. Promoting it into `versions` (running the full scenario
-# matrix against it) is deliberately a separate step.
-extra_build_versions=(2.6.9 3.5.0)
+extra_build_versions=(2.6.9)
 
 # Versions with no usable per-arch .deb in any pool we track, so the harness
 # builds them from the release tarball instead. 2.6.9 predates the per-arch
