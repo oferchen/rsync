@@ -165,7 +165,15 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                     topbits |= 0o2000;
                 }
                 b'o' => where_ |= 0o001,
-                b'a' => where_ |= 0o111,
+                b'a' => {
+                    where_ |= 0o111;
+                    // upstream: chmod.c:parse_chmod() `case 'a'` - `a` covers
+                    // both `u` and `g`, so it contributes both set-id bits and
+                    // `a+s` sets setuid AND setgid, matching chmod(1). Without
+                    // this the `s` clause below falls to its no-topbits default
+                    // and sets setuid only.
+                    topbits |= 0o6000;
+                }
                 b'+' => {
                     op = Op::Add;
                     state = State::SecondHalf;
@@ -320,15 +328,15 @@ mod tests {
 
     #[test]
     fn setid_default_setuid_without_ug_who() {
-        // upstream: chmod.c:173-178 - `s` sets `topoct = 04000` when no u/g
-        // who-letter contributed to topbits (o/a/implied who).
+        // upstream: chmod.c:parse_chmod() `case 's'` - `s` sets `topoct = 04000`
+        // when no who-letter contributed to topbits (`o` and the implied who).
         assert_eq!(one("o+s").mode_or, 0o4000);
-        assert_eq!(one("a+s").mode_or, 0o4000);
         assert_eq!(one("+s").mode_or, 0o4000);
-        // u/g who select their own top bit.
+        // u/g who select their own top bit; `a` covers both.
         assert_eq!(one("u+s").mode_or, 0o4000);
         assert_eq!(one("g+s").mode_or, 0o2000);
         assert_eq!(one("ug+s").mode_or, 0o6000);
+        assert_eq!(one("a+s").mode_or, 0o6000);
     }
 
     #[test]

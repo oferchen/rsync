@@ -16,6 +16,8 @@
 //! standard metadata preservation step.
 
 mod apply;
+#[cfg(all(test, unix))]
+mod matrix_tests;
 mod parse;
 mod spec;
 
