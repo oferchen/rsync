@@ -143,11 +143,47 @@ fn sid_to_id_access(psid: PSID) -> Option<(u32, bool, Vec<u8>)> {
     Some((rid, is_group, name_str.into_bytes()))
 }
 
+/// Audit clause for the read direction: NTFS ACE -> rsync wire entry.
+pub(super) const WIRE_INEXPRESSIBLE: &str = "cannot be expressed in the rsync ACL wire format";
+
+/// Audit clause for the apply direction: rsync wire entry -> NTFS ACE.
+const NO_DESTINATION_SID: &str = "could not be mapped to Windows SIDs";
+
+/// Names the ACE-type discriminant byte for an audit message.
+///
+/// Only the four non-object types share `ACCESS_ALLOWED_ACE`'s
+/// `header + Mask + SidStart` layout, so the caller may read a SID through
+/// that struct for exactly these. Object ACEs (types 5-8) interpose an
+/// object GUID before `SidStart` and are named without a principal.
+///
+/// upstream: WinNT.h - ACCESS_ALLOWED_ACE_TYPE 0x0 .. SYSTEM_ALARM_ACE_TYPE 0x3.
+fn ace_type_label(ace_type: u8) -> (&'static str, bool) {
+    match ace_type {
+        0 => ("allow", true),
+        1 => ("deny", true),
+        2 => ("audit", true),
+        3 => ("alarm", true),
+        _ => ("unsupported ACE type", false),
+    }
+}
+
 /// Iterates the ACEs of a DACL and converts them into a [`RsyncAcl`].
-pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> RsyncAcl {
+///
+/// The POSIX-style rsync ACL wire format carries only allow entries keyed by
+/// uid/gid, so deny, audit, alarm and object ACEs have no representation and
+/// are dropped. That loss is a documented scope choice, but it must not be
+/// silent: every dropped ACE is recorded in the returned [`DroppedAces`] so
+/// the caller can emit the same per-file audit trail the apply direction
+/// already emits through [`resolve_acl_aces`].
+///
+/// An ACE whose mask carries no `FR`/`FW`/`FX` bit is skipped WITHOUT being
+/// reported: it conveys no POSIX-expressible permission, so nothing is lost.
+/// [`resolve_acl_aces`] applies the same rule in the opposite direction.
+pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> (RsyncAcl, DroppedAces) {
     let mut acl = RsyncAcl::new();
+    let mut dropped = DroppedAces::default();
     if pdacl.is_null() {
-        return acl;
+        return (acl, dropped);
     }
 
     let mut info = ACL_SIZE_INFORMATION::default();
@@ -161,7 +197,7 @@ pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> RsyncAcl {
         )
     };
     if res.is_err() {
-        return acl;
+        return (acl, dropped);
     }
 
     for index in 0..info.AceCount {
@@ -169,44 +205,64 @@ pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> RsyncAcl {
         // SAFETY: index is bounded by AceCount; out-pointer is valid.
         let ok = unsafe { GetAce(pdacl, index, &mut ace_ptr) };
         if ok.is_err() || ace_ptr.is_null() {
+            dropped.record_description(format!("ACE #{index} (unreadable)"));
             continue;
         }
 
         // SAFETY: All ACE_HEADER variants share the leading header fields,
         // so it is safe to read AceType through a header reference.
         let header = unsafe { &*(ace_ptr.cast::<ACE_HEADER>()) };
+        let (label, sid_readable) = ace_type_label(header.AceType);
+
+        // SAFETY: the four non-object ACE types share `ACCESS_ALLOWED_ACE`'s
+        // layout, so `Mask` and `SidStart` are at the same offsets; object
+        // ACEs are excluded by `sid_readable`.
+        let principal = if sid_readable {
+            let ace = unsafe { &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>()) };
+            let psid = PSID(std::ptr::addr_of!(ace.SidStart) as *mut _);
+            Some((ace.Mask, sid_to_id_access(psid)))
+        } else {
+            None
+        };
 
         if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
-            // Deny ACEs and audit ACEs cannot be expressed in the
-            // POSIX-style rsync wire format and are dropped, matching
-            // upstream's lossy cross-platform behaviour.
+            // Deny, audit, alarm and object ACEs cannot be expressed in the
+            // POSIX-style rsync wire format. Upstream's cross-platform ACL
+            // transfer is lossy in the same way; the audit record is what
+            // keeps the loss visible.
+            dropped.record_description(match principal {
+                Some((_, Some((rid, _, name)))) => format!(
+                    "ACE #{index} ({label} for {}, id {rid})",
+                    String::from_utf8_lossy(&name)
+                ),
+                _ => format!("ACE #{index} ({label})"),
+            });
             continue;
         }
 
-        // SAFETY: `AceType == ACCESS_ALLOWED_ACE_TYPE` guarantees the
-        // ACE layout matches `ACCESS_ALLOWED_ACE`; `SidStart` marks the
-        // offset of the embedded SID.
-        let allowed = unsafe { &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>()) };
-        let mask = allowed.Mask;
-        let sid_start_addr = std::ptr::addr_of!(allowed.SidStart) as *mut _;
-        let psid = PSID(sid_start_addr);
+        let Some((mask, resolved)) = principal else {
+            continue;
+        };
 
         let perms = access_mask_to_rsync_perms(mask);
         if perms == 0 {
             continue;
         }
 
-        if let Some((rid, is_group, name)) = sid_to_id_access(psid) {
-            let entry = if is_group {
-                IdAccess::group_with_name(rid, u32::from(perms), name)
-            } else {
-                IdAccess::user_with_name(rid, u32::from(perms), name)
-            };
-            acl.names.push(entry);
-        }
+        let Some((rid, is_group, name)) = resolved else {
+            dropped.record_description(format!("ACE #{index} (allow, SID resolves to no account)"));
+            continue;
+        };
+
+        let entry = if is_group {
+            IdAccess::group_with_name(rid, u32::from(perms), name)
+        } else {
+            IdAccess::user_with_name(rid, u32::from(perms), name)
+        };
+        acl.names.push(entry);
     }
 
-    acl
+    (acl, dropped)
 }
 
 /// Reads the DACL for `path` and converts it to an [`RsyncAcl`].
@@ -233,7 +289,9 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
             let mut acl = if pdacl.is_null() {
                 RsyncAcl::from_mode(mode)
             } else {
-                dacl_to_rsync_acl(pdacl)
+                let (acl, dropped) = dacl_to_rsync_acl(pdacl);
+                warn_dropped_aces(path, WIRE_INEXPRESSIBLE, &dropped.descriptions);
+                acl
             };
             // Keep the descriptor alive across the conversion and drop
             // it explicitly here so the DACL pointer remains valid above.
@@ -385,7 +443,16 @@ impl DroppedAces {
             Some(name) => format!("{} ({kind} {})", String::from_utf8_lossy(name), entry.id),
             None => format!("{kind} {}", entry.id),
         };
-        self.descriptions.push(desc);
+        self.record_description(desc);
+    }
+
+    /// Records an already-formatted description.
+    ///
+    /// The read direction identifies losses by ACE position and type rather
+    /// than by [`IdAccess`], because the entries it drops never become
+    /// [`IdAccess`] values in the first place.
+    fn record_description(&mut self, description: String) {
+        self.descriptions.push(description);
     }
 }
 
@@ -440,7 +507,7 @@ pub(super) fn apply_rsync_acl_to_path(path: &Path, acl: &RsyncAcl) -> Result<(),
     let (sids, masks, dropped) = resolve_acl_aces(acl);
 
     if !dropped.is_empty() {
-        warn_dropped_aces(path, &dropped.descriptions);
+        warn_dropped_aces(path, NO_DESTINATION_SID, &dropped.descriptions);
     }
 
     if sids.is_empty() {
