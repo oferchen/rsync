@@ -925,20 +925,24 @@ mod tests {
         );
     }
 
-    /// CLASS GUARD: every deletion option must survive the bridge.
+    /// GROUP guard: every `DeletionConfig` field must survive the bridge.
     ///
-    /// `ignore_errors` was the THIRD long-form-only flag dropped by this
-    /// function - `--preallocate` and `--remove-source-files` came before it,
-    /// and their fix comments sit a few lines above the fix for this one. A
-    /// per-flag test would have caught none of the three, so this asserts the
-    /// group rather than a field.
+    /// ⚠ This is NOT a guard for the defect class. The class is "long-form-only
+    /// flag with no compact letter, so it never rides the flag string this
+    /// config is parsed from and MUST be bridged explicitly". `ignore_errors`
+    /// is its third member; the first two, `--preallocate` and
+    /// `--remove-source-files`, land in `ServerConfig.flags`, NOT in
+    /// `DeletionConfig` - so this guard would have caught one of the three.
+    /// It stops the next missing DELETION field and nothing wider. Closing the
+    /// class needs the long-form-only set enumerated, which is not derivable
+    /// from `build_server_flag_string` by inspection; that is tracked separately.
     ///
-    /// The completeness half is enforced by the COMPILER, not by a hand-kept
-    /// list: the exhaustive destructure below stops building the moment a field
-    /// is added to `DeletionConfig`, forcing whoever adds it to decide how it
-    /// crosses the bridge instead of silently inheriting `Default`.
+    /// Within its group the completeness half is enforced by the COMPILER, not
+    /// by a hand-kept list: the exhaustive destructure below stops building the
+    /// moment a field is added to `DeletionConfig`, forcing whoever adds it to
+    /// decide how it crosses the bridge instead of silently inheriting `Default`.
     #[test]
-    fn apply_common_server_flags_carries_every_deletion_option() {
+    fn apply_common_server_flags_carries_every_deletion_config_field() {
         let config = ClientConfig::builder()
             .delete_after(true)
             .delete_excluded(true)
