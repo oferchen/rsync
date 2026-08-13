@@ -49,7 +49,7 @@ use core::{
     rsync_error, rsync_info, rsync_warning,
     server::{
         HandshakeResult, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerResult,
-        ServerRole, ServerStats, run_server_with_handshake,
+        ServerRole, ServerStats, config::parse_block_size_arg, run_server_with_handshake,
     },
 };
 use logging_sink::MessageSink;

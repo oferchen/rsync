@@ -472,6 +472,11 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         .unwrap_or(protocol::ProtocolVersion::NEWEST);
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
+    // upstream: generator.c:720-721 - `-B` is honoured by whichever side runs
+    // the generator, so the client half needs it for a pull exactly as the
+    // server half needs the forwarded `-B%u` for a push. Both roles share this
+    // function, so one assignment covers SSH, daemon and embedded-SSH.
+    server_config.block_size = config.block_size_override();
     // upstream: options.c:2190-2203 - `xfer_dirs` is resolved locally by each
     // side (`--files-from`, recursion and `--list-only` all imply level 1), and
     // the compact `d` letter is packed only for an EXPLICIT `-d`

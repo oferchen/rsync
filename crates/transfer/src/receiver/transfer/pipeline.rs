@@ -392,6 +392,7 @@ impl ReceiverContext {
                         let protocol = self.protocol;
                         let compat_flags = self.compat_flags;
                         let whole_file = self.config.flags.whole_file;
+                        let block_size = self.config.block_size;
                         let dest_dir = &setup.dest_dir;
                         let checksum_length = setup.checksum_length;
                         let checksum_algorithm = setup.checksum_algorithm;
@@ -426,6 +427,7 @@ impl ReceiverContext {
                                         checksum_algorithm,
                                         whole_file,
                                         compat_flags,
+                                        block_size,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -452,6 +454,7 @@ impl ReceiverContext {
                                         checksum_algorithm,
                                         whole_file,
                                         compat_flags,
+                                        block_size,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -990,6 +993,7 @@ impl ReceiverContext {
                 checksum_algorithm: setup.checksum_algorithm,
                 whole_file: self.config.flags.whole_file,
                 compat_flags: self.compat_flags,
+                block_size: self.config.block_size,
             };
             let basis = find_basis_file_with_config(&basis_config);
 
