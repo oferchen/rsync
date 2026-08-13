@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::frontend::escape::escape_path;
+use crate::frontend::escape::{EscapeStyle, escape_path};
 use crate::{LIST_TIMESTAMP_FORMAT, format_list_permissions};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
@@ -49,10 +49,10 @@ pub(super) fn render_placeholder_value(
     context: &OutFormatContext,
     spec: &PlaceholderToken,
 ) -> Option<Vec<u8>> {
-    let allow_8bit = context.eight_bit_output;
+    let escape = context.escape;
     match spec.kind {
-        OutFormatPlaceholder::FileName => Some(render_name(event, allow_8bit)),
-        OutFormatPlaceholder::FullPath => Some(render_full_path(event, allow_8bit)),
+        OutFormatPlaceholder::FileName => Some(render_name(event, escape)),
+        OutFormatPlaceholder::FullPath => Some(render_full_path(event, escape)),
         OutFormatPlaceholder::ItemizedChanges => Some(match event.itemize_override() {
             // A remote transfer supplies the sender's already-correct 11-char
             // itemize string; a local event derives it from its change set.
@@ -97,7 +97,7 @@ pub(super) fn render_placeholder_value(
             // `symlink_target_connector` in the else-branch).
             if let Some(leader) = event.hardlink_leader() {
                 let mut rendered = b" => ".to_vec();
-                rendered.extend_from_slice(&escape_path(leader, allow_8bit));
+                rendered.extend_from_slice(&escape_path(leader, escape));
                 Some(rendered)
             } else {
                 match event
@@ -106,7 +106,7 @@ pub(super) fn render_placeholder_value(
                 {
                     Some(target) => {
                         let mut rendered = symlink_target_connector(event).as_bytes().to_vec();
-                        rendered.extend_from_slice(&escape_path(target, allow_8bit));
+                        rendered.extend_from_slice(&escape_path(target, escape));
                         Some(rendered)
                     }
                     // upstream: log.c:650-654 - the `case 'L'` else-branch sets n
@@ -265,8 +265,8 @@ fn normalize_render_separators(escaped: &[u8]) -> Vec<u8> {
 /// upstream: flist.c / log.c - itemize and out-format paths use POSIX
 /// forward-slash separators regardless of host OS. Storage retains the
 /// platform-native form; this normalizes only at the rendering boundary.
-fn escape_render_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
-    let rendered = escape_path(path, allow_8bit);
+fn escape_render_path(path: &Path, escape: EscapeStyle) -> Vec<u8> {
+    let rendered = escape_path(path, escape);
     #[cfg(windows)]
     {
         normalize_render_separators(&rendered)
@@ -279,8 +279,8 @@ fn escape_render_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
 
 /// Renders `%n`: the transfer-relative name, with a trailing slash for a
 /// directory (upstream `log.c:639-640`).
-fn render_name(event: &ClientEvent, allow_8bit: bool) -> Vec<u8> {
-    let mut rendered = escape_render_path(event.relative_path(), allow_8bit);
+fn render_name(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
+    let mut rendered = escape_render_path(event.relative_path(), escape);
     if rendered.last() != Some(&b'/')
         && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
             // `EntryDeleted` rows carry no metadata snapshot, so fall back to the
@@ -299,12 +299,12 @@ fn render_name(event: &ClientEvent, allow_8bit: bool) -> Vec<u8> {
 /// (upstream `pathjoin(F_PATHNAME(file), f_name(file))` with a single leading
 /// `/` stripped, `log.c`), otherwise the transfer-relative name. Unlike `%n`, no
 /// trailing slash is appended for directories.
-fn render_full_path(event: &ClientEvent, allow_8bit: bool) -> Vec<u8> {
+fn render_full_path(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
     let path = match event.source_prefix() {
         Some(prefix) => prefix,
         None => event.relative_path(),
     };
-    let mut rendered = escape_render_path(path, allow_8bit);
+    let mut rendered = escape_render_path(path, escape);
     // upstream: log.c `%f` strips a single leading '/' from the joined path.
     if rendered.first() == Some(&b'/') {
         rendered.remove(0);

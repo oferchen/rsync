@@ -168,10 +168,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
         // of `-i`/`-ii`.
         if matches!(event.kind(), ClientEventKind::SkippedNewerDestination) {
             if info_gte(InfoFlag::Skip, 1) {
-                writer.write_all(&escape_path(
-                    event.relative_path(),
-                    context.eight_bit_output,
-                ))?;
+                writer.write_all(&escape_path(event.relative_path(), context.escape))?;
                 writer.write_all(b" is newer\n")?;
             }
             continue;
@@ -186,10 +183,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
             _ => None,
         } {
             if info_gte(InfoFlag::Skip, 1) {
-                writer.write_all(&escape_path(
-                    event.relative_path(),
-                    context.eight_bit_output,
-                ))?;
+                writer.write_all(&escape_path(event.relative_path(), context.escape))?;
                 writer.write_all(suffix)?;
             }
             continue;
