@@ -58,7 +58,7 @@ pub enum Command {
     /// Generate man page from markdown source using pandoc.
     ManPage,
 
-    /// Verify upstream C citations name lines the cited files have.
+    /// Verify upstream citations name a pinned file, at a line it has.
     Citations(CitationsArgs),
 
     /// Assert the git index contains no binary artifacts.

@@ -31,17 +31,34 @@ pub fn list_tracked_files(workspace: &Path) -> TaskResult<Vec<PathBuf>> {
 
 /// Returns all Rust sources tracked or untracked within the repository via git.
 pub fn list_rust_sources_via_git(workspace: &Path) -> TaskResult<Vec<PathBuf>> {
+    list_sources_via_git(workspace, Some("*.rs"))
+}
+
+/// Returns every file in the repository, tracked or untracked-but-not-ignored.
+///
+/// Callers that scan for text patterns want this rather than a per-extension
+/// pathspec: an extension list is a guess about where the pattern may appear,
+/// and the citation gate exists because a defect hid in the one directory an
+/// earlier glob did not cover.
+pub fn list_sources_via_git_unfiltered(workspace: &Path) -> TaskResult<Vec<PathBuf>> {
+    list_sources_via_git(workspace, None)
+}
+
+fn list_sources_via_git(workspace: &Path, pathspec: Option<&str>) -> TaskResult<Vec<PathBuf>> {
+    let mut args = vec![
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+    ];
+    if let Some(spec) = pathspec {
+        args.push("--");
+        args.push(spec);
+    }
     let output = Command::new("git")
         .current_dir(workspace)
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "*.rs",
-        ])
+        .args(&args)
         .output()
         .map_err(|error| {
             map_command_error(

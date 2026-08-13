@@ -67,7 +67,7 @@ impl Task for ReleaseTask {
     }
 }
 
-/// Verifies upstream C citations against the pinned source line counts.
+/// Verifies upstream citations against the pinned source manifest.
 pub struct CitationsTask;
 
 impl Task for CitationsTask {
@@ -76,7 +76,7 @@ impl Task for CitationsTask {
     }
 
     fn description(&self) -> &'static str {
-        "Verify upstream citations name lines that exist"
+        "Verify upstream citations name files and lines that exist"
     }
 
     fn explicit_duration(&self) -> Option<Duration> {

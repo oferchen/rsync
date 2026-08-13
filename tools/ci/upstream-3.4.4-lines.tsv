@@ -1,7 +1,9 @@
-# Line counts for every .c/.h in rsync 3.4.4, the pinned upstream source.
+# Line counts for every .c/.h/.py/.sh in rsync 3.4.4, the pinned upstream source.
 # Lets the citation gate run where the source tree is absent (the required
 # nextest cell does not fetch it). rsync 3.4.4 is a released tarball and is
 # immutable, so this cannot drift; it is regenerated only when the pin moves.
+# The key set is also the gate's answer to "does this upstream file exist", so
+# a name missing here is a citation defect, not a manifest gap.
 # Regenerate: cargo xtask citations --write-manifest  (needs the source present)
 access.c	292
 acls.c	1141
@@ -18,6 +20,7 @@ clientname.c	538
 clientserver.c	1588
 compat.c	892
 config.h	870
+configure.sh	14048
 connection.c	47
 daemon-parm.h	381
 default-cvsignore.h	3
@@ -67,6 +70,9 @@ log.c	916
 main.c	1879
 match.c	448
 options.c	3156
+packaging/pkglib.py	255
+packaging/release.py	703
+packaging/solaris/build_pkg.sh	94
 params.c	645
 pipe.c	178
 popt/lookup3.c	959
@@ -85,14 +91,18 @@ rounding.c	38
 rounding.h	1
 rsync.c	831
 rsync.h	1512
+runtests.py	485
 sender.c	494
 socket.c	845
+support/install_deps_ubuntu.sh	11
+support/lsh.sh	37
 support/savetransfer.c	175
 syscall.c	2149
 t_chmod_secure.c	117
 t_secure_relpath.c	151
 t_stub.c	120
 t_unsafe.c	47
+testhelp/maketree.py	133
 testrun.c	61
 tls.c	299
 token.c	1143
