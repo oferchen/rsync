@@ -7,24 +7,19 @@
 //! into the namespace and silently collide once `NEXT_BGID` wraps past
 //! `u16::MAX`.
 //!
-//! Gated twice:
+//! Gated once, on `cfg(target_os = "linux")`: the bgid allocator only ships
+//! on the Linux io_uring backend. The Linux-only dev-dependency in
+//! `Cargo.toml` pulls `fast_io` with the `io_uring` feature, so the real
+//! allocator - not the always-erroring stub - backs this test. The gate is
+//! deliberately NOT `feature = "io_uring"`: that would resolve against the
+//! `daemon` crate's own features, which define no such feature, and would
+//! silently compile the test out entirely.
 //!
-//! 1. `cfg(all(target_os = "linux", feature = "io_uring"))` - the bgid
-//!    allocator only ships on the Linux io_uring backend.
-//! 2. `OC_RSYNC_BGID_STRESS=1` - the loop runs 100,000 acquire/release
-//!    cycles. The work is cheap (no kernel registration, no I/O) but the
-//!    iteration count alone would dominate the default test budget on
-//!    constrained runners, so the assertion is opt-in.
-//!
-//! Without the env var the test exits cleanly with a single-line skip
-//! message so the default `cargo nextest run` stays fast.
-//!
-//! Run it explicitly with:
-//!
-//! ```text
-//! OC_RSYNC_BGID_STRESS=1 cargo nextest run -p daemon \
-//!     --test bgid_long_running_stress --all-features
-//! ```
+//! The loop runs unconditionally. 100,000 acquire/release cycles cost ~17 ms
+//! measured (no kernel registration, no I/O), so there is no test-budget
+//! reason to make the assertion opt-in. It previously sat behind
+//! `OC_RSYNC_BGID_STRESS=1`, which no workflow ever set - the leak assertion
+//! therefore never ran in CI while the test still reported a pass.
 
 #![cfg(target_os = "linux")]
 
@@ -47,18 +42,8 @@ const SESSION_CYCLES: u32 = 100_000;
 /// toward `SESSION_CYCLES`).
 const PEAK_BGID_CEILING: u16 = 1_024;
 
-/// Env-var trigger. Unset = skip with a clear message.
-const STRESS_ENV: &str = "OC_RSYNC_BGID_STRESS";
-
 #[test]
 fn one_hundred_thousand_sessions_do_not_leak_bgids() {
-    if std::env::var_os(STRESS_ENV).is_none() {
-        eprintln!(
-            "[bgid-stress] skipped: set {STRESS_ENV}=1 to run the 100K session lifecycle stress"
-        );
-        return;
-    }
-
     let peak_before = bgid_peak_used();
     let inflight_before = bgid_inflight();
     assert_eq!(
