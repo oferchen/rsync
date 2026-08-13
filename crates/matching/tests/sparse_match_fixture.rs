@@ -17,7 +17,7 @@
 //! `match.c`'s `tag_table[s1]`). With ~60k indexed blocks the table
 //! saturates and almost every rolling-checksum probe survives the gate,
 //! which means the full hash-table lookup runs at every offset. A
-//! bithash-style probabilistic prefilter (upstream `rsum.c:362-366`)
+//! bithash-style probabilistic prefilter (zsync `librcksum/rsum.c:362-366`)
 //! reduces the survival rate. The assertion below pins the *correctness*
 //! invariant - matched bytes equal exactly `K * block_size` - so the
 //! prefilter work can be benchmarked against this fixture without the
@@ -198,7 +198,7 @@ fn xxh3_algo() -> SignatureAlgorithm {
 /// Centralised so every scale + algorithm combination exercises the
 /// same checks.
 ///
-/// upstream: rsum.c:362-366 - bithash will reduce probes; today's
+/// upstream: zsync librcksum/rsum.c:362-366 - bithash will reduce probes; today's
 /// pre-bithash baseline assertion is that matched_bytes equals exactly
 /// `K * block_size` and literal_bytes equals `source.len() - K *
 /// block_size`. The number of strong-checksum verify calls is not

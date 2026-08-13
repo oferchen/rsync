@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # run_upstream_testsuite.sh - run upstream rsync's testsuite/ against oc-rsync.
 #
-# Mirrors the contract of upstream's runtests.sh:
+# Mirrors the contract of upstream's runtests.py:
 #   - exports $RSYNC, $TOOLDIR, $srcdir, $suitedir, $scratchdir per test
 #   - sources rsync.fns indirectly (each *.test sources it itself)
 #   - exit codes from a test: 0=pass, 77=skip, 78=xfail, anything else=fail
 #
-# Differences vs upstream runtests.sh:
+# Differences vs upstream runtests.py:
 #   - $RSYNC is oc-rsync, not the upstream rsync binary
 #   - we still need upstream's helper tools (tls, getgroups, lsh.sh) and
 #     config.h/shconfig artifacts; those come from a one-time `./configure`
@@ -181,9 +181,11 @@ build_upstream_helpers() {
 }
 
 find_setfacl_nodef() {
-    # upstream: runtests.sh:205-215 - detect the platform's command for
-    # removing default ACLs from a directory.  The ACL tests rely on this
-    # variable being exported into their environment.
+    # upstream: runtests.py find_setfacl_nodef() (3.5.0 runtests.py:146-161,
+    # 3.4.4 runtests.py:67-82) - detect the platform's command for removing
+    # default ACLs from a directory.  The ACL tests rely on this variable being
+    # exported into their environment.  Anchored on the function name because
+    # the line offsets move between releases.
     local probe_dir=$1
     if setacl -k u::7,g::5,o:5 "$probe_dir" 2>/dev/null; then
         echo 'setacl -k'
@@ -249,8 +251,9 @@ prep_scratch() {
     local sd=$1
     [[ -d "$sd" ]] && chmod -R u+rwX "$sd" 2>/dev/null && rm -rf "$sd"
     mkdir -p "$sd"
-    # upstream: runtests.sh:254 - clear default ACLs and setgid to avoid
-    # confusing tests that depend on inheritable permission state.
+    # upstream: runtests.py prep_scratch() (3.5.0 runtests.py:230-241) - clear
+    # default ACLs and setgid to avoid confusing tests that depend on
+    # inheritable permission state.
     $setfacl_nodef "$sd" 2>/dev/null || true
     chmod g-s "$sd" 2>/dev/null || true
     ln -sfn "$srcdir" "$sd/src"
@@ -778,8 +781,8 @@ main() {
     # when a loop mount is unavailable.
     setup_scratch_fs "${log_root}/scratch"
 
-    # upstream: runtests.sh:205-217 - detect and export setfacl_nodef so
-    # ACL tests can clear default ACLs from directories.
+    # upstream: runtests.py find_setfacl_nodef() - detect and export
+    # setfacl_nodef so ACL tests can clear default ACLs from directories.
     setfacl_nodef=$(find_setfacl_nodef "$scratchbase")
     export setfacl_nodef
 

@@ -49,7 +49,8 @@ forced protocol):
 
 All entries are basenames under
 `target/interop/upstream-src/rsync-3.4.1/testsuite/*.test`, surfaced through
-`run_upstream_testsuite.sh:42-46`.
+`tools/ci/run_upstream_testsuite.sh:63-76` (`known_failures_conf`, sourced when
+the file is present).
 
 | # | Test script | File:Line | Category |
 |---|---|---|---|
