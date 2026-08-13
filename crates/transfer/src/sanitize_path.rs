@@ -237,6 +237,34 @@ mod tests {
         assert_eq!(sanitize_path("a/b/../c"), "a/c");
     }
 
+    /// Every upstream `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` case must
+    /// collapse identically through `sanitize_path`.
+    ///
+    /// `sanitize_path` is the daemon-side traversal guard: it is what turns a
+    /// peer-supplied name into the path actually opened under the module root.
+    /// It shares its `..`-collapse rule with upstream's `clean_fname`, and
+    /// upstream shipped an off-by-one there that left the collapse dead for
+    /// every multi-component and absolute path. A collapse that silently does
+    /// nothing means the retained name still carries `..` segments into the
+    /// open, so this is a confinement invariant, not formatting.
+    ///
+    /// `sanitize_path` additionally strips the leading `/` (that is the
+    /// `sanitize_path`-vs-`clean_fname` difference, not a collapse difference),
+    /// so the absolute row's expectation is de-anchored before comparison.
+    /// The table is shared (`test_support::COLLAPSE_CASES`) so a new edge case
+    /// is one row and reaches every oc-rsync copy of this rule at once.
+    // upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS; t_clean_fname.c
+    #[test]
+    fn upstream_collapse_cases_consume_the_preceding_component() {
+        for (input, expected) in test_support::COLLAPSE_CASES {
+            assert_eq!(
+                sanitize_path(input),
+                expected.trim_start_matches('/'),
+                "clean_fname collapse case {input:?}"
+            );
+        }
+    }
+
     #[test]
     fn dotdot_at_end_collapses() {
         assert_eq!(sanitize_path("a/b/.."), "a");
