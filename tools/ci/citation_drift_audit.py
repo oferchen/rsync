@@ -49,6 +49,7 @@ def src(f):
     return _cache[f]
 
 CITE = re.compile(r'\b([a-z_0-9]+)\.c:(\d+)')
+RANGE = re.compile(r'\b([a-z_0-9]+)\.c:(\d+)-(\d+)\b')
 def anchors(comment):
     out = []
     for q in re.findall(r'"([^"]{8,60})"', comment) + re.findall(r'`([^`]{8,60})`', comment):
@@ -58,12 +59,23 @@ def anchors(comment):
     return [x for x in out if len(x) >= 8]
 
 def audit(crate):
-    checked = miss = read = unresolved = 0; ex = []; unres = []
+    checked = miss = read = unresolved = 0; ex = []; unres = []; backwards = []
     for rs in glob.glob(f"crates/{crate}/src/**/*.rs", recursive=True):
         read += 1
-        for ln in open(rs, errors="replace"):
+        for lineno, ln in enumerate(open(rs, errors="replace"), 1):
             if "upstream" not in ln.lower():
                 continue
+            # Structural invariant, checked first and independent of the anchor
+            # machinery: END >= START. `CITE` matches only `file.c:START`, so nothing
+            # else in this tool ever looks at END - a retarget that moves START leaves
+            # END behind and yields `exclude.c:1381-1237`, which every other check
+            # here audits perfectly clean. A gate that accepts a backwards range has
+            # demonstrably not checked the range, so this one is hard-failing and is
+            # deliberately NOT ratcheted: there is no such thing as an accepted
+            # inverted range.
+            for rm in RANGE.finditer(ln):
+                if int(rm.group(3)) < int(rm.group(2)):
+                    backwards.append(f"{rs}:{lineno}: {rm.group(0)} runs backwards")
             anc = anchors(ln)
             if not anc:
                 continue
@@ -95,12 +107,15 @@ def audit(crate):
                     unresolved += 1
                     unres.append(f"{rs}: {f}.c:{a1} '{anc[0][:32]}' resolves nowhere")
     print(f"{crate}: string-anchored={checked} suspected-drift={miss} "
-          f"({miss/max(1,checked):.0%}) unresolved={unresolved}")
+          f"({miss/max(1,checked):.0%}) unresolved={unresolved}"
+          + (f" BACKWARDS-RANGES={len(backwards)}" if backwards else ""))
     for e in ex:
         print("  ", e)
     for u in unres:
         print("  ?", u)
-    return checked, miss, read
+    for b in backwards:
+        print("  !", b)
+    return checked, miss, read, backwards
 
 BASELINE = "tools/ci/citation_drift_baseline.json"
 
@@ -150,9 +165,11 @@ if __name__ == "__main__":
         )
     counts = {}
     files_read = 0
+    backwards = []
     for c in crates:
-        checked, miss, read = audit(c)
+        checked, miss, read, bad = audit(c)
         files_read += read
+        backwards += bad
         if checked:
             counts[c] = miss
     if files_read == 0:
@@ -167,6 +184,17 @@ if __name__ == "__main__":
             f"refusing to report: read {files_read} file(s) but string-anchored "
             "ZERO citations. The anchor extractor or the upstream source lookup "
             "is broken; a clean result here would be meaningless."
+        )
+    if backwards:
+        # Fails in every mode, including --write-baseline: a backwards range is
+        # never correct, so there is nothing here to accept as debt. Fix the range,
+        # then regenerate.
+        sys.exit(
+            f"FAIL: {len(backwards)} citation range(s) run backwards.\n  "
+            + "\n  ".join(backwards)
+            + "\n\nEND must be >= START. This usually means a retarget moved START "
+              "and left END on the old pin: `CITE` matches only `file.c:START`, so a "
+              "search-and-replace over citations never touches END."
         )
     if "--write-baseline" in flags:
         import json
