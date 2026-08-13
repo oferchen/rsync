@@ -26,10 +26,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: check-locked-flags-${{ github.ref }}
+  group: check-locked-flags-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
   # Superseded pull request pushes still cancel; pushes to master do not, so
-  # every merge commit keeps a completed run for bisection.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  # every merge commit keeps a completed run for bisection. The master
+  # exemption lives in the GROUP KEY, not in cancel-in-progress: giving each
+  # master commit its own group means there is never an older run in the group
+  # to evict, which holds regardless of how the flag is evaluated.
+  cancel-in-progress: true
 
 jobs:
   check:
