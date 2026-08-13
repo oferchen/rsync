@@ -225,6 +225,82 @@ fn ignore_errors_gates_the_peer_trailer_only() {
     }
 }
 
+/// Decodes a peer-supplied file-list `io_error` at `protocol` and returns the
+/// value the transfer drivers read, so the two protocol eras can be compared
+/// on identical inputs.
+///
+/// Pre-30 carries the value as a fixed 4-byte LE trailer after the end marker
+/// (`flist.c:3068-3072`); 30+ carries it in the end marker itself
+/// (`flist.c:2960-2970`), which the file-list writer emits.
+fn decode_peer_io_error(protocol: u8, value: i32, ignore_errors: bool) -> i32 {
+    let handshake = test_handshake_with_protocol(protocol);
+    let mut config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(protocol).unwrap(),
+        flag_string: "-logDtpre.".to_owned(),
+        flags: ParsedServerFlags {
+            numeric_ids: NumericIds::Explicit,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    config.deletion.ignore_errors = ignore_errors;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let mut wire = Vec::new();
+    if protocol < 30 {
+        wire.push(0x00);
+        wire.extend_from_slice(&value.to_le_bytes());
+    } else {
+        protocol::flist::FileListWriter::new(ctx.protocol())
+            .write_end(&mut wire, Some(value))
+            .unwrap();
+    }
+
+    let mut cursor = Cursor::new(wire);
+    ctx.receive_file_list(&mut cursor).unwrap();
+    ctx.flist_reader_io_error()
+}
+
+/// CROSS-IMPLEMENTATION: oc decodes the peer's file-list `io_error` in two
+/// independent places - the pre-30 fixed trailer in `file_list/receive.rs` and
+/// the 30+ end marker in `protocol::flist::read`. Upstream applies ONE rule to
+/// both: `flist.c:2949`, `:2967` and `:3070` are three copies of
+/// `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`.
+///
+/// So the two eras must agree cell for cell. The pre-30 decoder was already
+/// correct, which makes it a free oracle for the 30+ one - no external binary
+/// is needed, and the assertion keeps holding if either decoder is touched.
+/// Pinning each era against its own hand-written expectation would let them
+/// drift apart again without any test noticing.
+#[test]
+fn both_protocol_eras_apply_the_same_peer_trailer_rule() {
+    for &ignore_errors in &[false, true] {
+        let legacy = decode_peer_io_error(29, 3, ignore_errors);
+        let modern = decode_peer_io_error(32, 3, ignore_errors);
+        assert_eq!(
+            legacy, modern,
+            "protocol 29 and 32 must decode the same peer io_error \
+             (--ignore-errors={ignore_errors})"
+        );
+    }
+}
+
+/// The masking half of the rule must also hold across both eras: upstream
+/// applies `& IOERR_VALID_MASK` at every accumulation site, so an undefined
+/// bit set by a hostile peer must vanish identically in each decoder.
+#[test]
+fn both_protocol_eras_mask_the_peer_trailer_identically() {
+    for &value in &[0x7fff_fff8u32 as i32, 0x0100_0002, -1, 7] {
+        assert_eq!(
+            decode_peer_io_error(29, value, false),
+            decode_peer_io_error(32, value, false),
+            "protocol 29 and 32 must mask wire value {value:#x} identically"
+        );
+    }
+}
+
 /// A locally-generated file-list error survives `--ignore-errors`.
 ///
 /// upstream: `flist.c:841` has no `ignore_errors` check, so a filename this
