@@ -97,11 +97,11 @@ mod tests {
 
     #[test]
     fn setid_defaults_to_setuid_without_ug_who() {
-        // upstream: o+s / a+s / +s all set setuid only.
+        // upstream: o+s and the implied who set setuid only; a+s sets both.
         assert_eq!(apply("o+s", 0o644, false), 0o4644);
-        assert_eq!(apply("a+s", 0o644, false), 0o4644);
         assert_eq!(apply("+s", 0o644, false), 0o4644);
         assert_eq!(apply("g+s", 0o644, false), 0o2644);
+        assert_eq!(apply("a+s", 0o644, false), 0o6644);
     }
 
     #[test]
