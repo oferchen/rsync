@@ -686,18 +686,15 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
-    // upstream: options.c:1943-1950 - server-side `--max-alloc` is parsed and
-    // applied to the local allocator. We forward it from the client and
-    // enforce the cap on the server's buffer pool.
+    // upstream: options.c:2061-2074 - the server runs the same `parse_arguments`
+    // max-alloc block as the client, so a peer-forwarded `--max-alloc` is parsed
+    // and applied to the local allocator, and a forwarded zero is refused there
+    // instead of disabling the ceiling (CVE-2026-53794).
     if let Some(alloc_str) = &long_flags.max_alloc {
         match super::super::execution::parse_max_alloc_argument(std::ffi::OsStr::new(alloc_str)) {
             Ok(limit) => {
-                if limit == 0 {
-                    // upstream: options.c:1966 `if (!max_alloc) max_alloc =
-                    // SIZE_MAX;` - a forwarded `--max-alloc=0` means unlimited.
-                    protocol::set_max_alloc(usize::MAX);
-                } else if let Ok(limit_usize) = usize::try_from(limit) {
-                    // upstream: options.c:1959-1965 - the server rewrites its own
+                if let Ok(limit_usize) = usize::try_from(limit) {
+                    // upstream: options.c:2066-2074 - the server rewrites its own
                     // `max_alloc` global from the forwarded `--max-alloc`, which
                     // bounds the xattr datum decoders on the receive path
                     // (util2.c:75).
@@ -710,7 +707,11 @@ fn apply_value_flags<Err: Write>(
                 }
             }
             Err(message) => {
-                write_server_error(stderr, brand, message.to_string());
+                // `text()` not `to_string()`: the latter is the fully rendered
+                // client diagnostic, which `write_server_error` would then wrap
+                // in a second "rsync error: ... (code N)" envelope. Every sibling
+                // branch here passes the bare text.
+                write_server_error(stderr, brand, message.text().to_owned());
                 return Err(1);
             }
         }
