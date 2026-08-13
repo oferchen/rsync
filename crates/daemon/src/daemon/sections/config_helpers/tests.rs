@@ -530,39 +530,67 @@ mod config_helpers_tests {
         assert!(!AddressFamily::Ipv6.matches(IpAddr::V4(Ipv4Addr::LOCALHOST)));
     }
 
+    /// WHY: the `*`/`?` behaviour operators already depend on must survive the
+    /// move onto the shared upstream matcher, so the cases the hand-rolled
+    /// matcher covered are re-asserted through the parse/match path that
+    /// production uses.
     #[test]
-    fn wildcard_match_exact() {
-        assert!(wildcard_match("hello", "hello"));
-        assert!(!wildcard_match("hello", "world"));
+    fn hostname_glob_star_and_question_mark() {
+        let matches = |pattern: &str, host: &str| {
+            HostnamePattern::parse(pattern).unwrap().matches(host)
+        };
+
+        assert!(matches("h?llo", "hello"));
+        assert!(matches("h?llo", "hallo"));
+        assert!(!matches("h?llo", "hllo"));
+        assert!(matches("*.com", "example.com"));
+        assert!(matches("hello*", "hello world"));
+        assert!(matches("*", "anything"));
+        assert!(matches("h*o", "hello"));
+        assert!(matches("h*o", "ho"));
+        assert!(matches("*.*", "a.b"));
+        assert!(!matches("*.*", "abc"));
+        assert!(matches("*.*.*", "a.b.c"));
     }
 
+    /// WHY: upstream matches every `hosts allow`/`hosts deny` token with
+    /// `iwildmatch()` (access.c:46), so a bracket expression is a glob. oc used
+    /// to classify a bracket token as a literal name, which no real hostname
+    /// can equal - a deny rule written `bad[0-9].example.com` matched nothing
+    /// and the access check failed open.
     #[test]
-    fn wildcard_match_question_mark() {
-        assert!(wildcard_match("h?llo", "hello"));
-        assert!(wildcard_match("h?llo", "hallo"));
-        assert!(!wildcard_match("h?llo", "hllo"));
+    fn hostname_bracket_expression_is_a_glob_not_a_literal() {
+        let pattern = HostnamePattern::parse("host[0-9].example.com").unwrap();
+        assert!(pattern.matches("host7.example.com"));
+        assert!(!pattern.matches("hostx.example.com"));
+        assert!(!pattern.matches("host[0-9].example.com"));
+
+        let negated = HostnamePattern::parse("host[!0-9].example.com").unwrap();
+        assert!(negated.matches("hostx.example.com"));
+        assert!(!negated.matches("host7.example.com"));
     }
 
+    /// WHY: the config token is lower-cased at parse (mirroring upstream's
+    /// `strlower(list2)`, access.c:257) and the resolved peer name is
+    /// lower-cased at lookup, so an operator's capitalisation must not change
+    /// which peers a rule covers - on either side, and inside brackets.
     #[test]
-    fn wildcard_match_star() {
-        assert!(wildcard_match("*.com", "example.com"));
-        assert!(wildcard_match("hello*", "hello world"));
-        assert!(wildcard_match("*", "anything"));
-        assert!(wildcard_match("*", ""));
-    }
-
-    #[test]
-    fn wildcard_match_combined() {
-        assert!(wildcard_match("h*o", "hello"));
-        assert!(wildcard_match("h*o", "ho"));
-        assert!(wildcard_match("*.*", "a.b"));
-        assert!(!wildcard_match("*.*", "abc"));
-    }
-
-    #[test]
-    fn wildcard_match_multiple_stars() {
-        assert!(wildcard_match("*.*.*", "a.b.c"));
-        assert!(wildcard_match("**", "anything"));
+    fn hostname_glob_matching_ignores_operator_capitalisation() {
+        for token in [
+            "*.EXAMPLE.COM",
+            "*.example.com",
+            "HOST[0-9].EXAMPLE.COM",
+            "host[0-9].example.com",
+            "*.[Ee]xample.com",
+        ] {
+            let pattern = HostnamePattern::parse(token).unwrap();
+            let host = if token.contains('[') && token.contains("0-9") {
+                "host7.example.com"
+            } else {
+                "www.example.com"
+            };
+            assert!(pattern.matches(host), "token {token} failed to match {host}");
+        }
     }
 
     #[test]
