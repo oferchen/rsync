@@ -150,6 +150,84 @@ fn resolve_acl_aces_no_drops_for_empty_acl() {
     assert!(dropped.is_empty(), "no entries means no dropped record");
 }
 
+/// A deny ACE has no POSIX-style representation, so the rsync wire format
+/// cannot carry it. Dropping it is a documented scope choice; dropping it
+/// SILENTLY is the defect - an operator syncing an NTFS tree has no way to
+/// learn that a denial did not travel.
+///
+/// Symmetric with `resolve_acl_aces_records_unmappable_sids`, which pins the
+/// same contract for the opposite direction.
+#[cfg(windows)]
+#[test]
+#[allow(unsafe_code)]
+fn dacl_to_rsync_acl_audits_deny_aces_instead_of_dropping_them_silently() {
+    use windows::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, AddAccessDeniedAce,
+        CreateWellKnownSid, InitializeAcl, PSID, WinWorldSid,
+    };
+
+    use crate::acl_windows::dacl::dacl_to_rsync_acl;
+
+    /// `FILE_GENERIC_READ` - maps to the rsync `r` bit, so the allow ACE
+    /// survives `access_mask_to_rsync_perms` and the cell distinguishes
+    /// "dropped because deny" from "dropped because unmappable mask".
+    const FILE_GENERIC_READ: u32 = 0x0012_0089;
+
+    // `WinWorldSid` (Everyone, S-1-1-0) exists on every Windows host and is
+    // locale-independent, so this cell needs no domain and no live account.
+    let mut sid_buf = vec![0u8; 256];
+    let mut sid_len = sid_buf.len() as u32;
+    // SAFETY: the buffer is far larger than SECURITY_MAX_SID_SIZE and
+    // `sid_len` carries its capacity in and the written length out.
+    unsafe {
+        CreateWellKnownSid(
+            WinWorldSid,
+            None,
+            Some(PSID(sid_buf.as_mut_ptr().cast())),
+            &mut sid_len,
+        )
+    }
+    .expect("materialise the Everyone SID");
+    let psid = PSID(sid_buf.as_mut_ptr().cast());
+
+    // Same sizing rule as `apply_rsync_acl_to_path`: ACL header plus, per ACE,
+    // the ACE struct and SID minus the 4-byte inline `SidStart` placeholder.
+    let ace_size = std::mem::size_of::<ACCESS_ALLOWED_ACE>() as u32 + sid_len
+        - std::mem::size_of::<u32>() as u32;
+    let dacl_size = std::mem::size_of::<ACL>() as u32 + 2 * ace_size;
+    let mut dacl_buf = vec![0u8; dacl_size as usize];
+    let pacl = dacl_buf.as_mut_ptr().cast::<ACL>();
+
+    // SAFETY: `dacl_buf` is sized for the header plus both ACEs, and every
+    // call below writes into that same initialised ACL.
+    unsafe {
+        InitializeAcl(pacl, dacl_size, ACL_REVISION).expect("initialize ACL");
+        AddAccessAllowedAce(pacl, ACL_REVISION, FILE_GENERIC_READ, psid)
+            .expect("add the allow ACE");
+        AddAccessDeniedAce(pacl, ACL_REVISION, FILE_GENERIC_READ, psid).expect("add the deny ACE");
+    }
+
+    let (acl, dropped) = dacl_to_rsync_acl(pacl);
+
+    assert_eq!(
+        acl.names.len(),
+        1,
+        "the expressible allow ACE must still convert; auditing the deny ACE \
+         must not cost the entry that does travel"
+    );
+    assert_eq!(
+        dropped.descriptions.len(),
+        1,
+        "exactly the deny ACE is dropped, and it must be recorded: {:?}",
+        dropped.descriptions
+    );
+    assert!(
+        dropped.descriptions[0].contains("deny"),
+        "the audit record must name the ACE type that was lost: {:?}",
+        dropped.descriptions
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn read_dacl_on_temp_file_returns_dacl() {

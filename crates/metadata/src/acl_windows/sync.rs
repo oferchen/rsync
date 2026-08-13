@@ -6,8 +6,8 @@
 use std::io;
 use std::path::Path;
 
-use super::common::io_error_is_unsupported;
-use super::dacl::{apply_rsync_acl_to_path, dacl_to_rsync_acl, read_dacl};
+use super::common::{io_error_is_unsupported, warn_dropped_aces};
+use super::dacl::{WIRE_INEXPRESSIBLE, apply_rsync_acl_to_path, dacl_to_rsync_acl, read_dacl};
 use super::sddl::{read_dacl_sddl, write_dacl_sddl};
 use crate::MetadataError;
 
@@ -65,7 +65,13 @@ pub fn sync_acls(
         return Ok(());
     }
 
-    let acl = dacl_to_rsync_acl(pdacl);
+    // This is the lossy fallback leg: the verbatim SDDL round-trip above
+    // already returned when the volume served a descriptor, so reaching here
+    // means the DACL is about to be squeezed through the POSIX-style named-ACE
+    // encoding. Report what that squeeze discards against the SOURCE path,
+    // which is where the operator can inspect the ACEs that were lost.
+    let (acl, dropped) = dacl_to_rsync_acl(pdacl);
+    warn_dropped_aces(source, WIRE_INEXPRESSIBLE, &dropped.descriptions);
     drop(sd);
     if acl.names.is_empty() {
         return Ok(());
