@@ -132,6 +132,7 @@ windows = { workspace = true, features = [
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 criterion = { workspace = true }
 filetime = { workspace = true }
+test-support = { path = "../test-support" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(unix)'.dev-dependencies]

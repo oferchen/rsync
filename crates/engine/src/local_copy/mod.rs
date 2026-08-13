@@ -230,27 +230,12 @@ const CROSS_DEVICE_ERROR_CODE: i32 = 18;
 /// Used when resolving relative `--link-dest` / `--copy-dest` / `--compare-dest`
 /// candidates so they resolve even when an intermediate directory (e.g. a
 /// not-yet-created dry-run destination) is absent from disk.
+///
+/// Delegates to `filters::collapse_dot_dot_dirs`, the single implementation of
+/// upstream's `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` rule.
+// upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS
 pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
-    use std::path::{Component, PathBuf};
-
-    let mut normalized: Vec<Component<'_>> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.last() {
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                Some(Component::RootDir) => {}
-                _ => normalized.push(component),
-            },
-            other => normalized.push(other),
-        }
-    }
-    if normalized.is_empty() {
-        return PathBuf::from(".");
-    }
-    normalized.iter().collect()
+    filters::collapse_dot_dot_dirs(path)
 }
 
 #[cfg(test)]
@@ -284,6 +269,10 @@ mod tests;
 #[cfg(test)]
 #[path = "filter_program_internal_tests.rs"]
 mod filter_program_internal_tests;
+
+#[cfg(test)]
+#[path = "clean_fname_collapse_tests.rs"]
+mod clean_fname_collapse_tests;
 
 #[cfg(test)]
 pub(crate) mod test_support {
