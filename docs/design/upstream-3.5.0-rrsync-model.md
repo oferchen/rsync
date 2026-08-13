@@ -466,13 +466,49 @@ It seeds a hand-written dict for options popt accepts but that no code path
 emits verbatim (`fake-super`, `no-munge-links`, `copy-devices`,
 `write-devices`, ...), and hard-sets `files-from` to `3`.
 
-**The generator does not know about denials.** Every `-1` in the shipped table -
-and `debug` in particular - is a manual edit *inside* the generated block, and a
-regeneration silently restores it. Upstream knows: `rrsync-debug-denied_test.py`
-asserts the literal string `"'debug': -1,"` is present in the file, with the
-comment "a cull-options regeneration probably restored it". Any oc-rsync
-equivalent needs the same drift guard, and it needs to check the *value*, not
-only the behaviour.
+### The shipped table is NOT what the generator produces
+
+MEASURED, not inferred: running upstream's own `packaging/cull-options --python`
+against upstream's own 3.5.0 `options.c` and diffing the result against the
+block shipped in `support/rrsync` gives **three** differences.
+
+```
+-  'compress-threads': 1,     shipped only - generator does not emit it
+-  'debug': -1,               shipped
++  'debug': 1,                generated
+-  'dirs': 0,                 shipped only - generator does not emit it
+```
+
+Verified causes:
+
+- **`compress-threads`** is a client-side popt entry only (`options.c:783`,
+  `POPT_ARG_INT` into `do_compression_threads`) with no `args[ac++]` emit site,
+  so the scraper never sees it. A hand-added permissive extra.
+- **`dirs`** likewise has no emit site: `-d` goes to the server through
+  `argstr[x++] = 'd'` (`options.c:2806`), so the generator learns the *letter*
+  but never the long name. (The only `args[ac++]` match on "dirs" is
+  `--no-implied-dirs`, a different option.) Also a hand-added permissive extra.
+- **`debug: -1`** is a hand-applied **denial** that a regeneration would revert
+  to `1`, re-opening exactly the disclosure route `NEWS.md:171-174` documents.
+
+So the real relation is
+
+> **shipped = generated ∪ {hand-added allows} \ {hand-applied denies}**
+
+and *nothing in the upstream tree records which entry is which*. The
+START/END markers claim the whole block is generated; three entries are not.
+
+Upstream's only guard against the denial silently reverting is a string
+assertion in a test: `rrsync-debug-denied_test.py` checks that the literal
+`"'debug': -1,"` is still in the file, commented "a cull-options regeneration
+probably restored it". There is no guard at all on the two hand-added allows.
+
+**Consequence for the oc-rsync drift test (task 582): it cannot be "regenerate
+and compare".** That would either fail permanently on the hand-added entries or,
+if reconciled by regenerating, silently revert a security denial. It has to be a
+three-way check - committed table vs derived-from-upstream set vs an explicit,
+reviewed override list - so an upstream change surfaces as a diff a human reads
+rather than as a silent policy revert. Same shape as task 410; see consequence 8.
 
 ## 6. The `/proc/self/fd/N` pin, seen from the server
 
@@ -657,11 +693,16 @@ premises.
    both the deny check and the `-R` detection. Reuse the machinery from PR #7262
    rather than writing a second scanner.
 
-8. **The option table needs a drift test that checks the VALUE.** Upstream's
-   table is generated from `options.c` and its denials are manual edits inside
-   the generated block. oc-rsync's equivalent must assert both directions: every
-   option oc's client can send to a server appears in the table, and every
-   intended denial is still a denial. `rrsync-debug-denied` is the model.
+8. **The option table drift test must be THREE-WAY, not regenerate-and-compare.**
+   Measured in section 5: upstream's shipped table differs from its own
+   generator's output in three entries - two hand-added allows and one
+   hand-applied denial - with nothing recording which is which. A
+   regenerate-and-compare test would either fail forever or silently revert the
+   denial. oc-rsync's equivalent needs a committed table, a set derived from
+   upstream at test time, and an explicit reviewed override list, asserting both
+   directions: every option oc's client can send to a server is accounted for,
+   and every intended denial is still a denial. `rrsync-debug-denied` is the
+   model for the denial half; nothing upstream guards the allow half.
 
    **This is the same drift problem as task 410** (daemon `refuse options`
    `SHORT_OPTIONS` must match upstream `long_options[]` exactly), and the two
