@@ -93,13 +93,15 @@ impl ReceiverContext {
             self.remap_flist_ownership_from_id_lists();
         }
 
-        // upstream: flist.c:2773-2777 - read io_error flag for protocol < 30.
+        // upstream: flist.c:3068-3072 - read io_error flag for protocol < 30.
         // The sender writes write_int(f, io_error) as a 4-byte LE integer after
         // the id lists. Protocol >= 30 uses MSG_IO_ERROR or SAFE_FILE_LIST instead.
+        // `io_error |= err & IOERR_VALID_MASK` - a hostile peer must not be able
+        // to plant undefined bits in the local io_error.
         if self.protocol.uses_fixed_encoding() {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
-            let err = i32::from_le_bytes(buf);
+            let err = protocol::sanitize_peer_io_error(i32::from_le_bytes(buf));
             if err != 0 && !self.config.deletion.ignore_errors {
                 self.flist_io_error |= err;
             }
