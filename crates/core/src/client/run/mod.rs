@@ -511,11 +511,12 @@ fn apply_max_alloc(config: &ClientConfig) {
     let Some(limit) = config.max_alloc() else {
         return;
     };
-    // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a
-    // configured value of 0 means unlimited, so the ceiling becomes the
-    // platform maximum and the buffer pool retains no explicit byte budget.
+    // upstream: options.c:2069-2072 - a max-alloc of 0 once meant SIZE_MAX and
+    // so removed the ceiling; 3.5.0 refuses it (CVE-2026-53794). The CLI parser
+    // rejects zero before it reaches here, and a library caller that supplies
+    // it leaves the standing ceiling in place rather than lifting it, matching
+    // `protocol::set_max_alloc`'s own contract for a zero argument.
     if limit == 0 {
-        protocol::set_max_alloc(usize::MAX);
         return;
     }
     let Ok(limit_usize) = usize::try_from(limit) else {

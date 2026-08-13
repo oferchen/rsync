@@ -146,7 +146,10 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Set stdout buffering to *MODE*: **N** (none), **L** (line), or **B** (block).
 
 **--max-alloc**=*SIZE*
-:   Limit memory allocation to *SIZE* bytes. Supports suffixes: K, M, G.
+:   Limit an individual memory allocation to *SIZE* bytes (default 1G, minimum
+    1M). Supports suffixes: K, M, G. A value of 0 once meant "unlimited"; it is
+    now rejected, because a 0-byte cap disabled the allocation limit and so
+    invited memory exhaustion. Use an explicit large value for a high limit.
 
 **--log-file**=*FILE*
 :   Write per-file transfer information to *FILE*.
