@@ -92,6 +92,14 @@ pub enum Command {
     /// rsync across all client transports, then run the cross-platform checks
     /// (host `clippy -D warnings`, windows-gnu and linux-musl `cargo check`).
     /// Absent cross toolchains are skipped with a hint, never failed.
+    ///
+    /// The upstream side of the comparison is the pinned rsync 3.4.4 built by
+    /// `bash tools/ci/run_interop.sh` under
+    /// `target/interop/upstream-install/`, verified by its
+    /// `--version` banner and printed before the results. A missing or
+    /// wrong-version oracle aborts the run rather than falling back to
+    /// whatever `rsync` is on `PATH`. Set `OC_RSYNC_VALIDATE_UPSTREAM` to a
+    /// binary to compare against another release deliberately.
     Validate(ValidateMatrixArgs),
 }
 
