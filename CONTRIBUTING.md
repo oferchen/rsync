@@ -184,9 +184,12 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
 - **The hard gate.** `cargo xtask citations` asserts that every citation in the
   repository - not only under `crates/` - names a `.c`, `.h`, `.py` or `.sh`
   file the pinned release actually has, at a line that file actually has. It
-  reads `tools/ci/upstream-3.4.4-lines.tsv` rather than the source tree, so it
+  reads `tools/ci/upstream-3.5.0-lines.tsv` rather than the source tree, so it
   runs everywhere, including under `nextest`. Regenerate that manifest with
-  `cargo xtask citations --write-manifest` when the pin moves. Citations
+  `cargo xtask citations --write-manifest` when the pin moves - in the same
+  change that moves `VER` in the drift auditor, never in a later one. The two
+  read the same comments against different trees, so a half-moved pin makes
+  them contradict each other. Citations
   qualified by a directory the rsync tarball does not ship - zsync's
   `librcksum/`, an explicitly-versioned `rsync-3.4.1/` path - name a different
   upstream and are out of scope; write a bare name only when you mean a file of

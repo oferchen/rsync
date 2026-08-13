@@ -896,7 +896,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2
-    // (io.c:1151). Once configured, the generator/sender loop emits an empty
+    // (io.c:1281). Once configured, the generator/sender loop emits an empty
     // MSG_DATA keepalive during an I/O lull so the peer's timeout does not fire.
     // Without --timeout there is no lull tracking and the wire stays identical.
     if let Some(timeout_secs) = handshake.io_timeout {
