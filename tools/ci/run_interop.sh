@@ -5,7 +5,8 @@
 #     2.6.9  -> always source-built (legacy, predates per-arch .deb coverage we care about)
 #     3.0.9  -> old-releases.ubuntu.com
 #     3.1.3  -> archive.ubuntu.com
-#     3.4.4  -> source-built (latest release, no .deb yet)
+#     3.4.4  -> source-built (no .deb yet)
+#     3.5.0  -> source-built (latest release, no .deb yet); build-and-cache only
 # - Falls back to source build if the exact .deb for this arch is missing
 # - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
 set -euo pipefail
@@ -60,7 +61,30 @@ versions=(3.0.9 3.1.3 3.4.4)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
-extra_build_versions=(2.6.9)
+#
+# 3.5.0 is the current upstream release. It carries the same wire protocol as
+# 3.4.4 (rsync.h: PROTOCOL_VERSION 32, SUBPROTOCOL_VERSION 0) but rewrites the
+# path resolver and hardens the daemon, so it is built and cached here first to
+# validate the fetch/configure/build path and give the follow-up triage a real
+# 3.5.0 oracle binary. Promoting it into `versions` (running the full scenario
+# matrix against it) is deliberately a separate step.
+extra_build_versions=(2.6.9 3.5.0)
+
+# Versions with no usable per-arch .deb in any pool we track, so the harness
+# builds them from the release tarball instead. 2.6.9 predates the per-arch
+# pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
+# Both the primary URL builder and the generic fallback consult this list, so
+# the "source-only" fact is stated once.
+source_only_versions=(2.6.9 3.4.4 3.5.0)
+
+version_is_source_only() {
+  local version=$1 candidate
+  for candidate in "${source_only_versions[@]}"; do
+    [[ "$version" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
@@ -118,19 +142,16 @@ build_jobs() {
 build_version_url() {
   local version=$1
   local arch=$2
+  if version_is_source_only "$version"; then
+    echo ""
+    return 0
+  fi
   case "$version" in
-    2.6.9)
-      echo ""
-      ;;
     3.0.9)
       echo "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_${arch}.deb"
       ;;
     3.1.3)
       echo "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_${arch}.deb"
-      ;;
-    3.4.4)
-      # 3.4.4 is the latest upstream release; no .deb available yet, force source build.
-      echo ""
       ;;
     *)
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
@@ -196,12 +217,12 @@ try_fetch_deb_generic() {
 
   local candidates=()
 
+  if version_is_source_only "$version"; then
+    rm -f "$tmp_deb"
+    return 1
+  fi
+
   case "$version" in
-    2.6.9)
-      # No usable per-arch generic-pool .deb for rsync 2.6.9; skip straight to source build.
-      rm -f "$tmp_deb"
-      return 1
-      ;;
     3.0.9)
       candidates+=(
         "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1_${arch}.deb"
@@ -213,11 +234,6 @@ try_fetch_deb_generic() {
       candidates+=(
         "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.8_${arch}.deb"
       )
-      ;;
-    3.4.4)
-      # Latest upstream release; no .deb available yet, skip straight to source build.
-      rm -f "$tmp_deb"
-      return 1
       ;;
     *)
       candidates+=(
