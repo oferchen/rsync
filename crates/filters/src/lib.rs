@@ -133,7 +133,7 @@ pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
-pub use wildmatch::wildmatch;
+pub use wildmatch::{iwildmatch, wildmatch};
 
 #[cfg(test)]
 mod tests;
