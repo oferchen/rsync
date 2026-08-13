@@ -267,9 +267,22 @@ impl ModuleDefinition {
         // what keeps `hosts allow = UNKNOWN` usable.
         //
         // Keyed on the SENTINEL, not on the string being absent: the host is
-        // now always a matchable name, so `is_resolved()` is the only thing
-        // that still distinguishes "DNS gave us this" from "nobody could".
-        if !host.is_resolved()
+        // now always a matchable name, so the variant is the only thing that
+        // still distinguishes "DNS gave us this" from "nobody could".
+        //
+        // Matched EXHAUSTIVELY rather than through a boolean helper. "sentinel
+        // iff no name was resolved" is a biconditional over today's two
+        // variants and would silently become false if a third were added - a
+        // resolved-but-empty name, say - defaulting the new state into
+        // "allowed". With the match, adding a variant is a compile error here,
+        // so the decision has to be made rather than inherited. This is the one
+        // line in the module where being wrong is a security regression rather
+        // than a parity one.
+        let name_was_resolved = match host {
+            super::PeerHost::Resolved(_) => true,
+            super::PeerHost::Sentinel(_) => false,
+        };
+        if !name_was_resolved
             && self
                 .hosts_deny
                 .iter()

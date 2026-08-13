@@ -67,7 +67,9 @@ pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_looku
 /// so the result is cached); oc resolves per connection after a process-wide
 /// chroot, where a chroot without NSS configuration silently yields no name.
 /// Keying that guard on the sentinel rather than on `Option::is_none` is what
-/// lets the allow-side sentinels match without disarming it.
+/// lets the allow-side sentinels match without disarming it. The guard matches
+/// this enum EXHAUSTIVELY rather than calling a helper, so a third variant is a
+/// compile error there instead of silently defaulting to "allowed".
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PeerHost<'a> {
     /// A name that reverse DNS produced (and forward-confirmed, when the
@@ -94,11 +96,6 @@ impl<'a> PeerHost<'a> {
         match self {
             Self::Resolved(name) | Self::Sentinel(name) => name,
         }
-    }
-
-    /// Whether the name came from DNS. Only the fail-closed deny guard may ask.
-    pub(crate) const fn is_resolved(&self) -> bool {
-        matches!(self, Self::Resolved(_))
     }
 }
 
