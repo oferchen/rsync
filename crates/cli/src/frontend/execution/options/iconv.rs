@@ -155,10 +155,19 @@ mod tests {
     /// Non-vacuity: a charset that CAN be opened still resolves, so the two
     /// assertions above are detecting the rejection rather than a parser
     /// that rejects every explicit spec.
+    ///
+    /// Deliberately `UTF-8,UTF-8` rather than a legacy name. The charset
+    /// NAMESPACE is under review: oc resolves WHATWG labels via
+    /// `encoding_rs::Encoding::for_label`, upstream uses POSIX iconv, and
+    /// names like `ISO-8859-1` or `ascii` are precisely the ones that work
+    /// may change - WHATWG currently folds both onto windows-1252. Pinning
+    /// this control to a name under review would make it fail on a CORRECT
+    /// namespace fix and read as a regression. UTF-8 resolves identically
+    /// in both systems and under every candidate outcome.
     #[cfg(feature = "iconv")]
     #[test]
     fn openable_charset_still_resolves() {
-        resolve_iconv_setting(Some(&os("UTF-8,ISO-8859-1")), false)
+        resolve_iconv_setting(Some(&os("UTF-8,UTF-8")), false)
             .expect("a charset pair that opens must be accepted");
     }
 
