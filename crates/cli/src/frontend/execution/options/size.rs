@@ -84,15 +84,8 @@ pub(crate) const MAX_ALLOC_CEILING: u64 = u64::MAX / 4;
 /// Lower bound for a non-zero `--max-alloc`, mirroring upstream's
 /// `parse_size_arg(arg, 'B', "max-alloc", 1024*1024, -1, True)` min value.
 ///
-/// upstream: options.c:1960.
+/// upstream: options.c:2067 `parse_size_arg()` call in `parse_arguments()`.
 const MAX_ALLOC_MIN: u64 = 1024 * 1024;
-
-/// Sentinel returned for `--max-alloc=0`, meaning "unlimited".
-///
-/// upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a parsed
-/// value of zero disables the ceiling entirely. Callers resolve this to the
-/// platform's `usize::MAX` before publishing it.
-pub(crate) const MAX_ALLOC_UNLIMITED: u64 = 0;
 
 /// Upper bound for `--block-size` at protocol >= 30.
 ///
@@ -101,14 +94,21 @@ pub(crate) const MAX_ALLOC_UNLIMITED: u64 = 0;
 /// max_blength, False)`.
 const MAX_BLOCK_SIZE: u64 = 1 << 17;
 
+/// Error text for `--max-alloc=0`, byte-for-byte upstream's message.
+///
+/// upstream: `options.c:parse_arguments()` - `snprintf(err_buf, sizeof err_buf,
+/// "max-alloc must be greater than zero\n")` (options.c:2071).
+pub(crate) const MAX_ALLOC_ZERO_REJECTED: &str = "max-alloc must be greater than zero";
+
 /// Parses the `--max-alloc` argument as a byte ceiling.
 ///
 /// Mirrors upstream rsync's `parse_size_arg(arg, 'B', "max-alloc", 1024*1024,
-/// -1, True)` (options.c:1960) followed by `if (!max_alloc) max_alloc =
-/// SIZE_MAX;` (options.c:1966):
+/// -1, True)` and the zero check that follows it in `parse_arguments()`
+/// (options.c:2066-2073):
 ///
-/// - `0` is accepted and returned verbatim ([`MAX_ALLOC_UNLIMITED`]); callers
-///   resolve it to an unlimited ceiling.
+/// - `0` is rejected. It used to mean `SIZE_MAX`, which disabled the
+///   per-allocation guard outright; upstream 3.5.0 removed that escape hatch
+///   (CVE-2026-53794) because the value also arrives from a peer.
 /// - A non-zero value below 1 MiB is rejected ("too small").
 /// - Empty, negative, and non-numeric input is rejected.
 /// - Values above [`MAX_ALLOC_CEILING`] are rejected for overflow safety
@@ -129,14 +129,19 @@ pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
 
     let limit = parse_size_limit_argument(value, "--max-alloc")?;
 
-    // upstream: options.c:1966 - a zero value means unlimited (SIZE_MAX).
-    if limit == MAX_ALLOC_UNLIMITED {
-        return Ok(MAX_ALLOC_UNLIMITED);
+    // upstream: options.c:2069-2072 - `if (size == 0) { snprintf(err_buf, ...
+    // "max-alloc must be greater than zero\n"); goto cleanup; }`. The value can
+    // reach a daemon from the wire, so accepting zero would let a peer disable
+    // the my_alloc() ceiling (CVE-2026-53794).
+    if limit == 0 {
+        return Err(rsync_error!(1, MAX_ALLOC_ZERO_REJECTED.to_owned()).with_role(Role::Client));
     }
 
-    // upstream: options.c:1960,1120-1127 - parse_size_arg rejects a non-zero
-    // value below the 1 MiB minimum with "is too small (min: 1.00M or 0 for
-    // unlimited)". do_big_num renders the constant 1 MiB minimum as "1.00M".
+    // upstream: options.c:2067,1250-1259 - parse_size_arg rejects a value below
+    // the 1 MiB minimum with "is too small (min: 1.00M or 0 for unlimited)".
+    // do_big_num renders the constant 1 MiB minimum as "1.00M"; 3.5.0 left the
+    // "or 0 for unlimited" clause in place even though zero is now refused by
+    // the caller, so the text is mirrored verbatim.
     if limit < MAX_ALLOC_MIN {
         return Err(rsync_error!(
             1,
@@ -547,18 +552,22 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_alloc_argument_accepts_zero_as_unlimited() {
-        // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a
-        // zero value is accepted and means unlimited, not an error.
-        assert_eq!(
-            parse_max_alloc_argument(&os("0")).unwrap(),
-            MAX_ALLOC_UNLIMITED
-        );
+    fn parse_max_alloc_argument_rejects_zero() {
+        // upstream: options.c:2069-2072 - `--max-alloc=0` used to mean SIZE_MAX
+        // and thereby disabled the my_alloc() ceiling; 3.5.0 rejects it
+        // (CVE-2026-53794). Every spelling of zero takes the same path.
+        for value in ["0", "0B", "0K", "0.0M"] {
+            let err = parse_max_alloc_argument(&os(value)).unwrap_err();
+            assert!(
+                err.to_string().contains(MAX_ALLOC_ZERO_REJECTED),
+                "expected the upstream zero-rejection text for {value}, got: {err}"
+            );
+        }
     }
 
     #[test]
     fn parse_max_alloc_argument_rejects_below_one_mib() {
-        // upstream: options.c:1960 - parse_size_arg min value is 1 MiB, so a
+        // upstream: options.c:2067 - parse_size_arg min value is 1 MiB, so a
         // non-zero value below it ("512K", 1024 bytes) is "too small".
         for value in ["1024", "512K"] {
             let err = parse_max_alloc_argument(&os(value)).unwrap_err();
