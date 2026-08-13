@@ -25,8 +25,10 @@
 //! same layout with `--log-file` at both default verbosity and under `-8`.
 //!
 //! The fixtures are split by what the host filesystem can name. Every Unix
-//! runs [`PORTABLE_NAME`]; only Linux runs [`NON_UTF8_NAME`] - see the
-//! `non_utf8_names` module for why.
+//! runs [`PORTABLE_NAME`], which spells the C1 and high bytes as valid UTF-8 so
+//! the full escaping contract is exercised on every platform. Only Linux runs
+//! [`NON_UTF8_NAME`], whose *lone* invalid bytes no UTF-8-enforcing filesystem
+//! can hold - see the `non_utf8_names` module for why.
 
 #![cfg(unix)]
 
@@ -39,13 +41,20 @@ use std::process::Command;
 use tempfile::TempDir;
 use test_support::oc_rsync_bin;
 
-/// Source filename carrying the interesting bytes that every Unix filesystem
-/// can name: `ESC` (0x1B) and `LF` (0x0A), which must be escaped, plus `DEL`
-/// (0x7F) and a tab, which must survive verbatim.
-const PORTABLE_NAME: &[u8] = b"A\x1bB\nC\x7fD\tE";
+/// Source filename carrying one byte from every interesting class, spelled so
+/// that every Unix filesystem can name it.
+///
+/// `ESC` (0x1B) and `LF` (0x0A) must be escaped; `DEL` (0x7F) and a tab must
+/// survive verbatim. The C1 `CSI` is written as the UTF-8 encoding of U+009B
+/// (`c2 9b`) rather than the bare byte: the raw 0x9B is still physically in the
+/// name, so `escape_c1` is genuinely exercised, but the name stays valid UTF-8
+/// and so remains creatable on macOS. U+00FF (`c3 bf`) supplies the
+/// above-the-C1-range high bytes that must survive verbatim - `c2`, `c3` and
+/// `bf` are all above 0x9F.
+const PORTABLE_NAME: &[u8] = b"A\x1bB\nC\xc2\x9bD\x7fE\xc3\xbfF\tG";
 
-/// [`PORTABLE_NAME`] as the log file must render it.
-const PORTABLE_RENDERING: &[u8] = b"A\\#033B\\#012C\x7fD\tE";
+/// [`PORTABLE_NAME`] as the log file must render it. 0x9B is octal 233.
+const PORTABLE_RENDERING: &[u8] = b"A\\#033B\\#012C\xc2\\#233D\x7fE\xc3\xbfF\tG";
 
 /// Builds `src/<name>` and returns the temp root.
 fn named_tree(name: &[u8]) -> TempDir {
@@ -148,12 +157,12 @@ fn assert_no_raw_escape_or_c1(name: &[u8]) {
     }
 }
 
-/// upstream: log.c:126-131 - `LF` and `ESC` are escaped as `\#ooo`, so a
-/// filename cannot forge a log line or drive the terminal of an operator who
-/// later `cat`s the log; `DEL` and tab survive verbatim because the log sink
-/// runs with `use_isprint = 0`.
+/// upstream: log.c:126-131 - `LF`, `ESC` and the 8-bit `CSI` are escaped as
+/// `\#ooo`, so a filename cannot forge a log line or drive the terminal of an
+/// operator who later `cat`s the log; `DEL`, the high bytes above the C1 range
+/// and tab survive verbatim because the log sink runs with `use_isprint = 0`.
 #[test]
-fn log_file_escapes_controls_but_keeps_del() {
+fn log_file_escapes_controls_and_c1_but_keeps_high_bytes() {
     assert_rendering(PORTABLE_NAME, PORTABLE_RENDERING);
 }
 
@@ -165,30 +174,35 @@ fn log_file_escaping_is_not_weakened_by_eight_bit_output() {
     assert_eight_bit_does_not_weaken(PORTABLE_NAME);
 }
 
-/// No raw `ESC` byte may reach the log file anywhere - not just on the itemize
-/// line - or an attacker-chosen name could rewrite what the operator sees for
-/// surrounding entries.
+/// No raw `ESC` or C1 byte may reach the log file anywhere - not just on the
+/// itemize line - or an attacker-chosen name could rewrite what the operator
+/// sees for surrounding entries.
 #[test]
-fn log_file_contains_no_raw_escape_bytes() {
+fn log_file_contains_no_raw_escape_or_c1_bytes() {
     assert_no_raw_escape_or_c1(PORTABLE_NAME);
 }
 
-/// The same contract exercised with a filename that is not valid UTF-8.
+/// The same contract exercised with *lone* invalid bytes rather than their
+/// UTF-8 encodings.
 ///
 /// This is Linux-only because macOS/APFS rejects a filename containing a byte
 /// sequence that is not valid UTF-8, failing `write(2)` with `EILSEQ`
 /// ("Illegal byte sequence") - so [`NON_UTF8_NAME`] cannot be created there at
 /// all. That is a platform limit on constructing the *fixture*, not a relaxed
 /// expectation: the escaping contract is identical on both platforms, and the
-/// bytes macOS *can* name are covered by the tests above, which run everywhere.
-/// Nothing here is weakened or skipped for convenience.
+/// escaping rules themselves - including C1 and the high bytes - are already
+/// covered everywhere by the tests above, which spell the same bytes as valid
+/// UTF-8. What is exclusive to this module is the claim in the file header that
+/// "a non-UTF-8 name stays readable in the log": that needs a name no
+/// UTF-8-enforcing filesystem can hold. Nothing is weakened or skipped for
+/// convenience.
 #[cfg(target_os = "linux")]
 mod non_utf8_names {
     use super::{assert_eight_bit_does_not_weaken, assert_no_raw_escape_or_c1, assert_rendering};
 
-    /// Adds the two bytes macOS cannot name: the 8-bit `CSI` (0x9B), which must
-    /// be escaped because it is in the C1 range, and 0xFF, which must survive
-    /// verbatim because it is above it.
+    /// The bare bytes macOS cannot name: a lone 0x9B, which must be escaped
+    /// because it is in the C1 range, and a lone 0xFF, which must survive
+    /// verbatim because it is above it. Neither is valid UTF-8 on its own.
     const NON_UTF8_NAME: &[u8] = b"A\x1bB\nC\x9bD\x7fE\xffF\tG";
 
     /// [`NON_UTF8_NAME`] as the log file must render it.
