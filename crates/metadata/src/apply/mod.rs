@@ -727,7 +727,16 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     }
 
     // upstream: rsync.c:615 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
-    if options.crtimes() && entry.crtime() != 0 && !attrs_flags.skip_crtime() {
+    //
+    // Deliberately no `crtime != 0` test. Zero is a legitimate incoming value,
+    // not a stand-in for "absent": upstream's `get_create_time()` returns 0 for
+    // a daemon running without chroot (syscall.c, 3.4.3+), so a file list
+    // sourced from such a daemon carries 0 and upstream stamps it. "Absent" is
+    // already excluded by `options.crtimes()`, which mirrors `crtimes_ndx` -
+    // when it is set, the decoder always produces a crtime
+    // (`flist/read/metadata.rs`: `Some(mtime)` for XMIT_CRTIME_EQ_MTIME, else
+    // the varlong it read), so an entry can never reach here without one.
+    if options.crtimes() && !attrs_flags.skip_crtime() {
         timestamps::apply_crtime_from_entry(destination, entry)?;
     }
 
