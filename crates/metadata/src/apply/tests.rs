@@ -1207,6 +1207,107 @@ fn attrs_flags_skip_crtime_prevents_crtime_application() {
     assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
+/// Birth time of `path` in whole seconds since the Unix epoch.
+#[cfg(target_os = "macos")]
+fn birthtime_secs(path: &std::path::Path) -> i64 {
+    let created = fs::metadata(path)
+        .expect("dest metadata")
+        .created()
+        .expect("birth time");
+    match created.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).expect("birth time fits i64"),
+        Err(e) => -i64::try_from(e.duration().as_secs()).expect("birth time fits i64"),
+    }
+}
+
+/// An incoming crtime of 0 must be stamped, not silently ignored.
+///
+/// Zero is a legitimate value on the wire rather than a marker for "absent".
+/// Upstream's `get_create_time()` returns 0 when the sender is a daemon running
+/// without chroot (`syscall.c`, 3.4.3+), so every file list produced by such a
+/// daemon carries crtime 0 - and upstream stamps it, because `rsync.c:615-623`
+/// gates only on `crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME)` and then on
+/// `same_time()`, with no zero test anywhere.
+///
+/// oc previously carried an extra `entry.crtime() != 0` conjunct, so it left the
+/// destination's own birth time in place while upstream wrote 0 - measured as a
+/// real divergence pulling from an upstream 3.4.4 daemon. Guarding the whole
+/// behaviour rather than the removed conjunct: this fails if the zero test comes
+/// back in any form.
+#[cfg(target_os = "macos")]
+#[test]
+fn incoming_zero_crtime_is_applied_rather_than_treated_as_absent() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("zero-crtime.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_crtimes(true);
+
+    // Give the destination a nonzero birth time, so a later zero is a real
+    // change rather than a no-op the assertion could pass on by accident.
+    let mut seeded = FileEntry::new_file("zero-crtime.txt".into(), 4, 0o644);
+    seeded.set_mtime(1_700_000_000, 0);
+    seeded.set_crtime(1_600_000_000);
+    apply_metadata_with_attrs_flags(&dest, &seeded, &opts, None, AttrsFlags::empty())
+        .expect("seed crtime");
+    assert_eq!(
+        birthtime_secs(&dest),
+        1_600_000_000,
+        "precondition: destination must carry a nonzero birth time"
+    );
+
+    // Now the daemon-sourced shape: crtime 0 alongside a normal mtime.
+    let mut entry = FileEntry::new_file("zero-crtime.txt".into(), 4, 0o644);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_crtime(0);
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::empty())
+        .expect("apply zero crtime");
+
+    assert_eq!(
+        birthtime_secs(&dest),
+        0,
+        "an incoming crtime of 0 must be stamped, not skipped as if absent"
+    );
+}
+
+/// The zero-crtime rule must still yield to `SKIP_CRTIME`, which is the one
+/// conjunct upstream does have alongside `crtimes_ndx`.
+#[cfg(target_os = "macos")]
+#[test]
+fn skip_crtime_still_suppresses_an_incoming_zero_crtime() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("zero-crtime-skipped.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_crtimes(true);
+
+    let mut seeded = FileEntry::new_file("zero-crtime-skipped.txt".into(), 4, 0o644);
+    seeded.set_mtime(1_700_000_000, 0);
+    seeded.set_crtime(1_600_000_000);
+    apply_metadata_with_attrs_flags(&dest, &seeded, &opts, None, AttrsFlags::empty())
+        .expect("seed crtime");
+
+    let mut entry = FileEntry::new_file("zero-crtime-skipped.txt".into(), 4, 0o644);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_crtime(0);
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_CRTIME)
+        .expect("apply with SKIP_CRTIME");
+
+    assert_eq!(
+        birthtime_secs(&dest),
+        1_600_000_000,
+        "SKIP_CRTIME must suppress the write even for a zero crtime"
+    );
+}
+
 #[test]
 fn attrs_flags_skip_all_times_prevents_all_time_application() {
     use protocol::flist::FileEntry;
