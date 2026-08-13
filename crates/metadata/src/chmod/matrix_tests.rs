@@ -1,16 +1,25 @@
 //! Table-driven `--chmod` conformance matrix pinned to upstream rsync.
 //!
-//! The defect class this guards is "a who-letter does not expand to every bit
-//! it covers": `--chmod=a+s` set setuid only, because the `a` clause left the
-//! set-id top bits unset and the `s` clause fell through to its no-who default.
-//! A single `a+s` assertion would not catch the siblings of that bug (`a-s`,
-//! `a=s`, `a+st`, `a=t`, ...), so the whole `{who} x {op} x {perm}` grid is
-//! evaluated here.
+//! Two grids are evaluated here, because `--chmod` has two defect classes worth
+//! guarding as classes rather than as single cases:
 //!
-//! upstream: chmod.c `parse_chmod()` + `tweak_mode()`. Every expected value in
-//! [`MATRIX`] was produced by compiling rsync 3.5.0's `chmod.c` verbatim
-//! against a stubbed `rsync.h` and printing `tweak_mode()` for each spec and
-//! probe, so the table is upstream's own output rather than a hand-derivation.
+//! * [`MATRIX`] - "a who-letter does not expand to every bit it covers":
+//!   `--chmod=a+s` set setuid only, because the `a` clause left the set-id top
+//!   bits unset and the `s` clause fell through to its no-who default. A single
+//!   `a+s` assertion would not catch the siblings of that bug (`a-s`, `a=s`,
+//!   `a+st`, `a=t`, ...), so the whole `{who} x {op} x {perm}` grid runs.
+//! * [`COPY_MATRIX`] / [`COPY_SEQUENCE_MATRIX`] / [`REJECTED_RHS`] - the
+//!   chmod(1)-style permission copies (`u=g`, `g+u`, `o=u`) rsync 3.5.0 added.
+//!   Their whole substance is *which* class is read, *which* classes are
+//!   written, and *when* the source is sampled, so the grid spans
+//!   `{who} x {op} x {source class} x {starting mode}`, plus multi-clause rows
+//!   that pin the order dependence and an exhaustive accept/reject sweep that
+//!   pins the grammar against widening.
+//!
+//! upstream: chmod.c `parse_chmod()` + `tweak_mode()`. Every expected value
+//! below was produced by compiling rsync 3.5.0's `chmod.c` verbatim against a
+//! stubbed `rsync.h` and printing `tweak_mode()` for each spec and probe, so the
+//! tables are upstream's own output rather than a hand-derivation.
 
 use super::apply::apply_clauses;
 use super::parse::parse_with_umask;
@@ -28,6 +37,23 @@ const PROBES: [(u32, bool); 4] = [
     (0o7777, false),
     (0o750, true),
 ];
+
+/// Who-classes every grid is swept over. upstream: chmod.c parse_chmod()
+/// STATE_1ST_HALF accepts `u`, `g`, `o`, `a` in any combination, or none.
+const WHO: [&str; 8] = ["", "u", "g", "o", "a", "ug", "go", "ugo"];
+
+/// Operators every grid is swept over. upstream: `CHMOD_ADD`, `CHMOD_SUB`,
+/// `CHMOD_EQ`.
+const OP: [&str; 3] = ["+", "-", "="];
+
+/// Literal permission halves [`MATRIX`] is swept over.
+const WHAT: [&str; 12] = [
+    "r", "w", "x", "X", "s", "t", "rw", "rwx", "rwxXst", "st", "sX", "ts",
+];
+
+/// Permission *classes* a copy may read from. upstream: chmod.c parse_chmod()
+/// STATE_2ND_HALF `case 'u'/'g'/'o'` - `a` is deliberately absent.
+const COPY_SOURCES: [&str; 3] = ["u", "g", "o"];
 
 /// `(spec, [result per PROBES entry])` as produced by upstream rsync 3.5.0.
 const MATRIX: &[(&str, [u32; 4])] = &[
@@ -321,24 +347,152 @@ const MATRIX: &[(&str, [u32; 4])] = &[
     ("ugo=ts", [0o7000, 0o7000, 0o7000, 0o7000]),
 ];
 
-/// Every matrix cell must reproduce upstream's `tweak_mode()` output.
-#[test]
-fn chmod_matrix_matches_upstream() {
+/// Starting modes the permission-copy tables are evaluated against, in
+/// [`COPY_MATRIX`] column order. Every probe carries three *distinct* owner /
+/// group / other triads so a copy that lands in the wrong class is visible, and
+/// `07124` additionally has all three special bits set to exercise the
+/// destination-class clearing a `=` copy performs. The last probe is a
+/// directory.
+const COPY_PROBES: [(u32, bool); 4] = [
+    (0o0761, false),
+    (0o7124, false),
+    (0o0405, false),
+    (0o0752, true),
+];
+
+/// `(spec, [result per COPY_PROBES entry])` for the permission-copy grid, as
+/// produced by upstream rsync 3.5.0.
+const COPY_MATRIX: &[(&str, [u32; 4])] = &[
+    ("+u", [0o0775, 0o7135, 0o0445, 0o0757]),
+    ("+g", [0o0765, 0o7324, 0o0405, 0o0757]),
+    ("+o", [0o0771, 0o7564, 0o0555, 0o0752]),
+    ("-u", [0o0020, 0o7024, 0o0001, 0o0002]),
+    ("-g", [0o0121, 0o7124, 0o0405, 0o0202]),
+    ("-o", [0o0660, 0o7120, 0o0000, 0o0552]),
+    ("=u", [0o0755, 0o0111, 0o0444, 0o0755]),
+    ("=g", [0o0644, 0o0200, 0o0000, 0o0555]),
+    ("=o", [0o0111, 0o0444, 0o0555, 0o0200]),
+    ("u+u", [0o0761, 0o7124, 0o0405, 0o0752]),
+    ("u+g", [0o0761, 0o7324, 0o0405, 0o0752]),
+    ("u+o", [0o0761, 0o7524, 0o0505, 0o0752]),
+    ("u-u", [0o0061, 0o7024, 0o0005, 0o0052]),
+    ("u-g", [0o0161, 0o7124, 0o0405, 0o0252]),
+    ("u-o", [0o0661, 0o7124, 0o0005, 0o0552]),
+    ("u=u", [0o0761, 0o3124, 0o0405, 0o0752]),
+    ("u=g", [0o0661, 0o3224, 0o0005, 0o0552]),
+    ("u=o", [0o0161, 0o3424, 0o0505, 0o0252]),
+    ("g+u", [0o0771, 0o7134, 0o0445, 0o0772]),
+    ("g+g", [0o0761, 0o7124, 0o0405, 0o0752]),
+    ("g+o", [0o0771, 0o7164, 0o0455, 0o0772]),
+    ("g-u", [0o0701, 0o7124, 0o0405, 0o0702]),
+    ("g-g", [0o0701, 0o7104, 0o0405, 0o0702]),
+    ("g-o", [0o0761, 0o7124, 0o0405, 0o0752]),
+    ("g=u", [0o0771, 0o5114, 0o0445, 0o0772]),
+    ("g=g", [0o0761, 0o5124, 0o0405, 0o0752]),
+    ("g=o", [0o0711, 0o5144, 0o0455, 0o0722]),
+    ("o+u", [0o0767, 0o7125, 0o0405, 0o0757]),
+    ("o+g", [0o0767, 0o7126, 0o0405, 0o0757]),
+    ("o+o", [0o0761, 0o7124, 0o0405, 0o0752]),
+    ("o-u", [0o0760, 0o7124, 0o0401, 0o0750]),
+    ("o-g", [0o0761, 0o7124, 0o0405, 0o0752]),
+    ("o-o", [0o0760, 0o7120, 0o0400, 0o0750]),
+    ("o=u", [0o0767, 0o6121, 0o0404, 0o0757]),
+    ("o=g", [0o0766, 0o6122, 0o0400, 0o0755]),
+    ("o=o", [0o0761, 0o6124, 0o0405, 0o0752]),
+    ("a+u", [0o0777, 0o7135, 0o0445, 0o0777]),
+    ("a+g", [0o0767, 0o7326, 0o0405, 0o0757]),
+    ("a+o", [0o0771, 0o7564, 0o0555, 0o0772]),
+    ("a-u", [0o0000, 0o7024, 0o0001, 0o0000]),
+    ("a-g", [0o0101, 0o7104, 0o0405, 0o0202]),
+    ("a-o", [0o0660, 0o7120, 0o0000, 0o0550]),
+    ("a=u", [0o0777, 0o0111, 0o0444, 0o0777]),
+    ("a=g", [0o0666, 0o0222, 0o0000, 0o0555]),
+    ("a=o", [0o0111, 0o0444, 0o0555, 0o0222]),
+    ("ug+u", [0o0771, 0o7134, 0o0445, 0o0772]),
+    ("ug+g", [0o0761, 0o7324, 0o0405, 0o0752]),
+    ("ug+o", [0o0771, 0o7564, 0o0555, 0o0772]),
+    ("ug-u", [0o0001, 0o7024, 0o0005, 0o0002]),
+    ("ug-g", [0o0101, 0o7104, 0o0405, 0o0202]),
+    ("ug-o", [0o0661, 0o7124, 0o0005, 0o0552]),
+    ("ug=u", [0o0771, 0o1114, 0o0445, 0o0772]),
+    ("ug=g", [0o0661, 0o1224, 0o0005, 0o0552]),
+    ("ug=o", [0o0111, 0o1444, 0o0555, 0o0222]),
+    ("go+u", [0o0777, 0o7135, 0o0445, 0o0777]),
+    ("go+g", [0o0767, 0o7126, 0o0405, 0o0757]),
+    ("go+o", [0o0771, 0o7164, 0o0455, 0o0772]),
+    ("go-u", [0o0700, 0o7124, 0o0401, 0o0700]),
+    ("go-g", [0o0701, 0o7104, 0o0405, 0o0702]),
+    ("go-o", [0o0760, 0o7120, 0o0400, 0o0750]),
+    ("go=u", [0o0777, 0o4111, 0o0444, 0o0777]),
+    ("go=g", [0o0766, 0o4122, 0o0400, 0o0755]),
+    ("go=o", [0o0711, 0o4144, 0o0455, 0o0722]),
+    ("ugo+u", [0o0777, 0o7135, 0o0445, 0o0777]),
+    ("ugo+g", [0o0767, 0o7326, 0o0405, 0o0757]),
+    ("ugo+o", [0o0771, 0o7564, 0o0555, 0o0772]),
+    ("ugo-u", [0o0000, 0o7024, 0o0001, 0o0000]),
+    ("ugo-g", [0o0101, 0o7104, 0o0405, 0o0202]),
+    ("ugo-o", [0o0660, 0o7120, 0o0000, 0o0550]),
+    ("ugo=u", [0o0777, 0o0111, 0o0444, 0o0777]),
+    ("ugo=g", [0o0666, 0o0222, 0o0000, 0o0555]),
+    ("ugo=o", [0o0111, 0o0444, 0o0555, 0o0222]),
+];
+
+/// Multi-clause specs, as produced by upstream rsync 3.5.0. These pin the
+/// resolution ORDER: a copy reads the mode left by the clauses before it, so
+/// `u=g,g=o` and `g=o,u=g` must differ, and a copy composes with octal and
+/// literal clauses and with the `D`/`F` selectors.
+const COPY_SEQUENCE_MATRIX: &[(&str, [u32; 4])] = &[
+    ("u=g,g=o", [0o0611, 0o1244, 0o0055, 0o0522]),
+    ("g=o,u=g", [0o0111, 0o1444, 0o0555, 0o0222]),
+    ("g=u,u=g", [0o0771, 0o1114, 0o0445, 0o0772]),
+    ("u+g,g+o", [0o0771, 0o7364, 0o0455, 0o0772]),
+    ("g-u,u-g", [0o0701, 0o7124, 0o0405, 0o0702]),
+    ("700,u=g", [0o0000, 0o0000, 0o0000, 0o0000]),
+    ("u=g,700", [0o0700, 0o0700, 0o0700, 0o0700]),
+    ("u=g,u=o", [0o0161, 0o3424, 0o0505, 0o0252]),
+    ("a=u,g-o", [0o0707, 0o0101, 0o0404, 0o0707]),
+    ("Du=g,F=o", [0o0111, 0o0444, 0o0555, 0o0552]),
+    ("u=g,g+x", [0o0671, 0o3234, 0o0015, 0o0552]),
+    ("g+x,u=g", [0o0771, 0o3334, 0o0115, 0o0552]),
+    ("o=u,u=o", [0o0767, 0o2121, 0o0404, 0o0757]),
+];
+
+/// Permission halves upstream rsync 3.5.0 REJECTS, out of every one- and
+/// two-letter string over `rwxXstugoa`. The verdict is independent of the
+/// who-class and the operator, so this set is keyed on the half alone.
+const REJECTED_RHS: &[&str] = &[
+    "Xa", "Xg", "Xo", "Xu", "a", "aX", "aa", "ag", "ao", "ar", "as", "at", "au", "aw", "ax", "gX",
+    "ga", "gg", "go", "gr", "gs", "gt", "gu", "gw", "gx", "oX", "oa", "og", "oo", "or", "os", "ot",
+    "ou", "ow", "ox", "ra", "rg", "ro", "ru", "sa", "sg", "so", "su", "ta", "tg", "to", "tu", "uX",
+    "ua", "ug", "uo", "ur", "us", "ut", "uu", "uw", "ux", "wa", "wg", "wo", "wu", "xa", "xg", "xo",
+    "xu",
+];
+/// Real `FileType` values for the file and directory probes; `tweak_mode()`
+/// branches on `S_ISDIR` for both the `D`/`F` selector and the conditional `X`.
+fn probe_file_types() -> (std::fs::FileType, std::fs::FileType) {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("f");
     let dir_path = temp.path().join("d");
     std::fs::write(&file_path, b"payload").expect("write file");
     std::fs::create_dir(&dir_path).expect("create dir");
-    let file_type = std::fs::metadata(&file_path)
-        .expect("file metadata")
-        .file_type();
-    let dir_type = std::fs::metadata(&dir_path)
-        .expect("dir metadata")
-        .file_type();
+    (
+        std::fs::metadata(&file_path)
+            .expect("file metadata")
+            .file_type(),
+        std::fs::metadata(&dir_path)
+            .expect("dir metadata")
+            .file_type(),
+    )
+}
 
-    for (spec, expected) in MATRIX {
+/// Evaluates every `(spec, probe)` cell of `matrix` and asserts it reproduces
+/// upstream's value.
+fn assert_matrix(matrix: &[(&str, [u32; 4])], probes: &[(u32, bool); 4]) {
+    let (file_type, dir_type) = probe_file_types();
+
+    for (spec, expected) in matrix {
         let clauses = parse_with_umask(spec, UMASK).unwrap_or_else(|e| panic!("`{spec}`: {e}"));
-        for (probe, want) in PROBES.iter().zip(expected) {
+        for (probe, want) in probes.iter().zip(expected) {
             let (mode, is_dir) = *probe;
             let file_type = if is_dir { dir_type } else { file_type };
             let got = apply_clauses(&clauses, mode, file_type) & 0o7777;
@@ -352,16 +506,25 @@ fn chmod_matrix_matches_upstream() {
     }
 }
 
+/// Expected row for `spec`, which must be present in `matrix`.
+fn lookup(matrix: &[(&str, [u32; 4])], spec: &str) -> [u32; 4] {
+    matrix
+        .iter()
+        .find(|(s, _)| *s == spec)
+        .unwrap_or_else(|| panic!("matrix is missing `{spec}`"))
+        .1
+}
+
+/// Every matrix cell must reproduce upstream's `tweak_mode()` output.
+#[test]
+fn chmod_matrix_matches_upstream() {
+    assert_matrix(MATRIX, &PROBES);
+}
+
 /// The matrix must cover every `{who} x {op} x {perm}` combination it claims to,
 /// so a row silently dropped from the table cannot shrink the guard.
 #[test]
 fn chmod_matrix_covers_the_full_grid() {
-    const WHO: [&str; 8] = ["", "u", "g", "o", "a", "ug", "go", "ugo"];
-    const OP: [&str; 3] = ["+", "-", "="];
-    const WHAT: [&str; 12] = [
-        "r", "w", "x", "X", "s", "t", "rw", "rwx", "rwxXst", "st", "sX", "ts",
-    ];
-
     for who in WHO {
         for op in OP {
             for what in WHAT {
@@ -398,4 +561,97 @@ fn a_plus_s_sets_both_setid_bits() {
     assert_eq!(apply("a+s"), 0o6644);
     assert_eq!(apply("u+s"), 0o4644);
     assert_eq!(apply("g+s"), 0o2644);
+}
+
+/// Every permission-copy cell must reproduce upstream's `tweak_mode()` output.
+///
+/// upstream: rsync 3.5.0 chmod.c `mode_copy_bits()` - `u=g` and friends read
+/// the source class out of the mode and spread it across the destination
+/// classes. rsync 3.4.4 rejected the whole form, so this is the grid that a
+/// regression would silently take back to a parse error.
+#[test]
+fn chmod_copy_matrix_matches_upstream() {
+    assert_matrix(COPY_MATRIX, &COPY_PROBES);
+}
+
+/// The copy matrix must cover every `{who} x {op} x {source-class}` triple it
+/// claims to, so a row silently dropped from the table cannot shrink the guard.
+#[test]
+fn chmod_copy_matrix_covers_the_full_grid() {
+    for who in WHO {
+        for op in OP {
+            for src in COPY_SOURCES {
+                let spec = format!("{who}{op}{src}");
+                assert!(
+                    COPY_MATRIX.iter().any(|(s, _)| *s == spec),
+                    "copy matrix is missing `{spec}`"
+                );
+            }
+        }
+    }
+    assert_eq!(COPY_MATRIX.len(), WHO.len() * OP.len() * COPY_SOURCES.len());
+}
+
+/// A copy reads the mode as the *preceding* clauses left it, not the mode the
+/// file started with, so a comma-separated list is order-dependent.
+///
+/// upstream: chmod.c `tweak_mode()` calls `mode_copy_bits(mode, ...)` inside the
+/// clause loop, before that clause's own AND/OR is applied.
+#[test]
+fn chmod_copy_sequences_match_upstream() {
+    assert_matrix(COPY_SEQUENCE_MATRIX, &COPY_PROBES);
+}
+
+/// Reordering two copy clauses must change the result - the pin that would fail
+/// if the source were ever read from the original mode instead of the running
+/// one.
+#[test]
+fn chmod_copy_is_order_dependent() {
+    let forward = lookup(COPY_SEQUENCE_MATRIX, "u=g,g=o");
+    let reverse = lookup(COPY_SEQUENCE_MATRIX, "g=o,u=g");
+    assert_ne!(forward, reverse);
+}
+
+/// The grammar must not widen: for every `{who} x {op} x {one- or two-letter
+/// permission half}` spec, oc's accept/reject decision must equal upstream
+/// 3.5.0's.
+///
+/// upstream: chmod.c parse_chmod() STATE_2ND_HALF - a copy letter may not be
+/// combined with literal bits, with `s`/`t`, or with a second copy letter, in
+/// either order, and `a` is never a copy source. The verdict depends only on
+/// the permission half, which is why [`REJECTED_RHS`] is keyed on it.
+#[test]
+fn chmod_permission_half_verdicts_match_upstream() {
+    const LETTERS: [char; 10] = ['r', 'w', 'x', 'X', 's', 't', 'u', 'g', 'o', 'a'];
+
+    let mut halves = Vec::with_capacity(LETTERS.len() * (LETTERS.len() + 1));
+    for a in LETTERS {
+        halves.push(a.to_string());
+        for b in LETTERS {
+            halves.push(format!("{a}{b}"));
+        }
+    }
+    assert_eq!(
+        REJECTED_RHS.len(),
+        halves
+            .iter()
+            .filter(|h| REJECTED_RHS.contains(&h.as_str()))
+            .count(),
+        "REJECTED_RHS holds an entry outside the enumerated universe"
+    );
+
+    for who in WHO {
+        for op in OP {
+            for half in &halves {
+                let spec = format!("{who}{op}{half}");
+                let rejected = parse_with_umask(&spec, UMASK).is_err();
+                assert_eq!(
+                    rejected,
+                    REJECTED_RHS.contains(&half.as_str()),
+                    "`{spec}`: oc {} it, upstream 3.5.0 does not",
+                    if rejected { "rejects" } else { "accepts" }
+                );
+            }
+        }
+    }
 }

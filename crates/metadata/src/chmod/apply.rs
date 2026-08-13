@@ -1,11 +1,14 @@
 //! Evaluator that applies parsed [`Clause`] modifiers to a mode value.
 //!
 //! Faithful port of upstream rsync's `chmod.c:tweak_mode()`: each clause is a
-//! `mode = (mode & ModeAND) | ModeOR` transform, gated by the `D`/`F` selector
-//! and the `X` conditional-execute flag. Non-permission bits (the file-type
-//! bits above `CHMOD_BITS`) are preserved unchanged.
+//! `mode = (mode & ModeAND) | ModeOR` transform followed by the permission-copy
+//! fold, gated by the `D`/`F` selector and the `X` conditional-execute flag.
+//! Non-permission bits (the file-type bits above `CHMOD_BITS`) are preserved
+//! unchanged.
 
 use super::spec::Clause;
+#[cfg(unix)]
+use super::spec::Op;
 // CHMOD_BITS is only referenced by the unix-only mode-tweaking path; importing
 // it unconditionally is an unused import on Windows.
 #[cfg(unix)]
@@ -23,11 +26,32 @@ pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs:
     mode
 }
 
+/// Permission bits a copy clause contributes, read from `mode` as it stands
+/// *before* the clause's own AND/OR is applied.
+///
+/// The source triad is taken from the mode accumulated by the preceding
+/// clauses, which is what makes a comma-separated copy list order-dependent
+/// (`u=g,g=o` and `g=o,u=g` differ). upstream: chmod.c `mode_copy_bits()`.
+#[cfg(unix)]
+const fn copy_bits(mode: u32, clause: &Clause) -> u32 {
+    let mut bits = 0;
+    if clause.copy_src & 0o100 != 0 {
+        bits |= (mode >> 6) & 7;
+    }
+    if clause.copy_src & 0o010 != 0 {
+        bits |= (mode >> 3) & 7;
+    }
+    if clause.copy_src & 0o001 != 0 {
+        bits |= mode & 7;
+    }
+    (clause.copy_dst * bits) & clause.copy_and
+}
+
 /// Core of `chmod.c:tweak_mode()`.
 ///
 /// `is_x` is sampled once from the original executable bits and `non_perm`
 /// holds the file-type bits, both restored per upstream. upstream:
-/// chmod.c:218-236.
+/// chmod.c `tweak_mode()`.
 #[cfg(unix)]
 fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
     let is_x = orig & 0o111;
@@ -35,7 +59,7 @@ fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
     let mut mode = orig & CHMOD_BITS;
 
     for clause in clauses {
-        // upstream: chmod.c:224-227 - honour the D/F selector.
+        // upstream: chmod.c tweak_mode() - honour the D/F selector.
         if clause.dirs_only && !is_dir {
             continue;
         }
@@ -43,14 +67,25 @@ fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
             continue;
         }
 
+        // Sampled before the AND/OR, exactly where upstream calls it.
+        let copied = copy_bits(mode, clause);
+
         mode &= clause.mode_and;
 
-        // upstream: chmod.c:229-232 - a conditional `X` only sets the execute
-        // bits when the file was already executable or is a directory.
+        // upstream: chmod.c tweak_mode() - a conditional `X` only sets the
+        // execute bits when the file was already executable or is a directory.
         if clause.x_keep && is_x == 0 && !is_dir {
             mode |= clause.mode_or & !0o111;
         } else {
             mode |= clause.mode_or;
+        }
+
+        // upstream: chmod.c tweak_mode() - `-` removes the copied bits, every
+        // other operator adds them.
+        if clause.op == Op::Sub {
+            mode &= CHMOD_BITS - copied;
+        } else {
+            mode |= copied;
         }
     }
 

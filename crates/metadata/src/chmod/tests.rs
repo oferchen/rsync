@@ -110,22 +110,23 @@ fn conditional_execute_bit_behaviour_matches_rsync() {
     assert_eq!(dir_mode & 0o777, 0o711);
 }
 
-/// upstream: chmod.c:159-185 STATE_2ND_HALF has no `u`/`g`/`o` case, so a
-/// category letter in the permission half falls to `default:` -> STATE_ERROR
-/// and parse_chmod returns NULL. rsync's `--chmod` grammar has no chmod(1)-style
-/// copy-from-category form; upstream 3.4.4 prints
-/// `Invalid argument passed to --chmod (g=u)` and exits RERR_SYNTAX. An empty
-/// permission half (e.g. `o=`) is a distinct, legitimate clause and still
-/// parses (the operator was seen, so it is not an empty clause).
+/// upstream: chmod.c parse_chmod() STATE_2ND_HALF `case 'u'/'g'/'o'` - a lone
+/// category letter in the permission half names a class to COPY permissions
+/// from, the chmod(1)-style form rsync 3.5.0 added. Mixing it with literal bits
+/// still falls to STATE_ERROR, and the caller prints
+/// `Invalid argument passed to --chmod (g=ur)` and exits RERR_SYNTAX. An empty
+/// permission half (e.g. `o=`) is a distinct, legitimate clause and parses too
+/// (the operator was seen, so it is not an empty clause).
 #[test]
-fn who_letter_copy_forms_are_rejected() {
-    assert!(ChmodModifiers::parse("g=u").is_err());
-    assert!(ChmodModifiers::parse("o=g").is_err());
-    assert!(ChmodModifiers::parse("u+g").is_err());
-    assert!(ChmodModifiers::parse("g-o").is_err());
+fn who_letter_copy_forms_are_accepted() {
+    assert!(ChmodModifiers::parse("g=u").is_ok());
+    assert!(ChmodModifiers::parse("o=g").is_ok());
+    assert!(ChmodModifiers::parse("u+g").is_ok());
+    assert!(ChmodModifiers::parse("g-o").is_ok());
+    assert!(ChmodModifiers::parse("g=o,o=").is_ok());
+    // A copy letter mixed with literal bits is still an error.
     assert!(ChmodModifiers::parse("g=ur").is_err());
     // An empty permission half clears the class and remains valid.
-    assert!(ChmodModifiers::parse("g=o,o=").is_err());
     assert!(ChmodModifiers::parse("o=").is_ok());
     assert!(ChmodModifiers::parse("Dg=").is_ok());
 }

@@ -13,10 +13,12 @@ fn run_reports_invalid_chmod_specification() {
     let destination = tmp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
 
-    // A category letter (u/g/o) in the permission half is rejected exactly as
-    // upstream chmod.c STATE_2ND_HALF does; rsync has no chmod(1)-style copy
-    // form. Also exercise a plainly bogus letter.
-    for spec in ["a+q", "g=u", "o=g", "u+g"] {
+    // A lone category letter (u/g/o) in the permission half is a valid
+    // permission COPY since rsync 3.5.0, but mixing it with literal bits, with
+    // `s`/`t`, or with a second copy letter still hits chmod.c STATE_2ND_HALF's
+    // error transitions - as does `a`, which is never a copy source. Also
+    // exercise a plainly bogus letter.
+    for spec in ["a+q", "g=ur", "o=gs", "u+gg", "g=a"] {
         let (code, stdout, stderr) = run_with_args([
             OsString::from(RSYNC),
             OsString::from(format!("--chmod={spec}")),
