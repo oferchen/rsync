@@ -56,10 +56,24 @@ pub(crate) fn resolve_iconv_setting(
     }
 }
 
-/// Accepts a parsed setting when the `iconv` feature is enabled.
+/// Accepts a parsed setting when the `iconv` feature is enabled, after
+/// checking that every charset it names can actually be opened.
+///
+/// Upstream refuses to start when `iconv_open` fails, exiting
+/// `RERR_UNSUPPORTED` (4) from `setup_iconv()` (`rsync.c:130-140`). oc used
+/// to accept the option, resolve the converter to `None`, and then complete
+/// the transfer with filenames untranscoded and nothing on stderr - the same
+/// silent passthrough this function's `#[cfg(not(feature = "iconv"))]` twin
+/// below already refuses for a build-time-disabled iconv. The two have
+/// identical consequences for the operator, so they are treated alike; only
+/// the exit code differs, each matching its own upstream site.
 #[cfg(feature = "iconv")]
 fn accept_parsed_setting(setting: IconvSetting) -> Result<IconvSetting, Message> {
-    Ok(setting)
+    match setting.validate_charsets() {
+        Ok(()) => Ok(setting),
+        // upstream: rsync.c:134 - `exit_cleanup(RERR_UNSUPPORTED)`.
+        Err(detail) => Err(rsync_error!(4, detail).with_role(Role::Client)),
+    }
 }
 
 /// Rejects an explicit iconv setting with a hard error when the `iconv`
@@ -86,6 +100,66 @@ mod tests {
     fn resolve_iconv_setting_none_not_disabled() {
         let result = resolve_iconv_setting(None, false).unwrap();
         assert_eq!(result, IconvSetting::Unspecified);
+    }
+
+    /// An unopenable charset must ABORT with upstream's exit code and text,
+    /// never resolve to "no conversion".
+    ///
+    /// Upstream `setup_iconv()` calls `exit_cleanup(RERR_UNSUPPORTED)` when
+    /// `iconv_open` fails (`rsync.c:130-140`) and prints
+    /// `iconv_open("UTF-8", "<charset>") failed`. Measured against a built
+    /// rsync 3.5.0: `--iconv=NOSUCHCHARSET` gives exit 4 and transfers
+    /// nothing, where oc used to give exit 0 having copied every file with
+    /// the conversion silently dropped.
+    ///
+    /// Asserts the exit code AND the message, because on a path whose whole
+    /// purpose is telling the operator what went wrong, exit-4-with-other-
+    /// wording is a half-fix.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn unopenable_charset_exits_4_with_upstream_text() {
+        let error = resolve_iconv_setting(Some(&os("NOSUCHCHARSET")), false)
+            .expect_err("an unopenable charset must not resolve to a setting");
+
+        assert_eq!(
+            error.code(),
+            Some(4),
+            "upstream: rsync.c:134 RERR_UNSUPPORTED"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(r#"iconv_open("UTF-8", "NOSUCHCHARSET") failed"#),
+            "message must match upstream rsync.c:131-132, got: {error}"
+        );
+    }
+
+    /// The post-comma half names the peer's charset and is validated too:
+    /// upstream reaches the same `exit_cleanup` in the peer process, and a
+    /// local copy runs both halves here.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn unopenable_remote_charset_is_rejected_too() {
+        let error = resolve_iconv_setting(Some(&os("UTF-8,NOSUCHCHARSET")), false)
+            .expect_err("an unopenable remote charset must not resolve to a setting");
+
+        assert_eq!(error.code(), Some(4));
+        assert!(
+            error
+                .to_string()
+                .contains(r#"iconv_open("UTF-8", "NOSUCHCHARSET") failed"#),
+            "the failing charset must be named, got: {error}"
+        );
+    }
+
+    /// Non-vacuity: a charset that CAN be opened still resolves, so the two
+    /// assertions above are detecting the rejection rather than a parser
+    /// that rejects every explicit spec.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn openable_charset_still_resolves() {
+        resolve_iconv_setting(Some(&os("UTF-8,ISO-8859-1")), false)
+            .expect("a charset pair that opens must be accepted");
     }
 
     #[test]
