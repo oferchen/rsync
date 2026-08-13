@@ -161,6 +161,7 @@ include!("tests/chunks/module_hostname_allow_forward_resolves_token_to_peer.rs")
 include!("tests/chunks/module_hostname_allow_netgroup_admits_member.rs");
 include!("tests/chunks/module_hostname_deny_fails_closed_when_dns_unresolved.rs");
 include!("tests/chunks/module_hostname_deny_forward_resolves_token_to_peer.rs");
+include!("tests/chunks/module_hostname_deny_unresolvable_token_fails_closed.rs");
 include!("tests/chunks/module_hostname_forward_lookup_off_skips_token_resolution.rs");
 include!("tests/chunks/module_hostname_netgroup_deny_blocks_member.rs");
 include!("tests/chunks/module_hostname_netgroup_deny_fails_closed_without_hostname.rs");

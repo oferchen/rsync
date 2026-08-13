@@ -248,7 +248,7 @@ impl ModuleDefinition {
             if self
                 .hosts_allow
                 .iter()
-                .any(|pattern| self.host_matches(pattern, addr, host))
+                .any(|pattern| self.host_matches(pattern, addr, host, false))
             {
                 return true;
             }
@@ -294,7 +294,7 @@ impl ModuleDefinition {
         if self
             .hosts_deny
             .iter()
-            .any(|pattern| self.host_matches(pattern, addr, host))
+            .any(|pattern| self.host_matches(pattern, addr, host, true))
         {
             return false;
         }
@@ -306,19 +306,27 @@ impl ModuleDefinition {
     /// reverse-DNS name-pattern match with forward-DNS resolution of the
     /// rule's hostname token.
     ///
-    /// upstream: access.c:254 `match_hostname(host_ptr, addr, tok) ||
+    /// upstream: access.c:260 `match_hostname(host_ptr, addr, tok, deny) ||
     /// match_address(addr, tok)` - a peer matches a `hosts allow`/`hosts deny`
     /// token when its reverse-DNS name matches the token pattern OR the token
     /// forward-resolves to the peer's address. Forward resolution is gated on
     /// the module's `forward lookup` parameter (access.c:49 `allow_forward_dns`).
+    ///
+    /// `deny` names which list is being scanned. Upstream threads it as a
+    /// per-call flag through `access_match` - 0 for the allow list
+    /// (access.c:284), 1 for the deny list (access.c:293) - and the ONE place
+    /// it is read is the unresolvable-token branch (access.c:57-63). It is a
+    /// parameter rather than module state for the same reason it is upstream:
+    /// one rule, read differently per call.
     fn host_matches(
         &self,
         pattern: &HostPattern,
         addr: std::net::IpAddr,
         host: super::PeerHost<'_>,
+        deny: bool,
     ) -> bool {
         pattern.matches(addr, host.as_str())
-            || pattern.forward_resolve_matches(addr, self.forward_lookup)
+            || pattern.forward_resolve_matches(addr, self.forward_lookup, deny)
     }
 
     /// Returns whether any host pattern requires DNS hostname resolution.

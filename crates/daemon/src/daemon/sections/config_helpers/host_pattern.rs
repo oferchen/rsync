@@ -214,16 +214,21 @@ impl HostPattern {
     /// Resolution is gated on `forward_lookup` (upstream `allow_forward_dns`
     /// from `lp_forward_lookup`, access.c:49) and applies only to the
     /// [`HostPattern::Hostname`] variant; address and CIDR variants are matched
-    /// numerically by [`HostPattern::matches`] and never forward-resolved. A
-    /// lookup that returns no records yields no match (fail-closed), mirroring
-    /// the NULL `gethostbyname` return at access.c:57-58.
-    fn forward_resolve_matches(&self, addr: IpAddr, forward_lookup: bool) -> bool {
+    /// numerically by [`HostPattern::matches`] and never forward-resolved.
+    ///
+    /// `deny` says which list is being scanned, and it is the whole of
+    /// CVE-2026-70452's sibling fix: a token the resolver cannot resolve
+    /// returns `deny` (access.c:57-63), so an unresolvable **deny** token
+    /// matches - we cannot prove the peer is not the denied host - while an
+    /// unresolvable **allow** token still does not. Both gates above return 0
+    /// regardless of `deny`, exactly as upstream does at access.c:49-53.
+    fn forward_resolve_matches(&self, addr: IpAddr, forward_lookup: bool, deny: bool) -> bool {
         if !forward_lookup {
             return false;
         }
 
         match self {
-            Self::Hostname(pattern) => pattern.forward_resolve_matches(addr),
+            Self::Hostname(pattern) => pattern.forward_resolve_matches(addr, deny),
             _ => false,
         }
     }
@@ -319,14 +324,19 @@ impl HostnamePattern {
     /// the connecting address (access.c:60-61). The eligibility gate is
     /// [`token_is_forward_resolvable`]; resolution goes through the shared
     /// [`module_state::forward_resolve`] seam so failures fail closed.
-    fn forward_resolve_matches(&self, addr: IpAddr) -> bool {
+    fn forward_resolve_matches(&self, addr: IpAddr, deny: bool) -> bool {
         if !token_is_forward_resolvable(&self.original) {
             return false;
         }
 
-        module_state::forward_resolve(&self.original)
-            .into_iter()
-            .any(|resolved| resolved == addr)
+        match module_state::forward_resolve(&self.original) {
+            // upstream: access.c:66-73 - a successful lookup matches only when
+            // one of the returned records IS the peer.
+            Some(resolved) => resolved.into_iter().any(|record| record == addr),
+            // upstream: access.c:57-63 - a token the resolver cannot resolve
+            // returns `deny`, so a deny rule fails CLOSED.
+            None => deny,
+        }
     }
 
     fn matches(&self, hostname: &str) -> bool {
