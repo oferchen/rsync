@@ -352,12 +352,62 @@ pub fn create_test_file(path: &Path, content: &[u8]) {
     fs::write(path, content).expect("write test file");
 }
 
-/// Panic if the given upstream binary does not exist.
+/// Reports whether `path` is a genuine upstream rsync, judged by its
+/// `--version` banner rather than by its location.
+///
+/// The path is not evidence: macOS ships `openrsync` at `/usr/bin/rsync`
+/// (`openrsync: protocol version 29`), and an `oc-rsync` shim earlier on
+/// `PATH` answers to the same name. Only upstream prints a first line of the
+/// form `rsync  version N.N.N  protocol version NN`.
+///
+/// Returns the reason for rejection so callers can name it, rather than
+/// reporting a bare "not found".
+#[allow(dead_code)]
+fn upstream_banner_check(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("absent".to_string());
+    }
+    let Ok(output) = Command::new(path).arg("--version").output() else {
+        return Err("--version failed".to_string());
+    };
+    let banner = String::from_utf8_lossy(&output.stdout);
+    let first = banner.lines().next().unwrap_or_default();
+    if first.starts_with("rsync  version") && first.contains("protocol version") {
+        return Ok(());
+    }
+    if first.is_empty() {
+        // An empty banner is usually a binary that cannot execute here at all
+        // rather than a different rsync - notably a Linux ELF left in the
+        // shared `target/` by a container or a Linux host, which macOS refuses
+        // with ENOEXEC. Report the status so that reads as "wrong platform"
+        // instead of the misleading "not upstream: \"\"".
+        return Err(format!("printed no version banner ({})", output.status));
+    }
+    Err(format!("not upstream: {first:?}"))
+}
+
+/// Panic unless `binary_path` holds a genuine upstream rsync.
+///
+/// Used by the version-pinned protocol-compatibility tests, which need one
+/// *specific* upstream release rather than whichever one
+/// [`upstream_rsync`] happens to resolve, so the path is fixed by the caller
+/// and only its identity is verified here.
+///
+/// Existence alone is not enough: without the banner check a shim or a
+/// non-upstream rsync sitting at the expected path would let a
+/// cross-implementation test pass while comparing against the wrong oracle.
+///
+/// This fails loudly by design. A missing upstream binary must not be turned
+/// into a silent early return - see [`upstream_rsync`] for why. The callers
+/// are `#[ignore]`d, so a machine without the interop harness never reaches
+/// this; running them with `--ignored` is an explicit request for the oracle.
 #[allow(dead_code)]
 pub fn require_upstream(binary_path: &str) {
-    if !Path::new(binary_path).exists() {
-        eprintln!("Skipping: upstream rsync binary not found at {binary_path}");
-        panic!("upstream binary required for this test");
+    if let Err(reason) = upstream_banner_check(Path::new(binary_path)) {
+        panic!(
+            "upstream rsync required for this test, but {binary_path} is unusable ({reason}). \
+             Build the pinned versions with `bash tools/ci/run_interop.sh`."
+        );
     }
 }
 
@@ -396,20 +446,10 @@ pub fn upstream_rsync() -> PathBuf {
     let mut rejected = Vec::new();
     for candidate in UPSTREAM_CANDIDATES {
         let path = Path::new(candidate);
-        if !path.exists() {
-            rejected.push(format!("{candidate} (absent)"));
-            continue;
+        match upstream_banner_check(path) {
+            Ok(()) => return path.to_path_buf(),
+            Err(reason) => rejected.push(format!("{candidate} ({reason})")),
         }
-        let Ok(output) = Command::new(path).arg("--version").output() else {
-            rejected.push(format!("{candidate} (--version failed)"));
-            continue;
-        };
-        let banner = String::from_utf8_lossy(&output.stdout);
-        let first = banner.lines().next().unwrap_or_default();
-        if first.starts_with("rsync  version") && first.contains("protocol version") {
-            return path.to_path_buf();
-        }
-        rejected.push(format!("{candidate} (not upstream: {first:?})"));
     }
     panic!(
         "no upstream rsync binary found; tried: {}. Build one with \
