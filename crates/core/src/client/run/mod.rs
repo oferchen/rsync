@@ -775,8 +775,14 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             DeleteMode::During | DeleteMode::DuringDefault | DeleteMode::Disabled => options,
         };
 
+        // upstream: generator.c:304 delete_in_dir() - `--ignore-errors` lets the
+        // delete pass run after a source-scan I/O error instead of skipping it
+        // with a notice. The local-copy engine reads the flag from its own
+        // options, so it has to be carried across this bridge exactly as the
+        // remote path carries it onto ServerConfig.
         options
             .delete_excluded(config.delete_excluded())
+            .ignore_errors(config.ignore_errors())
             .max_deletions(config.max_delete())
     }
 
@@ -1696,6 +1702,50 @@ mod local_copy_option_wiring_tests {
                 .temp_directory_path()
                 .is_none()
         );
+    }
+
+    /// `--ignore-errors` lets the delete pass run despite a general I/O error
+    /// (upstream: generator.c:304). The local-copy engine reads it from
+    /// `LocalCopyOptions`, so it has to be carried across this bridge - without
+    /// it the engine sees the default `false` and prints the upstream skip
+    /// notice on a run where upstream stays silent and deletes.
+    ///
+    /// The engine-side setter has an extensive test file of its own, every case
+    /// of which passed while nothing in production ever called it. This asserts
+    /// the WIRING, which is the part that was missing.
+    #[test]
+    fn local_copy_options_carry_ignore_errors() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete(true)
+            .ignore_errors(true)
+            .build();
+
+        assert!(config.ignore_errors(), "client config must hold the flag");
+        assert!(
+            build_local_copy_options(&config, None).ignore_errors_enabled(),
+            "--ignore-errors must reach the local-copy engine"
+        );
+    }
+
+    /// CLASS GUARD: the deletion group must survive this bridge as a whole.
+    /// `ignore_errors` was carried by neither of oc's two config bridges, so
+    /// this asserts every deletion option together rather than one field.
+    #[test]
+    fn local_copy_options_carry_every_deletion_option() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete(true)
+            .delete_excluded(true)
+            .ignore_errors(true)
+            .max_delete(Some(7))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert!(options.delete_extraneous(), "delete");
+        assert!(options.delete_excluded_enabled(), "delete_excluded");
+        assert!(options.ignore_errors_enabled(), "ignore_errors");
+        assert_eq!(options.max_deletion_limit(), Some(7), "max_deletions");
     }
 
     #[test]

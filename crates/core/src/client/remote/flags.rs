@@ -538,6 +538,16 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // config (the wire-side sender conversion in build_wire_format_rules only
     // affects what the remote sender hides, not local delete protection).
     server_config.deletion.delete_excluded = config.delete_excluded();
+    // upstream: generator.c:304 delete_in_dir() - `io_error & IOERR_GENERAL &&
+    // !ignore_errors` skips the whole delete pass, so `--ignore-errors` is what
+    // lets deletions proceed after a source-scan error. Like `--preallocate` and
+    // `--remove-source-files` above, it is long-form-only with no compact letter,
+    // so build_server_flag_string never packs it and the local ServerConfig
+    // parsed from that string never sees it. On a pull the LOCAL client is the
+    // receiver and owns the delete pass, so the flag has to be carried here; on
+    // a push the remote receiver picks it up from the forwarded `--ignore-errors`
+    // arg (options.c:3062), which is why only the pull direction was affected.
+    server_config.deletion.ignore_errors = config.ignore_errors();
     // upstream: delete.c:156 - `--max-delete` is enforced by the generator,
     // which for a remote-shell pull runs on the local client (the receiver).
     // The `--max-delete=NUM` server arg is forwarded to the remote sender too,
@@ -896,6 +906,42 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
         assert!(!server_config.flags.info_flags.itemize);
+    }
+
+    /// `--ignore-errors` governs the receiver's delete pass
+    /// (upstream: generator.c:304 `io_error & IOERR_GENERAL && !ignore_errors`).
+    /// On a pull the LOCAL client is the receiver, and the flag is long-form-only
+    /// so it never rides the compact flag string this config is parsed from -
+    /// exactly like `--preallocate` and `--remove-source-files`. Without this the
+    /// receiver keeps a destination file the operator asked to have deleted.
+    #[test]
+    fn apply_common_server_flags_propagates_ignore_errors() {
+        let config = ClientConfig::builder().ignore_errors(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(
+            server_config.deletion.ignore_errors,
+            "--ignore-errors must reach the local receiver on a pull"
+        );
+    }
+
+    /// CLASS GUARD: every deletion option the client can set must survive the
+    /// bridge. `ignore_errors` was the third long-form-only flag to be dropped
+    /// here, so this asserts the whole group at once rather than one field -
+    /// a newly added `DeletionConfig` field that nobody carries fails here.
+    #[test]
+    fn apply_common_server_flags_carries_every_deletion_option() {
+        let config = ClientConfig::builder()
+            .delete_excluded(true)
+            .ignore_errors(true)
+            .max_delete(Some(7))
+            .build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+
+        assert!(server_config.deletion.delete_excluded, "delete_excluded");
+        assert!(server_config.deletion.ignore_errors, "ignore_errors");
+        assert_eq!(server_config.deletion.max_delete, Some(7), "max_delete");
     }
 
     #[test]
