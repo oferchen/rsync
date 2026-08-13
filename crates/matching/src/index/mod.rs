@@ -20,6 +20,8 @@ mod trace;
 #[cfg(test)]
 mod bithash_tests;
 #[cfg(test)]
+mod chain_bound_tests;
+#[cfg(test)]
 mod compact_key_tests;
 #[cfg(test)]
 mod matched_blocks_tests;
@@ -53,6 +55,22 @@ pub use trace::{
 /// rolling checksum to reject non-matching positions before probing the hash
 /// table. This constant matches upstream's `TABLESIZE` in `match.c`.
 const TAG_TABLE_SIZE: usize = 1 << 16;
+
+/// Maximum number of equal-weak-checksum candidates verified at a single
+/// source offset before the matcher gives up and rolls forward a byte.
+///
+/// upstream: `match.c` `MAX_CHAIN_LEN` (rsync 3.5.0), added for
+/// CVE-2026-70453. A weak checksum that collides thousands of times turns the
+/// per-offset chain walk into an `O(source_len * chain_len)` scan, and the
+/// signature that populates the chain is peer-supplied, so a hostile peer can
+/// pin a CPU for hours with a crafted basis. Bounding the per-offset work
+/// caps that at `O(source_len * MAX_CHAIN_LEN)`.
+///
+/// Reaching the bound is a non-match, never an error: the skipped bytes are
+/// sent as literal data, so the transfer stays correct and only its size can
+/// change. Honest bases never approach the bound - see the
+/// `bound_is_inert_on_a_realistic_basis` test.
+const MAX_CHAIN_LEN: u32 = 1024;
 
 /// Sentinel marking the absence of a stored successor in [`DeltaSignatureIndex::next_match`].
 ///
@@ -629,22 +647,8 @@ impl DeltaSignatureIndex {
         }
 
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
-        for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
-            if matches!(matched, Some(m) if m.is_matched(index)) {
-                continue;
-            }
-            // ZSO-3 hash-chain prune: skip basis blocks the matcher has
-            // already emitted as `Copy` tokens. Atomic load keeps the
-            // probe `&self`-compatible so the index can be shared
-            // read-only across concurrent generators.
-            if self.is_consumed(index as u32) {
-                continue;
-            }
-            let block = &self.blocks[index];
-            debug_assert_eq!(block.len(), self.block_length);
-            if strong.as_slice() == block.strong() {
-                return Some(index);
-            }
+        if let Some(index) = self.walk_chain(digest, matched, strong.as_slice()) {
+            return Some(index);
         }
         // A bithash positive that produced no confirmed match: the exact
         // rolling-sum / strong-sum verify rejected it. upstream: match.c:239
@@ -700,19 +704,53 @@ impl DeltaSignatureIndex {
         let strong = self
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);
+        self.walk_chain(digest, matched, strong.as_slice())
+    }
+
+    /// Walks the equal-weak-checksum chain for `digest` and returns the first
+    /// candidate whose strong checksum equals `strong`.
+    ///
+    /// Shared by the contiguous and two-slice probes so the chain-walk rule -
+    /// the prune skips and the [`MAX_CHAIN_LEN`] bound - lives in one place.
+    ///
+    /// upstream: `match.c` `hash_search()` inner chain loop. Candidates dropped
+    /// by the prune bitsets are the analogue of upstream's bypassed in-place
+    /// entries, which upstream unlinks from the chain before its counter runs;
+    /// like upstream's, they do not spend the budget, so the bound covers
+    /// exactly the candidates that reach the strong-checksum compare. That
+    /// placement is what keeps the bound inert on honest bases: a duplicate
+    /// basis block is matched by the first live candidate, never by walking
+    /// past a thousand dead ones.
+    #[inline]
+    fn walk_chain(
+        &self,
+        digest: RollingDigest,
+        matched: Option<&MatchedBlocks>,
+        strong: &[u8],
+    ) -> Option<usize> {
+        let mut chain_len = 0u32;
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             if matches!(matched, Some(m) if m.is_matched(index)) {
                 continue;
             }
-            // ZSO-3 hash-chain prune: see [`Self::find_match_bytes_filtered`]
-            // for the duplicate-block correctness contract; the slice
-            // variant follows the same protocol.
+            // ZSO-3 hash-chain prune: skip basis blocks the matcher has
+            // already emitted as `Copy` tokens. Atomic load keeps the probe
+            // `&self`-compatible so the index can be shared read-only across
+            // concurrent generators. See [`MatchedBlocks`] for the
+            // duplicate-block correctness contract.
             if self.is_consumed(index as u32) {
                 continue;
             }
+            // upstream: `match.c` - bound the work spent on one pathological
+            // bucket. Past the cap the offset is a non-match and the caller
+            // rolls forward a byte, so the skipped data goes out as literals.
+            chain_len += 1;
+            if chain_len > MAX_CHAIN_LEN {
+                return None;
+            }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
-            if strong.as_slice() == block.strong() {
+            if strong == block.strong() {
                 return Some(index);
             }
         }
