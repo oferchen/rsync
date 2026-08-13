@@ -89,10 +89,43 @@ fn read_entry_detects_error_marker_with_safe_file_list() {
     let mut cursor = Cursor::new(&data[..]);
     let result = reader.read_entry(&mut cursor);
 
-    // io_error markers are now accumulated (upstream: flist.c io_error |= err)
-    // rather than returned as hard errors.
+    // io_error markers are accumulated (upstream: flist.c:2968
+    // `io_error |= err & IOERR_VALID_MASK`) rather than returned as hard errors.
+    // 42 = 0b101010 carries two undefined bits; only IOERR_VANISHED survives.
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), 42);
+    assert_eq!(reader.io_error(), 42 & crate::IOERR_VALID_MASK);
+    assert_eq!(reader.io_error(), crate::IOERR_VANISHED);
+}
+
+/// The varint end-of-list form (`write_varint(0); write_varint(io_error)`) is a
+/// second, independent way for a peer to deliver an `io_error`. It must mask
+/// too - upstream applies the mask on both flist branches, and covering only
+/// one of them leaves the hole open.
+///
+/// upstream: flist.c:2946-2952 - `if ((flags = read_varint(f)) == 0) { int err
+/// = read_varint(f); io_error |= err & IOERR_VALID_MASK; break; }`
+#[test]
+fn varint_end_of_list_masks_undefined_bits_from_a_hostile_peer() {
+    use crate::varint::encode_varint_to_vec;
+
+    let protocol = test_protocol();
+    let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+    for wire_value in [0x7fff_fff8, 0x0100_0000 | crate::IOERR_GENERAL, 0x2a] {
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let mut data = Vec::new();
+        encode_varint_to_vec(0, &mut data);
+        encode_varint_to_vec(wire_value, &mut data);
+
+        let mut cursor = Cursor::new(&data[..]);
+        assert!(reader.read_entry(&mut cursor).unwrap().is_none());
+        assert_eq!(
+            reader.io_error(),
+            wire_value & crate::IOERR_VALID_MASK,
+            "wire value {wire_value:#x} must be masked before it is accumulated"
+        );
+    }
 }
 
 #[test]
@@ -135,8 +168,10 @@ fn read_entry_with_protocol_31_accepts_error_marker() {
     let mut cursor = Cursor::new(&data[..]);
     let result = reader.read_entry(&mut cursor);
 
+    // 99 = 0b1100011: the two high bits are undefined and must not survive.
+    // upstream: flist.c:2968 - `io_error |= err & IOERR_VALID_MASK`.
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), 99);
+    assert_eq!(reader.io_error(), 99 & crate::IOERR_VALID_MASK);
 }
 
 #[test]
@@ -146,16 +181,20 @@ fn read_write_round_trip_with_safe_file_list_error_nonvarint() {
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let flags = CompatibilityFlags::SAFE_FILE_LIST;
 
+    // A real sender's io_error only ever holds defined IOERR_* bits, so the
+    // round trip is exact. Undefined bits are covered by the masking tests.
+    let sent = crate::IOERR_VALID_MASK;
+
     let writer = FileListWriter::with_compat_flags(protocol, flags);
     let mut data = Vec::new();
-    writer.write_end(&mut data, Some(123)).unwrap();
+    writer.write_end(&mut data, Some(sent)).unwrap();
 
     let mut reader = FileListReader::with_compat_flags(protocol, flags);
     let mut cursor = Cursor::new(&data[..]);
     let result = reader.read_entry(&mut cursor);
 
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), 123);
+    assert_eq!(reader.io_error(), sent);
 }
 
 #[test]
@@ -177,15 +216,17 @@ fn read_write_round_trip_with_varint_end_marker() {
     assert!(result.unwrap().is_none());
     assert_eq!(cursor.position() as usize, data.len());
 
-    // Test end marker with non-zero error accumulates io_error
+    // Test end marker with non-zero error accumulates io_error. A real sender
+    // only ever emits defined IOERR_* bits, so the round trip is exact.
+    let sent = crate::IOERR_VALID_MASK;
     let mut data2 = Vec::new();
-    writer.write_end(&mut data2, Some(123)).unwrap();
+    writer.write_end(&mut data2, Some(sent)).unwrap();
 
     let mut reader2 = FileListReader::with_compat_flags(protocol, flags);
     let mut cursor2 = Cursor::new(&data2[..]);
     let result2 = reader2.read_entry(&mut cursor2);
     assert!(result2.unwrap().is_none());
-    assert_eq!(reader2.io_error(), 123);
+    assert_eq!(reader2.io_error(), sent);
 }
 
 #[test]
