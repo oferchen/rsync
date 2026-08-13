@@ -188,6 +188,10 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
 /// and too-large values are rejected with a `--bwlimit` error.
 // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
+    // upstream: an empty value resolves to 0, and `unlimited_0` makes 0 mean
+    // "no limit" for this option (options.c:1821). Measured: `--bwlimit=`
+    // behaves exactly like `--bwlimit=0` on rsync 3.5.0.
+    let argument = super::empty_size_means_zero(argument);
     let text = argument.to_string_lossy();
     match BandwidthLimit::parse(&text) {
         Ok(Some(limit)) => Ok(Some(limit)),
