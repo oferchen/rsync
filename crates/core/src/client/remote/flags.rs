@@ -538,7 +538,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // config (the wire-side sender conversion in build_wire_format_rules only
     // affects what the remote sender hides, not local delete protection).
     server_config.deletion.delete_excluded = config.delete_excluded();
-    // upstream: generator.c:304 delete_in_dir() - `io_error & IOERR_GENERAL &&
+    // upstream: generator.c:298 delete_in_dir() - `io_error & IOERR_GENERAL &&
     // !ignore_errors` skips the whole delete pass, so `--ignore-errors` is what
     // lets deletions proceed after a source-scan error. Like `--preallocate` and
     // `--remove-source-files` above, it is long-form-only with no compact letter,
@@ -909,7 +909,7 @@ mod tests {
     }
 
     /// `--ignore-errors` governs the receiver's delete pass
-    /// (upstream: generator.c:304 `io_error & IOERR_GENERAL && !ignore_errors`).
+    /// (upstream: generator.c:298 `io_error & IOERR_GENERAL && !ignore_errors`).
     /// On a pull the LOCAL client is the receiver, and the flag is long-form-only
     /// so it never rides the compact flag string this config is parsed from -
     /// exactly like `--preallocate` and `--remove-source-files`. Without this the
