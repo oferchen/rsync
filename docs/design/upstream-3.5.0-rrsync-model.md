@@ -283,6 +283,25 @@ test - a symlink at that name was followed. 3.5.0's `safe_open_logfile()`
 fails silently to "no logging", never to "log elsewhere".
 Pinned by `rrsync-logfile-symlink_test.py`.
 
+**There is nevertheless no operator-visible diagnostic channel on a default
+install**, and this bounds what any "warn the admin" design can promise:
+
+- `die()` writes to `sys.stderr` (`support/rrsync:968`). Under an sshd forced
+  command stderr goes back over the SSH channel **to the client** - the
+  untrusted peer. The `sys.stdin.isatty()` guard on the next line exists
+  precisely because non-interactive is the normal case. So every refusal
+  message rrsync produces is delivered to the party the refusal is aimed at,
+  and the operator sees none of it.
+- `LOGFILE` is the only other channel and it is doubly weak: it is the
+  *relative* name `'rrsync.log'` which **must already exist** to be appended to
+  (`support/rrsync:14`), and `safe_open_logfile()` is called at `main():540`
+  **before** the `os.chdir(args.dir)` at `main():543` - so it resolves against
+  sshd's working directory, not the restricted dir. Same ordering in 3.4.4
+  (`:202` vs `:205`), so this is longstanding rather than a 3.5.0 regression.
+
+Consequence: on a stock deployment nothing is written anywhere the admin can
+read. See consequence 5 - it is why "start, but warn" is not one option.
+
 ### 3.6 The lock is explicitly not a security control
 
 `lock_or_die()` (`support/rrsync:950-964`) now distinguishes "another instance
@@ -646,8 +665,15 @@ premises.
    have it. A restricted-shell subcommand cannot ship correct device/special
    denial without first adding `--drop-D`/`--no-drop-D` (`options.c:688-689`) and
    the generator gate (`generator.c:2031`). Forcing `--no-D` instead is not a
-   smaller version of the same thing - it corrupts the file list. This is a
-   separate task and it blocks 8c.
+   smaller version of the same thing - it corrupts the file list. Tracked as
+   task 617, which blocks 8c.
+
+   One rule that is easy to miss and that the wrapper depends on: **`--drop-D`
+   is not forwarded to the remote side** (`rsync.1.md:1439-1440` - "it is meant
+   to be applied to one end of a connection by itself"), exactly like
+   `--confine-root`. That is what makes it safe for the wrapper to append
+   unilaterally, and an implementation that adds it to the outgoing arg vector
+   would defeat the point.
 
 2. **`--confine-root` is a prerequisite too.** Task 548 is still pending. oc has
    an internal `confine_root` field on the generator's source opener
@@ -662,19 +688,37 @@ premises.
    the transfer path uses (U350-4c). Concretely: the wrapper contributes the
    *root* and the *pin*; the resolver contributes the *walk*.
 
-4. **The pin is Linux-only and that is upstream's answer, not a gap to close.**
-   Mirroring means: probe (platform check **plus** two runtime probes, one
+4. **The pin is Linux-only, and what to do off Linux is an OPEN USER DECISION.**
+   Upstream's answer is: probe (platform check **plus** two runtime probes, one
    directory and one regular file), pin where it works, fall through to the
-   validated name where it does not - and **fail closed** where `/proc/self/fd`
-   exists but misbehaves. Being stricter than upstream (refusing on non-Linux)
-   is a divergence that breaks macOS and BSD users. Being laxer is a hole.
+   validated name where it does not, and **fail closed** where `/proc/self/fd`
+   exists but misbehaves.
+
+   The tension is that oc-rsync treats silent degradation as a defect, while
+   macOS is Tier-1 here. Three positions, and the obvious middle one does not
+   survive contact with section 3.5:
+
+   | | behaviour off Linux | cost |
+   |---|---|---|
+   | **(a) mirror upstream** | degrade to the validated name, document it | weaker guarantee under the same command name, and nobody is told at runtime |
+   | **(b) degrade + notify the operator** | same, plus an out-of-band notice (syslog, or a logfile we create rather than require) | needs a diagnostic channel this subcommand does not have; see below |
+   | **(c) refuse to start** | restricted shell unavailable on macOS/BSD | not a more conservative version of upstream - a different product |
+
+   **"Start, but warn" is not a fourth option unless the channel is solved
+   first.** Under an sshd forced command, stderr goes to the *client*, and the
+   only other upstream channel is a relative `LOGFILE` that must pre-exist and
+   is opened before the `chdir` (section 3.5). A warning on stderr is delivered
+   to the party that benefits from the weaker guarantee, which is
+   indistinguishable from (a) in practice.
+
+   This overlaps task 614 and should be settled once for both. Between (a) and
+   (b) either is defensible; (c) is the one to argue hardest against.
 
 5. **Two places oc cannot straightforwardly mirror upstream:**
    - **Windows.** `/proc/self/fd`, `O_PATH`, `flock` on a directory fd, and
      `SSH_ORIGINAL_COMMAND`-style forced commands all have no direct analogue.
-     The honest position is the same one upstream takes for the BSDs: the
-     unhardened path, stated as such. This overlaps task 614 and should be
-     settled once, not twice.
+     Same decision as consequence 4, and it should be settled once for both
+     rather than twice; task 614.
    - **The Python-specific hooks.** `braceexpand` (optional; absent, rrsync just
      de-backslashes), `glob.glob()` semantics for transfer args, and
      `os.path.realpath()`'s exact `..`-collapse behaviour. A Rust implementation
