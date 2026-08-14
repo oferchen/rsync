@@ -1150,6 +1150,38 @@ comp_verify_perms() {
 
 # Run a single test scenario: prepare dest, transfer, verify.
 # Flags are word-split intentionally (no glob-expandable patterns at word start).
+# Would a relative symlink target resolve above the transfer root?
+#
+# $1 is the directory holding the link, relative to the destination root ("" for
+# the root itself); $2 is the link's target. Purely lexical, matching how
+# upstream's unsafe_symlink() (util1.c) decides: it counts components rather
+# than resolving on disk, so a dangling target is still classified.
+#
+# Returns 0 (true, "escapes") when a '..' would step above the root.
+symlink_target_escapes() {
+  local linkdir=$1 target=$2 depth=0 component
+  local -a __sle_parts
+
+  IFS='/' read -r -a __sle_parts <<< "$linkdir"
+  for component in "${__sle_parts[@]}"; do
+    [[ -z "$component" || "$component" == "." ]] && continue
+    depth=$((depth + 1))
+  done
+
+  IFS='/' read -r -a __sle_parts <<< "$target"
+  for component in "${__sle_parts[@]}"; do
+    case "$component" in
+      ''|.) ;;
+      ..)
+        depth=$((depth - 1))
+        (( depth < 0 )) && return 0
+        ;;
+      *) depth=$((depth + 1)) ;;
+    esac
+  done
+  return 1
+}
+
 comp_run_scenario() {
   local label=$1 client=$2 flags=$3 sdir=$4 url=$5 ddir=$6 log=$7 vtype=$8
 
@@ -1502,10 +1534,45 @@ comp_run_scenario() {
       ;;
     safe-links)
       comp_verify_transfer "$sdir" "$ddir" || return 1
-      if [[ -L "$ddir/unsafe_link.txt" ]]; then
-        echo "    --safe-links: unsafe symlink was transferred"
-        return 1
-      fi
+      # The source plants unsafe_link.txt -> /etc/hostname. Asserting that the
+      # destination entry is ABSENT is not an upstream-faithful check: whether
+      # the link survives depends on the receiving module's config, and under
+      # the config this harness writes (write_rust_daemon_conf /
+      # write_upstream_conf: use chroot = false, munge symlinks = false)
+      # upstream KEEPS it.
+      #
+      #   munge symlinks = false + a module path
+      #     -> sanitize_paths is on (clientserver.c:1068) and munging is off, so
+      #        flist.c:1329 rewrites the target to the relative, in-tree
+      #        "etc/hostname". --safe-links (generator.c:1951) then correctly
+      #        does not skip it. Measured: rsync 3.4.4 and 3.5.0 as daemon
+      #        receivers both CREATE the link under this exact config.
+      #   munge symlinks = on (upstream's default for a module with a path)
+      #     -> the target gains the /rsyncd-munged/ prefix, stays absolute, and
+      #        --safe-links skips it, so the entry is absent.
+      #
+      # The invariant that holds under both, and is what --safe-links plus the
+      # sanitize actually guarantee, is that nothing lands in the destination
+      # still pointing outside it. Assert that over every destination symlink,
+      # which also covers links the scenario does not plant by name.
+      local link target rel linkdir
+      while IFS= read -r link; do
+        target=$(readlink "$link")
+        rel="${link#"$ddir"/}"
+        if [[ "$target" == /* ]]; then
+          echo "    --safe-links: ${rel} kept an absolute target: ${target}"
+          return 1
+        fi
+        # Directory holding the link, relative to $ddir. A link directly in
+        # $ddir has no '/' in $rel, and ${rel%/*} would then return $rel
+        # unchanged rather than the empty string.
+        linkdir="${rel%/*}"
+        [[ "$linkdir" == "$rel" ]] && linkdir=""
+        if symlink_target_escapes "$linkdir" "$target"; then
+          echo "    --safe-links: ${rel} escapes the destination: ${target}"
+          return 1
+        fi
+      done < <(find "$ddir" -type l)
       if [[ -L "$sdir/link.txt" ]] && [[ ! -L "$ddir/link.txt" ]]; then
         echo "    --safe-links: safe symlink missing"
         return 1
