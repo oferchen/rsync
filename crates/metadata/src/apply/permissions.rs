@@ -684,7 +684,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 ///
 /// Both branches remain visible to `fakeroot`: `secure_chmod_at` performs the
 /// mode change with the libc `fchmodat(2)` symbol (only the parent-directory
-/// walk uses `openat2`/`RESOLVE_BENEATH`, which fakeroot ignores because it
+/// walk uses `openat2`/`RESOLVE_NO_SYMLINKS`, which fakeroot ignores because it
 /// tracks modes per inode on the chmod call, not on directory opens), and
 /// `std::fs::set_permissions` uses the libc `chmod(2)` symbol. Both are
 /// interposed by fakeroot's LD_PRELOAD wrapper, so no raw-syscall path bypasses
@@ -1139,7 +1139,7 @@ pub(super) fn apply_permissions_from_entry(
 
             if needs_chmod {
                 // upstream: syscall.c:do_chmod_at() - chmod the leaf through a
-                // dirfd opened with RESOLVE_BENEATH/RESOLVE_NO_SYMLINKS so a
+                // dirfd opened with RESOLVE_NO_SYMLINKS so a
                 // symlink swapped into any parent component cannot redirect
                 // the chmod outside the receiver's confinement (testsuite
                 // chdir-symlink-race). Under `--keep-dirlinks` the helper
