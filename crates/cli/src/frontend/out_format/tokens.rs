@@ -4,6 +4,8 @@
 
 use core::client::StrongChecksumAlgorithm;
 
+use crate::frontend::escape::EscapeStyle;
+
 /// Maximum width accepted for placeholder formatting.
 pub(super) const MAX_PLACEHOLDER_WIDTH: usize = 4096;
 
@@ -189,10 +191,10 @@ pub(crate) struct OutFormatContext {
     /// all-dot rows even without `-vv`. The render path uses this to bypass
     /// the empty-change-set suppression independently of `emit_unchanged`.
     pub(super) itemize_repeated: bool,
-    /// `--8-bit-output` / `-8`: when true, high-bit characters pass through
-    /// without octal escaping. Only control characters below 0x20 (except
-    /// tab) are escaped. Matches upstream `allow_8bit_chars`.
-    pub(super) eight_bit_output: bool,
+    /// Which `filtered_fwrite` escape rule this render pass writes under -
+    /// the terminal pair (honouring `--8-bit-output`) or the log-file pair.
+    /// See `crate::frontend::escape::EscapeStyle`.
+    pub(super) escape: EscapeStyle,
     /// `--links` / `-l` (also set by `-a`): whether symbolic links are
     /// preserved.
     ///
@@ -288,11 +290,11 @@ impl OutFormatContext {
         self.itemize_repeated
     }
 
-    /// Sets the `--8-bit-output` flag for filename escaping in the
-    /// out-format renderer.
+    /// Sets the sink's `filtered_fwrite` escape rule for the out-format
+    /// renderer (upstream: log.c:132 for the log file, log.c:425 for stdout).
     #[must_use]
-    pub(crate) fn with_eight_bit_output(mut self, eight_bit_output: bool) -> Self {
-        self.eight_bit_output = eight_bit_output;
+    pub(crate) fn with_escape_style(mut self, escape: EscapeStyle) -> Self {
+        self.escape = escape;
         self
     }
 
@@ -486,7 +488,7 @@ mod tests {
             preserve_group: false,
             emit_unchanged: false,
             itemize_repeated: false,
-            eight_bit_output: false,
+            escape: EscapeStyle::default(),
             preserve_links: false,
             full_checksum_algorithm: None,
             always_checksum: false,

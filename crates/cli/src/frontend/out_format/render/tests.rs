@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use core::client::{ClientEntryKind, ClientEvent, ClientEventKind, RemoteItemizeFields};
 use engine::local_copy::{LocalCopyChangeSet, TimeChange};
 
+use crate::frontend::escape::EscapeStyle;
 use crate::frontend::out_format::parser::parse_out_format;
 use crate::frontend::out_format::tokens::{
     HumanizeMode, OutFormatContext, PlaceholderAlignment, PlaceholderFormat,
@@ -1857,7 +1858,7 @@ fn render_remote_host_with_context_populated() {
         preserve_group: false,
         emit_unchanged: false,
         itemize_repeated: false,
-        eight_bit_output: false,
+        escape: EscapeStyle::default(),
         preserve_links: false,
         full_checksum_algorithm: None,
         always_checksum: false,
@@ -1887,7 +1888,7 @@ fn render_remote_address_with_context_populated() {
         preserve_group: false,
         emit_unchanged: false,
         itemize_repeated: false,
-        eight_bit_output: false,
+        escape: EscapeStyle::default(),
         preserve_links: false,
         full_checksum_algorithm: None,
         always_checksum: false,
@@ -1917,7 +1918,7 @@ fn render_module_name_with_context_populated() {
         preserve_group: false,
         emit_unchanged: false,
         itemize_repeated: false,
-        eight_bit_output: false,
+        escape: EscapeStyle::default(),
         preserve_links: false,
         full_checksum_algorithm: None,
         always_checksum: false,
@@ -1944,7 +1945,7 @@ fn render_module_path_with_context_populated() {
         preserve_group: false,
         emit_unchanged: false,
         itemize_repeated: false,
-        eight_bit_output: false,
+        escape: EscapeStyle::default(),
         preserve_links: false,
         full_checksum_algorithm: None,
         always_checksum: false,
@@ -1974,7 +1975,7 @@ fn render_all_remote_placeholders_with_full_context() {
         preserve_group: false,
         emit_unchanged: false,
         itemize_repeated: false,
-        eight_bit_output: false,
+        escape: EscapeStyle::default(),
         preserve_links: false,
         full_checksum_algorithm: None,
         always_checksum: false,

@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use crate::frontend::escape::EscapeStyle;
 
 #[test]
 fn list_only_lists_entries_without_copying() {
@@ -1476,7 +1477,7 @@ fn list_only_renders_specials_and_symlink_arrow_gate() {
             HumanReadableMode::Grouped,
             false,
             false,
-            false,
+            EscapeStyle::terminal(false),
             preserve_links,
         )
         .expect("render");
@@ -1561,7 +1562,7 @@ fn list_only_renders_atime_and_crtime_columns() {
         HumanReadableMode::Grouped,
         true,
         true,
-        false,
+        EscapeStyle::terminal(false),
         true,
     )
     .expect("render");

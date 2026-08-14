@@ -11,6 +11,7 @@
 //! - Multiple events rendered in order
 
 use super::*;
+use crate::frontend::escape::EscapeStyle;
 use core::client::run_client;
 
 #[test]
@@ -245,7 +246,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut with_out_format,
     )
     .expect("render with out-format");
@@ -271,7 +272,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut without_out_format,
     )
     .expect("render without out-format");
