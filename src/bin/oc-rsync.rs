@@ -42,6 +42,14 @@ fn main() -> ExitCode {
     #[cfg(all(target_os = "windows", target_env = "gnu"))]
     windows_gnu_eh::force_link();
 
+    // Raised before any thread or child process exists, so the sender,
+    // generator, receiver and daemon children all inherit it. The placement
+    // is load-bearing rather than stylistic: raising it later would leave
+    // already-spawned workers on the old limit.
+    //
+    // upstream: main.c:1817 - the first statement of main().
+    core::fd_limit::raise_fd_limit();
+
     // Do NOT hold `StdoutLock`/`StderrLock` here. Both are process-wide
     // reentrant locks owned by the acquiring thread. In TCP-daemon mode `main`
     // parks in the accept loop for the process lifetime while each session runs

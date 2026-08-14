@@ -11,6 +11,8 @@ pub mod auth;
 pub mod bandwidth;
 /// Centralized exit code definitions matching upstream rsync's `errcode.h`.
 pub mod exit_code;
+/// Process file-descriptor limit management.
+pub mod fd_limit;
 /// Signal handling for graceful shutdown and cleanup.
 pub mod signal;
 /// Timeout configuration and tracking for rsync connections and I/O operations.
