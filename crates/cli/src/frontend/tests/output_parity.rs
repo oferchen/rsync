@@ -9,6 +9,7 @@ use super::*;
 use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
+use crate::frontend::escape::EscapeStyle;
 use core::client::{
     ClientConfig, ClientEntryKind, ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode,
     run_client,
@@ -76,7 +77,7 @@ fn render_stats_at_level(
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut rendered,
     )
     .expect("render stats");
@@ -105,7 +106,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut rendered,
     )
     .expect("render verbose");
@@ -150,7 +151,7 @@ fn info_name_only_suppresses_stats_footer() {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut rendered,
     )
     .expect("render");
@@ -548,7 +549,7 @@ fn parity_totals_only_without_stats_flag() {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut rendered,
     )
     .expect("render");
@@ -820,7 +821,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,                               // show_copy_method
         false,                               // show_atimes
         false,                               // show_crtimes
-        false,                               // eight_bit_output
+        EscapeStyle::terminal(false),        // escape style
         &mut rendered,
     )
     .expect("render");
