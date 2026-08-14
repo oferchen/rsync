@@ -32,6 +32,7 @@ pub use matching::{
 /// from the file size using the upstream square-root heuristic.
 /// [`SignatureLayoutParams`] captures the inputs; [`SignatureLayout`] carries
 /// the resolved layout; [`SignatureLayoutError`] reports invalid inputs.
+pub use signature::block_size::{MAX_BLOCK_SIZE_OLD, MAX_BLOCK_SIZE_V30};
 pub use signature::{
     SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
 };

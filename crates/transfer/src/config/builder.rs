@@ -18,6 +18,7 @@
 //! ```
 
 use std::ffi::OsString;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -73,6 +74,7 @@ pub struct ServerConfigBuilder {
     write: WriteConfig,
     checksum_seed: Option<u32>,
     checksum_choice: Option<protocol::ChecksumAlgorithm>,
+    block_size: Option<NonZeroU32>,
     trust_sender: bool,
     stop_at: Option<SystemTime>,
     qsort: bool,
@@ -115,6 +117,7 @@ impl ServerConfigBuilder {
             write: WriteConfig::default(),
             checksum_seed: None,
             checksum_choice: None,
+            block_size: None,
             trust_sender: false,
             stop_at: None,
             qsort: false,
@@ -355,6 +358,15 @@ impl ServerConfigBuilder {
     /// Sets an optional checksum algorithm override.
     pub fn checksum_choice(&mut self, choice: Option<protocol::ChecksumAlgorithm>) -> &mut Self {
         self.checksum_choice = choice;
+        self
+    }
+
+    /// Sets the fixed delta block length from `-B` / `--block-size`.
+    ///
+    /// Only the receiving side acts on it, at the one point that sizes the
+    /// blocks it checksums. upstream: generator.c:720-721.
+    pub fn block_size(&mut self, size: Option<NonZeroU32>) -> &mut Self {
+        self.block_size = size;
         self
     }
 
@@ -633,6 +645,7 @@ impl ServerConfigBuilder {
             write: self.write.clone(),
             checksum_seed: self.checksum_seed,
             checksum_choice: self.checksum_choice,
+            block_size: self.block_size,
             trust_sender: self.trust_sender,
             stop_at: self.stop_at,
             qsort: self.qsort,

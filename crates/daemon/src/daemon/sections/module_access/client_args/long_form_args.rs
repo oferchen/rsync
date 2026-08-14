@@ -269,6 +269,19 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     if let Ok(n) = val.trim_start_matches('+').parse::<i64>() {
                         config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
                     }
+                // upstream: options.c:2953-2954 - the client forwards the block
+                // size as a standalone `-B%u` token, and options.c:1795-1805
+                // parses it back into the same `block_size` global. The daemon
+                // decodes the client argv here rather than through the
+                // `--server` argv parser, so it needs its own arm; both call the
+                // one shared bound check.
+                } else if let Some(val) = arg
+                    .strip_prefix("-B")
+                    .or_else(|| arg.strip_prefix("--block-size="))
+                {
+                    if let Ok(size) = parse_block_size_arg(val, config.protocol) {
+                        config.block_size = size;
+                    }
                 // upstream: options.c:2874 - a negative modify_window is
                 // forwarded via the short `-@%d` spelling (e.g. `-@-1`) for
                 // nanosecond-exact comparison (util1.c:1482).
