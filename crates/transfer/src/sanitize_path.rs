@@ -64,6 +64,35 @@ pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
     sanitize_path_bytes(path, 0, true)
 }
 
+/// Byte-exact variant of [`sanitize_path`] (`SP_DEFAULT`) with an explicit
+/// depth budget.
+///
+/// Used for symlink targets received from the network, which are raw byte
+/// strings on the wire (upstream carries them as `char*`) and need not be
+/// valid UTF-8. Routing them through `String` would replace non-UTF-8 bytes
+/// and rewrite the very value the sanitizer exists to make safe, so this
+/// entry point stays on `&[u8]` end to end. Shares
+/// [`sanitize_path_bytes`] with the `&str` form, so the traversal guard
+/// cannot diverge between the two.
+///
+/// `depth` is how many leading `..` may survive - upstream passes the depth of
+/// the entry's own directory, so a target that only walks back to the transfer
+/// root is preserved verbatim while one that reaches past it is collapsed. This
+/// is the single `sanitize_path` call in upstream's `flist.c` that does not pass
+/// 0, and the non-zero value is load-bearing: at 0 a link in `sub/dir/` pointing
+/// at `../../hello.txt` would be rewritten to `hello.txt`, silently retargeting
+/// it at a sibling that does not exist.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1329` - `sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
+///   applied to a received symlink target when `sanitize_paths &&
+///   !munge_symlinks`.
+/// - `flist.c:867` - `lastdir_depth = count_dir_elements(lastdir)`.
+pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
+    sanitize_path_bytes(path, i32::try_from(depth).unwrap_or(i32::MAX), false)
+}
+
 /// Core sanitization with configurable depth budget and dot-dir handling.
 ///
 /// - `depth`: number of leading `..` segments allowed (0 for daemon mode)
