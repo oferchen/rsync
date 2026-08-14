@@ -498,6 +498,85 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
     assert_eq!(summary.files_copied(), 1);
 }
 
+// FIFO-only counterpart to the two archive-mode tests above. Both of those
+// also create a socket, so both are excluded on Apple platforms, and the
+// FIFO half of what they assert goes with them: archive mode applied to a
+// special file has no coverage there at all. `mkfifo_for_tests` works on
+// every unix, so this runs everywhere.
+//
+// Unlike the socket tests this keeps times(true): utimensat returns ENXIO on
+// a socket on some Linux kernels, which is why they disable it, but a FIFO
+// takes timestamps normally. That makes this the only place the mtime VALUE
+// is asserted on a special file - the macOS-running
+// execute_fifo_preserves_type_under_times_and_perms passes --times but
+// checks only the type and mode.
+//
+// The mtime assertion is the load-bearing one: measured by mutation, forcing
+// times(false) fails it. The mode assertion is NOT a --perms test - forcing
+// permissions(false) still passes, because the executor hands the source mode
+// to mknod, so a special file carries its mode with or without --perms. It is
+// kept as a pin on that carried value, not as coverage of the flag.
+#[cfg(unix)]
+#[test]
+fn execute_archive_mode_copies_fifo_preserving_mode_and_mtime() {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let fifo = source_root.join("archive.pipe");
+    mkfifo_for_tests(&fifo, 0o640).expect("mkfifo");
+    fs::set_permissions(&fifo, PermissionsExt::from_mode(0o640))
+        .expect("set fifo permissions");
+
+    // Must be the NOFOLLOW setter. Plain set_file_times() open(2)s the path
+    // first, and open(2) on a FIFO blocks until a peer opens the other end -
+    // a permanent deadlock, not a slow test.
+    let atime = FileTime::from_unix_time(1_700_050_000, 0);
+    let mtime = FileTime::from_unix_time(1_700_060_000, 0);
+    filetime::set_symlink_file_times(&fifo, atime, mtime).expect("set fifo times");
+
+    fs::write(source_root.join("file.txt"), b"archive").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // archive_options() minus owner/group: chown requires root.
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            test_helpers::presets::archive_options()
+                .owner(false)
+                .group(false),
+        )
+        .expect("archive copy succeeds");
+
+    let dest_fifo = dest_root.join("source").join("archive.pipe");
+    let fifo_meta = fs::symlink_metadata(&dest_fifo).expect("fifo meta");
+    assert!(
+        fifo_meta.file_type().is_fifo(),
+        "archive mode must recreate the FIFO as a FIFO"
+    );
+    assert_eq!(fifo_meta.permissions().mode() & 0o777, 0o640);
+    assert_eq!(
+        FileTime::from_last_modification_time(&fifo_meta).unix_seconds(),
+        1_700_060_000,
+        "archive mode must carry the FIFO's mtime, not stamp it with now()"
+    );
+
+    assert_eq!(
+        fs::read(dest_root.join("source").join("file.txt")).expect("read"),
+        b"archive"
+    );
+    assert_eq!(summary.fifos_created(), 1);
+    assert_eq!(summary.files_copied(), 1);
+}
+
 
 #[cfg(all(
     unix,

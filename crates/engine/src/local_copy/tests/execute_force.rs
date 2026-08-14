@@ -403,15 +403,13 @@ fn force_disabled_symlink_cannot_replace_directory_in_recursive_copy() {
     assert!(dest_root.join("link").is_dir(), "directory should remain");
 }
 
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "tvos",
-        target_os = "watchos"
-    ))
-))]
+// Creates no socket, so the Apple exclusion the neighbouring socket tests
+// carry does not apply: mkfifo_for_tests has an Apple arm and force-replacing
+// a populated directory is not platform-specific. Without this, replacing a
+// NON-EMPTY directory with a FIFO is covered on no Apple platform - the
+// macOS-running execute_fifo_replaces_directory_when_force_enabled uses an
+// empty one, so the recursive-removal half goes untested there.
+#[cfg(unix)]
 #[test]
 fn force_fifo_replaces_non_empty_directory() {
     use std::os::unix::fs::FileTypeExt;
