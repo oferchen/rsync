@@ -13,12 +13,12 @@
 //!
 //! | Question | Upstream | Here |
 //! |---|---|---|
-//! | Is the hardening opted out of? | `symlink_optout_allowed()` | [`Activation::optout_allowed`] |
-//! | Is path resolution hardened at all? | `secure_relpath_active()` | [`Activation::hardened`] |
-//! | What root must a path stay under? | `confinement_root()` | [`Activation::root`] |
-//! | Is *this* open subject to the root? | `operator_path_resolve` | [`PathKind`] |
+//! | Is the hardening opted out of? | `symlink_optout_allowed()` | [`Activation::optout_allowed`](crate::confinement::Activation::optout_allowed) |
+//! | Is path resolution hardened at all? | `secure_relpath_active()` | [`Activation::hardened`](crate::confinement::Activation::hardened) |
+//! | What root must a path stay under? | `confinement_root()` | [`Activation::root`](crate::confinement::Activation::root) |
+//! | Is *this* open subject to the root? | `operator_path_resolve` | [`PathKind`](crate::confinement::PathKind) |
 //!
-//! The first three are properties of the session and live on [`Activation`].
+//! The first three are properties of the session and live on [`Activation`](crate::confinement::Activation).
 //! The fourth is a property of the individual call.
 //!
 //! # Why `PathKind` is a parameter and not session state
