@@ -41,7 +41,7 @@ impl ReceiverContext {
                 let path = entry.path();
 
                 // Check for absolute paths (reject unless --relative is active).
-                // upstream: flist.c:769 `!relative_paths && *thisname == '/'`
+                // upstream: flist.c:852 `!relative_paths && *thisname == '/'`
                 if !relative_paths && path.has_root() {
                     info_log!(
                         Misc,
@@ -82,7 +82,7 @@ impl ReceiverContext {
                 }
 
                 // Check for `..` path components (always rejected).
-                // upstream: flist.c:769 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
+                // upstream: flist.c:852 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
                 if path_contains_dot_dot(path) {
                     info_log!(
                         Misc,
@@ -141,7 +141,7 @@ impl ReceiverContext {
             for entry in &self.file_list[flat_start..] {
                 let path = entry.path();
 
-                // upstream: flist.c:769 `!relative_paths && *thisname == '/'`
+                // upstream: flist.c:852 `!relative_paths && *thisname == '/'`
                 if !relative_paths && path.has_root() {
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,

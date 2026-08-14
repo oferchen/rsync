@@ -1,6 +1,6 @@
 //! Signed modification-time comparison tolerance (`--modify-window`).
 //!
-//! Mirrors upstream rsync's `int modify_window` (options.c:143), which the
+//! Mirrors upstream rsync's `int modify_window` (options.c:149), which the
 //! generator consults through `same_time()` when deciding whether a
 //! destination file is already up to date. The value is deliberately signed:
 //! a negative window requests nanosecond-exact comparison rather than the
@@ -14,7 +14,7 @@
 /// - `< 0`: nanosecond-exact comparison - both the whole seconds and the
 ///   nanoseconds must be equal.
 ///
-/// upstream: options.c:143 `int modify_window` / util1.c:1478 `same_time()`.
+/// upstream: options.c:149 `int modify_window` / util1.c:32 `same_time()`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModifyWindow(i64);
 
@@ -25,7 +25,7 @@ impl ModifyWindow {
     /// Builds a window from a signed whole-second count.
     ///
     /// A negative `secs` selects nanosecond-exact comparison, matching
-    /// upstream's `modify_window < 0` branch (util1.c:1482).
+    /// upstream's `modify_window < 0` branch (util1.c:1653).
     #[must_use]
     pub const fn from_secs(secs: i64) -> Self {
         Self(secs)
@@ -50,7 +50,7 @@ impl ModifyWindow {
     /// - `window == 0`: `f1_sec == f2_sec` (nanoseconds ignored).
     /// - `window < 0`: `f1_sec == f2_sec && f1_nsec == f2_nsec` (nsec-exact).
     /// - `window > 0`: `|f1_sec - f2_sec| <= window` (nanoseconds ignored -
-    ///   upstream note: "time windows don't care about that", util1.c:1484).
+    ///   upstream note: "time windows don't care about that", util1.c:1655).
     #[must_use]
     pub fn same_time(self, f1_sec: i64, f1_nsec: u32, f2_sec: i64, f2_nsec: u32) -> bool {
         // upstream: util1.c:1480

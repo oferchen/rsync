@@ -279,7 +279,7 @@ impl GeneratorContext {
         };
         use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
 
-        // upstream: sender.c:221-222 - rprintf(FINFO, "send_files starting\n")
+        // upstream: sender.c:506-507 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
 
         // upstream: sender.c:218 - int save_io_error = io_error;
@@ -1134,7 +1134,7 @@ impl GeneratorContext {
             }
             files_transferred += 1;
             transferred_file_size += file_size;
-            // upstream: sender.c:480 - `file->flags |= FLAG_FILE_SENT` once the
+            // upstream: sender.c:804 - `file->flags |= FLAG_FILE_SENT` once the
             // entry has actually been transferred, so a later redo request for
             // it clears append_mode/make_backups above. Skipped items
             // (diminished, open failure, non-regular) `continue` before here,
@@ -1455,13 +1455,13 @@ struct SentFileTracker {
 
 impl SentFileTracker {
     /// Returns true when `ndx` was already transferred, i.e. this request is a
-    /// redo-pass resend (upstream `file->flags & FLAG_FILE_SENT`, sender.c:319).
+    /// redo-pass resend (upstream `file->flags & FLAG_FILE_SENT`, sender.c:610).
     fn is_resend(&self, ndx: usize) -> bool {
         self.sent.get(ndx).copied().unwrap_or(false)
     }
 
     /// Records that `ndx` has now been transferred, so any later request for it
-    /// is a resend (upstream `file->flags |= FLAG_FILE_SENT`, sender.c:480).
+    /// is a resend (upstream `file->flags |= FLAG_FILE_SENT`, sender.c:804).
     fn mark_sent(&mut self, ndx: usize) {
         if ndx >= self.sent.len() {
             self.sent.resize(ndx + 1, false);
@@ -1513,7 +1513,7 @@ const fn source_changed_since_flist(
 /// vanished/general distinction, exactly as upstream reaches `map_file` only
 /// after a successful `fstat`.
 ///
-/// upstream: sender.c:421 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
+/// upstream: sender.c:745 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
 fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
     std::fs::metadata(source_path).is_ok_and(|meta| meta.len() < flist_len)
 }

@@ -557,7 +557,7 @@ impl GeneratorContext {
 /// The returned `base` is what `walk_path` strips from each child path to
 /// compute its wire-side relative name.
 fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
-    // upstream: flist.c:2351 - `if ((p = strstr(fbuf, "/./")) != NULL)`
+    // upstream: flist.c:2623 - `if ((p = strstr(fbuf, "/./")) != NULL)`
     if let Some(anchor) = find_dot_dir_anchor(path) {
         let path_str = path.as_os_str().to_string_lossy();
         let (head, tail) = path_str.split_at(anchor);

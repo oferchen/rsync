@@ -150,7 +150,7 @@ mod tests {
         missing_greeting_token,
     };
 
-    // upstream: clientserver.c:199-203 - `strchr(buf + 9, ' ')` finds the
+    // upstream: clientserver.c:228-232 - `strchr(buf + 9, ' ')` finds the
     // trailing space, so `strdup(that + 1)` is a non-NULL EMPTY string. That is
     // a different state from the NULL a space-less greeting yields, and the
     // difference decides whether the peer is authenticated or refused.

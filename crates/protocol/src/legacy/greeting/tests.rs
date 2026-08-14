@@ -69,7 +69,7 @@ fn greeting_details_accepts_trailing_whitespace_in_digest_list() {
     assert!(greeting.has_digest_list());
 }
 
-// upstream: clientserver.c:199-203 - `daemon_auth_choices = strchr(buf + 9, ' ')`
+// upstream: clientserver.c:228-232 - `daemon_auth_choices = strchr(buf + 9, ' ')`
 // succeeds on a greeting whose last byte is that space, so
 // `strdup(daemon_auth_choices + 1)` is a non-NULL EMPTY string. The parser is
 // shared by the daemon and the client, and both decide whether to authenticate

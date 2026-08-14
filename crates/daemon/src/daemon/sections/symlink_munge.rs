@@ -180,7 +180,7 @@ mod symlink_munge_tests {
     /// symlinks from escaping the sanitized inner path. A bare `use chroot=yes`
     /// with a non-split path stays OFF (covered by `effective_munge_auto_chroot_on`).
     ///
-    /// upstream: clientserver.c:997-998 - `munge_symlinks = !use_chroot || module_dirlen`.
+    /// upstream: clientserver.c:1071-1072 - `munge_symlinks = !use_chroot || module_dirlen`.
     #[test]
     fn effective_munge_auto_chroot_partial_split_on() {
         let def = ModuleDefinition {

@@ -338,7 +338,7 @@ impl SshConfig {
         // would drop rsync's literal `/./` dot-root pivot used by --relative
         // (-R). The subprocess SSH path passes the operand through verbatim, so
         // the embedded transport must preserve `/./` identically.
-        // upstream: flist.c:2351 send_file_list - `strstr(fbuf, "/./")` splits
+        // upstream: flist.c:2623 send_file_list - `strstr(fbuf, "/./")` splits
         // the source arg at the pivot so -R recreates only the components after
         // it; without the literal marker the whole absolute path is recreated.
         let raw_path = raw_url_path(url_str).unwrap_or("");

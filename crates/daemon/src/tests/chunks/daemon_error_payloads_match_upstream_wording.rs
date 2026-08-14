@@ -9,79 +9,79 @@
 
 #[test]
 fn daemon_error_payloads_match_upstream_wording() {
-    // upstream: clientserver.c:732 - `@ERROR: Unknown module '%s'\n`
+    // upstream: clientserver.c:777 - `@ERROR: Unknown module '%s'\n`
     assert_eq!(
         crate::daemon::UNKNOWN_MODULE_PAYLOAD,
         "@ERROR: Unknown module '{module}'",
     );
 
-    // upstream: clientserver.c:1429 - `@ERROR: Unknown command '%s'\n`
+    // upstream: clientserver.c:1563 - `@ERROR: Unknown command '%s'\n`
     assert_eq!(
         crate::daemon::UNKNOWN_COMMAND_PAYLOAD,
         "@ERROR: Unknown command '{command}'",
     );
 
-    // upstream: clientserver.c:735-736 - `@ERROR: access denied to %s from %s (%s)\n`
+    // upstream: clientserver.c:780-781 - `@ERROR: access denied to %s from %s (%s)\n`
     assert_eq!(
         crate::daemon::ACCESS_DENIED_PAYLOAD,
         "@ERROR: access denied to {module} from {host} ({addr})",
     );
 
-    // upstream: clientserver.c:750 - `@ERROR: failed to open lock file\n`
+    // upstream: clientserver.c:795 - `@ERROR: failed to open lock file\n`
     assert_eq!(
         crate::daemon::MODULE_LOCK_ERROR_PAYLOAD,
         "@ERROR: failed to open lock file",
     );
 
-    // upstream: clientserver.c:754 - `@ERROR: max connections (%d) reached -- try again later\n`
+    // upstream: clientserver.c:799 - `@ERROR: max connections (%d) reached -- try again later\n`
     assert_eq!(
         crate::daemon::MODULE_MAX_CONNECTIONS_PAYLOAD,
         "@ERROR: max connections ({limit}) reached -- try again later",
     );
 
-    // upstream: clientserver.c:764 - `@ERROR: auth failed on module %s\n`
+    // upstream: clientserver.c:812 - `@ERROR: auth failed on module %s\n`
     assert_eq!(
         crate::daemon::AUTH_FAILED_PAYLOAD,
         "@ERROR: auth failed on module {module}",
     );
 
-    // upstream: clientserver.c:985 - `@ERROR: chroot failed\n`
+    // upstream: clientserver.c:1052 - `@ERROR: chroot failed\n`
     assert_eq!(
         crate::daemon::CHROOT_FAILED_PAYLOAD,
         "@ERROR: chroot failed",
     );
 
-    // upstream: clientserver.c:649 - `@ERROR: chdir failed\n`
+    // upstream: clientserver.c:694 - `@ERROR: chdir failed\n`
     assert_eq!(
         crate::daemon::CHDIR_FAILED_PAYLOAD,
         "@ERROR: chdir failed",
     );
 
-    // upstream: clientserver.c:1053 - `@ERROR: setuid failed\n`
+    // upstream: clientserver.c:1129 - `@ERROR: setuid failed\n`
     assert_eq!(
         crate::daemon::SETUID_FAILED_PAYLOAD,
         "@ERROR: setuid failed",
     );
 
-    // upstream: clientserver.c:1024 - `@ERROR: setgid failed\n`
+    // upstream: clientserver.c:1100 - `@ERROR: setgid failed\n`
     assert_eq!(
         crate::daemon::SETGID_FAILED_PAYLOAD,
         "@ERROR: setgid failed",
     );
 
-    // upstream: clientserver.c:1031 - `@ERROR: setgroups failed\n`
+    // upstream: clientserver.c:1107 - `@ERROR: setgroups failed\n`
     assert_eq!(
         crate::daemon::SETGROUPS_FAILED_PAYLOAD,
         "@ERROR: setgroups failed",
     );
 
-    // upstream: clientserver.c:785 - `@ERROR: invalid uid %s\n`
+    // upstream: clientserver.c:837 - `@ERROR: invalid uid %s\n`
     assert_eq!(
         crate::daemon::INVALID_UID_PAYLOAD,
         "@ERROR: invalid uid {uid}",
     );
 
-    // upstream: clientserver.c:658 - `@ERROR: invalid gid %s\n`
+    // upstream: clientserver.c:703 - `@ERROR: invalid gid %s\n`
     assert_eq!(
         crate::daemon::INVALID_GID_PAYLOAD,
         "@ERROR: invalid gid {gid}",

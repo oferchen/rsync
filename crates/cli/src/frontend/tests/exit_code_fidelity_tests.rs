@@ -86,7 +86,7 @@ fn files_from_extra_operands_return_syntax_error() {
     assert_eq!(one, 1, "lone operand with --files-from should exit 1");
 }
 
-/// upstream: checksum.c:139 `unknown checksum name` -> RERR_UNSUPPORTED (4).
+/// upstream: checksum.c:156 `unknown checksum name` -> RERR_UNSUPPORTED (4).
 #[test]
 fn invalid_checksum_choice_returns_unsupported() {
     let (code, _stdout, _stderr) = run_with_args([

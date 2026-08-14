@@ -381,7 +381,7 @@ fn is_option_refused(
             is_glob = true;
         }
 
-        // upstream: options.c:965-980 - vital options carry `descrip = "a="`
+        // upstream: options.c:1050-1065 - vital options carry `descrip = "a="`
         // and `parse_one_refuse_match` only updates them when the rule is
         // exact, never wild. Mirror that here so administrators cannot wreck
         // the handshake with `refuse options = *`.

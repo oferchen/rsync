@@ -1076,7 +1076,7 @@ impl ReceiverContext {
                             type_bits
                         );
 
-                        // upstream: generator.c:345 `delete_during == 2` records
+                        // upstream: generator.c:351 `delete_during == 2` records
                         // the victim via remember_delete() and defers the unlink;
                         // in collect_only mode the worker only records the entry so
                         // the physical removal runs later in do_delayed_deletions().
@@ -2023,7 +2023,7 @@ mod tests {
     /// the boundary device is an ordinary deletion candidate; an entry on any
     /// other device is a mount point that must be preserved.
     ///
-    /// upstream: flist.c:1344 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// upstream: flist.c:1490 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
     /// generator.c:331 (delete_in_dir skips it).
     #[test]
     fn mount_boundary_predicate_preserves_foreign_device_entries() {

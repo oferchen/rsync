@@ -338,7 +338,7 @@ fn assert_empty_digest_list_refused(greeting: &str) {
 /// A protocol-31 greeting whose only trailing byte is the separating space
 /// advertises an EMPTY digest list, and upstream refuses it.
 ///
-/// upstream: clientserver.c:199-203 - `daemon_auth_choices = strchr(buf + 9, ' ')`
+/// upstream: clientserver.c:228-232 - `daemon_auth_choices = strchr(buf + 9, ' ')`
 /// finds that trailing space, so `strdup(daemon_auth_choices + 1)` is a
 /// **non-NULL empty string**. `negotiate_daemon_auth()` therefore takes the
 /// `if (daemon_auth_choices)` branch, never sets `md4_is_old`, and

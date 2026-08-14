@@ -1054,7 +1054,7 @@ mod created_directory_notice_tests {
 /// names ride the socket un-multiplexed (raw) below protocol 31 and MSG_DATA
 /// framed at protocol >= 31.
 ///
-/// upstream: io.c:1230 `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches
+/// upstream: io.c:1374 `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches
 /// the output stream to `MPLX_TO_BUFFERED` for the forwarding window.
 #[cfg(test)]
 mod files_from_forwarding_framing_tests {

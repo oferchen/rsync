@@ -133,7 +133,7 @@ where
     // gid_ndx); otherwise 0 / "DEFAULT".
     let preserve_owner = config.preserve_owner();
     let preserve_group = config.preserve_group();
-    // upstream: flist.c:2251 emits "sending incremental file list" only when
+    // upstream: flist.c:2524 emits "sending incremental file list" only when
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
     // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
     //   `-v` transfer gets no banner (`config.recursive()`);
@@ -214,7 +214,7 @@ where
                 });
             }
 
-            // upstream: generator.c:582-583 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
+            // upstream: generator.c:588-589 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
             // or `--info=name2`) keeps emitting itemize lines for unchanged
             // entries. Thread the resolved name-level into the renderer so it
             // bypasses the empty-change-set suppression and surfaces all-dot
@@ -382,7 +382,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         full_checksum_algorithm,
         always_checksum,
     } = params;
-    // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
+    // upstream: generator.c:588-589 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
     // surfaces unchanged entries in the log alongside stdout. The `-ii`
     // (`stdout_format_has_i > 1`) arm forces them independently of `-vv`.
@@ -405,7 +405,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         writeln!(log.file, "{message}")?;
     }
     // The FCLIENT "sending incremental file list" banner is stdout only;
-    // upstream's parallel "building file list" line (flist.c:2248) is an FLOG
+    // upstream's parallel "building file list" line (flist.c:2520) is an FLOG
     // log-file message consumed from the FLOG event queue above.
     emit_transfer_summary(
         summary,

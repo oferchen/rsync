@@ -1599,7 +1599,7 @@ fn render_percent_b_and_c_swap_counters_on_receiver() {
 
 #[test]
 fn render_percent_b_and_c_zero_for_non_transfer() {
-    // upstream log.c:674-675 - `!(iflags & ITEM_TRANSFER)` forces both to 0.
+    // upstream log.c:706-707 - `!(iflags & ITEM_TRANSFER)` forces both to 0.
     // A metadata-only reuse is not a transfer, so neither escape counts bytes.
     let event = make_event(
         ClientEventKind::MetadataReused,
@@ -1714,7 +1714,7 @@ fn render_percent_g_upper_shows_default_when_gid_unavailable() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT" when
+    // upstream: log.c:606-608 - `case 'G'` renders the literal "DEFAULT" when
     // the gid is unavailable (`!gid_ndx || FLAG_SKIP_GROUP`). test_metadata
     // seeds gid = None, so byte fidelity requires "DEFAULT", not "0".
     assert_eq!(render_format("%G", &event), "DEFAULT\n");
@@ -1740,7 +1740,7 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:650-653 - `case 'L'` with no width modifier breaks with
+    // upstream: log.c:675-678 - `case 'L'` with no width modifier breaks with
     // n = "" for a non-link entry, so %L renders empty.
     assert_eq!(render_format("%L", &event), "\n");
 }
@@ -2121,7 +2121,7 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
 
 // Regression: upstream `testsuite/itemize.test` line 113-124 expects `-ivvplrtH`
 // to emit all-dot itemize rows for unchanged dirs, files, and symlinks,
-// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:582-583`.
+// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:588-589`.
 // The renderer's empty-change-set suppression must be bypassed when the
 // context flags `emit_unchanged`.
 
@@ -2254,7 +2254,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
 
 #[test]
 fn emit_out_format_emits_uptodate_hardlink_alias_under_info_name_2() {
-    // upstream: generator.c:582 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
+    // upstream: generator.c:588 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
     // `--info=name2`) the same up-to-date alias surfaces as `hf          n`.
     let event = make_event(
         ClientEventKind::HardLink,
@@ -2330,7 +2330,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_at_plain_i() {
 
 #[test]
 fn emit_out_format_emits_fresh_hardlink_alias_with_relink_target() {
-    // upstream: generator.c:582 `(xname && *xname)` arm / hlink.c:232-234 - a
+    // upstream: generator.c:589 `(xname && *xname)` arm / hlink.c:232-234 - a
     // freshly atomic_create'd alias (NOT sharing the leader inode, e.g. a
     // `--copy-dest` cluster member linked to a copied leader) itemizes with the
     // relink target as the xname (`=> %s`), forcing the row even at plain `-i`.

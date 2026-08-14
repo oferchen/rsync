@@ -98,7 +98,7 @@ pub struct BasisFileConfig<'a> {
     /// is absent, the generator falls back to a same-named regular file inside
     /// this directory as the delta basis (`FNAMECMP_PARTIAL_DIR`).
     ///
-    /// Upstream: `generator.c:1759-1765` - `partialptr = partial_dir_fname(fname)`.
+    /// Upstream: `generator.c:2173-2179` - `partialptr = partial_dir_fname(fname)`.
     pub partial_dir: Option<&'a std::path::Path>,
     /// Protocol version for signature generation.
     pub protocol: ProtocolVersion,
@@ -1408,7 +1408,7 @@ mod tests {
     /// around the redo `recv_generator()` call, and `sum_sizes_sqroot()` then
     /// takes the `csum_length == SUM_LENGTH` branch to emit a full-strength
     /// `s2length` instead of the phase-1 sqrt-reduced length.
-    /// upstream: generator.c:2178 (`csum_length = SUM_LENGTH`),
+    /// upstream: generator.c:2650 (`csum_length = SUM_LENGTH`),
     /// generator.c:739-740 (`s2length = max_s2length`), generator.c:2205
     /// (restore `SHORT_SUM_LENGTH`).
     ///

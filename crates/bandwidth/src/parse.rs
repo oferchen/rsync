@@ -89,7 +89,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::TooSmall);
     }
 
-    // upstream: options.c:1718 `bwlimit = (size + 512) / 1024` rounds the parsed
+    // upstream: options.c:1825 `bwlimit = (size + 512) / 1024` rounds the parsed
     // byte rate to whole KiB, and every pacing calculation then uses that KiB
     // value (io.c:2115,2120,2133). Quantize identically so a byte or decimal
     // suffix paces at the same rate as upstream rather than at its exact parsed

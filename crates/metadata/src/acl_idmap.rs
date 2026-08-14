@@ -84,7 +84,7 @@ impl AclIdMapper {
 
     /// Remaps a named-user ACL id to the local uid.
     ///
-    /// upstream: acls.c:1070 `ida->id = match_uid(ida->id)`.
+    /// upstream: acls.c:1439 `ida->id = match_uid(ida->id)`.
     #[must_use]
     pub fn map_uid(&self, id: u32) -> u32 {
         if self.numeric_ids {
@@ -102,7 +102,7 @@ impl AclIdMapper {
 
     /// Remaps a named-group ACL id to the local gid.
     ///
-    /// upstream: acls.c:1072 `ida->id = match_gid(ida->id, NULL)`.
+    /// upstream: acls.c:1441 `ida->id = match_gid(ida->id, NULL)`.
     #[must_use]
     pub fn map_gid(&self, id: u32) -> u32 {
         if self.numeric_ids {

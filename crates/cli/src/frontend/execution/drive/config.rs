@@ -163,7 +163,7 @@ pub(crate) struct ConfigInputs {
     /// rendered client-side from collected events instead of the server line.
     pub(crate) render_out_format_locally: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
-    /// forwards `--log-format=%o`. upstream: options.c:2776-2777.
+    /// forwards `--log-format=%o`. upstream: options.c:2939-2940.
     pub(crate) out_format_has_operation: bool,
     /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
     /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
@@ -469,7 +469,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         NameOutputLevel::UpdatedAndUnchanged
     ));
 
-    // upstream: log.c:870 log_delete() prints "deleting %n" whenever
+    // upstream: log.c:920 log_delete() prints "deleting %n" whenever
     // INFO_GTE(DEL, 1), independent of -v. `--info=del` (level >= 1) raises DEL
     // without raising verbosity, so `collect_events()` - which only fires on
     // verbosity/progress/list_only - would leave the engine without the

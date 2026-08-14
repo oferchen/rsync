@@ -14,7 +14,7 @@ fn golden_deleting_format_is_eleven_chars() {
 
 #[test]
 fn golden_direction_sent() {
-    // upstream: log.c:710 - `!local_server && *op == 's' ? '<'`
+    // upstream: log.c:742 - `!local_server && *op == 's' ? '<'`
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Sent)
         .with_file_type(FileType::RegularFile)
@@ -113,7 +113,7 @@ fn golden_filetype_special() {
 
 #[test]
 fn golden_symlink_never_shows_size() {
-    // upstream: log.c:713 - `c[3] = '.';` unconditionally for symlinks
+    // upstream: log.c:745 - `c[3] = '.';` unconditionally for symlinks
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::Symlink)
@@ -155,7 +155,7 @@ fn golden_missing_data_all_question() {
 
 #[test]
 fn golden_collapse_dots_for_not_updated() {
-    // upstream: log.c:741 - `c[0] == '.'` triggers collapse
+    // upstream: log.c:773 - `c[0] == '.'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
         .with_file_type(FileType::RegularFile);
@@ -164,7 +164,7 @@ fn golden_collapse_dots_for_not_updated() {
 
 #[test]
 fn golden_collapse_dots_for_hardlink_unchanged() {
-    // upstream: log.c:741 - `c[0] == 'h'` triggers collapse
+    // upstream: log.c:773 - `c[0] == 'h'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::HardLink)
         .with_file_type(FileType::RegularFile);
@@ -173,7 +173,7 @@ fn golden_collapse_dots_for_hardlink_unchanged() {
 
 #[test]
 fn golden_collapse_dots_for_created_unchanged() {
-    // upstream: log.c:741 - `c[0] == 'c'` triggers collapse
+    // upstream: log.c:773 - `c[0] == 'c'` triggers collapse
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Created)
         .with_file_type(FileType::RegularFile);
@@ -229,7 +229,7 @@ fn golden_all_attributes_changed() {
 
 #[test]
 fn golden_atime_only_shows_u() {
-    // upstream: log.c:731 - `iflags & ITEM_REPORT_ATIME ? 'u'`
+    // upstream: log.c:763 - `iflags & ITEM_REPORT_ATIME ? 'u'`
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
@@ -291,7 +291,7 @@ fn golden_time_uppercase_t_takes_precedence() {
 
 #[test]
 fn golden_all_outputs_are_eleven_chars() {
-    // upstream: log.c:734 - `c[11] = '\0'` - always exactly 11 characters
+    // upstream: log.c:766 - `c[11] = '\0'` - always exactly 11 characters
     let cases: Vec<(ItemizeChange, &str)> = vec![
         (
             ItemizeChange::new()

@@ -83,7 +83,7 @@ pub(super) fn apply_during_transfer_deletions(
         DeleteTiming::During => {
             delete_extraneous_entries(context, destination, relative, keep_names)?;
         }
-        // upstream: generator.c:345 `delete_during == 2` decides the delete set
+        // upstream: generator.c:351 `delete_during == 2` decides the delete set
         // during the walk (via `delete_in_dir`/`change_local_filter_dir`, while
         // the destination merge files are still absent) and only postpones the
         // unlink. Decide here and defer the concrete plan; the flush executes it

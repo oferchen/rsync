@@ -179,7 +179,7 @@ pub(super) fn commit_file(
 ///
 /// Best-effort: a missing partial file or a non-empty partial-dir leaves the
 /// filesystem untouched. Absolute `--partial-dir` values are never rmdir'd,
-/// matching upstream `util1.c:1343` (`if (!create && *partial_dir == '/')`).
+/// matching upstream `util1.c:1507` (`if (!create && *partial_dir == '/')`).
 fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
     let PartialMode::PartialDir(ref dir) = config.partial_mode else {
         return;

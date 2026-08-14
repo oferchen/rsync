@@ -54,7 +54,7 @@ impl ModuleDefinitionBuilder {
         })?;
 
         let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
-        // upstream: clientserver.c:831 - `use_chroot < 0` means unset. Track
+        // upstream: clientserver.c:883 - `use_chroot < 0` means unset. Track
         // explicitness so a runtime chroot() failure can fall back to
         // no-chroot only when the operator did not demand it.
         let use_chroot_explicit = self.use_chroot.is_some() || default_use_chroot.is_some();

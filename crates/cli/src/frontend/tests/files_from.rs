@@ -1751,7 +1751,7 @@ fn resolve_files_from_entry_with_leading_dot_slash_skips_extra_marker() {
 /// ```
 ///
 /// Source operand is `$scratchdir` (the parent of `from/`); dest is `$todir/`.
-/// Upstream `flist.c:2351-2477` honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Upstream `flist.c:2749-2875` honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// and calls `send_directory()` for every trailing-slash or dotdir entry, so
 /// `from/./` enumerates one level of `from/`'s children even though `--files-from`
 /// implicitly clears `recurse` (`options.c:2189`). The same applies to

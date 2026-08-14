@@ -1037,7 +1037,7 @@ fn alt_dest_types_cannot_be_mixed() {
     );
 }
 
-/// upstream: options.c:2169 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
+/// upstream: options.c:2286 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
 /// name of exactly MAX_BATCH_NAME_LEN (256) bytes is the boundary and must be
 /// accepted. This is observable behaviour a drop-in must not regress: rejecting
 /// a legal name would break scripts that upstream rsync accepts.

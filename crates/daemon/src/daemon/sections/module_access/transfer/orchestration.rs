@@ -269,7 +269,7 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // upstream: clientserver.c:1071 - emit `@RSYNCD: OK` now that chroot and the
+    // upstream: clientserver.c:1152 - emit `@RSYNCD: OK` now that chroot and the
     // privilege drop have succeeded; the client then switches to multiplexed
     // input and sends its argv, which we read next.
     send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;

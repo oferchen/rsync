@@ -122,7 +122,7 @@ impl GeneratorContext {
                     }
                     // upstream: flist.c:2428-2436 - default: link_stat failed.
                     _ => {
-                        // upstream: flist.c:2431 - `if (errno != ENOENT)` guards
+                        // upstream: flist.c:2703 - `if (errno != ENOENT)` guards
                         // the `io_error |= IOERR_GENERAL`, so a source that
                         // never existed deliberately leaves io_error clear: that
                         // bit travels to the receiver and would inhibit its
@@ -432,7 +432,7 @@ impl GeneratorContext {
             match entry {
                 Ok(de) => child_paths.push(de.path()),
                 Err(e) => {
-                    // upstream: flist.c:1924 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
+                    // upstream: flist.c:2195 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     let text = format!(
                         "rsync: [sender] readdir({}): {}\n",
                         full_fname_path(dir_path, self.daemon_paths()),
@@ -532,7 +532,7 @@ impl GeneratorContext {
     fn log_stat_error(&mut self, path: &Path, e: &io::Error) {
         let fname = full_fname_path(path, self.daemon_paths());
         let (kind, text) = if e.kind() == io::ErrorKind::NotFound {
-            // upstream: flist.c:1314-1318 - rprintf(FWARNING, "file has vanished: %s\n", ...)
+            // upstream: flist.c:1463-1467 - rprintf(FWARNING, "file has vanished: %s\n", ...)
             (
                 SenderDiagnostic::Warning,
                 format!("file has vanished: {fname}\n"),
@@ -648,7 +648,7 @@ mod rsyserr_wording_tests {
             "rsync: [sender] opendir \"{path}\" failed: Permission denied (13)",
             "rsync: [sender] opendir \"/p\" failed: Permission denied (13)",
         ),
-        // upstream: flist.c:1924 - "readdir(%s)"
+        // upstream: flist.c:2195 - "readdir(%s)"
         (
             "rsync: [sender] readdir(\"{path}\"): Input/output error (5)",
             "rsync: [sender] readdir(\"/p\"): Input/output error (5)",
@@ -658,9 +658,9 @@ mod rsyserr_wording_tests {
             "rsync: [sender] make_file failed for \"{path}\": Permission denied (13)",
             "rsync: [sender] make_file failed for \"/p\": Permission denied (13)",
         ),
-        // upstream: flist.c:1317 / sender.c:389 - "file has vanished: %s" via full_fname()
+        // upstream: flist.c:1463 / sender.c:713 - "file has vanished: %s" via full_fname()
         ("file has vanished: \"{path}\"", "file has vanished: \"/p\""),
-        // upstream: sender.c:393 - "send_files failed to open %s"
+        // upstream: sender.c:718 - "send_files failed to open %s"
         (
             "rsync: [sender] send_files failed to open \"{path}\": Permission denied (13)",
             "rsync: [sender] send_files failed to open \"/p\": Permission denied (13)",
@@ -733,7 +733,7 @@ mod symsafe_emission_tests {
     //! Wording tests for `--info=SYMSAFE` producer emissions on the
     //! sender side.
     //!
-    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:229`
+    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:268`
     //! when `--copy-unsafe-links` triggers a dereference. The exact line
     //! emitted (per `rprintf(FINFO, ...)`) is matched byte-for-byte so
     //! interop harnesses that grep for the literal continue to find it.

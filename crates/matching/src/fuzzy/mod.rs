@@ -34,7 +34,7 @@ use std::path::PathBuf;
 
 /// Highest accepted fuzzy distance; a candidate above this is ignored.
 ///
-/// upstream: generator.c:835 - `lowest_dist = 25 << 16` seeds the scan, so a
+/// upstream: generator.c:840 - `lowest_dist = 25 << 16` seeds the scan, so a
 /// candidate qualifies only when its distance is `<= 25` Levenshtein units.
 const MAX_FUZZY_DISTANCE: u32 = 25 << 16;
 
@@ -44,7 +44,7 @@ pub const FUZZY_LEVEL_1: u8 = 1;
 /// Fuzzy level for `-yy`; searches destination directory plus reference
 /// directories (`--compare-dest`, `--copy-dest`, `--link-dest`).
 ///
-/// upstream: options.c:2083 - when `fuzzy_basis > 1`, the value is set to
+/// upstream: options.c:2199 - when `fuzzy_basis > 1`, the value is set to
 /// `basis_dir_cnt + 1` so the search iterates over the dest dir (index 0)
 /// plus each reference directory.
 pub const FUZZY_LEVEL_2: u8 = 2;

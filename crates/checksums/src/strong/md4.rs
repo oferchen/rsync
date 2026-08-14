@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn md4_seeded_zero_seed_matches_unseeded() {
-        // upstream: checksum.c:377 - `if (checksum_seed)` skips seed append on 0
+        // upstream: checksum.c:394 - `if (checksum_seed)` skips seed append on 0
         let data = b"zero seed produces unseeded digest";
         assert_eq!(
             Md4::digest_with_seed(0, data),

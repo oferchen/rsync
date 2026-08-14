@@ -67,7 +67,7 @@ impl<'a> ModuleRequestContext<'a> {
 /// Writes exactly `<payload>\n` and nothing more. Upstream never follows an
 /// `@ERROR:` line with `@RSYNCD: EXIT`: the client treats `@ERROR` as fatal
 /// and returns immediately without reading further
-/// (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0` ->
+/// (upstream: clientserver.c:424-428 - `strncmp(line, "@ERROR", 6) == 0` ->
 /// `return -1`), so the server just emits the line and lets the socket close.
 /// Only the successful module-listing path emits `@RSYNCD: EXIT`.
 ///
@@ -385,7 +385,7 @@ fn parse_client_capability_info(client_args: &[String]) -> String {
 /// `V` letter that upstream uses to gate the single-byte compat-flags
 /// encoding.
 ///
-/// Matches upstream `compat.c:734` - `strchr(client_info, 'V') != NULL`.
+/// Matches upstream `compat.c:745` - `strchr(client_info, 'V') != NULL`.
 fn has_pre_release_capability(client_info: &str, letter: char) -> bool {
     client_info.contains(letter)
 }

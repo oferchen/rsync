@@ -312,7 +312,7 @@ where
 /// DURING state - the destination's per-dir merge files have not been copied
 /// yet) and defers the concrete plan for execution after the transfer.
 ///
-/// upstream: generator.c:345 `delete_during == 2` calls `remember_delete(fp, ...)`
+/// upstream: generator.c:351 `delete_during == 2` calls `remember_delete(fp, ...)`
 /// from inside `delete_in_dir` - the decision (including
 /// `change_local_filter_dir`) happens during the walk, only the unlink is
 /// postponed to `do_delayed_deletions()` (generator.c:2419). Deciding at flush
@@ -600,7 +600,7 @@ fn remove_entry_capped(
 }
 
 /// Returns `true` when the running deletion count has reached the configured
-/// `--max-delete` limit. upstream: delete.c:156 `stats.deleted_files >= max_delete`.
+/// `--max-delete` limit. upstream: delete.c:217 `stats.deleted_files >= max_delete`.
 fn cap_reached(context: &CopyContext) -> bool {
     context
         .options()
@@ -1103,7 +1103,7 @@ pub(crate) fn remove_source_entry_if_requested(
     // upstream: sender.c:150 - re-stat the source before removing it.
     let current = match fs::symlink_metadata(source) {
         Ok(metadata) => metadata,
-        // upstream: sender.c:174-175 - ENOENT is the benign "already removed" case.
+        // upstream: sender.c:457-458 - ENOENT is the benign "already removed" case.
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         // upstream: sender.c:151-153,176-177 - any other re-lstat failure is an
         // FERROR_XFER: leave the source in place and finish RERR_PARTIAL (23).
@@ -1207,7 +1207,7 @@ fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> b
 /// inode - i.e. the source *is* the file just written to the destination, so
 /// removing it would delete the destination.
 ///
-/// upstream: sender.c:155-160 `(int64)st.st_dev == IVAL64(num_dev_ino_buf, 4)`
+/// upstream: sender.c:434-439 `(int64)st.st_dev == IVAL64(num_dev_ino_buf, 4)`
 #[cfg(unix)]
 fn is_destination_inode(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1322,7 +1322,7 @@ mod mount_boundary_tests {
     /// an ordinary deletion candidate; an entry on any other device is a mount
     /// point that must be preserved.
     ///
-    /// upstream: flist.c:1344 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// upstream: flist.c:1490 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
     /// generator.c:331 (delete_in_dir skips it).
     #[test]
     fn mount_boundary_predicate_distinguishes_devices() {

@@ -314,7 +314,7 @@ pub fn format_legacy_daemon_message(message: LegacyDaemonMessage<'_>) -> String 
 /// maximum). This is the emit half whose inverse is
 /// [`parse_daemon_module_listing`].
 ///
-/// upstream: clientserver.c:1268 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
+/// upstream: clientserver.c:1381 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
 ///
 /// # Examples
 ///

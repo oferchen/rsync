@@ -254,7 +254,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:253 - `FILE *f = msgs2stderr == 1 ? stderr : stdout;`.
+    /// upstream: log.c:272 - `FILE *f = msgs2stderr == 1 ? stderr : stdout;`.
     /// Only the `== 1` state moves the default; modelling msgs2stderr as a
     /// bool would collapse Never and Default, which differ at log.c:328.
     #[test]
