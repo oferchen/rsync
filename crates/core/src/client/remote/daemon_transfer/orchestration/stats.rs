@@ -107,7 +107,10 @@ pub(super) fn convert_server_stats_to_summary(
         summary = summary.with_events(list_only_events);
     }
 
-    // upstream: log.c - log_exit() converts io_error bitfield to RERR_* codes.
+    // upstream: cleanup.c:210-218 - convert io_error bitfield to RERR_* codes.
+    // `log_exit()` only renders the chosen code; the selection rule lives in
+    // `_exit_cleanup`, and its three independent `if`s order the flags
+    // GENERAL > VANISHED > DEL_LIMIT.
     let exit_code = io_error_flags::to_exit_code(io_error);
     if exit_code != 0 {
         summary.set_io_error_exit_code(exit_code);
