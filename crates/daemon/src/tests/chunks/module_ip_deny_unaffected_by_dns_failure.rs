@@ -21,7 +21,7 @@ fn module_ip_deny_unaffected_by_dns_failure() {
 
     // Denied peer is still denied (IP rule matches regardless of hostname).
     assert!(
-        !module.permits(denied_peer, None),
+        !module.permits(denied_peer, PeerHost::new(None, true)),
         "IP-pattern deny rule must continue to match the peer IP even when \
          reverse DNS fails"
     );
@@ -30,7 +30,7 @@ fn module_ip_deny_unaffected_by_dns_failure() {
     // GHSA-rjfm-3w2m-jf4f only activates when at least one deny rule is
     // hostname-based; pure IP-rule modules retain their original semantics.
     assert!(
-        module.permits(allowed_peer, None),
+        module.permits(allowed_peer, PeerHost::new(None, true)),
         "IP-only deny rule must not fail closed on unresolved DNS for peers \
          outside the denied range"
     );

@@ -2,9 +2,9 @@
 fn module_definition_hostname_suffix_matches() {
     let module = module_with_host_patterns(&[".example.com"], &[]);
     let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    assert!(module.permits(peer, Some("node.example.com")));
-    assert!(module.permits(peer, Some("example.com")));
-    assert!(!module.permits(peer, Some("example.net")));
-    assert!(!module.permits(peer, Some("sampleexample.com")));
+    assert!(module.permits(peer, PeerHost::new(Some("node.example.com"), true)));
+    assert!(module.permits(peer, PeerHost::new(Some("example.com"), true)));
+    assert!(!module.permits(peer, PeerHost::new(Some("example.net"), true)));
+    assert!(!module.permits(peer, PeerHost::new(Some("sampleexample.com"), true)));
 }
 

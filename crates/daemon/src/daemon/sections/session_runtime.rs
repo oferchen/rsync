@@ -100,7 +100,11 @@ fn handle_session(
         None
     };
     if let Some(log) = log_sink.as_ref() {
-        log_connection(log, peer_host.as_deref(), peer_addr);
+        log_connection(
+            log,
+            peer_host_display(peer_host.as_deref(), reverse_lookup),
+            peer_addr,
+        );
     }
 
     match style {
@@ -399,7 +403,11 @@ fn handle_legacy_session(
         // listing; capabilities are only sent after module selection
         // during the transfer handshake.
         if let Some(log) = log_sink.as_ref() {
-            log_list_request(log, peer_host.as_deref(), peer_addr);
+            log_list_request(
+                log,
+                peer_host_display(peer_host.as_deref(), reverse_lookup),
+                peer_addr,
+            );
         }
         respond_with_module_list(reader.get_mut(), &mut limiter, modules, messages)?;
         // FSM: -> Closing after sending the module list and EXIT.

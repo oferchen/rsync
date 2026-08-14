@@ -352,3 +352,209 @@ fn operator_trusted_policy_follows_a_relative_in_tree_symlink() {
         .lstat_at(std::ffi::OsStr::new("marker"))
         .expect("the sandbox must be anchored at real/, reached through sub");
 }
+
+/// The descriptor-exhaustion hint must fire for exactly the two errnos
+/// upstream tests for, and for nothing else.
+///
+/// The interesting negative is `ENOENT`: every descent that walks past a
+/// missing component produces one, so a predicate that fired on any error
+/// would print the hint on ordinary traffic. Testing only the positives
+/// would not catch that - the mutation `exhausted = true` survives a
+/// positives-only suite.
+///
+/// upstream: syscall.c:2924 `if (errno == EMFILE || errno == ENFILE)`.
+#[test]
+fn fd_exhaustion_predicate_matches_only_emfile_and_enfile() {
+    use rustix::io::Errno;
+
+    for errno in [Errno::MFILE, Errno::NFILE] {
+        let latch = std::sync::atomic::AtomicBool::new(false);
+        let err = std::io::Error::from_raw_os_error(errno.raw_os_error());
+        assert!(
+            super::should_warn_fd_exhaustion(&err, &latch),
+            "{errno:?} is a descriptor-exhaustion failure and must warn"
+        );
+    }
+
+    for errno in [
+        Errno::NOENT,
+        Errno::ACCESS,
+        Errno::LOOP,
+        Errno::XDEV,
+        Errno::NOTDIR,
+    ] {
+        let latch = std::sync::atomic::AtomicBool::new(false);
+        let err = std::io::Error::from_raw_os_error(errno.raw_os_error());
+        assert!(
+            !super::should_warn_fd_exhaustion(&err, &latch),
+            "{errno:?} is an ordinary resolution failure and must stay silent"
+        );
+        assert!(
+            !latch.load(std::sync::atomic::Ordering::Relaxed),
+            "{errno:?} must not consume the one-shot latch"
+        );
+    }
+}
+
+/// The hint is one-shot: a deep tree hits the ceiling once per component
+/// and would otherwise flood stderr with an identical line.
+///
+/// upstream: syscall.c:2926-2928 `static int warned = 0; if (!warned)`.
+#[test]
+fn fd_exhaustion_hint_is_emitted_at_most_once() {
+    use rustix::io::Errno;
+
+    let latch = std::sync::atomic::AtomicBool::new(false);
+    let err = std::io::Error::from_raw_os_error(Errno::MFILE.raw_os_error());
+
+    assert!(
+        super::should_warn_fd_exhaustion(&err, &latch),
+        "the first exhaustion must warn"
+    );
+    for attempt in 2..=16 {
+        assert!(
+            !super::should_warn_fd_exhaustion(&err, &latch),
+            "attempt {attempt} must stay silent once the latch is claimed"
+        );
+    }
+}
+
+/// Concurrent claimants still produce exactly one line.
+///
+/// The carrier hands `BorrowedFd` copies to rayon workers, so several
+/// threads can hit the ceiling in the same instant. A non-atomic
+/// load-then-store latch would let more than one through.
+#[test]
+fn fd_exhaustion_latch_admits_exactly_one_concurrent_claimant() {
+    use rustix::io::Errno;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let latch = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let claims = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..16)
+        .map(|_| {
+            let latch = Arc::clone(&latch);
+            let claims = Arc::clone(&claims);
+            thread::spawn(move || {
+                let err = std::io::Error::from_raw_os_error(Errno::MFILE.raw_os_error());
+                if super::should_warn_fd_exhaustion(&err, &latch) {
+                    claims.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("join claimant");
+    }
+
+    assert_eq!(
+        claims.load(Ordering::Relaxed),
+        1,
+        "the latch must admit exactly one claimant across all threads"
+    );
+}
+
+/// The hint text is upstream's, byte for byte, with no `rsync warning:`
+/// envelope.
+///
+/// `rprintf(FWARNING, ...)` is routed to stderr verbatim by `rwrite()`
+/// (log.c:341); the `rsync warning: ... (code N) at FILE(LINE)` wording is
+/// spelled out at its own call site (log.c:956) and does not apply here.
+/// Pinning the text is what stops a later "improvement" from wrapping it.
+///
+/// upstream: syscall.c:2930-2931.
+#[test]
+fn fd_exhaustion_hint_text_matches_upstream_verbatim() {
+    assert_eq!(
+        super::FD_EXHAUSTION_HINT,
+        "out of file descriptors resolving a deep path; raise the open-file limit (e.g. `ulimit -n`)"
+    );
+    assert!(
+        !super::FD_EXHAUSTION_HINT.contains("rsync warning:"),
+        "upstream's FWARNING at this site carries no envelope"
+    );
+    assert!(
+        !super::FD_EXHAUSTION_HINT.ends_with('\n'),
+        "the newline belongs to the emit, not the text"
+    );
+}
+
+/// Cross-check against a real kernel refusal: `enter()` must emit the hint
+/// on stderr and must still report `EMFILE` to its caller.
+///
+/// This is the only cell that exercises the wiring inside `openat_dir`
+/// rather than the predicate in isolation. Without the stderr half,
+/// deleting the `eprintln!` from `openat_dir` leaves every other test in
+/// this file green - the predicate stays correct and becomes dead code.
+///
+/// The errno half is the port's answer to upstream's `int e = errno; ...
+/// errno = e;`. Upstream needs the save/restore because `rprintf` can
+/// clobber the global `errno`; the Rust port owns the failure as a moved
+/// [`std::io::Error`], so nothing the emit does can reach it. Asserting
+/// the errno here is what makes that a checked claim rather than a stated
+/// one: a refactor that re-derives the error after the emit (from a fresh
+/// `Errno::last_os_error()`, say) changes what this sees.
+///
+/// Both the `RLIMIT_NOFILE` drop and the stderr redirect are
+/// process-global. That is safe because nextest runs each test in its own
+/// process. Every descriptor the test needs is allocated *before* the
+/// limit drops, and both globals are restored before the assertions so a
+/// failing assert can still allocate for its own output.
+///
+/// upstream: syscall.c:2924-2936.
+#[test]
+fn real_fd_exhaustion_warns_once_and_surfaces_emfile_to_the_caller() {
+    use rustix::io::dup;
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    use rustix::stdio::{dup2_stderr, stderr};
+    use std::io::{Read, Seek, SeekFrom};
+
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("subdir")).expect("mkdir subdir");
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+
+    // Allocate every descriptor up front - none of this can succeed once
+    // the limit is down.
+    let mut captured = tempfile::tempfile().expect("stderr capture file");
+    let saved_stderr = dup(stderr()).expect("save stderr");
+    let original = getrlimit(Resource::Nofile);
+
+    dup2_stderr(&captured).expect("redirect stderr");
+
+    // Existing descriptors keep working; only new allocations are refused,
+    // because the kernel checks the limit when it picks an fd number.
+    setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(3),
+            maximum: original.maximum,
+        },
+    )
+    .expect("lower RLIMIT_NOFILE");
+
+    let outcome = sandbox.enter(std::ffi::OsStr::new("subdir"));
+
+    setrlimit(Resource::Nofile, original).expect("restore RLIMIT_NOFILE");
+    dup2_stderr(&saved_stderr).expect("restore stderr");
+
+    let mut emitted = String::new();
+    captured.seek(SeekFrom::Start(0)).expect("rewind capture");
+    captured
+        .read_to_string(&mut emitted)
+        .expect("read captured stderr");
+
+    assert_eq!(
+        emitted.matches(super::FD_EXHAUSTION_HINT).count(),
+        1,
+        "the descent must print the hint exactly once; got: {emitted:?}"
+    );
+
+    let err = outcome.expect_err("descent must fail once no descriptor can be allocated");
+    assert_eq!(
+        err.raw_os_error(),
+        Some(rustix::io::Errno::MFILE.raw_os_error()),
+        "the caller must still see EMFILE, not an error re-derived after the hint"
+    );
+}

@@ -10,7 +10,7 @@
   "checksums": 0,
   "cli": 3,
   "compress": 0,
-  "core": 3,
+  "core": 0,
   "daemon": 2,
   "engine": 0,
   "filters": 0,

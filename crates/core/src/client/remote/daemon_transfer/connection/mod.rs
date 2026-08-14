@@ -228,7 +228,7 @@ pub(crate) fn resolve_auth_username(
 /// Echoes a daemon `@ERROR` line to stderr and constructs the matching
 /// client error.
 ///
-/// Mirrors upstream `clientserver.c:382` - `rprintf(FERROR, "%s\n", line)` -
+/// Mirrors upstream `clientserver.c:425` - `rprintf(FERROR, "%s\n", line)` -
 /// which prints the raw `@ERROR` line verbatim to stderr before returning
 /// the fatal error to the caller. External tools (and the upstream
 /// testsuite/daemon-chroot-acl_test.py GHSA-rjfm-3w2m-jf4f regression
