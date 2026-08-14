@@ -64,6 +64,25 @@ pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
     sanitize_path_bytes(path, 0, true)
 }
 
+/// Byte-exact variant of [`sanitize_path`] (`SP_DEFAULT`).
+///
+/// Used for symlink targets received from the network, which are raw byte
+/// strings on the wire (upstream carries them as `char*`) and need not be
+/// valid UTF-8. Routing them through `String` would replace non-UTF-8 bytes
+/// and rewrite the very value the sanitizer exists to make safe, so this
+/// entry point stays on `&[u8]` end to end. Shares
+/// [`sanitize_path_bytes`] with the `&str` form, so the traversal guard
+/// cannot diverge between the two.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1182` - `sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
+///   applied to a received symlink target when `sanitize_paths &&
+///   !munge_symlinks`.
+pub fn sanitize_path_bytes_default(path: &[u8]) -> Vec<u8> {
+    sanitize_path_bytes(path, 0, false)
+}
+
 /// Core sanitization with configurable depth budget and dot-dir handling.
 ///
 /// - `depth`: number of leading `..` segments allowed (0 for daemon mode)

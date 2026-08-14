@@ -74,6 +74,30 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
+            // upstream: flist.c:1329 - `if (sanitize_paths && !munge_symlinks
+            // && *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
+            // `sanitize_paths` is set for a daemon module serving a path
+            // (clientserver.c:1068), so turning munging off does not leave the
+            // received target untouched: it still cannot resolve above the
+            // module root. The two transforms are mutually exclusive upstream,
+            // which is why this runs only when munging is off.
+            //
+            // Applied *before* the safe-links evaluation because upstream
+            // sanitizes during the file-list decode, so the `--safe-links`
+            // check at generator.c:1951 reads the already-sanitized
+            // `F_SYMLINK(file)`. Sanitizing after the check instead would skip
+            // entries upstream creates.
+            let sanitized: PathBuf;
+            let wire_target = if !self.config.munge_symlinks
+                && self.config.connection.is_daemon_connection
+                && !wire_target.as_os_str().is_empty()
+            {
+                sanitized = sanitize_received_symlink_target(wire_target);
+                &sanitized
+            } else {
+                wire_target
+            };
+
             // upstream: generator.c:1951 - `if (safe_symlinks && unsafe_symlink(sl, fname))`
             // skips unsafe symlinks when --safe-links is set. The check stays
             // here (not in sanitize_file_list) to preserve protocol index
@@ -1018,6 +1042,28 @@ impl ReceiverContext {
 /// receives the ASCII prefix without any lossy decode. The matching strip
 /// happens on the sender via `strip_symlink_munge_prefix` in
 /// `crate::generator::file_list::entry`.
+/// Sanitizes a received symlink target so it cannot resolve above the module
+/// root, for daemon modules that disabled `munge symlinks`.
+///
+/// Mirrors upstream `flist.c:1182`, which applies `sanitize_path(...,
+/// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
+/// `sanitize_paths` is set for every daemon module (`clientserver.c:994-995`),
+/// so the two transforms between them leave no daemon configuration in which a
+/// peer-supplied target reaches the disk verbatim.
+///
+/// Byte-level like the munge sibling above: a symlink target is a raw byte
+/// string on the wire, and decoding it through `String` would rewrite the very
+/// value being made safe.
+#[cfg(unix)]
+fn sanitize_received_symlink_target(target: &Path) -> std::path::PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let sanitized =
+        crate::sanitize_path::sanitize_path_bytes_default(target.as_os_str().as_bytes());
+    std::path::PathBuf::from(OsString::from_vec(sanitized))
+}
+
 #[cfg(unix)]
 pub(in crate::receiver) fn apply_symlink_munge_prefix(target: &Path) -> std::path::PathBuf {
     use std::ffi::OsString;
