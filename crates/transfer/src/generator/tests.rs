@@ -2783,12 +2783,18 @@ fn to_exit_code_del_limit_returns_25() {
 }
 
 #[test]
-fn to_exit_code_del_limit_overrides_all() {
-    // upstream: IOERR_DEL_LIMIT takes highest precedence
+fn to_exit_code_general_outranks_vanished_and_del_limit() {
+    // upstream: cleanup.c:210-218 - three INDEPENDENT `if`s assign in the order
+    // DEL_LIMIT, VANISHED, GENERAL, each overwriting the last, so the GENERAL
+    // arm is the one that survives when several flags are set.
+    //
+    // This test previously asserted 25 under the comment "IOERR_DEL_LIMIT takes
+    // highest precedence", which inverted the rule and pinned the defect it was
+    // meant to guard.
     let all = io_error_flags::IOERR_DEL_LIMIT
         | io_error_flags::IOERR_GENERAL
         | io_error_flags::IOERR_VANISHED;
-    assert_eq!(io_error_flags::to_exit_code(all), 25);
+    assert_eq!(io_error_flags::to_exit_code(all), 23);
 }
 
 #[test]
