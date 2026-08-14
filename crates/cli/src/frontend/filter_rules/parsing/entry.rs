@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use core::client::{FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
+use filters::{ClearToken, classify_clear_token};
 
 use super::super::directive::FilterDirective;
 use super::directives::{parse_dir_merge_alias, parse_long_merge_directive};
@@ -68,11 +69,14 @@ pub(crate) fn parse_old_prefix_rule(
     }
 
     let bytes = line.as_bytes();
-    // upstream: `*s == '!'` triggers FILTRULE_CLEAR_LIST tentatively. Any
-    // trailing non-whitespace then turns the rule back into a pattern, so
-    // we honor `!` (optionally followed by whitespace) as a clear and let
-    // `!pattern` fall through to the default rule kind.
-    if bytes[0] == b'!' && (line.len() == 1 || line[1..].trim().is_empty()) {
+    // upstream: exclude.c parse_rule_tok() XFLG_OLD_PREFIXES branch - `*s ==
+    // '!'` sets FILTRULE_CLEAR_LIST tentatively WITHOUT advancing `s`, so the
+    // later `if (len > 1) rule->rflags &= ~FILTRULE_CLEAR_LIST` measures the
+    // whole line. Only a line that is exactly `!` stays a clear; anything
+    // longer - including `! ` - is demoted back to a literal pattern. The
+    // trailing-characters error cannot fire here, because its guard excludes
+    // XFLG_OLD_PREFIXES.
+    if line == "!" {
         return Ok(FilterDirective::Clear);
     }
 
@@ -119,23 +123,20 @@ pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Messag
         return Ok(FilterDirective::Noop);
     }
 
-    if let Some(remainder) = trimmed.strip_prefix('!') {
-        if remainder.trim().is_empty() {
-            return Ok(FilterDirective::Clear);
+    // upstream: exclude.c parse_rule_tok() - both the bare `!` and the `clear`
+    // long name set FILTRULE_CLEAR_LIST, and both leave exactly one character
+    // for the shared `if (*s) s++` to step over, so a lone trailing space is
+    // already "trailing characters". `RULE_STRCMP` is a case-sensitive strncmp
+    // reached only via `case 'c'`, so `CLEAR`/`Clear` are not the directive and
+    // fall through to "Unknown filter rule".
+    match classify_clear_token(trimmed.as_bytes()) {
+        ClearToken::Clear => return Ok(FilterDirective::Clear),
+        ClearToken::TrailingCharacters => {
+            let message = rsync_error!(1, "'!' rule has trailing characters: {}", trimmed)
+                .with_role(Role::Client);
+            return Err(message);
         }
-
-        let message = rsync_error!(1, "'!' rule has trailing characters: {}", trimmed)
-            .with_role(Role::Client);
-        return Err(message);
-    }
-
-    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
-    // strncmp reached only via `case 'c'`, so `CLEAR`/`Clear` are not the clear
-    // directive - they fall through to the inner switch default and raise
-    // "Unknown filter rule". Match the exact lowercase keyword, matching the
-    // merge-file path (merge/parse.rs parse_rule_line).
-    if trimmed == "clear" {
-        return Ok(FilterDirective::Clear);
+        ClearToken::NotClearToken => {}
     }
 
     if is_cvs_convenience_rule(trimmed) {

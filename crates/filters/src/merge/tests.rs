@@ -1159,3 +1159,108 @@ fn short_form_comma_not_after_prefix_is_invalid() {
 fn long_form_keyword_without_separator_is_unknown() {
     assert!(parse_rules("excludes foo", Path::new("test")).is_err());
 }
+
+/// Every clear-list spelling a merge-file line can take, and what upstream
+/// rsync 3.5.0 does with it.
+///
+/// A merge file runs the full rule syntax, so both the `!` and `clear`
+/// spellings are live and the trailing-characters error can fire - unlike the
+/// no-prefixes (`.cvsignore`) path, where `!` is a whitespace-delimited token
+/// and a longer one is simply a pattern. Expectations were measured against a
+/// locally built rsync 3.5.0.
+///
+/// upstream: exclude.c parse_rule_tok() - both spellings leave one character
+/// for `if (*s) s++`, so a lone trailing space is already trailing characters;
+/// `rule_strcmp()` steps past a comma instead, which is why `clear,` clears.
+const MERGE_CLEAR_TOKEN_GRID: &[(&str, bool)] = &[
+    ("!", true),
+    ("clear", true),
+    ("clear,", true),
+    ("!,", true),
+    ("! ", false),
+    ("!  ", false),
+    ("!_", false),
+    ("!x", false),
+    ("clear ", false),
+    ("clear  ", false),
+    ("clear_", false),
+    ("clear,x", false),
+    ("!,x", false),
+];
+
+#[test]
+fn merge_clear_token_grid_matches_upstream() {
+    for (line, clears) in MERGE_CLEAR_TOKEN_GRID {
+        let result = parse_rules(line, Path::new("test"));
+        if *clears {
+            let rules =
+                result.unwrap_or_else(|e| panic!("merge line `{line}` must parse as a clear: {e}"));
+            assert_eq!(rules.len(), 1, "merge line `{line}` must yield one rule");
+            assert_eq!(
+                rules[0].action(),
+                FilterAction::Clear,
+                "merge line `{line}` must clear the list"
+            );
+        } else {
+            let error = result
+                .err()
+                .unwrap_or_else(|| panic!("merge line `{line}` must be rejected"));
+            assert!(
+                error.to_string().contains("trailing characters"),
+                "merge line `{line}` must report trailing characters, got: {error}"
+            );
+        }
+    }
+}
+
+/// The grid must cross both spellings with every separator class, so a dropped
+/// row cannot silently shrink the guard.
+#[test]
+fn merge_clear_token_grid_covers_both_spellings_and_every_separator() {
+    for token in ["!", "clear"] {
+        for suffix in ["", " ", "_", ","] {
+            let line = format!("{token}{suffix}");
+            assert!(
+                MERGE_CLEAR_TOKEN_GRID.iter().any(|(l, _)| *l == line),
+                "merge clear-token grid is missing `{line}`"
+            );
+        }
+    }
+}
+
+/// A no-prefixes merge file (`.cvsignore` under `-C`, or a `:-` dir-merge) has
+/// no trailing-characters error at all: `!` is a plain token there and anything
+/// longer is a literal pattern.
+///
+/// upstream: exclude.c parse_rule_tok() - the FILTRULE_NO_PREFIXES branch is
+/// what rsync 3.5.0 fixed the guard to consult (`template->rflags`, not
+/// `rule->rflags`), which is precisely what suppresses the error on this path.
+#[test]
+fn no_prefixes_clear_token_never_reports_trailing_characters() {
+    let rules = parse_rules_no_prefixes("!\n", Path::new("test"), false, true, true);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(
+        rules[0].action(),
+        FilterAction::Clear,
+        "a bare `!` token clears under -C"
+    );
+
+    // `!foo` is longer than the token, so upstream demotes it to a pattern
+    // rather than erroring.
+    let rules = parse_rules_no_prefixes("!foo\n", Path::new("test"), false, true, true);
+    assert_eq!(rules.len(), 1);
+    assert_ne!(
+        rules[0].action(),
+        FilterAction::Clear,
+        "`!foo` is a literal pattern, not a clear"
+    );
+
+    // Without CVS_IGNORE the `!` is not special at all.
+    let rules = parse_rules_no_prefixes("!\n", Path::new("test"), false, false, false);
+    assert_eq!(rules.len(), 1);
+    assert_ne!(
+        rules[0].action(),
+        FilterAction::Clear,
+        "`!` is literal without the C modifier"
+    );
+}

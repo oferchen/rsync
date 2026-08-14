@@ -106,6 +106,7 @@ pub mod apple_double;
 pub mod chain;
 /// Lexical `..` collapse for filter paths, mirroring `clean_fname()`.
 pub mod clean_fname;
+pub mod clear_token;
 mod compiled;
 /// CVS exclusion patterns for rsync's `--cvs-exclude` (`-C`) option.
 pub mod cvs;
@@ -127,6 +128,7 @@ pub use apple_double::{
 };
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use clean_fname::collapse_dot_dot_dirs;
+pub use clear_token::{ClearToken, classify_clear_token};
 pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
