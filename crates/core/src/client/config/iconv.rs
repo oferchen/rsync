@@ -120,14 +120,70 @@ impl IconvSetting {
     ///   each peer's local charset); the post-comma half of
     ///   `--iconv=LOCAL,REMOTE` describes the *peer's* local charset and
     ///   is forwarded to the remote CLI by the invocation builder, not
-    ///   used for transcoding on this side. When the local charset is not
-    ///   recognised by `encoding_rs`, this returns `None` and emits a
-    ///   `tracing::warn!` (gated on the `tracing` feature) so the
-    ///   transfer falls back to verbatim bytes rather than aborting in
-    ///   the middle of a file list. The CLI parser already validates
-    ///   that the spec is non-empty, so reaching this fallback
-    ///   indicates an unsupported encoding label.
+    ///   used for transcoding on this side. An unrecognised charset is
+    ///   rejected earlier by [`IconvSetting::validate_charsets`], which the
+    ///   CLI runs at option-resolution time and which exits 4 exactly as
+    ///   upstream's `setup_iconv()` does; the `None` arm below is therefore
+    ///   defence in depth, not the operator-visible path. It must NOT be
+    ///   relaxed back into a silent fallback: returning `None` here reads to
+    ///   every caller as "no conversion requested", which is why an
+    ///   unsupported charset used to produce a full transfer with
+    ///   untranscoded filenames and no diagnostic.
     ///
+    /// Validates that every charset named by `--iconv` can actually be
+    /// opened, returning upstream's `iconv_open(...) failed` text when one
+    /// cannot.
+    ///
+    /// Upstream performs this check once at startup: `setup_iconv()` opens
+    /// both directions and calls `exit_cleanup(RERR_UNSUPPORTED)` if either
+    /// `iconv_open` fails (`rsync.c:130-140`), so an unusable charset stops
+    /// the run before a single file is examined. oc previously had no
+    /// equivalent - `resolve_converter` and `resolve_local_copy_converter`
+    /// each turned the failure into `None`, which every caller reads as "no
+    /// conversion requested", so the operator got a full transfer with the
+    /// filenames untranscoded and nothing on stderr.
+    ///
+    /// Validating here rather than at the point of use is what makes that
+    /// safe: the concern recorded on those two call sites - not wanting to
+    /// abort midway through a file list - is real, and upstream answers it
+    /// by refusing at startup. Once this gate runs there is no unknown
+    /// charset left to discover mid-transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:130-140` - `iconv_open` failure is fatal with
+    ///   `RERR_UNSUPPORTED`, message `iconv_open("%s", "%s") failed`.
+    pub fn validate_charsets(&self) -> Result<(), String> {
+        let Self::Explicit { local, remote } = self else {
+            return Ok(());
+        };
+
+        // upstream: rsync.c:130 - `ic_send = iconv_open(UTF8_CHARSET,
+        // charset)` is attempted first, so its message is the one an
+        // operator sees for a charset that cannot be opened at all.
+        Self::check_charset(local)?;
+
+        // The post-comma half names the PEER's charset. Upstream validates
+        // it in the peer process, which reaches the same `exit_cleanup`
+        // (clientserver.c:168/762, main.c:651-666 all call setup_iconv);
+        // a local copy runs both halves here, so check it here too.
+        if let Some(remote) = remote {
+            Self::check_charset(remote)?;
+        }
+        Ok(())
+    }
+
+    /// Returns upstream's failure text when `charset` cannot be opened
+    /// against the UTF-8 wire charset.
+    fn check_charset(charset: &str) -> Result<(), String> {
+        if FilenameConverter::new(charset, "UTF-8").is_err() {
+            // upstream: rsync.c:131-132 - `iconv_open("%s", "%s") failed`
+            // with UTF8_CHARSET as the destination.
+            return Err(format!(r#"iconv_open("UTF-8", "{charset}") failed"#));
+        }
+        Ok(())
+    }
+
     /// # Upstream Reference
     ///
     /// - `rsync.c:87-140` `setup_iconv()` - wire is always UTF-8.
