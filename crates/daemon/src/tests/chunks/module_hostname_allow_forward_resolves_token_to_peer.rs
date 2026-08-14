@@ -23,7 +23,7 @@ fn module_hostname_allow_forward_resolves_token_to_peer() {
     set_test_forward_override("trusted.example.com", &[peer]);
 
     assert!(
-        module.permits(peer, None),
+        module.permits(peer, PeerHost::new(None, true)),
         "a hostname allow token forward-resolving to the peer must admit it"
     );
 

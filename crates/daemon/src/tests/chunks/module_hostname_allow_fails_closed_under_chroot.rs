@@ -56,7 +56,7 @@ fn module_hostname_allow_fails_closed_under_chroot() {
     // hostname-only `hosts allow` list. The peer is refused even though
     // its IP is not explicitly denied.
     assert!(
-        !module.permits(peer, resolved),
+        !module.permits(peer, PeerHost::new(resolved, true)),
         "hostname-pattern `hosts allow` rule must refuse peers whose \
          reverse DNS fails under chroot (GHSA-rjfm-3w2m-jf4f Scenario B)"
     );
@@ -76,7 +76,7 @@ fn module_hostname_allow_fails_closed_under_chroot() {
         "override must surface the configured hostname for the positive case"
     );
     assert!(
-        module.permits(peer, resolved),
+        module.permits(peer, PeerHost::new(resolved, true)),
         "matching hostname must be admitted; the prior refusal is from \
          the DNS failure, not a pattern mismatch"
     );
