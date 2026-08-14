@@ -31,8 +31,8 @@ use std::os::unix::fs::MetadataExt;
 ///
 /// When `--keep-dirlinks` is inactive, dispatches to
 /// [`fast_io::secure_chown_at`], which walks the parent through
-/// `secure_open_dir` (`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` on
-/// Linux 5.6+, `open(O_NOFOLLOW | O_DIRECTORY)` elsewhere) and anchors
+/// `secure_open_dir` (`openat2(RESOLVE_NO_SYMLINKS)` on Linux 5.6+,
+/// `open(O_NOFOLLOW | O_DIRECTORY)` elsewhere) and anchors
 /// `fchownat` on that dirfd. `AT_SYMLINK_NOFOLLOW` alone only guards the leaf;
 /// a symlink swapped into a receiver-created ancestor directory would
 /// otherwise be followed, redirecting the chown outside the module. Mirrors
