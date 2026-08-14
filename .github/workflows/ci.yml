@@ -40,18 +40,32 @@ on:
       - '.github/workflows/_upstream-testsuite.yml'
       - 'docker/**'
       - 'Cross.toml'
+  # Merge-queue validation. This is the workflow that publishes every required
+  # context, so without this trigger a merge group would never receive them and
+  # would sit unmergeable forever. `merge_group` accepts no `paths` filter, so
+  # the full matrix runs for every batch regardless of what it touches - which
+  # is the intent: the merge group is the last gate before master, and the
+  # docs-only stand-in contexts published by ci-skip.yml are deliberately not
+  # wired here (ci-skip.yml stays `pull_request`-only; giving it this trigger
+  # would publish a second check run per required context and race this one).
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
   schedule:
     # Run nightly to exercise beta/nightly toolchains (not run on PRs)
     - cron: '30 3 * * *'
 
 concurrency:
-  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
+  group: ci-${{ github.ref }}${{ (github.ref == 'refs/heads/master' || github.event_name == 'merge_group') && format('-{0}', github.sha) || '' }}
   # Superseded pull request pushes still cancel; pushes to master do not, so
   # every merge commit keeps a completed run for bisection. The master
   # exemption lives in the GROUP KEY, not in cancel-in-progress: giving each
   # master commit its own group means there is never an older run in the group
   # to evict, which holds regardless of how the flag is evaluated.
+  #
+  # Merge groups take the same exemption for a sharper reason: a cancelled
+  # merge-group run reports as a FAILED required context, which evicts the whole
+  # batch from the queue. Batches must never cancel one another.
   cancel-in-progress: true
 
 permissions:
