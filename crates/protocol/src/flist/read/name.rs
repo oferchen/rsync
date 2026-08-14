@@ -164,9 +164,12 @@ impl FileListReader {
                     "{}",
                     crate::iconv::cannot_convert_filename_message("receiver", &name)
                 );
-                // upstream: flist.c:758 sets `io_error |= IOERR_GENERAL` with
+                // upstream: flist.c:841 sets `io_error |= IOERR_GENERAL` with
                 // no `ignore_errors` check, so this is a LOCAL error and is
-                // never suppressed by --ignore-errors.
+                // never suppressed by --ignore-errors. This is the FILENAME
+                // conversion arm (the `cannot convert filename` rprintf at
+                // :843), not the symlink-data arm at :1316 which sets the same
+                // flag - the anchor alone cannot tell them apart.
                 self.local_io_error |= crate::io_error::IOERR_GENERAL;
                 Ok(Vec::new())
             }
