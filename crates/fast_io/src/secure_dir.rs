@@ -64,6 +64,39 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
     imp::secure_open_dir(path)
 }
 
+/// Open an operator-supplied anchor directory with ordinary resolution.
+///
+/// This is the counterpart to [`secure_open_dir`] for a path the *operator*
+/// chose - a daemon module root from the config file, or the destination
+/// operand of a local/remote-shell invocation. Such a path is trusted: it is
+/// not attacker-influenced, and refusing to resolve it through a symlink
+/// breaks ordinary deployments (`/srv -> /mnt/srv`) for no security gain.
+///
+/// Confinement belongs on the *peer*-supplied remainder resolved beneath the
+/// returned descriptor, not on the anchor itself.
+///
+/// # Upstream Reference
+///
+/// Upstream splits the two by who supplied the path:
+///
+/// - `syscall.c:85-90` `open_anchor_dirfd()` - a plain
+///   `openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY)`, no `O_NOFOLLOW` and no
+///   `resolve` flags.
+/// - `syscall.c:3189-3193` - `secure_relative_open()` routes an absolute
+///   `basedir` to that helper under the comment "Absolute basedir:
+///   operator-trusted."
+/// - `main.c:765` / `clientserver.c:993` - the receiver destination and the
+///   daemon module root are entered with a plain `change_dir()`.
+///
+/// # Errors
+///
+/// Ordinary `open(2)` errors only: `ENOENT`, `ENOTDIR`, `EACCES`, `EPERM`.
+/// Unlike [`secure_open_dir`] this never fails with `ELOOP` or `EXDEV`
+/// merely because a component is a symlink.
+pub fn open_trusted_dir(path: &Path) -> io::Result<OwnedFd> {
+    imp::open_trusted_dir(path)
+}
+
 #[cfg(unix)]
 mod imp {
     use super::*;
@@ -87,6 +120,41 @@ mod imp {
         }
 
         open_nofollow(&c_path)
+    }
+
+    pub(super) fn open_trusted_dir(path: &Path) -> io::Result<OwnedFd> {
+        let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path contains interior null byte",
+            )
+        })?;
+
+        // upstream: syscall.c:85-90 open_anchor_dirfd() - no `O_NOFOLLOW`,
+        // no `resolve` flags. The anchor is operator-supplied, so ordinary
+        // symlink resolution applies.
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+
+        // SAFETY: `c_path` is a valid NUL-terminated C string borrowed for
+        // the duration of the call. `libc::open` is a thread-safe syscall
+        // wrapper returning either a fresh owned descriptor or -1 with
+        // `errno` set. Ownership of any non-negative fd transfers
+        // immediately to `OwnedFd::from_raw_fd`, which closes it on drop;
+        // the raw value is not retained anywhere else, so no aliasing or
+        // use-after-free is possible.
+        #[allow(unsafe_code)]
+        let raw = unsafe { libc::open(c_path.as_ptr(), flags) };
+
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: `raw` is a non-negative fd just returned by `open(2)` with
+        // `O_CLOEXEC`. It has not been duplicated or leaked; this is the sole
+        // owner.
+        #[allow(unsafe_code)]
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        Ok(fd)
     }
 
     /// Plain `open(O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` fallback.

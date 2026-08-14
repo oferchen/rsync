@@ -24,7 +24,7 @@ use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPhase;
 
 #[cfg(unix)]
-use super::sandbox::open_sandbox_for_dest_strict;
+use super::sandbox::{open_sandbox_for_dest_anchored, open_sandbox_for_dest_strict};
 use super::wire_filters::parse_wire_filters_for_receiver;
 
 /// Merges the daemon module `incoming chmod` modifiers with the client
@@ -530,10 +530,27 @@ impl ReceiverContext {
         // upstream: clientserver.c:1018 - `use_secure_symlinks = am_daemon
         // && !am_chrooted` gates the do_*_at wrappers in syscall.c that
         // implement the same refusal.
+        //
+        // A daemon receiver takes the anchored path instead. `dest_dir` is
+        // `module_root.join(peer_tail)` (see
+        // `open_sandbox_for_dest_anchored`), and the two halves are not
+        // equally trusted: the operator authored the root, the client sent
+        // the tail. Opening the fused string under one resolve policy made
+        // an operator's own symlinked module root - `path = /srv/...` where
+        // `/srv` is a link - refuse every transfer, because the policy that
+        // belongs to the tail was being applied to the root as well.
         #[cfg(unix)]
         let sandbox = {
             let strict = self.config.connection.is_daemon_connection;
-            open_sandbox_for_dest_strict(&dest_dir, strict)?
+            match self.config.connection.daemon_module_root.as_deref() {
+                Some(module_root) if strict => {
+                    open_sandbox_for_dest_anchored(module_root, &dest_dir)?
+                }
+                // No module root recorded (every non-daemon receiver, plus a
+                // daemon connection that never resolved one): there is no
+                // operator/peer split to make, so keep the existing open.
+                _ => open_sandbox_for_dest_strict(&dest_dir, strict)?,
+            }
         };
 
         // FSM: file list received and sanitized. Advance to DeltaTransfer.

@@ -36,6 +36,28 @@ macro_rules! info_log {
     };
 }
 
+/// Emit a warning, unconditionally.
+///
+/// Unlike [`info_log!`](crate::info_log) and
+/// [`debug_log!`](crate::debug_log) this takes no flag or level: upstream's
+/// `FWARNING` is not verbosity-gated. It is a log code `rwrite()` dispatches
+/// in its own right (upstream: `log.c:341`) and one the protocol carries to
+/// the peer for versions >= 30 (upstream: `rsync.h:285`, `rsync.h:296`).
+///
+/// Reach for this when an operator needs to know something happened whether
+/// or not they passed `-v`. Anything that should stay quiet at default
+/// verbosity belongs in `info_log!` or `debug_log!` instead.
+///
+/// ```ignore
+/// warn_log!("cannot confine destination '{}': {err}", dest.display());
+/// ```
+#[macro_export]
+macro_rules! warn_log {
+    ($($arg:tt)*) => {
+        $crate::emit_warning(format!($($arg)*));
+    };
+}
+
 /// Emit a debug log message if the flag level is enabled.
 ///
 /// The message is only formatted when the current thread's

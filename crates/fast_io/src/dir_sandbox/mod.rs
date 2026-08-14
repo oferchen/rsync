@@ -134,6 +134,87 @@ struct DirFrame {
 }
 
 impl DirSandbox {
+    /// Open a receiver destination root, splitting operator trust from peer
+    /// trust.
+    ///
+    /// `anchor` is operator-supplied - a daemon module root from the config
+    /// file, or the destination operand of a local/remote-shell run. It is
+    /// opened with ordinary resolution via [`open_trusted_dir`], so an
+    /// operator layout like `/srv -> /mnt/srv` resolves normally.
+    ///
+    /// `peer_tail` is the module-relative remainder the *peer* asked for. It
+    /// is resolved component-by-component beneath the anchor descriptor, so
+    /// it can neither climb above the anchor nor follow a planted symlink out
+    /// of the served tree.
+    ///
+    /// Fusing the two into one absolute path and applying a single policy is
+    /// what this method exists to prevent: confining the anchor breaks
+    /// ordinary deployments, and trusting the tail is a module escape.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:85-90` `open_anchor_dirfd()` - plain `openat` for an
+    ///   operator anchor.
+    /// - `syscall.c:3189-3193` - "Absolute basedir: operator-trusted."
+    /// - `syscall.c:2891` `ds_descend()` - the per-component walk that
+    ///   confines the peer-supplied remainder.
+    ///
+    /// # Errors
+    ///
+    /// - Ordinary `open(2)` errors for `anchor` (`ENOENT`, `ENOTDIR`,
+    ///   `EACCES`).
+    /// - `EXDEV` when a `peer_tail` component would escape the anchor.
+    /// - `ELOOP` when a `peer_tail` component is a symlink that cannot be
+    ///   resolved beneath the anchor.
+    #[cfg(unix)]
+    pub fn open_dest_anchor(anchor: &Path, peer_tail: &Path) -> io::Result<Self> {
+        Self::open_dest_anchor_with_policy(anchor, peer_tail, ConfinePolicy::operator_trusted())
+    }
+
+    /// [`open_dest_anchor`](Self::open_dest_anchor) with the trust policy made
+    /// explicit.
+    ///
+    /// `policy` decides how components the peer named are resolved. The
+    /// [`NoExclude`] arm implemented here keeps the kernel walk and is
+    /// therefore behaviour-identical to the unpolicied entry point; the oracle
+    /// arm replaces the mechanism and lands with its consumer in tasks
+    /// 599/600.
+    #[cfg(unix)]
+    pub fn open_dest_anchor_with_policy(
+        anchor: &Path,
+        peer_tail: &Path,
+        policy: ConfinePolicy<NoExclude>,
+    ) -> io::Result<Self> {
+        let ConfinePolicy { exclude } = policy;
+        let mut fd = crate::secure_dir::open_trusted_dir(anchor)?;
+
+        for component in peer_tail.components() {
+            let name = match component {
+                std::path::Component::Normal(name) => name,
+                // `.` is a no-op; anything else (`..`, a root, a prefix) has
+                // no business in a peer-supplied module-relative tail and is
+                // refused rather than normalised away.
+                std::path::Component::CurDir => continue,
+                _ => {
+                    return Err(io::Error::from_raw_os_error(libc::EXDEV));
+                }
+            };
+            fd = openat_dir(fd.as_fd(), name)?;
+            // Under `NoExclude` this is a constant `false`. A real oracle
+            // cannot be honoured here at all - the kernel resolved the
+            // component, so the only path available is the nominal one.
+            if exclude.outside_confinement(Path::new(name)) {
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
+        }
+
+        Ok(Self {
+            root: Arc::new(fd),
+            stack: Vec::new(),
+            secondaries: DashMap::new(),
+        })
+    }
+
     /// Open `root` and seed an empty descent stack.
     ///
     /// The root is opened through [`secure_open_dir`] so the bootstrap
@@ -328,17 +409,38 @@ impl DirSandbox {
     }
 }
 
-/// Open `child_name` as a directory off `parent_fd` using the strictest
-/// resolution policy the running kernel supports.
+/// Descend one component beneath `parent_fd`, following an in-tree symlink
+/// and refusing an escape.
 ///
-/// On Linux 5.6+ this uses `openat2(2)` with
-/// `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`; otherwise it falls back to
-/// `openat(2)` with `O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` via `rustix`.
+/// This is the single beneath-semantics primitive. Both the per-entry
+/// descent and the peer-tail walk under an operator anchor go through it, so
+/// there is one implementation of one upstream rule.
+///
+/// The policy is upstream's `ds_descend()` (`syscall.c:2891`): a relative
+/// in-tree symlink target is spliced back into the walk, while an absolute
+/// target or a climb above the anchor is refused. `RESOLVE_BENEATH` gives
+/// exactly that, and `RESOLVE_NO_MAGICLINKS` blocks the `/proc` magic-link
+/// detour. It is the same mask the peer-path parent anchor already uses
+/// (`at_syscalls/nested.rs:201`), whose rationale this now shares rather
+/// than contradicts.
+///
+/// `RESOLVE_NO_SYMLINKS` is deliberately *not* set. It refuses every symlink
+/// component, including the in-tree ones upstream resolves, which turns a
+/// symlinked subdirectory inside the destination tree into a hard failure.
+///
+/// Where `openat2(2)` is unavailable the walk degrades to `O_NOFOLLOW` per
+/// component, which refuses in-tree symlinks the kernel path would follow.
+/// That is stricter than upstream and is the portable-fallback gap tracked
+/// for the rest of the sandbox.
 fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     #[cfg(target_os = "linux")]
     {
         if openat2_supported()
-            && let Some(fd) = linux::openat2_beneath(parent_fd, child_name)?
+            && let Some(fd) = linux::openat2_beneath(
+                parent_fd,
+                child_name,
+                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS,
+            )?
         {
             return Ok(fd);
         }
@@ -381,6 +483,7 @@ mod linux {
     pub(super) fn openat2_beneath(
         parent_fd: BorrowedFd<'_>,
         child_name: &OsStr,
+        resolve: u64,
     ) -> io::Result<Option<OwnedFd>> {
         let c_name = CString::new(child_name.as_bytes()).map_err(|_| {
             io::Error::new(
@@ -413,10 +516,15 @@ mod linux {
         #[allow(unsafe_code)]
         let raw = unsafe {
             let mut how: libc::open_how = std::mem::zeroed();
-            how.flags =
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
+            // `O_NOFOLLOW` is deliberately absent. It refuses a symlink at the
+            // final component, and every caller here passes a single component,
+            // so the leaf *is* the whole path - it would refuse the in-tree
+            // symlinks `RESOLVE_BENEATH` is here to let through, and it does so
+            // before any `resolve` flag is consulted. Confinement is the
+            // caller's `resolve` mask; an escape still fails with `EXDEV`.
+            how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
             how.mode = 0;
-            how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+            how.resolve = resolve;
 
             libc::syscall(
                 libc::SYS_openat2,
@@ -441,5 +549,61 @@ mod linux {
             return Ok(None);
         }
         Err(err)
+    }
+}
+
+/// Consulted per descended component when a walk is confined to a module.
+///
+/// Only the manual per-component resolver can honour this: `openat2` resolves
+/// symlinks in the kernel, so a `RESOLVE_BENEATH` walk never learns where a
+/// symlink landed and could only offer the *nominal* path - which is exactly
+/// what a symlink defeats. See `docs/design/path-confinement-resolver-api.md`
+/// section 4.4.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:2891-2965` `ds_descend()` - extends `ds.abspath` per component
+///   and refuses when `abspath_outside_confinement()` says the resolved path
+///   left the module.
+pub trait ConfinementOracle {
+    /// True when `abspath` has left the served tree.
+    fn outside_confinement(&self, abspath: &Path) -> bool;
+}
+
+/// The oracle for an operator-trusted walk: there is nothing to exclude.
+///
+/// Zero-sized, so a `ConfinePolicy<NoExclude>` carries no state and the
+/// exclude check compiles out entirely. This mirrors upstream leaving
+/// `ds.abspath` unseeded for a non-daemon caller, where the comment at
+/// `syscall.c:2989-2991` notes such callers "pay nothing".
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoExclude;
+
+impl ConfinementOracle for NoExclude {
+    fn outside_confinement(&self, _abspath: &Path) -> bool {
+        false
+    }
+}
+
+/// How a walk treats components it did not itself name.
+///
+/// The policy selects the *resolution mechanism*, not merely the call shape:
+/// `NoExclude` keeps the kernel walk (`RESOLVE_BENEATH`), while a real oracle
+/// requires the manual per-component resolver, because the exclude check is
+/// unimplementable on top of `openat2`.
+///
+/// The type parameter arrives with the oracle arm (tasks 599/600). Today only
+/// the `NoExclude` instantiation exists, so it is spelled concretely rather
+/// than speculatively generalised.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConfinePolicy<O = NoExclude> {
+    exclude: O,
+}
+
+impl ConfinePolicy<NoExclude> {
+    /// The operator named every component; nothing is confined.
+    #[must_use]
+    pub const fn operator_trusted() -> Self {
+        Self { exclude: NoExclude }
     }
 }
