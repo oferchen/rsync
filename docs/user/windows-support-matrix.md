@@ -126,6 +126,14 @@ are in `docs/design/windows-device-file-strategy.md`.
 - NFSv4-to-DACL conversion audit: tracked under XAP series.
 - ARM64 Windows build and test: not in CI matrix.
 - Windows Event Log integration: not wired; daemon logs to STDERR.
+- Daemon auth username: set `USER` explicitly. Upstream resolves the username
+  it sends in the `@RSYNCD` auth response from `USER`, then `LOGNAME`, falling
+  back to `nobody` (`clientserver.c:289-292`, `authenticate.c:451-452`); it
+  never consults `USERNAME`. A native Windows shell typically sets only
+  `USERNAME`, so a client that does not set `USER` authenticates as `nobody`
+  and an `auth users` rule naming the login account rejects it. oc mirrors
+  upstream here deliberately: the username is a wire byte, and sending a
+  different one would be a silent, non-negotiated divergence.
 
 ## 6. Build and packaging requirements
 

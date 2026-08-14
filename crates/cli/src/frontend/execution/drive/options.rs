@@ -13,9 +13,10 @@ use core::client::{
 use logging_sink::MessageSink;
 
 use super::super::{
-    parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,
-    parse_compress_threads, parse_debug_flags, parse_info_flags, parse_max_alloc_argument,
-    parse_max_delete_argument, parse_modify_window_argument, parse_size_limit_argument,
+    empty_size_means_zero, parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice,
+    parse_compress_level, parse_compress_threads, parse_debug_flags, parse_info_flags,
+    parse_max_alloc_argument, parse_max_delete_argument, parse_modify_window_argument,
+    parse_size_limit_argument,
 };
 use super::messages::fail_with_message;
 use crate::frontend::{
@@ -320,18 +321,24 @@ where
     };
 
     let min_size_limit = match inputs.min_size.as_ref() {
-        Some(value) => match parse_size_limit_argument(value.as_os_str(), "--min-size") {
-            Ok(limit) => Some(limit),
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        },
+        Some(value) => {
+            match parse_size_limit_argument(empty_size_means_zero(value.as_os_str()), "--min-size")
+            {
+                Ok(limit) => Some(limit),
+                Err(message) => return Err(fail_with_message(message, stderr)),
+            }
+        }
         None => None,
     };
 
     let max_size_limit = match inputs.max_size.as_ref() {
-        Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-size") {
-            Ok(limit) => Some(limit),
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        },
+        Some(value) => {
+            match parse_size_limit_argument(empty_size_means_zero(value.as_os_str()), "--max-size")
+            {
+                Ok(limit) => Some(limit),
+                Err(message) => return Err(fail_with_message(message, stderr)),
+            }
+        }
         None => None,
     };
 

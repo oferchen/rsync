@@ -302,19 +302,14 @@ where
 
     let min_size = matches.remove_one::<OsString>("min-size");
     let max_size = matches.remove_one::<OsString>("max-size");
-    let block_size = match matches.remove_one::<OsString>("block-size") {
-        Some(value) => {
-            let s = value.to_string_lossy();
-            if s.parse::<u64>().is_err() {
-                return Err(clap::Error::raw(
-                    clap::error::ErrorKind::ValueValidation,
-                    format!("invalid --block-size value '{s}': must be a positive integer\n"),
-                ));
-            }
-            Some(value)
-        }
-        None => None,
-    };
+    // `--block-size` is validated where `--min-size` / `--max-size` are, by the
+    // shared suffix-aware parser (`parse_block_size_argument`). A bare-integer
+    // gate here would pre-empt it and make upstream's whole size grammar
+    // unreachable for this one option.
+    //
+    // upstream: options.c:1802 `parse_size_arg(arg, 'b', "block-size", 0,
+    // max_blength, False)` - the same parser the three siblings use.
+    let block_size = matches.remove_one::<OsString>("block-size");
 
     let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
     let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;

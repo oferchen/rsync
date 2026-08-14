@@ -23,7 +23,8 @@ pub(crate) use numeric::{
 };
 pub(crate) use protocol::{ProtocolArg, legacy_remote_rejection, parse_protocol_version_arg};
 pub(crate) use size::{
-    parse_block_size_argument, parse_max_alloc_argument, parse_size_limit_argument,
+    empty_size_means_zero, parse_block_size_argument, parse_max_alloc_argument,
+    parse_size_limit_argument,
 };
 
 #[cfg(test)]

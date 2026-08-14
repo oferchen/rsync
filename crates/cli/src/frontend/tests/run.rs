@@ -79,15 +79,21 @@ fn run_rejects_excess_alt_dest_dirs() {
 
 #[test]
 fn clap_value_error_does_not_double_error_prefix() {
-    // A clap value-validation failure (here `--block-size`) surfaces through
+    // A clap value-validation failure (here `--io-uring-depth`) surfaces through
     // `clap::Error::to_string()`, which prepends a stock `error: ` header. oc
     // wraps the detail with the canonical `syntax or usage error: ` category
     // (upstream `rerr_names`), so an unstripped clap header would render the
     // wording twice as `syntax or usage error: error: ...`. Upstream rsync
     // prints the category exactly once; this guards that parity.
+    //
+    // The vehicle used to be `--block-size=abc`, but that option no longer
+    // fails at the clap layer: its validation moved to the shared size parser
+    // so the upstream suffix grammar (`1K`, `1KiB`, `1.5K`) could reach it.
+    // Any option that still raises a clap `ValueValidation` serves equally -
+    // the guard is about the prefix, not about which option produced it.
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(OC_RSYNC),
-        OsString::from("--block-size=abc"),
+        OsString::from("--io-uring-depth=abc"),
         OsString::from("src"),
         OsString::from("dst"),
     ]);
@@ -101,7 +107,7 @@ fn clap_value_error_does_not_double_error_prefix() {
         "diagnostic should keep the canonical rerr_names category"
     );
     assert!(
-        rendered.contains("invalid --block-size value 'abc'"),
+        rendered.contains("invalid --io-uring-depth value 'abc'"),
         "diagnostic should include the clap-provided detail"
     );
     assert!(

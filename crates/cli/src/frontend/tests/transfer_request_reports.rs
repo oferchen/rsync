@@ -26,9 +26,14 @@ fn transfer_request_reports_filter_file_errors() {
         OsString::from("dst"),
     ]);
 
-    assert_eq!(code, 1);
+    // upstream: exclude.c:1712-1719 - RERR_FILEIO (11), not the generic 1 this
+    // asserted before, and upstream's own wording.
+    assert_eq!(code, 11);
     assert!(stdout.is_empty());
     let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
-    assert!(rendered.contains("failed to read filter file 'missing.txt'"));
+    assert!(
+        rendered.contains("failed to open exclude file missing.txt"),
+        "unexpected diagnostic: {rendered}"
+    );
     assert_contains_client_trailer(&rendered);
 }

@@ -31,10 +31,10 @@ pub(crate) use flags::{
 pub(crate) use module_list::render_module_list;
 pub(crate) use operands::{extract_operands, parse_bind_address_argument};
 pub(crate) use options::{
-    ProtocolArg, legacy_remote_rejection, parse_block_size_argument, parse_checksum_seed_argument,
-    parse_max_alloc_argument, parse_max_delete_argument, parse_modify_window_argument,
-    parse_protocol_version_arg, parse_size_limit_argument, parse_timeout_argument,
-    resolve_iconv_setting,
+    ProtocolArg, empty_size_means_zero, legacy_remote_rejection, parse_block_size_argument,
+    parse_checksum_seed_argument, parse_max_alloc_argument, parse_max_delete_argument,
+    parse_modify_window_argument, parse_protocol_version_arg, parse_size_limit_argument,
+    parse_timeout_argument, resolve_iconv_setting,
 };
 pub(crate) use stop::{parse_stop_after_argument, parse_stop_at_argument};
 
