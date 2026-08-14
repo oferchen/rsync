@@ -1488,16 +1488,29 @@ fn link_dest_refused_hard_link_creates_the_node_instead() {
             let ftime = FileTime::from_last_modification_time(
                 &fs::symlink_metadata(&source_node).expect("source metadata"),
             );
-            set_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+            // Must be the NOFOLLOW setter, to match the lstat above. Plain
+            // set_file_times() open(2)s the path first, which on these three
+            // kinds is not merely wrong but unusable: a FIFO blocks forever
+            // waiting for a peer to open the other end, a socket refuses with
+            // ENXIO/EOPNOTSUPP, and a symlink is followed to a target that
+            // does not exist.
+            filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
 
-            let operands = vec![
-                source_dir.clone().into_os_string(),
-                dest_dir.clone().into_os_string(),
-            ];
+            // Trailing slash is load-bearing: it syncs the CONTENTS of source,
+            // so the entry's link-dest-relative name is `node` and resolves to
+            // `previous/node`. Without it the name would be `source/node`,
+            // the basis lookup would miss, and the link tier would never run -
+            // the matrix would pass while testing nothing.
+            let mut source_operand = source_dir.clone().into_os_string();
+            source_operand.push("/");
+            let operands = vec![source_operand, dest_dir.clone().into_os_string()];
             let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+            // `specials` covers FIFOs and sockets; symlinks need `links` as
+            // well, or they are skipped before the link tier is reached.
             let options = LocalCopyOptions::default()
                 .recursive(true)
                 .specials(true)
+                .links(true)
                 .permissions(true)
                 .extend_link_dests([basis_dir.clone()]);
 
@@ -1572,12 +1585,15 @@ fn link_dest_links_special_when_the_destination_accepts_it() {
     let ftime = FileTime::from_last_modification_time(
         &fs::symlink_metadata(&source_node).expect("source metadata"),
     );
-    set_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+    // NOFOLLOW setter to match the lstat above; plain set_file_times() would
+    // open(2) the FIFO and block forever waiting for a peer.
+    filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
 
-    let operands = vec![
-        source_dir.clone().into_os_string(),
-        dest_dir.clone().into_os_string(),
-    ];
+    // Trailing slash syncs the CONTENTS, so the link-dest-relative name is
+    // `node` and resolves to `previous/node` (see the matrix test above).
+    let mut source_operand = source_dir.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .recursive(true)
