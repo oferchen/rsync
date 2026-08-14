@@ -385,7 +385,7 @@ pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
-pub use secure_dir::secure_open_dir;
+pub use secure_dir::{open_trusted_dir, secure_open_dir};
 // Non-unix `send_file_to_fd_with_policy` stub silently routes bytes to
 // `io::sink` (data-loss footgun for any future caller). Gate the public
 // re-export on unix; the stub stays available in-crate for symbol parity.
