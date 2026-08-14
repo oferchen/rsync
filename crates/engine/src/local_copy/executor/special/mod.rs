@@ -19,8 +19,53 @@ pub(crate) use device::copy_device;
 pub(crate) use fifo::copy_fifo;
 pub(crate) use symlink::{copy_symlink, create_symlink, symlink_target_is_safe};
 
+/// Attempts a `--link-dest` basis hard link, reporting whether it succeeded.
+///
+/// Returns `Ok(false)` when the destination refuses to create the link, leaving
+/// the caller to materialise the entry from the source instead. Upstream treats
+/// *any* `do_link_at()` failure that way rather than selecting "cannot
+/// hard-link" errnos, because the errno does not carry that distinction:
+/// `link(2)` documents `EPERM` both for a filesystem without hard-link support
+/// and for an ordinary permission refusal, and FUSE reports `ENOSYS` for the
+/// same condition. Failures that are genuinely fatal (`ENOSPC`, `EDQUOT`,
+/// `EROFS`) surface again when the caller creates the node, so nothing is
+/// silently swallowed.
+///
+/// upstream: generator.c:1269-1292 try_dests_non() - a failed `do_link_at()`
+/// sets `cannot_hardlink = 1; match_level = 2;` and returns `-3`, which makes
+/// the caller create the entry, landing where a build without
+/// `CAN_HARDLINK_SYMLINK` / `CAN_HARDLINK_SPECIAL` already lands.
+fn try_hard_link_basis(
+    context: &mut CopyContext,
+    basis: &Path,
+    destination: &Path,
+) -> Result<bool, LocalCopyError> {
+    let mut attempted_commit = false;
+    loop {
+        match create_hard_link(basis, destination) {
+            Ok(()) => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination(destination)?;
+                return Ok(create_hard_link(basis, destination).is_ok());
+            }
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && context.delay_updates_enabled()
+                    && !attempted_commit =>
+            {
+                context.commit_deferred_update_for(basis)?;
+                attempted_commit = true;
+            }
+            Err(_) => return Ok(false),
+        }
+    }
+}
+
 /// Hard-links a `--link-dest` basis device or special node into place, recording
 /// an exact-match `hD`/`hS` itemize row with blank attribute slots.
+///
+/// Returns `false` when the destination refused the link, so the caller creates
+/// the node from the source instead (see [`try_hard_link_basis`]).
 ///
 /// upstream: generator.c:1105-1137 try_dests_non() match_level 3 - the basis is
 /// hard-linked via `do_link()` and itemized with
@@ -38,35 +83,9 @@ pub(super) fn link_special_from_link_dest(
     file_type: fs::FileType,
     destination_previously_existed: bool,
     is_device: bool,
-) -> Result<(), LocalCopyError> {
-    let mut attempted_commit = false;
-    loop {
-        match create_hard_link(basis, destination) {
-            Ok(()) => break,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                remove_existing_destination(destination)?;
-                create_hard_link(basis, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
-                })?;
-                break;
-            }
-            Err(error)
-                if error.kind() == io::ErrorKind::NotFound
-                    && context.delay_updates_enabled()
-                    && !attempted_commit =>
-            {
-                context.commit_deferred_update_for(basis)?;
-                attempted_commit = true;
-                continue;
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create hard link",
-                    destination.to_path_buf(),
-                    error,
-                ));
-            }
-        }
+) -> Result<bool, LocalCopyError> {
+    if !try_hard_link_basis(context, basis, destination)? {
+        return Ok(false);
     }
 
     context.record_hard_link(metadata, destination);
@@ -107,5 +126,5 @@ pub(super) fn link_special_from_link_dest(
         record_path,
         file_type,
     )?;
-    Ok(())
+    Ok(true)
 }
