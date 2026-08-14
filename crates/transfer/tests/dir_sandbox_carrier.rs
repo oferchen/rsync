@@ -98,14 +98,25 @@ fn receiver_shaped_descent_tracks_current_dirfd() {
     assert_eq!(sandbox.current_dirfd().as_raw_fd(), root_raw);
 }
 
+/// An **absolute** symlink target is refused even when it resolves back
+/// inside the tree, and the failed descent leaves the cursor untouched.
+///
+/// This test previously asserted that *any* symlink leaf is refused, which
+/// described a policy the carrier no longer has. Its fixture only ever
+/// exercised the absolute case, so retargeting it at absoluteness is what
+/// it was actually measuring all along - the name and comments were the
+/// part that was wrong.
+///
+/// upstream: `ds_descend()` refuses an absolute target outright
+/// (`syscall.c:2953`) while splicing a relative in-tree one back into the
+/// walk (`syscall.c:2961`), so refusing here is parity, not strictness.
 #[test]
-fn descent_refuses_symlink_leaf_without_disturbing_stack() {
+fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("real")).unwrap();
-    // `link` is a symlink that resolves to `real`. Entering `link`
-    // must fail under the leaf `O_NOFOLLOW` invariant on every Unix
-    // target the carrier supports; on Linux 5.6+ the `openat2`
-    // upgrade adds `RESOLVE_NO_SYMLINKS` for the same refusal.
+    // NOTE: `root.join("real")` is an ABSOLUTE target. That is the whole
+    // point of this case - see the relative-target test below for the
+    // in-tree behaviour, which is the one that actually changed.
     symlink(root.join("real"), root.join("link")).unwrap();
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
@@ -114,23 +125,23 @@ fn descent_refuses_symlink_leaf_without_disturbing_stack() {
 
     let err = sandbox
         .enter(OsStr::new("link"))
-        .expect_err("symlink leaf must be rejected");
+        .expect_err("absolute symlink target must be rejected");
 
     // Accepted refusals across Unix variants:
-    // - Linux openat2 `RESOLVE_NO_SYMLINKS` -> ELOOP (raw 40).
-    // - Linux openat `O_NOFOLLOW | O_DIRECTORY` on a symlink leaf ->
-    //   ELOOP (raw 40).
-    // - macOS / BSD evaluate O_DIRECTORY before O_NOFOLLOW and report
-    //   ENOTDIR (raw 20) for symlink-to-directory.
+    // - Linux openat2 `RESOLVE_BENEATH` rejects an absolute target as an
+    //   escape -> EXDEV (raw 18).
+    // - macOS / BSD take the leaf-only `O_NOFOLLOW | O_DIRECTORY` arm and
+    //   report ENOTDIR (raw 20) or ELOOP (raw 62).
     let code = err.raw_os_error().expect("must carry an errno");
     let accepted: &[i32] = &[
+        18, // EXDEV on Linux under RESOLVE_BENEATH
         20, // ENOTDIR on macOS / BSD
         40, // ELOOP on Linux
         62, // ELOOP on macOS / BSD
     ];
     assert!(
         accepted.contains(&code),
-        "expected ENOTDIR or ELOOP for symlink leaf, got errno={code} ({err})"
+        "expected an escape or symlink refusal, got errno={code} ({err})"
     );
 
     assert_eq!(sandbox.depth(), depth_before, "failed enter must not push");
@@ -139,6 +150,31 @@ fn descent_refuses_symlink_leaf_without_disturbing_stack() {
         root_raw,
         "failed enter must not perturb the cursor"
     );
+}
+
+/// A **relative** in-tree symlink is followed, not refused. This is the
+/// case the carrier used to get wrong: a symlinked subdirectory inside the
+/// destination tree is ordinary content, and refusing it made a plain
+/// `oc-rsync -a src/ dst/` fail whenever `dst/sub` was a link.
+///
+/// Linux-only: the non-Linux arm is leaf-only `O_NOFOLLOW`, which still
+/// refuses a symlink leaf regardless of target. That platform split is a
+/// real residual, not an oversight in this test.
+///
+/// upstream: `syscall.c:2961`.
+#[cfg(target_os = "linux")]
+#[test]
+fn descent_follows_relative_in_tree_symlink() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("real")).unwrap();
+    symlink("real", root.join("link")).unwrap();
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+
+    sandbox
+        .enter(OsStr::new("link"))
+        .expect("a relative in-tree symlink must be followed");
+    assert_eq!(sandbox.depth(), 1, "successful enter must push");
 }
 
 #[test]
