@@ -719,6 +719,47 @@ fn a_dot_dot_inside_a_symlink_target_is_walked_not_string_collapsed() {
     .expect("the identical shape with a real intermediate must resolve");
 }
 
+/// Raise this process's soft `RLIMIT_NOFILE` toward `wanted`, returning the
+/// soft limit actually in force afterwards.
+///
+/// `DS_MAXDEPTH` is 1024, and the common Linux default soft limit is *also*
+/// 1024 - so a depth-ceiling test dies of `EMFILE` long before it reaches the
+/// ceiling and measures fd exhaustion instead of the thing it is named for.
+/// macOS defaults to 1048576, which is why this was invisible there and
+/// surfaced only when the suite was first run on Linux.
+///
+/// `setrlimit(2)` refuses a soft limit above the hard limit, so the request is
+/// clamped to it rather than failing. nextest runs each test in its own
+/// process, so the change is local to this one.
+#[cfg(unix)]
+fn raise_nofile_soft_limit(wanted: u64) -> u64 {
+    // SAFETY: both calls hand the kernel a pointer to a fully initialised,
+    // stack-owned `libc::rlimit` plus the matching resource constant, which is
+    // the documented `getrlimit(2)` / `setrlimit(2)` ABI. Neither retains the
+    // pointer past return, and the value is read only after a success.
+    #[allow(unsafe_code)]
+    unsafe {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+            return 0;
+        }
+        let target = wanted.min(limit.rlim_max as u64);
+        if (limit.rlim_cur as u64) < target {
+            let raised = libc::rlimit {
+                rlim_cur: target as libc::rlim_t,
+                rlim_max: limit.rlim_max,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raised) == 0 {
+                return target;
+            }
+        }
+        limit.rlim_cur as u64
+    }
+}
+
 /// Spec case 6: the depth ceiling refuses rather than truncating.
 ///
 /// Truncation is the dangerous failure: a walk that silently stopped early
@@ -741,6 +782,18 @@ fn the_depth_ceiling_refuses_rather_than_truncating() {
 
     let (_guard, root) = canonical_tempdir();
     let depth = super::DS_MAXDEPTH;
+
+    // The fixture holds one dirfd per level and the walk opens its own set, so
+    // reaching the ceiling needs roughly 2 * DS_MAXDEPTH descriptors. Raise
+    // the soft limit first - see `raise_nofile_soft_limit`.
+    let needed = (depth as u64 + 1) * 2 + 64;
+    let available = raise_nofile_soft_limit(needed);
+    assert!(
+        available >= needed,
+        "this test needs {needed} file descriptors to reach the depth ceiling, \
+         but the hard RLIMIT_NOFILE caps the soft limit at {available}; \
+         below that the walk dies of EMFILE before it ever reports ENOMEM"
+    );
 
     // Build `depth` nested single-character directories off a moving dirfd.
     // The parents are retained so teardown can walk back up without recursing.
