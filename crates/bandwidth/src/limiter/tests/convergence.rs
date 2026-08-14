@@ -5,16 +5,47 @@
 //! various load profiles: steady-state, step response, burst recovery,
 //! multi-stream fairness, underutilization, zero-crossing, minimum
 //! granularity, effectively-unlimited bandwidth, idle recovery, and
-//! stability under matched throughput. All assertions operate on the
-//! deterministic `requested` sleep durations recorded via the `test-support`
-//! infrastructure, eliminating wall-clock jitter.
+//! stability under matched throughput. Assertions operate on the `requested`
+//! sleep durations recorded via the `test-support` infrastructure, which
+//! removes the duration of the sleep itself from the measurement - but NOT
+//! wall-clock jitter, because `register` still credits the real time elapsed
+//! between calls as transfer allowance. Any observed-rate assertion must
+//! therefore size its window with [`registrations_for_tolerance`].
 
+use super::super::MINIMUM_SLEEP_MICROS;
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;
 
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
+}
+
+/// Safety factor applied over the bare one-quantum bound.
+///
+/// Covers the warm-up debt carried into the measured window and the
+/// sub-millisecond scheduler noise that decides *which* registration crosses
+/// the debt threshold - a shift of one registration moves the total by a full
+/// quantum, so the bound has to hold with room to spare.
+const WINDOW_MARGIN: f64 = 4.0;
+
+/// Registrations of `chunk` bytes needed before the minimum-sleep floor stops
+/// dominating an observed-rate assertion at `tolerance_pct`.
+///
+/// The limiter sleeps only once accumulated debt reaches 100 ms of transfer
+/// time, so a requested-sleep total is quantised in 100 ms steps. Over `n`
+/// registrations the ideal total is `n * chunk / rate` seconds, which makes one
+/// quantum `0.1 * rate / (n * chunk)` of it. Sizing the window is the only
+/// honest lever here: the quantum is upstream behaviour that oc mirrors, and
+/// the tolerance is the convergence property under test - so the sample has to
+/// be large enough to support the claim, rather than the claim relaxed to fit
+/// the sample.
+// upstream: io.c:sleep_for_bwlimit() - `if (sleep_usec < ONE_SEC / 10) return`
+fn registrations_for_tolerance(rate: u64, chunk: usize, tolerance_pct: f64) -> usize {
+    let quantum_secs = MINIMUM_SLEEP_MICROS as f64 / 1_000_000.0;
+    let quantum_fraction = quantum_secs * rate as f64 / chunk as f64;
+    let needed = WINDOW_MARGIN * quantum_fraction / (tolerance_pct / 100.0);
+    (needed.ceil() as usize).max(1)
 }
 
 /// Drives `chunks` registrations of `chunk_bytes` through the limiter,
@@ -524,22 +555,29 @@ fn minimum_granularity_single_byte_accumulation() {
     let mut session = recorded_sleep_session();
     session.clear();
 
-    let rate = 10_u64;
+    // The slowest rate an operator can actually request. Below it the leftover
+    // debt recomputed after each sleep - an integer division oc shares with
+    // upstream - truncates a whole byte, which at a few bytes per second is a
+    // whole sleep quantum and paces at twice the configured rate. Testing under
+    // the floor measures that truncation instead of the accumulation this test
+    // is about.
+    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+    let rate = 512_u64;
     let mut limiter = BandwidthLimiter::new(nz(rate));
 
-    // Write 10 single bytes - should accumulate to 1 second of sleep
+    // Write `rate` single bytes - should accumulate to 1 second of sleep
     let mut total_requested = Duration::ZERO;
-    for _ in 0..10 {
+    for _ in 0..rate {
         let sleep = limiter.register(1);
         total_requested = total_requested.saturating_add(sleep.requested());
     }
 
-    // 10 bytes at 10 B/s = 1 second
+    // `rate` bytes at `rate` B/s = 1 second
     let expected = Duration::from_secs(1);
     let diff = total_requested.abs_diff(expected);
     assert!(
         diff <= Duration::from_millis(200),
-        "10 bytes at 10 B/s: total {total_requested:?} should be near {expected:?}"
+        "{rate} bytes at {rate} B/s: total {total_requested:?} should be near {expected:?}"
     );
 }
 
@@ -1001,7 +1039,14 @@ fn bursty_traffic_alternating_burst_and_trickle() {
 
 #[test]
 fn convergence_across_three_decades_of_rates() {
-    let rates = [100_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
+    // Starts at the slowest rate an operator can request. The leftover debt
+    // recomputed after each sleep truncates a byte - an integer division oc
+    // shares with upstream - which costs `1 / max(chunk, rate/10)` of the pace.
+    // At the floor that is 1/64 = 1.6%; at 100 B/s it is 1/12 = 8.3%, a flat
+    // bias no window size dilutes, so a sub-floor row would measure the
+    // truncation rather than convergence.
+    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+    let rates = [512_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
 
     for &rate in &rates {
         let mut session = recorded_sleep_session();
@@ -1013,7 +1058,11 @@ fn convergence_across_three_decades_of_rates() {
         // Warm up
         let _ = run_pacing(&mut limiter, 2, chunk);
 
-        let (bytes, sleep) = run_pacing(&mut limiter, 16, chunk);
+        // The lowest rate sets the deepest window: integer-truncating `rate / 8`
+        // makes its chunk proportionally smallest, so it needs the most
+        // registrations before the 100 ms floor falls under 5%.
+        let registrations = registrations_for_tolerance(rate, chunk, 5.0);
+        let (bytes, sleep) = run_pacing(&mut limiter, registrations, chunk);
         let obs = observed_rate(bytes, sleep);
         let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
         assert!(
@@ -1082,11 +1131,19 @@ fn interleaved_streams_with_different_chunk_sizes() {
         let _ = run_pacing(limiter, 2, chunks[idx]);
     }
 
-    // Interleaved measurement
+    // Interleaved measurement. The smallest chunk sets the window: at 100 B a
+    // quantum spans five registrations, so a 16-deep window measured position
+    // within one quantum rather than convergence.
+    let registrations = chunks
+        .iter()
+        .map(|&chunk| registrations_for_tolerance(rate, chunk, 10.0))
+        .max()
+        .expect("chunks is non-empty");
+
     let mut stream_bytes = vec![0_u128; chunks.len()];
     let mut stream_sleep = vec![Duration::ZERO; chunks.len()];
 
-    for _ in 0..16 {
+    for _ in 0..registrations {
         for (idx, limiter) in limiters.iter_mut().enumerate() {
             let sleep = limiter.register(chunks[idx]);
             stream_bytes[idx] += chunks[idx] as u128;
