@@ -1007,7 +1007,7 @@ fn long_flags_capture_skip_compress() {
     assert_eq!(flags.skip_compress.as_deref(), Some("gz/zip/jpg"));
 }
 
-// upstream: options.c:2787-2790 - block_size is forwarded as a standalone
+// upstream: options.c:2953-2954 - block_size is forwarded as a standalone
 // `-B%u` token (e.g. `-B131072`) after the compact flag string. Without
 // recognition the token leaked into the positional list and the receiver
 // failed with `failed to create destination root -B131072` (exit 12).
@@ -1030,7 +1030,7 @@ fn block_size_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:2787-2790 - the forwarded block-size digits are captured.
+// upstream: options.c:2953-2954 - the forwarded block-size digits are captured.
 #[test]
 fn long_flags_capture_block_size() {
     let args = vec![OsString::from("--server"), OsString::from("-B131072")];

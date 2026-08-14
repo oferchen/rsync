@@ -23,9 +23,21 @@
 #
 # The cost of running this on every pull request is small and was measured, not
 # assumed: `cargo xtask citations` builds 68 packages, where the workspace
-# nextest cell builds 490. It needs no upstream tarball either - the gate reads
-# the committed `tools/ci/upstream-3.4.4-lines.tsv` manifest, which is why the
-# manifest exists.
+# nextest cell builds 490. It needs no upstream tarball either - the gate reads a
+# committed line-count manifest, which is why the manifest exists.
+#
+# The manifest, and the upstream release it describes, are named by
+# `MANIFEST_PATH` and `PINNED_SOURCE_DIR` in `xtask/src/commands/citations.rs`.
+# Read those constants rather than a filename written here: this comment used to
+# name `tools/ci/upstream-3.4.4-lines.tsv`, survived the bump to the 3.5.0 pin,
+# and went on asserting a file that no longer exists. A comment sitting next to
+# the thing it describes reads as authoritative, so a stale one is worse than
+# none - it cost two readers a wrong diagnosis before anyone printed the constant.
+#
+# Note also that this job answers only "does the cited line exist in that file?".
+# Whether the line still *says* what the citation claims is a separate question,
+# answered by `tools/ci/citation_drift_audit.py`. A citation can pass here and
+# fail there, which is exactly how a stale citation rides in a green cell.
 #
 # This deliberately overlaps the copy that runs under nextest. The duplication is
 # cheap and the two have different trigger sets; the standalone job is the one
@@ -34,9 +46,14 @@
 # ADVISORY, NOT REQUIRED - a deliberate choice, not an oversight.
 #
 # `Upstream citations resolve` is not in the master ruleset's required-status-check
-# list and is not being added to it. Master enforces strict up-to-date merges, so
-# every additional required context lengthens the serial merge queue; a docs-typo
-# pull request should not have to round-trip that queue behind a comment checker.
+# list and is not being added to it. A docs-typo pull request should not have to
+# wait on a comment checker to merge.
+#
+# This paragraph used to add "Master enforces strict up-to-date merges, so every
+# additional required context lengthens the serial merge queue." That is no longer
+# true - `strict_required_status_checks_policy` is now `false` on the master
+# ruleset - so the queue-length argument is retired, not the decision. Check the
+# ruleset before reusing any claim about merge behaviour from a comment.
 # The failure being closed here is *invisibility* - a wrong citation currently
 # reaches master with nothing anywhere reporting on it - and an advisory red is
 # visible on the pull request, which is exactly what was missing.

@@ -102,10 +102,33 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: start_daemon() with inherited fds uses 127.0.0.1:0 as the
-    // synthetic peer address since there is no TCP socket to query for a real
-    // peer address.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    // upstream: clientserver.c:1559 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
+    // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
+    // environment arm entirely and `client_sockaddr()` reads the real peer via
+    // `getpeername` (clientname.c:37-45).
+    //
+    // This site previously fabricated `127.0.0.1` on the stated premise that
+    // "there is no TCP socket to query" - which is simply untrue here, and is
+    // why the hole survived review. Every `hosts allow` / `hosts deny` rule was
+    // evaluated against a synthetic localhost instead of the real client.
+    let peer_addr = match crate::daemon::peer_address::inherited_socket_peer_addr() {
+        Ok(addr) => addr,
+        // upstream: clientname.c:41-45 - `getpeername` failure is fatal
+        // (`exit_cleanup(RERR_SOCKETIO)`), never a fallback address. Serving a
+        // session whose peer cannot be named would evaluate the ACL against
+        // nothing.
+        Err(err) => {
+            let code = ExitCode::SocketIo;
+            return Err(DaemonError::with_code(
+                code,
+                rsync_error!(
+                    code.as_i32(),
+                    format!("getpeername on the inherited stdin socket failed: {err}")
+                )
+                .with_role(Role::Daemon),
+            ));
+        }
+    };
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
     // name unconditionally, so this pre-module log/registry name is confirmed
