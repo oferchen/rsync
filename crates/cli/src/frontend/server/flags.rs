@@ -666,7 +666,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                 if let Some(window) = s.strip_prefix("-@") {
                     flags.modify_window = Some(window.to_owned());
                 }
-                // upstream: options.c:2787-2790 - block_size arrives as a
+                // upstream: options.c:2953-2954 - block_size arrives as a
                 // standalone `-B%u` token (e.g. `-B131072`) after the compact
                 // flag string. Guard on trailing digits so only the block-size
                 // spelling is consumed here, never some other `-B...` token.
@@ -958,7 +958,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--usermap=")
         || arg.starts_with("--groupmap=")
         || arg.starts_with("--skip-compress=")
-        // upstream: options.c:2787-2790 - block_size arrives as a standalone
+        // upstream: options.c:2953-2954 - block_size arrives as a standalone
         // `-B%u` token. Guard on trailing digits so only that spelling matches.
         || (arg.starts_with("-B")
             && arg.len() > 2

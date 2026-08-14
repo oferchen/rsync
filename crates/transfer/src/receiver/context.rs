@@ -430,7 +430,7 @@ pub struct ReceiverContext {
     /// `delete_in_dir()`; skipping protects destination files that merely never
     /// made it into an incomplete file list from being unlinked as extraneous.
     ///
-    /// upstream: generator.c:298-305 - `delete_in_dir()` returns early (printing
+    /// upstream: generator.c:304-311 - `delete_in_dir()` returns early (printing
     /// once) whenever `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(in crate::receiver) io_error_delete_warning_emitted: bool,
     /// True when this receiver is applying a recorded batch (`--read-batch`)

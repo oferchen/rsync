@@ -1426,7 +1426,7 @@ impl<'a> CopyContext<'a> {
     /// neither the warning nor the skip fires in that case - matching
     /// upstream, where the flag both suppresses the notice and lets the
     /// delete pass run.
-    // upstream: generator.c:298-305 delete_in_dir() prints "IO error
+    // upstream: generator.c:304-311 delete_in_dir() prints "IO error
     // encountered -- skipping file deletion" once (guarded by a static
     // `already_warned`) and returns without deleting whenever
     // `io_error & IOERR_GENERAL && !ignore_errors`.

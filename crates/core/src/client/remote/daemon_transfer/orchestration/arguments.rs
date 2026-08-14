@@ -408,7 +408,7 @@ pub(super) fn build_full_daemon_args(
         ));
     }
 
-    // upstream: options.c:2787-2791 - `-B%u` (block_size). oc mirrors the SSH
+    // upstream: options.c:2953-2957 - `-B%u` (block_size). oc mirrors the SSH
     // builder's `--block-size=` spelling; both are accepted by the daemon's
     // option parser and carry the identical value, so the remote receiver's
     // generator sizes delta blocks exactly like the client requested.
@@ -1485,7 +1485,7 @@ mod server_option_fidelity_tests {
         assert!(flag.contains('p'), "perms on must pack 'p': {flag}");
     }
 
-    // upstream: options.c:2787-2791 - -B/block_size must reach the remote so its
+    // upstream: options.c:2953-2957 - -B/block_size must reach the remote so its
     // generator sizes delta blocks identically. Role-agnostic (both directions).
     #[test]
     fn block_size_forwarded_both_directions() {
