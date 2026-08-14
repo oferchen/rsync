@@ -15,6 +15,33 @@ use super::parse::{
     parse_server_stop_after, parse_server_stop_at,
 };
 
+/// Resolves the Landlock allowlist root for a receiver's destination operand.
+///
+/// The root must be the **directory the receiver writes into**, never the
+/// operand itself. Upstream builds every temp name inside the destination's own
+/// directory - `get_tmpname()` (upstream: receiver.c:309) splits `fname` at its
+/// last `/` and prefixes the temp basename there - so that directory is always
+/// required, whether or not the destination file already exists.
+///
+/// Canonicalising the operand alone is not enough: when it names an **existing
+/// regular file** `canonicalize()` succeeds on the file, and Landlock's
+/// `PathBeneath` rule over a regular file grants that one file and nothing else.
+/// The receiver's `mkstemp` of a sibling temp then fails with `EACCES`. Taking
+/// the parent in that case makes an existing destination behave like one that
+/// does not exist yet, which already resolved to the parent.
+fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> {
+    dest.canonicalize()
+        .ok()
+        .and_then(|canonical| {
+            if canonical.is_dir() {
+                Some(canonical)
+            } else {
+                canonical.parent().map(std::path::Path::to_path_buf)
+            }
+        })
+        .or_else(|| dest.parent().and_then(|parent| parent.canonicalize().ok()))
+}
+
 /// Runs the native server implementation when `--server` is requested.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
@@ -445,11 +472,7 @@ where
     if role == ServerRole::Receiver {
         if let Some(dest) = config.args.last() {
             let dest_path = std::path::PathBuf::from(dest);
-            if let Some(root) = dest_path
-                .canonicalize()
-                .ok()
-                .or_else(|| dest_path.parent().and_then(|p| p.canonicalize().ok()))
-            {
+            if let Some(root) = landlock_root_for_dest(&dest_path) {
                 use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
                 if is_supported() {
                     let canonical_root = root.clone();
@@ -856,6 +879,46 @@ mod log_format_itemize_tests {
     #[test]
     fn a_format_without_i_leaves_every_flag_clear() {
         assert_eq!(derive("%n%L"), InfoFlags::default());
+    }
+}
+
+#[cfg(test)]
+mod landlock_root_tests {
+    use std::fs;
+
+    use super::landlock_root_for_dest;
+
+    /// The receiver's `mkstemp` targets the destination's own directory, so the
+    /// allowlist root must be a directory in every shape the operand can take.
+    /// The existing-file row is the regression: `canonicalize()` succeeds on the
+    /// file, and a Landlock rule over a regular file grants that file alone, so
+    /// returning the operand there denies the sibling temp with `EACCES`.
+    #[test]
+    fn root_is_the_written_directory_for_every_operand_shape() {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let dir = scratch.path().join("dest");
+        fs::create_dir(&dir).unwrap();
+        let existing_file = dir.join("f.bin");
+        fs::write(&existing_file, b"basis").unwrap();
+        let absent = dir.join("not-yet.bin");
+
+        let canonical_dir = fs::canonicalize(&dir).unwrap();
+
+        assert_eq!(
+            landlock_root_for_dest(&dir).as_ref(),
+            Some(&canonical_dir),
+            "a directory operand is its own root"
+        );
+        assert_eq!(
+            landlock_root_for_dest(&existing_file).as_ref(),
+            Some(&canonical_dir),
+            "an existing destination file must resolve to its parent directory"
+        );
+        assert_eq!(
+            landlock_root_for_dest(&absent).as_ref(),
+            Some(&canonical_dir),
+            "a not-yet-created destination keeps resolving to its parent"
+        );
     }
 }
 
