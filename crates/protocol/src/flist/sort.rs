@@ -19,7 +19,7 @@
 //! without file-before-directory distinction, implicit trailing '/', or the
 //! "."-sorts-first rule (that special case is gated on `t_PATH`, which pre-29
 //! never produces).
-//! upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+//! upstream: flist.c:3560 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 
 use std::cmp::Ordering;
 
@@ -98,7 +98,7 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 /// At protocol < 29, upstream `f_name_cmp()` uses `t_path = t_ITEM`,
 /// meaning directories are NOT treated specially - no implicit trailing
 /// slash, no files-before-dirs. This is a simple lexicographic sort.
-/// upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+/// upstream: flist.c:3560 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 ///
 /// There is also NO "." sorts-first rule here. Upstream's special case
 /// (`flist.c:3275` and its `c2` twin at `:3287`) is gated on

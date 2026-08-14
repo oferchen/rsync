@@ -208,7 +208,7 @@ pub struct ParsedServerFlags {
     /// (long-form `--no-implied-dirs`, upstream `implied_dirs == 0`).
     ///
     /// Stored negated so the `Default` derive leaves it `false` (implied dirs
-    /// on, matching upstream's `int implied_dirs = 1` default, options.c:95).
+    /// on, matching upstream's `int implied_dirs = 1` default, options.c:100).
     /// Not part of the compact flag string; set via long-form propagation.
     ///
     /// The sender's file-list builder emits the implied parent directories of a
@@ -280,7 +280,7 @@ pub struct ParsedServerFlags {
     pub append_verify: bool,
     /// Make backups before overwriting (`b` flag, `--backup`).
     ///
-    /// Upstream: `options.c:2631` - `argstr[x++] = 'b'`.
+    /// Upstream: `options.c:2797` - `argstr[x++] = 'b'`.
     pub backup: bool,
     /// Fuzzy basis file matching level (`y` flag, `--fuzzy`).
     ///
@@ -350,7 +350,7 @@ pub struct ParsedServerFlags {
     /// `if (am_sender)` block, so on a pull the flag is never sent over the
     /// wire and the local client (which IS the receiver) must apply it itself.
     /// When set, the receiver skips a directory's mtime both at creation
-    /// (upstream `rsync.c:583` - `omit_dir_times && S_ISDIR` sets
+    /// (upstream `rsync.c:719` - `omit_dir_times && S_ISDIR` sets
     /// `ATTRS_SKIP_MTIME`) and in the final retouch pass (upstream
     /// `generator.c:2271` - `need_retouch_dir_times = preserve_mtimes &&
     /// !omit_dir_times`).

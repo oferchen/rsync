@@ -75,7 +75,7 @@ pub(crate) struct MultiplexWriter<W> {
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
     /// Selects whether recorded bytes are also framed onto the wire.
-    /// upstream: `sender.c:217` `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    /// upstream: `sender.c:501` `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub(crate) batch_route: BatchRoute,
     /// Instant of the last actual write to `inner`, tracking upstream's
     /// `last_io_out`. A lull is measured from this point.
@@ -413,7 +413,7 @@ mod keepalive_tests {
     }
 
     /// Once the lull has elapsed at a frame boundary, an empty MSG_DATA keepalive
-    /// is emitted, matching upstream `send_msg(MSG_DATA, "", 0, 0)` (io.c:1473).
+    /// is emitted, matching upstream `send_msg(MSG_DATA, "", 0, 0)` (io.c:1633).
     #[test]
     fn lull_elapsed_emits_empty_msg_data() {
         let mut out: Vec<u8> = Vec::new();

@@ -325,7 +325,7 @@ fn partial_dir_path_root_level_file() {
 /// destination-relative paths so the main thread can surface upstream's
 /// `INFO_GTE(BACKUP, 1)` line during wire transfers.
 ///
-/// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n",
+/// upstream: backup.c:433 - `rprintf(FINFO, "backed up %s to %s\n",
 /// fname, buf)` fires on the `success:` label for every backup written.
 /// We propagate the notice via [`CommitResult::backup_notice`] because
 /// the disk thread's `VerbosityConfig` is not seeded with the user's

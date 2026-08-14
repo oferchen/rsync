@@ -637,7 +637,7 @@ pub(super) fn try_reference_dest_non(
 /// like upstream - no `set_file_attrs` runs afterwards. Returns `true` on a
 /// successful link and `false` on failure (the caller then creates the node).
 ///
-/// upstream: generator.c:1126 - `do_link_at(cmpbuf, fname)` then `goto cleanup`
+/// upstream: generator.c:1269 - `do_link_at(cmpbuf, fname)` then `goto cleanup`
 #[cfg(unix)]
 fn hard_link_reference_non(ref_path: &Path, dest_path: &Path) -> bool {
     if let Some(parent) = dest_path.parent() {
@@ -863,7 +863,7 @@ mod io_uring_linkat_tests {
 
 /// Pinning tests for `--info=COPY` emissions on `--copy-dest` failures.
 ///
-/// upstream: generator.c:931 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
+/// upstream: generator.c:936 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
 /// `copy_altdest_file()` whose wording reads:
 ///   `copy_file SRC => DST: STRERROR (ERRNO)`
 /// COPY sits in `info_verbosity[1]` (options.c:251) so the flag is enabled at
@@ -1394,7 +1394,7 @@ mod modify_window_tests {
     }
 
     /// With `--modify-window=-1` the quick-check requires nanosecond-exact
-    /// equality (upstream `modify_window < 0`, util1.c:1482): two files sharing
+    /// equality (upstream `modify_window < 0`, util1.c:1653): two files sharing
     /// a whole second but differing in the sub-second component are DIFFERENT
     /// and must be transferred, whereas any non-negative window skips them.
     #[test]

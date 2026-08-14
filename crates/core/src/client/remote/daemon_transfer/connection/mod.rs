@@ -260,7 +260,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     // this list can never disagree.
     let advertised_digests = advertised_digests_in_greeting(&greeting);
 
-    // upstream: compat.c:843-844 - `am_client && DEBUG_GTE(NSTR, 2)` emits
+    // upstream: compat.c:855-856 - `am_client && DEBUG_GTE(NSTR, 2)` emits
     // "Client auth list (on client): <list>" using the raw token sequence
     // from `valid_auth_checksums`. The daemon greeting carries the same
     // list verbatim, so we echo whatever the server advertised.
@@ -375,7 +375,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
                         )
                     })?;
 
-            // upstream: compat.c:865-868 - `DEBUG_GTE(NSTR, 1)` emits
+            // upstream: compat.c:877-880 - `DEBUG_GTE(NSTR, 1)` emits
             // "Client negotiated auth: <name>" after the strongest mutual
             // digest is selected.
             trace_daemon_auth_negotiated(digest.name());

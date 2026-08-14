@@ -423,7 +423,7 @@ impl GeneratorContext {
         let fname = crate::full_fname::full_fname(path_display, self.daemon_paths());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
-            // upstream: sender.c:387-390 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
+            // upstream: sender.c:713-716 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
             // `c` is FERROR only for a protocol < 28 daemon; oc's protocol floor
             // is 28, so this is always FWARNING. `fname` is already quoted and
             // carries the daemon module suffix (util1.c:1273 full_fname).
@@ -434,7 +434,7 @@ impl GeneratorContext {
             )?;
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
-            // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
+            // upstream: sender.c:718 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             let text = format!(
                 "rsync: [sender] send_files failed to open {fname}: {}\n",
                 engine::local_copy::upstream_io_error(error),
@@ -495,7 +495,7 @@ impl GeneratorContext {
         ndx: i32,
         path_display: &str,
     ) -> io::Result<()> {
-        // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
+        // upstream: sender.c:746 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
         // full_fname quotes the path and appends the daemon module suffix.
         self.emit_sender_diagnostic(
             writer,

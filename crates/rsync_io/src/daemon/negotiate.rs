@@ -96,7 +96,7 @@ where
         server_greeting.subprotocol()
     );
 
-    // upstream: clientserver.c:155 `our_sub = get_subprotocol_version()` is read
+    // upstream: clientserver.c:179 `our_sub = get_subprotocol_version()` is read
     // from this side's configured protocol version, so a release build always
     // advertises subprotocol 0.
     let our_sub = get_subprotocol_version(desired_protocol.as_u8());

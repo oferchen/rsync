@@ -75,7 +75,7 @@ pub use self::wire::{
 /// signature wire size. The `derive_strong_sum_length()` heuristic computes
 /// a dynamic length between 2-16 bytes based on file and block sizes.
 ///
-/// (upstream: generator.c:2205 `csum_length = SHORT_SUM_LENGTH`)
+/// (upstream: generator.c:2677 `csum_length = SHORT_SUM_LENGTH`)
 const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::SHORT_SUM_LENGTH).unwrap();
 
@@ -84,7 +84,7 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 /// Upstream rsync switches to `SUM_LENGTH` (16) for phase 2 redo to ensure
 /// maximum integrity after a whole-file checksum failure.
 ///
-/// (upstream: generator.c:2178 `csum_length = SUM_LENGTH`)
+/// (upstream: generator.c:2650 `csum_length = SUM_LENGTH`)
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 

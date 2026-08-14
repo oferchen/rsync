@@ -633,7 +633,7 @@ mod integration {
     /// fix, checksum bytes after each regular file entry are not consumed, causing
     /// subsequent entries to be deserialized incorrectly.
     ///
-    /// upstream: flist.c:682 `write_buf(f, sum, flist_csum_len)` writes the
+    /// upstream: flist.c:765 `write_buf(f, sum, flist_csum_len)` writes the
     /// checksum, and flist.c:1230 `read_buf(f, bp, flist_csum_len)` reads it.
     #[test]
     fn test_protocol_flist_roundtrip_with_always_checksum() {

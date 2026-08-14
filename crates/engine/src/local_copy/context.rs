@@ -719,7 +719,7 @@ pub(crate) struct DynamicDirMergeFrame {
     /// current directory's filesystem entries, each tagged with whether the
     /// originating dir-merge rule inherits into subdirectories.
     ///
-    /// upstream: exclude.c:801 `push_local_filters` sets `lp->tail = NULL` so
+    /// upstream: exclude.c:900 `push_local_filters` sets `lp->tail = NULL` so
     /// rules loaded at an ancestor depth stay in `lp->head` and continue to
     /// match descendants. The frame's loaded segments therefore accumulate the
     /// inheritable segments of every ancestor; segments whose rule carried the

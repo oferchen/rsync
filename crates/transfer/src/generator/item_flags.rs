@@ -241,7 +241,7 @@ impl ItemFlags {
                 first[0] as usize
             };
 
-            // upstream: io.c:2010-2014 - `len >= bufsize` (MAXPATHLEN) aborts
+            // upstream: io.c:2181-2185 - `len >= bufsize` (MAXPATHLEN) aborts
             // with RERR_PROTOCOL. Truncating instead would leave the unread
             // tail on the wire and desync every subsequent read.
             if xlen >= MAX_XNAME_VSTRING_LEN {

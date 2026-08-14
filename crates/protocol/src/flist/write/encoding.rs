@@ -416,7 +416,7 @@ impl FileListWriter {
             self.stats.num_dirs += 1;
         } else if entry.is_file() {
             self.stats.num_files += 1;
-            // upstream: flist.c:691 `stats.total_size += F_LENGTH(file)` uses
+            // upstream: flist.c:774 `stats.total_size += F_LENGTH(file)` uses
             // signed int64 and tolerates wrap; this is a cosmetic counter logged
             // by trace.rs and never gates wire format. Saturate instead of
             // wrapping so debug builds (overflow-checks=true, e.g. cargo-fuzz)

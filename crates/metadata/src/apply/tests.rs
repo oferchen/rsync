@@ -262,7 +262,7 @@ fn directory_permissions_and_times_are_preserved() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    // upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` always sets
+    // upstream: rsync.c:725-726 - `!atimes_ndx || S_ISDIR` always sets
     // ATTRS_SKIP_ATIME for directories, so a directory's access time is never
     // written (not even under --atimes).
     assert_ne!(

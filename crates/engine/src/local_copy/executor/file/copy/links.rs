@@ -626,7 +626,7 @@ pub(super) fn process_links(
     {
         match decision {
             ReferenceDecision::Skip(basis) => {
-                // upstream: generator.c:1022,1145 / rsync.c:676 - "is uptodate"
+                // upstream: generator.c:1154,1145 / rsync.c:828 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
                 // MetadataReused event (cli::frontend::progress::render) so

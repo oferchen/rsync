@@ -94,7 +94,7 @@ fn tri_state_flag_indexed(
 
 /// Resolves an archive-implied flag pair honoring `-a`'s command-line position.
 ///
-/// upstream: options.c:1546 `case 'a'` expands `-a` in place during the argv
+/// upstream: options.c:1653 `case 'a'` expands `-a` in place during the argv
 /// scan, assigning `preserve_* = 1` for every `-rlptgoD` dimension. Because that
 /// scan is left-to-right and last-wins, a later individual `--no-X` overrides the
 /// archive default and a later `-a` re-enables the dimension (`-a --no-perms`

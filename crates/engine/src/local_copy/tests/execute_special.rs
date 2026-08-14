@@ -248,7 +248,7 @@ fn skipping_non_regular_emits_info_nonreg_notice() {
 }
 
 /// Verifies that `--info=nononreg` (level 0) suppresses the NONREG notice,
-/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:1696).
+/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:2110).
 #[cfg(unix)]
 #[test]
 fn nononreg_suppresses_info_nonreg_notice() {
@@ -1870,7 +1870,7 @@ fn copy_unsafe_links_emits_info_symsafe_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=SYMSAFE`)
 /// suppresses the notice during a `--copy-unsafe-links` dereference,
-/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:228).
+/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:268).
 #[cfg(unix)]
 #[test]
 fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {

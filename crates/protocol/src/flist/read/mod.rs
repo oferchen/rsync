@@ -122,7 +122,7 @@ pub struct FileListReader {
     ///
     /// Controls pathname validation: when false, absolute paths (leading `/`)
     /// are rejected. When true, leading slashes are stripped instead.
-    /// upstream: flist.c:769 `!relative_paths && *thisname == '/'`
+    /// upstream: flist.c:852 `!relative_paths && *thisname == '/'`
     relative_paths: bool,
     /// Wire NDX start of the current flist segment.
     ///

@@ -503,7 +503,7 @@ fn omits_ignore_errors_flag_when_not_set() {
     );
 }
 
-// WHY: upstream options.c:2930-2931 emits `--fsync` inside the `if (am_sender)`
+// WHY: upstream options.c:2647-2648 emits `--fsync` inside the `if (am_sender)`
 // block, so it rides only on a PUSH (RemoteRole::Sender) where the remote
 // receiver fsyncs the files it writes. On a PULL the remote sender writes no
 // destination files, so forwarding --fsync would be meaningless (and upstream
@@ -1169,7 +1169,7 @@ fn includes_delay_updates_long_arg() {
 
 #[test]
 fn partial_dir_not_forwarded_on_pull_receiver() {
-    // upstream: options.c:2886 - `if (partial_dir && am_sender)`. On a pull the
+    // upstream: options.c:3052 - `if (partial_dir && am_sender)`. On a pull the
     // client is the receiver, so --partial-dir stays local and must NOT be
     // forwarded to the remote sender (upstream turns it into an implied exclude
     // of that dir on the sender, so forwarding it would change file selection).
@@ -1421,7 +1421,7 @@ fn omits_no_implied_dirs_when_default() {
 
 #[test]
 fn omits_no_implied_dirs_when_disabled_without_relative_paths() {
-    // upstream: options.c:2207-2208 forces `implied_dirs = 0` when relative
+    // upstream: options.c:2325-2326 forces `implied_dirs = 0` when relative
     // paths are off, and options.c:2976 gates the `--no-implied-dirs`
     // forwarding on `relative_paths`. A non-relative transfer must therefore
     // never forward `--no-implied-dirs`; otherwise the remote sender
@@ -2200,7 +2200,7 @@ fn list_only_arg_forwards_long_flag_without_n_on_pull() {
     );
 }
 
-// upstream: options.c:2747 - `list_only > 1`. The IMPLICIT single-source
+// upstream: options.c:2913 - `list_only > 1`. The IMPLICIT single-source
 // listing (list_only == 1, `list_only_arg` false) is never forwarded.
 #[test]
 fn implicit_list_only_does_not_forward_long_flag() {
@@ -3426,7 +3426,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         "all-flags test: --fake-super must not be forwarded to a remote sender: {args:?}"
     );
 
-    // upstream: options.c:2987 - `if (copy_devices && !am_sender)`. This is a
+    // upstream: options.c:3158 - `if (copy_devices && !am_sender)`. This is a
     // push (client is the sender), so --copy-devices is a pull-only flag and
     // must not appear even with copy_devices(true).
     assert!(
@@ -4784,7 +4784,7 @@ fn sender_only_mapping_and_dest_options_not_forwarded_on_pull() {
     }
 }
 
-// WHY (OPT-GAP-02): upstream options.c:2799 forwards `--bwlimit=%d` in whole KiB
+// WHY (OPT-GAP-02): upstream options.c:2966 forwards `--bwlimit=%d` in whole KiB
 // (options.c:1718 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The remote
 // peer re-parses the value with a default `K` suffix (options.c:1714), so a raw
 // byte count is scaled up 1024x and the throttle effectively vanishes. A rate of
@@ -4873,7 +4873,7 @@ fn dirs_delete_pull_omits_no_r() {
     );
 }
 
-// upstream: options.c:2993 - `if (open_noatime && preserve_atimes <= 1)`. Plain
+// upstream: options.c:3164 - `if (open_noatime && preserve_atimes <= 1)`. Plain
 // --open-noatime (no -U) is below the threshold, so the flag is forwarded.
 #[test]
 fn open_noatime_forwarded_without_atimes() {

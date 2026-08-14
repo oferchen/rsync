@@ -209,7 +209,7 @@ pub struct ComputedChecksum {
 /// emit directly because its thread-local [`logging::VerbosityConfig`] is
 /// never seeded, so `info_gte(Backup, 1)` would always be false there.
 ///
-/// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n", fname, buf)`
+/// upstream: backup.c:433 - `rprintf(FINFO, "backed up %s to %s\n", fname, buf)`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupNotice {
     /// Destination-relative path of the original file before the rename.

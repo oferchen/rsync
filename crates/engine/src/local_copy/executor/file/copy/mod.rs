@@ -316,7 +316,7 @@ pub(crate) fn copy_file(
 /// Mirrors the `SkippedMissingDestination` recording path so the notice renders
 /// inline during the generator phase (before the statistics block) in file
 /// order, matching upstream `recv_generator()` which prints the notice via
-/// `rprintf(FINFO, ...)` and then `goto cleanup`. upstream: generator.c:1704-1719.
+/// `rprintf(FINFO, ...)` and then `goto cleanup`. upstream: generator.c:2115-2130.
 fn record_size_skip(
     context: &mut CopyContext,
     source: &Path,

@@ -1694,7 +1694,7 @@ fn read_signature_blocks_keepalive_empty_never_fires() {
     assert_eq!(pokes, 0);
 }
 
-/// upstream: sender.c:76 - `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`.
+/// upstream: sender.c:340 - `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`.
 /// Protocol 31 and newer multiplex the checksum stream, so the sender never pokes
 /// keepalives during the signature read.
 #[test]
@@ -2268,7 +2268,7 @@ fn id_lists_round_trip_with_numeric_ids_true() {
 /// collapse broke - the sender would send the list while the receiver skipped
 /// it (or vice versa), desyncing the stream.
 ///
-/// upstream: flist.c:2548 (send, `numeric_ids <= 0`) and uidlist.c:465,473
+/// upstream: flist.c:2820 (send, `numeric_ids <= 0`) and uidlist.c:465,473
 /// (recv, `numeric_ids <= 0`).
 #[test]
 fn id_lists_round_trip_with_daemon_forced_numeric_ids() {
@@ -3332,7 +3332,7 @@ mod files_from {
         );
     }
 
-    /// upstream: flist.c:1983-1985 send_implied_dirs() - `copy_links = xfer_dirs = 1`
+    /// upstream: flist.c:2256-2258 send_implied_dirs() - `copy_links = xfer_dirs = 1`
     /// is in force while the ancestor chain is emitted, so each implied parent is
     /// stat-ed through symlinks. Stat-ing with `symlink_metadata` reports a
     /// symlinked ancestor as a non-directory and emits nothing for it, so the
@@ -4848,7 +4848,7 @@ fn segment_scheduler_starts_with_an_empty_lookahead() {
 
 #[test]
 fn segment_scheduler_stops_the_burst_once_the_backlog_is_reached() {
-    // upstream flist.c:2139 - `while (file_total - file_old_total < at_least)`
+    // upstream flist.c:2411 - `while (file_total - file_old_total < at_least)`
     // is re-tested every iteration, and file_total grows by each sub-list it
     // sends. Two 500-entry sub-lists reach exactly MIN_FILECNT_LOOKAHEAD, and
     // `1000 < 1000` is false, so the third must not go out.
@@ -5473,7 +5473,7 @@ mod itemize_emit_gate {
         captured.borrow().clone()
     }
 
-    /// upstream: generator.c:582 - `INFO_GTE(NAME, 2)` forces emission even
+    /// upstream: generator.c:588 - `INFO_GTE(NAME, 2)` forces emission even
     /// when `iflags == 0`. Without this branch the upstream `itemize.test`
     /// testsuite (run under `-ivvplrtH`) lost `.d ./`, `.d bar/`,
     /// `.f foo/config1`, and `.L foo/sym` rows on master.
@@ -5487,7 +5487,7 @@ mod itemize_emit_gate {
         );
     }
 
-    /// upstream: generator.c:582 - `INFO_GTE(NAME, 2)` is the gate.
+    /// upstream: generator.c:588 - `INFO_GTE(NAME, 2)` is the gate.
     /// `-v` (NAME level 1) is below the threshold, so unchanged entries
     /// must stay silent. This is the existing pre-fix behaviour for
     /// significant-flag-only emission.

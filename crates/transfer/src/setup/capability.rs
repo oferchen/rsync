@@ -25,7 +25,7 @@ pub(crate) struct CapabilityMapping {
     pub(crate) requires_inc_recurse: bool,
     /// Whether this capability requires the iconv feature to be compiled in.
     ///
-    /// Mirrors upstream `#ifdef ICONV_OPTION` gating (compat.c:716-718) for
+    /// Mirrors upstream `#ifdef ICONV_OPTION` gating (compat.c:728-730) for
     /// CF_SYMLINK_ICONV. The runtime caller must skip mappings whose
     /// `requires_iconv` is true when the `iconv` cargo feature is disabled,
     /// otherwise the peer will run `sender_symlink_iconv` against a stream
@@ -58,7 +58,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         requires_iconv: false,
     },
     // SYMLINK_ICONV: 's' - gated on the `iconv` cargo feature, mirroring
-    // upstream's `#ifdef ICONV_OPTION` (compat.c:716-718). Without the
+    // upstream's `#ifdef ICONV_OPTION` (compat.c:728-730). Without the
     // feature the runtime filter in `iconv_capability_compiled_in()` skips
     // this row so we neither advertise CF_SYMLINK_ICONV in `-e.<...>` nor
     // accept it from the peer.
@@ -145,7 +145,7 @@ fn consecutive_match_opt_in() -> bool {
 /// Returns whether the iconv capability ('s' / CF_SYMLINK_ICONV) is
 /// compiled into this build.
 ///
-/// Mirrors upstream's `#ifdef ICONV_OPTION` (compat.c:716-718) which
+/// Mirrors upstream's `#ifdef ICONV_OPTION` (compat.c:728-730) which
 /// gates the advertisement and recognition of CF_SYMLINK_ICONV on
 /// build-time iconv availability.
 #[inline]

@@ -89,7 +89,7 @@ impl ClientConfig {
     /// report `true` when the destination is remote AND every source is
     /// local - the exact case upstream renders as `<`.
     ///
-    /// upstream: log.c:707-710 - `!local_server && *op == 's' ? '<' : '>'`
+    /// upstream: log.c:742-745 - `!local_server && *op == 's' ? '<' : '>'`
     #[must_use]
     pub fn is_local_sender(&self) -> bool {
         use crate::client::remote::operand_is_remote;
@@ -123,7 +123,7 @@ impl ClientConfig {
     /// A push (remote destination, local sources) and a local copy both send
     /// the file list from the local process, so neither is a pull.
     ///
-    /// upstream: `flist.c:2251` prints "sending incremental file list" only on
+    /// upstream: `flist.c:2524` prints "sending incremental file list" only on
     /// the sender (`!am_server`); the client is `am_sender` for a push and a
     /// local copy, and the receiver for a pull (which prints "receiving").
     #[must_use]

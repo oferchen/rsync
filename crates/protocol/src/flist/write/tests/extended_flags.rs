@@ -301,7 +301,7 @@ fn extended_flags_owner_name_flags() {
 
 #[test]
 fn name_follows_gated_on_inc_recurse() {
-    // upstream: flist.c:481-482,491-492 - `if (inc_recurse && user_name)` gates
+    // upstream: flist.c:564-565,491-492 - `if (inc_recurse && user_name)` gates
     // the inline XMIT_*_NAME_FOLLOWS flags. Without inc_recurse the sender must
     // NOT emit inline owner names (they ride only in the trailing id-list), so
     // `with_name_follows(false)` (the default) must produce a strictly shorter

@@ -1706,7 +1706,7 @@ fn read_entry_accepts_mode_zero_sentinel_with_delete_missing_args() {
 
 /// Without `--delete-missing-args` a mode-0 entry is not a sentinel and its
 /// (empty) type bits are invalid, so upstream rejects it - as must oc.
-/// upstream: flist.c:884 `mode != 0 || missing_args != 2`.
+/// upstream: flist.c:975 `mode != 0 || missing_args != 2`.
 #[test]
 fn read_entry_rejects_mode_zero_without_delete_missing_args() {
     let protocol = test_protocol();
@@ -2885,7 +2885,7 @@ mod iconv_integration {
     /// charset must be EMPTIED and record `io_error` (exit 23) - upstream's
     /// `outbuf.len = 0` semantics, NOT a lossy `?`-mangled name.
     ///
-    /// upstream: flist.c:757-764 recv_file_entry() - `io_error |= IOERR_GENERAL`,
+    /// upstream: flist.c:841-848 recv_file_entry() - `io_error |= IOERR_GENERAL`,
     /// FERROR_UTF8, `outbuf.len = 0`.
     #[cfg(unix)]
     #[test]

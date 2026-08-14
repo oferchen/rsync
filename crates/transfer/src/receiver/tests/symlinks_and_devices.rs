@@ -367,7 +367,7 @@ fn out_format_pull_hardlink_follower_carries_leader() {
 
 #[test]
 fn out_format_pull_empty_xname_carries_no_leader() {
-    // upstream: log.c:644 gates the ` => hlink` suffix on `hlink && *hlink`, so an
+    // upstream: log.c:676 gates the ` => hlink` suffix on `hlink && *hlink`, so an
     // already-correct hard-link alias itemized with the empty xname (hlink.c:218-222)
     // carries no leader and `%L` stays empty. An empty xname must not populate
     // `hardlink_leader`.

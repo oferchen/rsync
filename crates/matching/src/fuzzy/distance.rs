@@ -8,7 +8,7 @@
 //! upstream: util1.c:1588 `fuzzy_distance()`, util1.c:1528
 //! `find_filename_suffix()`, generator.c:890-895 (combined name+suffix score).
 
-/// One Levenshtein unit of edit distance. upstream: util1.c:1586 `#define UNIT (1 << 16)`.
+/// One Levenshtein unit of edit distance. upstream: util1.c:1757 `#define UNIT (1 << 16)`.
 pub(super) const UNIT: u32 = 1 << 16;
 
 /// Distance sentinel returned when the length-difference heuristic proves the
@@ -145,7 +145,7 @@ pub(super) fn find_filename_suffix(name: &[u8]) -> &[u8] {
 
     // upstream: util1.c:1548 - scan back through the significant suffixes.
     while fn_len > 1 {
-        // upstream: util1.c:1549 - `while (*--s != '.' && s != fn) {}`.
+        // upstream: util1.c:1720 - `while (*--s != '.' && s != fn) {}`.
         let mut s = start + fn_len;
         loop {
             s -= 1;

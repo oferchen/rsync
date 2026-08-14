@@ -376,7 +376,7 @@ fn server_reader_take_io_error_plain_returns_zero() {
 /// remote pull that loses a source file mid-transfer reports the right code:
 /// IOERR_VANISHED -> 24, IOERR_GENERAL -> 23. This is the value the receiver
 /// transfer path ORs via `stats.io_error |= reader.take_io_error()`.
-/// upstream: io.c:1547 `io_error |= val`; log.c `log_exit` maps to RERR_*.
+/// upstream: io.c:1707 `io_error |= val`; log.c `log_exit` maps to RERR_*.
 #[test]
 fn server_reader_io_error_drives_receiver_exit_code() {
     use crate::generator::io_error_flags::{IOERR_GENERAL, IOERR_VANISHED, to_exit_code};

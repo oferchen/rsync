@@ -204,7 +204,7 @@ fn inline_filter_option(
 
 /// Maps an `-F` occurrence to the filter directive it expands to.
 ///
-/// upstream: options.c:1608 - the first `-F` adds `: /.rsync-filter`
+/// upstream: options.c:1715 - the first `-F` adds `: /.rsync-filter`
 /// (dir-merge), the second adds `- .rsync-filter` (exclude); third and later
 /// occurrences are ignored.
 fn rsync_filter_shortcut_directive(occurrence: usize) -> Option<OsString> {

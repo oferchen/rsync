@@ -148,7 +148,7 @@ impl FileListReader {
         let is_dir = (mode & 0o170000) == 0o040000;
 
         // 5. Read atime if preserving atimes (AFTER mode, non-directories only).
-        // upstream: flist.c:894-895 - atime is a single `read_varlong(f, 4)`;
+        // upstream: flist.c:986-987 - atime is a single `read_varlong(f, 4)`;
         // there is no atime nsec field on the wire regardless of protocol
         // version (unlike mtime nsec which is gated by XMIT_MOD_NSEC).
         let (atime, atime_nsec) = if self.preserve_atimes && !is_dir {

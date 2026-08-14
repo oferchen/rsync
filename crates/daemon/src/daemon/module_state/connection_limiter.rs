@@ -141,7 +141,7 @@ impl ConnectionLimiter {
 
 /// Builds an `F_WRLCK` description for the slot beginning at `offset`.
 ///
-/// upstream: util1.c:634-640 sets `l_type = F_WRLCK`, `l_whence = SEEK_SET`,
+/// upstream: util1.c:713-719 sets `l_type = F_WRLCK`, `l_whence = SEEK_SET`,
 /// `l_start = offset`, `l_len = len`.
 #[cfg(unix)]
 fn slot_lock(offset: i64) -> nix::libc::flock {

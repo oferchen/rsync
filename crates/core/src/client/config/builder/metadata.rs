@@ -116,7 +116,7 @@ impl ClientConfigBuilder {
     builder_setter! {
         /// Records an explicit `--super` request.
         ///
-        /// Mirrors upstream's `am_root > 1` state (`options.c:90`): set only by
+        /// Mirrors upstream's `am_root > 1` state (`options.c:3018`): set only by
         /// an explicit `--super`, never by merely running as root. Used by the
         /// remote-invocation builder to forward `--super` on a push
         /// (`options.c:2852`).

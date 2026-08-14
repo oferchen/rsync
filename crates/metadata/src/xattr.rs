@@ -42,7 +42,7 @@ fn is_root() -> bool {
 
 /// Returns upstream's `user_only` value for the receiver/local xattr paths.
 ///
-/// upstream: xattrs.c:237 `int user_only = am_sender ? 0 : !am_root;` - the
+/// upstream: xattrs.c:249 `int user_only = am_sender ? 0 : !am_root;` - the
 /// sender never restricts to the user namespace (see
 /// [`XattrRole::user_only`](crate::xattr_send::XattrRole::user_only)); every
 /// receiver-side or local-copy path restricts a non-root process to the
@@ -197,7 +197,7 @@ pub fn read_xattrs_for_wire(
     let screen = if opts.filter.is_some() {
         NamespaceScreen::Bypass
     } else {
-        // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`. The
+        // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`. The
         // sender skips only the system.* namespace and still transmits user.*,
         // security.* (e.g. SELinux labels), and trusted.*; a non-root
         // generator reading the destination to diff it keeps user.* alone, so
@@ -1211,7 +1211,7 @@ mod tests {
     /// settle. The sender is exempt at any privilege level, which is why the
     /// role - not `am_root` alone - decides.
     ///
-    /// upstream: xattrs.c:237 - `int user_only = am_sender ? 0 : !am_root;`
+    /// upstream: xattrs.c:249 - `int user_only = am_sender ? 0 : !am_root;`
     #[cfg(target_os = "linux")]
     #[test]
     fn non_root_generator_screens_out_non_user_namespaces() {

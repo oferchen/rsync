@@ -48,7 +48,7 @@ const MAX_BLOCK_ENTRY_LEN: usize = 4 + MAX_STRONG_SUM_LEN as usize;
 pub enum SumHeadError {
     /// A block-match token referenced a block the `sum_head` does not describe.
     ///
-    /// upstream: `receiver.c:414` - `Invalid block index %d (count=%ld)`,
+    /// upstream: `receiver.c:571` - `Invalid block index %d (count=%ld)`,
     /// which aborts the transfer with `RERR_PROTOCOL`.
     #[error("Invalid block index {index} (count={count})")]
     InvalidBlockIndex {

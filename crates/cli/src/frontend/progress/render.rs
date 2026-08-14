@@ -29,7 +29,7 @@ fn writeln_wrapped<W: Write + ?Sized>(
 }
 
 /// Renders a path with any trailing platform path separators trimmed as raw
-/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:789`
+/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:797`
 /// before the `created directory %s\n` print.
 fn display_without_trailing_separators(path: &Path, allow_8bit: bool) -> Vec<u8> {
     let mut rendered = escape_path(path, allow_8bit);
@@ -171,7 +171,7 @@ pub(crate) fn emit_transfer_summary(
         return Ok(());
     }
 
-    // upstream: flist.c:2251 - rprintf(FCLIENT, "sending incremental file list\n")
+    // upstream: flist.c:2524 - rprintf(FCLIENT, "sending incremental file list\n")
     // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. This banner is
     // stdout-only. Upstream's parallel `rprintf(FLOG, "building file list\n")`
     // (flist.c:2248) targets the log file, which a plain client without
@@ -710,7 +710,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Number of files: {}{files_breakdown}",
         format_count(total_entries, human_readable)
     )?;
-    // upstream: main.c:429 - `if (protocol_version >= 29)`
+    // upstream: main.c:434 - `if (protocol_version >= 29)`
     if summary.protocol_version() >= 29 {
         writeln!(
             stdout,
@@ -718,7 +718,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
             format_count(created_total, human_readable)
         )?;
     }
-    // upstream: main.c:431 - `if (protocol_version >= 31)`
+    // upstream: main.c:436 - `if (protocol_version >= 31)`
     if summary.protocol_version() >= 31 {
         writeln!(
             stdout,
@@ -936,7 +936,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     eight_bit_output: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
-    // upstream: log.c:870 log_delete() prints "deleting %n" whenever
+    // upstream: log.c:920 log_delete() prints "deleting %n" whenever
     // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
     // listing. `--info=del` leaves NAME disabled at verbosity 0, so this
     // short-circuit must fall through when DEL-gated deletions are queued -
@@ -977,7 +977,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
     for event in ordered_events {
         let kind = event.kind();
-        // upstream: log.c:870-874 log_delete() prints "deleting %n" gated on
+        // upstream: log.c:920-924 log_delete() prints "deleting %n" gated on
         // INFO_GTE(DEL, 1), which -v raises to 1 (options.c:251). The deletion
         // notice is DEL-gated and independent of the NAME level that governs the
         // per-file listing, so render it here - ahead of the transfer summary -

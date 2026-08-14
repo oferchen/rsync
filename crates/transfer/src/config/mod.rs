@@ -295,7 +295,7 @@ pub struct ConnectionConfig {
     /// `Some` only when the local process is the sender (`am_sender`) and a
     /// non-zero limit is in effect: a client push, an SSH `--server --sender`,
     /// or a daemon-sender on a pull. The receiver leaves this `None`, mirroring
-    /// upstream `main.c:1068` where the receiver sets `bwlimit_writemax = 0`.
+    /// upstream `main.c:1083` where the receiver sets `bwlimit_writemax = 0`.
     /// A `None` value (or a zero rate) is a no-op passthrough on the wire.
     ///
     /// The live [`bandwidth::BandwidthLimiter`] is constructed from these

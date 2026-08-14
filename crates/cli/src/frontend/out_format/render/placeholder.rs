@@ -109,7 +109,7 @@ pub(super) fn render_placeholder_value(
                         rendered.extend_from_slice(&escape_path(target, allow_8bit));
                         Some(rendered)
                     }
-                    // upstream: log.c:650-654 - the `case 'L'` else-branch sets n
+                    // upstream: log.c:675-679 - the `case 'L'` else-branch sets n
                     // = "" for a non-link/non-hardlink entry. With no width
                     // modifier upstream breaks with the empty string (matched here
                     // by returning None); with a width modifier it copies four
@@ -124,7 +124,7 @@ pub(super) fn render_placeholder_value(
             }
         }
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
-        // upstream: log.c:570-573 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
+        // upstream: log.c:600-603 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
         // so the numeric uid appears only under `-o`/`--owner`; otherwise `0`.
         OutFormatPlaceholder::OwnerUid => Some(
             if context.preserve_owner {
@@ -137,7 +137,7 @@ pub(super) fn render_placeholder_value(
             }
             .into_bytes(),
         ),
-        // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT"
+        // upstream: log.c:606-608 - `case 'G'` renders the literal "DEFAULT"
         // when `!gid_ndx || file->flags & FLAG_SKIP_GROUP`; only an available
         // gid under `-g`/`--group` is formatted numerically. This differs from
         // `%U` (log.c:570-573), which renders 0 for an unavailable uid.
@@ -176,7 +176,7 @@ pub(super) fn render_placeholder_value(
 /// local-copy path transfers are always whole-file, so the header is empty
 /// (count=0) and its size is the constant 16 bytes the sender reads back.
 ///
-/// upstream: rsync.h:987 `struct sum_struct`; io.c:2072 `write_sum_head()`,
+/// upstream: rsync.h:987 `struct sum_struct`; io.c:2257 `write_sum_head()`,
 /// which emits `s2length` only for `protocol_version >= 27` (always true for
 /// the protocol range oc-rsync speaks).
 const SUM_HEAD_WIRE_BYTES: u64 = 16;

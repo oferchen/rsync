@@ -13,7 +13,7 @@ fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io:
         stream.set_write_timeout(Some(duration))?;
     } else {
         // When the module sets no `timeout`, the data phase is untimed, matching
-        // upstream's `io_timeout = 0` default (options.c:102; io.c:179
+        // upstream's `io_timeout = 0` default (options.c:107; io.c:179
         // short-circuits the timeout check when unset). Clearing both directions
         // is defensive: it guarantees the accepted socket carries no inherited
         // I/O deadline into the delta phase, so a legitimately slow but live

@@ -123,7 +123,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         // row via log_item(FCLIENT), so on a push a brand-new file shows
         // `<f+++++++++` rather than `<f.........`.
         //
-        // upstream: generator.c:581 `iflags &= 0xffff` keeps every low-16
+        // upstream: generator.c:587 `iflags &= 0xffff` keeps every low-16
         // report bit - including ITEM_REPORT_XATTR (1<<8), which itemize() set
         // from the xattr_diff() comparison (generator.c:565-576). Only bits
         // 16-18 (ITEM_MISSING_DATA/DELETED/MATCHED, all log-only locals) are

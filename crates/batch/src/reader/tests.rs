@@ -591,7 +591,7 @@ mod flist_deserialization_tests {
     }
 
     /// Under `--numeric-ids` the sender emits no post-flist id-lists
-    /// (upstream `flist.c:2548` requires `numeric_ids <= 0`), so the reader
+    /// (upstream `flist.c:2820` requires `numeric_ids <= 0`), so the reader
     /// must not try to consume them even though `preserve_uid`/`preserve_gid`
     /// are set. Reading them would decode the following delta bytes as a
     /// varint id-list and desync the stream. WHY: this guards the exact

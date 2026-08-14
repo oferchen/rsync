@@ -647,7 +647,7 @@ mod tests {
         );
     }
 
-    /// upstream: clientserver.c:191 - a `remote_protocol >= 30` banner that omits
+    /// upstream: clientserver.c:218 - a `remote_protocol >= 30` banner that omits
     /// the subprotocol value is fatal for the client with `RERR_STARTCLIENT`.
     /// The message and exit code must match so a listing sees the same failure a
     /// transfer would.
@@ -664,7 +664,7 @@ mod tests {
         );
     }
 
-    /// upstream: clientserver.c:207 - a `remote_protocol > 31` banner that omits
+    /// upstream: clientserver.c:234 - a `remote_protocol > 31` banner that omits
     /// the digest name list is fatal for the client with `RERR_STARTCLIENT`.
     #[test]
     fn listing_rejects_missing_digest_list() {

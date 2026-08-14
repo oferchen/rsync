@@ -572,7 +572,7 @@ fn build_server_config_for_receiver(
     // local receiver config here - without this the ssh:// pull staged the temp
     // file in the destination directory, ignoring --temp-dir.
     server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
-    // upstream rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
+    // upstream rsync.c:719 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
     // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
     // options.c:2646-2647 packs the compact 'O' into server_options only when
     // am_sender, so on a pull -O never rides the wire; the local client IS the

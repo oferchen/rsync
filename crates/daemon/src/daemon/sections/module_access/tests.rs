@@ -2565,7 +2565,7 @@ mod module_access_tests {
 
     #[test]
     fn resolve_sender_sources_glob_keeps_literal_when_no_match() {
-        // upstream: util1.c:786 - `glob.argc == save_argc` branch preserves
+        // upstream: util1.c:864 - `glob.argc == save_argc` branch preserves
         // the literal arg when nothing matches so the sender surfaces a
         // normal link_stat failure (exit 23) instead of dropping silently.
         let tmp = tempfile::tempdir().expect("tempdir");

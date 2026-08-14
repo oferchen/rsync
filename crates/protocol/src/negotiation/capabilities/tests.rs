@@ -168,7 +168,7 @@ fn test_vstring_max_nstr_strlen_limit_rejects_oversized() {
 #[test]
 fn test_vstring_max_nstr_strlen_limit_accepts_boundary() {
     // The largest accepted vstring is MAX_NSTR_STRLEN - 1 == 255 bytes:
-    // upstream io.c:2011 rejects `len >= bufsize` (bufsize == 256), reserving
+    // upstream io.c:2181 rejects `len >= bufsize` (bufsize == 256), reserving
     // one byte for the NUL terminator.
     let boundary = "x".repeat(255);
     let mut buffer = Vec::new();
@@ -1674,7 +1674,7 @@ fn phase2_11_vstring_2byte_length_255() {
 /// Tests value 256 (crosses into second high byte).
 ///
 /// The write side must still emit the 2-byte header `0x81 0x00`, but the read
-/// side rejects it: upstream io.c:2011 refuses `len >= bufsize` (256).
+/// side rejects it: upstream io.c:2181 refuses `len >= bufsize` (256).
 #[test]
 fn phase2_11_vstring_2byte_length_256() {
     let test_str = "f".repeat(256);
@@ -1838,7 +1838,7 @@ fn phase2_12_vstring_sanity_limit_exceeded() {
 
 /// Tests exactly at the upstream reject boundary (len == MAX_NSTR_STRLEN = 256).
 ///
-/// upstream: io.c:2011 `if (len >= bufsize)` with `bufsize == MAX_NSTR_STRLEN`
+/// upstream: io.c:2181 `if (len >= bufsize)` with `bufsize == MAX_NSTR_STRLEN`
 /// (256, compat.c:99) - upstream reserves one byte for the NUL terminator, so a
 /// 256-byte payload is refused with `RERR_UNSUPPORTED`. oc-rsync must reject it
 /// too; accepting it would desync negotiation against a real rsync peer.
@@ -1890,7 +1890,7 @@ fn phase2_12_vstring_above_sanity_limit() {
 
 /// Tests the largest accepted vstring (MAX_NSTR_STRLEN - 1 = 255 bytes).
 ///
-/// upstream: io.c:2011 `if (len >= bufsize)` with `bufsize == 256` accepts up to
+/// upstream: io.c:2181 `if (len >= bufsize)` with `bufsize == 256` accepts up to
 /// 255 data bytes (one byte reserved for the NUL terminator). This is the
 /// boundary a real rsync peer will round-trip, so oc-rsync must accept it.
 #[test]

@@ -207,7 +207,7 @@ impl StrongChecksumChoice {
 
     /// Reports whether the transfer algorithm is the `none` sentinel.
     ///
-    /// Upstream `checksum.c:197-198` forces `whole_file = 1` whenever the
+    /// Upstream `checksum.c:216-217` forces `whole_file = 1` whenever the
     /// negotiated transfer checksum is `CSUM_NONE`. The config builder uses
     /// this to promote `whole_file` at build time so the delta pipeline is
     /// never engaged when the user explicitly disables the transfer

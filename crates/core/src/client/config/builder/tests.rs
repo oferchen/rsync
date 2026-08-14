@@ -1002,7 +1002,7 @@ fn delay_updates_with_explicit_partial_dir_uses_that_dir() {
     assert_eq!(rule.pattern(), ".rsync-partial/");
 }
 
-/// upstream: compat.c:791 guard `*partial_dir != '/'` - an absolute partial
+/// upstream: compat.c:803 guard `*partial_dir != '/'` - an absolute partial
 /// directory must not inject any implicit rule.
 #[test]
 fn implicit_partial_dir_filter_skips_absolute_dir() {
@@ -1088,7 +1088,7 @@ fn backup_dir_omits_protect_rule() {
     );
 }
 
-/// upstream: options.c:2336 guard `make_backups && delete_mode` - the protect
+/// upstream: options.c:2478 guard `make_backups && delete_mode` - the protect
 /// rule requires BOTH `--backup` and `--delete`; neither alone injects it.
 #[test]
 fn backup_without_delete_omits_protect_rule() {
@@ -1703,7 +1703,7 @@ fn checksum_choice_none_promotes_whole_file() {
 
 #[test]
 fn checksum_choice_none_overrides_explicit_no_whole_file() {
-    // upstream: checksum.c:198 assigns `whole_file = 1` unconditionally,
+    // upstream: checksum.c:216 assigns `whole_file = 1` unconditionally,
     // overriding any user-supplied `--no-whole-file`.
     let choice = StrongChecksumChoice::parse("none").unwrap();
     let config = builder().whole_file(false).checksum_choice(choice).build();

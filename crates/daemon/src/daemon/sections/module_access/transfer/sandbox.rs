@@ -15,7 +15,7 @@
 /// after sending an error to the client.
 ///
 /// A `chroot()`/`setgid()`/`setuid()` syscall failure runs the module's
-/// `post-xfer exec` hook before returning: upstream: clientserver.c:983-1059 -
+/// `post-xfer exec` hook before returning: upstream: clientserver.c:964-1040 -
 /// these syscalls execute after the post-xfer-exec fork point (908-933), so
 /// the waiting parent still observes the child's exit and still fires the
 /// hook. A `resolve_drop_target` uid/gid *name* resolution failure does not:
@@ -63,8 +63,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
             }
             Err(err) => {
                 // Operator demanded chroot explicitly: a failure is fatal.
-                // upstream: clientserver.c:985 - `@ERROR: chroot failed\n`
-                // upstream: clientserver.c:649 - `@ERROR: chdir failed\n`
+                // upstream: clientserver.c:1052 - `@ERROR: chroot failed\n`
+                // upstream: clientserver.c:694 - `@ERROR: chdir failed\n`
                 let text = err.to_string();
                 let error = if text.contains("chdir") {
                     AtError::ChdirFailed

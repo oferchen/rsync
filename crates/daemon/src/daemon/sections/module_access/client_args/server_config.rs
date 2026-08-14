@@ -85,7 +85,7 @@ fn apply_output_verbosity_limit(cfg: &mut ServerConfig, max_verbosity: i32) -> u
 ///   `NumericIds::DaemonForced`, distinct from the client's explicit
 ///   `NumericIds::Explicit` which also drops the wire list.
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
-    // upstream: clientserver.c:769 `module_id = i` - selecting a module makes
+    // upstream: clientserver.c:821 `module_id = i` - selecting a module makes
     // `module_id >= 0` for the rest of the server process, and that is the sole
     // condition under which `full_fname()` (util1.c:1290) appends
     // ` (in MODULE)` after the closing quote of every path it renders into an

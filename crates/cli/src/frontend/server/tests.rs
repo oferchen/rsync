@@ -1866,7 +1866,7 @@ fn server_mode_merges_cmdline_and_stdin_standalone_s_flag() {
 ///
 /// Mirrors the exact wire from the upstream alt-dest test running over
 /// lsh.sh: `--server -vlogDtpre.iLsfxCIvu --copy-dest /tmp/ad/alt3 . /tmp/ad/to/`.
-// upstream: options.c:2939-2940 `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
+// upstream: options.c:3111-3112 `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
 #[test]
 fn parse_server_args_handles_split_copy_dest_form() {
     let args = vec![

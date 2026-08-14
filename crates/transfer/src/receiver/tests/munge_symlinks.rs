@@ -192,7 +192,7 @@ fn create_symlinks_surfaces_non_eacces_error() {
 ///    the exact second. Upstream's diff drops nanoseconds; matching seconds is
 ///    the load-bearing invariant.
 ///
-/// upstream: generator.c:1604 `set_file_attrs(fname, file, NULL, NULL, 0)`
+/// upstream: generator.c:2003 `set_file_attrs(fname, file, NULL, NULL, 0)`
 /// upstream: rsync.c:set_times() uses `lutimes`/`utimensat(AT_SYMLINK_NOFOLLOW)`
 #[cfg(unix)]
 #[test]

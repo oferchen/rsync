@@ -117,7 +117,7 @@ impl BandwidthLimit {
     /// Returns the whole-KiB value that `server_options()` forwards as
     /// `--bwlimit=N` to a remote peer.
     ///
-    /// upstream: options.c:1718 - `bwlimit = (size + 512) / 1024` converts the
+    /// upstream: options.c:1825 - `bwlimit = (size + 512) / 1024` converts the
     /// parsed byte-per-second rate into whole KiB, and options.c:2799 forwards
     /// that integer as `--bwlimit=%d`. The remote side re-parses the value with
     /// a default `K` suffix (options.c:1714 `parse_size_arg(bwlimit_arg, 'K',

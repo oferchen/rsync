@@ -586,7 +586,7 @@ pub(super) fn apply_crtime_from_source_metadata(
 ///
 /// On macOS this uses `setattrlist(2)` with `ATTR_CMN_CRTIME`. On other
 /// platforms this is a no-op since creation time is not universally settable.
-// upstream: rsync.c:615 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
+// upstream: rsync.c:751 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
 pub(super) fn apply_crtime_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,

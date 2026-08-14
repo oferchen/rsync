@@ -263,7 +263,7 @@ where
     // non-allowlisted syscall is answered with EPERM, so a first read taken
     // later - inside a sandboxed worker - would cache -1 and collapse
     // `dest_mode()`'s new-file result to mode 000.
-    // upstream: main.c:1797 `umask(orig_umask = umask(0));` runs in main()
+    // upstream: main.c:1877 `umask(orig_umask = umask(0));` runs in main()
     // before any privilege drop or sandbox setup.
     #[cfg(unix)]
     metadata::init_orig_umask();

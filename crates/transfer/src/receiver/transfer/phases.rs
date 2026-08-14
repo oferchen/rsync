@@ -60,7 +60,7 @@ impl ReceiverContext {
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
             }
 
-            // upstream: generator.c:2372-2374 - phase++ then "generate_files phase=%d"
+            // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
             let mut phase: i32 = 1;
             // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
@@ -337,7 +337,7 @@ impl ReceiverContext {
         // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files finished");
 
-        // upstream: generator.c:2453-2454 - "generate_files finished" emitted at
+        // upstream: generator.c:2928-2929 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
 
@@ -404,7 +404,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generator_starting_matches_upstream() {
-        // upstream: generator.c:2277-2278 - "generator starting pid=%d"
+        // upstream: generator.c:2751-2752 - "generator starting pid=%d"
         init_genr_level1();
         let pid: u32 = 12345;
         debug_log!(Genr, 1, "generator starting pid={}", pid);
@@ -417,7 +417,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn recv_generator_per_file_matches_upstream() {
-        // upstream: generator.c:1246-1247 - "recv_generator(%s,%d)"
+        // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)"
         init_genr_level1();
         let name = PathBuf::from("dir/file.txt");
         let ndx: i32 = 7;
@@ -450,7 +450,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_finished_matches_upstream() {
-        // upstream: generator.c:2453-2454 - "generate_files finished"
+        // upstream: generator.c:2928-2929 - "generate_files finished"
         init_genr_level1();
         debug_log!(Genr, 1, "generate_files finished");
         let msgs = genr_messages();

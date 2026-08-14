@@ -528,7 +528,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:581 `iflags &= 0xffff` keeps ITEM_REPORT_XATTR
+    /// upstream: generator.c:587 `iflags &= 0xffff` keeps ITEM_REPORT_XATTR
     /// (1<<8). A push of a file whose xattrs differ carries the bit into the
     /// wire shortint (0x8100, LE 00 81) so the row prints `<f.s......x`, and the
     /// terminating xattr-request byte follows it (send_xattr_request writes

@@ -240,7 +240,7 @@ impl ReceiverContext {
                     }
                 }
             } else if !self.config.reference_directories.is_empty() {
-                // upstream: generator.c:1586 - `else if (basis_dir[0] != NULL)`
+                // upstream: generator.c:1978 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical symlink in a `--compare-dest` basis leaves
                 // the destination absent; a `--link-dest` basis is hard-linked.
@@ -309,7 +309,7 @@ impl ReceiverContext {
                 }
                 return Err(e);
             }
-            // upstream: generator.c:1604 - `set_file_attrs(fname, file, NULL, NULL, 0)`
+            // upstream: generator.c:2003 - `set_file_attrs(fname, file, NULL, NULL, 0)`
             // runs immediately after `atomic_create` -> `do_symlink` so the new
             // symlink's mtime matches the sender-supplied value. Without this
             // step the receiver-created symlink wears the wall-clock time from

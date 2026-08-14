@@ -79,7 +79,7 @@ impl ClientConfigBuilder {
         if pattern.is_empty() {
             return;
         }
-        // upstream: compat.c:791 guard `*partial_dir != '/'` - an absolute
+        // upstream: compat.c:803 guard `*partial_dir != '/'` - an absolute
         // (leading-slash) partial dir injects no implicit rule. Test the
         // leading slash directly rather than `Path::is_relative()`, which is
         // platform-dependent: on Windows a leading-slash path has no drive

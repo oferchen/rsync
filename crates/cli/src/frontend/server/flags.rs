@@ -48,7 +48,7 @@ pub(super) struct ServerLongFlags {
     pub(super) is_receiver: bool,
     /// Bandwidth limit forwarded by the client as whole KiB per second.
     ///
-    /// upstream: options.c:2799 - `server_options()` emits `--bwlimit=%d` where
+    /// upstream: options.c:2966 - `server_options()` emits `--bwlimit=%d` where
     /// `%d` is the rate in whole KiB (options.c:1718). Only the sender-role
     /// server (`--sender`) acts on it; a receiver disables its own throttle
     /// (main.c:1068). Captured raw here and parsed when building the config.
@@ -346,28 +346,28 @@ pub(super) struct ServerLongFlags {
 
     /// User id/name map spec forwarded by the client (upstream: `--usermap=SPEC`).
     ///
-    /// upstream: options.c:2912-2913 - `safe_arg("--usermap", usermap)` (joined
+    /// upstream: options.c:3084-3085 - `safe_arg("--usermap", usermap)` (joined
     /// `--usermap=VALUE`) is emitted inside the `am_sender` block so a server
     /// receiver maps ownership on the destination.
     pub(super) usermap: Option<String>,
 
     /// Group id/name map spec forwarded by the client (upstream: `--groupmap=SPEC`).
     ///
-    /// upstream: options.c:2915-2916 - `safe_arg("--groupmap", groupmap)` (joined
+    /// upstream: options.c:3087-3088 - `safe_arg("--groupmap", groupmap)` (joined
     /// `--groupmap=VALUE`), emitted alongside `--usermap` in the `am_sender` block.
     pub(super) groupmap: Option<String>,
 
     /// Skip-compress suffix list forwarded by the client (upstream:
     /// `--skip-compress=LIST`).
     ///
-    /// upstream: options.c:2859-2860 - `safe_arg("--skip-compress", skip_compress)`
+    /// upstream: options.c:3026-3027 - `safe_arg("--skip-compress", skip_compress)`
     /// (joined `--skip-compress=VALUE`), emitted in the `else` (client-receiver)
     /// branch so a server sender skips compression for the listed suffixes.
     pub(super) skip_compress: Option<String>,
 
     /// Block size forwarded by the client (upstream: `-B%u`).
     ///
-    /// upstream: options.c:2787-2790 - `asprintf(&arg, "-B%u", block_size)`
+    /// upstream: options.c:2954-2957 - `asprintf(&arg, "-B%u", block_size)`
     /// emits a standalone `-B<digits>` token after the compact flag string.
     /// Recognised here so it is not mistaken for a positional destination path.
     pub(super) block_size: Option<String>,
@@ -739,7 +739,7 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     } else if let Some(value) = s.strip_prefix("--max-alloc=") {
         flags.max_alloc = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--bwlimit=") {
-        // upstream: options.c:2799 - client forwards `--bwlimit=%d` in whole KiB.
+        // upstream: options.c:2966 - client forwards `--bwlimit=%d` in whole KiB.
         flags.bwlimit = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-at=") {
         flags.stop_at = Some(value.to_owned());
@@ -776,7 +776,7 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         .or_else(|| s.strip_prefix("--zc="))
     {
         flags.compress_choice = Some(value.to_owned());
-    // upstream: options.c:2754-2758 - `--compress-level=%d` carries the
+    // upstream: options.c:2922-2926 - `--compress-level=%d` carries the
     // explicit compression level so the server codec matches the client.
     } else if let Some(value) = s.strip_prefix("--compress-level=") {
         flags.compression_level = Some(value.to_owned());
@@ -932,7 +932,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
-        // upstream: options.c:2799-2800 - server_options() emits `--bwlimit=%d`
+        // upstream: options.c:2966-2967 - server_options() emits `--bwlimit=%d`
         // (whole KiB) as a JOINED long flag. Recognise it so the value is not
         // mistaken for a positional destination path; a separate pass captures
         // the numeric value into ServerLongFlags::bwlimit.

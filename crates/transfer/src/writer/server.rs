@@ -346,7 +346,7 @@ impl<W: Write> ServerWriter<W> {
     /// A no-op without an attached recorder (`Plain` / `Taken` can never carry
     /// one), so the default transfer path stays byte-for-byte identical.
     ///
-    /// upstream: `sender.c:217` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    /// upstream: `sender.c:501` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub fn set_batch_route(&mut self, route: BatchRoute) {
         match self {
             Self::Multiplex(mux) => mux.batch_route = route,

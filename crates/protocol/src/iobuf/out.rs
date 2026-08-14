@@ -17,7 +17,7 @@ const DATA_HEADER_TAG: u32 = match MessageHeader::new(MessageCode::Data, 0) {
 
 /// Upstream's raw output buffer size.
 ///
-/// upstream: `io.c:1382` `alloc_xbuf(&iobuf.out, ROUND_UP_1024(IO_BUFFER_SIZE * 2))`
+/// upstream: `io.c:1541` `alloc_xbuf(&iobuf.out, ROUND_UP_1024(IO_BUFFER_SIZE * 2))`
 /// with `IO_BUFFER_SIZE = 32*1024` (`rsync.h:160`). Never reallocated
 /// (io.c:594 "We never resize the circular output buffer.").
 pub const OUT_BUFFER_SIZE: usize = 64 * 1024;
@@ -48,7 +48,7 @@ pub struct OutBuf {
     /// Current (possibly temporarily reduced) circular size.
     size: usize,
     /// 0 when raw, 4 once multiplexing reserves a `MSG_DATA` header.
-    /// upstream: `io.c:2457` `iobuf.out_empty_len = 4`.
+    /// upstream: `io.c:2652` `iobuf.out_empty_len = 4`.
     out_empty_len: usize,
     /// Offset of the reserved `MSG_DATA` header inside `buf`.
     /// upstream: `iobuf.raw_data_header_pos`.

@@ -336,7 +336,7 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
         ExitCode::PartialTransfer
     };
     let path_display = path.display();
-    // upstream: flist.c:1317 / sender.c:389 - rprintf(c, "file has vanished: %s\n",
+    // upstream: flist.c:1463 / sender.c:713 - rprintf(c, "file has vanished: %s\n",
     // full_fname(...)). full_fname() wraps the path in double quotes (util1.c:1228).
     // Both call sites (send_file_list building the flist and send_files opening a
     // source file) run under am_sender, so who_am_i() yields the `sender` role for
@@ -1003,7 +1003,7 @@ mod tests {
         /// error" plus the raw `(code N)` suffix, tagged with the local process
         /// role - never a bare `[client]`.
         ///
-        /// upstream: log.c:912 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
+        /// upstream: log.c:959 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
         /// where the name comes from rerr_name()/"unexplained error" (log.c:903)
         /// and the role from who_am_i() (rsync.c:823).
         #[test]

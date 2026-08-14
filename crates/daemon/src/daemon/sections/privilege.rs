@@ -203,10 +203,10 @@ struct DropTarget {
 #[derive(Debug)]
 enum DropResolutionError {
     /// A user NAME (the `nobody` default) failed to resolve.
-    /// upstream: clientserver.c:785 `@ERROR: invalid uid %s`.
+    /// upstream: clientserver.c:837 `@ERROR: invalid uid %s`.
     InvalidUid(String),
     /// A group NAME (the `nobody` default) failed to resolve.
-    /// upstream: clientserver.c:658 `@ERROR: invalid gid %s`.
+    /// upstream: clientserver.c:703 `@ERROR: invalid gid %s`.
     InvalidGid(String),
     /// A `gid = *` group enumeration failed - not a name lookup.
     /// upstream: clientserver.c:797 `want_all_groups`.
@@ -221,7 +221,7 @@ impl DropResolutionError {
     /// `invalid uid/gid` and `setuid/setgid failed` strings can never be
     /// collapsed again.
     ///
-    /// upstream: clientserver.c:784-786 (`Invalid uid %s` / `@ERROR: invalid
+    /// upstream: clientserver.c:836-838 (`Invalid uid %s` / `@ERROR: invalid
     /// uid %s`) and clientserver.c:657-658 (`Invalid gid %s` / `@ERROR: invalid
     /// gid %s`).
     fn upstream_reply(&self) -> (String, AtError) {
@@ -261,7 +261,7 @@ impl From<DropResolutionError> for io::Error {
 /// Delegates to the `platform` crate, which owns the `nix` dependency on every
 /// Unix target (the daemon crate links `nix` only on Linux).
 ///
-/// upstream: clientserver.c:779 `am_root = (uid == ROOT_UID)`. Non-Unix
+/// upstream: clientserver.c:831 `am_root = (uid == ROOT_UID)`. Non-Unix
 /// platforms have no root uid and use the impersonation path instead.
 fn daemon_is_root() -> bool {
     platform::privilege::is_effective_root()
@@ -341,7 +341,7 @@ fn resolve_nobody_uid() -> io::Result<u32> {
 
 /// Resolves the `nobody` group to its gid via NSS.
 ///
-/// upstream: clientserver.c:821 `add_a_group(f_out, NOBODY_GROUP)`; NOBODY_GROUP
+/// upstream: clientserver.c:873 `add_a_group(f_out, NOBODY_GROUP)`; NOBODY_GROUP
 /// is `"nobody"` (config.h).
 #[cfg(unix)]
 fn resolve_nobody_gid() -> io::Result<u32> {
@@ -368,7 +368,7 @@ fn resolve_nobody_gid() -> io::Result<u32> {
 /// non-root, no-explicit-uid case), matching upstream's use of the resolved
 /// `uid` variable in `want_all_groups`.
 ///
-/// upstream: clientserver.c:797 `want_all_groups(f_out, uid)` ->
+/// upstream: clientserver.c:849 `want_all_groups(f_out, uid)` ->
 /// uidlist.c:576 `getallgroups`.
 #[cfg(unix)]
 fn resolve_all_user_groups(uid: Option<u32>) -> io::Result<Vec<u32>> {

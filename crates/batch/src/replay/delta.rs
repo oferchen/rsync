@@ -203,7 +203,7 @@ pub fn apply_delta_ops(
 
 /// Returns the default xfer checksum length for batch replay.
 ///
-/// upstream: `checksum.c:188` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
+/// upstream: `checksum.c:206` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
 /// Batch files don't record the negotiated checksum algorithm. For all
 /// supported protocols (28-32), the default xfer checksum is MD4, MD5, or
 /// XXH3-128 - all produce 16-byte digests.

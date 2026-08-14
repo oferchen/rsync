@@ -779,7 +779,7 @@ fn refused_option_copy_and_write_devices_vital_survive_wildcard() {
     // `refuse options = *` neither un-refuses them nor is even consulted for
     // them - they remain refused by the daemon default.
     //
-    // upstream: options.c:973-978 marks both as `descrip = "a="` (exact-match
+    // upstream: options.c:1050-1055 marks both as `descrip = "a="` (exact-match
     // only, wild-match disabled) and options.c:984-987 refuses them by default.
     let module = ModuleDefinition {
         refuse_options: vec!["*".to_owned()],
@@ -1148,7 +1148,7 @@ fn refuse_emits_at_error_raw_pre_handshake() {
     //
     // Upstream emits exactly the `@ERROR: <msg>\n` line and nothing more: the
     // client treats `@ERROR` as fatal and returns before reading further
-    // (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0` ->
+    // (upstream: clientserver.c:424-428 - `strncmp(line, "@ERROR", 6) == 0` ->
     // `return -1`), so no trailing `@RSYNCD: EXIT` is sent. Matching that
     // byte-for-byte matters because two interoperating tools must agree on the
     // exact refusal wire bytes; a stray EXIT line is a divergence from upstream.

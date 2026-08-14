@@ -22,7 +22,7 @@ use crate::flags::{NumericIds, ParsedServerFlags};
 use crate::role::ServerRole;
 
 /// Raw-level counting shim mirroring the production `CountingReader`
-/// (upstream: io.c:820 `stats.total_read += n`).
+/// (upstream: io.c:920 `stats.total_read += n`).
 struct CountingRead<'a> {
     inner: Cursor<&'a [u8]>,
     counter: Arc<AtomicU64>,

@@ -289,7 +289,7 @@ fn late_delete_pass_with_dest_rsync_filter_protects_bak() {
 /// whole delete pass and keeps the un-listed dest file, emitting the notice once
 /// even across both (early + late) delete-pass sites.
 ///
-/// upstream: generator.c:298-305 - `io_error & IOERR_GENERAL && !ignore_errors`.
+/// upstream: generator.c:304-311 - `io_error & IOERR_GENERAL && !ignore_errors`.
 #[test]
 fn delete_pass_skipped_when_sender_flist_had_io_error() {
     use super::super::super::stats::TransferStats;

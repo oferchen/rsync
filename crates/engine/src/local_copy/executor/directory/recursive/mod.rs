@@ -88,7 +88,7 @@ pub(crate) fn copy_directory_recursive(
 
 /// Walks a directory's immediate children even when global recursion is off.
 ///
-/// Mirrors upstream `flist.c:2477` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Mirrors upstream `flist.c:2749` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// to walk one level beneath SLASH_ENDING_NAME / DOTDIR_NAME source arguments
 /// (and `--files-from` entries with the corresponding markers). Subdirectories
 /// encountered during this one-level walk are NOT recursed into further,

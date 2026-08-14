@@ -68,7 +68,7 @@ enum BackupPlacement {
 /// the fallback; with `prefer_rename = true` the whole link tier is skipped and
 /// the entry is renamed straight into the backup area.
 ///
-/// upstream: `backup.c:191` - `if (!prefer_rename)` gates the entire
+/// upstream: `backup.c:230` - `if (!prefer_rename)` gates the entire
 /// `do_link_at` tier, so `make_backup(fbuf, True)` (the `--delete` caller,
 /// `delete.c:167`) goes directly to `do_rename_at` and reports RENAME.
 /// upstream: `backup.c:200-219` - `do_link_at` then `do_rename_at`. A
@@ -215,7 +215,7 @@ fn report_backup(
         // upstream: backup.c:290-291 - DEBUG_GTE(BACKUP, 1) DEVICE success.
         BackupPlacement::CopiedNode => engine::trace_make_backup_device(&existing_display),
     }
-    // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1) "backed up %s to %s".
+    // upstream: backup.c:433-434 - INFO_GTE(BACKUP, 1) "backed up %s to %s".
     let file_rel = existing.strip_prefix(dest_dir).unwrap_or(existing);
     let backup_rel = backup_path.strip_prefix(dest_dir).unwrap_or(backup_path);
     logging::info_log!(
@@ -251,7 +251,7 @@ pub(in crate::receiver::directory) fn is_backup_file(name: &OsStr, suffix: &str)
 /// placement leaves the original behind (upstream's copy tier, `ok == 2`); the
 /// rename and cross-device copy tiers already free the path.
 ///
-/// upstream: `delete.c:167-170` - `make_backup(fbuf, True)` then, when the copy
+/// upstream: `delete.c:230-233` - `make_backup(fbuf, True)` then, when the copy
 /// tier left the original in place (`ok == 2`), `robust_unlink(fbuf)`.
 #[cfg(unix)]
 #[allow(clippy::too_many_arguments)]
@@ -358,7 +358,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     if fs::symlink_metadata(existing).is_err() {
         return Ok(false);
     }
-    // upstream: delete.c:167 - `make_backup(fbuf, True)`. The delete pass is the
+    // upstream: delete.c:230 - `make_backup(fbuf, True)`. The delete pass is the
     // `prefer_rename` caller: the victim is renamed into the backup area, so the
     // RENAME trace is emitted and no second link ever exists.
     place_report_and_clear(
@@ -397,7 +397,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     if fs::symlink_metadata(existing).is_err() {
         return Ok(false);
     }
-    // upstream: delete.c:167 - `make_backup(fbuf, True)`, the rename-only caller.
+    // upstream: delete.c:230 - `make_backup(fbuf, True)`, the rename-only caller.
     place_report_and_clear(
         existing,
         dest_dir,
@@ -696,7 +696,7 @@ mod tests {
     /// assertion is on the emitted mechanism, which is the observable upstream
     /// difference (`make_backup: RENAME` vs `make_backup: HLINK`).
     ///
-    /// upstream: delete.c:167 `make_backup(fbuf, True)` -> backup.c:191
+    /// upstream: delete.c:230 `make_backup(fbuf, True)` -> backup.c:191
     /// `if (!prefer_rename)` skips `do_link_at`, so `do_rename_at` reports
     /// "make_backup: RENAME %s successful." (backup.c:216-217).
     #[test]
@@ -998,7 +998,7 @@ mod tests {
     }
 
     /// The `--delete` pre-delete backup path (`backup_victim` ->
-    /// `place_report_and_clear`, upstream delete.c:167 `make_backup(fbuf, True)`)
+    /// `place_report_and_clear`, upstream delete.c:230 `make_backup(fbuf, True)`)
     /// routes a non-regular victim's `--backup-dir` parents through the same
     /// `copy_valid_path` attribute inheritance: a freshly-created backup
     /// subdirectory inherits the destination directory's mode, and the victim is

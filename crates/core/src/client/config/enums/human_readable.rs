@@ -35,7 +35,7 @@ pub enum HumanReadableMode {
     /// Level 1 (default): thousands-separated decimal digits (`1,234,567`) in a
     /// 14-wide size column, with no unit suffix.
     ///
-    /// upstream: `options.c:111` initialises `human_readable = 1`.
+    /// upstream: `options.c:116` initialises `human_readable = 1`.
     Grouped,
     /// Level 2 (`-h`): base-1000 suffix formatting (e.g. `1.23K`, `4.56M`).
     DecimalUnits,

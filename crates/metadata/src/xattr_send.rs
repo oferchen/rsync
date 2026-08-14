@@ -38,7 +38,7 @@ pub enum XattrRole {
 impl XattrRole {
     /// Upstream's `user_only` for this role at the given privilege level.
     ///
-    /// upstream: `xattrs.c:237` - `int user_only = am_sender ? 0 : !am_root;`
+    /// upstream: `xattrs.c:249` - `int user_only = am_sender ? 0 : !am_root;`
     /// The sender never restricts to the `user.*` namespace; a non-root
     /// generator always does.
     #[must_use]
@@ -239,7 +239,7 @@ mod tests {
     /// to `user.*` and drop SELinux labels from the wire; reading it off the
     /// role alone would let a root generator ignore namespaces it can store.
     ///
-    /// upstream: xattrs.c:237 - `int user_only = am_sender ? 0 : !am_root;`
+    /// upstream: xattrs.c:249 - `int user_only = am_sender ? 0 : !am_root;`
     #[test]
     fn user_only_mirrors_the_upstream_ternary() {
         assert!(!XattrRole::Sender.user_only(false));
@@ -268,7 +268,7 @@ mod tests {
     /// The role also drives the `rsync.%FOO` strip, which is why it is a field
     /// rather than something inferred from the preservation level.
     ///
-    /// upstream: xattrs.c:262 - `am_sender && preserve_xattrs < 2`
+    /// upstream: xattrs.c:274 - `am_sender && preserve_xattrs < 2`
     #[test]
     fn is_sender_reports_the_upstream_am_sender_global() {
         assert!(XattrRole::Sender.is_sender());

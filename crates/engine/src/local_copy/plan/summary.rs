@@ -545,7 +545,7 @@ impl LocalCopySummary {
 
     /// Returns `true` when the transfer materialised the destination root directory.
     ///
-    /// upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:816-817 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The CLI mirrors this
     /// gate to emit the notice ahead of the per-entry itemize lines so the
     /// upstream `testsuite/itemize.test` golden matches.
@@ -822,7 +822,7 @@ impl LocalCopySummary {
     /// Folds one delta-scanned file's match diagnostics into the run totals
     /// rendered on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:433-435` - `total_hash_hits += hash_hits` etc. once
+    /// upstream: `match.c:474-476` - `total_hash_hits += hash_hits` etc. once
     /// per file, immediately after that file's `match_sums()` returns.
     pub(in crate::local_copy) fn record_delta_probe(
         &mut self,

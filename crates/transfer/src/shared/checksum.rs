@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn signature_algorithm_md4_with_zero_seed_returns_unseeded_md4() {
-        // upstream: checksum.c:377 - `if (checksum_seed)` skips append when 0
+        // upstream: checksum.c:394 - `if (checksum_seed)` skips append when 0
         let factory = ChecksumFactory::new(ChecksumAlgorithm::MD4, 0, false);
         assert!(matches!(
             factory.signature_algorithm(),

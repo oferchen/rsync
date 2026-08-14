@@ -1205,7 +1205,7 @@ fn warn_per_family_bind_failure_labels_ipv6() {
     // The dual-stack startup must surface per-family failure with the
     // correct address-family label so operators investigating partial
     // listener reachability can identify which family degraded. This
-    // mirrors upstream socket.c:467-469's `(address-family %d)` diagnostic.
+    // mirrors upstream socket.c:618-620's `(address-family %d)` diagnostic.
     let addr: SocketAddr = "[::]:8873".parse().unwrap();
     let error = io::Error::new(io::ErrorKind::AddrNotAvailable, "test failure");
 

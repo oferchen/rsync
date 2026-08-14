@@ -136,7 +136,7 @@ pub(crate) struct MultiplexReader<R> {
     pub(super) buffer: Vec<u8>,
     pub(super) pos: usize,
     /// Accumulated I/O error flags from `MSG_IO_ERROR` messages.
-    /// upstream: io.c:1547 `io_error |= val;`
+    /// upstream: io.c:1707 `io_error |= val;`
     pub(super) io_error: i32,
     /// File indices received via `MSG_NO_SEND` from the sender.
     /// upstream: io.c:1618-1627, sender.c:367-368
@@ -156,7 +156,7 @@ pub(crate) struct MultiplexReader<R> {
     pub(super) error_exit_code: Option<i32>,
     /// Count of MSG_ERROR_XFER messages received from the remote.
     ///
-    /// upstream: log.c:311 - receipt of FERROR_XFER sets `got_xfer_error = 1`.
+    /// upstream: log.c:338 - receipt of FERROR_XFER sets `got_xfer_error = 1`.
     /// When the remote daemon's generator rejects files matching server-side
     /// module exclude rules, it emits FERROR_XFER for each rejected file and
     /// then exits with RERR_PARTIAL (23). This count is informational - the
@@ -167,7 +167,7 @@ pub(crate) struct MultiplexReader<R> {
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
     /// Client's current effective I/O timeout in seconds, or `None`/`0` for
     /// infinite. Set only on the client-receiver path; drives the upstream
-    /// adoption test. upstream: io.c:1556 `!io_timeout || io_timeout > val`.
+    /// adoption test. upstream: io.c:1726 `!io_timeout || io_timeout > val`.
     io_timeout: Option<u32>,
     /// Live-socket re-apply hook for an adopted daemon `MSG_IO_TIMEOUT`. `Some`
     /// only when this reader is the client receiver of a daemon transfer; its
@@ -236,7 +236,7 @@ const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 /// Returns the timeout the client should adopt from a daemon-advertised
 /// `MSG_IO_TIMEOUT` value `val`, or `None` to keep the current setting.
 ///
-/// Mirrors upstream `io.c:1556` `if (!io_timeout || io_timeout > val)`: adopt
+/// Mirrors upstream `io.c:1726` `if (!io_timeout || io_timeout > val)`: adopt
 /// the stricter (smaller, non-zero) timeout. A current value of `None` or `0`
 /// means the client set no timeout (infinite), so any daemon value is adopted;
 /// otherwise the daemon value is adopted only when it is smaller than the
@@ -403,7 +403,7 @@ impl<R> MultiplexReader<R> {
     /// naturally via EOF.
     ///
     /// upstream: generator.c:1281 - `rprintf(FERROR_XFER, "daemon refused...")`
-    /// upstream: log.c:311 - `got_xfer_error = 1;` on FERROR_XFER receipt
+    /// upstream: log.c:338 - `got_xfer_error = 1;` on FERROR_XFER receipt
     /// upstream: main.c:1630-1631 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
     fn check_error_exit(&self) -> io::Result<()> {
         if let Some(code) = self.error_exit_code {
@@ -968,7 +968,7 @@ mod deleted_render_tests {
 
     #[test]
     fn plain_render_file_and_dir() {
-        // upstream: log.c:874 "deleting %n"; %n appends a trailing slash for a
+        // upstream: log.c:920 "deleting %n"; %n appends a trailing slash for a
         // directory (the trailing-NUL payload marks it).
         let cfg = DeletedRender {
             itemize: false,

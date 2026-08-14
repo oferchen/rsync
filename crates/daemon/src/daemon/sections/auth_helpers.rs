@@ -9,7 +9,7 @@ fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr
 pub(crate) fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
     let display = format_host(host, peer_addr.ip());
     let ip = peer_addr.ip();
-    // upstream: clientserver.c:1421 - `module-list request from %s (%s)`
+    // upstream: clientserver.c:1555 - `module-list request from %s (%s)`
     let text = format!("module-list request from {display} ({ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -23,7 +23,7 @@ pub(crate) fn log_module_request(
 ) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    // upstream: clientserver.c:742 - `rsync allowed access on module %s from %s (%s)`
+    // upstream: clientserver.c:787 - `rsync allowed access on module %s from %s (%s)`
     let text = format!("rsync allowed access on module {module_display} from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -114,7 +114,7 @@ pub(crate) fn log_module_denied(
 ) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    // upstream: clientserver.c:729 - `rsync denied on module %s from %s (%s)`
+    // upstream: clientserver.c:774 - `rsync denied on module %s from %s (%s)`
     let text = format!("rsync denied on module {module_display} from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -128,7 +128,7 @@ pub(crate) fn log_unknown_module(
 ) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    // upstream: clientserver.c:1434 - `unknown module '%s' tried from %s (%s)`
+    // upstream: clientserver.c:1568 - `unknown module '%s' tried from %s (%s)`
     let text = format!("unknown module '{module_display}' tried from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);

@@ -82,7 +82,7 @@ impl ClientConfig {
 
     /// Reports whether the user explicitly requested `--super`.
     ///
-    /// Mirrors upstream's `am_root > 1` state (`options.c:90`), set only by an
+    /// Mirrors upstream's `am_root > 1` state (`options.c:3018`), set only by an
     /// explicit `--super` (not by merely running as root). The remote-invocation
     /// builder forwards `--super` on a push under this condition, matching
     /// `options.c:2852`.

@@ -351,7 +351,7 @@ fn wire_rule_crosses_wire(
     protocol: protocol::ProtocolVersion,
 ) -> bool {
     if rule.cvs_origin {
-        // upstream: exclude.c:1652 send_filter_list() - `if (cvs_exclude && am_sender)`
+        // upstream: exclude.c:1951 send_filter_list() - `if (cvs_exclude && am_sender)`
         // adds the `-C` rules before send_rules(); a receiving client adds them
         // only afterwards (exclude.c:1663-1668), so they never cross the wire.
         if !client_is_sender {
@@ -829,7 +829,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // upstream: io.c:1401 iobuf.in is a fixed 32KB circular buffer that is never
     // resized (io.c:579). IoBufReader is that buffer, and it sits beneath the
     // multiplex demuxer so no decoder ever touches the descriptor - the layering
-    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:243).
+    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:296).
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
     // matching upstream's `stats.total_read` (io.c:820).
@@ -843,7 +843,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // an invalid message). The re-apply hook is supplied only on the daemon-pull
     // path, so its presence plus the client-receiver role gates adoption exactly
     // as upstream does. The client's own --timeout is the current value the
-    // adoption test compares against (upstream io.c:1556 `!io_timeout || io_timeout > val`).
+    // adoption test compares against (upstream io.c:1726 `!io_timeout || io_timeout > val`).
     if let Some(reapply) = io_timeout_reapply {
         if config.connection.client_mode && config.role == crate::role::ServerRole::Receiver {
             reader
@@ -896,7 +896,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2
-    // (io.c:1151). Once configured, the generator/sender loop emits an empty
+    // (io.c:1281). Once configured, the generator/sender loop emits an empty
     // MSG_DATA keepalive during an I/O lull so the peer's timeout does not fire.
     // Without --timeout there is no lull tracking and the wire stays identical.
     if let Some(timeout_secs) = handshake.io_timeout {

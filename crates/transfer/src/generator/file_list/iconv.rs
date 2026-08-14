@@ -93,7 +93,7 @@ impl GeneratorContext {
     ) -> bool {
         let name = entry.name_bytes();
         if converter.local_to_remote(&name).is_err() {
-            // upstream: flist.c:1631 - FERROR_XFER "cannot convert filename".
+            // upstream: flist.c:1796 - FERROR_XFER "cannot convert filename".
             eprintln!(
                 "{}",
                 protocol::iconv::cannot_convert_filename_message("sender", &name)
@@ -101,7 +101,7 @@ impl GeneratorContext {
             return false;
         }
 
-        // upstream: flist.c:1642 - `if (symlink_len && sender_symlink_iconv)`.
+        // upstream: flist.c:1803 - `if (symlink_len && sender_symlink_iconv)`.
         if symlink_iconv
             && entry.is_symlink()
             && let Some(target) = entry.link_target()

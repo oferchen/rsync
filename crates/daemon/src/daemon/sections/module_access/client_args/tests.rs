@@ -282,7 +282,7 @@ mod daemon_module_suffix_tests {
     /// daemon-side `send_files failed to open` / `mkstemp failed` line name the
     /// module the client asked for, exactly as upstream 3.4.4 does.
     ///
-    /// upstream: clientserver.c:769 `module_id = i`; util1.c:1290
+    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1290
     /// `if (module_id >= 0)`.
     #[test]
     fn module_selection_records_name_for_full_fname() {

@@ -378,7 +378,7 @@ struct CompiledRule {
     deletion_descendant_matchers: Vec<GlobMatcher>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
-    /// upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
+    /// upstream: exclude.c:1005 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
     /// When set, the rule fires on paths that do NOT match the pattern.
     negate: bool,
     /// Source-definition order within the owning segment, assigned by
@@ -469,7 +469,7 @@ impl CompiledRule {
 
     fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
         let pattern_matched = self.pattern_matches(path, is_dir, check_descendants);
-        // upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
+        // upstream: exclude.c:1005 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
         // A negated rule fires when the pattern does NOT match.
         if self.negate {
             !pattern_matched

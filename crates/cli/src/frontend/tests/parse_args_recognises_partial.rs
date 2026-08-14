@@ -48,7 +48,7 @@ fn parse_args_uses_rsync_partial_dir_env_with_partial() {
 
 #[test]
 fn parse_args_ignores_rsync_partial_dir_env_without_partial() {
-    // upstream: options.c:2448 `if (keep_partial && !partial_dir && !am_server)`
+    // upstream: options.c:2590 `if (keep_partial && !partial_dir && !am_server)`
     // - without --partial/-P the env var is ignored and does not enable partial.
     let _env_lock = ENV_LOCK.lock().expect("env lock");
 

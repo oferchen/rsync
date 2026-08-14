@@ -75,7 +75,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
     let mut cleared: Vec<bool> = vec![false; n];
 
     let mut prev_depth: i64 = 0;
-    // upstream: flist.c:3124 - "It's OK that this isn't really true."
+    // upstream: flist.c:3426 - "It's OK that this isn't really true."
     let mut prev_i: usize = 0;
 
     for i in 0..n {
@@ -117,7 +117,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
             let dir_is_excluded = !filter_chain.allows_deletion(entry.path().as_path(), true);
 
             if dir_is_excluded {
-                // upstream: flist.c:3143-3150 - "Keep dirs through this dir."
+                // upstream: flist.c:3445-3452 - "Keep dirs through this dir."
                 // Walk the chain restoring F_DEPTH to descending depths.
                 let mut j = prev_depth - 1;
                 loop {
@@ -138,7 +138,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
             prev_i = i;
         } else {
-            // upstream: flist.c:3155-3162 - "Keep dirs through this non-dir."
+            // upstream: flist.c:3457-3464 - "Keep dirs through this non-dir."
             // Any non-dir (or depth-0 dir) entry proves its ancestor candidate
             // chain is non-empty; reprieve them all.
             let mut j = prev_depth;
@@ -155,7 +155,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         }
     }
 
-    // upstream: flist.c:3165-3172 - "Dump all remaining empty dirs."
+    // upstream: flist.c:3467-3474 - "Dump all remaining empty dirs."
     loop {
         let m = marker[prev_i];
         if m >= 0 {

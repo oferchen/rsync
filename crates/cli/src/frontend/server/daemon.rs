@@ -129,7 +129,7 @@ where
 /// inherited file descriptors. Used by remote shells (e.g., SSH) that invoke:
 ///   `oc-rsync --config=<file> --server --daemon .`
 ///
-/// upstream: main.c:1868 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
+/// upstream: main.c:1948 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
 #[cfg(unix)]
 pub(crate) fn run_server_daemon_mode<Err>(args: &[OsString], stderr: &mut Err) -> i32
 where

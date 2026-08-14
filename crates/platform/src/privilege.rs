@@ -76,7 +76,7 @@ pub fn apply_chroot(_path: &Path) -> io::Result<()> {
 /// the process root unchanged (chrooting to `/` is a no-op); failure (almost
 /// always `EPERM`) means the daemon is unprivileged.
 ///
-/// upstream: clientserver.c:834 `rsync_module()` - `chroot("/") < 0` probes
+/// upstream: clientserver.c:886 `rsync_module()` - `chroot("/") < 0` probes
 /// capability before the real `chroot(module_chdir)` later in the function.
 #[cfg(unix)]
 pub fn probe_chroot_capability() -> io::Result<()> {
@@ -230,7 +230,7 @@ pub fn drop_privileges(uid: Option<u32>, gids: &[u32]) -> io::Result<()> {
 ///
 /// Non-Unix platforms have no root uid and always return `false`.
 ///
-/// upstream: clientserver.c:780 `am_root = (uid == ROOT_UID)`.
+/// upstream: clientserver.c:831 `am_root = (uid == ROOT_UID)`.
 #[cfg(unix)]
 pub fn is_effective_root() -> bool {
     nix::unistd::geteuid().is_root()

@@ -394,7 +394,7 @@ fn daemon_negotiation_error_no_exit_after_error() {
     // Verify that no `@RSYNCD: EXIT` follows an `@ERROR:` refusal. Upstream
     // sends only the `@ERROR: <msg>\n` line and closes the socket: the client
     // treats `@ERROR` as fatal and returns before reading further
-    // (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0`
+    // (upstream: clientserver.c:424-428 - `strncmp(line, "@ERROR", 6) == 0`
     // -> `return -1`). A trailing EXIT would be a byte-level divergence from
     // upstream that two interoperating tools must not exhibit.
     let _lock = ENV_LOCK.lock().expect("env lock");

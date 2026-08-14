@@ -28,20 +28,25 @@
 //!   annotating hundreds of correct comments, and an exemption that common
 //!   stops being read.
 //! - Line-number *accuracy* is worse than unsettled, it is version-bound. The
-//!   same citation set audits at 11% suspected drift against 3.4.4 and 93%
-//!   against 3.5.0. Whether these citations should carry line numbers at all,
-//!   or name a function and let the reader grep, is an open decision that has
-//!   to be made before the pin moves - not something to be pre-empted by a
-//!   gate. `tools/ci/citation_drift_audit.py` reports on that question as a
+//!   same citation set audited at 11% suspected drift against 3.4.4 and 93%
+//!   against 3.5.0, which is why moving the pin meant retargeting the corpus
+//!   rather than editing one constant. Whether these citations should carry
+//!   line numbers at all, or name a function and let the reader grep, remains
+//!   open. `tools/ci/citation_drift_audit.py` reports on that question as a
 //!   ratchet; it is not, and must not become, a hard gate.
+//!
+//!   Both pins move together or neither does. This gate and the drift audit
+//!   read the same comments against different upstream trees, so a release
+//!   flipped in one and not the other makes them contradict: the retarget that
+//!   satisfies the audit names lines the older manifest does not have.
 //!
 //! # Why a manifest instead of the source tree
 //!
 //! The required `nextest` cell does not fetch the upstream tarball, so a gate
 //! that reads `target/interop/upstream-src/` there would skip - and a gate that
 //! skips in the one place it must run is not a gate. `tools/ci/
-//! upstream-3.4.4-lines.tsv` carries one line count per upstream file. rsync
-//! 3.4.4 is a released tarball and is immutable, so the manifest cannot drift
+//! upstream-3.5.0-lines.tsv` carries one line count per upstream file. rsync
+//! 3.5.0 is a released tarball and is immutable, so the manifest cannot drift
 //! from it; `tests::manifest_matches_the_pinned_source` re-derives it wherever
 //! the source is present.
 
@@ -53,10 +58,10 @@ use std::path::Path;
 
 /// Committed line counts for every citable source file in the pinned upstream
 /// release: `.c`, `.h`, `.py` and `.sh`.
-pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.4.4-lines.tsv";
+pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.0-lines.tsv";
 
 /// The pinned upstream source, present only where the interop tarball was fetched.
-pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.4.4";
+pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.0";
 
 /// Extensions a citation may name. Upstream carries protocol logic in C and its
 /// test and release harness in Python and shell, and citations reach all four -
@@ -66,9 +71,9 @@ const CITED_EXTENSIONS: [&str; 4] = ["c", "h", "py", "sh"];
 
 /// Header written above the generated counts, explaining why the file exists.
 const MANIFEST_HEADER: &str = "\
-# Line counts for every .c/.h/.py/.sh in rsync 3.4.4, the pinned upstream source.
+# Line counts for every .c/.h/.py/.sh in rsync 3.5.0, the pinned upstream source.
 # Lets the citation gate run where the source tree is absent (the required
-# nextest cell does not fetch it). rsync 3.4.4 is a released tarball and is
+# nextest cell does not fetch it). rsync 3.5.0 is a released tarball and is
 # immutable, so this cannot drift; it is regenerated only when the pin moves.
 # The key set is also the gate's answer to \"does this upstream file exist\", so
 # a name missing here is a citation defect, not a manifest gap.
@@ -124,7 +129,7 @@ impl std::fmt::Display for Violation {
                 cited,
             } => write!(
                 f,
-                "{source}:{line}: cites {upstream}:{cited} but rsync 3.4.4 has no {upstream}"
+                "{source}:{line}: cites {upstream}:{cited} but rsync 3.5.0 has no {upstream}"
             ),
         }
     }
@@ -444,7 +449,7 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
     if report.violations.is_empty() {
         eprintln!(
             "citations: {} name(s) and {} line range(s) checked across {} \
-             file(s) - every citation names a file rsync 3.4.4 has, at a line \
+             file(s) - every citation names a file rsync 3.5.0 has, at a line \
              that file has. This does NOT mean the cited line says what the \
              comment claims; nothing here checks that.",
             report.tally.names_checked, report.tally.ranges_checked, report.files_read
@@ -704,7 +709,7 @@ mod tests {
         let report = collect_violations(&workspace).expect("scan succeeds");
         assert!(
             report.violations.is_empty(),
-            "upstream citations that cannot be followed to rsync 3.4.4:\n{}",
+            "upstream citations that cannot be followed to rsync 3.5.0:\n{}",
             report
                 .violations
                 .iter()
