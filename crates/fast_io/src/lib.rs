@@ -88,6 +88,10 @@ pub mod cached_sort;
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
 pub mod confined_open;
+/// Path-confinement activation: who is confined, and against what root.
+///
+/// Pure policy with no I/O, so it builds and is tested on every target.
+pub mod confinement;
 /// Rootless container / user-namespace detection for SQPOLL gating.
 pub mod container;
 /// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
