@@ -775,7 +775,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             DeleteMode::During | DeleteMode::DuringDefault | DeleteMode::Disabled => options,
         };
 
-        // upstream: generator.c:298 delete_in_dir() - `--ignore-errors` lets the
+        // upstream: generator.c:304 delete_in_dir() - `--ignore-errors` lets the
         // delete pass run after a source-scan I/O error instead of skipping it
         // with a notice. The local-copy engine reads the flag from its own
         // options, so it has to be carried across this bridge exactly as the
@@ -1706,7 +1706,7 @@ mod local_copy_option_wiring_tests {
     }
 
     /// `--ignore-errors` lets the delete pass run despite a general I/O error
-    /// (upstream: generator.c:298). The local-copy engine reads it from
+    /// (upstream: generator.c:304). The local-copy engine reads it from
     /// `LocalCopyOptions`, so it has to be carried across this bridge - without
     /// it the engine sees the default `false` and prints the upstream skip
     /// notice on a run where upstream stays silent and deletes.
