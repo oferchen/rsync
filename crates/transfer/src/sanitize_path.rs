@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1035` - `sanitize_path(dest, p, rootdir, depth, flags)`
+//! - `util1.c:1138` - `sanitize_path(dest, p, rootdir, depth, flags)`
 //! - `flist.c:774` - applied to received file names in daemon mode
 //! - `flist.c:2299` - applied to `--files-from` entries
 //! - `flist.c:1182` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
@@ -30,7 +30,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1035-1108` - `sanitize_path()`
+/// - `util1.c:1138-1211` - `sanitize_path()`
 pub fn sanitize_path(path: &str) -> String {
     sanitize_path_with_depth(path, 0, false)
 }
@@ -74,7 +74,7 @@ pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1035-1108`
+/// - `util1.c:1138-1211`
 fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> String {
     let out = sanitize_path_bytes(path.as_bytes(), depth, keep_dot_dirs);
     String::from_utf8(out).unwrap_or_else(|_| ".".to_string())
@@ -90,7 +90,7 @@ fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> Stri
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1035-1108`
+/// - `util1.c:1138-1211`
 fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec<u8> {
     let mut p = 0usize;
 

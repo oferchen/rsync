@@ -263,7 +263,7 @@ fn classify_client_path_against_module(
 /// access, so they must reach the Landlock allowlist or a default-on flip
 /// would EACCES legitimate writes (URV-5.b.REOPEN).
 ///
-/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the
+/// upstream: util1.c:1138 `sanitize_path` collapses `..` against the
 /// module root depth; main.c:841 `check_alt_basis_dirs` warns but does not
 /// abort when the sanitised basis is missing or out-of-tree.
 ///
