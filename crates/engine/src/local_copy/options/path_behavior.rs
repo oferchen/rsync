@@ -201,6 +201,18 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Refuses to CREATE device and special nodes, leaving existing ones alone.
+    ///
+    /// Deliberately does NOT clear `devices` / `specials`: upstream keeps
+    /// `preserve_devices` / `preserve_specials` intact because they also frame
+    /// the file list's rdev fields. upstream: generator.c:2026-2033.
+    #[must_use]
+    #[doc(alias = "--drop-D")]
+    pub const fn drop_devices(mut self, drop_devices: bool) -> Self {
+        self.drop_devices = drop_devices;
+        self
+    }
+
     /// Requests removal of conflicting destination entries before updating them.
     #[must_use]
     #[doc(alias = "--force")]
@@ -396,6 +408,34 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn specials_enabled(&self) -> bool {
         self.specials
+    }
+
+    /// Reports whether `--drop-D` withholds device and special CREATION.
+    ///
+    /// Kept separate from [`Self::devices_enabled`] and
+    /// [`Self::specials_enabled`] on purpose: upstream leaves
+    /// `preserve_devices` / `preserve_specials` untouched because they also
+    /// frame the file list's rdev fields. upstream: generator.c:2026-2033.
+    #[must_use]
+    #[doc(alias = "--drop-D")]
+    pub const fn drop_devices_enabled(&self) -> bool {
+        self.drop_devices
+    }
+
+    /// Reports whether a device node may actually be created.
+    ///
+    /// upstream: generator.c:2031 `!drop_devices && ... preserve_devices`.
+    #[must_use]
+    pub const fn may_create_devices(&self) -> bool {
+        self.devices && !self.drop_devices
+    }
+
+    /// Reports whether a FIFO or socket may actually be created.
+    ///
+    /// upstream: generator.c:2031 `!drop_devices && ... preserve_specials`.
+    #[must_use]
+    pub const fn may_create_specials(&self) -> bool {
+        self.specials && !self.drop_devices
     }
 
     /// Reports whether destination conflicts should be resolved by removing existing entries.

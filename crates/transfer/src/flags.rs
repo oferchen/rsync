@@ -89,6 +89,14 @@ pub struct ParsedServerFlags {
     pub devices: bool,
     /// Preserve special files (included in `D` flag, `--specials`).
     pub specials: bool,
+    /// Refuse to CREATE devices and special files (`--drop-D`).
+    ///
+    /// Deliberately separate from `devices`/`specials`: those frame the file
+    /// list's rdev fields, so clearing them on one end alone desynchronises the
+    /// stream. This flag withholds creation only and never reaches the wire.
+    ///
+    /// upstream: options.c:688-689, generator.c:2026-2033
+    pub drop_devices: bool,
     /// Preserve modification times (`t` flag, `--times`).
     pub times: bool,
     /// Preserve access times (`U` flag, `--atimes`).

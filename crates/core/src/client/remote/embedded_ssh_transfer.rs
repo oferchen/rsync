@@ -546,6 +546,7 @@ fn build_server_config_for_receiver(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    server_config.flags.drop_devices = config.drop_devices();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
@@ -685,6 +686,7 @@ fn build_server_config_for_generator(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    server_config.flags.drop_devices = config.drop_devices();
     // Local-only sender optimization; never emitted onto the wire, so it is
     // carried directly onto the in-process generator's ParsedServerFlags.
     server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
