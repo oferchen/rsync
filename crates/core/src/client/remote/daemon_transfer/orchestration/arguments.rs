@@ -408,12 +408,14 @@ pub(super) fn build_full_daemon_args(
         ));
     }
 
-    // upstream: options.c:2953-2957 - `-B%u` (block_size). oc mirrors the SSH
-    // builder's `--block-size=` spelling; both are accepted by the daemon's
-    // option parser and carry the identical value, so the remote receiver's
-    // generator sizes delta blocks exactly like the client requested.
+    // upstream: options.c:2953-2957 - `asprintf(&arg, "-B%u", (int)block_size)`
+    // inside `if (block_size) {`. The SHORT spelling is what upstream puts on
+    // the wire, so the daemon arg vector must carry it too: a `--block-size=`
+    // token is an oc-only spelling that no upstream daemon parses, and it left
+    // the remote generator sizing blocks by the square-root heuristic instead
+    // of the requested size.
     if let Some(bs) = config.block_size_override() {
-        args.push(format!("--block-size={}", bs.get()));
+        args.push(format!("-B{}", bs.get()));
     }
 
     // upstream: options.c:2793-2797 - --timeout=N so both peers enforce the
@@ -1485,27 +1487,34 @@ mod server_option_fidelity_tests {
         assert!(flag.contains('p'), "perms on must pack 'p': {flag}");
     }
 
-    // upstream: options.c:2953-2957 - -B/block_size must reach the remote so its
-    // generator sizes delta blocks identically. Role-agnostic (both directions).
+    // upstream: options.c:2953-2957 - `asprintf(&arg, "-B%u", (int)block_size)`.
+    // The remote generator sizes delta blocks from this token, so both the value
+    // and the SPELLING matter: this assertion previously pinned
+    // `--block-size=4096`, an oc-only long form that no upstream daemon parses,
+    // and that is exactly why an operator's `-B` was silently ignored on every
+    // rsync:// transfer. Role-agnostic (both directions).
     #[test]
-    fn block_size_forwarded_both_directions() {
+    fn block_size_forwarded_both_directions_in_the_upstream_short_spelling() {
         let size = std::num::NonZeroU32::new(4096).unwrap();
         let config = ClientConfig::builder()
             .block_size_override(Some(size))
             .build();
         for is_sender in [true, false] {
+            let built = args(&config, is_sender);
             assert!(
-                args(&config, is_sender)
-                    .iter()
-                    .any(|a| a == "--block-size=4096"),
-                "block-size must forward (is_sender={is_sender})"
+                built.iter().any(|a| a == "-B4096"),
+                "block-size must forward as upstream `-B4096` (is_sender={is_sender}): {built:?}"
+            );
+            assert!(
+                !built.iter().any(|a| a.starts_with("--block-size")),
+                "the non-upstream long spelling must be gone (is_sender={is_sender}): {built:?}"
             );
         }
         let off = ClientConfig::builder().build();
         assert!(
             !args(&off, false)
                 .iter()
-                .any(|a| a.starts_with("--block-size")),
+                .any(|a| a.starts_with("-B") || a.starts_with("--block-size")),
             "no block-size when unset"
         );
     }
