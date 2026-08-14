@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default `--max-alloc` ceiling in bytes (1 GiB).
 ///
-/// upstream: `options.c:203` `#define DEFAULT_MAX_ALLOC (1024L * 1024 * 1024)`.
+/// upstream: `options.c:209` `#define DEFAULT_MAX_ALLOC (1024L * 1024 * 1024)`.
 pub const DEFAULT_MAX_ALLOC: usize = 1024 * 1024 * 1024;
 
 /// The negotiated `--max-alloc` ceiling, mirroring upstream's `max_alloc`
@@ -37,7 +37,7 @@ static MAX_ALLOC: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_ALLOC);
 /// handling). A zero value is ignored, leaving the previous ceiling in place,
 /// mirroring upstream's rejection of a non-positive size in `parse_size_arg`.
 ///
-/// upstream: `options.c:1959-1965` assigns `max_alloc = size` after parsing.
+/// upstream: `options.c:2074-2080` assigns `max_alloc = size` after parsing.
 pub fn set_max_alloc(bytes: usize) {
     if bytes == 0 {
         return;

@@ -394,7 +394,7 @@ fn apply_global_directive(
 
             store_global_directive(&mut state.daemon_uid, value.to_owned(), canonical, line_number);
         }
-        // upstream: clientserver.c:1363 `lp_daemon_gid` - `daemon gid` sets the
+        // upstream: clientserver.c:1500 `lp_daemon_gid` - `daemon gid` sets the
         // process-wide gid the listener drops to before the accept loop.
         "daemongid" => {
             if value.is_empty() {

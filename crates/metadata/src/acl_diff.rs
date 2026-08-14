@@ -70,7 +70,7 @@ pub fn dest_acl_differs(
     is_dir: bool,
     id_map: Option<&AclIdMapper>,
 ) -> bool {
-    // upstream: acls.c:1024-1037 - access ACL leg. `ndx >= 0` gates the whole
+    // upstream: acls.c:1389-1402 - access ACL leg. `ndx >= 0` gates the whole
     // block, so no sender access ACL means no change to report.
     if let Some(sender) = sender_access {
         let dest = crate::get_rsync_acl(path, mode, false);

@@ -90,7 +90,7 @@ pub struct FilterRule {
     /// Consumes the merged file's lines as literal patterns instead of running
     /// them through the prefix dispatch.
     ///
-    /// upstream: exclude.c:1227-1237 - the merge-file modifier `case '-'`/
+    /// upstream: exclude.c:1381-1391 - the merge-file modifier `case '-'`/
     /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
     pub(crate) no_prefixes: bool,
     /// Pairs with [`Self::no_prefixes`] to select the `+` (include) variant.
@@ -555,7 +555,7 @@ impl FilterRule {
     /// On merge / dir-merge rules this anchors the merged rules to the transfer
     /// root instead of the merge file's own directory.
     ///
-    /// upstream: exclude.c:1238-1240 - `case '/'` sets `FILTRULE_ABS_PATH`
+    /// upstream: exclude.c:1392-1394 - `case '/'` sets `FILTRULE_ABS_PATH`
     #[must_use]
     pub const fn is_abs_path(&self) -> bool {
         self.abs_path
@@ -572,7 +572,7 @@ impl FilterRule {
     /// modifier and, via the second element, whether it is the `+` (include)
     /// variant.
     ///
-    /// upstream: exclude.c:1227-1237 - the merge-file modifier `case '-'`/
+    /// upstream: exclude.c:1381-1391 - the merge-file modifier `case '-'`/
     /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
     #[must_use]
     pub const fn no_prefixes(&self) -> (bool, bool) {

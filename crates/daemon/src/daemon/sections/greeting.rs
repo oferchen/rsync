@@ -73,7 +73,7 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// daemon (`am_client == 0`) and the client (`am_client == 1`) enforce the exact
 /// same upstream thresholds; only the diagnostic wording differs by role.
 pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
-    // upstream: clientserver.c:180-184 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
+    // upstream: clientserver.c:209-213 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
     // < 1)` the daemon answers `@ERROR: protocol startup error`. The client's
     // first line must be a version banner, so a bare module name, an empty
     // request, or an HTTP probe is refused here rather than being taken for a
@@ -207,7 +207,7 @@ mod greeting_validation_tests {
         );
     }
 
-    // upstream: clientserver.c:207 - the digest gate is `remote_protocol > 31`, so
+    // upstream: clientserver.c:234 - the digest gate is `remote_protocol > 31`, so
     // protocol 31 needs the subprotocol but not a digest list.
     #[test]
     fn protocol_31_requires_subprotocol_not_digest() {

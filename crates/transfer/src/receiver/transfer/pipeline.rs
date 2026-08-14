@@ -307,7 +307,7 @@ impl ReceiverContext {
             sandbox: setup.sandbox.clone(),
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
             metadata_opts: Some(setup.metadata_opts.clone()),
-            // upstream: generator.c:2187 `make_backups = -make_backups`
+            // upstream: generator.c:2659 `make_backups = -make_backups`
             // negates make_backups during the redo pass so the inplace
             // pre-image copy does not overwrite the good phase-1 backup
             // with the now-corrupted destination.

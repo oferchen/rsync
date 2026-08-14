@@ -160,7 +160,7 @@ impl ReceiverContext {
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf, u32)> {
-        // upstream: generator.c:1246-1247 - "recv_generator(%s,%d)" emitted at
+        // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
         // the loop when the flag is off keeps the hot path allocation-free.
@@ -909,7 +909,7 @@ impl ReceiverContext {
         if self.acl_itemize_active() && !entry.is_symlink() && self.dest_acl_differs(entry, path) {
             iflags |= ItemFlags::ITEM_REPORT_ACL;
         }
-        // upstream: generator.c:564-571 - the last thing the `statret >= 0` leg
+        // upstream: generator.c:521-528 - the last thing the `statret >= 0` leg
         // does is a lazy `get_xattr(fnamecmp, sxp)` followed by
         // `xattr_diff(file, sxp, 1)`. It runs for every itemized entry, not
         // just for one that was skipped as up to date.
@@ -987,7 +987,7 @@ impl ReceiverContext {
         metadata::XattrSendOptions {
             role: metadata::XattrRole::Generator,
             follow_symlinks: false,
-            // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`,
+            // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`,
             // so a non-root generator sees only the `user.*` namespace here. A
             // `security.*` or `trusted.*` difference it could never store must
             // not raise the itemize `x` column. When a filter is present
@@ -1522,7 +1522,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:581-583 - `iflags &= 0xffff` puts the full low
+    /// upstream: generator.c:587-589 - `iflags &= 0xffff` puts the full low
     /// word on the wire, but the record is only emitted when a significant
     /// flag survives (or `-ii` / `-vv` force unchanged rows), and this
     /// no-trailing-fields path must never advertise `ITEM_REPORT_XATTR`,
@@ -1689,7 +1689,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:564-571 (`statret >= 0`) and :573-575
+    /// upstream: generator.c:521-528 (`statret >= 0`) and :573-575
     /// (`statret < 0`). Both legs of `itemize()` compare xattrs, so the `x`
     /// column belongs on the *transfer* seed as much as on the up-to-date row.
     ///

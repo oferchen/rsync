@@ -83,7 +83,7 @@ pub(crate) fn destination_is_newer(
     destination: &fs::Metadata,
     modify_window: ModifyWindow,
 ) -> bool {
-    // upstream: generator.c:1721 - the `stype == ftype` guard means a
+    // upstream: generator.c:2135 - the `stype == ftype` guard means a
     // type-mismatched destination is never skipped by `--update`.
     if !same_file_type(source, destination) {
         return false;
@@ -322,7 +322,7 @@ fn unix_sec_nsec(time: SystemTime) -> (i64, u32) {
 ///   modify_window` -- i.e. `|a_sec - b_sec| <= window_secs`. Nanoseconds do not
 ///   figure into the window check ("time windows don't care about that").
 /// - `window < 0`: a nanosecond-exact comparison applies - the seconds AND the
-///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1482).
+///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1653).
 ///
 /// upstream: util1.c:1478 same_time() (via generator.c unchanged_file()).
 pub(crate) fn system_time_within_window(
@@ -656,7 +656,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn destination_is_not_newer_when_dest_is_symlink_over_regular_source() {
-        // upstream: generator.c:1721 requires `stype == ftype` for the --update
+        // upstream: generator.c:2135 requires `stype == ftype` for the --update
         // skip. A newer destination SYMLINK must never cause a regular-file
         // source to be skipped, because a file-format difference is always
         // important enough to update. This is the exact `update` testsuite

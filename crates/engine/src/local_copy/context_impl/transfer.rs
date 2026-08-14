@@ -203,7 +203,7 @@ impl<'a> CopyContext<'a> {
         ephemeral_stack.push(Vec::new());
         marker_ephemeral_stack.push(Vec::new());
 
-        // upstream: exclude.c:801 `push_local_filters` sets `lp->tail = NULL`,
+        // upstream: exclude.c:900 `push_local_filters` sets `lp->tail = NULL`,
         // keeping `lp->head` so rules loaded at an ancestor depth keep matching
         // descendants. Seed the new frame's active rules AND inheritable loaded
         // segments from the parent frame, then look each active rule up in this

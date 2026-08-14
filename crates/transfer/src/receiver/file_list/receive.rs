@@ -31,7 +31,7 @@ impl ReceiverContext {
     /// After the file list entries, this also consumes the UID/GID lists that follow
     /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
-        // upstream: flist.c:2615 - `start_read = stats.total_read;` snapshots the
+        // upstream: flist.c:2887 - `start_read = stats.total_read;` snapshots the
         // raw wire counter before any list byte is read; the span (through the id
         // lists and the pre-30 io_error int) accumulates into stats.flist_size.
         let span_start = self.flist_span_start();
@@ -199,7 +199,7 @@ impl ReceiverContext {
         // across recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
 
-        // upstream: flist.c:2789 - `stats.flist_size += stats.total_read - start_read;`
+        // upstream: flist.c:3091 - `stats.flist_size += stats.total_read - start_read;`
         self.flist_span_end(span_start);
 
         Ok(count)

@@ -48,7 +48,7 @@ const MAX_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// returned unchanged. This is the single point that decides whether stall
 /// detection is armed at all.
 ///
-/// upstream: io.c:179 `if (!io_timeout) return;`
+/// upstream: io.c:226 `if (!io_timeout)` (guard returns early)
 #[must_use]
 pub(crate) fn effective_io_timeout(timeout: Option<Duration>) -> Option<Duration> {
     timeout.filter(|d| !d.is_zero())
@@ -56,9 +56,16 @@ pub(crate) fn effective_io_timeout(timeout: Option<Duration>) -> Option<Duration
 
 /// Computes the watchdog poll interval for a given `io_timeout`.
 ///
-/// Mirrors upstream's `allowed_lull = (io_timeout + 1) / 2` (io.c:1151),
-/// clamped to `[MIN_POLL_INTERVAL, MAX_POLL_INTERVAL]`. Polling at half the
-/// timeout guarantees the stall is detected within `~1.5 * io_timeout`.
+/// Mirrors upstream's `allowed_lull = (int)(((int64)io_timeout + 1) / 2)`
+/// (io.c:1281), clamped to `[MIN_POLL_INTERVAL, MAX_POLL_INTERVAL]`. Polling at
+/// half the timeout guarantees the stall is detected within `~1.5 * io_timeout`.
+///
+/// 3.5.0 hardened that line against a negative or `INT_MAX` `io_timeout` - a
+/// negative clamp, the `int64` widening above, and an `INT_MAX / 5` cap so the
+/// `allowed_lull * 5` the generator and sender derive cannot overflow. None of
+/// it is needed here: `Duration` is unsigned, so a negative interval cannot be
+/// represented, and the clamp bounds the result at both ends regardless of the
+/// input.
 #[must_use]
 pub(crate) fn stall_poll_interval(io_timeout: Duration) -> Duration {
     (io_timeout / 2).clamp(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
@@ -195,7 +202,7 @@ impl IoStallWatchdog {
                         return;
                     }
 
-                    // upstream: io.c:196 `if (t - chk >= io_timeout)` aborts.
+                    // upstream: io.c:243 `if (t - chk >= io_timeout)` aborts.
                     if thread_progress.idle() >= io_timeout {
                         thread_fired.store(true, Ordering::Release);
                         if let Some(action) = abort.take() {

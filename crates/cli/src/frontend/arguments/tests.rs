@@ -247,7 +247,7 @@ mod short_options {
         assert_eq!(parsed.atimes, Some(1));
     }
 
-    // upstream: options.c:1585 `if (++preserve_atimes > 1)` - a doubled `-UU`
+    // upstream: options.c:1692 `if (++preserve_atimes > 1)` - a doubled `-UU`
     // raises the level to 2, which server_options() forwards as `-UU`. Modelled
     // as a count so the emitted server args match a real `rsync -UU`.
     #[test]
@@ -3340,7 +3340,7 @@ mod env_option_defaults {
         assert_eq!(parsed.iconv, Some(OsString::from(".")));
     }
 
-    // upstream: options.c:1377 - `protect_args <= 0` guard: an explicitly
+    // upstream: options.c:1485 - `protect_args <= 0` guard: an explicitly
     // enabled protect_args suppresses the RSYNC_ICONV default.
     #[test]
     fn protect_args_suppresses_rsync_iconv_env() {

@@ -106,7 +106,7 @@ pub fn trace_process_gids(gids: &[u32]) {
 
 /// Traces a uid ownership change about to be applied (level 1).
 ///
-/// upstream: `rsync.c:537-540` - `"set uid of %s from %u to %u\n"`.
+/// upstream: `rsync.c:667-670` - `"set uid of %s from %u to %u\n"`.
 /// Emitted by `set_file_attrs` immediately before `do_lchown` when the
 /// resolved uid differs from the destination's existing uid.
 #[inline]
@@ -116,7 +116,7 @@ pub fn trace_set_uid(fname: &str, from: u32, to: u32) {
 
 /// Traces a gid ownership change about to be applied (level 1).
 ///
-/// upstream: `rsync.c:541-545` - `"set gid of %s from %u to %u\n"`.
+/// upstream: `rsync.c:672-676` - `"set gid of %s from %u to %u\n"`.
 /// Emitted by `set_file_attrs` immediately before `do_lchown` when the
 /// resolved gid differs from the destination's existing gid.
 #[inline]
@@ -158,7 +158,7 @@ mod tests {
         // upstream: uidlist.c:289 - `idlist_ptr == &uidlist ? "u" : "g"`.
         assert_eq!(IdKind::Uid.prefix(), "u");
         assert_eq!(IdKind::Gid.prefix(), "g");
-        // upstream: rsync.c:538,542 - `"set uid of"` / `"set gid of"`.
+        // upstream: rsync.c:667,542 - `"set uid of"` / `"set gid of"`.
         assert_eq!(IdKind::Uid.word(), "uid");
         assert_eq!(IdKind::Gid.word(), "gid");
     }
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn level1_set_uid_emits() {
-        // upstream: rsync.c:537-540 - "set uid of %s from %u to %u".
+        // upstream: rsync.c:667-670 - "set uid of %s from %u to %u".
         init_at(1);
         trace_set_uid("/tmp/dst", 1000, 0);
         let m = own_messages();
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn level1_set_gid_emits() {
-        // upstream: rsync.c:541-545 - "set gid of %s from %u to %u".
+        // upstream: rsync.c:672-676 - "set gid of %s from %u to %u".
         init_at(1);
         trace_set_gid("./file", 100, 200);
         let m = own_messages();

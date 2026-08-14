@@ -44,7 +44,7 @@ fn generator_with_bwlimit_builds_limiter() {
 
 /// The receiver never throttles, even when a `--bwlimit` rate is present.
 ///
-/// WHY: upstream `main.c:1068` sets `bwlimit_writemax = 0` on the receiver, so
+/// WHY: upstream `main.c:1083` sets `bwlimit_writemax = 0` on the receiver, so
 /// its writes (of ACKs / file-list requests) are never paced. Forwarding a
 /// `--bwlimit` value to a receiver (upstream always forwards it) must remain a
 /// no-op on its writer.

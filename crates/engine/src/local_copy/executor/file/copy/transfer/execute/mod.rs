@@ -196,7 +196,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             // basis override: copy_file_contents rewrites the existing inode via
             // the proven inplace path (which truncates to the final length).
         } else {
-            // upstream: rsync.c:740 - `make_backup(fname, False)` tries a
+            // upstream: rsync.c:898 - `make_backup(fname, False)` tries a
             // hard link into the backup area before renaming.
             context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
             // When a rename moved the basis file, delta transfer must read
@@ -509,7 +509,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         append_offset,
         context.preallocate_enabled(),
     )?;
-    // upstream: receiver.c:326-336 - the inplace branch (`preallocated_len = size_r`)
+    // upstream: receiver.c:490-500 - the inplace branch (`preallocated_len = size_r`)
     // is an `else if` reached only when the preallocate branch (receiver.c:320) did
     // NOT run. That branch runs for `--preallocate` whenever the file grows
     // (`total_size > size_r`), leaving preallocated_len at do_fallocate()'s 0 so the

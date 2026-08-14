@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn default_perms_wire_shape() {
-        // upstream: acls.c:1133-1134 - "got ACL-based default perms %o for directory %s"
+        // upstream: acls.c:1503-1504 - "got ACL-based default perms %o for directory %s"
         init_at(1);
         trace_default_perms_for_dir(0o755, "/tmp/dst");
         trace_default_perms_for_dir(0o700, ".");

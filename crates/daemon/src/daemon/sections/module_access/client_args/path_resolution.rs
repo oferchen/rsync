@@ -75,7 +75,7 @@ fn resolve_receiver_dest(
     module_name: &str,
 ) -> Option<std::path::PathBuf> {
     let positionals = extract_module_relative_paths(client_args, module_name);
-    // upstream: main.c:1212-1213 - `local_name = get_local_name(flist, argv[0])`
+    // upstream: main.c:1422-1423 - `local_name = get_local_name(flist, argv[0])`
     // uses the FIRST remaining positional (after the `.` placeholder has been
     // consumed by `do_server_recv` at lines 1174-1177). For a receiver that
     // translates to the last wire positional - the destination.
@@ -229,7 +229,7 @@ fn resolve_sender_sources(
 /// instead of the post-strip-prefix `.` and `one` that would otherwise
 /// trip the receiver's "rejecting unrequested file-list name" check.
 ///
-/// upstream: `flist.c:2312-2322` - `fbuf[len-1] == '/'` enters the
+/// upstream: `flist.c:1886-1896` - `fbuf[len-1] == '/'` enters the
 /// `DOTDIR_NAME` branch, which is how the daemon distinguishes
 /// "transfer module contents" from "transfer a named sub-path".
 fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {

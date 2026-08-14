@@ -65,7 +65,7 @@ pub(crate) fn decode_access(encoded: u32, is_name_entry: bool) -> io::Result<(u3
         let flags = encoded & 0x03;
         let mut access = encoded >> ACCESS_SHIFT;
 
-        // upstream: acls.c:679 rejects `access & ~SMB_ACL_VALID_NAME_BITS`
+        // upstream: acls.c:909 rejects `access & ~SMB_ACL_VALID_NAME_BITS`
         // after the shift, before folding in NAME_IS_USER.
         if access & !ACL_VALID_NAME_BITS != 0 {
             return Err(access_value_error(access));
@@ -78,7 +78,7 @@ pub(crate) fn decode_access(encoded: u32, is_name_entry: bool) -> io::Result<(u3
 
         Ok((access, name_follows))
     } else {
-        // upstream: acls.c:687 rejects `access & ~SMB_ACL_VALID_OBJ_BITS`.
+        // upstream: acls.c:917 rejects `access & ~SMB_ACL_VALID_OBJ_BITS`.
         if encoded & !ACL_VALID_OBJ_BITS != 0 {
             return Err(access_value_error(encoded));
         }
@@ -88,7 +88,7 @@ pub(crate) fn decode_access(encoded: u32, is_name_entry: bool) -> io::Result<(u3
 
 /// Builds the out-of-range access-bit error.
 ///
-/// upstream: acls.c:688-691 `recv_acl_access()` prints "value out of range"
+/// upstream: acls.c:919-922 `recv_acl_access()` prints "value out of range"
 /// and calls `exit_cleanup(RERR_STREAMIO)`. A bare `InvalidData` io::Error maps
 /// to `RERR_STREAMIO` (exit 12) via the core exit-code mapper
 /// (`exit_code/codes.rs`), so no dedicated error variant is introduced.

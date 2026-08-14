@@ -83,7 +83,7 @@ pub fn trace_opening_connection<S: AsRef<OsStr>>(command: &[S]) {
 
 /// Traces the daemon argument list being sent over the TCP socket (level 1).
 ///
-/// upstream: clientserver.c:350-351 - `print_child_argv("sending daemon args:", sargs)`
+/// upstream: clientserver.c:393-394 - `print_child_argv("sending daemon args:", sargs)`
 /// inside `start_inband_exchange()` right before the per-arg write loop.
 /// `sargs` includes the leading `--server [--sender] -flags . path` argv that
 /// the daemon will hand to its own `parse_arguments()`.

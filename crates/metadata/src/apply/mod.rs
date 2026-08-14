@@ -726,7 +726,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         )?;
     }
 
-    // upstream: rsync.c:615 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
+    // upstream: rsync.c:751 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
     //
     // Deliberately no `crtime != 0` test. Zero is a legitimate incoming value,
     // not a stand-in for "absent": upstream's `get_create_time()` returns 0 for

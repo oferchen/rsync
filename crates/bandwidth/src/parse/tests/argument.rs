@@ -17,7 +17,7 @@ fn parse_bandwidth_accepts_decimal_units() {
 
 #[test]
 fn parse_bandwidth_quantizes_effective_rate_to_whole_kib() {
-    // upstream: options.c:1718 `bwlimit = (size + 512) / 1024`, then every pacing
+    // upstream: options.c:1825 `bwlimit = (size + 512) / 1024`, then every pacing
     // calculation uses that whole-KiB value (io.c:2115,2120,2133). A byte or
     // decimal suffix must therefore pace at the KiB-rounded rate, not its exact
     // parsed byte count, or oc would throttle at a different speed than upstream.

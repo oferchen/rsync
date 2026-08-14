@@ -156,7 +156,7 @@ pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message
 ///
 /// A leading `+` prefix is permitted and ignored. A negative value is accepted
 /// and requests upstream's nanosecond-exact mtime comparison
-/// (`modify_window < 0`, util1.c:1482); upstream parses this option as a signed
+/// (`modify_window < 0`, util1.c:1653); upstream parses this option as a signed
 /// `int` (options.c:660, `POPT_ARG_INT`).
 pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<i64, Message> {
     let text = value.to_string_lossy();

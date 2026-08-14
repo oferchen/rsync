@@ -107,7 +107,7 @@ fn chown_fd(
 
 /// Emits the upstream level-1 `set uid of`/`set gid of` traces for a chown.
 ///
-/// upstream: `rsync.c:535-545` - `DEBUG_GTE(OWN, 1)` block emitted from
+/// upstream: `rsync.c:664-674` - `DEBUG_GTE(OWN, 1)` block emitted from
 /// `set_file_attrs` before `do_lchown`. The trace fires only for the fields
 /// that actually change against `existing`; when `existing` is unknown we
 /// emit using `from = 0` to match upstream's behaviour for fresh inodes
@@ -145,7 +145,7 @@ const IMPOSSIBLE_ID: u32 = u32::MAX;
 ///
 /// Kept pure so the exact wording can be pinned in a unit test. The path is
 /// quoted like upstream `full_fname`, and `kind` is `"uid"` or `"gid"`.
-// upstream: rsync.c:558-561 - "uid 4294967295 (-1) is impossible to set on %s".
+// upstream: rsync.c:691-694 - "uid 4294967295 (-1) is impossible to set on %s".
 #[cfg(unix)]
 fn impossible_id_message(kind: &str, destination: &Path) -> String {
     format!(
@@ -164,7 +164,7 @@ fn warn_impossible_id(kind: &str, destination: &Path) {
 
 /// Returns `true` when a resolved id of `(uid_t)-1` cannot be applied because
 /// the destination is not already owned by `-1`.
-// upstream: rsync.c:558-560 - `uid == (uid_t)-1 && sxp->st.st_uid != (uid_t)-1`.
+// upstream: rsync.c:690-692 - `uid == (uid_t)-1 && sxp->st.st_uid != (uid_t)-1`.
 #[cfg(unix)]
 fn id_is_impossible(resolved: Option<u32>, pre_chown_id: Option<u32>) -> bool {
     matches!(resolved, Some(IMPOSSIBLE_ID)) && pre_chown_id.unwrap_or(0) != IMPOSSIBLE_ID
@@ -918,7 +918,7 @@ mod own_debug_tests {
 
     #[test]
     fn level1_set_uid_emits_with_destination_path() {
-        // upstream: rsync.c:537-540 - "set uid of %s from %u to %u".
+        // upstream: rsync.c:667-670 - "set uid of %s from %u to %u".
         init_at(1);
 
         let tmp = tempdir().expect("tempdir");
@@ -945,7 +945,7 @@ mod own_debug_tests {
 
     #[test]
     fn level1_set_gid_emits_with_destination_path() {
-        // upstream: rsync.c:541-545 - "set gid of %s from %u to %u".
+        // upstream: rsync.c:672-676 - "set gid of %s from %u to %u".
         init_at(1);
 
         let tmp = tempdir().expect("tempdir");
@@ -972,7 +972,7 @@ mod own_debug_tests {
 
     #[test]
     fn level1_no_emission_when_uid_unchanged() {
-        // upstream: rsync.c:536-540 - `if (change_uid)` gates the uid trace.
+        // upstream: rsync.c:665-669 - `if (change_uid)` gates the uid trace.
         init_at(1);
 
         let tmp = tempdir().expect("tempdir");
@@ -1160,7 +1160,7 @@ mod post_chown_tests {
 
     #[test]
     fn plain_mode_skips_restat() {
-        // upstream: rsync.c:564 - the re-stat is gated on `S_ISUID | S_ISGID`
+        // upstream: rsync.c:697 - the re-stat is gated on `S_ISUID | S_ISGID`
         // only; ordinary and sticky-only modes take the cheap path.
         assert!(
             !suid_sgid_needs_restat(Some(0o0755)),

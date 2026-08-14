@@ -163,7 +163,7 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            // upstream: flist.c:1501 - `file->len32 = (uint32)st.st_size` runs for
+            // upstream: flist.c:1662 - `file->len32 = (uint32)st.st_size` runs for
             // every entry; only devices/specials are zeroed (flist.c:1484-1486).
             // Directories therefore carry their on-disk inode size on the wire,
             // which feeds `--list-only`, `%l`, and the `--stats` total.
@@ -358,7 +358,7 @@ impl GeneratorContext {
                     // so the sender transmits every namespace but system.*, and
                     // never claims root, so system.* stays local.
                     am_root: false,
-                    // upstream: xattrs.c:262 - `am_sender && preserve_xattrs < 2`
+                    // upstream: xattrs.c:274 - `am_sender && preserve_xattrs < 2`
                     // strips the rsync.%FOO store; -XX transmits it.
                     preserve_xattrs: self.config.flags.xattrs_level,
                     fake_super: self.config.fake_super,
@@ -1273,7 +1273,7 @@ mod windows_reparse_tests {
 mod entry_length_tests {
     //! `F_LENGTH` parity regression for directory and symlink entries.
     //!
-    //! upstream: flist.c:1501 - `file->len32 = (uint32)st.st_size` runs for
+    //! upstream: flist.c:1662 - `file->len32 = (uint32)st.st_size` runs for
     //! every entry type; only devices and specials are zeroed at flist.c:1484
     //! and flist.c:1486. Directories therefore carry their on-disk inode size
     //! and symlinks carry `st_size` (the target byte length). That field is
@@ -1373,7 +1373,7 @@ mod entry_length_tests {
 mod flist_checksum_tests {
     //! Sender-side `--checksum` (`-c`) per-file flist checksum regression.
     //!
-    //! upstream: flist.c:1444 - `always_checksum && am_sender && S_ISREG`
+    //! upstream: flist.c:1590 - `always_checksum && am_sender && S_ISREG`
     //! computes `file_checksum()` (checksum.c:401, unseeded) and stores it in
     //! `F_SUM(file)`; send_file_entry (flist.c:1003) writes it into the flist.
     //! The receiver's quick-check (generator.c:633 `quick_check_ok`) compares

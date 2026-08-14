@@ -58,7 +58,7 @@ impl SignatureLayoutParams {
     /// than [`SUM_LENGTH`], and the sender rejects a `s2length` wider than the
     /// digest it expects. Defaults to [`SUM_LENGTH`] (16), so the standard
     /// 16-byte digests (MD5, MD4, XXH3-128) leave the layout byte-identical to
-    /// upstream. (upstream: generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
+    /// upstream. (upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
     #[inline]
     #[must_use]
     pub const fn with_transfer_digest_length(mut self, transfer_digest_length: NonZeroU8) -> Self {
@@ -325,7 +325,7 @@ fn derive_strong_sum_length(
         return checksum_length;
     }
 
-    // upstream: generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`.
+    // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`.
     let max_s2length = i32::from(SUM_LENGTH.min(transfer_digest_length.get()));
 
     // upstream: generator.c:738-740 - a full-length phase csum yields the whole
@@ -347,7 +347,7 @@ fn derive_strong_sum_length(
         bias -= 1;
     }
 
-    // upstream: generator.c:747-749 - `MAX(s2length, csum_length)` floors the
+    // upstream: generator.c:753-755 - `MAX(s2length, csum_length)` floors the
     // computed length, then `MIN(s2length, max_s2length)` caps it last, so the
     // negotiated digest width wins even below the phase csum length.
     let mut strong_len = (bias + 1 - 32 + 7) / 8;

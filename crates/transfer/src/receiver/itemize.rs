@@ -503,7 +503,7 @@ impl ReceiverContext {
         let itemize =
             crate::generator::itemize::format_iflags(&effective_iflags, entry, is_sender, &ctx);
         let raw = effective_iflags.raw();
-        // upstream: log.c:644 gates the ` => hlink` suffix on `hlink && *hlink`,
+        // upstream: log.c:676 gates the ` => hlink` suffix on `hlink && *hlink`,
         // so an empty xname carries no leader (an already-correct hard-link alias
         // itemized with the empty string, hlink.c:218-222).
         let hardlink_leader = xname
@@ -814,7 +814,7 @@ impl ReceiverContext {
         const STRIPPED: u32 = crate::generator::ItemFlags::ITEM_REPORT_XATTR
             | crate::generator::ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
             | crate::generator::ItemFlags::ITEM_XNAME_FOLLOWS;
-        // upstream: generator.c:581 `iflags &= 0xffff` - the full low word goes
+        // upstream: generator.c:587 `iflags &= 0xffff` - the full low word goes
         // on the wire; the significance mask below is only the emission gate.
         let wire = ((iflags & !STRIPPED) & 0xFFFF) as u16;
         if wire & (crate::generator::ItemFlags::SIGNIFICANT_ITEM_FLAGS as u16) == 0

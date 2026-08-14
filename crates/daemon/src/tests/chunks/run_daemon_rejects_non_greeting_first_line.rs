@@ -1,6 +1,6 @@
 /// The client's first line must be its `@RSYNCD:` version banner.
 ///
-/// upstream: clientserver.c:180-184 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...) < 1)`
+/// upstream: clientserver.c:209-213 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...) < 1)`
 /// the daemon writes `@ERROR: protocol startup error` and drops the connection.
 /// oc previously fell through to module selection and echoed the raw line back as
 /// `@ERROR: Unknown module '<line>'`, which both diverged from upstream and

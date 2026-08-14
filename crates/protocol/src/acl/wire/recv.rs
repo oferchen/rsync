@@ -95,7 +95,7 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(
     acl_type: AclType,
 ) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
-    // upstream: acls.c:736-740 reads `int ndx = read_varint(f)` and rejects
+    // upstream: acls.c:966-970 reads `int ndx = read_varint(f)` and rejects
     // out-of-range indices with an error. The wire value is an index + 1, so a
     // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
     // panic under overflow-checks builds. Reject that edge with a protocol

@@ -37,7 +37,7 @@ pub(in crate::local_copy) enum TransferOutcome {
     /// An `--append-verify` pass appended its tail but the whole-file
     /// re-checksum disagreed. The appended bytes stay on disk and the caller
     /// must rerun the file as an ordinary delta transfer.
-    /// upstream: receiver.c:1096 `send_msg_int(MSG_REDO, ndx)`.
+    /// upstream: receiver.c:1358 `send_msg_int(MSG_REDO, ndx)`.
     VerificationFailed,
 }
 
