@@ -18,7 +18,7 @@ fn module_hostname_netgroup_deny_fails_closed_without_hostname() {
     let peer = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 23));
 
     assert!(
-        !module.permits(peer, None),
+        !module.permits(peer, PeerHost::new(None, true)),
         "an @netgroup deny rule must fail closed when the peer has no resolved hostname"
     );
 

@@ -239,7 +239,7 @@ impl ModuleDefinition {
     /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
-    pub(crate) fn permits(&self, addr: std::net::IpAddr, hostname: Option<&str>) -> bool {
+    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
         // upstream: access.c:277-283 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
@@ -248,7 +248,7 @@ impl ModuleDefinition {
             if self
                 .hosts_allow
                 .iter()
-                .any(|pattern| self.host_matches(pattern, addr, hostname))
+                .any(|pattern| self.host_matches(pattern, addr, host, false))
             {
                 return true;
             }
@@ -257,14 +257,32 @@ impl ModuleDefinition {
             }
         }
 
-        // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution failed
-        // and any deny rule is hostname-based. Without this guard, a peer
-        // whose reverse DNS returns no name (e.g., because the daemon's
+        // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution produced
+        // no name and any deny rule is hostname-based. Without this guard, a
+        // peer whose reverse DNS returns no name (e.g., because the daemon's
         // chroot lacks `/etc/resolv.conf` and the NSS shared objects)
         // silently bypasses hostname-pattern deny rules. This guard only
         // fires on the deny path - the allow short-circuit above lets a
-        // matched peer through without depending on hostname state.
-        if hostname.is_none()
+        // matched peer through without depending on hostname state, which is
+        // what keeps `hosts allow = UNKNOWN` usable.
+        //
+        // Keyed on the SENTINEL, not on the string being absent: the host is
+        // now always a matchable name, so the variant is the only thing that
+        // still distinguishes "DNS gave us this" from "nobody could".
+        //
+        // Matched EXHAUSTIVELY rather than through a boolean helper. "sentinel
+        // iff no name was resolved" is a biconditional over today's two
+        // variants and would silently become false if a third were added - a
+        // resolved-but-empty name, say - defaulting the new state into
+        // "allowed". With the match, adding a variant is a compile error here,
+        // so the decision has to be made rather than inherited. This is the one
+        // line in the module where being wrong is a security regression rather
+        // than a parity one.
+        let name_was_resolved = match host {
+            super::PeerHost::Resolved(_) => true,
+            super::PeerHost::Sentinel(_) => false,
+        };
+        if !name_was_resolved
             && self
                 .hosts_deny
                 .iter()
@@ -276,7 +294,7 @@ impl ModuleDefinition {
         if self
             .hosts_deny
             .iter()
-            .any(|pattern| self.host_matches(pattern, addr, hostname))
+            .any(|pattern| self.host_matches(pattern, addr, host, true))
         {
             return false;
         }
@@ -288,19 +306,27 @@ impl ModuleDefinition {
     /// reverse-DNS name-pattern match with forward-DNS resolution of the
     /// rule's hostname token.
     ///
-    /// upstream: access.c:254 `match_hostname(host_ptr, addr, tok) ||
+    /// upstream: access.c:260 `match_hostname(host_ptr, addr, tok, deny) ||
     /// match_address(addr, tok)` - a peer matches a `hosts allow`/`hosts deny`
     /// token when its reverse-DNS name matches the token pattern OR the token
     /// forward-resolves to the peer's address. Forward resolution is gated on
     /// the module's `forward lookup` parameter (access.c:49 `allow_forward_dns`).
+    ///
+    /// `deny` names which list is being scanned. Upstream threads it as a
+    /// per-call flag through `access_match` - 0 for the allow list
+    /// (access.c:284), 1 for the deny list (access.c:293) - and the ONE place
+    /// it is read is the unresolvable-token branch (access.c:57-63). It is a
+    /// parameter rather than module state for the same reason it is upstream:
+    /// one rule, read differently per call.
     fn host_matches(
         &self,
         pattern: &HostPattern,
         addr: std::net::IpAddr,
-        hostname: Option<&str>,
+        host: super::PeerHost<'_>,
+        deny: bool,
     ) -> bool {
-        pattern.matches(addr, hostname)
-            || pattern.forward_resolve_matches(addr, self.forward_lookup)
+        pattern.matches(addr, host.as_str())
+            || pattern.forward_resolve_matches(addr, self.forward_lookup, deny)
     }
 
     /// Returns whether any host pattern requires DNS hostname resolution.

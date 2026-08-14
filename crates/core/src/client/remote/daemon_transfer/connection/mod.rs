@@ -172,10 +172,63 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
     })
 }
 
+/// Resolves the username the client sends in its `@RSYNCD` auth response.
+///
+/// Two upstream stages, in order:
+///
+/// ```c
+/// /* clientserver.c:289-292, start_inband_exchange() */
+/// if (!user)
+///     user = getenv("USER");
+/// if (!user)
+///     user = getenv("LOGNAME");
+/// /* authenticate.c:451-452, auth_client() */
+/// if (!user || !*user)
+///     user = "nobody";
+/// ```
+///
+/// Three details are load-bearing and were each wrong before:
+///
+/// * the second variable is `LOGNAME`, not `USERNAME` - `USERNAME` is a Windows
+///   convention upstream never consults, so a peer that sets only `USERNAME`
+///   must still authenticate as `nobody`;
+/// * the final fallback is `nobody`, not `rsync`;
+/// * the env chain stops at the first variable that is **set**, even when its
+///   value is empty. `USER=""` with `LOGNAME=bob` therefore yields `nobody`,
+///   not `bob` - `getenv` returns a non-NULL empty string, so `if (!user)`
+///   is false and only `auth_client`'s `!*user` catches it. `env::var` mirrors
+///   this exactly: `Ok("")` when set-empty, `Err` only when absent.
+///
+/// An explicitly requested username (`rsync://user@host/mod`) skips the
+/// environment entirely, and an explicitly empty one still degrades to
+/// `nobody`, because upstream applies the emptiness check inside `auth_client`
+/// regardless of where the name came from.
+fn daemon_auth_username(requested: Option<&str>) -> String {
+    resolve_auth_username(
+        requested,
+        std::env::var("USER").ok().as_deref(),
+        std::env::var("LOGNAME").ok().as_deref(),
+    )
+}
+
+/// The decision half of [`daemon_auth_username`], with the environment passed
+/// in so it is testable without mutating process-global state.
+pub(crate) fn resolve_auth_username(
+    requested: Option<&str>,
+    user_env: Option<&str>,
+    logname_env: Option<&str>,
+) -> String {
+    let resolved = requested.or(user_env).or(logname_env);
+    match resolved {
+        Some(name) if !name.is_empty() => name.to_owned(),
+        _ => "nobody".to_owned(),
+    }
+}
+
 /// Echoes a daemon `@ERROR` line to stderr and constructs the matching
 /// client error.
 ///
-/// Mirrors upstream `clientserver.c:382` - `rprintf(FERROR, "%s\n", line)` -
+/// Mirrors upstream `clientserver.c:425` - `rprintf(FERROR, "%s\n", line)` -
 /// which prints the raw `@ERROR` line verbatim to stderr before returning
 /// the fatal error to the caller. External tools (and the upstream
 /// testsuite/daemon-chroot-acl_test.py GHSA-rjfm-3w2m-jf4f regression
@@ -356,11 +409,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
                     )
                 })?;
 
-            let username = request.username.clone().unwrap_or_else(|| {
-                std::env::var("USER")
-                    .or_else(|_| std::env::var("USERNAME"))
-                    .unwrap_or_else(|_| "rsync".to_owned())
-            });
+            let username = daemon_auth_username(request.username.as_deref());
 
             // upstream: authenticate.c:242 `auth_client()` negotiates only
             // after the daemon asked for credentials. An absent list falls back

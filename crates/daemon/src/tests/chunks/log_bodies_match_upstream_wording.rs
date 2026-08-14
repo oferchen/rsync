@@ -9,7 +9,7 @@ fn log_bodies_match_upstream_wording() {
     let path = dir.path().join("daemon.log");
     let log = open_log_sink(&path, Brand::Oc).expect("open log");
 
-    let host = Some("client.example");
+    let host = "client.example";
     let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17));
     let addr = std::net::SocketAddr::new(ip, 873);
 

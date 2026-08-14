@@ -1,11 +1,12 @@
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
-use core::client::{FilterRuleKind, FilterRuleSpec};
+use core::client::{FILE_IO_EXIT_CODE, FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
+use engine::local_copy::upstream_io_error;
 
 use super::directive::FilterDirective;
 use super::parsing::parse_old_prefix_rule;
@@ -42,7 +43,11 @@ pub(crate) fn append_filter_rules_from_files(
     // file's rules locally so a `!` inside the file clears only that scope
     // and parent CLI rules survive.
     for path in files {
-        let patterns = load_filter_file_patterns(Path::new(path.as_os_str()), eol_nulls)?;
+        let patterns = load_filter_file_patterns(
+            Path::new(path.as_os_str()),
+            eol_nulls,
+            matches!(kind, FilterRuleKind::Include),
+        )?;
         let mut local: Vec<FilterRuleSpec> = Vec::new();
         for pattern in patterns {
             if honor_old_prefixes {
@@ -74,36 +79,65 @@ pub(crate) fn append_filter_rules_from_files(
     Ok(())
 }
 
+/// Reports a filter file that could not be opened the way upstream's
+/// `parse_filter_file` does, under upstream's exit code.
+///
+/// upstream: exclude.c:1712-1719 - `rsyserr(FERROR, errno, "failed to open
+/// %sclude file %s", ...)` then `exit_cleanup(RERR_FILEIO)`. The include/exclude
+/// wording follows `template->rflags & FILTRULE_INCLUDE`, so a merge rule
+/// carrying a `+` modifier (`.+ FILE`, `merge,+ FILE`) says "include file".
+///
+/// This rule is deliberately NOT shared with `--files-from`, whose own open
+/// failure upstream reports from a different site and exits 1, not 11
+/// (main.c:1886) - measured on 3.5.0.
+fn filter_file_open_error(path: &Path, include: bool, error: &io::Error) -> Message {
+    let text = format!(
+        "failed to open {}clude file {}: {}",
+        if include { "in" } else { "ex" },
+        path.display(),
+        upstream_io_error(error)
+    );
+    rsync_error!(FILE_IO_EXIT_CODE, text).with_role(Role::Client)
+}
+
 /// Reads the raw pattern lines from a filter file, or from standard input when
 /// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
+/// `include` selects upstream's include/exclude wording if the open fails.
 pub(crate) fn load_filter_file_patterns(
     path: &Path,
     eol_nulls: bool,
+    include: bool,
 ) -> Result<Vec<String>, Message> {
     if path == Path::new("-") {
         return read_filter_patterns_from_standard_input(eol_nulls);
     }
 
-    let path_display = path.display().to_string();
-    let file = File::open(path).map_err(|error| {
-        let text = format!("failed to read filter file '{path_display}': {error}");
-        rsync_error!(1, text).with_role(Role::Client)
-    })?;
+    let file = File::open(path).map_err(|error| filter_file_open_error(path, include, &error))?;
 
     let mut reader = BufReader::new(file);
     read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
-        let text = format!("failed to read filter file '{path_display}': {error}");
+        // Upstream has no analogue: its getc loop cannot distinguish a read
+        // error from EOF, so a post-open failure silently ends the file. Keep
+        // oc's louder report rather than inventing an upstream citation for it.
+        let text = format!("failed to read filter file '{}': {error}", path.display());
         rsync_error!(1, text).with_role(Role::Client)
     })
 }
 
-/// Reads a merge file's entire contents as a string.
-pub(super) fn read_merge_file(path: &Path) -> Result<String, Message> {
-    let display = path.display();
-    fs::read_to_string(path).map_err(|error| {
-        let text = format!("failed to read filter file '{display}': {error}");
+/// Reads a merge file's entire contents as a string. `include` selects
+/// upstream's include/exclude wording if the open fails.
+pub(super) fn read_merge_file(path: &Path, include: bool) -> Result<String, Message> {
+    // Opened separately from the read so that only a genuine open failure takes
+    // upstream's wording and exit code; a mid-file read error (or non-UTF-8
+    // contents) is a different condition and keeps its own report.
+    let mut file =
+        File::open(path).map_err(|error| filter_file_open_error(path, include, &error))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).map_err(|error| {
+        let text = format!("failed to read filter file '{}': {error}", path.display());
         rsync_error!(1, text).with_role(Role::Client)
-    })
+    })?;
+    Ok(contents)
 }
 
 /// Reads an entire merge file from standard input.
@@ -297,16 +331,32 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
-        let result = load_filter_file_patterns(&path, false).expect("load");
+        let result = load_filter_file_patterns(&path, false, false).expect("load");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
+    /// upstream: exclude.c:1712-1719 - a missing --exclude-from/--include-from
+    /// file is fatal with RERR_FILEIO (11) and upstream's own wording, not the
+    /// generic exit 1 this previously accepted.
     #[test]
-    fn load_filter_file_patterns_fails_for_missing_file() {
+    fn load_filter_file_patterns_reports_a_missing_file_like_upstream() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("nonexistent.txt");
-        let result = load_filter_file_patterns(&path, false);
-        assert!(result.is_err());
+
+        let excluded = load_filter_file_patterns(&path, false, false).expect_err("must fail");
+        assert_eq!(excluded.code(), Some(11));
+        assert!(
+            excluded.text().starts_with("failed to open exclude file "),
+            "unexpected text: {}",
+            excluded.text()
+        );
+
+        let included = load_filter_file_patterns(&path, false, true).expect_err("must fail");
+        assert!(
+            included.text().starts_with("failed to open include file "),
+            "unexpected text: {}",
+            included.text()
+        );
     }
 
     #[test]
@@ -314,16 +364,23 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("merge.txt");
         std::fs::write(&path, "content here").expect("write");
-        let result = read_merge_file(&path).expect("read");
+        let result = read_merge_file(&path, false).expect("read");
         assert_eq!(result, "content here");
     }
 
+    /// A merge rule naming a missing file is fatal under the same rule
+    /// (upstream: exclude.c:1587 passes XFLG_FATAL_ERRORS for `merge`/`.`).
     #[test]
-    fn read_merge_file_fails_for_missing_file() {
+    fn read_merge_file_reports_a_missing_file_like_upstream() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("nonexistent.txt");
-        let result = read_merge_file(&path);
-        assert!(result.is_err());
+        let error = read_merge_file(&path, false).expect_err("must fail");
+        assert_eq!(error.code(), Some(11));
+        assert!(
+            error.text().starts_with("failed to open exclude file "),
+            "unexpected text: {}",
+            error.text()
+        );
     }
 
     #[test]
@@ -343,7 +400,7 @@ mod tests {
     #[test]
     fn load_filter_file_patterns_handles_dash_path() {
         set_filter_stdin_input(b"stdin_pattern\n".to_vec());
-        let result = load_filter_file_patterns(Path::new("-"), false).expect("load");
+        let result = load_filter_file_patterns(Path::new("-"), false, false).expect("load");
         assert_eq!(result, vec!["stdin_pattern"]);
     }
 

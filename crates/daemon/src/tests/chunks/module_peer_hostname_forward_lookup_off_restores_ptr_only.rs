@@ -30,7 +30,7 @@ fn module_peer_hostname_forward_lookup_off_restores_ptr_only() {
         Some("trusted.example.com"),
         "forward lookup = no must trust the PTR name without confirmation"
     );
-    assert!(module.permits(peer, resolved));
+    assert!(module.permits(peer, PeerHost::new(resolved, true)));
 
     clear_test_hostname_overrides();
 }

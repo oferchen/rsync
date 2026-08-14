@@ -72,11 +72,11 @@ fn apply_privilege_restrictions_with_upstream_errors(
                     AtError::ChrootFailed
                 };
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                let host_owned = ctx.effective_host().map(str::to_owned);
+                let host_owned = ctx.host_display().to_owned();
                 run_post_xfer_finalizer(
                     ctx,
                     module,
-                    host_owned.as_deref(),
+                    &host_owned,
                     auth_user,
                     client_args,
                     MODULE_ABORT_EXIT_CODE,
@@ -121,11 +121,11 @@ fn apply_privilege_restrictions_with_upstream_errors(
                     AtError::SetgidFailed
                 };
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                let host_owned = ctx.effective_host().map(str::to_owned);
+                let host_owned = ctx.host_display().to_owned();
                 run_post_xfer_finalizer(
                     ctx,
                     module,
-                    host_owned.as_deref(),
+                    &host_owned,
                     auth_user,
                     client_args,
                     MODULE_ABORT_EXIT_CODE,
@@ -192,7 +192,7 @@ fn validate_module_path(
         let text = format!(
             "module '{}' path validation failed for {} ({}): path does not exist: {}",
             ctx.request,
-            ctx.effective_host().unwrap_or("unknown"),
+            ctx.host_display(),
             ctx.peer_ip,
             module.path.display()
         );
