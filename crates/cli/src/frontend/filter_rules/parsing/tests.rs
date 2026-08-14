@@ -662,23 +662,33 @@ fn old_prefix_plus_space_flips_to_include() {
     }
 }
 
+/// Only a line that is exactly `!` clears under the old-prefix options.
+///
+/// upstream: exclude.c parse_rule_tok() XFLG_OLD_PREFIXES branch - `*s == '!'`
+/// sets FILTRULE_CLEAR_LIST but does NOT advance `s`, so the later
+/// `if (len > 1) rule->rflags &= ~FILTRULE_CLEAR_LIST` measures the whole line
+/// and demotes anything longer back to a literal pattern. `! ` is a pattern
+/// spelled "! ", not a clear; rsync 3.5.0 keeps a `keep2.txt` exclude standing
+/// across `--exclude='! '` for exactly this reason.
 #[test]
-fn old_prefix_bang_emits_clear() {
+fn old_prefix_clear_requires_an_exact_bang() {
     assert!(matches!(
         parse_old_prefix_rule("!", FilterRuleKind::Exclude).unwrap(),
         FilterDirective::Clear
     ));
-    assert!(matches!(
-        parse_old_prefix_rule("!   ", FilterRuleKind::Exclude).unwrap(),
-        FilterDirective::Clear
-    ));
+    for line in ["! ", "!  ", "!\t", "!   "] {
+        match parse_old_prefix_rule(line, FilterRuleKind::Exclude).unwrap() {
+            FilterDirective::Rule(spec) => assert_eq!(spec.pattern(), line),
+            other => panic!("`{line}` must be a literal pattern, got {other:?}"),
+        }
+    }
 }
 
 #[test]
 fn old_prefix_bang_with_pattern_is_raw_pattern() {
-    // upstream: `!pattern` (no space) is NOT a clear - it's the raw
-    // pattern because XFLG_OLD_PREFIXES only recognizes `!` as clear
-    // when followed by whitespace or end-of-line.
+    // upstream: `!pattern` is NOT a clear - `len > 1` demotes the tentative
+    // FILTRULE_CLEAR_LIST back to a literal pattern. Whitespace does not
+    // rescue it either; see old_prefix_clear_requires_an_exact_bang.
     let result = parse_old_prefix_rule("!keepme", FilterRuleKind::Exclude).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
@@ -868,4 +878,129 @@ fn lowercase_modifiers_and_uppercase_prefixes_still_parse() {
         FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Protect),
         other => panic!("expected protect Rule, got {other:?}"),
     }
+}
+
+/// Every spelling the clear-list token can take, and what upstream rsync 3.5.0
+/// does with it in the two parser contexts this module owns.
+///
+/// The grid is the guard: the token has two spellings (`!` and `clear`), two
+/// separators (whitespace and `_`) that do NOT rescue it, one (`,`) that does,
+/// and two contexts whose rules genuinely differ - so a handful of cases would
+/// not pin it. Expectations were measured against a locally built rsync 3.5.0.
+///
+/// upstream: exclude.c parse_rule_tok() - the full-syntax branch runs
+/// `if (*s) s++` and then errors on any remaining `len`, while the
+/// XFLG_OLD_PREFIXES branch never errors and instead demotes on `len > 1`.
+const CLEAR_TOKEN_GRID: &[(&str, FullSyntax, OldPrefix)] = &[
+    ("!", FullSyntax::Clear, OldPrefix::Clear),
+    ("!,", FullSyntax::Clear, OldPrefix::Pattern),
+    ("! ", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("!  ", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("!_", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("!x", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("!,x", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("!clear", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("clear", FullSyntax::Clear, OldPrefix::Pattern),
+    ("clear ", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    (
+        "clear  ",
+        FullSyntax::TrailingCharacters,
+        OldPrefix::Pattern,
+    ),
+    ("clear_", FullSyntax::TrailingCharacters, OldPrefix::Pattern),
+    ("clear,", FullSyntax::Clear, OldPrefix::Pattern),
+    (
+        "clear,x",
+        FullSyntax::TrailingCharacters,
+        OldPrefix::Pattern,
+    ),
+    ("clearx", FullSyntax::Rejected, OldPrefix::Pattern),
+    ("Clear", FullSyntax::Rejected, OldPrefix::Pattern),
+];
+
+/// Outcome of a spelling in full `--filter` syntax.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullSyntax {
+    /// Clears the list in scope.
+    Clear,
+    /// `'!' rule has trailing characters`, RERR_SYNTAX.
+    TrailingCharacters,
+    /// Not the clear token at all; rejected as an unrecognised rule.
+    Rejected,
+}
+
+/// Outcome of a spelling under `--exclude`/`--include` old-prefix parsing,
+/// where the trailing-characters error cannot fire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OldPrefix {
+    /// Clears the list in scope.
+    Clear,
+    /// Demoted to a literal pattern equal to the whole line.
+    Pattern,
+}
+
+#[test]
+fn clear_token_grid_matches_upstream_in_full_filter_syntax() {
+    for (spelling, expected, _) in CLEAR_TOKEN_GRID {
+        let result = parse_filter_directive(OsStr::new(spelling));
+        match (expected, result) {
+            (FullSyntax::Clear, Ok(FilterDirective::Clear)) => {}
+            (FullSyntax::TrailingCharacters, Err(message)) => {
+                let rendered = message.to_string();
+                assert!(
+                    rendered.contains(&format!("'!' rule has trailing characters: {spelling}")),
+                    "`--filter={spelling}` must report trailing characters, got: {rendered}"
+                );
+            }
+            (FullSyntax::Rejected, Err(message)) => {
+                let rendered = message.to_string();
+                assert!(
+                    !rendered.contains("trailing characters"),
+                    "`--filter={spelling}` is not the clear token, so it must not \
+                     report trailing characters, got: {rendered}"
+                );
+            }
+            (expected, actual) => {
+                panic!("`--filter={spelling}`: expected {expected:?}, got {actual:?}")
+            }
+        }
+    }
+}
+
+#[test]
+fn clear_token_grid_matches_upstream_in_old_prefix_syntax() {
+    for (spelling, _, expected) in CLEAR_TOKEN_GRID {
+        let result = parse_old_prefix_rule(spelling, FilterRuleKind::Exclude)
+            .unwrap_or_else(|e| panic!("`--exclude={spelling}` must parse: {e}"));
+        match (expected, result) {
+            (OldPrefix::Clear, FilterDirective::Clear) => {}
+            (OldPrefix::Pattern, FilterDirective::Rule(spec)) => {
+                assert_eq!(
+                    spec.pattern(),
+                    *spelling,
+                    "`--exclude={spelling}` must keep the whole line as the pattern"
+                );
+            }
+            (expected, actual) => {
+                panic!("`--exclude={spelling}`: expected {expected:?}, got {actual:?}")
+            }
+        }
+    }
+}
+
+/// The grid must cover both spellings crossed with every separator class, so a
+/// row dropped from the table cannot silently shrink the guard.
+#[test]
+fn clear_token_grid_covers_both_spellings_and_every_separator() {
+    for token in ["!", "clear"] {
+        for suffix in ["", " ", "_", ",", "x"] {
+            let spelling = format!("{token}{suffix}");
+            assert!(
+                CLEAR_TOKEN_GRID.iter().any(|(s, _, _)| *s == spelling),
+                "clear-token grid is missing `{spelling}`"
+            );
+        }
+    }
+    // Both contexts must be exercised for every row.
+    assert!(CLEAR_TOKEN_GRID.len() >= 2 * 5);
 }

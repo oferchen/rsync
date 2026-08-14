@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::FilterRule;
+use crate::clear_token::{ClearToken, classify_clear_token};
 
 use super::error::MergeFileError;
 
@@ -571,10 +572,21 @@ fn parse_rule_line(
     source_path: &Path,
     line_num: usize,
 ) -> Result<FilterRule, MergeFileError> {
-    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
-    // strncmp, so `CLEAR`/`Clear` are not the clear directive.
-    if line == "!" || line == "clear" {
-        return Ok(FilterRule::clear());
+    // upstream: exclude.c parse_rule_tok() - the bare `!` and the `clear` long
+    // name are the two spellings of FILTRULE_CLEAR_LIST, and each leaves one
+    // character for `if (*s) s++`, so anything left over (a lone trailing space
+    // included) is a trailing-characters error. `RULE_STRCMP` is a
+    // case-sensitive strncmp, so `CLEAR`/`Clear` are not the directive.
+    match classify_clear_token(line.as_bytes()) {
+        ClearToken::Clear => return Ok(FilterRule::clear()),
+        ClearToken::TrailingCharacters => {
+            return Err(MergeFileError::parse_error(
+                source_path,
+                line_num,
+                format!("'!' rule has trailing characters: {line}"),
+            ));
+        }
+        ClearToken::NotClearToken => {}
     }
 
     if let Some(rule) = try_parse_short_form(line, source_path, line_num)? {
