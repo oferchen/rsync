@@ -20,7 +20,7 @@ fn module_hostname_netgroup_non_member_falls_through() {
     // musl/Windows no-op resolver that always reports no membership.
 
     assert!(
-        !module.permits(peer, Some("stranger.example.com")),
+        !module.permits(peer, PeerHost::new(Some("stranger.example.com"), true)),
         "a non-member (or the no-op netgroup platform) must not satisfy an @netgroup allow rule"
     );
 

@@ -10,7 +10,7 @@ fn module_peer_hostname_uses_override() {
     let mut cache = None;
     let resolved = module_peer_hostname(&module, &mut cache, peer, true);
     assert_eq!(resolved, Some("trusted.example.com"));
-    assert!(module.permits(peer, resolved));
+    assert!(module.permits(peer, PeerHost::new(resolved, true)));
     clear_test_hostname_overrides();
 }
 

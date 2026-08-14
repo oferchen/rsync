@@ -268,7 +268,7 @@ fn read_and_log_client_args(
         let text = format!(
             "module '{}' from {} ({}): client args: {}",
             ctx.request,
-            ctx.effective_host().unwrap_or("unknown"),
+            ctx.host_display(),
             ctx.peer_ip,
             args_str
         );

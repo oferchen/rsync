@@ -7,7 +7,7 @@ fn log_module_limit_logs_cap_reached() {
 
     log_module_limit(
         &log,
-        Some("client.example"),
+        "client.example",
         IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17)),
         "docs",
         limit,

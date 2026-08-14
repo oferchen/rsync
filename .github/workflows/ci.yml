@@ -209,6 +209,30 @@ jobs:
         run: python3 tools/audit/unsafe_safety_comment_audit.py
 
   # ===========================================================================
+  # tools/ Unit Tests
+  # ---------------------------------------------------------------------------
+  # `tools/tests/` held unittest modules that no workflow ran, so a regression
+  # in the helpers they cover was invisible - including the coverage gate and
+  # the path-site sweep whose output scopes the confinement work. The runner
+  # discovers by pattern rather than an enumerated list, because an enumerated
+  # list is how those modules became orphans in the first place, and it asserts
+  # a non-zero test count, because `unittest discover` exits 0 when it matches
+  # nothing. Blocking, not informational: an inert gate is the defect it is
+  # meant to catch.
+  # ===========================================================================
+  tools-tests:
+    name: tools unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run tools/tests
+        run: bash tools/ci/run_tools_tests.sh
+
+  # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
   # ===========================================================================
   test:
@@ -356,7 +380,7 @@ jobs:
       # main Test step does not run.
       - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
         shell: bash
-        run: cargo nextest run --locked -p metadata -p fast_io -p transfer -E 'test(crtime) | test(sparse) | test(iocp_read_parity) | test(junction) | test(file_symlink_reports) | test(windows_receiver_symlink)'
+        run: cargo nextest run --locked -p metadata -p fast_io -p transfer
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
