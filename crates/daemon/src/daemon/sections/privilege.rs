@@ -339,18 +339,53 @@ fn resolve_nobody_uid() -> io::Result<u32> {
     ))
 }
 
-/// Resolves the `nobody` group to its gid via NSS.
+/// Candidate names for the unprivileged default group, in upstream's order.
 ///
-/// upstream: clientserver.c:873 `add_a_group(f_out, NOBODY_GROUP)`; NOBODY_GROUP
-/// is `"nobody"` (config.h).
+/// upstream: configure.sh:7376-7386 picks NOBODY_GROUP by probing `/etc/group`
+/// at BUILD time - `nobody` if that group exists, else `nogroup`, else `nobody`
+/// as a last resort. Debian and Ubuntu ship `nogroup`; most others ship
+/// `nobody`, which is why a build configured on one family names a group the
+/// other does not have.
+///
+/// oc ships ONE binary for every distribution, so the build-time answer is not
+/// available to it. Probing the same names in the same order at RUNTIME is the
+/// faithful mirror: it resolves to exactly what upstream would have baked in on
+/// the host actually running the daemon, and it keeps working if the binary is
+/// moved between distributions.
+// upstream: clientserver.c:873 `add_a_group(f_out, NOBODY_GROUP)`
+#[cfg(unix)]
+const NOBODY_GROUP_CANDIDATES: [&[u8]; 2] = [b"nobody", b"nogroup"];
+
+/// Resolves the unprivileged default group to its gid via NSS.
+///
+/// Returns the first of [`NOBODY_GROUP_CANDIDATES`] that exists. Errors naming
+/// every candidate when none does, mirroring upstream's `@ERROR: invalid gid`
+/// while telling the operator which names were tried - upstream can name only
+/// the single group it was configured with.
 #[cfg(unix)]
 fn resolve_nobody_gid() -> io::Result<u32> {
-    metadata::id_lookup::lookup_group_by_name(b"nobody")?.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "cannot drop to default group: no 'nobody' group (set an explicit gid)",
-        )
-    })
+    resolve_first_existing_group(&NOBODY_GROUP_CANDIDATES)
+}
+
+/// Returns the gid of the first `candidates` entry that resolves.
+///
+/// Split from [`resolve_nobody_gid`] so the FALLBACK is testable independently
+/// of which groups the test host happens to have: a test that only asserts
+/// "the default group resolves" passes on a host carrying the first candidate
+/// no matter whether the fallback works at all.
+#[cfg(unix)]
+fn resolve_first_existing_group(candidates: &[&[u8]]) -> io::Result<u32> {
+    for candidate in candidates {
+        if let Some(gid) = metadata::id_lookup::lookup_group_by_name(candidate)? {
+            return Ok(gid);
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "cannot drop to default group: no 'nobody' or 'nogroup' group \
+         (set an explicit gid)",
+    ))
 }
 
 /// Non-Unix stub: only reachable via `am_root`, which is always false off Unix.
@@ -757,6 +792,70 @@ mod privilege_tests {
         assert!(
             !resolve_use_chroot(&module, &sink),
             "explicit 'use chroot = no' must not be overridden by a /./ marker"
+        );
+    }
+
+    /// WHY: upstream picks NOBODY_GROUP at BUILD time by probing /etc/group -
+    /// `nobody` if present, else `nogroup` (configure.sh:7376-7386). Debian and
+    /// Ubuntu ship only `nogroup`. oc ships one binary for every distribution,
+    /// so it must probe the same names in the same order at RUNTIME or a root
+    /// daemon on those distributions dies with `@ERROR: invalid gid nobody`
+    /// where upstream succeeds.
+    ///
+    /// Exercises the FALLBACK specifically. Asserting only that the real
+    /// default group resolves would pass on any host carrying the first
+    /// candidate regardless of whether the fallback works, so this drives a
+    /// synthetic list whose first entry cannot exist.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_first_existing_group_falls_through_to_the_later_candidate() {
+        let Ok(Some(expected)) = metadata::id_lookup::lookup_group_by_name(b"nobody") else {
+            // Host lacks `nobody`; the sibling `nogroup` arm below covers it.
+            return;
+        };
+
+        let candidates: [&[u8]; 2] = [b"oc-rsync-no-such-group-zz", b"nobody"];
+        let gid = resolve_first_existing_group(&candidates)
+            .expect("must fall through the missing first candidate");
+        assert_eq!(
+            gid, expected,
+            "fallback must resolve the second candidate, not the first"
+        );
+    }
+
+    /// WHY: the candidate ORDER is upstream's, not ours - configure.sh prefers
+    /// `nobody` and only then `nogroup`. A host carrying both must therefore
+    /// pick `nobody`, matching what upstream would have baked in there.
+    #[cfg(unix)]
+    #[test]
+    fn nobody_group_candidates_mirror_upstream_probe_order() {
+        assert_eq!(
+            NOBODY_GROUP_CANDIDATES,
+            [b"nobody".as_slice(), b"nogroup".as_slice()],
+            "order mirrors configure.sh:7376-7386 (nobody, then nogroup)"
+        );
+    }
+
+    /// WHY: a root daemon with no explicit `gid` must find SOME unprivileged
+    /// group on any host that has either candidate. This is the end-to-end
+    /// regression guard for the Debian/Ubuntu case - before the fallback it
+    /// failed there outright.
+    #[cfg(unix)]
+    #[test]
+    fn default_group_resolves_when_either_candidate_exists() {
+        let has_any = NOBODY_GROUP_CANDIDATES.iter().any(|candidate| {
+            matches!(
+                metadata::id_lookup::lookup_group_by_name(candidate),
+                Ok(Some(_))
+            )
+        });
+        if !has_any {
+            return;
+        }
+
+        assert!(
+            resolve_nobody_gid().is_ok(),
+            "a host carrying 'nobody' or 'nogroup' must resolve a default group"
         );
     }
 }
