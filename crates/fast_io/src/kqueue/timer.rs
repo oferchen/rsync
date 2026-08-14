@@ -222,8 +222,13 @@ mod tests {
         );
     }
 
+    /// Only the lower bound is asserted. A wall-clock ceiling would test the
+    /// host scheduler rather than the timer: nothing in this crate can bound
+    /// how long the OS takes to run us again after the kevent fires, and under
+    /// a loaded CI runner a 50 ms sleep has been observed returning in 184 ms.
+    /// A timer that never fires at all is caught by the harness timeout.
     #[test]
-    fn sleep_fifty_ms_is_within_tolerance() {
+    fn sleep_fifty_ms_blocks_for_at_least_the_requested_duration() {
         let sleeper = TimerSleeper::new().expect("kqueue allocation succeeds");
         let target = Duration::from_millis(50);
         let start = Instant::now();
@@ -233,10 +238,6 @@ mod tests {
         assert!(
             elapsed >= Duration::from_millis(40),
             "kqueue timer slept too short: elapsed={elapsed:?}"
-        );
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "kqueue timer slept too long: elapsed={elapsed:?}"
         );
     }
 
@@ -263,13 +264,12 @@ mod tests {
                 .sleep(Duration::from_millis(10))
                 .expect("kqueue timer fires");
             let elapsed = start.elapsed();
+            // Lower bound only, for the same reason as the 50 ms case above:
+            // the reuse contract is that each `sleep` re-arms and blocks, not
+            // that the scheduler returns within any particular wall-clock budget.
             assert!(
                 elapsed >= Duration::from_millis(5),
                 "sleep too short on reuse: elapsed={elapsed:?}"
-            );
-            assert!(
-                elapsed < Duration::from_millis(60),
-                "sleep too long on reuse: elapsed={elapsed:?}"
             );
         }
     }
