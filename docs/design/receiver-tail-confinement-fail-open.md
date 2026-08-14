@@ -52,13 +52,37 @@ iconv` on `[ubuntu-latest, macos-latest, windows-latest]`. Both
 `crates/protocol/src/flist/read/name.rs`, so the red is master's. The escape
 detector fired continuously; the cell is not required, so nobody looked.
 
-⚠ **The daemon log is silent too.** The full log for the escaping run holds the
-access line, the client-args line, the landlock/seccomp notices,
-`receiving file list`, and the byte totals. There is **no** confinement
-warning of any kind - not the `continuing without path confinement` text, not
-anything else. Which arm ran instead of the warn arm is *not* established; only
-the absence of the log line is measured. So "loud, but only in the daemon's log"
+⚠ **The daemon log is silent too, and that is a SECOND defect.** The full log
+for the escaping run holds the access line, the client-args line, the
+landlock/seccomp notices, `receiving file list`, and the byte totals - **no**
+confinement warning of any kind. So "loud, but only in the daemon's log"
 overstates it: on this path it is silent on both sides.
+
+Which arm executes was then measured directly, with an `eprintln!` - chosen
+because it bypasses the logging layer under suspicion - placed as an adjacent
+statement in the same match arm, running the real escaping transfer once:
+
+```
+daemon stderr, IN FULL:
+  ZZPROBE anchored: module_root=…/module peer_tail=escape result=Err(Some(20))
+  ZZPROBE anchored: took the DEGRADE arm (warn + Ok(None))
+```
+
+1. `open_sandbox_for_dest_anchored` **is** on the escaping path, and
+   `open_dest_anchor` returns `ENOTDIR (20)` in production exactly as it does
+   in isolation (PR #7328). Section 3's fix therefore lands on code the escape
+   traverses - worth stating, because the disconfirming outcome was live until
+   that run executed.
+2. The `eprintln!` and the `warn_log!` are **adjacent statements in the same
+   arm, same function, same thread**. The first reaches the daemon's stderr;
+   the second reaches nothing. `warn_log!` -> `emit_warning` ->
+   `emit_info_coded` -> `EVENTS.with(|e| e.borrow_mut().push(…))`
+   (`crates/logging/src/thread_local.rs:163`) pushes into a thread-local buffer
+   that nothing drains on the daemon receive thread. That is **task 421's**
+   mechanism, killing a security warning rather than a debug line.
+
+⚠ Scope of 2: one call site, one thread. Whether the missing drain is
+per-thread, per-role or specific to this path is **not** measured.
 
 ### Why
 
@@ -132,9 +156,18 @@ refuse the connection (`@ERROR: chroot failed`, exit 5).
 | 3.4.4 and 3.5.0 refuse it at exit 3, same config | **measured** |
 | no confinement warning anywhere in oc's daemon log for that run | **measured** (full log read) |
 | a client cannot plant the link on a default module | **measured** |
+| the anchored branch is live on the escaping path (`ENOTDIR`, degrade arm) | **measured**, in production |
+| the `warn_log!` reaches nothing, by same-arm control | **measured** |
 | Linux refuses the same tail (`EXDEV` -> hard `Err`) | **measured**, unit level |
-| Linux end-to-end also refuses | inferred from the above |
-| which oc arm runs in place of the warn arm | **not established** |
+| Linux end-to-end also refuses | **inferred** - see below |
+
+⚠ The last row is the one that **bounds this finding downward**. The claim
+"any platform without `openat2`" is a limit rather than "every platform" only
+because `openat2`-capable Linux is believed to refuse. If that inference is
+wrong the finding is *larger* than stated, so this is the most expensive place
+in the document to be inferring. Measuring it needs a Linux daemon built from
+current master; the available host is blocked (task 683), and a stale binary
+would not settle it (task 393).
 
 ## 2. Upstream, and what oc must copy
 
