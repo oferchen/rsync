@@ -711,11 +711,11 @@ fn config_with_batch_mode(mode: engine::batch::BatchMode) -> ClientConfig {
         .build()
 }
 
-/// upstream: `options.c:2850-2851` - the sender half of `server_options()` emits
-/// the literal `--only-write-batch=X` placeholder. It is the only signal that
-/// puts the remote receiver into `dry_run` (`main.c:1839`), which is what stops
+/// upstream: `options.c:3016-3017` - the sender half of server_options() emits
+/// `args[ac++] = "--only-write-batch=X"`. It is the only signal that
+/// puts the remote receiver into `dry_run` (`main.c:1919`), which is what stops
 /// it from updating the destination and from waiting on a token stream the
-/// sender is diverting into its batch file (`sender.c:217`). Without this
+/// sender is diverting into its batch file (`sender.c:501`). Without this
 /// argument a `--only-write-batch` push writes the remote destination.
 #[test]
 fn only_write_batch_sender_emits_placeholder_arg() {
@@ -729,8 +729,9 @@ fn only_write_batch_sender_emits_placeholder_arg() {
     );
 }
 
-/// upstream: `options.c:2850-2851` sits inside the `if (am_sender)` block, so a
-/// PULL never forwards it. Leaking it would put the remote SENDER into dry-run
+/// upstream: `options.c:3016-3017` - `args[ac++] = "--only-write-batch=X"` sits
+/// inside the am_sender block, so a PULL never forwards it. Leaking it would
+/// put the remote SENDER into dry-run
 /// and it would stop sending file data entirely.
 #[test]
 fn only_write_batch_is_not_forwarded_on_a_pull() {
