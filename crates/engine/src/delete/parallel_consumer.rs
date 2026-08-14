@@ -574,11 +574,10 @@ fn is_not_empty(err: &io::Error) -> bool {
     matches!(err.kind(), io::ErrorKind::DirectoryNotEmpty)
 }
 
-/// Mirrors [`super::emitter::policy`] `IOERR_GENERAL` (bit 0) so the
-/// caller's exit-code mapping matches the sequential emitter.
-const IOERR_GENERAL: i32 = 1;
-/// Mirrors [`super::emitter::policy`] `IOERR_VANISHED_ONLY` (bit 1).
-const IOERR_VANISHED_ONLY: i32 = 1 << 1;
+// The delete pass shares the wire bits with the file-list decoders; taking them
+// from the single definition in `protocol::io_error` keeps the parallel and
+// sequential emitters from drifting apart or from the exit-code mapping.
+use protocol::{IOERR_GENERAL, IOERR_VANISHED as IOERR_VANISHED_ONLY};
 
 fn accumulate_nonfatal(io_error: &mut i32, policy: &EmitterErrorPolicy, err: &io::Error) {
     if policy.ignore_errors {

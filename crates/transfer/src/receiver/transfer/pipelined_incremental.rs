@@ -75,8 +75,7 @@ impl ReceiverContext {
         let mut stats = TransferStats {
             files_listed: file_count,
             entries_received: file_count as u64,
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
-                | self.flist_io_error,
+            io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
         // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)

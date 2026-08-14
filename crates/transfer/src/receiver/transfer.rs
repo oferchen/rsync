@@ -182,9 +182,7 @@ impl ReceiverContext {
             .map_err(crate::fsm_error)?;
 
         Ok(TransferStats {
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
-                | self.flist_io_error
-                | reader.take_io_error(),
+            io_error: self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error(),
             // upstream: log.c:310-311 - an empty list is exactly what a missing
             // source argument produces, and `flist.c:2431` leaves io_error clear
             // for it, so the MSG_ERROR_XFER frames read while draining the list

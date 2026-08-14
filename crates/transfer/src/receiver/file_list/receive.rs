@@ -57,13 +57,11 @@ impl ReceiverContext {
             count += 1;
         }
 
-        // upstream: flist.c:757-759 recv_file_entry() - a filename that cannot
-        // be strictly transcoded under --iconv sets io_error |= IOERR_GENERAL on
-        // the receiver. Fold the reader's accumulated flag into the receiver's
-        // so the transfer exits 23, unless --ignore-errors suppresses it.
-        if !self.config.deletion.ignore_errors {
-            self.flist_io_error |= flist_reader.io_error();
-        }
+        // The reader's accumulated bits are NOT folded in here. They are read
+        // through `ReceiverContext::flist_reader_io_error`, which is the single
+        // place upstream's two rules are applied - the peer trailer gated on
+        // `--ignore-errors`, the local transcode failure not. Folding here
+        // applied one rule to both.
 
         // upstream: flist.c:2761-2762 - recv_id_list() called when !inc_recurse
         let inc_recurse = self
@@ -101,10 +99,9 @@ impl ReceiverContext {
         if self.protocol.uses_fixed_encoding() {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
-            let err = protocol::sanitize_peer_io_error(i32::from_le_bytes(buf));
-            if err != 0 && !self.config.deletion.ignore_errors {
-                self.flist_io_error |= err;
-            }
+            // Stored raw; `flist_reader_io_error` applies the `!ignore_errors`
+            // gate, identically to the protocol >= 30 trailer.
+            self.peer_flist_io_error |= protocol::sanitize_peer_io_error(i32::from_le_bytes(buf));
         }
 
         // upstream: flist.c:1682 - send_file_entry() is called with flist->used
