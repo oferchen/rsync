@@ -1994,6 +1994,70 @@ fn send_io_error_flag_ignore_errors_suppresses_value() {
     assert_eq!(output, &[0, 0, 0, 0]);
 }
 
+/// Captures the sender's ENTIRE io_error surface for `protocol` with an empty
+/// file list.
+///
+/// The two wire eras carry io_error on different channels, so a test that looks
+/// at only one of them measures nothing on the other: pre-30 uses the standalone
+/// 4-byte field (`flist.c:2825`) and leaves the end-of-list marker a bare zero
+/// byte, while 30+ folds the value into the marker itself (`flist.c:2384-2394`).
+/// Concatenating both channels lets one assertion state the single upstream
+/// rule that governs them.
+fn sender_io_error_bytes(protocol: u8, io_error: i32, ignore_errors: bool) -> Vec<u8> {
+    let handshake = test_handshake_with_protocol(protocol);
+    let mut config = test_config();
+    config.deletion.ignore_errors = ignore_errors;
+
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    if io_error != 0 {
+        ctx.add_io_error(io_error);
+    }
+
+    let mut output = Vec::new();
+    ctx.send_file_list(&mut output).unwrap();
+    ctx.send_io_error_flag(&mut output).unwrap();
+    output
+}
+
+/// CLASS GUARD: `--ignore-errors` suppresses the sender's io_error in BOTH wire
+/// eras, not just the legacy one.
+///
+/// Upstream states one rule twice - `flist.c:2781-2788` selects
+/// `write_end_of_flist(f, 0)` when `io_error == 0 || ignore_errors`, and
+/// `flist.c:2825` writes `ignore_errors ? 0 : io_error` on the pre-30 path.
+/// oc implemented only the second, and the gap was invisible from behaviour:
+/// the peer receives `--ignore-errors` too (options.c:3062) and gates its own
+/// decode on `!ignore_errors`, so a real 3.5.0 receiver masks the extra value.
+/// Assert the BYTES, and assert both eras in one test, or a future encoding era
+/// repeats this.
+#[test]
+fn ignore_errors_suppresses_the_sender_io_error_in_both_wire_eras() {
+    for &protocol in &[29u8, 32u8] {
+        let clean = sender_io_error_bytes(protocol, 0, false);
+        let reported = sender_io_error_bytes(protocol, io_error_flags::IOERR_GENERAL, false);
+        let suppressed = sender_io_error_bytes(protocol, io_error_flags::IOERR_GENERAL, true);
+
+        // Non-vacuity: this protocol must be able to put the value on the wire
+        // at all, otherwise `suppressed == clean` would also hold for a sender
+        // that never encodes io_error and the assertion below would prove
+        // nothing. This control has already earned its place - written against
+        // the end-of-list marker alone it failed at protocol 29, because that
+        // era carries io_error on the other channel entirely.
+        assert_ne!(
+            reported, clean,
+            "protocol {protocol}: the sender does not encode io_error on any \
+             channel, so this test cannot detect a missing ignore_errors gate"
+        );
+
+        assert_eq!(
+            suppressed, clean,
+            "protocol {protocol}: --ignore-errors must leave the sender's \
+             io_error surface byte-identical to the no-error case \
+             (flist.c:2781-2788 for 30+, flist.c:2825 for pre-30)"
+        );
+    }
+}
+
 #[test]
 fn apply_permutation_in_place_identity() {
     let mut a = vec![1, 2, 3, 4];
