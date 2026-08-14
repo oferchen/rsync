@@ -266,11 +266,47 @@ not "fix" it.
    `rsync` 3.5.0 daemon in the same harness, must refuse. It does today
    (exit 3, `ELOOP`), so this gate is a live oracle rather than a recorded
    expectation - if oc and 3.5.0 ever agree by both being wrong, it fires.
+7. `a_non_daemon_receiver_leaves_the_target_alone`
+   (`crates/transfer/src/receiver/tests/sanitize_symlink_targets.rs`, PR #7333)
+   is **inverted** - it must assert `outside`, not `../outside`. See below.
 
 Gate 3 is the one a security-only reading misses, and gate 5 is how this task
 proves it actually closed the thing #7328 could only document. Gate 6 exists
 because the escape was found by *comparing* against upstream, not by reading
 oc alone - keep the oracle in the suite rather than transcribing its verdict.
+
+### ⚠ Gates 5 and 7 are the same device pointing in opposite directions
+
+Both name a specific existing assertion that this task must change, so the fix
+proves it closed the gap instead of leaving a contradicting test behind. The
+*direction* differs, and getting it backwards would undo real coverage:
+
+| | artefact | action | why |
+|---|---|---|---|
+| gate 5 | `⚠ KNOWN GAP` doc comments on the two `anchored_mode_*` tests (PR #7328) | **DELETE** | they describe a mechanism that ceases to exist once the walk refuses |
+| gate 7 | `a_non_daemon_receiver_leaves_the_target_alone` (PR #7333) | **INVERT** | the test's subject survives; only its expected value changes |
+
+Gate 7 exists because that test currently **pins task 600's known-narrow gate
+as correct**. It asserts that a non-daemon receiver stores `../outside`
+verbatim - which is right for #7333's scope, since that PR mirrors
+`flist.c:1182`'s `sanitize_paths` predicate exactly and `sanitize_paths` is a
+daemon-module property (`clientserver.c:994-995`). It is *not* right against
+upstream as a whole. `secure_relpath_active()` (`syscall.c:100`) ends:
+
+```c
+return !am_chrooted && (am_daemon || !am_sender);
+```
+
+`!am_sender` is the clause oc does not have: upstream hardens **every**
+non-chrooted receiver, daemon or not, while oc keys the whole behaviour on
+`is_daemon_connection`. So #7333 inherits the narrowness rather than
+introducing it, and this task owns closing it.
+
+⚠ Left alone, that assertion reads as a deliberate contract within a release or
+two, and whoever implements the widened predicate will hit a red test and
+"fix" it back to the divergent behaviour. Naming it here is what stops a
+pinned gap from being mistaken for an intended one - the failure mode this
+spec exists to prevent, one layer up.
 
 ⚠ The harness has one environment trap worth carrying: an `rsync` daemon with
 `max connections` set needs an explicit `lock file` inside the fixture, or it
@@ -281,8 +317,10 @@ shape of a control that validates nothing.
 
 ## 5. Adjacent defect: no `sanitize_path` on a received symlink target
 
-Deliberately **not** fixed here - it is a file-list-receive defect, not a
-path-walk defect, and the fix lands in a different file.
+**FIXED in PR #7333 (task 682); this section is the historical record plus the
+one residual.** It was deliberately not fixed *here* - a file-list-receive
+defect, not a path-walk defect, and the fix landed in a different file
+(`crates/transfer/src/receiver/directory/links.rs`).
 
 Upstream carries a second, independent defence for the case where an operator
 turns munging off. `flist.c:1182`, inside `recv_file_entry()`:
@@ -297,15 +335,25 @@ the normalised module path length), so with munging off upstream still strips
 the leading `../` from an incoming symlink target - which is exactly the
 `../outside` -> `outside` rewrite in the table above.
 
-oc has the function (`crates/transfer/src/sanitize_path.rs`) and its module doc
-**cites this very line**, but the daemon receive path never applies it to
+oc had the function (`crates/transfer/src/sanitize_path.rs`) and its module doc
+**cited this very line**, but the daemon receive path never applied it to
 symlink targets. Consequence, measured: under `munge symlinks = false` a client
-holding only write access plants `../outside` verbatim and escapes in two
+holding only write access planted `../outside` verbatim and escaped in two
 transfers, exit 0, empty stderr, no out-of-band step.
 
-Fixing that is worth its own change, because it has its own upstream anchor,
-its own gate (`munge symlinks = false` module receives a `../` target and stores
-it sanitised), and it would still be needed if this task's walk were perfect.
+⚠ The shape was sharper than "wire up the existing helper": there was **one
+missing call *and* a missing public entry point**. The only public variant was
+`SP_KEEP_DOT_DIRS` (one production caller, `generator/filters.rs:421`, for
+filter names); no `SP_DEFAULT` variant existed, so "the helper exists" would
+have read as "just call it". #7333 added `sanitize_path_bytes_default` over a
+shared `&[u8]` core - deliberately not via `String`, because a lossy decode
+would rewrite the very bytes being made safe.
+
+**Residual after #7333, and it is this task's problem:** the gate is
+`is_daemon_connection`, mirroring `flist.c:1182`'s `sanitize_paths` exactly.
+Upstream is broader - see gate 7 above. #7333 inherited task 600's narrow
+predicate rather than introducing it, and pinned it in a test that gate 7
+requires this task to invert.
 
 ## 6. Consumers
 
