@@ -92,7 +92,7 @@ impl ReceiverContext {
                 && self.config.connection.is_daemon_connection
                 && !wire_target.as_os_str().is_empty()
             {
-                sanitized = sanitize_received_symlink_target(wire_target);
+                sanitized = sanitize_received_symlink_target(wire_target, relative_path);
                 &sanitized
             } else {
                 wire_target
@@ -1031,6 +1031,57 @@ impl ReceiverContext {
     }
 }
 
+/// Sanitizes a received symlink target so it cannot resolve above the module
+/// root, for daemon modules that disabled `munge symlinks`.
+///
+/// Mirrors upstream `flist.c:1329`, which applies `sanitize_path(...,
+/// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
+/// `sanitize_paths` is set for a daemon module with a path
+/// (`clientserver.c:1068`), so the two transforms between them leave no daemon
+/// configuration in which a peer-supplied target reaches the disk verbatim.
+///
+/// This rewrite is what makes an absolute target relative, so a link to
+/// `/etc/hostname` becomes the in-tree `etc/hostname` and `--safe-links` no
+/// longer treats it as escaping. That is upstream's behaviour, measured against
+/// rsync 3.4.4 and 3.5.0 as daemon receivers under `use chroot = false` plus
+/// `munge symlinks = false`: both create the link with the rewritten target.
+///
+/// Byte-level like the munge sibling above: a symlink target is a raw byte
+/// string on the wire, and decoding it through `String` would rewrite the very
+/// value being made safe.
+///
+/// `entry_path` is the entry's own relative path; its parent supplies the
+/// depth budget upstream passes as `lastdir_depth`, so a target that walks back
+/// no further than the transfer root survives intact.
+#[cfg(unix)]
+fn sanitize_received_symlink_target(target: &Path, entry_path: &Path) -> std::path::PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let sanitized = crate::sanitize_path::sanitize_path_bytes_default(
+        target.as_os_str().as_bytes(),
+        containing_dir_depth(entry_path),
+    );
+    std::path::PathBuf::from(OsString::from_vec(sanitized))
+}
+
+/// Number of directory levels the entry sits below the transfer root.
+///
+/// Mirrors upstream `util1.c:1015 count_dir_elements()` applied to `lastdir`,
+/// the entry's own directory (`flist.c:867`). `count_dir_elements` skips `.`
+/// elements, which is what filtering to `Component::Normal` reproduces; the
+/// received name is already sanitized by this point, so no `..` remains for the
+/// two to disagree about.
+#[cfg(unix)]
+fn containing_dir_depth(entry_path: &Path) -> usize {
+    entry_path.parent().map_or(0, |parent| {
+        parent
+            .components()
+            .filter(|component| matches!(component, std::path::Component::Normal(_)))
+            .count()
+    })
+}
+
 /// Prepends the `/rsyncd-munged/` prefix to a symlink target.
 ///
 /// Mirrors upstream `flist.c:1150-1154` where the receiver prepends
@@ -1042,28 +1093,6 @@ impl ReceiverContext {
 /// receives the ASCII prefix without any lossy decode. The matching strip
 /// happens on the sender via `strip_symlink_munge_prefix` in
 /// `crate::generator::file_list::entry`.
-/// Sanitizes a received symlink target so it cannot resolve above the module
-/// root, for daemon modules that disabled `munge symlinks`.
-///
-/// Mirrors upstream `flist.c:1182`, which applies `sanitize_path(...,
-/// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
-/// `sanitize_paths` is set for every daemon module (`clientserver.c:994-995`),
-/// so the two transforms between them leave no daemon configuration in which a
-/// peer-supplied target reaches the disk verbatim.
-///
-/// Byte-level like the munge sibling above: a symlink target is a raw byte
-/// string on the wire, and decoding it through `String` would rewrite the very
-/// value being made safe.
-#[cfg(unix)]
-fn sanitize_received_symlink_target(target: &Path) -> std::path::PathBuf {
-    use std::ffi::OsString;
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-    let sanitized =
-        crate::sanitize_path::sanitize_path_bytes_default(target.as_os_str().as_bytes());
-    std::path::PathBuf::from(OsString::from_vec(sanitized))
-}
-
 #[cfg(unix)]
 pub(in crate::receiver) fn apply_symlink_munge_prefix(target: &Path) -> std::path::PathBuf {
     use std::ffi::OsString;

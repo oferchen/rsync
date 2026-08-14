@@ -2,11 +2,22 @@
 //!
 //! A daemon module that sets `munge symlinks = false` gives up the
 //! `/rsyncd-munged/` prefix, but upstream does **not** leave the received
-//! target untouched: `sanitize_paths` is on for every daemon module, so the
-//! decode path strips the leading `../` that would let the stored link
+//! target untouched: `sanitize_paths` is on for a daemon module with a path,
+//! so the decode path strips the leading `../` that would let the stored link
 //! resolve outside the module root. The two transforms are mutually
 //! exclusive and together they leave no configuration in which a
 //! client-supplied target reaches the disk verbatim.
+//!
+//! The strip is budgeted, not unconditional: upstream passes `lastdir_depth`,
+//! the depth of the entry's own directory, so a target that walks back no
+//! further than the transfer root is preserved and only the part that reaches
+//! past it is collapsed. Measured against rsync 3.5.0 as a daemon receiver,
+//! pushing two links from `sub/dir/`:
+//!
+//! ```text
+//! ../../hello.txt     -> ../../hello.txt    (in budget, kept intact)
+//! ../../../escape.txt -> ../../escape.txt   (one level over, collapsed)
+//! ```
 //!
 //! Measured 2026-08-14 against real daemons, `use chroot = false`,
 //! `read only = false`, `munge symlinks = false`, client pushing
@@ -20,11 +31,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1182` - `if (sanitize_paths && !munge_symlinks && *bp)
+//! - `flist.c:1329` - `if (sanitize_paths && !munge_symlinks && *bp)
 //!   sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
-//! - `clientserver.c:994-995` - `if (module_dirlen) sanitize_paths = 1`, so
-//!   the guard is live for every daemon module.
-//! - `generator.c:1559` - the `--safe-links` check reads `F_SYMLINK(file)`,
+//! - `clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`, so
+//!   the guard is live for a daemon module serving a path.
+//! - `flist.c:867` - `lastdir_depth = count_dir_elements(lastdir)`, the
+//!   budget of leading `..` the sanitize preserves.
+//! - `generator.c:1951` - the `--safe-links` check reads `F_SYMLINK(file)`,
 //!   i.e. the *already* sanitized target, which is why the transform has to
 //!   happen before the safety evaluation rather than at creation time.
 
@@ -82,25 +95,43 @@ fn daemon_receiver_without_munging() -> ServerConfig {
 /// Runs one symlink through the receiver and reports the on-disk target, or
 /// `None` when no link was created (the `--safe-links` skip path).
 fn create_one_symlink(config: ServerConfig, target: &str) -> Option<std::path::PathBuf> {
+    create_one_symlink_at(config, "escape", target)
+}
+
+/// As [`create_one_symlink`], but places the link at an arbitrary relative
+/// path so the depth budget can be exercised below the transfer root.
+///
+/// The two agree at the root and diverge only underneath it, which is why the
+/// depth-taking arm needs its own entry path rather than another target.
+fn create_one_symlink_at(
+    config: ServerConfig,
+    entry_path: &str,
+    target: &str,
+) -> Option<std::path::PathBuf> {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dest = tmp.path().to_path_buf();
 
+    let link_path = dest.join(entry_path);
+    if let Some(parent) = link_path.parent() {
+        std::fs::create_dir_all(parent).expect("create the entry's parent directories");
+    }
+
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_symlink("escape".into(), target.into())];
+    ctx.file_list = vec![FileEntry::new_symlink(entry_path.into(), target.into())];
 
     let mut writer = NullMsgInfoWriter;
     ctx.create_symlinks(&dest, None, &mut writer)
         .expect("create_symlinks must succeed on a writable tempdir");
 
-    let on_disk = std::fs::read_link(dest.join("escape")).ok();
+    let on_disk = std::fs::read_link(&link_path).ok();
     drop(tmp);
     on_disk
 }
 
 #[test]
 fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
-    // upstream: flist.c:1182 - with munging off, `sanitize_paths` still
+    // upstream: flist.c:1329 - with munging off, `sanitize_paths` still
     // strips the leading `../`, so the stored link cannot resolve above the
     // module root. Without this, a client holding only write access plants
     // `escape -> ../outside` and reaches outside the module on the next
@@ -111,7 +142,7 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
         on_disk.as_deref(),
         Some(std::path::Path::new("outside")),
         "a daemon receiver with `munge symlinks = false` must sanitize the \
-         received target (upstream flist.c:1182); storing `../outside` \
+         received target (upstream flist.c:1329); storing `../outside` \
          verbatim lets the link resolve outside the module root",
     );
 }
@@ -119,7 +150,7 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
 #[test]
 fn a_non_daemon_receiver_leaves_the_target_alone() {
     // Negative control for the gate. Upstream keys the transform on
-    // `sanitize_paths`, which `clientserver.c:994-995` sets only when serving
+    // `sanitize_paths`, which `clientserver.c:1068` sets only when serving
     // a daemon module - an ordinary local or SSH receiver must keep the
     // target byte-for-byte. Without this, the fix would silently rewrite
     // legitimate `../` targets on every non-daemon transfer.
@@ -132,14 +163,14 @@ fn a_non_daemon_receiver_leaves_the_target_alone() {
         on_disk.as_deref(),
         Some(std::path::Path::new("../outside")),
         "only a daemon receiver has `sanitize_paths` set upstream \
-         (clientserver.c:994-995); a non-daemon receiver must store the \
+         (clientserver.c:1068); a non-daemon receiver must store the \
          target verbatim",
     );
 }
 
 #[test]
 fn munging_still_wins_when_it_is_enabled() {
-    // The two transforms are mutually exclusive upstream (`flist.c:1182` is
+    // The two transforms are mutually exclusive upstream (`flist.c:1329` is
     // guarded by `!munge_symlinks`). With munging on, the target must carry
     // the prefix and must NOT have been sanitized first - sanitizing as well
     // would strip the `../` that the munge prefix already neutralises, and
@@ -152,7 +183,7 @@ fn munging_still_wins_when_it_is_enabled() {
     assert_eq!(
         on_disk.as_deref(),
         Some(std::path::Path::new("/rsyncd-munged/../outside")),
-        "munging and sanitization are mutually exclusive (flist.c:1182 is \
+        "munging and sanitization are mutually exclusive (flist.c:1329 is \
          gated on !munge_symlinks); with munging on the target keeps its \
          `../` behind the prefix",
     );
@@ -191,9 +222,9 @@ fn a_non_utf8_target_is_sanitized_byte_exactly() {
 #[test]
 fn sanitization_precedes_the_safe_links_check() {
     // Placement, not just presence. Upstream sanitizes during the file-list
-    // decode (`flist.c:1182`), so by the time the generator evaluates
+    // decode (`flist.c:1329`), so by the time the generator evaluates
     // `--safe-links` it reads the *sanitized* target
-    // (`generator.c:1559` passes `F_SYMLINK(file)`). A target of
+    // (`generator.c:1951` passes `F_SYMLINK(file)`). A target of
     // `../outside` therefore becomes `outside`, which is in-tree, and the
     // link is created.
     //
@@ -211,7 +242,62 @@ fn sanitization_precedes_the_safe_links_check() {
         Some(std::path::Path::new("outside")),
         "sanitization must run before the --safe-links evaluation so the \
          check sees the same in-tree target upstream sees \
-         (flist.c:1182 decode, then generator.c:1559); sanitizing later \
+         (flist.c:1329 decode, then generator.c:1951); sanitizing later \
          would skip an entry upstream creates",
+    );
+}
+
+#[test]
+fn a_target_reaching_no_further_than_the_transfer_root_survives_intact() {
+    // upstream: flist.c:1329 passes `lastdir_depth`, not 0 - the depth of the
+    // entry's own directory (flist.c:867). A link in `sub/dir/` may therefore
+    // carry `../..`, which lands exactly on the transfer root and is in-tree.
+    //
+    // This is the arm the root-level tests above cannot reach: at the root the
+    // budget is 0 and both readings agree, so every one of them passes either
+    // way. With depth hardcoded to 0 this target collapses to `hello.txt`,
+    // silently retargeting the link at a sibling inside `sub/dir/` that does
+    // not exist - a corrupted link, not a blocked one.
+    //
+    // Measured against rsync 3.5.0 as a daemon receiver under
+    // `use chroot = false` + `munge symlinks = false`: the target is stored
+    // unchanged.
+    let on_disk = create_one_symlink_at(
+        daemon_receiver_without_munging(),
+        "sub/dir/up_two.txt",
+        "../../hello.txt",
+    );
+
+    assert_eq!(
+        on_disk.as_deref(),
+        Some(std::path::Path::new("../../hello.txt")),
+        "a target that walks back no further than the transfer root is within \
+         the `lastdir_depth` budget and must survive verbatim (flist.c:1329 \
+         with flist.c:867); collapsing it to `hello.txt` points the link at a \
+         file that does not exist",
+    );
+}
+
+#[test]
+fn a_target_reaching_past_the_transfer_root_is_collapsed_to_it() {
+    // The complement of the arm above, and the reason the budget is a budget
+    // rather than a licence: one `..` beyond the entry's own depth would
+    // escape, so upstream drops exactly the excess and keeps the rest.
+    //
+    // Measured against rsync 3.5.0 under the same config: `../../../escape.txt`
+    // from `sub/dir/` is stored as `../../escape.txt`, i.e. clamped to the
+    // transfer root rather than flattened to a bare name.
+    let on_disk = create_one_symlink_at(
+        daemon_receiver_without_munging(),
+        "sub/dir/up_three.txt",
+        "../../../escape.txt",
+    );
+
+    assert_eq!(
+        on_disk.as_deref(),
+        Some(std::path::Path::new("../../escape.txt")),
+        "only the `..` beyond the entry's depth is dropped (flist.c:1329 with \
+         lastdir_depth); flattening to `escape.txt` would both lose the \
+         in-budget prefix and hide that the peer asked to escape",
     );
 }
