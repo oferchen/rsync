@@ -140,7 +140,7 @@ impl DirSandbox {
     ///
     /// `anchor` is operator-supplied - a daemon module root from the config
     /// file, or the destination operand of a local/remote-shell run. It is
-    /// opened with ordinary resolution via [`open_trusted_dir`], so an
+    /// opened with ordinary resolution via [`open_trusted_dir`](crate::open_trusted_dir), so an
     /// operator layout like `/srv -> /mnt/srv` resolves normally.
     ///
     /// `peer_tail` is the module-relative remainder the *peer* asked for. It
