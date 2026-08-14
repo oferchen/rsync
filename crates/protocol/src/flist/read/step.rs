@@ -72,7 +72,8 @@ struct EntrySnapshot {
     state: FileListCompressionState,
     acl_cache: AclCache,
     xattr_cache: XattrCache,
-    io_error: i32,
+    peer_io_error: i32,
+    local_io_error: i32,
     stats: FileListStats,
 }
 
@@ -83,7 +84,8 @@ impl FileListReader {
             state: self.state.clone(),
             acl_cache: self.acl_cache.clone(),
             xattr_cache: self.xattr_cache.clone(),
-            io_error: self.io_error,
+            peer_io_error: self.peer_io_error,
+            local_io_error: self.local_io_error,
             stats: self.stats.clone(),
         }
     }
@@ -93,7 +95,8 @@ impl FileListReader {
         self.state = snap.state;
         self.acl_cache = snap.acl_cache;
         self.xattr_cache = snap.xattr_cache;
-        self.io_error = snap.io_error;
+        self.peer_io_error = snap.peer_io_error;
+        self.local_io_error = snap.local_io_error;
         self.stats = snap.stats;
     }
 

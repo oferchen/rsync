@@ -137,13 +137,21 @@ pub struct FileListReader {
     /// they all point to a single `Arc<Path>` allocation instead of each holding
     /// an independent copy.
     dirname_interner: PathInterner,
-    /// Accumulated I/O error code from the sender.
+    /// I/O error bits the PEER reported in the file-list trailer, sanitized
+    /// but NOT gated on `--ignore-errors`.
     ///
-    /// Upstream `flist.c:recv_file_list()` does `io_error |= err` when it
-    /// encounters an IoError marker, then breaks the loop. We mirror this by
-    /// returning `Ok(None)` and accumulating the error here for the caller to
-    /// inspect after the file list is fully read.
-    io_error: i32,
+    /// Upstream keeps this separate from a locally-generated error because the
+    /// two obey different rules: `flist.c:2949/2967/3070` accumulate the peer's
+    /// value only `if (!ignore_errors)`. The gate belongs to the consumer, which
+    /// knows the option; keeping the raw value here lets that decision be made
+    /// in exactly one place. See [`Self::peer_io_error`].
+    peer_io_error: i32,
+    /// I/O error bits this receiver generated while decoding the list.
+    ///
+    /// Upstream sets these unconditionally - `flist.c:841`'s filename-transcode
+    /// failure has no `ignore_errors` check - so they must NOT be folded in with
+    /// the peer's value. See [`Self::local_io_error`].
+    local_io_error: i32,
     /// ACL cache for tracking received ACL definitions.
     ///
     /// When `preserve_acls` is enabled, ACL data is read from the wire after
@@ -191,7 +199,8 @@ impl FileListReader {
             relative_paths: false,
             ndx_start: 0,
             dirname_interner: PathInterner::new(),
-            io_error: 0,
+            peer_io_error: 0,
+            local_io_error: 0,
             acl_cache: AclCache::new(),
             xattr_cache: XattrCache::new(),
         }
@@ -228,7 +237,8 @@ impl FileListReader {
             relative_paths: false,
             ndx_start: 0,
             dirname_interner: PathInterner::new(),
-            io_error: 0,
+            peer_io_error: 0,
+            local_io_error: 0,
             acl_cache: AclCache::new(),
             xattr_cache: XattrCache::new(),
         }
@@ -416,15 +426,29 @@ impl FileListReader {
         &self.stats
     }
 
-    /// Returns the accumulated I/O error code from the sender.
+    /// I/O error bits the PEER reported in the file-list trailer.
     ///
-    /// Upstream `flist.c:recv_file_list()` accumulates `io_error |= err` when
-    /// the sender reports I/O errors during file list generation. A non-zero
-    /// value means some source files could not be read, but the transfer should
-    /// still proceed with the files that were successfully listed.
+    /// Already reduced to `IOERR_VALID_MASK`, but deliberately NOT gated on
+    /// `--ignore-errors`: upstream applies that gate at the point of use
+    /// (`flist.c:2949`, `:2967`, `:3070` all read
+    /// `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`). Callers that
+    /// hold the option must apply it; callers that do not must not use this.
+    ///
+    /// There is deliberately no combined accessor. The two kinds of error obey
+    /// different upstream rules, and a single getter is what let four of five
+    /// consumers silently pick the wrong one.
     #[must_use]
-    pub const fn io_error(&self) -> i32 {
-        self.io_error
+    pub const fn peer_io_error(&self) -> i32 {
+        self.peer_io_error
+    }
+
+    /// I/O error bits generated locally while decoding the list.
+    ///
+    /// Upstream never gates these on `--ignore-errors` (`flist.c:841`), so they
+    /// apply unconditionally.
+    #[must_use]
+    pub const fn local_io_error(&self) -> i32 {
+        self.local_io_error
     }
 
     /// Returns a reference to the ACL cache.
@@ -550,10 +574,12 @@ impl FileListReader {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
                 // upstream: flist.c:2950,2968 recv_file_list() does
-                // `io_error |= err & IOERR_VALID_MASK` and breaks the loop - it
-                // does NOT abort the transfer. The mask keeps a hostile peer
-                // from planting undefined bits in the local io_error.
-                self.io_error |= crate::io_error::sanitize_peer_io_error(code);
+                // `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK` and
+                // breaks the loop - it does NOT abort the transfer. The mask
+                // keeps a hostile peer from planting undefined bits; the
+                // `ignore_errors` half of the rule is applied by the consumer,
+                // which is the only layer that knows the option.
+                self.peer_io_error |= crate::io_error::sanitize_peer_io_error(code);
                 return Ok(None);
             }
             FlagsResult::Flags(f) => f,

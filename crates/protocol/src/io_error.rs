@@ -84,3 +84,80 @@ mod tests {
         }
     }
 }
+
+/// The two upstream rules for a file-list `io_error`, stated once so a consumer
+/// can be checked against them.
+///
+/// Upstream does not have one `io_error` rule, it has two, and they differ
+/// exactly on `--ignore-errors`:
+///
+/// * a value the PEER sent in the file-list trailer is accumulated only when
+///   `ignore_errors` is clear - `flist.c:2949`, `:2967`, `:3070` are all
+///   `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`;
+/// * a value this side generated while decoding is accumulated unconditionally
+///   - `flist.c:841`'s filename-transcode failure has no `ignore_errors` check.
+///
+/// Storing both in one accumulator is what let four of five consumers apply the
+/// wrong rule, so the rule is expressed here and consumers are tested against
+/// it rather than each restating it.
+#[must_use]
+pub const fn combine_flist_io_error(peer: i32, local: i32, ignore_errors: bool) -> i32 {
+    let peer = if ignore_errors { 0 } else { peer };
+    peer | local
+}
+
+#[cfg(test)]
+mod combine_tests {
+    use super::{IOERR_GENERAL, IOERR_VANISHED, combine_flist_io_error};
+
+    /// `--ignore-errors` suppresses the PEER's trailer value and nothing else.
+    ///
+    /// The `(peer=set, local=0, ignore=true)` row is the one that regressed:
+    /// four of five drains re-admitted the peer value after the gate had
+    /// filtered it, so a peer-reported error still reached the exit code under
+    /// `--ignore-errors`. upstream: flist.c:2949/2967/3070.
+    #[test]
+    fn ignore_errors_suppresses_only_the_peer_half() {
+        for &(peer, local, ignore, want) in &[
+            (IOERR_GENERAL, 0, false, IOERR_GENERAL),
+            (IOERR_GENERAL, 0, true, 0),
+            (0, IOERR_GENERAL, false, IOERR_GENERAL),
+            // upstream never gates a local decode failure.
+            (0, IOERR_GENERAL, true, IOERR_GENERAL),
+            (IOERR_VANISHED, IOERR_GENERAL, true, IOERR_GENERAL),
+            (
+                IOERR_VANISHED,
+                IOERR_GENERAL,
+                false,
+                IOERR_VANISHED | IOERR_GENERAL,
+            ),
+            (0, 0, true, 0),
+            (0, 0, false, 0),
+        ] {
+            assert_eq!(
+                combine_flist_io_error(peer, local, ignore),
+                want,
+                "peer={peer:#x} local={local:#x} ignore_errors={ignore}"
+            );
+        }
+    }
+
+    /// The grid must cover every `(peer set?) x (local set?) x (ignore?)`
+    /// combination, so a dropped row cannot shrink the guard.
+    #[test]
+    fn rule_grid_is_complete() {
+        let mut seen = 0u8;
+        for peer in [0, IOERR_GENERAL] {
+            for local in [0, IOERR_GENERAL] {
+                for ignore in [false, true] {
+                    let bit =
+                        u8::from(peer != 0) << 2 | u8::from(local != 0) << 1 | u8::from(ignore);
+                    seen |= 1 << bit;
+                    // Every combination must be answerable by the one rule.
+                    let _ = combine_flist_io_error(peer, local, ignore);
+                }
+            }
+        }
+        assert_eq!(seen, 0xFF, "not all eight rule combinations exercised");
+    }
+}

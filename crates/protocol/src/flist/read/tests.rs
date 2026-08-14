@@ -93,8 +93,8 @@ fn read_entry_detects_error_marker_with_safe_file_list() {
     // `io_error |= err & IOERR_VALID_MASK`) rather than returned as hard errors.
     // 42 = 0b101010 carries two undefined bits; only IOERR_VANISHED survives.
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), 42 & crate::IOERR_VALID_MASK);
-    assert_eq!(reader.io_error(), crate::IOERR_VANISHED);
+    assert_eq!(reader.peer_io_error(), 42 & crate::IOERR_VALID_MASK);
+    assert_eq!(reader.peer_io_error(), crate::IOERR_VANISHED);
 }
 
 /// The varint end-of-list form (`write_varint(0); write_varint(io_error)`) is a
@@ -121,7 +121,7 @@ fn varint_end_of_list_masks_undefined_bits_from_a_hostile_peer() {
         let mut cursor = Cursor::new(&data[..]);
         assert!(reader.read_entry(&mut cursor).unwrap().is_none());
         assert_eq!(
-            reader.io_error(),
+            reader.peer_io_error(),
             wire_value & crate::IOERR_VALID_MASK,
             "wire value {wire_value:#x} must be masked before it is accumulated"
         );
@@ -171,7 +171,7 @@ fn read_entry_with_protocol_31_accepts_error_marker() {
     // 99 = 0b1100011: the two high bits are undefined and must not survive.
     // upstream: flist.c:2968 - `io_error |= err & IOERR_VALID_MASK`.
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), 99 & crate::IOERR_VALID_MASK);
+    assert_eq!(reader.peer_io_error(), 99 & crate::IOERR_VALID_MASK);
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn read_write_round_trip_with_safe_file_list_error_nonvarint() {
     let result = reader.read_entry(&mut cursor);
 
     assert!(result.unwrap().is_none());
-    assert_eq!(reader.io_error(), sent);
+    assert_eq!(reader.peer_io_error(), sent);
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn read_write_round_trip_with_varint_end_marker() {
     let mut cursor2 = Cursor::new(&data2[..]);
     let result2 = reader2.read_entry(&mut cursor2);
     assert!(result2.unwrap().is_none());
-    assert_eq!(reader2.io_error(), sent);
+    assert_eq!(reader2.peer_io_error(), sent);
 }
 
 #[test]
@@ -2816,7 +2816,11 @@ mod iconv_integration {
             latin1_wire,
             "target must stay raw wire bytes without CF_SYMLINK_ICONV",
         );
-        assert_eq!(reader.io_error(), 0, "raw pass-through sets no io_error");
+        assert_eq!(
+            reader.local_io_error(),
+            0,
+            "raw pass-through sets no io_error"
+        );
     }
 
     /// Without a converter, the symlink target wire bytes pass through
@@ -2871,7 +2875,7 @@ mod iconv_integration {
             "unconvertible target must be emptied, matching upstream",
         );
         assert_ne!(
-            reader.io_error(),
+            reader.local_io_error(),
             0,
             "strict symlink-target failure must record io_error (exit 23)",
         );
@@ -2904,7 +2908,7 @@ mod iconv_integration {
             "unconvertible filename must be emptied, matching upstream",
         );
         assert_ne!(
-            reader.io_error(),
+            reader.local_io_error(),
             0,
             "strict filename failure must record io_error (exit 23)",
         );

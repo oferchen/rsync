@@ -132,8 +132,7 @@ impl ReceiverContext {
             num_devices,
             num_specials,
             entries_received: file_count as u64,
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
-                | self.flist_io_error,
+            io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
 

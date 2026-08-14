@@ -15,13 +15,16 @@ pub const EMITTER_VANISHED_EXIT_CODE: i32 = 24;
 
 /// Upstream `IOERR_GENERAL`: the general-error bit the delete pass sets
 /// for non-fatal failures other than a vanished destination entry.
-pub(super) const IOERR_GENERAL: i32 = 1;
+///
+/// Re-exported from the one definition in `protocol::io_error` rather than
+/// restated, so the bit cannot drift from the value the wire decoders use.
+pub(super) use protocol::IOERR_GENERAL;
 
-/// Sentinel bit set when the only failure observed was a vanished
-/// destination entry (`io::ErrorKind::NotFound`). Distinct from
-/// `IOERR_GENERAL` so the caller can map a vanished-only run to exit
-/// code 24 instead of 23.
-pub(super) const IOERR_VANISHED_ONLY: i32 = 1 << 1;
+/// Bit set when the only failure observed was a vanished destination entry
+/// (`io::ErrorKind::NotFound`), letting the caller map a vanished-only run to
+/// exit code 24 instead of 23. This is upstream's `IOERR_VANISHED`; the local
+/// name records that the delete pass uses it as a sole-cause sentinel.
+pub(super) use protocol::IOERR_VANISHED as IOERR_VANISHED_ONLY;
 
 /// Policy controlling how the emitter reacts to per-entry I/O failures.
 ///
