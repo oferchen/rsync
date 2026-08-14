@@ -1403,3 +1403,211 @@ fn link_dest_copies_when_only_xattrs_differ() {
         .expect("basis xattr present");
     assert_eq!(basis_xattr, b"v1", "link-dest basis must not be modified");
 }
+
+// A `--link-dest` basis whose node the destination refuses to hard-link must
+// fall back to creating the entry, not fail the transfer.
+//
+// upstream: generator.c:1269-1292 try_dests_non() - rsync 3.5.0 sets
+// `cannot_hardlink = 1; match_level = 2;` on ANY `do_link_at()` failure and
+// returns `-3`, so the caller creates the node. 3.4.4 instead reported
+// `FERROR_XFER` and exited 23. Upstream deliberately does not select "cannot
+// hard-link" errnos: `link(2)` documents `EPERM` both for a filesystem without
+// hard-link support and for an ordinary permission refusal, and FUSE reports
+// `ENOSYS` for the same condition, so the errno cannot carry the distinction.
+//
+// Every errno below must therefore behave identically, for every special type
+// that reaches the link tier. Device nodes take the same
+// `link_special_from_link_dest` path as FIFOs and sockets (only the `is_device`
+// summary flag differs) but cannot be created without privileges, so they are
+// covered by that shared path rather than by a separate node here.
+#[cfg(unix)]
+#[test]
+fn link_dest_refused_hard_link_creates_the_node_instead() {
+    use std::os::unix::net::UnixListener;
+
+    #[derive(Clone, Copy)]
+    enum Special {
+        Fifo,
+        Socket,
+        Symlink,
+    }
+
+    let kinds = [
+        (Special::Fifo, "fifo"),
+        (Special::Socket, "socket"),
+        (Special::Symlink, "symlink"),
+    ];
+    // Every errno a destination can answer a refused link with. EOPNOTSUPP and
+    // ENOSYS differ numerically between Linux and macOS, so take them from libc
+    // rather than hard-coding.
+    let errnos = [
+        (libc::EXDEV, "EXDEV"),
+        (libc::EPERM, "EPERM"),
+        (libc::EOPNOTSUPP, "EOPNOTSUPP"),
+        (libc::EMLINK, "EMLINK"),
+        (libc::ENOSYS, "ENOSYS"),
+        (libc::EACCES, "EACCES"),
+    ];
+
+    for (kind, kind_name) in kinds {
+        for (errno, errno_name) in errnos {
+            let case = format!("{kind_name}/{errno_name}");
+            let temp = tempdir().expect("tempdir");
+            let source_dir = temp.path().join("source");
+            let basis_dir = temp.path().join("previous");
+            let dest_dir = temp.path().join("dest");
+            fs::create_dir_all(&source_dir).expect("create source");
+            fs::create_dir_all(&basis_dir).expect("create basis");
+
+            let make = |dir: &Path| {
+                let path = dir.join("node");
+                match kind {
+                    Special::Fifo => {
+                        let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+                            .expect("cstring");
+                        // SAFETY-free: mkfifo via libc is the only portable way
+                        // to create a FIFO; the call is wrapped by the crate's
+                        // existing libc usage policy for tests.
+                        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+                        assert_eq!(rc, 0, "mkfifo failed for {case}");
+                    }
+                    Special::Socket => {
+                        UnixListener::bind(&path).expect("bind socket");
+                    }
+                    Special::Symlink => {
+                        std::os::unix::fs::symlink("/some/target", &path).expect("symlink");
+                    }
+                }
+                path
+            };
+
+            let source_node = make(&source_dir);
+            let basis_node = make(&basis_dir);
+            // Align mtime so the basis reaches the exact-match tier that
+            // attempts the hard link at all.
+            let ftime = FileTime::from_last_modification_time(
+                &fs::symlink_metadata(&source_node).expect("source metadata"),
+            );
+            // Must be the NOFOLLOW setter, to match the lstat above. Plain
+            // set_file_times() open(2)s the path first, which on these three
+            // kinds is not merely wrong but unusable: a FIFO blocks forever
+            // waiting for a peer to open the other end, a socket refuses with
+            // ENXIO/EOPNOTSUPP, and a symlink is followed to a target that
+            // does not exist.
+            filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+
+            // Trailing slash is load-bearing: it syncs the CONTENTS of source,
+            // so the entry's link-dest-relative name is `node` and resolves to
+            // `previous/node`. Without it the name would be `source/node`,
+            // the basis lookup would miss, and the link tier would never run -
+            // the matrix would pass while testing nothing.
+            let mut source_operand = source_dir.clone().into_os_string();
+            source_operand.push("/");
+            let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+            let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+            // `specials` covers FIFOs and sockets; symlinks need `links` as
+            // well, or they are skipped before the link tier is reached.
+            let options = LocalCopyOptions::default()
+                .recursive(true)
+                .specials(true)
+                .links(true)
+                .permissions(true)
+                .extend_link_dests([basis_dir.clone()]);
+
+            let summary = with_hard_link_override(
+                move |_, _| Err(io::Error::from_raw_os_error(errno)),
+                || plan.execute_with_options(LocalCopyExecution::Apply, options),
+            );
+
+            // The refusal must not fail the transfer (3.4.4 exited 23 here).
+            let summary = summary
+                .unwrap_or_else(|error| panic!("{case}: transfer failed instead of copying: {error}"));
+            let _ = &summary;
+
+            // ...and the entry must exist, created from the source.
+            let created = dest_dir.join("node");
+            let meta = fs::symlink_metadata(&created)
+                .unwrap_or_else(|error| panic!("{case}: destination entry missing: {error}"));
+            match kind {
+                Special::Fifo => {
+                    use std::os::unix::fs::FileTypeExt;
+                    assert!(meta.file_type().is_fifo(), "{case}: not a FIFO");
+                }
+                Special::Socket => {
+                    use std::os::unix::fs::FileTypeExt;
+                    assert!(meta.file_type().is_socket(), "{case}: not a socket");
+                }
+                Special::Symlink => {
+                    assert!(meta.file_type().is_symlink(), "{case}: not a symlink");
+                    assert_eq!(
+                        fs::read_link(&created).expect("read_link"),
+                        Path::new("/some/target"),
+                        "{case}: symlink target not preserved"
+                    );
+                }
+            }
+
+            // The fallback must create a distinct node, never share the basis
+            // inode - that is what distinguishes a real fallback from a link
+            // that silently succeeded.
+            let basis_meta = fs::symlink_metadata(&basis_node).expect("basis metadata");
+            assert_ne!(
+                meta.ino(),
+                basis_meta.ino(),
+                "{case}: destination shares the basis inode, so no link was attempted"
+            );
+        }
+    }
+}
+
+// Companion to the test above: with the link tier succeeding, the same setup
+// MUST hard-link. Without this, the fallback test could pass vacuously on a
+// basis that never reached the exact-match tier at all.
+#[cfg(unix)]
+#[test]
+fn link_dest_links_special_when_the_destination_accepts_it() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let basis_dir = temp.path().join("previous");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&basis_dir).expect("create basis");
+
+    let make = |dir: &Path| {
+        let path = dir.join("node");
+        let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).expect("cstring");
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo failed");
+        path
+    };
+    let source_node = make(&source_dir);
+    let basis_node = make(&basis_dir);
+    let ftime = FileTime::from_last_modification_time(
+        &fs::symlink_metadata(&source_node).expect("source metadata"),
+    );
+    // NOFOLLOW setter to match the lstat above; plain set_file_times() would
+    // open(2) the FIFO and block forever waiting for a peer.
+    filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+
+    // Trailing slash syncs the CONTENTS, so the link-dest-relative name is
+    // `node` and resolves to `previous/node` (see the matrix test above).
+    let mut source_operand = source_dir.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .specials(true)
+        .permissions(true)
+        .extend_link_dests([basis_dir.clone()]);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let created = fs::symlink_metadata(dest_dir.join("node")).expect("destination entry");
+    let basis_meta = fs::symlink_metadata(&basis_node).expect("basis metadata");
+    assert_eq!(
+        created.ino(),
+        basis_meta.ino(),
+        "an accepted link must share the basis inode"
+    );
+}

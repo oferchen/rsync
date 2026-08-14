@@ -27,7 +27,7 @@ use crate::local_copy::{
 use ::metadata::{MetadataOptions, apply_symlink_metadata_with_options};
 
 use super::super::{is_device, is_fifo};
-use super::{device::copy_device, fifo::copy_fifo};
+use super::{device::copy_device, fifo::copy_fifo, try_hard_link_basis};
 
 /// Returns `true` when a symlink target stays within the transfer tree.
 ///
@@ -456,43 +456,12 @@ pub(crate) fn copy_symlink(
     // the destination is being created fresh (no prior symlink to recreate).
     if !mode.is_dry_run() && pre_replace_symlink_metadata.is_none() {
         let link_relative = relative.unwrap_or(record_path.as_deref().unwrap_or(Path::new("")));
+        // A destination that refuses the link falls through to recreating the
+        // symlink from the source, as upstream's `-3` return does.
         if !link_relative.as_os_str().is_empty()
             && let Some(basis_symlink) = context.link_dest_symlink_target(link_relative, &target)?
+            && try_hard_link_basis(context, &basis_symlink, destination)?
         {
-            let mut attempted_commit = false;
-            loop {
-                match create_hard_link(&basis_symlink, destination) {
-                    Ok(()) => break,
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        remove_existing_destination(destination)?;
-                        create_hard_link(&basis_symlink, destination).map_err(|link_error| {
-                            LocalCopyError::io(
-                                "create hard link",
-                                destination.to_path_buf(),
-                                link_error,
-                            )
-                        })?;
-                        break;
-                    }
-                    Err(error)
-                        if error.kind() == io::ErrorKind::NotFound
-                            && context.delay_updates_enabled()
-                            && !attempted_commit =>
-                    {
-                        context.commit_deferred_update_for(&basis_symlink)?;
-                        attempted_commit = true;
-                        continue;
-                    }
-                    Err(error) => {
-                        return Err(LocalCopyError::io(
-                            "create hard link",
-                            destination.to_path_buf(),
-                            error,
-                        ));
-                    }
-                }
-            }
-
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_hard_link();
             context.summary_mut().record_symlink();

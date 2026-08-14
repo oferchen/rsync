@@ -240,7 +240,9 @@ pub(crate) fn copy_fifo(
             && let Some(basis) =
                 context.link_dest_special_target(link_relative, metadata, metadata_options)?
         {
-            link_special_from_link_dest(
+            // A destination that refuses the link falls through to creating the
+            // FIFO from the source, as upstream's `-3` return does.
+            if link_special_from_link_dest(
                 context,
                 source,
                 destination,
@@ -250,8 +252,9 @@ pub(crate) fn copy_fifo(
                 file_type,
                 destination_previously_existed,
                 false,
-            )?;
-            return Ok(());
+            )? {
+                return Ok(());
+            }
         }
     }
 
