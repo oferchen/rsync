@@ -669,3 +669,271 @@ impl ConfinePolicy<NoExclude> {
         Self { exclude: NoExclude }
     }
 }
+
+/// Symlink-hop budget for one confined walk, spent cumulatively across every
+/// component and every followed target rather than reset per component.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2794` `SECURE_OPEN_MAXSYMLINKS`
+/// - `rsync-3.5.0/syscall.c:2966` `ds_walk_path()` takes `hops` by pointer,
+///   which is what makes one budget span the whole walk.
+const SECURE_OPEN_MAXSYMLINKS: u32 = 40;
+
+/// Ceiling on directory descriptors one walk holds open at once.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2801` `DS_MAXDEPTH`
+const DS_MAXDEPTH: usize = 1024;
+
+impl<O: ConfinementOracle> ConfinePolicy<O> {
+    /// Confine the walk, consulting `exclude` after every descended component.
+    ///
+    /// Selects the manual per-component resolver. That arm trades `openat2`'s
+    /// atomic resolution for the ability to evaluate the exclude check at all -
+    /// a documented decision, not an oversight; see
+    /// `docs/design/path-confinement-resolver-api.md` section 4.4.
+    pub fn confined(exclude: O) -> Self {
+        Self { exclude }
+    }
+}
+
+/// True when an `O_NOFOLLOW` open failed *because the leaf was a symlink*.
+///
+/// Platforms disagree on the errno, so upstream tests the whole set rather
+/// than branching per OS. `ENOTDIR` is handled separately by the caller: it
+/// is ambiguous, meaning either a symlink (where `O_DIRECTORY` was evaluated
+/// first) or a genuine non-directory, and only the `readlink` probe can tell
+/// them apart.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/rsync.h:438-441` `NOFOLLOW_HIT_SYMLINK()`
+#[cfg(unix)]
+fn nofollow_hit_symlink(err: &io::Error) -> bool {
+    let Some(code) = err.raw_os_error() else {
+        return false;
+    };
+    #[cfg(any(
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+        target_os = "freebsd"
+    ))]
+    if code == libc::EFTYPE {
+        return true;
+    }
+    code == libc::ELOOP || code == libc::EMLINK
+}
+
+/// One confined walk in progress: upstream's `struct dirstack`.
+///
+/// `anchor` is the operator-trusted base. Unlike upstream, which borrows
+/// `fds[0]` and must `dup()` it in `ds_take()`, this walk owns its anchor, so
+/// the leaf can be handed back directly.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2803-2811` `struct dirstack`
+#[cfg(unix)]
+struct ConfinedWalk<'oracle, O: ConfinementOracle> {
+    anchor: OwnedFd,
+    pushed: Vec<OwnedFd>,
+    /// Absolute path of the current directory, maintained across descents so
+    /// the oracle sees where a followed symlink actually landed. Empty when
+    /// the anchor is relative, which disables the check exactly as upstream
+    /// disables it for an unseeded `ds.abspath`.
+    abspath: PathBuf,
+    exclude: &'oracle O,
+    /// Shared across the whole walk. See [`SECURE_OPEN_MAXSYMLINKS`].
+    hops: u32,
+}
+
+#[cfg(unix)]
+impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
+    fn cur(&self) -> std::os::fd::BorrowedFd<'_> {
+        match self.pushed.last() {
+            Some(fd) => fd.as_fd(),
+            None => self.anchor.as_fd(),
+        }
+    }
+
+    fn push(&mut self, fd: OwnedFd, name: &std::ffi::OsStr) -> io::Result<()> {
+        if self.pushed.len() + 1 >= DS_MAXDEPTH {
+            return Err(io::Error::from_raw_os_error(libc::ENOMEM));
+        }
+        self.pushed.push(fd);
+        if !self.abspath.as_os_str().is_empty() {
+            self.abspath.push(name);
+        }
+        Ok(())
+    }
+
+    /// `..`: pop to the pinned parent, refusing to rise above the anchor.
+    ///
+    /// This is a *movement*, not a name to open, which is why it is handled
+    /// here rather than refused as a malformed component. Upstream reports
+    /// `ELOOP` when the stack is already at the anchor.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2896-2901`
+    fn pop(&mut self) -> io::Result<()> {
+        if self.pushed.pop().is_none() {
+            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        }
+        if !self.abspath.as_os_str().is_empty() {
+            self.abspath.pop();
+        }
+        Ok(())
+    }
+
+    /// Descend one component, following an in-tree directory symlink.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2891-2965` `ds_descend()`
+    fn descend(&mut self, part: &std::ffi::OsStr) -> io::Result<()> {
+        if part == "." {
+            return Ok(());
+        }
+        if part == ".." {
+            return self.pop();
+        }
+
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        match crate::dir_sandbox::at_syscalls::openat(self.cur(), part, flags, 0) {
+            Ok(dir) => {
+                self.push(OwnedFd::from(dir), part)?;
+                if !self.abspath.as_os_str().is_empty()
+                    && self.exclude.outside_confinement(&self.abspath)
+                {
+                    return Err(io::Error::from_raw_os_error(libc::ELOOP));
+                }
+                Ok(())
+            }
+            Err(err) if nofollow_hit_symlink(&err) || err.raw_os_error() == Some(libc::ENOTDIR) => {
+                self.follow_symlink(part, err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Splice a symlink's target into the walk on the same stack.
+    ///
+    /// The target is relative and may itself contain `..` or further symlinks,
+    /// which is why it re-enters [`walk_relative`](Self::walk_relative) rather
+    /// than being opened directly.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2937-2961`
+    fn follow_symlink(&mut self, part: &std::ffi::OsStr, open_err: io::Error) -> io::Result<()> {
+        let target = match crate::dir_sandbox::at_syscalls::readlinkat(self.cur(), part) {
+            Ok(target) => target,
+            // EINVAL means "not a symlink", so the component really was a
+            // non-directory and the open's own errno is the honest answer.
+            Err(err) if err.raw_os_error() == Some(libc::EINVAL) => return Err(open_err),
+            Err(err) => return Err(err),
+        };
+
+        // An absolute target is refused outright - it names a path the anchor
+        // does not contain, and following it would leave the module even when
+        // it happens to resolve back inside.
+        if target.as_os_str().is_empty() || target.is_absolute() {
+            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        }
+
+        if self.hops == 0 {
+            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        }
+        self.hops -= 1;
+
+        self.walk_relative(&target)
+    }
+
+    /// Walk every component of a relative path on the current stack.
+    ///
+    /// Splits on `/` and skips empty tokens, mirroring upstream's
+    /// `strtok_r(path, "/")` rather than `Path::components()`, whose
+    /// normalisation rules are not the ones this walk is specified against.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2966-2977` `ds_walk_path()`
+    fn walk_relative(&mut self, path: &Path) -> io::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+
+        for part in path.as_os_str().as_bytes().split(|byte| *byte == b'/') {
+            if part.is_empty() {
+                continue;
+            }
+            self.descend(std::ffi::OsStr::from_bytes(part))?;
+        }
+        Ok(())
+    }
+
+    /// Hand back the directory the walk finished on.
+    fn into_leaf(self) -> OwnedFd {
+        let Self {
+            anchor, mut pushed, ..
+        } = self;
+        pushed.pop().unwrap_or(anchor)
+    }
+}
+
+impl DirSandbox {
+    /// Open an operator-trusted `anchor`, then walk `peer_tail` beneath it
+    /// component by component, consulting the policy's oracle at every step.
+    ///
+    /// This is the arm [`open_dest_anchor_with_policy`](Self::open_dest_anchor_with_policy)
+    /// cannot provide. `RESOLVE_BENEATH` resolves symlinks inside the kernel,
+    /// so a confined caller never learns where one landed and could only test
+    /// the nominal path - which is precisely what a symlink defeats.
+    ///
+    /// Relative in-tree symlinks are followed, absolute targets and climbs
+    /// above the anchor are refused, and the symlink-hop budget is shared
+    /// across the whole walk.
+    ///
+    /// # Errors
+    ///
+    /// - `ELOOP` - a refused symlink (absolute, empty, or landing outside the
+    ///   confinement), a `..` that would rise above the anchor, or an
+    ///   exhausted hop budget.
+    /// - `ENOMEM` - the path is deeper than [`DS_MAXDEPTH`].
+    /// - Otherwise the underlying `openat`/`readlinkat` errno.
+    #[cfg(unix)]
+    pub fn open_dest_anchor_confined<O: ConfinementOracle>(
+        anchor: &Path,
+        peer_tail: &Path,
+        policy: ConfinePolicy<O>,
+    ) -> io::Result<Self> {
+        let ConfinePolicy { exclude } = policy;
+        let anchor_fd = crate::secure_dir::open_trusted_dir(anchor)?;
+
+        let mut walk = ConfinedWalk {
+            anchor: anchor_fd,
+            pushed: Vec::new(),
+            // Seeded only for an absolute anchor. A relative one leaves the
+            // tracker empty and the exclude check inert, mirroring upstream's
+            // note that non-daemon callers "pay nothing"
+            // (rsync-3.5.0/syscall.c:2989-2991).
+            abspath: if anchor.is_absolute() {
+                anchor.to_path_buf()
+            } else {
+                PathBuf::new()
+            },
+            exclude: &exclude,
+            hops: SECURE_OPEN_MAXSYMLINKS,
+        };
+
+        walk.walk_relative(peer_tail)?;
+
+        Ok(Self {
+            root: Arc::new(walk.into_leaf()),
+            stack: Vec::new(),
+            secondaries: DashMap::new(),
+        })
+    }
+}
