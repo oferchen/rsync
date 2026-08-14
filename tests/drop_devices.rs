@@ -233,7 +233,22 @@ fn drop_d_does_not_change_the_remote_argv() {
     let (src, _) = seed_specials(temp.path());
 
     let rsh = temp.path().join("capture-argv");
-    fs::write(&rsh, "#!/bin/sh\nprintf '%s\\n' \"$*\" >&2\nexit 0\n").expect("write fake rsh");
+    // The argv is captured to a FILE, not to stderr. The fake shell exits without
+    // speaking the protocol, so oc-rsync then fails the transfer and writes its own
+    // diagnostic - and which diagnostic it writes is a race: noticing EOF yields
+    // "connection unexpectedly closed" (code 12), losing the write race yields
+    // "handshake failed: Broken pipe" (code 5). Sharing one stream between the
+    // capture and the process's own output made this gate compare that race instead
+    // of the argv it exists to pin. Keep the two channels separate.
+    let capture = temp.path().join("argv-capture");
+    fs::write(
+        &rsh,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >>'{}'\nexit 0\n",
+            capture.display()
+        ),
+    )
+    .expect("write fake rsh");
     let mut perms = fs::metadata(&rsh).expect("stat rsh").permissions();
     {
         use std::os::unix::fs::PermissionsExt;
@@ -249,7 +264,9 @@ fn drop_d_does_not_change_the_remote_argv() {
         args.push(rsh.as_os_str());
         args.push(OsStr::new(&src_arg));
         args.push(OsStr::new("remote:/dst/"));
-        String::from_utf8_lossy(&run(&args).stderr).into_owned()
+        let _ = fs::remove_file(&capture);
+        let _ = run(&args);
+        fs::read_to_string(&capture).unwrap_or_default()
     };
 
     let without = argv_for(&[]);
