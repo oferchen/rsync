@@ -67,6 +67,7 @@ use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dashmap::DashMap;
 
@@ -409,6 +410,39 @@ impl DirSandbox {
     }
 }
 
+/// Latch for the once-per-process descriptor-exhaustion hint.
+static FD_EXHAUSTION_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// The hint text, byte-for-byte as upstream prints it.
+///
+/// upstream: syscall.c:2930-2931 - a bare `rprintf(FWARNING, ...)`, which
+/// `rwrite()` routes to stderr verbatim (log.c:341). The
+/// `rsync warning: ... (code N) at FILE(LINE) [role=version]` envelope is
+/// **not** applied here; that wording is spelled out literally at its own
+/// call site (log.c:956) and adding it would print text upstream does not.
+const FD_EXHAUSTION_HINT: &str =
+    "out of file descriptors resolving a deep path; raise the open-file limit (e.g. `ulimit -n`)";
+
+/// Decide whether `err` is the first descriptor-exhaustion failure seen.
+///
+/// Returns `true` exactly once per `warned` latch, and only for `EMFILE`
+/// (per-process limit) or `ENFILE` (system-wide limit). `swap` makes the
+/// claim atomic, so concurrent rayon workers hitting the ceiling together
+/// still produce a single line.
+///
+/// The latch is a parameter rather than a direct read of
+/// [`FD_EXHAUSTION_WARNED`] so tests can exercise the first-time arm
+/// without the process-global static coupling them to each other.
+fn should_warn_fd_exhaustion(err: &io::Error, warned: &AtomicBool) -> bool {
+    use rustix::io::Errno;
+
+    let exhausted = err.raw_os_error().is_some_and(|raw| {
+        raw == Errno::MFILE.raw_os_error() || raw == Errno::NFILE.raw_os_error()
+    });
+
+    exhausted && !warned.swap(true, Ordering::Relaxed)
+}
+
 /// Descend one component beneath `parent_fd`, following an in-tree symlink
 /// and refusing an escape.
 ///
@@ -432,7 +466,35 @@ impl DirSandbox {
 /// component, which refuses in-tree symlinks the kernel path would follow.
 /// That is stricter than upstream and is the portable-fallback gap tracked
 /// for the rest of the sandbox.
+///
+/// # Descriptor exhaustion
+///
+/// The carrier holds one dirfd per live path component, so a deep descent
+/// can exhaust the open-file limit where a single path-based `open()`
+/// would not. Upstream prints a one-shot hint on `EMFILE`/`ENFILE` for
+/// exactly this reason (upstream: syscall.c:2924-2936); without it the
+/// bare "Too many open files" is opaque about which limit to raise.
+///
+/// Upstream brackets its `rprintf` with `int e = errno; ... errno = e;`
+/// because `rprintf` can itself clobber the global `errno`. Rust has no
+/// such hazard here: the failure is an owned [`io::Error`] moved through
+/// this function, so nothing the emit does can alter what the caller
+/// observes. The guarantee is pinned by test rather than by copying a
+/// save/restore dance that would be a no-op.
 fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
+    let result = openat_dir_strict(parent_fd, child_name);
+
+    if let Err(err) = &result
+        && should_warn_fd_exhaustion(err, &FD_EXHAUSTION_WARNED)
+    {
+        eprintln!("{FD_EXHAUSTION_HINT}");
+    }
+
+    result
+}
+
+/// The resolution itself, with no diagnostics attached.
+fn openat_dir_strict(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     #[cfg(target_os = "linux")]
     {
         if openat2_supported()
