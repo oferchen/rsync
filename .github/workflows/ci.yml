@@ -356,7 +356,7 @@ jobs:
       # main Test step does not run.
       - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
         shell: bash
-        run: cargo nextest run --locked -p metadata -p fast_io -p transfer -E 'test(crtime) | test(sparse) | test(iocp_read_parity) | test(junction) | test(file_symlink_reports) | test(windows_receiver_symlink)'
+        run: cargo nextest run --locked -p metadata -p fast_io -p transfer
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
