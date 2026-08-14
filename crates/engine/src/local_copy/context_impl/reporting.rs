@@ -356,7 +356,7 @@ impl<'a> CopyContext<'a> {
         if self.delete_pass_blocked_by_io_error() {
             // I/O errors occurred and --ignore-errors is not set; suppress
             // deletions to prevent data loss and emit the one-shot skip
-            // notice. upstream: generator.c:298-305.
+            // notice. upstream: generator.c:304-311.
             self.deferred_ops.deletions.clear();
             return Ok(());
         }
