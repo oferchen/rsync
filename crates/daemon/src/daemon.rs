@@ -72,6 +72,7 @@ use crate::{
 
 mod at_error;
 mod help;
+pub(crate) mod peer_address;
 pub(crate) mod tracing_stream;
 
 pub(crate) use self::at_error::AtError;
@@ -432,10 +433,34 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: start_daemon() with stdin/stdout fds uses 127.0.0.1:0 as the
-    // synthetic peer address. In remote-shell daemon mode the real peer address
-    // is not available since there is no TCP socket to query.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    // upstream: clientname.c:63-78 - a daemon behind a remote shell
+    // (`am_daemon < 0`) has no socket to interrogate, so the peer address comes
+    // from the environment, seeded with `0.0.0.0`.
+    //
+    // The seed is the security-relevant part. This site previously fabricated
+    // `127.0.0.1` and cited upstream for it; upstream does no such thing, and
+    // the synthetic loopback matched `hosts allow = 127.0.0.1` - the canonical
+    // "local only" rule - admitting every client. `0.0.0.0` matches no
+    // realistic allow token, so an unconfigured remote-shell daemon denies.
+    let peer_addr = match peer_address::remote_shell_peer_addr() {
+        peer_address::RemoteShellPeer::Addr(ip) => SocketAddr::new(ip, 0),
+        // upstream: clientname.c:76-81 - a set-but-unparsable variable falls
+        // through to `client_sockaddr()`, which on a remote shell's pipe fails
+        // `getpeername` and exits `RERR_SOCKETIO`. Refuse rather than silently
+        // fall back to a default the operator did not configure.
+        peer_address::RemoteShellPeer::Unusable => {
+            let code = ExitCode::SocketIo;
+            return Err(DaemonError::with_code(
+                code,
+                rsync_error!(
+                    code.as_i32(),
+                    "unable to determine the peer address: a peer-address environment \
+                     variable is set but holds no usable IP address"
+                )
+                .with_role(Role::Daemon),
+            ));
+        }
+    };
 
     // Resolve hostname for the synthetic peer (will resolve localhost).
     // upstream: clientname.c `client_name` forward-confirms unconditionally;
