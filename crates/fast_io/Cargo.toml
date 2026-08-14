@@ -209,6 +209,13 @@ tempfile = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 
+[target.'cfg(unix)'.dev-dependencies]
+# The dir_sandbox descriptor-exhaustion test lowers RLIMIT_NOFILE to provoke a
+# real EMFILE from the kernel. rustix's `process` feature exposes a safe
+# setrlimit/getrlimit pair, so the test needs no `unsafe` libc call; the crate
+# is already a production dependency here under the `fs` feature.
+rustix = { workspace = true, features = ["process", "stdio"] }
+
 [[bench]]
 name = "io_optimizations"
 harness = false
