@@ -74,16 +74,25 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
-            // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links
-            // is set. Check stays here (not in sanitize_file_list) to preserve
-            // protocol index alignment with the sender. Safe-link evaluation
-            // runs against the wire target (pre-munge) so the policy decision
-            // matches upstream's `flist.c` ordering where the munge prefix is
-            // applied only after safety checks complete.
+            // upstream: generator.c:1951 - `if (safe_symlinks && unsafe_symlink(sl, fname))`
+            // skips unsafe symlinks when --safe-links is set. The check stays
+            // here (not in sanitize_file_list) to preserve protocol index
+            // alignment with the sender.
+            //
+            // Note the operand differs from upstream's. oc evaluates the wire
+            // target (pre-munge); upstream evaluates the already-munged one,
+            // because it applies the prefix during file-list decode and the
+            // generator then reads `F_SYMLINK(file)`. `unsafe_symlink()`
+            // rejects every absolute target, and munging makes every target
+            // absolute, so upstream under `munge symlinks = true` with
+            // --safe-links skips every symlink - safe ones included - while oc
+            // creates the safe ones. Measured against 3.4.4 and 3.5.0.
+            // Reordering to match is a behaviour change, not a comment fix.
             if self.config.flags.safe_links
                 && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
             {
-                // upstream: generator.c:1554 - log skipped unsafe symlinks
+                // upstream: generator.c:1952 - `if (INFO_GTE(NAME, 1))` gates the
+                // skipped-symlink report at the first -v level.
                 info_log!(
                     Name,
                     1,
