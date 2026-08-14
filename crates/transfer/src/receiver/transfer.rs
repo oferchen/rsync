@@ -323,7 +323,7 @@ impl ReceiverContext {
     {
         use crate::generator::io_error_flags::IOERR_GENERAL;
 
-        // upstream: generator.c:298-305 delete_in_dir() - if the sender hit a
+        // upstream: generator.c:304-311 delete_in_dir() - if the sender hit a
         // general I/O error while scanning the source, its file list may be
         // incomplete, so deleting dest files that merely never got listed would
         // lose data. Skip the entire delete pass (both phases) and print the

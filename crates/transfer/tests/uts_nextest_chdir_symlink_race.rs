@@ -132,15 +132,26 @@ fn rejects_symlinked_subdir_and_leaves_outside_untouched() {
 
     // Accepted refusals across Unix variants - the same set the
     // existing carrier tests in `dir_sandbox_carrier.rs` document.
+    //
+    // The refusal itself is unchanged; only which errno reports it moved.
+    // The descent now confines with `RESOLVE_BENEATH` rather than
+    // `RESOLVE_NO_SYMLINKS`, so this planted `subdir -> /outside` is
+    // rejected as an *escape* (EXDEV) instead of as *a symlink* (ELOOP).
+    // EXDEV is the stronger statement: it says the target left the
+    // anchor, which is precisely the property this scenario defends.
+    // The sentinel assertions below are what actually prove the attack
+    // failed, and they are untouched.
     let code = err.raw_os_error().expect("kernel must report errno");
     let accepted: &[i32] = &[
+        18, // EXDEV (Linux: openat2 RESOLVE_BENEATH, target left the anchor)
         20, // ENOTDIR (macOS / BSD: O_DIRECTORY beats O_NOFOLLOW)
         40, // ELOOP (Linux: openat2 RESOLVE_NO_SYMLINKS or O_NOFOLLOW)
         62, // ELOOP (macOS / BSD raw value)
     ];
     assert!(
         accepted.contains(&code),
-        "expected ENOTDIR or ELOOP for symlinked subdir, got errno={code} ({err})"
+        "expected an escape or symlink refusal for the planted subdir, \
+         got errno={code} ({err})"
     );
 
     // The outside sentinel must be byte-identical: the receiver never
