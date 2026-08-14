@@ -672,6 +672,22 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
+    // upstream: options.c:2953-2954 - the client re-emits `-B%u` to the server,
+    // and options.c:1795-1805 parses it back into the same `block_size` global
+    // the client used. Without this the server receiver's generator silently
+    // fell back to the square-root heuristic, so every `--block-size` transfer
+    // over the wire produced a different block signature and a different
+    // matched/literal split than upstream.
+    if let Some(size_str) = &long_flags.block_size {
+        match core::server::config::parse_block_size_arg(size_str, config.protocol) {
+            Ok(size) => config.block_size = size,
+            Err(msg) => {
+                write_server_error(stderr, brand, msg);
+                return Err(1);
+            }
+        }
+    }
+
     if let Some(size_str) = &long_flags.min_size {
         match parse_server_size_limit(size_str, "--min-size") {
             Ok(size) => config.file_selection.min_file_size = Some(size),

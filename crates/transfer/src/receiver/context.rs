@@ -830,6 +830,7 @@ impl ReceiverContext {
             checksum_algorithm,
             whole_file: self.config.flags.whole_file,
             compat_flags: self.compat_flags,
+            block_size: self.config.block_size,
         }
     }
 

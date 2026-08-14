@@ -7,6 +7,7 @@ pub use builder::ServerConfigBuilder;
 pub use error::BuilderError;
 
 use std::ffi::OsString;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -409,6 +410,23 @@ pub struct ServerConfig {
     /// protocol instead of using automatic negotiation. Propagated from
     /// the client configuration to ensure both sides agree on the algorithm.
     pub checksum_choice: Option<protocol::ChecksumAlgorithm>,
+    /// Fixed delta block length from `-B` / `--block-size`, when the operator
+    /// set one.
+    ///
+    /// The receiving side owns this value: it is the generator that sizes the
+    /// blocks it checksums, so the sender never consults it. `None` selects the
+    /// square-root heuristic.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:1804` - `OPT_BLOCK_SIZE` stores the parsed size in the
+    ///   `block_size` global.
+    /// - `options.c:2953-2954` - the client re-emits it to the server as a
+    ///   standalone `-B%u` token, so a server receiver parses it back into the
+    ///   same global.
+    /// - `generator.c:720-721` - `if (block_size) blength = block_size;` is the
+    ///   single point where it displaces the heuristic.
+    pub block_size: Option<NonZeroU32>,
     /// Disables sender path safety checks when true (`--trust-sender`).
     ///
     /// When false (default), the receiver validates file list entries from the
@@ -648,6 +666,45 @@ pub struct ServerConfig {
     pub munge_symlinks: bool,
 }
 
+/// Parses a forwarded `-B<digits>` / `--block-size=NUM` value into the
+/// [`ServerConfig::block_size`] field.
+///
+/// Shared by every side that decodes a peer's argument vector - the `--server`
+/// argv parser and the daemon's long-form parser - so the bound check exists
+/// once rather than once per decoder.
+///
+/// upstream: options.c:1795-1805 `OPT_BLOCK_SIZE` runs the same check on the
+/// server as on the client: `parse_size_arg(arg, 'b', "block-size", 0,
+/// max_blength, False)` with `max_blength = protocol_version < 30 ?
+/// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`. A `0` means "unset" and falls back to
+/// the square-root heuristic (`generator.c:720` tests `if (block_size)`), so it
+/// maps to `None` rather than to an error.
+///
+/// # Errors
+///
+/// Returns a human-readable message when the value is not a plain integer or
+/// exceeds the protocol's maximum block length.
+pub fn parse_block_size_arg(
+    value: &str,
+    protocol: ProtocolVersion,
+) -> Result<Option<NonZeroU32>, String> {
+    let max_blength = if protocol < ProtocolVersion::V30 {
+        engine::delta::MAX_BLOCK_SIZE_OLD
+    } else {
+        engine::delta::MAX_BLOCK_SIZE_V30
+    };
+    let parsed: u32 = value
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid -B value '{value}': must be 0..{max_blength}"))?;
+    if parsed > max_blength {
+        return Err(format!(
+            "invalid -B value '{value}': must be 0..{max_blength}"
+        ));
+    }
+    Ok(NonZeroU32::new(parsed))
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -662,6 +719,7 @@ impl Default for ServerConfig {
             write: WriteConfig::default(),
             checksum_seed: None,
             checksum_choice: None,
+            block_size: None,
             trust_sender: false,
             stop_at: None,
             qsort: false,
@@ -1157,5 +1215,47 @@ mod tests {
         let mut config = append_config(true, true);
         config.promote_append_mode_for_protocol(ProtocolVersion::V29);
         assert!(config.flags.append_verify);
+    }
+
+    /// upstream: options.c:1795-1805 - `max_blength = protocol_version < 30 ?
+    /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`, so the ceiling is protocol-dependent
+    /// and a value legal at protocol 29 is rejected at 30+.
+    #[test]
+    fn block_size_ceiling_is_protocol_dependent() {
+        let at_29 = parse_block_size_arg("200000", ProtocolVersion::V29);
+        assert_eq!(
+            at_29
+                .expect("legal below OLD_MAX_BLOCK_SIZE")
+                .map(NonZeroU32::get),
+            Some(200_000),
+        );
+        assert!(
+            parse_block_size_arg("200000", ProtocolVersion::V32).is_err(),
+            "200000 exceeds MAX_BLOCK_SIZE (1 << 17) at protocol >= 30",
+        );
+    }
+
+    /// upstream: generator.c:720 tests `if (block_size)`, so a forwarded `0` is
+    /// "unset" and must select the square-root heuristic rather than error.
+    #[test]
+    fn block_size_zero_means_heuristic_not_error() {
+        assert_eq!(
+            parse_block_size_arg("0", ProtocolVersion::V32).expect("0 is legal"),
+            None,
+        );
+    }
+
+    #[test]
+    fn block_size_rejects_a_non_integer() {
+        assert!(parse_block_size_arg("1K", ProtocolVersion::V32).is_err());
+        assert!(parse_block_size_arg("", ProtocolVersion::V32).is_err());
+        assert!(parse_block_size_arg("-1", ProtocolVersion::V32).is_err());
+    }
+
+    /// The field must default to `None` so a peer that never sends `-B` keeps
+    /// the heuristic, byte-identical to upstream.
+    #[test]
+    fn block_size_defaults_to_none() {
+        assert_eq!(ServerConfig::default().block_size, None);
     }
 }

@@ -5,7 +5,7 @@
 //! the file signature used by the sender to compute deltas.
 
 use std::fs;
-use std::num::NonZeroU8;
+use std::num::{NonZeroU8, NonZeroU32};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -114,6 +114,14 @@ pub struct BasisFileConfig<'a> {
     /// [`protocol::effective_s2length`]). `None` (local copy / no negotiation)
     /// leaves the strong sum at full length, byte-identical to upstream.
     pub compat_flags: Option<protocol::CompatibilityFlags>,
+    /// Fixed delta block length from `-B` / `--block-size`, when the operator
+    /// set one. `None` selects the square-root heuristic.
+    ///
+    /// upstream: generator.c:720-721 - `if (block_size) blength = block_size;`
+    /// inside `sum_sizes_sqroot()`, the one point where the option displaces
+    /// the heuristic. The receiving side owns it: the generator sizes the
+    /// blocks it checksums, so the sender never consults the value.
+    pub block_size: Option<NonZeroU32>,
 }
 
 /// Configuration for generating a signature from a basis file.
@@ -131,6 +139,8 @@ struct SignatureGenerationConfig {
     checksum_algorithm: engine::signature::SignatureAlgorithm,
     /// Mutually negotiated compatibility flags (see [`BasisFileConfig::compat_flags`]).
     compat_flags: Option<protocol::CompatibilityFlags>,
+    /// Fixed delta block length (see [`BasisFileConfig::block_size`]).
+    block_size: Option<NonZeroU32>,
 }
 
 impl SignatureGenerationConfig {
@@ -141,6 +151,7 @@ impl SignatureGenerationConfig {
             checksum_length: config.checksum_length,
             checksum_algorithm: config.checksum_algorithm,
             compat_flags: config.compat_flags,
+            block_size: config.block_size,
         }
     }
 }
@@ -396,9 +407,13 @@ fn generate_basis_signature(
     let digest_len =
         NonZeroU8::new(config.checksum_algorithm.digest_len().min(u8::MAX as usize) as u8)
             .expect("negotiated digest length is at least one byte");
-    let params =
-        SignatureLayoutParams::new(basis_size, None, config.protocol, config.checksum_length)
-            .with_transfer_digest_length(digest_len);
+    let params = SignatureLayoutParams::new(
+        basis_size,
+        config.block_size,
+        config.protocol,
+        config.checksum_length,
+    )
+    .with_transfer_digest_length(digest_len);
 
     let layout = match calculate_signature_layout(params) {
         Ok(layout) => layout,
@@ -952,6 +967,7 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             compat_flags: None,
+            block_size: None,
         };
 
         // Production path (windowed BufReader over the basis file).
@@ -1020,6 +1036,7 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             compat_flags: None,
+            block_size: None,
         };
 
         // Open the basis exactly as the live path does, then let "another
@@ -1087,6 +1104,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1140,6 +1158,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1182,6 +1201,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1258,6 +1278,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1329,6 +1350,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1389,6 +1411,7 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1449,6 +1472,7 @@ mod tests {
             // Not --whole-file: the redo path must still search for a basis.
             whole_file: false,
             compat_flags: None,
+            block_size: None,
         };
 
         let strong_len = |result: &BasisFileResult| -> u8 {
@@ -1524,6 +1548,7 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             compat_flags: None,
+            block_size: None,
         };
 
         // No flags -> full length (byte-identical to upstream).
@@ -1537,6 +1562,7 @@ mod tests {
         assert_eq!(
             strong_len(SignatureGenerationConfig {
                 compat_flags: Some(no_cap),
+                block_size: None,
                 ..base
             }),
             16
@@ -1549,6 +1575,7 @@ mod tests {
         assert_eq!(
             strong_len(SignatureGenerationConfig {
                 compat_flags: Some(with_cap),
+                block_size: None,
                 ..base
             }),
             8,
@@ -1587,6 +1614,7 @@ mod tests {
                 checksum_length: NonZeroU8::new(phase_len).unwrap(),
                 checksum_algorithm: algo,
                 compat_flags: None,
+                block_size: None,
             };
             let params = SignatureLayoutParams::new(
                 file_size,
@@ -1666,5 +1694,59 @@ mod tests {
                 sig(size, block, 16, xxh3_64);
             }
         }
+    }
+
+    /// upstream: generator.c:720-721 - `if (block_size) blength = block_size;`.
+    /// The generator is the side that sizes the blocks it checksums, so the
+    /// value has to reach `generate_basis_signature`, not merely be parsed.
+    /// Without a fixture that CHANGES the block length this assertion would be
+    /// vacuous, so it pins both halves: the requested length is used, and a
+    /// `None` request still selects the square-root heuristic (700 here).
+    #[test]
+    fn block_size_reaches_the_generated_signature() {
+        const SIZE: usize = 4096;
+        let data: Vec<u8> = (0..SIZE).map(|i| ((i * 31 + 7) % 256) as u8).collect();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("basis.bin");
+        fs::write(&path, &data).expect("write basis");
+
+        let sign = |block_size: Option<NonZeroU32>| {
+            let cfg = SignatureGenerationConfig {
+                protocol: ProtocolVersion::NEWEST,
+                checksum_length: NonZeroU8::new(16).unwrap(),
+                checksum_algorithm: SignatureAlgorithm::Md4,
+                compat_flags: None,
+                block_size,
+            };
+            generate_basis_signature(
+                fast_io::open_basis_nofollow(&path).expect("open basis"),
+                SIZE as u64,
+                path.clone(),
+                protocol::FnameCmpType::Fname,
+                None,
+                cfg,
+            )
+            .signature
+            .expect("signature")
+        };
+
+        let heuristic = sign(None);
+        assert_eq!(
+            heuristic.layout().block_length().get(),
+            700,
+            "no -B must keep upstream's BLOCK_SIZE default (rsync.h:25)",
+        );
+
+        let requested = sign(NonZeroU32::new(2048));
+        assert_eq!(
+            requested.layout().block_length().get(),
+            2048,
+            "-B 2048 must displace the heuristic",
+        );
+        assert_eq!(
+            requested.blocks().len(),
+            2,
+            "4096 bytes at 2048 is exactly two blocks",
+        );
     }
 }
