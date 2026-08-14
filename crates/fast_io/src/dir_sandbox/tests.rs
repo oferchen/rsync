@@ -118,18 +118,41 @@ fn exit_on_empty_stack_is_noop() {
 /// upstream refuses absolute targets too (`syscall.c:2953`) - so a fixture
 /// built with `symlink(root.join("real"), ...)` passes for the wrong reason
 /// and proves nothing about this contract.
+///
+/// ⚠ Whether the descent *can* follow it depends on the mechanism available.
+/// `openat2` resolves the symlink inside the kernel and lands beneath the
+/// anchor; the portable `openat(O_NOFOLLOW)` fallback cannot express "follow
+/// only if it stays inside" and refuses. [`openat_dir`](super::openat_dir)
+/// records that as the portable-fallback gap. Both are asserted, keyed on the
+/// same runtime predicate the code consults - asserting only the first made
+/// this red on every non-Linux target while CI never ran the crate there.
+///
+/// ⚠ As above, the refusal arm is a **tracked divergence, not the contract**:
+/// upstream follows the target (`ds_descend`, `syscall.c:2961`). Parity is
+/// task 551; `enter()`'s behaviour is deliberately unchanged here, because
+/// making the fallback follow in-tree symlinks is a cross-platform decision
+/// and not a test fix.
 #[test]
-fn enter_follows_in_tree_symlink_child() {
+fn enter_follows_in_tree_symlink_child_where_the_kernel_can() {
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("create real dir");
     symlink("real", root.join("link")).expect("relative in-tree symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
-    sandbox
-        .enter(std::ffi::OsStr::new("link"))
-        .expect("in-tree symlinked subdirectory must be descended");
-    assert_eq!(sandbox.depth(), 1);
-    sandbox.exit();
+    let entered = sandbox.enter(std::ffi::OsStr::new("link"));
+
+    if crate::linux_capabilities::openat2_supported() {
+        entered.expect("in-tree symlinked subdirectory must be descended");
+        assert_eq!(sandbox.depth(), 1);
+        sandbox.exit();
+    } else {
+        let err = entered.expect_err("the O_NOFOLLOW fallback cannot follow it");
+        let code = err.raw_os_error();
+        assert!(
+            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
+            "the fallback refusal is ELOOP or ENOTDIR (BSD orders O_DIRECTORY first); got {err:?}"
+        );
+    }
     assert_eq!(sandbox.depth(), 0);
 }
 
@@ -150,7 +173,10 @@ fn enter_refuses_relative_symlink_that_escapes() {
         .expect_err("a symlink leaving the anchor must be refused");
     let code = err.raw_os_error();
     assert!(
-        code == Some(libc::EXDEV) || code == Some(libc::ELOOP) || code == Some(libc::ENOENT),
+        code == Some(libc::EXDEV)
+            || code == Some(libc::ELOOP)
+            || code == Some(libc::ENOENT)
+            || code == Some(libc::ENOTDIR),
         "expected an escape refusal, got: {err}"
     );
     assert_eq!(sandbox.depth(), 0);
@@ -325,32 +351,74 @@ fn enter_to_legitimate_subdir_returns_ok() {
 
 /// The seam, exercised through the arm that is already live.
 ///
-/// An operator-trusted policy must resolve a peer tail exactly as the
-/// unpolicied walk does today: an in-tree relative symlink is followed.
-/// This pins the `NoExclude` arm to `RESOLVE_BENEATH` semantics so the
-/// oracle arm (tasks 599/600), which replaces the mechanism, cannot
-/// silently change this one.
+/// The `NoExclude` arm delegates resolution to the kernel, so what it does
+/// with an in-tree relative symlink is a property of the *mechanism actually
+/// available*, not a single fixed rule:
+///
+/// - `openat2(RESOLVE_BENEATH)` follows it, matching upstream `ds_descend()`;
+/// - the portable `openat(O_NOFOLLOW)` fallback refuses it, which
+///   [`openat_dir`](super::openat_dir) documents as stricter than upstream and
+///   tracked as the portable-fallback gap.
+///
+/// ⚠ The fallback arm asserts a **known divergence from upstream, not intended
+/// behaviour**. Upstream 3.5.0 follows a relative in-tree target
+/// (`ds_descend`, `syscall.c:2961`); oc refuses it wherever `openat2` is
+/// unavailable, so every non-Linux target is stricter than the reference
+/// implementation. Bringing the fallback to parity is task 551 (U350-4i,
+/// cross-platform parity for the resolver), where the macOS, BSD and Windows
+/// stories get decided together. This test is the ledger entry for that gap -
+/// pinning it silently is the failure mode; naming it is what makes it a
+/// record rather than an endorsement.
+///
+/// Both are pinned here, keyed on the same runtime predicate the code
+/// consults. An earlier revision asserted only the first, which made this test
+/// fail on every non-Linux target and on any Linux kernel without `openat2` -
+/// a green Linux run said nothing about either.
 ///
 /// # Upstream Reference
 ///
 /// - `syscall.c:2891` `ds_descend()` - follows a relative in-tree target.
 #[test]
-fn operator_trusted_policy_follows_a_relative_in_tree_symlink() {
+fn operator_trusted_policy_resolution_matches_the_available_mechanism() {
     let (_guard, root) = canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("mkdir real");
     std::fs::write(root.join("real").join("marker"), b"x").expect("write marker");
     symlink("real", root.join("sub")).expect("symlink sub -> real");
 
-    let sandbox = DirSandbox::open_dest_anchor_with_policy(
+    let walked = DirSandbox::open_dest_anchor_with_policy(
         &root,
         std::path::Path::new("sub"),
         super::ConfinePolicy::operator_trusted(),
-    )
-    .expect("an in-tree relative symlink must resolve under the operator-trusted policy");
+    );
 
-    sandbox
+    if crate::linux_capabilities::openat2_supported() {
+        let sandbox = walked.expect("openat2 RESOLVE_BENEATH must follow an in-tree symlink");
+        sandbox
+            .lstat_at(std::ffi::OsStr::new("marker"))
+            .expect("the sandbox must be anchored at real/, reached through sub");
+    } else {
+        let err = walked
+            .expect_err("the O_NOFOLLOW fallback refuses a symlink the kernel walk would follow");
+        let code = err.raw_os_error();
+        assert!(
+            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
+            "the fallback refusal is ELOOP or ENOTDIR (BSD orders O_DIRECTORY first); got {err:?}"
+        );
+    }
+
+    // Whichever mechanism is in play, the CONFINED arm follows it - that arm
+    // resolves each component itself and does not depend on `openat2`. Without
+    // this the test would pass on a fallback host while saying nothing about
+    // the resolver 603-607 will actually route onto.
+    let confined = DirSandbox::open_dest_anchor_confined(
+        &root,
+        std::path::Path::new("sub"),
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect("the confined walk follows an in-tree relative symlink on every platform");
+    confined
         .lstat_at(std::ffi::OsStr::new("marker"))
-        .expect("the sandbox must be anchored at real/, reached through sub");
+        .expect("the confined walk must land in real/");
 }
 
 /// Builds a chain of `len` directory symlinks under `dir` named
@@ -575,4 +643,239 @@ fn an_absolute_symlink_target_is_refused_even_when_it_points_back_inside() {
         Some(libc::ELOOP),
         "an absolute target is reported as ELOOP; got {err:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Task 602: the residual cases from the resolver test plan
+// (`docs/design/path-confinement-resolver-api.md` section 8). The cases the
+// walk already pins live above; these are the four it did not.
+// ---------------------------------------------------------------------------
+
+/// An oracle that counts how many times it is consulted.
+///
+/// Existence is the point: "the operator-trusted walk pays nothing" is a claim
+/// about calls *not made*, which no assertion on the walk's return value can
+/// distinguish from an oracle that ran and answered `false`.
+#[derive(Default, Clone)]
+struct CountingOracle {
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl CountingOracle {
+    /// A clone shares the counter, so the caller can still read it after the
+    /// oracle itself has been moved into the policy.
+    fn calls(&self) -> usize {
+        self.calls.get()
+    }
+}
+
+impl super::ConfinementOracle for CountingOracle {
+    fn outside_confinement(&self, _abspath: &std::path::Path) -> bool {
+        self.calls.set(self.calls.get() + 1);
+        false
+    }
+}
+
+/// Spec case 4: a symlink target containing `..` is *walked*, not collapsed.
+///
+/// The discriminator is an intermediate component that does not exist.
+/// Lexical collapse turns `missing/../real` into `real` and succeeds; a walk
+/// opens `missing` first and fails. Upstream splits the spliced target with
+/// `strtok_r` and calls `ds_descend()` per token, so the open happens.
+///
+/// The second half is the control: with the intermediate present the same
+/// shape resolves, so the refusal above is attributable to the missing
+/// component rather than to `..` in a target being rejected outright.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2966-2976` `ds_walk_path()` tokenises on `/`
+/// - `rsync-3.5.0/syscall.c:2937-2961` the spliced target re-enters the walk
+#[test]
+fn a_dot_dot_inside_a_symlink_target_is_walked_not_string_collapsed() {
+    let (_guard, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("real")).expect("mkdir real");
+    std::fs::create_dir(root.join("present")).expect("mkdir present");
+    symlink("missing/../real", root.join("collapsing")).expect("symlink via missing");
+    symlink("present/../real", root.join("walking")).expect("symlink via present");
+
+    let err = DirSandbox::open_dest_anchor_confined(
+        &root,
+        std::path::Path::new("collapsing"),
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect_err("a walked target must open `missing` and fail; collapsing would succeed");
+    assert_eq!(
+        err.raw_os_error(),
+        Some(libc::ENOENT),
+        "the absent intermediate must surface as ENOENT; got {err:?}"
+    );
+
+    DirSandbox::open_dest_anchor_confined(
+        &root,
+        std::path::Path::new("walking"),
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect("the identical shape with a real intermediate must resolve");
+}
+
+/// Spec case 6: the depth ceiling refuses rather than truncating.
+///
+/// Truncation is the dangerous failure: a walk that silently stopped early
+/// would hand back a dirfd for an *ancestor* of the requested path, and every
+/// later `*at` call would then operate on the wrong directory while looking
+/// successful. Refusing with `ENOMEM` is the only safe answer.
+///
+/// The tree is built with `mkdirat`/`openat` on a moving dirfd rather than a
+/// long absolute path: `PATH_MAX` is 1024 on macOS, so a 1024-deep absolute
+/// path cannot be created at all through the path-based API. The walk itself
+/// only ever sees single components, so it is unaffected.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2801` `DS_MAXDEPTH`
+/// - `rsync-3.5.0/syscall.c:2865-2868` `ds_push()` returns `ENOMEM` at the cap
+#[test]
+fn the_depth_ceiling_refuses_rather_than_truncating() {
+    use std::os::fd::{AsFd, OwnedFd};
+
+    let (_guard, root) = canonical_tempdir();
+    let depth = super::DS_MAXDEPTH;
+
+    // Build `depth` nested single-character directories off a moving dirfd.
+    // The parents are retained so teardown can walk back up without recursing.
+    let name = std::ffi::OsStr::new("d");
+    let mut chain: Vec<OwnedFd> = vec![OwnedFd::from(
+        std::fs::File::open(&root).expect("open tempdir root as dirfd"),
+    )];
+    for _ in 0..depth {
+        let cur = chain.last().expect("chain is never empty").as_fd();
+        super::at_syscalls::mkdirat(cur, name, 0o700).expect("mkdirat");
+        let next = super::at_syscalls::openat(
+            cur,
+            name,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            0,
+        )
+        .expect("openat child");
+        chain.push(OwnedFd::from(next));
+    }
+
+    let too_deep: std::path::PathBuf = std::iter::repeat_n("d", depth).collect();
+    let err = DirSandbox::open_dest_anchor_confined(
+        &root,
+        &too_deep,
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect_err("a path at the ceiling must be refused, never silently truncated");
+    assert_eq!(
+        err.raw_os_error(),
+        Some(libc::ENOMEM),
+        "the ceiling is reported as ENOMEM; got {err:?}"
+    );
+
+    // The control: one below the cap resolves, so the refusal above is the
+    // ceiling and not some unrelated limit reached along the way.
+    let deep_enough: std::path::PathBuf = std::iter::repeat_n("d", depth - 2).collect();
+    DirSandbox::open_dest_anchor_confined(
+        &root,
+        &deep_enough,
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect("a path just under the ceiling must resolve");
+
+    // Tear the chain down deepest-first through the retained dirfds.
+    // `TempDir`'s own cleanup calls `remove_dir_all`, which recurses once per
+    // level and overflows the stack at this depth - the tree has to be gone
+    // before the guard drops.
+    chain.pop();
+    while let Some(parent) = chain.pop() {
+        super::at_syscalls::unlinkat(parent.as_fd(), name, super::at_syscalls::UnlinkFlags::Dir)
+            .expect("rmdir one level");
+    }
+}
+
+/// Spec case 8: an operator-trusted walk consults the oracle zero times.
+///
+/// Upstream leaves `ds.abspath` unseeded for a caller with nothing to exclude,
+/// and notes such callers "pay nothing". oc mirrors that by seeding the
+/// tracker only for an absolute anchor and gating the exclude check on a
+/// non-empty tracker, so a relative anchor must produce no calls at all.
+///
+/// A counting oracle is the only instrument that can see this: an oracle that
+/// ran and returned `false` yields exactly the same walk result. This is the
+/// "a mutation that kills nothing is informative" shape stated as a test -
+/// the property is a call *not made*, so no assertion on the return value can
+/// distinguish the two, and only counting can.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2989-2991` non-daemon callers "pay nothing"
+#[test]
+fn an_operator_trusted_walk_never_consults_the_oracle() {
+    let (_guard, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+
+    let counting = CountingOracle::default();
+    let counting_probe = counting.clone();
+    let cwd = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(&root).expect("chdir into the anchor");
+    let walked = DirSandbox::open_dest_anchor_confined(
+        std::path::Path::new("."),
+        std::path::Path::new("a/b"),
+        super::ConfinePolicy::confined(counting),
+    );
+    std::env::set_current_dir(cwd).expect("restore cwd");
+    walked.expect("a relative anchor must still resolve its tail");
+
+    assert_eq!(
+        counting_probe.calls(),
+        0,
+        "an unseeded tracker must skip the exclude check entirely"
+    );
+
+    // The control: with an absolute anchor the tracker is seeded and the same
+    // two components DO consult the oracle. Without this the assertion above
+    // would also hold for an oracle that is never wired up at all.
+    let seeded = CountingOracle::default();
+    let seeded_probe = seeded.clone();
+    DirSandbox::open_dest_anchor_confined(
+        &root,
+        std::path::Path::new("a/b"),
+        super::ConfinePolicy::confined(seeded),
+    )
+    .expect("absolute anchor must resolve");
+    assert_eq!(
+        seeded_probe.calls(),
+        2,
+        "a seeded tracker consults the oracle once per descended component"
+    );
+}
+
+/// Spec case 9: the handle outlives the sandbox.
+///
+/// Task 596 settled that the resolver must hand back a *retained anchor
+/// handle*, because consumers hold it across operations that outlive the walk.
+/// If `DirSandbox`'s drop closed the descriptor, the surviving `Arc` would name
+/// a closed fd - and, worse, a number the kernel is free to reissue, so a later
+/// `*at` call could silently address an unrelated file rather than failing.
+#[test]
+fn the_anchor_handle_outlives_the_sandbox_that_produced_it() {
+    use std::os::fd::AsFd;
+
+    let (_guard, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("leaf")).expect("mkdir leaf");
+    std::fs::write(root.join("leaf/marker"), b"x").expect("write marker");
+
+    let sandbox = DirSandbox::open_dest_anchor_confined(
+        &root,
+        std::path::Path::new("leaf"),
+        super::ConfinePolicy::confined(ExcludeNothing),
+    )
+    .expect("walk to leaf");
+    let handle = sandbox.root_arc();
+    drop(sandbox);
+
+    super::at_syscalls::fstatat_nofollow(handle.as_fd(), std::ffi::OsStr::new("marker"))
+        .expect("the retained handle must still address the walked directory");
 }
