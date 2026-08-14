@@ -12024,18 +12024,79 @@ run_comprehensive_interop_case() {
 
 # Parse command line arguments
 build_only=false
+only_version=""
+# Tracked separately from the value: `--only-version=` (empty) must not be
+# mistaken for "no selector given". Testing `-n "$only_version"` alone would
+# silently run the FULL matrix for a caller who asked to narrow it - the exact
+# vacuity this selector exists to prevent, one level up.
+only_version_given=false
 for arg in "$@"; do
   case "$arg" in
     build-only)
       build_only=true
       ;;
+    --only-version=*)
+      only_version="${arg#--only-version=}"
+      only_version_given=true
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [build-only]" >&2
+      echo "Usage: $0 [build-only] [--only-version=VERSION]" >&2
       exit 1
       ;;
   esac
 done
+
+# Narrow the run to a single upstream peer.
+#
+# `versions` above stays the source of truth for which peers we interoperate
+# with; CI lifts that same list into a per-version job matrix so a failure names
+# the version that broke instead of burying it in one aggregate cell. Filtering
+# here - once, after parsing and before any consumer - preserves the single
+# source of truth rather than teaching each downstream loop about the selector.
+#
+# An unmatched selector is FATAL. A run that silently selected nothing would
+# execute zero scenarios and still exit 0, which is precisely the vacuous pass
+# this selector exists to make impossible.
+if [[ "$only_version_given" == "true" ]]; then
+  if [[ -z "$only_version" ]]; then
+    echo "--only-version= requires a version; an empty value would run the" >&2
+    echo "full matrix while appearing to narrow it." >&2
+    echo "Known versions: ${versions[*]}" >&2
+    exit 1
+  fi
+
+  selector_matched=false
+  for candidate in "${versions[@]}"; do
+    if [[ "$only_version" == "$candidate" ]]; then
+      selector_matched=true
+      break
+    fi
+  done
+
+  if [[ "$selector_matched" != "true" ]]; then
+    # Distinguish "not a peer we test" from "a peer we only build", because the
+    # second is a reasonable thing to ask for and a bare "unknown version" would
+    # send the caller looking for a typo that is not there.
+    for candidate in "${extra_build_versions[@]}"; do
+      if [[ "$only_version" == "$candidate" ]]; then
+        echo "--only-version=${only_version} selects a build-only peer: it is in" >&2
+        echo "extra_build_versions and has no scenarios wired, so the run would" >&2
+        echo "execute nothing. Use build-only to cache its binary instead." >&2
+        exit 1
+      fi
+    done
+    echo "--only-version=${only_version} matches no version in the interop set." >&2
+    echo "Known versions: ${versions[*]}" >&2
+    exit 1
+  fi
+
+  versions=("$only_version")
+  # The cache-warming peers exist to put binaries on disk for versions with no
+  # scenarios. A single-version run has no use for them, and building them would
+  # charge every matrix cell for the same work.
+  extra_build_versions=()
+fi
 
 # Build upstream binaries first (always needed). Includes versions cached for
 # follow-up tasks (extra_build_versions) so the binary is on disk and on PATH
@@ -12049,7 +12110,12 @@ done
 # subshell: ensure_upstream_build exits on failure, and without the subshell
 # that exit would take the whole harness down. Failures for the versions above
 # stay fatal.
-for version in "${extra_build_versions[@]}"; do
+# `${arr[@]+"${arr[@]}"}` not `"${arr[@]}"`: --only-version empties this array,
+# and under `set -u` the bash 3.2 that ships on macOS treats "${empty[@]}" as an
+# unbound variable and aborts. CI runs bash 5 where it is benign, which is
+# exactly how that class of bug stays invisible until someone runs the harness
+# locally.
+for version in ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
   if ! (ensure_upstream_build "$version"); then
     echo "warning: upstream rsync ${version} failed to build; it has no scenarios wired, continuing" >&2
   fi
@@ -12058,7 +12124,7 @@ done
 # If build-only mode, exit after building upstream binaries
 if [[ "$build_only" == "true" ]]; then
   echo "Built upstream rsync binaries (build-only mode)"
-  for version in "${versions[@]}" "${extra_build_versions[@]}"; do
+  for version in "${versions[@]}" ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
     binary="${upstream_install_root}/${version}/bin/rsync"
     if [[ -x "$binary" ]]; then
       echo "  - ${version}: $binary"
@@ -12239,9 +12305,19 @@ echo ""
 echo "=== Standalone Interop Tests ==="
 
 # Use the newest available upstream binary for standalone tests
+# The standalone phase prefers 3.4.4 as the default peer, but under
+# --only-version it MUST use the selected peer: a cell labelled `interop (3.5.0)`
+# that ran its standalone tests against a 3.4.4 binary left on disk from an
+# earlier cached build would be mislabelled, and the per-version matrix exists
+# precisely so a failure names the right version.
+standalone_preferred_version="3.4.4"
+if [[ "$only_version_given" == "true" ]]; then
+  standalone_preferred_version="$only_version"
+fi
+
 standalone_binary=""
-if [[ -x "${upstream_install_root}/3.4.4/bin/rsync" ]]; then
-  standalone_binary="${upstream_install_root}/3.4.4/bin/rsync"
+if [[ -x "${upstream_install_root}/${standalone_preferred_version}/bin/rsync" ]]; then
+  standalone_binary="${upstream_install_root}/${standalone_preferred_version}/bin/rsync"
 fi
 if [[ -z "$standalone_binary" ]]; then
   # Fall back to any available version
