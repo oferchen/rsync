@@ -7,9 +7,17 @@ Implementation spec for U350-4d.2. Companion to
 ## 1. The defect, measured
 
 A daemon receiver resolves a client-supplied path tail beneath the operator's
-module root. On a platform without `openat2(2)` that confinement is not merely
-weaker - it is absent, the transfer reports success, and **both upstream
+module root. **On a platform without `openat2(2)`** that confinement is not
+merely weaker - it is absent, the transfer reports success, and **both upstream
 versions refuse the same transfer at exit 3 in the same configuration.**
+
+⚠ **The platform qualifier is load-bearing; the config qualifier is not.**
+Everything measured below is macOS. The same portable arm runs on the BSDs and
+on Linux kernels predating `openat2`. On Linux **with** `openat2` the walk
+produces `EXDEV` and oc refuses correctly. The accurate claim is *"the stock
+non-chroot daemon module silently serves an escape on any platform without
+`openat2`"* - **not** "on every platform". What is *not* qualified is the
+configuration: this is the default module, not a hardened-off one.
 
 Measured 2026-08-14, macOS 15 (aarch64), real daemons, `use chroot = false`,
 `read only = false`, and **no other directive** - so `munge symlinks` takes its
@@ -33,6 +41,16 @@ client:   -a payload/ rsync://127.0.0.1:PORT/mod/escape/
 3.5.0's `ELOOP` is the `O_NOFOLLOW` confined walk refusing the component;
 3.4.4 refuses by a different mechanism, not chased here. Either way the
 divergence is oc-only and lands in the default deployment.
+
+⚠ **The detector has been failing in CI the whole time, in a cell nobody
+reads.** `transfer` is absent from the *required* `macOS (stable)` cell, but
+`.github/workflows/_test-features.yml` runs a cross-OS matrix whose `iconv` row
+is `-p protocol -p transfer -p engine -p core -p cli -p daemon --features
+iconv` on `[ubuntu-latest, macos-latest, windows-latest]`. Both
+`sandbox::symlink_race_tests::anchored_mode_*` have been red there on every PR
+- observed on #7318, which touches only a citation comment in
+`crates/protocol/src/flist/read/name.rs`, so the red is master's. The escape
+detector fired continuously; the cell is not required, so nobody looked.
 
 ⚠ **The daemon log is silent too.** The full log for the escaping run holds the
 access line, the client-args line, the landlock/seccomp notices,
@@ -202,7 +220,11 @@ not "fix" it.
    empty, on a platform without `openat2`.
 3. An in-tree symlinked subdirectory in the module still transfers - the
    availability half. Refusing everything would pass gate 2 while breaking
-   ordinary module layouts.
+   ordinary module layouts. This is the failure mode task 598 already recorded
+   against the resolver: 3.5.0 **follows** a relative in-tree target
+   (`ds_descend`, `syscall.c:2961`) and refuses only absolute targets
+   (`:2953`) and `..` above the anchor (`:2896`). A refuse-all reading would
+   break plain `oc-rsync -a src/ dst/` where `dst/sub` is a symlink.
 4. `..` in a peer tail still yields the front-door refusal after routing.
 5. The two `anchored_mode_*` tests (PR #7328) tighten from mechanism-branched
    to a single asserted answer on both arms, and their `⚠ KNOWN GAP` doc
