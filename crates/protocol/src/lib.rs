@@ -180,7 +180,8 @@ pub use iconv::{
     converter_from_locale,
 };
 pub use io_error::{
-    IOERR_DEL_LIMIT, IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED, sanitize_peer_io_error,
+    IOERR_DEL_LIMIT, IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED, combine_flist_io_error,
+    sanitize_peer_io_error,
 };
 pub use legacy::{
     AdvertisedDigests, DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, EARLY_INPUT_CMD,

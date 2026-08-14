@@ -76,7 +76,9 @@ impl FileListReader {
                             "{}",
                             crate::iconv::cannot_convert_symlink_message("receiver", name)
                         );
-                        self.io_error |= 1;
+                        // upstream: flist.c:1169-1177 sets io_error with no
+                        // `ignore_errors` check, so this is a LOCAL error.
+                        self.local_io_error |= crate::io_error::IOERR_GENERAL;
                         return Ok(Some(PathBuf::new()));
                     }
                 },

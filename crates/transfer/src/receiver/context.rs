@@ -198,6 +198,13 @@ pub struct ReceiverContext {
     /// id lists (upstream: flist.c:2552-2553). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     pub(in crate::receiver) flist_io_error: i32,
+    /// PEER-supplied file-list io_error bits from the protocol < 30 trailer,
+    /// sanitized but deliberately NOT gated on `--ignore-errors`.
+    ///
+    /// Held raw so the gate is applied in exactly one place -
+    /// [`Self::flist_reader_io_error`] - identically to the protocol >= 30
+    /// trailer the file-list reader accumulates.
+    pub(in crate::receiver) peer_flist_io_error: i32,
     /// Shared handle on the raw wire byte counter, used to measure the
     /// file-list spans for `stats.flist_size`.
     ///
@@ -497,6 +504,7 @@ impl ReceiverContext {
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
             flist_io_error: 0,
+            peer_flist_io_error: 0,
             raw_read_counter: None,
             flist_size: 0,
             sender_stats: None,
@@ -954,6 +962,31 @@ impl ReceiverContext {
     ///
     /// Mirrors `xattrs.c:set_xattr()` which looks up `F_XATTR(file)` in the
     /// global xattr list cache `rsync_xal_l`.
+    /// File-list `io_error` bits, with upstream's rule applied exactly once.
+    ///
+    /// Upstream keeps two rules apart and this is the only place oc expresses
+    /// them:
+    ///
+    /// * a PEER-supplied trailer value is accumulated only when
+    ///   `--ignore-errors` is absent - `flist.c:2949`, `:2967` and `:3070` all
+    ///   read `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`;
+    /// * a locally-generated decode error is accumulated unconditionally -
+    ///   `flist.c:841`'s filename-transcode failure has no `ignore_errors`
+    ///   check anywhere on the receiver side.
+    ///
+    /// Both protocol eras feed the same expression: the protocol >= 30 trailer
+    /// via [`FileListReader::peer_io_error`], the protocol < 30 trailer via
+    /// `peer_flist_io_error`. Holding the peer value raw and gating here is what
+    /// keeps the rule in one place - five call sites previously drained a single
+    /// combined getter and four of them applied the wrong rule.
+    pub(in crate::receiver) fn flist_reader_io_error(&self) -> i32 {
+        let reader = self.flist_reader_cache.as_ref();
+        let peer = self.peer_flist_io_error
+            | reader.map_or(0, protocol::flist::FileListReader::peer_io_error);
+        let local = reader.map_or(0, protocol::flist::FileListReader::local_io_error);
+        protocol::combine_flist_io_error(peer, local, self.config.deletion.ignore_errors)
+    }
+
     pub(in crate::receiver) fn resolve_xattr_list(
         &self,
         entry: &protocol::flist::FileEntry,
