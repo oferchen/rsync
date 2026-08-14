@@ -211,9 +211,10 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 /// Sender-only `--super`/`--stats` server args, shared by the SSH and
 /// daemon-push argument builders.
 ///
-/// upstream: options.c:2852-2857 server_options() - inside the `if (am_sender)`
-/// block, `--super` is appended when `am_root > 1` (an explicit `--super`, never
-/// mere root) and `--stats` when `do_stats`. Both are forwarded only on a push,
+/// upstream: options.c:3018-3023 server_options() - `args[ac++] = "--super"`
+/// when `am_root > 1` (an explicit `--super`, never mere root) and
+/// `args[ac++] = "--stats"` when `do_stats`, both inside the am_sender block.
+/// Both are forwarded only on a push,
 /// where the remote receiver/generator performs the privileged operations and
 /// computes the transfer statistics. Callers invoke this only from their sender
 /// branch so both transports emit the same trailer in the same order.

@@ -141,7 +141,11 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     };
 
     if let Some(log) = log_sink.as_ref() {
-        log_connection(log, peer_host.as_deref(), peer_addr);
+        log_connection(
+            log,
+            peer_host_display(peer_host.as_deref(), reverse_lookup),
+            peer_addr,
+        );
     }
 
     let outcome = handle_legacy_session(

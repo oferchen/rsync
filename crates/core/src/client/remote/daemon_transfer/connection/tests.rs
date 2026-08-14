@@ -710,3 +710,70 @@ mod quic_url_tests {
         assert_eq!(request.address.port(), 873);
     }
 }
+
+/// The username sent in the `@RSYNCD` auth response, one case per row of the
+/// table measured against the real rsync 3.5.0 client.
+///
+/// upstream: clientserver.c:289-292 (`USER` then `LOGNAME`) composed with
+/// authenticate.c:451-452 (`if (!user || !*user) user = "nobody";`).
+mod daemon_auth_username_tests {
+    use super::super::resolve_auth_username;
+
+    /// `USER` wins when set, and is the only variable consulted.
+    #[test]
+    fn user_env_is_preferred() {
+        assert_eq!(resolve_auth_username(None, Some("alice"), None), "alice");
+        assert_eq!(
+            resolve_auth_username(None, Some("alice"), Some("bob")),
+            "alice"
+        );
+    }
+
+    /// `LOGNAME` is the second variable - NOT `USERNAME`, which upstream never
+    /// reads. oc previously consulted `USERNAME` and so authenticated as
+    /// `rsync` on any host that sets only `LOGNAME`.
+    #[test]
+    fn logname_is_the_second_variable() {
+        assert_eq!(resolve_auth_username(None, None, Some("bob")), "bob");
+    }
+
+    /// An unset environment authenticates as `nobody`, not `rsync`.
+    ///
+    /// upstream: authenticate.c:452.
+    #[test]
+    fn absent_environment_falls_back_to_nobody() {
+        assert_eq!(resolve_auth_username(None, None, None), "nobody");
+    }
+
+    /// A SET-but-empty `USER` stops the chain: upstream's `getenv` returns a
+    /// non-NULL empty string, so `if (!user)` is false and `LOGNAME` is never
+    /// consulted; only `auth_client`'s `!*user` rescues it, as `nobody`.
+    ///
+    /// This is the row most likely to be got wrong by a naive
+    /// "first non-empty wins" reading, and the real 3.5.0 client was measured
+    /// producing `nobody` here.
+    #[test]
+    fn empty_user_env_does_not_fall_through_to_logname() {
+        assert_eq!(resolve_auth_username(None, Some(""), Some("bob")), "nobody");
+    }
+
+    /// An explicit `rsync://user@host/` name skips the environment entirely.
+    #[test]
+    fn an_explicit_username_skips_the_environment() {
+        assert_eq!(
+            resolve_auth_username(Some("carol"), Some("alice"), Some("bob")),
+            "carol"
+        );
+    }
+
+    /// ...and an explicitly empty one still degrades to `nobody`, because
+    /// upstream applies the emptiness check inside `auth_client` regardless of
+    /// where the name came from.
+    #[test]
+    fn an_explicit_empty_username_degrades_to_nobody() {
+        assert_eq!(
+            resolve_auth_username(Some(""), Some("alice"), None),
+            "nobody"
+        );
+    }
+}

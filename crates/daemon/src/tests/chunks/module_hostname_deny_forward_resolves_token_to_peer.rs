@@ -24,7 +24,7 @@ fn module_hostname_deny_forward_resolves_token_to_peer() {
 
     set_test_forward_override("blocked.example.com", &[peer]);
     assert!(
-        !module.permits(peer, reverse),
+        !module.permits(peer, PeerHost::new(reverse, true)),
         "a deny token forward-resolving to the peer must reject it"
     );
 
@@ -35,7 +35,7 @@ fn module_hostname_deny_forward_resolves_token_to_peer() {
         &[IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9))],
     );
     assert!(
-        module.permits(peer, reverse),
+        module.permits(peer, PeerHost::new(reverse, true)),
         "a deny token resolving to a different address must not block the peer"
     );
 

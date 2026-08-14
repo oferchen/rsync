@@ -402,28 +402,41 @@ mod module_access_tests {
         assert!(message.contains("/var/lock/rsyncd.lock"));
     }
 
+    /// A resolved name is rendered verbatim, whatever the lookup setting.
     #[test]
-    fn format_host_returns_hostname_when_present() {
-        use std::net::IpAddr;
-        let host = Some("example.com");
-        let fallback: IpAddr = "192.168.1.1".parse().unwrap();
-        assert_eq!(format_host(host, fallback), "example.com");
+    fn peer_host_display_returns_the_resolved_name() {
+        assert_eq!(peer_host_display(Some("example.com"), true), "example.com");
+        assert_eq!(peer_host_display(Some("example.com"), false), "example.com");
     }
 
+    /// A lookup that was ATTEMPTED and produced nothing renders `UNKNOWN`.
+    ///
+    /// upstream: clientname.c:112 `strlcpy(name_buf, default_name, ...)`.
     #[test]
-    fn format_host_returns_ip_when_hostname_missing() {
-        use std::net::IpAddr;
-        let host: Option<&str> = None;
-        let fallback: IpAddr = "10.0.0.1".parse().unwrap();
-        assert_eq!(format_host(host, fallback), "10.0.0.1");
+    fn peer_host_display_reports_unknown_when_the_lookup_failed() {
+        assert_eq!(peer_host_display(None, true), "UNKNOWN");
     }
 
+    /// A lookup that was never attempted renders `UNDETERMINED`, a DIFFERENT
+    /// string. Collapsing the two is the divergence this replaces: oc printed
+    /// one lowercase `unknown` for both, and the bare IP in the access lines.
+    ///
+    /// upstream: clientserver.c:126 + :1525.
     #[test]
-    fn format_host_returns_ipv6_when_hostname_missing() {
-        use std::net::IpAddr;
-        let host: Option<&str> = None;
-        let fallback: IpAddr = "::1".parse().unwrap();
-        assert_eq!(format_host(host, fallback), "::1");
+    fn peer_host_display_reports_undetermined_when_no_lookup_ran() {
+        assert_eq!(peer_host_display(None, false), "UNDETERMINED");
+        assert_ne!(peer_host_display(None, false), peer_host_display(None, true));
+    }
+
+    /// The sentinels must never be an address: the daemon log renders
+    /// `<host> (<addr>)` and upstream keeps those two fields distinct even when
+    /// the host is unknown. oc previously printed `10.0.0.1 (10.0.0.1)`.
+    #[test]
+    fn peer_host_display_never_substitutes_the_peer_address() {
+        for reverse_lookup in [true, false] {
+            let rendered = peer_host_display(None, reverse_lookup);
+            assert!(rendered.parse::<std::net::IpAddr>().is_err(), "{rendered}");
+        }
     }
 
     #[test]
