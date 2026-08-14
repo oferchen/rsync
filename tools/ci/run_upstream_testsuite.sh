@@ -19,19 +19,28 @@
 #   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin upstream version
 #   PRESERVE_SCRATCH=yes tools/ci/...sh               # keep per-test scratch dirs
 #
-# Git-ref mode (tracks the moving 3.5.0dev target - RsyncProject master):
+# Python-suite options (see run_python_suite_mode):
+#   UPSTREAM_PEER_BIN=<path>  # --rsync-bin2: peer rsync for the daemon side and
+#                             # remote-shell --rsync-path. Pointing it at a real
+#                             # upstream build is what makes the run a VERSION-
+#                             # MIXING run; without it the suite is oc vs oc.
+#   EXPECT_RESULT=<file>      # --expect-result: expected-outcome manifest.
+#   EXPECT_SKIPPED=<spec>     # --expect-skipped, e.g.
+#                             # "@testsuite/skiplist/common.txt,@.../linux.txt"
+#
+# Git-ref mode (any RsyncProject ref, e.g. a post-release dev branch):
 #   UPSTREAM_VERSION=master tools/ci/...sh            # git-clone + build master
 #   UPSTREAM_REF=<sha-or-tag> tools/ci/...sh          # any RsyncProject ref
 #   UPSTREAM_GIT_URL=<url> UPSTREAM_REF=... tools/ci/...sh
 #
-# Git-ref mode is additive and OFF by default: the release-tarball path above
-# is 100% unchanged unless UPSTREAM_REF is set or UPSTREAM_VERSION=master. In
-# git-ref mode the upstream source is a git checkout, not a release tarball,
-# and (since the 3.4.x -> 3.5.0dev migration) upstream's testsuite is Python
-# (runtests.py + testsuite/*_test.py), not the shell *.test scripts of 3.4.x.
-# We therefore delegate to upstream's own runtests.py with --rsync-bin set to
-# oc-rsync - the master analog of pointing $RSYNC at oc-rsync in the tarball
-# path - rather than driving *.test scripts ourselves. See run_git_ref_mode().
+# WHICH RUNNER: chosen from what the extracted tree ships, not from the version
+# string. rsync moved its testsuite from shell `*.test` scripts to Python
+# (runtests.py + testsuite/*_test.py) between 3.4.4 and 3.5.0, so one
+# release-tarball path has to serve both. A tree with runtests.py delegates to
+# upstream's own runner (keeping the oracle upstream's, and unlocking
+# --rsync-bin2 version mixing and --expect-result manifests); a tree with
+# `*.test` takes the shell loop below. Neither can select zero tests silently:
+# the shell loop refuses an empty match, and an empty manifest is refused too.
 
 set -euo pipefail
 
@@ -51,9 +60,22 @@ upstream_src_root="${workspace_root}/target/interop/upstream-src"
 if [[ "$git_ref_mode" == "yes" ]]; then
     # A ref may be a sha/tag/branch; sanitize it into a safe directory name.
     upstream_src_dir="${upstream_src_root}/rsync-git-${upstream_ref//[^A-Za-z0-9._-]/_}"
+    upstream_label="git ${upstream_ref}"
 else
     upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
+    upstream_label="release ${upstream_version}"
 fi
+# Optional peer binary for the Python suite's --rsync-bin2: the rsync used for
+# the daemon side and for remote-shell --rsync-path. Setting it to a real
+# upstream build is what turns the run into a version-MIXING run (oc on one end
+# of the wire, upstream on the other) rather than oc-against-oc.
+upstream_peer_bin="${UPSTREAM_PEER_BIN:-}"
+# Expected-outcome manifest (runtests.py --expect-result). When set, ONLY the
+# listed tests run and every outcome must match, an unexpected PASS included.
+expect_result_file="${EXPECT_RESULT:-}"
+# Composable expected-skip spec (runtests.py --expect-skipped), e.g.
+# "@testsuite/skiplist/common.txt,@testsuite/skiplist/linux.txt".
+expect_skipped_spec="${EXPECT_SKIPPED:-}"
 oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
 # Resolve to absolute path - test scripts cd into the upstream source tree,
 # so a relative OC_RSYNC_BIN would break.
@@ -79,7 +101,13 @@ fi
 is_known_failure() {
     local name=$1
     local kf
-    for kf in "${KNOWN_FAILURES[@]}"; do
+    # `${arr[@]+"${arr[@]}"}` because bash 3.2 (the macOS system bash) treats a
+    # plain "${arr[@]}" on an EMPTY array as an unbound variable under `set -u`.
+    # The ledger is empty today, so on macOS every test aborted here, was
+    # miscounted as a skip, and the run still exited 0 - reporting success
+    # having executed nothing. CI is bash 5 and unaffected, which is exactly
+    # why this stayed invisible.
+    for kf in ${KNOWN_FAILURES[@]+"${KNOWN_FAILURES[@]}"}; do
         [[ "$kf" == "$name" ]] && return 0
     done
     return 1
@@ -609,14 +637,42 @@ world_traversable_scratch_base() {
 # tracking of a moving target, so there is no known-failures gate: we surface
 # every divergence (the FAIL/XFAIL set) and propagate runtests.py's own exit
 # code, which the nightly workflow reports without blocking any PR.
-run_git_ref_mode() {
+# Does the extracted upstream tree ship the Python testsuite?
+#
+# This is a question about the TREE, not about the version string or how it was
+# obtained. rsync migrated the suite from shell `*.test` scripts to Python
+# (`runtests.py` + `testsuite/*_test.py`) between 3.4.4 and 3.5.0, so the same
+# release-tarball path now has to drive two different runners. Dispatching on
+# shape means a future release needs no version list edited here, and a tree
+# that ships neither is caught by the zero-test guard rather than passing
+# vacuously.
+python_suite_available() {
+    [[ -f "${upstream_src_dir}/runtests.py" ]] || return 1
+    compgen -G "${upstream_src_dir}/testsuite/*_test.py" >/dev/null 2>&1
+}
+
+# Drive upstream's own runtests.py against oc-rsync.
+#
+# Used for any tree shipping the Python suite - the 3.5.0 release tarball and
+# RsyncProject git refs alike. Delegating to upstream's runner rather than
+# re-driving `*_test.py` ourselves keeps the oracle upstream's, and gives us
+# --rsync-bin2 (version mixing over the wire) and --expect-result (an
+# expected-outcome manifest that fails on an unexpected PASS as well as a
+# regression) for free.
+run_python_suite_mode() {
     ensure_oc_rsync
     ensure_upstream_src
 
-    echo "==> Building upstream (git ${upstream_ref}) + testsuite helpers..." >&2
+    echo "==> Building upstream (${upstream_label}) + testsuite helpers..." >&2
     (
         cd "$upstream_src_dir"
-        if [[ ! -f configure.sh ]]; then
+        # `shconfig` is what ./configure PRODUCES, so it is the honest
+        # already-configured test for both inputs. A release tarball ships
+        # configure.sh itself, so keying on that file skipped ./configure for a
+        # tarball and the build then failed for want of shconfig/config.h. A
+        # fresh git checkout ships a stub ./configure that bootstraps
+        # configure.sh via prepare-source, so this predicate holds there too.
+        if [[ ! -f shconfig ]]; then
             ./configure --disable-debug --disable-md2man --disable-iconv \
                 --disable-zstd --disable-lz4 >configure.log 2>&1 \
                 || { tail -80 configure.log; exit 1; }
@@ -672,6 +728,44 @@ run_git_ref_mode() {
         --srcdir="$upstream_src_dir"
         --timeout="$testrun_timeout"
     )
+    # --rsync-bin2 is the peer binary for the daemon side and for remote-shell
+    # --rsync-path. Pointing it at a real upstream build puts oc on one end of
+    # the wire and upstream on the other: this, not the wire-format interop
+    # cells, is what actually tests compatibility with a given release. Absent,
+    # the suite runs oc against oc and proves only self-consistency.
+    if [[ -n "$upstream_peer_bin" ]]; then
+        if [[ ! -x "$upstream_peer_bin" ]]; then
+            echo "ERROR: UPSTREAM_PEER_BIN is set but not executable: ${upstream_peer_bin}" >&2
+            echo "       Refusing to fall back to oc-vs-oc, which would report" >&2
+            echo "       a version-mixing pass without ever mixing versions." >&2
+            exit 1
+        fi
+        echo "==> Peer (--rsync-bin2): ${upstream_peer_bin}" >&2
+        "$upstream_peer_bin" --version 2>&1 | head -n1 | sed 's/^/    /' >&2
+        runtests_argv+=(--rsync-bin2="$upstream_peer_bin")
+    fi
+    # An expected-outcome manifest runs ONLY the tests it lists, so a truncated
+    # manifest silently shrinks coverage rather than failing. Refuse a missing
+    # file outright, and report the count we are about to hold ourselves to.
+    if [[ -n "$expect_result_file" ]]; then
+        if [[ ! -f "$expect_result_file" ]]; then
+            echo "ERROR: EXPECT_RESULT does not exist: ${expect_result_file}" >&2
+            exit 1
+        fi
+        local expect_count
+        expect_count=$(grep -cvE '^[[:space:]]*(#|$)' "$expect_result_file" || true)
+        if (( expect_count == 0 )); then
+            echo "ERROR: EXPECT_RESULT lists no tests: ${expect_result_file}" >&2
+            echo "       runtests.py runs only what the manifest names, so an" >&2
+            echo "       empty manifest would pass without running anything." >&2
+            exit 1
+        fi
+        echo "==> Expected-outcome manifest: ${expect_result_file} (${expect_count} tests)" >&2
+        runtests_argv+=(--expect-result="$expect_result_file")
+    fi
+    if [[ -n "$expect_skipped_spec" ]]; then
+        runtests_argv+=(--expect-skipped="$expect_skipped_spec")
+    fi
     # Host the scratch tree under a world-traversable base OUTSIDE the parent
     # that partial_nowrite_test.py shadows with a tmpfs (see
     # world_traversable_scratch_base). Falls back to $log_root off-CI, so local
@@ -758,12 +852,24 @@ emit_git_ref_step_summary() {
 
 main() {
     if [[ "$git_ref_mode" == "yes" ]]; then
-        run_git_ref_mode
+        run_python_suite_mode
         exit $?
     fi
 
     ensure_oc_rsync
     ensure_upstream_src
+
+    # Pick the runner from what the extracted release actually ships, not from
+    # its version number. 3.4.4 ships 57 `*.test` shell scripts and takes the
+    # loop below; 3.5.0 ships runtests.py + 345 `*_test.py` and takes upstream's
+    # own runner. Before this dispatch existed, pointing UPSTREAM_VERSION at
+    # 3.5.0 selected zero `*.test` files and the loop reported success without
+    # executing a single test - a vacuous green on a required gate.
+    if python_suite_available; then
+        run_python_suite_mode
+        exit $?
+    fi
+
     build_upstream_helpers
     setup_test_env
     stabilize_srcroot_mtime
@@ -818,7 +924,7 @@ main() {
     # has 57 *.test and 0 *_test.py; rsync-3.5.0/testsuite has 0 *.test and
     # 345 *_test.py. So `UPSTREAM_VERSION=3.5.0` down this path selects zero
     # tests and exits clean. Driving a Python-suite release needs
-    # runtests.py (see run_git_ref_mode), not this loop.
+    # runtests.py (see run_python_suite_mode), not this loop.
     local considered=$((passed + failed + xfail + skipped + ${#unexpected_passes[@]}))
     if (( considered == 0 )); then
         echo "ERROR: no tests matched '${pattern}' in ${suitedir}" >&2
