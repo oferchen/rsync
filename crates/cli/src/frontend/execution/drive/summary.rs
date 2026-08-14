@@ -13,6 +13,8 @@ use core::{
 use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, info_gte};
 use logging_sink::{MessageSink, logfile::LogFileWriter};
 
+use crate::frontend::escape::EscapeStyle;
+
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
@@ -225,7 +227,7 @@ where
                 .with_id_preservation(preserve_owner, preserve_group)
                 .with_emit_unchanged(emit_unchanged)
                 .with_itemize_repeated(itemize_repeated)
-                .with_eight_bit_output(eight_bit_output)
+                .with_escape_style(EscapeStyle::terminal(eight_bit_output))
                 .with_preserve_links(preserve_links)
                 .with_full_checksum(full_checksum_algorithm, always_checksum);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -249,7 +251,7 @@ where
                     show_copy_method,
                     show_atimes,
                     show_crtimes,
-                    eight_bit_output,
+                    EscapeStyle::terminal(eight_bit_output),
                     writer,
                 )
             }) {
@@ -279,7 +281,6 @@ where
                     itemize_repeated,
                     show_atimes,
                     show_crtimes,
-                    eight_bit_output,
                     preserve_links,
                     full_checksum_algorithm,
                     always_checksum,
@@ -345,9 +346,6 @@ struct EmitLogOutputParams<'a> {
     show_atimes: bool,
     /// `--crtimes`: render the CRTIME column in `--list-only` log output.
     show_crtimes: bool,
-    /// `--8-bit-output` / `-8`: pass high-bit characters through without
-    /// octal escaping in log-file output.
-    eight_bit_output: bool,
     /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
     /// the ` -> <target>` arrow (upstream: generator.c:1183).
     preserve_links: bool,
@@ -377,7 +375,6 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         itemize_repeated,
         show_atimes,
         show_crtimes,
-        eight_bit_output,
         preserve_links,
         full_checksum_algorithm,
         always_checksum,
@@ -392,7 +389,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_id_preservation(preserve_owner, preserve_group)
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
-        .with_eight_bit_output(eight_bit_output)
+        .with_escape_style(EscapeStyle::log_file())
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
     // upstream: log.c:290-305 - FLOG messages are written to the log file
@@ -432,7 +429,12 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         false,
         show_atimes,
         show_crtimes,
-        eight_bit_output,
+        // upstream: log.c:132 `logit()` writes the log line through
+        // `filtered_fwrite(.., use_isprint=0, escape_c1=1, ..)` - a fixed pair
+        // that `--8-bit-output` does not reach, so a name carrying `ESC`, a
+        // newline or an 8-bit CSI cannot forge a log line (CWE-117) while DEL
+        // and 0xA0-0xFF stay verbatim.
+        EscapeStyle::log_file(),
         &mut log.file,
     )?;
     // upstream: cleanup.c:222-226 gates log_exit() on
