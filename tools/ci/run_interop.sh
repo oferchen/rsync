@@ -92,6 +92,26 @@ version_is_source_only() {
   return 1
 }
 
+# Releases that run the extended scenario matrix and the forced-protocol sweep.
+# 3.0.9 and 3.1.3 stay on the baseline set: they are protocol anchors, not
+# behaviour peers, and several extended scenarios assume modern option support.
+#
+# This is deliberately a RELEASE test, not a protocol test. Under the forced
+# sweep the effective protocol is whatever --protocol=N asked for, so gating the
+# extended list on `eff_proto` would silently drop those cells from the
+# --protocol=28..31 runs and move the known-failure baseline. The one leg that
+# genuinely needs a protocol floor (xattrs) carries its own `eff_proto >= 30`
+# plus capability check at the point of use.
+extended_matrix_versions=(3.4.4 3.5.0)
+
+version_has_extended_matrix() {
+  local version=$1 candidate
+  for candidate in "${extended_matrix_versions[@]}"; do
+    [[ "$version" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
@@ -11727,11 +11747,12 @@ run_comprehensive_interop_case() {
     # returns to default features.
   )
 
-  # Extended scenarios only for the newest upstream versions (3.4.x).
-  # xattrs requires protocol >= 30 (upstream compat.c), so it only works
-  # against 3.4.4 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3 (protocol 31
-  # but may lack --enable-xattr-support).
-  if [[ "${version}" == "3.4.4" ]]; then
+  # Extended scenarios for the newest upstream releases (see
+  # extended_matrix_versions). 3.5.0 earns these as much as 3.4.4 does: it is
+  # the current release and shares protocol 32, and the file header already
+  # states it "runs the full scenario matrix" - a literal `== 3.4.4` here is
+  # what made that untrue, leaving 3.5.0 on the 33-cell protocol-anchor set.
+  if version_has_extended_matrix "${version}"; then
     scenarios+=(
       "one-file-system|-avx|basic"
       "whole-file-replace|-avW|whole-file-replace"
@@ -11841,9 +11862,11 @@ run_comprehensive_interop_case() {
   else
     echo "  [info] proto ${eff_proto} / upstream ${version} / host lacks ACL support, skipping acls"
   fi
-  # xattrs only runs against the newest upstream (3.4.4) as before, now also
-  # capability- and protocol-gated.
-  if [[ "${version}" == "3.4.4" ]]; then
+  # xattrs runs against the newest upstream releases, capability- and
+  # protocol-gated. The release test stays because 3.1.3 may be built without
+  # --enable-xattr-support in a way upstream_supports_xattr cannot always see;
+  # the proto/capability checks below are the substantive gate.
+  if version_has_extended_matrix "${version}"; then
     if [[ "$eff_proto" -ge 30 && "${HOST_XATTR_OK}" == 1 ]] && upstream_supports_xattr "$upstream_binary"; then
       scenarios+=("xattrs|-avX|xattrs")
     else
@@ -12088,32 +12111,46 @@ done
 echo "=== Parallel version tests complete ==="
 
 # =====================================================================
-# Protocol version forcing tests: all 5 protocols via the newest
-# available upstream binary (3.4.4).
+# Protocol version forcing tests: all 5 protocols against each upstream
+# release in extended_matrix_versions that is installed.
+#
+# This used to resolve "newest" to the literal 3.4.4, so the sweep never
+# touched 3.5.0 no matter what the version list said. Both releases are
+# swept rather than only the newest: the 3.4.4 legs carry an established
+# known-failure baseline at --protocol=28, and silently retargeting them
+# would move that baseline instead of adding coverage.
 # Run sequentially to avoid port contention under CI load.
 # =====================================================================
-newest_label=""
-newest_binary=""
-if [[ -x "${upstream_install_root}/3.4.4/bin/rsync" ]]; then
-  newest_label="3.4.4"
-  newest_binary="${upstream_install_root}/3.4.4/bin/rsync"
-fi
-if [[ -n "$newest_binary" ]]; then
+sweep_labels=()
+sweep_binaries=()
+for sweep_version in "${extended_matrix_versions[@]}"; do
+  if [[ -x "${upstream_install_root}/${sweep_version}/bin/rsync" ]]; then
+    sweep_labels+=("$sweep_version")
+    sweep_binaries+=("${upstream_install_root}/${sweep_version}/bin/rsync")
+  fi
+done
+if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
   protos=(28 29 30 31 32)
   fp_warnings=()
 
-  for proto in "${protos[@]}"; do
-    oc_port=$(allocate_ephemeral_port)
-    up_port=$(allocate_ephemeral_port)
-    echo ""
-    echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
-    if ! run_comprehensive_interop_case "$newest_label" "$newest_binary" \
-        "$oc_port" "$up_port" "--protocol=${proto}"; then
-      fp_warnings+=("proto${proto}")
-    fi
+  for sweep_idx in "${!sweep_binaries[@]}"; do
+    newest_label="${sweep_labels[$sweep_idx]}"
+    newest_binary="${sweep_binaries[$sweep_idx]}"
+    for proto in "${protos[@]}"; do
+      oc_port=$(allocate_ephemeral_port)
+      up_port=$(allocate_ephemeral_port)
+      echo ""
+      echo "=== Protocol ${proto} vs upstream ${newest_label} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
+      if ! run_comprehensive_interop_case "$newest_label" "$newest_binary" \
+          "$oc_port" "$up_port" "--protocol=${proto}"; then
+        # Tagged with the release: without it the two sweeps collide on
+        # "proto28" and the summary cannot say which upstream regressed.
+        fp_warnings+=("${newest_label}/proto${proto}")
+      fi
 
-    stop_oc_daemon
-    stop_upstream_daemon
+      stop_oc_daemon
+      stop_upstream_daemon
+    done
   done
 
   if (( ${#fp_warnings[@]} > 0 )); then

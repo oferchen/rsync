@@ -808,6 +808,26 @@ main() {
         esac
     done
 
+    # A glob that matches nothing expands to the literal pattern, which the
+    # `-e` test above then skips - so the loop body never runs and every
+    # counter stays 0. `summarize` would report that as success: a REQUIRED
+    # gate passing without executing a single test.
+    #
+    # This is reachable today by pointing UPSTREAM_VERSION at a release whose
+    # testsuite is Python rather than shell. Measured: rsync-3.4.4/testsuite
+    # has 57 *.test and 0 *_test.py; rsync-3.5.0/testsuite has 0 *.test and
+    # 345 *_test.py. So `UPSTREAM_VERSION=3.5.0` down this path selects zero
+    # tests and exits clean. Driving a Python-suite release needs
+    # runtests.py (see run_git_ref_mode), not this loop.
+    local considered=$((passed + failed + xfail + skipped + ${#unexpected_passes[@]}))
+    if (( considered == 0 )); then
+        echo "ERROR: no tests matched '${pattern}' in ${suitedir}" >&2
+        echo "       Refusing to report success without executing anything." >&2
+        echo "       A release whose testsuite is Python (*_test.py + runtests.py)" >&2
+        echo "       cannot be driven by this shell-script loop." >&2
+        exit 1
+    fi
+
     summarize
     emit_gha_step_summary
 
