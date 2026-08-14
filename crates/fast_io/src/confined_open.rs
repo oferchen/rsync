@@ -90,10 +90,10 @@ pub enum LeafPolicy {
 ///
 /// # Errors
 ///
-/// - `EINVAL` when `relative` is absolute, empty, or contains a `..`
-///   component (front-door validation, mirroring upstream
-///   `secure_relative_open`).
-/// - `EISDIR` when the final component names a directory rather than a file.
+/// - `EINVAL` when `relative` is absolute or contains a `..` component
+///   (front-door validation, mirroring upstream `secure_relative_open`).
+/// - `EISDIR` when `relative` names a directory rather than a file: it is
+///   empty, all slashes, or its final component is `.` or `..`.
 /// - `EXDEV` (Linux `openat2` path) when resolution would escape `root`.
 /// - `ELOOP` when a symlink is refused: a leaf symlink under
 ///   [`LeafPolicy::Nofollow`], an absolute or escaping target under
@@ -162,6 +162,14 @@ mod imp {
         leaf: LeafPolicy,
         noatime: bool,
     ) -> io::Result<File> {
+        // Classify the final component ONCE, before the platform split, and
+        // hand both arms the slash-trimmed path. Doing it per-arm let them
+        // disagree: `openat2` opens a directory named by a bare `.` and
+        // reports `ENOENT` for an empty path, where upstream's walk reports
+        // `EISDIR` for both. The classification is a property of the input,
+        // not of the kernel.
+        let (trimmed, _, _) = split_leaf(relative)?;
+
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // Open the module root as the anchoring dirfd. The root is an
@@ -174,15 +182,14 @@ mod imp {
                 .read(true)
                 .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
                 .open(root)?;
-            if let Some(file) = linux::openat2_confined(root_dir.as_fd(), relative, leaf, noatime)?
-            {
+            if let Some(file) = linux::openat2_confined(root_dir.as_fd(), trimmed, leaf, noatime)? {
                 return Ok(file);
             }
         }
 
         match leaf {
-            LeafPolicy::Nofollow => walk_then_open_leaf(root, relative, noatime),
-            LeafPolicy::FollowConfined => walk_following_leaf(root, relative, noatime),
+            LeafPolicy::Nofollow => walk_then_open_leaf(root, trimmed, noatime),
+            LeafPolicy::FollowConfined => walk_following_leaf(root, trimmed, noatime),
         }
     }
 
@@ -198,7 +205,7 @@ mod imp {
     /// - `rsync-3.5.0/sender.c:209-247` `sender_open_confined()`
     /// - `rsync-3.5.0/syscall.c:3037-3057` `secure_walk_at()`'s file-leaf arm
     fn walk_then_open_leaf(root: &Path, relative: &Path, noatime: bool) -> io::Result<File> {
-        let (dir, leaf) = split_leaf(relative)?;
+        let (_, dir, leaf) = split_leaf(relative)?;
         let parent = resolve_parent(root, dir)?;
         open_leaf(parent.root_dirfd(), leaf, noatime)
     }
@@ -217,7 +224,7 @@ mod imp {
     fn walk_following_leaf(root: &Path, relative: &Path, noatime: bool) -> io::Result<File> {
         let mut cur = relative.to_path_buf();
         for _ in 0..COPYLINKS_MAXHOPS {
-            let (dir, leaf) = split_leaf(&cur)?;
+            let (_, dir, leaf) = split_leaf(&cur)?;
             let parent = resolve_parent(root, dir)?;
             let target = match readlinkat(parent.root_dirfd(), leaf) {
                 Ok(target) => target,
@@ -248,36 +255,48 @@ mod imp {
         DirSandbox::open_dest_anchor_confined(root, dir, ConfinePolicy::operator_trusted())
     }
 
-    /// Split `relative` into its parent path and final component on raw `/`
-    /// bytes.
+    /// Split `relative` into `(trimmed, parent, leaf)` on raw `/` bytes.
     ///
     /// Deliberately not `Path::components()`: that normalises, and the rule
     /// being mirrored is a byte split. Trailing slashes are trimmed first so
-    /// the last-component test is exact.
+    /// the last-component test is exact - and `trimmed` is handed to the
+    /// kernel arm too, which would otherwise see `sub/data/` and report
+    /// `ENOTDIR` where upstream opens the file.
+    ///
+    /// # Errors
+    ///
+    /// `EISDIR` when there is no file leaf to open: an empty or all-slash
+    /// path, or a final `.` / `..`. Those name a directory, and upstream
+    /// reports `EISDIR` for a caller that did not ask for `O_DIRECTORY`.
     ///
     /// # Upstream Reference
     ///
     /// - `rsync-3.5.0/sender.c:212-226` `sender_open_confined()`'s `strrchr`
     /// - `rsync-3.5.0/syscall.c:3002-3006` `secure_walk_at()`'s slash trim
-    fn split_leaf(relative: &Path) -> io::Result<(&Path, &OsStr)> {
+    /// - `rsync-3.5.0/syscall.c:3025-3033` a final `.` / `..` -> `EISDIR`
+    /// - `rsync-3.5.0/syscall.c:3079-3086` no component at all -> `EISDIR`
+    fn split_leaf(relative: &Path) -> io::Result<(&Path, &Path, &OsStr)> {
         let bytes = relative.as_os_str().as_bytes();
         let end = bytes.iter().rposition(|byte| *byte != b'/');
         let bytes = match end {
             Some(last) => &bytes[..=last],
-            // Empty, or nothing but slashes: no leaf to open beneath the root.
-            None => return Err(io::Error::from_raw_os_error(libc::EINVAL)),
+            // Empty, or nothing but slashes: no leaf, so this names the anchor
+            // directory itself.
+            None => return Err(io::Error::from_raw_os_error(libc::EISDIR)),
         };
         let (dir, leaf) = match bytes.iter().rposition(|byte| *byte == b'/') {
             Some(slash) => (&bytes[..slash], &bytes[slash + 1..]),
             None => (&bytes[..0], bytes),
         };
         if leaf == b"." || leaf == b".." {
-            // A movement, not a name to open: the caller asked for a
-            // directory. upstream: syscall.c:3025-3033 reports EISDIR when
-            // O_DIRECTORY was not requested.
+            // A movement, not a name to open.
             return Err(io::Error::from_raw_os_error(libc::EISDIR));
         }
-        Ok((Path::new(OsStr::from_bytes(dir)), OsStr::from_bytes(leaf)))
+        Ok((
+            Path::new(OsStr::from_bytes(bytes)),
+            Path::new(OsStr::from_bytes(dir)),
+            OsStr::from_bytes(leaf),
+        ))
     }
 
     /// Opens the leaf `O_RDONLY | O_NOFOLLOW`, honouring `--open-noatime`
@@ -767,19 +786,53 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    /// An empty or all-slash relative path has no leaf to open.
+    /// A path naming a directory is refused with `EISDIR`, and a trailing
+    /// slash is trimmed rather than being fatal - identically on both
+    /// platform arms.
+    ///
+    /// WHY: the final-component rule is a property of the input, not of the
+    /// kernel, but it was first written inside the portable arm only. The two
+    /// arms then disagreed on every input here: `openat2` reports `ENOENT`
+    /// for an empty path, opens the directory named by a bare `.`, and
+    /// reports `ENOTDIR` for `sub/data/` - where upstream's
+    /// `secure_walk_at()` reports `EISDIR`, `EISDIR`, and the file. Caught
+    /// only by running the suite on Linux; all four pass on macOS either way,
+    /// which is exactly why the classification now happens once, above the
+    /// platform split.
     #[test]
-    fn rejects_a_relative_path_with_no_leaf() {
+    fn the_leaf_classification_is_identical_on_both_platform_arms() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
-        for empty in ["", "/"] {
-            let err = open_source_confined(&root, Path::new(empty), LeafPolicy::Nofollow, false)
-                .expect_err("a path with no leaf must be rejected");
+        std::fs::create_dir(root.join("sub")).expect("mkdir sub");
+        std::fs::write(root.join("sub/data"), b"payload").expect("write");
+
+        for directory in ["", ".", "sub/."] {
+            let err =
+                open_source_confined(&root, Path::new(directory), LeafPolicy::Nofollow, false)
+                    .expect_err("a path naming a directory must be refused");
+            assert_eq!(
+                err.raw_os_error(),
+                Some(libc::EISDIR),
+                "expected EISDIR for {directory:?}, got: {err}"
+            );
+        }
+
+        // A leading slash is still the front door's EINVAL, not EISDIR - it is
+        // tested before the leaf is classified, exactly as upstream tests
+        // `relpath[0] == '/'` before entering the walk (syscall.c:3105-3109).
+        for absolute in ["/", "///"] {
+            let err = open_source_confined(&root, Path::new(absolute), LeafPolicy::Nofollow, false)
+                .expect_err("an absolute path must be refused");
             assert_eq!(
                 err.raw_os_error(),
                 Some(libc::EINVAL),
-                "expected EINVAL for {empty:?}, got: {err}"
+                "expected EINVAL for {absolute:?}, got: {err}"
             );
         }
+
+        // Trailing slashes are trimmed, so the file still opens.
+        let file = open_source_confined(&root, Path::new("sub/data/"), LeafPolicy::Nofollow, false)
+            .expect("a trailing slash must be trimmed, not fatal");
+        assert_eq!(read_to_string(file), "payload");
     }
 }
