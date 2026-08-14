@@ -436,6 +436,29 @@ NEON) are used where available, with automatic scalar fallbacks.
 **--no-specials**
 :   Disable preservation of special files.
 
+**--drop-D**
+:   Tells the receiving side to refuse to create device files and special
+    files, whatever the transfer requested. Entries for them are skipped
+    exactly as if **-D** had not been used, with the usual "non-regular file"
+    warning. Nodes already present at the destination are left alone.
+
+    This differs from **--no-D** in that it changes only what is created, not
+    how the file list is encoded. **--no-D** also turns off the rdev fields
+    that devices and special files carry on the wire, so applying it to one
+    end of a connection alone leaves the two ends disagreeing about the
+    encoding and the transfer fails. **--drop-D** can therefore be added on
+    the receiving side by itself, which is what it exists for.
+
+    Because it only withholds creation, it has no effect on a sending rsync.
+    The option is not forwarded to the remote side; to set it on a remote
+    receiver, send it explicitly with **--remote-option** (**-M**):
+
+        oc-rsync -av -M--drop-D src/ host:dest/
+
+**--no-drop-D**
+:   Negates **--drop-D**, letting the receiver create device and special files
+    again.
+
 **--super**
 :   Receiver attempts super-user activities (implies **--owner**, **--group**,
     and **--perms**).

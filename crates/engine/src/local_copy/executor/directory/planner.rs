@@ -156,7 +156,7 @@ fn decide_entry_action(
     }
 
     if is_fifo(effective_type) {
-        if context.specials_enabled() || list_only {
+        if context.may_create_specials() || list_only {
             return Ok(EntryAction::CopyFifo);
         }
         *keep_name = false;
@@ -167,7 +167,7 @@ fn decide_entry_action(
         if context.copy_devices_as_files_enabled() {
             return Ok(EntryAction::CopyDeviceAsFile);
         }
-        if context.devices_enabled() || list_only {
+        if context.may_create_devices() || list_only {
             return Ok(EntryAction::CopyDevice);
         }
         *keep_name = false;
@@ -298,7 +298,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                     action = EntryAction::CopyFile;
                                     metadata_override = Some(target_metadata);
                                 } else if is_fifo(target_type) {
-                                    if context.specials_enabled() {
+                                    if context.may_create_specials() {
                                         action = EntryAction::CopyFifo;
                                         metadata_override = Some(target_metadata);
                                     } else {
@@ -310,7 +310,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                     if context.copy_devices_as_files_enabled() {
                                         action = EntryAction::CopyDeviceAsFile;
                                         metadata_override = Some(target_metadata);
-                                    } else if context.devices_enabled() {
+                                    } else if context.may_create_devices() {
                                         action = EntryAction::CopyDevice;
                                         metadata_override = Some(target_metadata);
                                     } else {
@@ -719,7 +719,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                                     action = EntryAction::CopyFile;
                                     metadata_override = Some(target_metadata.clone());
                                 } else if is_fifo(target_type) {
-                                    if context.specials_enabled() {
+                                    if context.may_create_specials() {
                                         action = EntryAction::CopyFifo;
                                         metadata_override = Some(target_metadata.clone());
                                     } else {
@@ -731,7 +731,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                                     if context.copy_devices_as_files_enabled() {
                                         action = EntryAction::CopyDeviceAsFile;
                                         metadata_override = Some(target_metadata.clone());
-                                    } else if context.devices_enabled() {
+                                    } else if context.may_create_devices() {
                                         action = EntryAction::CopyDevice;
                                         metadata_override = Some(target_metadata.clone());
                                     } else {

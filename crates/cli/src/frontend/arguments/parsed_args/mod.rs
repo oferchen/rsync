@@ -363,6 +363,11 @@ pub struct ParsedArgs {
     /// `--specials` / `--no-specials` - preserve special files (sockets, FIFOs).
     pub specials: Option<bool>,
 
+    /// `--drop-D` / `--no-drop-D` - receiver refuses to CREATE devices and
+    /// special files. Orthogonal to `devices`/`specials`, which frame the file
+    /// list's rdev fields (upstream options.c:688-689, generator.c:2026-2033).
+    pub drop_devices: bool,
+
     /// `--copy-devices` - copy device file contents as regular files.
     pub copy_devices: bool,
 

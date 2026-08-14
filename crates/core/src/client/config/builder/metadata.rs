@@ -203,6 +203,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Refuses to CREATE devices and special files on the receiving side.
+    ///
+    /// Never reaches the wire and is never forwarded to a peer: it withholds
+    /// creation only, leaving the file list's rdev framing alone.
+    /// upstream: options.c:688-689, generator.c:2026-2033.
+    #[must_use]
+    #[doc(alias = "--drop-D")]
+    pub const fn drop_devices(mut self, enabled: bool) -> Self {
+        self.drop_devices = enabled;
+        self
+    }
+
     #[cfg(all(any(unix, windows), feature = "acl"))]
     /// Enables or disables POSIX ACL preservation when applying metadata.
     #[must_use]

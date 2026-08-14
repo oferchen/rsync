@@ -905,6 +905,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .munge_links(config.munge_links())
             .devices(config.preserve_devices())
             .specials(config.preserve_specials())
+            .drop_devices(config.drop_devices())
             .with_one_file_system_level(config.one_file_system_level())
             .relative_paths(config.relative_paths())
             .dirs(config.dirs())

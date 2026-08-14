@@ -565,6 +565,12 @@ where
         .or(archive_devices);
     let write_devices =
         tri_state_flag_positive_first(&matches, "write-devices", "no-write-devices");
+    // Deliberately NOT derived from `archive_devices`: --drop-D is orthogonal to
+    // -D. It withholds creation without touching the preserve_devices /
+    // preserve_specials pair that frames the file list's rdev fields
+    // (upstream generator.c:2026-2033).
+    let drop_devices =
+        tri_state_flag_positive_first(&matches, "drop-devices", "no-drop-devices").unwrap_or(false);
     let relative = tri_state_flag_positive_first(&matches, "relative", "no-relative");
     let one_file_system = {
         let count = matches.get_count("one-file-system");
@@ -1148,6 +1154,7 @@ where
         config,
         write_devices,
         devices,
+        drop_devices,
         copy_devices,
         specials,
         force,

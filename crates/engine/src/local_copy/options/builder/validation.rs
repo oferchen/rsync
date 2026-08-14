@@ -181,6 +181,7 @@ impl LocalCopyOptionsBuilder {
             devices: self.devices,
             copy_devices_as_files: self.copy_devices_as_files,
             specials: self.specials,
+            drop_devices: self.drop_devices,
             force_replacements: self.force_replacements,
             implied_dirs: self.implied_dirs,
             mkpath: self.mkpath,

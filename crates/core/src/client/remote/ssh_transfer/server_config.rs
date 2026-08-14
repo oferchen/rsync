@@ -74,6 +74,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    server_config.flags.drop_devices = config.drop_devices();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
@@ -237,6 +238,7 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    server_config.flags.drop_devices = config.drop_devices();
     // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
     // never placed in server_options, so it is never forwarded to the remote
     // receiver. On a push the local client IS the sender and applies the

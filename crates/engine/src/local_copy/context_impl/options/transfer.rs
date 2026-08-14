@@ -113,6 +113,14 @@ impl<'a> CopyContext<'a> {
         self.options.specials_enabled()
     }
 
+    pub(super) const fn may_create_devices(&self) -> bool {
+        self.options.may_create_devices()
+    }
+
+    pub(super) const fn may_create_specials(&self) -> bool {
+        self.options.may_create_specials()
+    }
+
     pub(super) const fn list_only_enabled(&self) -> bool {
         self.options.list_only_enabled()
     }

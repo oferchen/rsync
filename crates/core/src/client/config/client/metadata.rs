@@ -231,6 +231,15 @@ impl ClientConfig {
     pub const fn preserve_specials(&self) -> bool {
         self.preserve_specials
     }
+
+    /// Reports whether `--drop-D` withholds device/special creation.
+    ///
+    /// upstream: generator.c:2031.
+    #[must_use]
+    #[doc(alias = "--drop-D")]
+    pub const fn drop_devices(&self) -> bool {
+        self.drop_devices
+    }
 }
 
 #[cfg(test)]

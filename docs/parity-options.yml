@@ -461,6 +461,18 @@ options:
     upstream_default: disabled by default
     status: implemented
     notes: Negates the corresponding positive option.
+  - option: --drop-D
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Receiver refuses to create devices/specials; wire-neutral, not forwarded.
+  - option: --no-drop-D
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
   - option: --links
     short: l
     category: general

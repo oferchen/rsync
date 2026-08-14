@@ -75,6 +75,8 @@ pub(super) struct ServerLongFlags {
     /// (`Some(true)`) or `--no-specials` (`Some(false)`). `None` leaves the
     /// value implied by the compact `D` letter untouched.
     pub(super) specials: Option<bool>,
+    /// `--drop-D` / `--no-drop-D` - receiver refuses to create devices/specials.
+    pub(super) drop_devices: Option<bool>,
     pub(super) qsort: bool,
     pub(super) checksum_seed: Option<String>,
     pub(super) checksum_choice: Option<String>,
@@ -380,6 +382,7 @@ pub(super) struct ServerLongFlags {
 /// are ignored for forward compatibility.
 pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
     let mut flags = ServerLongFlags {
+        drop_devices: None,
         is_sender: false,
         is_receiver: false,
         bwlimit: None,
@@ -467,6 +470,13 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // preserve_specials separately from the compact 'D' (devices) letter.
             "--specials" => flags.specials = Some(true),
             "--no-specials" => flags.specials = Some(false),
+            // Accepted so `-M--drop-D` reaches a remote receiver: upstream's
+            // server argv is parsed by the same option table, and the man page
+            // names --remote-option as the way to set it remotely
+            // (rsync.1.md:1786-1793). It is never EMITTED into an outgoing
+            // server argv - upstream's server_options() has no drop_devices.
+            "--drop-D" => flags.drop_devices = Some(true),
+            "--no-drop-D" => flags.drop_devices = Some(false),
             "--qsort" => flags.qsort = true,
             // upstream: options.c:2908-2909 - `if (use_qsort) args[ac++] =
             // "--use-qsort"`. This is the spelling server_options() actually
@@ -843,6 +853,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--partial"
             | "--specials"
             | "--no-specials"
+            | "--drop-D"
+            | "--no-drop-D"
             | "--list-only"
             | "--msgs2stderr"
             | "--no-msgs2stderr"
