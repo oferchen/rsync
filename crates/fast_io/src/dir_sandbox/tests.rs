@@ -732,7 +732,13 @@ fn a_dot_dot_inside_a_symlink_target_is_walked_not_string_collapsed() {
 /// clamped to it rather than failing. nextest runs each test in its own
 /// process, so the change is local to this one.
 #[cfg(unix)]
-fn raise_nofile_soft_limit(wanted: u64) -> u64 {
+fn raise_nofile_soft_limit(wanted: libc::rlim_t) -> libc::rlim_t {
+    // Everything stays in `libc::rlim_t` rather than converting to `u64`.
+    // It is `u64` on Linux and macOS - which is why a `u64` cast reads as
+    // redundant here and clippy rejects it - but it is `i64` on FreeBSD, so
+    // neither an `as` cast nor `u64::from` is portable. Not converting at all
+    // is.
+    //
     // SAFETY: both calls hand the kernel a pointer to a fully initialised,
     // stack-owned `libc::rlimit` plus the matching resource constant, which is
     // the documented `getrlimit(2)` / `setrlimit(2)` ABI. Neither retains the
@@ -746,17 +752,17 @@ fn raise_nofile_soft_limit(wanted: u64) -> u64 {
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
             return 0;
         }
-        let target = wanted.min(limit.rlim_max as u64);
-        if (limit.rlim_cur as u64) < target {
+        let target = wanted.min(limit.rlim_max);
+        if limit.rlim_cur < target {
             let raised = libc::rlimit {
-                rlim_cur: target as libc::rlim_t,
+                rlim_cur: target,
                 rlim_max: limit.rlim_max,
             };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &raised) == 0 {
                 return target;
             }
         }
-        limit.rlim_cur as u64
+        limit.rlim_cur
     }
 }
 
@@ -786,7 +792,7 @@ fn the_depth_ceiling_refuses_rather_than_truncating() {
     // The fixture holds one dirfd per level and the walk opens its own set, so
     // reaching the ceiling needs roughly 2 * DS_MAXDEPTH descriptors. Raise
     // the soft limit first - see `raise_nofile_soft_limit`.
-    let needed = (depth as u64 + 1) * 2 + 64;
+    let needed = (depth as libc::rlim_t + 1) * 2 + 64;
     let available = raise_nofile_soft_limit(needed);
     assert!(
         available >= needed,
