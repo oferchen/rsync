@@ -330,7 +330,7 @@ fn msg_io_error_masks_undefined_bits_from_a_hostile_peer() {
 /// defined bits. Masking at one entry point but not the other is exactly the
 /// defect upstream fixed, so this asserts the property, not one call site.
 ///
-/// upstream: rsync.h:195-200 (the mask's rationale), generator.c:304 (the
+/// upstream: rsync.h:195-200 (the mask's rationale), generator.c:298 (the
 /// delete guard), cleanup.c:213-218 (the exit-code mapping).
 #[test]
 fn no_peer_value_can_steer_the_delete_guard_or_exit_code_off_the_defined_bits() {
