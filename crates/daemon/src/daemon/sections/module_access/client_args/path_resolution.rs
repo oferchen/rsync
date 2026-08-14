@@ -66,9 +66,15 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// no-op for every currently-valid destination path (a `..`-free tail is
 /// unaffected); the guard rejects the escape up front as defense-in-depth.
 ///
-/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the module
-/// root depth on the receiver side, behind the chroot wall. oc-rsync mirrors
-/// the check explicitly because the daemon does not always chroot.
+/// This is deliberately STRICTER than upstream, not a mirror of it.
+/// `sanitize_path` (util1.c:1138) has no failure path for `..`: its contract
+/// is to ALWAYS collapse `..` elements beyond the allowed depth, dropping a
+/// leading `..` that has nothing to pop so the result clamps at the module
+/// root. With upstream's daemon depth of 0 an in-tree `sub/../other` is
+/// therefore rewritten to `other` and served. oc-rsync refuses the whole
+/// request instead, which is safe but rejects paths both 3.4.4 and 3.5.0
+/// accept; reconciling the two is tracked separately and needs the collapse,
+/// not the removal of this guard.
 fn resolve_receiver_dest(
     module_path: &std::path::Path,
     client_args: &[String],
@@ -152,9 +158,9 @@ fn resolve_sender_sources(
         }
         all_empty = false;
         // Reject `..` traversal segments so the joined path cannot escape the
-        // module root. Upstream rsync's sender-side `sanitize_path()` and the
-        // chroot wall it lives behind cover this; oc-rsync mirrors the check
-        // explicitly because the daemon does not always chroot.
+        // module root. Upstream collapses rather than refuses here - see the
+        // divergence note on `resolve_receiver_dest` - so this arm is the
+        // stricter of the two behaviours, not a mirror of upstream's.
         let trimmed = tail.trim_start_matches(['/', '\\']);
         for component in std::path::Path::new(trimmed).components() {
             if matches!(component, std::path::Component::ParentDir) {
@@ -293,7 +299,7 @@ fn expand_relative_glob(base: &std::path::Path, rel: &std::path::Path) -> Vec<st
         let segment = match component {
             std::path::Component::Normal(s) => s,
             // RootDir / Prefix should not appear in a stripped relative path,
-            // and ParentDir is rejected upstream. CurDir is a no-op.
+            // and `..` was already rejected by the caller. CurDir is a no-op.
             std::path::Component::CurDir => continue,
             _ => return Vec::new(),
         };
@@ -465,7 +471,7 @@ fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
 /// check_alt_basis_dirs` only warns, never aborts - and we must still apply
 /// the containment policy in that case.
 ///
-/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the
+/// upstream: util1.c:1138 `sanitize_path` collapses `..` against the
 /// module root depth; main.c:1199-1206 `check_alt_basis_dirs` warns on
 /// out-of-tree basis. We mirror the silent-drop side of that contract
 /// instead of upstream's path-rewrite because our daemon does not chdir

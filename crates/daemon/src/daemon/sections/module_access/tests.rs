@@ -2339,7 +2339,7 @@ mod module_access_tests {
     //
     // Behavioural divergence from the upstream test: upstream's daemon never
     // emits a literal "outside the module" `@ERROR` for these scenarios. Its
-    // `util1.c:1035 sanitize_path` collapses `..` against the module root
+    // `util1.c:1138 sanitize_path` collapses `..` against the module root
     // depth (rewriting the path under the module) and `main.c:841
     // check_alt_basis_dirs` only warns when the resulting basis is missing.
     // PR #5778 aligned the oc-rsync daemon with that contract by switching
