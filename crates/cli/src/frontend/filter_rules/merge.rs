@@ -81,7 +81,13 @@ pub(crate) fn apply_merge_directive(
         let contents = if is_stdin {
             read_merge_from_standard_input()?
         } else {
-            read_merge_file(&resolved_path)?
+            // upstream: exclude.c:1715 - the include/exclude wording of a
+            // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
+            // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
+            read_merge_file(
+                &resolved_path,
+                options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
+            )?
         };
 
         parse_merge_contents(

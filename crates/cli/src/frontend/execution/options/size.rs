@@ -39,6 +39,35 @@ impl From<SizeArgError> for SizeParseError {
 /// Parses a size argument with an optional unit suffix (K/M/G/T/P/E).
 ///
 /// The `flag` parameter is used in error messages (e.g. `"--max-size"`).
+/// Maps an empty value to `0`, mirroring what upstream's `parse_size_arg` does
+/// with an empty string.
+///
+/// upstream: options.c:1172-1175 - the digit scan leaves `arg` on the string
+/// terminator, so the suffix switch takes `def_suf` and `strtod("")` yields 0.
+///
+/// Applied PER OPTION rather than inside the shared string parser, because
+/// whether the resulting 0 is legal is decided by that option's own
+/// `min_value`: legal for `--block-size`, `--min-size` and `--max-size`
+/// (min 0 - options.c:1802, :1809, :1815) and for `--bwlimit` (`unlimited_0`,
+/// :1821); NOT legal for `--max-alloc` (min 1 MiB, :2067), which upstream and
+/// oc both reject. Folding the rule into `parse_size_spec` would silently
+/// start accepting `--max-alloc=`.
+///
+/// Measured against rsync 3.5.0: an empty value behaves exactly like `=0` on
+/// each option - and for `--max-size` that EXCLUDES every non-empty file
+/// rather than meaning "no limit", so this is not a "fall back to the
+/// default" rule.
+pub(crate) fn empty_size_means_zero(value: &OsStr) -> &OsStr {
+    if value
+        .to_string_lossy()
+        .trim_matches(|ch: char| ch.is_ascii_whitespace())
+        .is_empty()
+    {
+        return OsStr::new("0");
+    }
+    value
+}
+
 pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
@@ -181,7 +210,7 @@ pub(crate) fn parse_block_size_argument(value: &OsStr) -> Result<Option<NonZeroU
         trimmed
     };
 
-    let limit = parse_size_limit_argument(value, "--block-size")?;
+    let limit = parse_size_limit_argument(empty_size_means_zero(value), "--block-size")?;
 
     // upstream: options.c:1692-1695 - min_value 0 accepts `--block-size=0`,
     // which stores block_size = 0 and later falls back to the default.
@@ -645,9 +674,22 @@ mod tests {
         );
     }
 
+    /// An empty value resolves to 0, which for `--block-size` means "no
+    /// override, use the default" - the same `Ok(None)` that `=0` yields.
+    ///
+    /// This previously asserted a rejection, pinning oc's divergence: upstream
+    /// accepts the empty spelling (options.c:1172-1175 + :1802, min 0).
     #[test]
-    fn parse_block_size_argument_empty() {
-        assert!(parse_block_size_argument(&os("")).is_err());
+    fn parse_block_size_argument_empty_resolves_like_zero() {
+        assert_eq!(
+            parse_block_size_argument(&os("")).expect("empty is accepted"),
+            parse_block_size_argument(&os("0")).expect("zero is accepted"),
+        );
+        assert!(
+            parse_block_size_argument(&os(""))
+                .expect("empty is accepted")
+                .is_none()
+        );
     }
 
     #[test]
