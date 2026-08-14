@@ -112,11 +112,6 @@ fn log_message(log: &SharedLogSink, message: &Message) {
     }
 }
 
-/// Formats a host for logging, using the IP address as fallback.
-fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
-    host.map_or_else(|| fallback.to_string(), str::to_string)
-}
-
 /// Returns a sanitised view of a module identifier suitable for diagnostics.
 ///
 /// Module names originate from user input (daemon operands) or configuration
