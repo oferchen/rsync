@@ -228,7 +228,7 @@ mimalloc = "0.1"
 # Fast non-cryptographic hash for HashMap/HashSet - 2-5x faster for integer keys
 rustc-hash = "2.1"
 # Parallel directory walking - ~4x faster than walkdir
-jwalk = "0.9"
+jwalk = "0.8"
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
 exacl = "0.13"
 # Async runtime - feature-gated for optional async support

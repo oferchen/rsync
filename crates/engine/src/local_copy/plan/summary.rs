@@ -145,15 +145,6 @@ pub struct LocalCopySummary {
     transferred_file_size: u64,
     bytes_copied: u64,
     matched_bytes: u64,
-    // Cumulative delta-matcher diagnostics for the `-vv` `total:` line.
-    // upstream: match.c:433-435 folds each file's per-file `matches`,
-    // `hash_hits`, and `false_alarms` into `total_*` after `match_sums()`
-    // returns, and `match_report()` (match.c:439) prints the totals once. The
-    // local-copy executor has no forked sender running `match_sums()`, so it
-    // accumulates the same running totals here.
-    delta_matches: u64,
-    delta_hash_hits: u64,
-    delta_false_alarms: u64,
     bytes_sent: u64,
     bytes_received: u64,
     compressed_bytes: u64,
@@ -364,36 +355,6 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn matched_bytes(&self) -> u64 {
         self.matched_bytes
-    }
-
-    /// Returns the number of basis blocks the delta matcher reused across the
-    /// whole run - the `matches=` field of the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:435` `total_matches`.
-    #[must_use]
-    pub const fn delta_matches(&self) -> u64 {
-        self.delta_matches
-    }
-
-    /// Returns the run's cumulative delta-probe hash hits - the `hash_hits=`
-    /// field of the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:433` `total_hash_hits`. oc counts bithash-prefilter
-    /// positives rather than upstream's `SUM2HASH` bucket hits; see
-    /// [`crate::delta::ProbeCounters`] for why the two are not comparable.
-    #[must_use]
-    pub const fn delta_hash_hits(&self) -> u64 {
-        self.delta_hash_hits
-    }
-
-    /// Returns the run's cumulative delta-probe false alarms - the
-    /// `false_alarms=` field of the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:434` `total_false_alarms`. See
-    /// [`crate::delta::ProbeCounters`] for oc's counting semantics.
-    #[must_use]
-    pub const fn delta_false_alarms(&self) -> u64 {
-        self.delta_false_alarms
     }
 
     /// Returns the aggregate number of bytes that were sent to the peer.
@@ -766,9 +727,6 @@ impl LocalCopySummary {
             transferred_file_size: 0,
             bytes_copied: 0,
             matched_bytes: 0,
-            delta_matches: 0,
-            delta_hash_hits: 0,
-            delta_false_alarms: 0,
             compressed_bytes: 0,
             compression_used: false,
             total_source_bytes: 0,
@@ -783,28 +741,17 @@ impl LocalCopySummary {
         }
     }
 
-    /// Records one transferred file's contribution to the summary.
-    ///
-    /// `matched_bytes` is supplied by the copy path that produced the matches,
-    /// never inferred here. It used to be derived as `file_size -
-    /// literal_bytes`, which silently assumed every non-literal byte came from
-    /// a block match. Append mode falsifies that: the pre-existing prefix is
-    /// neither literal nor matched, so the derivation counted the whole prefix
-    /// as matched while upstream reports zero. upstream: match.c:121 grows
-    /// `stats.matched_data` only inside `matched()`, and append mode never
-    /// reaches it (match.c:389-390 sets `last_match = s->flength; s->count =
-    /// 0;` and the hash loop is skipped).
     pub(in crate::local_copy) fn record_file(
         &mut self,
         file_size: u64,
         literal_bytes: u64,
-        matched_bytes: u64,
         compressed: Option<u64>,
     ) {
         self.files_copied = self.files_copied.saturating_add(1);
         self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
         self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
-        self.matched_bytes = self.matched_bytes.saturating_add(matched_bytes);
+        let matched = file_size.saturating_sub(literal_bytes);
+        self.matched_bytes = self.matched_bytes.saturating_add(matched);
         let transmitted = compressed.unwrap_or(literal_bytes);
         // A local copy emulates the protocol sender: it writes the file data
         // (counted as sent) but receives no data payload back. Counting the data
@@ -817,21 +764,6 @@ impl LocalCopySummary {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
         }
-    }
-
-    /// Folds one delta-scanned file's match diagnostics into the run totals
-    /// rendered on the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:433-435` - `total_hash_hits += hash_hits` etc. once
-    /// per file, immediately after that file's `match_sums()` returns.
-    pub(in crate::local_copy) fn record_delta_probe(
-        &mut self,
-        matches: u64,
-        probe: crate::delta::ProbeCounters,
-    ) {
-        self.delta_matches = self.delta_matches.saturating_add(matches);
-        self.delta_hash_hits = self.delta_hash_hits.saturating_add(probe.hash_hits);
-        self.delta_false_alarms = self.delta_false_alarms.saturating_add(probe.false_alarms);
     }
 
     /// Records a would-be transfer for a `--dry-run`, mirroring upstream's
@@ -1327,39 +1259,10 @@ mod tests {
         assert_eq!(summary.total_elapsed(), Duration::from_secs(3));
     }
 
-    /// The `-vv` `total:` line reports RUN totals, not the last file's figures.
-    /// upstream: match.c:433-435 folds each file's counters into `total_*` and
-    /// match_report() prints the accumulation once, so a per-file overwrite
-    /// would under-report every multi-file transfer.
-    #[test]
-    fn record_delta_probe_accumulates_across_files() {
-        let mut summary = LocalCopySummary::default();
-        assert_eq!(summary.delta_matches(), 0);
-
-        summary.record_delta_probe(
-            3,
-            crate::delta::ProbeCounters {
-                hash_hits: 5,
-                false_alarms: 2,
-            },
-        );
-        summary.record_delta_probe(
-            1,
-            crate::delta::ProbeCounters {
-                hash_hits: 4,
-                false_alarms: 3,
-            },
-        );
-
-        assert_eq!(summary.delta_matches(), 4);
-        assert_eq!(summary.delta_hash_hits(), 9);
-        assert_eq!(summary.delta_false_alarms(), 5);
-    }
-
     #[test]
     fn record_file_increments_counters() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1000, 800, 200, None);
+        summary.record_file(1000, 800, None);
 
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.transferred_file_size(), 1000);
@@ -1372,7 +1275,7 @@ mod tests {
     #[test]
     fn record_file_with_compression() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1000, 800, 200, Some(400));
+        summary.record_file(1000, 800, Some(400));
 
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.compressed_bytes(), 400);
@@ -1403,8 +1306,8 @@ mod tests {
     #[test]
     fn record_multiple_files_accumulates() {
         let mut summary = LocalCopySummary::default();
-        summary.record_file(100, 80, 20, None);
-        summary.record_file(200, 150, 50, None);
+        summary.record_file(100, 80, None);
+        summary.record_file(200, 150, None);
 
         assert_eq!(summary.files_copied(), 2);
         assert_eq!(summary.transferred_file_size(), 300);
@@ -1611,7 +1514,7 @@ mod tests {
         // `bytes_sent` untouched - that data-only figure is what upstream's
         // `Total bytes sent` is built on for a local copy.
         let mut summary = LocalCopySummary::default();
-        summary.record_file(1_000, 1_000, 0, None);
+        summary.record_file(1_000, 1_000, None);
         summary.record_file_list_entry(40);
         assert_eq!(summary.bytes_sent(), 1_000);
 

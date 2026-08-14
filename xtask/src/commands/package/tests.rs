@@ -21,14 +21,6 @@ fn workspace_root() -> &'static Path {
     })
 }
 
-/// Host architecture the cross-compiler fixtures resolve against.
-///
-/// Pinned so the expectations hold on every build host; resolving against the
-/// real host would make `aarch64-unknown-linux-gnu` a native target on an
-/// aarch64 machine and no cross-compiler would be looked for at all.
-#[cfg(all(test, target_os = "linux"))]
-const FIXTURE_HOST_ARCH: &str = "x86_64";
-
 type ScopedEnv = EnvGuard;
 
 fn scoped_env(keys: &[&'static str]) -> ScopedEnv {
@@ -163,12 +155,8 @@ fn execute_reports_missing_cross_compiler() {
         "aarch64-linux-gnu-gcc,zig",
     );
 
-    let error = resolve_cross_compiler_for_tests(
-        workspace_root(),
-        "aarch64-unknown-linux-gnu",
-        FIXTURE_HOST_ARCH,
-    )
-    .unwrap_err();
+    let error = resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+        .unwrap_err();
 
     assert!(matches!(
         error,
@@ -186,13 +174,10 @@ fn cross_compiler_resolution_prefers_cross_gcc() {
     prepend_path(&mut env, dir.path());
     set_str(&mut env, "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "zig");
 
-    let override_value = resolve_cross_compiler_for_tests(
-        workspace_root(),
-        "aarch64-unknown-linux-gnu",
-        FIXTURE_HOST_ARCH,
-    )
-    .expect("resolution succeeds")
-    .expect("cross compiler override present");
+    let override_value =
+        resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+            .expect("resolution succeeds")
+            .expect("cross compiler override present");
 
     assert_eq!(
         override_value.0,
@@ -213,13 +198,10 @@ fn cross_compiler_resolution_falls_back_to_zig() {
         "aarch64-linux-gnu-gcc",
     );
 
-    let override_value = resolve_cross_compiler_for_tests(
-        workspace_root(),
-        "aarch64-unknown-linux-gnu",
-        FIXTURE_HOST_ARCH,
-    )
-    .expect("resolution succeeds")
-    .expect("cross compiler override present");
+    let override_value =
+        resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+            .expect("resolution succeeds")
+            .expect("cross compiler override present");
 
     assert_eq!(
         override_value.0,
@@ -256,9 +238,8 @@ fn tarball_resolution_skips_targets_without_cross_tooling() {
         },
     ];
 
-    let resolved =
-        resolve_tarball_cross_compilers_for_tests(workspace_root(), specs, FIXTURE_HOST_ARCH)
-            .expect("resolution succeeds");
+    let resolved = resolve_tarball_cross_compilers_for_tests(workspace_root(), specs)
+        .expect("resolution succeeds");
 
     assert_eq!(resolved.builds.len(), 1);
     assert_eq!(

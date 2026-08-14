@@ -317,34 +317,6 @@ impl ClientSummary {
         self.stats.matched_bytes()
     }
 
-    /// Returns the number of basis blocks the delta matcher reused, reported as
-    /// `matches=` on the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:435` `total_matches`, printed by `match_report()`
-    /// (`match.c:439`).
-    #[must_use]
-    pub const fn delta_matches(&self) -> u64 {
-        self.stats.delta_matches()
-    }
-
-    /// Returns the delta matcher's cumulative hash hits, reported as
-    /// `hash_hits=` on the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:433` `total_hash_hits`.
-    #[must_use]
-    pub const fn delta_hash_hits(&self) -> u64 {
-        self.stats.delta_hash_hits()
-    }
-
-    /// Returns the delta matcher's cumulative false alarms, reported as
-    /// `false_alarms=` on the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:434` `total_false_alarms`.
-    #[must_use]
-    pub const fn delta_false_alarms(&self) -> u64 {
-        self.stats.delta_false_alarms()
-    }
-
     /// Returns the aggregate number of bytes received during the transfer.
     #[must_use]
     pub const fn bytes_received(&self) -> u64 {
@@ -446,7 +418,7 @@ impl ClientSummary {
     ///
     /// Used by the CLI to emit upstream's `created directory <dest>` notice
     /// before per-entry itemize lines when itemize-changes is enabled.
-    /// upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`.
     #[must_use]
     pub const fn destination_root_created(&self) -> bool {

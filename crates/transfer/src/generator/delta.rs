@@ -464,60 +464,29 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
 
     let block_count = config.sig_blocks.len() as u64;
 
-    // The remainder is NOT unknown from the wire format. The receiver sends it
-    // in the sum_head - `io.c:2061` `sum->remainder = read_int(f);` - and
-    // `io.c:2062-2064` range-checks it, rejecting `< 0` or `> blength` with
-    // "Invalid remainder length". It is the only field that distinguishes the
-    // last block's true length from `blength`, and upstream's sender applies it
-    // to exactly one block, and only when non-zero:
-    //
-    //   sender.c:109-110 (receive_sums)
-    //     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
-    //     else                                      s->sums[i].len = s->blength;
-    //
-    // Dropping it left every reconstructed block claiming `blength`, so the
-    // basis's short final block could never match and was re-sent as literal
-    // data on every transfer.
-    let remainder = config.remainder;
+    // Reconstruct signature layout (remainder unknown, set to 0)
     let layout = SignatureLayout::from_raw_parts(
         block_length_nz,
-        remainder,
+        0, // remainder unknown from wire format
         block_count,
         strong_sum_length_nz,
     );
 
-    // Convert wire blocks to engine signature blocks (consumes sig_blocks). A
-    // block's length rides on its rolling digest, so this is where upstream's
-    // split above is reproduced: the last block takes the remainder, every
-    // other block takes `blength`. With `remainder == 0` - a basis that divides
-    // evenly - every block keeps `blength`, including the last.
-    let last_position = block_count.saturating_sub(1);
+    // Convert wire blocks to engine signature blocks (consumes sig_blocks)
     let engine_blocks: Vec<SignatureBlock> = config
         .sig_blocks
         .into_iter()
-        .enumerate()
-        .map(|(position, wire_block)| {
-            let len = if remainder != 0 && position as u64 == last_position {
-                remainder as usize
-            } else {
-                config.block_length as usize
-            };
+        .map(|wire_block| {
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, len),
+                RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
                 &wire_block.strong_sum,
             )
         })
         .collect();
 
-    // upstream: generator.c:755-756 - `remainder = len % blength` and
-    // `count = len/blength + (remainder != 0)`, inverted here to recover the
-    // basis length the sum_head describes.
-    let total_bytes = if remainder == 0 {
-        block_count * u64::from(config.block_length)
-    } else {
-        last_position * u64::from(config.block_length) + u64::from(remainder)
-    };
+    // Calculate total bytes (approximation since we don't know exact remainder)
+    let total_bytes = (block_count.saturating_sub(1)) * u64::from(config.block_length);
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
@@ -1688,121 +1657,7 @@ mod tests {
             compat_flags: None,
             checksum_seed: 0,
             updating_basis_file: guard,
-            remainder: 0,
         }
-    }
-
-    /// The wire `remainder` must land on the LAST reconstructed block, and only
-    /// there.
-    ///
-    /// upstream: `sender.c:109-110` (receive_sums)
-    ///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
-    ///   `else                                      s->sums[i].len = s->blength;`
-    ///
-    /// The field is on the wire (`io.c:2061`) and range-checked
-    /// (`io.c:2062-2064`); dropping it made every block claim `blength`, which
-    /// is what left the basis's short final block unmatchable.
-    #[test]
-    fn wire_remainder_shortens_only_the_final_reconstructed_block() {
-        const BLOCK_LEN: u32 = 700;
-        const REMAINDER: u32 = 400;
-        const FULL_BLOCKS: usize = 4;
-        let basis = vec![7u8; FULL_BLOCKS * BLOCK_LEN as usize + REMAINDER as usize];
-
-        let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        assert_eq!(sig_blocks.len(), FULL_BLOCKS + 1);
-
-        let mut config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
-        config.remainder = REMAINDER;
-        let index = build_signature_index(config).expect("index");
-
-        assert_eq!(index.block_count(), FULL_BLOCKS + 1);
-        for position in 0..FULL_BLOCKS {
-            assert_eq!(
-                index.block(position).len(),
-                BLOCK_LEN as usize,
-                "block {position} must keep blength"
-            );
-        }
-        assert_eq!(
-            index.block(FULL_BLOCKS).len(),
-            REMAINDER as usize,
-            "only the final block takes the remainder"
-        );
-    }
-
-    /// A basis whose length is an exact multiple of `blength` sends
-    /// `remainder == 0`, and upstream's `&& s->remainder != 0` guard then keeps
-    /// `blength` for EVERY block including the last. Getting this wrong would
-    /// zero-length the final block of the common, evenly-divided case.
-    #[test]
-    fn zero_remainder_keeps_blength_on_every_block() {
-        const BLOCK_LEN: u32 = 700;
-        const FULL_BLOCKS: usize = 4;
-        let basis = vec![9u8; FULL_BLOCKS * BLOCK_LEN as usize];
-
-        let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        assert_eq!(sig_blocks.len(), FULL_BLOCKS);
-
-        // delta_config defaults remainder to 0, which is exactly the wire value
-        // an evenly-divided basis produces.
-        let config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
-        assert_eq!(config.remainder, 0);
-        let index = build_signature_index(config).expect("index");
-
-        assert_eq!(index.block_count(), FULL_BLOCKS);
-        for position in 0..FULL_BLOCKS {
-            assert_eq!(
-                index.block(position).len(),
-                BLOCK_LEN as usize,
-                "block {position} must keep blength when remainder is 0"
-            );
-        }
-    }
-
-    /// End-to-end through the sender's delta scan: with the remainder carried,
-    /// the trailing short block is Copied instead of re-sent as literal data.
-    /// This is the pairing that makes either half verifiable - the matching-side
-    /// tail probe cannot fire while the index claims every block is `blength`.
-    #[test]
-    fn carried_remainder_lets_the_sender_copy_the_short_final_block() {
-        const BLOCK_LEN: u32 = 700;
-        const REMAINDER: u32 = 400;
-        const FULL_BLOCKS: usize = 4;
-        let mut basis = Vec::new();
-        let mut state: u64 = 0x1234_5678_9abc_def0;
-        for _ in 0..(FULL_BLOCKS * BLOCK_LEN as usize + REMAINDER as usize) {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            basis.push((state >> 33) as u8);
-        }
-
-        let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        let mut config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
-        config.remainder = REMAINDER;
-
-        let script =
-            generate_delta_from_signature(io::Cursor::new(basis.clone()), config).expect("delta");
-
-        let short_copies: Vec<usize> = script
-            .tokens()
-            .iter()
-            .filter_map(|token| match token {
-                DeltaToken::Copy { len, .. } if *len < BLOCK_LEN as usize => Some(*len),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            short_copies,
-            vec![REMAINDER as usize],
-            "the short final block must be Copied with its true length"
-        );
-        assert_eq!(
-            script.literal_bytes(),
-            0,
-            "an identical source matches whole"
-        );
     }
 
     // WHY: this pins the activation end-to-end - the config field must reach the

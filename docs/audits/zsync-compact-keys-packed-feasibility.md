@@ -201,7 +201,7 @@ payload, the `tag_table` semantics, the `BitHash` semantics, and the
   - [`crates/matching/src/index/bithash.rs`](../../crates/matching/src/index/bithash.rs)
 - Existing cache bench: [`crates/matching/benches/compact_keys_cache.rs`](../../crates/matching/benches/compact_keys_cache.rs)
 - Block sizing: [`crates/signature/src/block_size.rs`](../../crates/signature/src/block_size.rs)
-- zsync 0.6.2 source (gianm/zsync mirror):
+- zsync 0.6.2 source, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
   - `librcksum/state.c:48` - `rsum_a_mask` derivation
   - `librcksum/hash.c:62-84` - hash-table sizing
   - `librcksum/internal.h:83` - `BITHASHBITS` density

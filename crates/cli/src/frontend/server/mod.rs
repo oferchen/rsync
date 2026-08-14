@@ -16,9 +16,6 @@ mod tests;
 #[cfg(test)]
 mod roundtrip_tests;
 
-#[cfg(all(test, windows))]
-mod windows_osstring_tests;
-
 pub(crate) use daemon::{
     daemon_mode_arguments, run_daemon_mode, run_server_daemon_mode, server_daemon_mode_requested,
     server_mode_requested,

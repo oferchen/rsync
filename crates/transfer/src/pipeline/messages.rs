@@ -42,24 +42,6 @@ pub enum FileMessage {
     /// - `fileio.c:192-211` - `skip_matched()` flushes then `lseek`s past the
     ///   in-place bytes (or feeds the sparse processor with the seek flag).
     SkipMatched(Vec<u8>),
-    /// Matched basis bytes that must be written, but that are not literal data
-    /// received from the sender.
-    ///
-    /// Written exactly like [`FileMessage::Chunk`]; the variants differ only in
-    /// what they mean for `--partial` retention. Upstream sets the
-    /// `cleanup_got_literal` latch only in the literal branch, so a temp file
-    /// containing nothing but basis copies is unlinked on abort rather than
-    /// renamed over a complete destination. Routing matched blocks through
-    /// `Chunk` made a byte counter that was standing in for that latch non-zero
-    /// with zero literal data received.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:392-403` - `if (i > 0) { ...; cleanup_got_literal = 1; }`;
-    ///   the matched branch at `receiver.c:413+` deliberately does not.
-    /// - `cleanup.c:159` - retention is gated on `cleanup_got_literal`;
-    ///   `cleanup.c:199-200` unlinks the temp otherwise.
-    MatchedChunk(Vec<u8>),
     /// Finalize the current file: compute the whole-file checksum, verify it
     /// against the sender's trailing sum, and only then flush, fsync, and
     /// rename into place.

@@ -634,7 +634,7 @@ impl<'a> CopyContext<'a> {
                 let progressed = initial_bytes.saturating_add(copied);
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
             }
-            return Ok(FileCopyOutcome::new(copied, MATCHED_NONE, None));
+            return Ok(FileCopyOutcome::new(copied, None));
         }
 
         if sparse {
@@ -715,9 +715,9 @@ impl<'a> CopyContext<'a> {
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
             self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, Some(compressed_total))
+            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
+            FileCopyOutcome::new(literal_bytes, None)
         };
 
         Ok(outcome)
@@ -830,9 +830,9 @@ impl<'a> CopyContext<'a> {
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
             self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, Some(compressed_total))
+            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
+            FileCopyOutcome::new(literal_bytes, None)
         };
 
         Ok(outcome)

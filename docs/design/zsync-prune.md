@@ -26,7 +26,7 @@ hide siblings.
 
 zsync's `librcksum` removes a block's `hash_entry` from its bucket chain
 when - and only when - the matched data is actually written. Citations
-follow the parent note's `gianm/zsync` mirror lineage:
+follow the parent note's lineage, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
 
 - Trigger site: `rsum.c:109-119` `write_blocks()`. Pruning runs AFTER
   the matched data has been delivered, not at the moment a probe finds
@@ -457,7 +457,7 @@ This PR (#2068) and its impl/test/bench follow-ups (#2069 / #2070 /
 - Upstream rsync 3.4.1: `match.c`, `token.c`. No equivalent prune in
   upstream; matched blocks remain in the chain for the transfer's
   duration. Not present here is an intentional zsync borrow.
-- zsync 0.6.2 (gianm/zsync mirror), as cited in the parent:
+- zsync 0.6.2, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`), as cited in the parent:
   - `librcksum/rsum.c:109-119` write_blocks trigger
   - `librcksum/hash.c:111-128` remove_block_from_hash
   - Bithash non-clearing on removal: `librcksum/hash.c:111-128`

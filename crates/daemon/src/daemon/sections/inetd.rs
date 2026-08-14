@@ -102,10 +102,19 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: start_daemon() with inherited fds uses 127.0.0.1:0 as the
-    // synthetic peer address since there is no TCP socket to query for a real
-    // peer address.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    // In inetd mode fd 0 IS the connected socket - upstream passes it as both
+    // the read and write fd (clientserver.c:1559) and `client_addr()` reaches
+    // the real peer through `client_sockaddr()` -> getpeername (clientname.c:80).
+    //
+    // If stdin turns out not to be a socket, fall back to upstream's seed value
+    // "0.0.0.0" (clientname.c:64) rather than localhost: an unknown peer must
+    // match no `hosts allow` token, so access control fails CLOSED. Reporting
+    // localhost made `hosts allow = 127.0.0.1` - the canonical "local only"
+    // rule - admit every client.
+    let peer_addr = crate::peer_address::stdio_peer_addr(
+        crate::peer_address::StdioMode::Inetd,
+        crate::peer_address::inherited_peer_addr(),
+    );
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
     // name unconditionally, so this pre-module log/registry name is confirmed

@@ -74,27 +74,6 @@ pub struct DeltaGeneratorConfig<'a> {
     /// upstream: match.c:211 (`updating_basis_file && s->sums[i].offset <
     /// offset`), sender.c:337 (the per-file assignment).
     pub updating_basis_file: bool,
-
-    /// Length of the basis's final block when it is short, or `0` when the
-    /// basis divides evenly into `block_length`-sized blocks.
-    ///
-    /// Carried straight off the wire: the receiver puts it in the `sum_head`
-    /// (`io.c:2061` `sum->remainder = read_int(f);`, range-checked at
-    /// `io.c:2062-2064`, which rejects `< 0` or `> blength` with "Invalid
-    /// remainder length"). It is the only thing that distinguishes the last
-    /// block's true length from `blength`, and upstream's sender applies it in
-    /// `receive_sums()`:
-    ///
-    /// ```text
-    /// sender.c:109-110
-    ///     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
-    ///     else                                      s->sums[i].len = s->blength;
-    /// ```
-    ///
-    /// Note the `&& s->remainder != 0` guard: a basis whose length is an exact
-    /// multiple of `blength` keeps `blength` for every block, including the
-    /// last. Defaults to `0`, which reproduces exactly that case.
-    pub remainder: u32,
 }
 
 impl<'a> DeltaGeneratorConfig<'a> {
@@ -116,18 +95,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
             compat_flags: None,
             checksum_seed: 0,
             updating_basis_file: false,
-            remainder: 0,
         }
-    }
-
-    /// Sets the basis's short-final-block length from the wire `sum_head`.
-    ///
-    /// upstream: `sender.c:109-110` (`receive_sums()` applies it to the last
-    /// block only, and only when non-zero).
-    #[must_use]
-    pub fn with_remainder(mut self, remainder: u32) -> Self {
-        self.remainder = remainder;
-        self
     }
 
     /// Attaches negotiated algorithms from protocol >= 30 capability exchange.

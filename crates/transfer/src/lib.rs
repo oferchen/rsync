@@ -608,11 +608,6 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         itemize,
         io_timeout_reapply,
     } = hooks;
-    // upstream: options.c:2410 - `--append` implies `--inplace`, applied by the
-    // same parse_arguments() every peer runs. This is the one path shared by
-    // the client's in-process half, the `--server` process and the daemon, so
-    // the implication lands before setup_protocol()'s protocol < 29 checks.
-    config.apply_append_implies_inplace();
     // FSM: begin at Handshake (version exchange is already complete when this
     // function is called - either via run_server_stdio or daemon greeting).
     let mut pipeline = TransferPipeline::new(config.role);

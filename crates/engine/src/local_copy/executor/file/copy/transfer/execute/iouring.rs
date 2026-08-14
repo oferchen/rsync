@@ -118,9 +118,7 @@ pub(super) fn try_dispatch(
     context.record_hard_link(metadata, destination);
     context
         .summary_mut()
-        // A whole-file clone/copy is all literal: no signature was
-        // consulted, so nothing was matched.
-        .record_file(file_size, file_size, crate::local_copy::MATCHED_NONE, None);
+        .record_file(file_size, file_size, None);
     context
         .summary_mut()
         .record_copy_method(CopyMethodKind::IoUring);

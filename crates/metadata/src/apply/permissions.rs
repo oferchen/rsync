@@ -56,35 +56,18 @@ fn fchmod_libc(
     .map_err(|errno| MetadataError::new(action, destination, io::Error::from(errno)))
 }
 
-/// Process-wide `orig_umask`, captured once. See [`init_orig_umask`].
-#[cfg(unix)]
-static ORIG_UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-
-/// Captures the process umask into the process-wide cache.
+/// Returns the process umask, cached for thread safety.
 ///
-/// Must be called from the program entry point, BEFORE the daemon installs its
-/// seccomp filter. `umask(2)` is not on the worker allowlist
-/// (`daemon::seccomp::worker_seccomp_allowlist`), and a non-allowlisted syscall
-/// is failed with `EPERM` rather than killing the process, so a *lazy* first
-/// read inside a sandboxed worker gets `-1` back. Caching that sentinel makes
-/// `dflt_perms` (`ACCESSPERMS & ~orig_umask`) zero, which collapses
-/// `dest_mode()`'s new-file result to mode `000` on every write path.
-///
-/// Capturing eagerly at startup - the same place and for the same reason as
-/// upstream - keeps the sandbox allowlist minimal and removes the ordering
-/// hazard entirely: by the time any filter is installed the value is already
-/// resolved.
-///
-/// Idempotent: the first call wins, later calls are no-ops.
-///
-/// # Upstream Reference
-///
-/// - `main.c:1797` - `umask(orig_umask = umask(0));` runs in `main()` before
-///   any privilege drop or sandbox setup.
+/// upstream: `main.c` stores `orig_umask` once at startup. We query it
+/// the first time a permission application needs the umask and cache the
+/// result so the double set-and-restore syscall happens at most once per
+/// process.
 #[cfg(unix)]
 #[allow(unsafe_code)]
-pub fn init_orig_umask() {
-    ORIG_UMASK.get_or_init(|| {
+fn cached_umask() -> u32 {
+    use std::sync::OnceLock;
+    static UMASK: OnceLock<u32> = OnceLock::new();
+    *UMASK.get_or_init(|| {
         // SAFETY: umask is a standard POSIX call. We set it to 0 to read
         // the current value, then immediately restore it. This is a
         // well-known pattern (used by upstream rsync main.c, GNU coreutils,
@@ -93,46 +76,8 @@ pub fn init_orig_umask() {
         // modifications.
         let old = unsafe { libc::umask(0) };
         unsafe { libc::umask(old) };
-        sanitize_umask(old as u32)
-    });
-}
-
-/// Default umask assumed when the `umask(2)` query itself failed.
-#[cfg(unix)]
-const FALLBACK_UMASK: u32 = 0o022;
-
-/// Rejects a `umask(2)` return value that cannot be a umask.
-///
-/// A umask is 9 significant bits, so anything outside `0o777` means the query
-/// failed rather than answered - a seccomp filter that fails a non-allowlisted
-/// syscall with `EPERM` hands back `-1`, which as a `u32` is `u32::MAX`. Caching
-/// that would make `dflt_perms` (`ACCESSPERMS & ~orig_umask`) zero and chmod
-/// every newly created destination to mode `000`, so fall back to the POSIX
-/// default instead of propagating a sentinel into `dest_mode()`.
-///
-/// Defence in depth only: [`init_orig_umask`] runs before any sandbox is
-/// installed, so a correctly wired binary never reaches the fallback.
-#[cfg(unix)]
-const fn sanitize_umask(raw: u32) -> u32 {
-    if raw & !0o777 == 0 {
-        raw
-    } else {
-        FALLBACK_UMASK
-    }
-}
-
-/// Returns the process umask captured by [`init_orig_umask`].
-///
-/// Falls back to capturing on first use for callers that never ran the entry
-/// point (unit tests, library embedders). Production binaries prime this from
-/// `main` so the value is resolved before any sandbox is installed.
-#[cfg(unix)]
-fn cached_umask() -> u32 {
-    if let Some(umask) = ORIG_UMASK.get() {
-        return *umask;
-    }
-    init_orig_umask();
-    *ORIG_UMASK.get().unwrap_or(&0o022)
+        old as u32
+    })
 }
 
 /// Returns the default permission seed for a child created under `parent`.
@@ -243,7 +188,7 @@ fn compute_dest_mode(
 /// already drive the chmod through `metadata.permissions().mode()` or the
 /// chmod modifier chain.
 ///
-/// upstream: receiver.c:964 (`dest_mode()` invocation) + rsync.c:449-472
+/// upstream: rsync.c:954-965 (`dest_mode()` invocation) + rsync.c:457-465
 /// (`dest_mode()` body)
 #[cfg(unix)]
 pub fn apply_dest_mode_pre_transfer(
@@ -1025,7 +970,7 @@ pub(super) fn apply_permissions_from_entry(
         use std::os::unix::fs::PermissionsExt;
 
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
-            // upstream: receiver.c:964 - even when `!preserve_perms` and
+            // upstream: rsync.c:954-965 - even when `!preserve_perms` and
             // `!preserve_executability`, the receiver mutates `file->mode` via
             // `dest_mode()` and `set_file_attrs()` chmods the post-rename
             // destination to it. For an existing destination this preserves
@@ -1337,37 +1282,5 @@ mod tests {
 
         let result = apply_permissions_with_chmod(&dest, &source_meta, &options, None);
         assert!(result.is_err(), "expected Err with -p active, got Ok");
-    }
-
-    /// A real umask must survive verbatim: the sanitiser exists to reject a
-    /// failed query, not to second-guess the process's actual mask.
-    #[cfg(unix)]
-    #[test]
-    fn sanitize_umask_passes_every_real_umask_through() {
-        for raw in 0..=0o777u32 {
-            assert_eq!(
-                super::sanitize_umask(raw),
-                raw,
-                "{raw:o} is a valid 9-bit umask and must not be rewritten",
-            );
-        }
-    }
-
-    /// `umask(2)` failing returns `-1`, which as a `u32` is `u32::MAX`. Caching
-    /// it would make `dflt_perms` = `0o777 & !u32::MAX` = 0 and chmod every new
-    /// destination to mode 000, so it must be rejected. This is the value a
-    /// seccomp filter answering `EPERM` actually produced on the daemon
-    /// receiver.
-    #[cfg(unix)]
-    #[test]
-    fn sanitize_umask_rejects_a_failed_query() {
-        assert_eq!(super::sanitize_umask(u32::MAX), super::FALLBACK_UMASK);
-        assert_ne!(
-            0o777 & !super::sanitize_umask(u32::MAX),
-            0,
-            "a rejected sentinel must not yield dflt_perms == 0",
-        );
-        // Any value with bits above the 9 umask bits is equally impossible.
-        assert_eq!(super::sanitize_umask(0o1000), super::FALLBACK_UMASK);
     }
 }

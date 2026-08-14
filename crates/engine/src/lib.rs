@@ -137,7 +137,6 @@ pub mod operand;
 pub mod throughput;
 pub mod util;
 pub mod walk;
-pub mod write_strategy;
 
 #[doc(hidden)]
 pub mod batch {

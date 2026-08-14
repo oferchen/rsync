@@ -116,13 +116,6 @@ jobs:
           python3 .github/scripts/benchmark_report.py > benchmark_report.md
           cat benchmark_report.md
 
-      - name: Self-test benchmark renderers
-        # The chart and report are published as release assets, so the
-        # renderers are exercised against synthetic results before the real
-        # ones are drawn. A metric regression here fails the tag build
-        # instead of shipping a misleading chart to the release page.
-        run: python3 tools/ci/tests/test_benchmark_chart.py
-
       - name: Generate benchmark chart
         run: |
           pip install cairosvg

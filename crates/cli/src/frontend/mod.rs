@@ -258,16 +258,6 @@ where
     Out: Write,
     Err: Write,
 {
-    // Resolve the process umask before any mode dispatch. The daemon installs a
-    // seccomp filter whose worker allowlist has no `umask(2)`, and a
-    // non-allowlisted syscall is answered with EPERM, so a first read taken
-    // later - inside a sandboxed worker - would cache -1 and collapse
-    // `dest_mode()`'s new-file result to mode 000.
-    // upstream: main.c:1797 `umask(orig_umask = umask(0));` runs in main()
-    // before any privilege drop or sandbox setup.
-    #[cfg(unix)]
-    metadata::init_orig_umask();
-
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
     if args.is_empty() {
         args.push(OsString::from(ProgramName::OcRsync.as_str()));

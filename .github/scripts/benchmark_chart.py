@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """Generate an SVG benchmark chart from benchmark_results.json.
 
-Pure Python -- no external dependencies.  Reads CI benchmark data and
-produces a grouped horizontal bar chart comparing oc-rsync against upstream
-rsync across all transfer modes.
-
-Not every mode measures the same thing.  Most compare elapsed time, but the
-`memory` mode compares peak resident set size, so each mode declares its
-metric unit (`MODE_UNITS`) and that unit selects both the value read out of
-the results JSON and the formatter used to label it.
+Pure Python -- no external dependencies.  Reads CI benchmark timing data
+and produces a grouped horizontal bar chart comparing oc-rsync against
+upstream rsync across all transfer modes.
 
 Design patterns:
   - Builder (ChartBuilder) for incremental SVG construction
   - Data classes for typed, immutable layout geometry
-  - Strategy for unit-driven value extraction, formatting and ratio wording
   - Strategy for adaptive text placement (inside vs outside bars)
   - Single Responsibility per function
 """
@@ -26,7 +20,6 @@ import math
 import os
 import sys
 from dataclasses import dataclass
-from enum import Enum
 from html import escape
 
 # ---------------------------------------------------------------------------
@@ -50,9 +43,8 @@ MODE_GAP = 16
 MIN_BAR_WIDTH = 2
 TEXT_INSIDE_THRESHOLD = 60
 
-# Comparison thresholds on the oc_rsync / upstream ratio, in whichever unit
-# the mode measures.  < FASTER: oc-rsync clearly better.  <= SAME_UPPER:
-# within noise.  > SAME_UPPER: worse.
+# Speedup classification thresholds (oc_rsync / upstream timing ratio).
+# < FASTER: oc-rsync clearly faster.  <= SAME_UPPER: within noise.  > SAME_UPPER: slower.
 RATIO_FASTER_BELOW = 0.95
 RATIO_SAME_UPPER = 1.05
 
@@ -127,39 +119,6 @@ MODE_CLI_HINTS = {
     ),
 }
 
-
-class MetricUnit(Enum):
-    """What a mode's bars measure.
-
-    Only the two units the benchmark actually produces exist here: elapsed
-    wall-clock time and peak resident set size.
-    """
-
-    DURATION = "duration"
-    BYTES = "bytes"
-
-
-# Every mode states its unit explicitly.  There is deliberately no default:
-# a new mode must declare what it measures, because a mode silently
-# inheriting "duration" is how peak RSS came to be plotted and labelled as
-# elapsed time.
-MODE_UNITS = {
-    "local": MetricUnit.DURATION,
-    "ssh_pull": MetricUnit.DURATION,
-    "ssh_push": MetricUnit.DURATION,
-    "daemon_pull": MetricUnit.DURATION,
-    "daemon_push": MetricUnit.DURATION,
-    "compression": MetricUnit.DURATION,
-    "delta": MetricUnit.DURATION,
-    "large_file": MetricUnit.DURATION,
-    "many_small": MetricUnit.DURATION,
-    "sparse": MetricUnit.DURATION,
-    "memory": MetricUnit.BYTES,
-    "checksum_openssl": MetricUnit.DURATION,
-    "io_uring": MetricUnit.DURATION,
-    "ssh_transport": MetricUnit.DURATION,
-}
-
 # Modes where bars represent alternative labels instead of upstream vs oc-rsync
 OPENSSL_MODES = {"checksum_openssl"}
 IO_URING_MODES = {"io_uring"}
@@ -174,16 +133,11 @@ CLI_HINT_HEIGHT = 16
 
 @dataclass(frozen=True)
 class BarSpec:
-    """One horizontal bar in the chart.
-
-    `value` is the measured magnitude in the owning mode's unit -- seconds
-    for a duration mode, bytes for a byte mode.  The field is deliberately
-    unit-neutral; the unit lives on the enclosing `ModeGroup`.
-    """
+    """One horizontal bar in the chart."""
 
     y: float
     width: float
-    value: float
+    timing: float
     color: str
     series_label: str
 
@@ -212,28 +166,18 @@ class TestPair:
 
 @dataclass(frozen=True)
 class ModeGroup:
-    """A group of test pairs under one transfer mode header.
-
-    `unit` is the metric every bar and ratio in this group is expressed in;
-    it selects the label formatter and the ratio wording.
-    """
+    """A group of test pairs under one transfer mode header."""
 
     label: str
     header_y: float
     cli_hint: str
     cli_hint_y: float
-    unit: MetricUnit
     tests: list[TestPair]
 
 
 @dataclass(frozen=True)
 class ChartLayout:
-    """Complete layout geometry for the chart.
-
-    `max_time` and `scale` describe a shared duration axis and are therefore
-    derived from duration modes only -- a single axis spanning seconds and
-    bytes would be meaningless.
-    """
+    """Complete layout geometry for the chart."""
 
     groups: list[ModeGroup]
     chart_height: float
@@ -252,60 +196,20 @@ def _is_three_way_ssh(mode: str, t: dict) -> bool:
     return mode in SSH_TRANSPORT_MODES and "upstream_ssh" in t
 
 
-def _series_keys(mode: str, t: dict) -> tuple[str, ...]:
-    """Result-JSON keys holding this row's series, left to right."""
-    if _is_three_way_ssh(mode, t):
-        return ("upstream_ssh", "oc_subprocess", "oc_russh")
-    return ("upstream", "oc_rsync")
-
-
-def metric_value(series: dict, unit: MetricUnit) -> float:
-    """Read one series' measured magnitude in `unit` from a results entry.
-
-    benchmark.py reports every series with the same timing keys (`mean`,
-    `min`, `max`) and attaches peak resident set size under a separate
-    `peak_rss_kb` key.  A byte-unit mode must therefore read `peak_rss_kb`:
-    its `mean` is the run's elapsed time, not its memory use.
-
-    `peak_rss_kb` is absent when /usr/bin/time could not be parsed; report
-    zero so the row renders as visibly empty rather than aborting the chart.
-    """
-    if unit is MetricUnit.BYTES:
-        return float(series.get("peak_rss_kb") or 0.0) * 1024.0
-    return float(series["mean"])
-
-
-def metric_values(mode: str, t: dict) -> list[float]:
-    """Measured magnitudes for every bar of one test row, in the mode's unit."""
-    unit = MODE_UNITS[mode]
-    return [metric_value(t[key], unit) for key in _series_keys(mode, t)]
-
-
-def pair_ratio(t: dict, unit: MetricUnit, up_v: float, oc_v: float) -> float:
-    """oc-rsync vs upstream ratio for one row, in the row's own unit.
-
-    The results JSON carries a single `ratio` field that benchmark.py always
-    derives from elapsed time -- benchmark_report.py renders it under a
-    column headed "Time Ratio" and prints peak RSS in separate columns.  A
-    byte-unit row must therefore derive its ratio from the magnitudes it
-    actually plots, otherwise the memory row is annotated with a speed-up
-    that says nothing about memory.
-    """
-    if unit is MetricUnit.BYTES:
-        return oc_v / up_v if up_v > 0 else 0.0
-    return t.get("ratio", 0.0)
-
-
 def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
     """Compute y-positions for every element and overall chart dimensions."""
     all_times = []
     for mode, mode_tests in tests_by_mode.items():
-        if MODE_UNITS.get(mode) is not MetricUnit.DURATION:
-            continue
         for t in mode_tests:
-            all_times.extend(metric_values(mode, t))
+            if _is_three_way_ssh(mode, t):
+                all_times.append(t["upstream_ssh"]["mean"])
+                all_times.append(t["oc_subprocess"]["mean"])
+                all_times.append(t["oc_russh"]["mean"])
+            else:
+                all_times.append(t["upstream"]["mean"])
+                all_times.append(t["oc_rsync"]["mean"])
 
-    max_time = max(all_times, default=0.0) or 1.0
+    max_time = max(all_times) if all_times else 1.0
     scale = BAR_AREA_WIDTH / (max_time * 1.1)
 
     y = TOP_MARGIN
@@ -316,24 +220,25 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
         if not mode_tests:
             continue
 
-        unit = MODE_UNITS[mode]
-
         if groups:
             y += MODE_GAP
 
         # Per-group horizontal scale. A single global scale (driven by the one
-        # largest test across every mode) crushes the small groups into
-        # unreadable stubs while a few outliers stretch across, so each mode
-        # group is scaled to its own largest bar instead. Absolute magnitudes
-        # stay legible via the per-bar labels; the ratio column carries the
-        # cross-group comparison. Per-group scaling is also what keeps modes
-        # in different units from sharing an axis.
-        group_values: list[float] = []
+        # slowest test across every mode) crushes the sub-second groups into
+        # unreadable stubs while a few multi-second cases stretch across, so
+        # each mode group is scaled to its own slowest bar instead. Absolute
+        # times stay legible via the per-bar ms labels; the ratio column
+        # carries the cross-group comparison.
+        group_times: list[float] = []
         for t in mode_tests:
-            group_values.extend(metric_values(mode, t))
-        # `or 1.0` also covers an all-zero group (every measurement missing),
-        # which would otherwise divide by zero.
-        group_max = max(group_values, default=0.0) or 1.0
+            if _is_three_way_ssh(mode, t):
+                group_times.append(t["upstream_ssh"]["mean"])
+                group_times.append(t["oc_subprocess"]["mean"])
+                group_times.append(t["oc_russh"]["mean"])
+            else:
+                group_times.append(t["upstream"]["mean"])
+                group_times.append(t["oc_rsync"]["mean"])
+        group_max = max(group_times) if group_times else 1.0
         group_scale = BAR_AREA_WIDTH / (group_max * 1.1)
 
         header_y = y + MODE_HEADER_HEIGHT * 0.7
@@ -361,17 +266,20 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             else:
                 center_y = y + BAR_HEIGHT + BAR_GAP / 2
 
-            values = metric_values(mode, t)
             if three_way:
-                up_v, oc_v, third_v = values
+                up_t = t["upstream_ssh"]["mean"]
+                oc_t = t["oc_subprocess"]["mean"]
+                third_t = t["oc_russh"]["mean"]
             else:
-                (up_v, oc_v), third_v = values, None
+                up_t = t["upstream"]["mean"]
+                oc_t = t["oc_rsync"]["mean"]
+                third_t = None
 
-            up_w = max(up_v * group_scale, MIN_BAR_WIDTH)
-            oc_w = max(oc_v * group_scale, MIN_BAR_WIDTH)
+            up_w = max(up_t * group_scale, MIN_BAR_WIDTH)
+            oc_w = max(oc_t * group_scale, MIN_BAR_WIDTH)
             third_w = (
-                max(third_v * group_scale, MIN_BAR_WIDTH)
-                if third_v is not None
+                max(third_t * group_scale, MIN_BAR_WIDTH)
+                if third_t is not None
                 else None
             )
 
@@ -407,20 +315,20 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             ratio_secondary = None
             if three_way and third_w is not None and bar3_color is not None:
                 third_bar = BarSpec(
-                    third_y, third_w, third_v, bar3_color, bar3_label
+                    third_y, third_w, third_t, bar3_color, bar3_label
                 )
                 # Primary ratio = russh / oc subprocess.
                 # Secondary ratio = oc subprocess / upstream.
                 ratio_primary = t.get("ratio_russh_vs_sub", t.get("ratio", 0.0))
                 ratio_secondary = t.get("ratio_sub_vs_upstream", 0.0)
             else:
-                ratio_primary = pair_ratio(t, unit, up_v, oc_v)
+                ratio_primary = t.get("ratio", 0.0)
 
             pairs.append(
                 TestPair(
                     name=t["name"],
-                    upstream=BarSpec(up_y, up_w, up_v, bar1_color, bar1_label),
-                    oc_rsync=BarSpec(oc_y, oc_w, oc_v, bar2_color, bar2_label),
+                    upstream=BarSpec(up_y, up_w, up_t, bar1_color, bar1_label),
+                    oc_rsync=BarSpec(oc_y, oc_w, oc_t, bar2_color, bar2_label),
                     ratio=ratio_primary,
                     center_y=center_y,
                     third=third_bar,
@@ -438,7 +346,6 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             header_y=header_y,
             cli_hint=cli_hint,
             cli_hint_y=cli_hint_y,
-            unit=unit,
             tests=pairs,
         ))
 
@@ -466,91 +373,22 @@ def fmt_time(seconds: float) -> str:
     return f"{seconds:.2f}s"
 
 
-def fmt_bytes(num_bytes: float) -> str:
-    """Human-readable size: '512 KiB' for <1 MiB, '12.34 MiB', '1.21 GiB'.
+def ratio_text(ratio: float) -> tuple[str, str]:
+    """Return (display_text, color) for a speedup annotation.
 
-    IEC binary prefixes, because the underlying measurement is /usr/bin/time's
-    peak resident set size, reported in 1024-byte kbytes; the digits therefore
-    match the memory table in benchmark_report.py, which divides by 1024 too.
-    Mirrors fmt_time's shape: whole units for the smallest step, two decimals
-    once the value crosses into a larger one.
+    A non-positive ratio means timing data was missing or rounded to zero
+    on at least one side of the comparison (benchmark.py rounds ratios to
+    two decimals, collapsing sub-millisecond ratios such as 250x faster
+    to 0.0); render a neutral marker rather than dividing by zero.
     """
-    kib = num_bytes / 1024.0
-    if kib < 1024.0:
-        return f"{kib:.0f} KiB"
-    mib = kib / 1024.0
-    if mib < 1024.0:
-        return f"{mib:.2f} MiB"
-    return f"{mib / 1024.0:.2f} GiB"
-
-
-def fmt_time_exact(seconds: float) -> str:
-    """Unabbreviated timing for hover text: '2.986s'."""
-    return f"{seconds:.3f}s"
-
-
-def fmt_bytes_exact(num_bytes: float) -> str:
-    """Unabbreviated size for hover text, in the measured unit: '7924 KiB'.
-
-    /usr/bin/time reports peak RSS in whole kilobytes, so this is the raw
-    measurement with no rounding of its own.
-    """
-    return f"{num_bytes / 1024:.0f} KiB"
-
-
-# Strategy: the mode's unit selects the formatter.  One formatter for all
-# modes is what put a duration under the "Memory Usage" header.  Bar and
-# axis labels are abbreviated for width; hover text keeps full precision.
-UNIT_FORMATTERS = {
-    MetricUnit.DURATION: fmt_time,
-    MetricUnit.BYTES: fmt_bytes,
-}
-UNIT_EXACT_FORMATTERS = {
-    MetricUnit.DURATION: fmt_time_exact,
-    MetricUnit.BYTES: fmt_bytes_exact,
-}
-
-# (better, worse) wording for a ratio in each unit.  Spending more RSS is
-# not "slower", it is more memory.
-RATIO_WORDS = {
-    MetricUnit.DURATION: ("faster", "slower"),
-    MetricUnit.BYTES: ("less memory", "more memory"),
-}
-
-
-def fmt_value(value: float, unit: MetricUnit) -> str:
-    """Format a measured magnitude for a bar or axis label."""
-    return UNIT_FORMATTERS[unit](value)
-
-
-def fmt_value_exact(value: float, unit: MetricUnit) -> str:
-    """Format a measured magnitude for hover text, without abbreviating."""
-    return UNIT_EXACT_FORMATTERS[unit](value)
-
-
-def ratio_text(ratio: float, unit: MetricUnit) -> tuple[str, str]:
-    """Return (display_text, color) for an oc-rsync vs upstream annotation.
-
-    Wording follows the unit: a duration ratio reads faster/slower, a memory
-    ratio reads less/more memory.
-
-    A non-positive ratio is only meaningful for durations, where benchmark.py
-    rounds ratios to two decimals and so collapses a sub-millisecond ratio
-    such as 250x faster to 0.0.  Peak RSS has no comparable rounding floor --
-    it is measured in whole kilobytes -- so for a byte metric a non-positive
-    ratio can only mean the measurement is missing, and claiming a win there
-    would invent a result.
-    """
-    better, worse = RATIO_WORDS[unit]
     if ratio <= 0:
-        if unit is MetricUnit.DURATION:
-            return (f">100x {better}", COLOR_FASTER)
-        return ("no data", COLOR_SAME)
+        return (">100x faster", COLOR_FASTER)
     if ratio < RATIO_FASTER_BELOW:
-        return (f"{1.0 / ratio:.1f}x {better}", COLOR_FASTER)
+        speedup = 1.0 / ratio
+        return (f"{speedup:.1f}x faster", COLOR_FASTER)
     if ratio <= RATIO_SAME_UPPER:
         return ("~same", COLOR_SAME)
-    return (f"{ratio:.1f}x {worse}", COLOR_SLOWER)
+    return (f"{ratio:.1f}x slower", COLOR_SLOWER)
 
 
 def nice_grid_step(max_val: float, target_steps: int = 5) -> float:
@@ -610,14 +448,7 @@ class ChartBuilder:
         scale: float,
         y_top: float,
         y_bottom: float,
-        unit: MetricUnit = MetricUnit.DURATION,
     ) -> None:
-        """Draw an axis of dashed gridlines labelled in `unit`.
-
-        Axis labels are formatted at a different site from the bar labels, so
-        they take the same unit-driven formatter; a grid drawn over a byte
-        axis must not be labelled in milliseconds.
-        """
         step = nice_grid_step(max_time)
         self._parts.append("<g>")
         val = step
@@ -633,12 +464,12 @@ class ChartBuilder:
             self._parts.append(
                 f'<text x="{x:.1f}" y="{y_bottom + 14}" '
                 f'text-anchor="middle" font-size="10" fill="{COLOR_SUBTITLE}">'
-                f"{fmt_value(val, unit)}</text>"
+                f"{fmt_time(val)}</text>"
             )
             val += step
         self._parts.append("</g>")
 
-    def add_mode_group(self, group: ModeGroup) -> None:
+    def add_mode_group(self, group: ModeGroup, scale: float) -> None:
         self._parts.append(
             f'<text x="10" y="{group.header_y:.1f}" '
             f'font-size="13" font-weight="600" fill="{COLOR_MODE_HEADER}">'
@@ -658,11 +489,11 @@ class ChartBuilder:
                 f'text-anchor="end" font-size="11" fill="{COLOR_LABEL}">'
                 f"{escape(pair.name)}</text>"
             )
-            self._add_bar(pair.upstream, group.unit)
-            self._add_bar(pair.oc_rsync, group.unit)
+            self._add_bar(pair.upstream, scale)
+            self._add_bar(pair.oc_rsync, scale)
             if pair.third is not None:
-                self._add_bar(pair.third, group.unit)
-            self._add_speedup(pair, group.unit)
+                self._add_bar(pair.third, scale)
+            self._add_speedup(pair)
 
     def add_legend(
         self,
@@ -772,39 +603,38 @@ class ChartBuilder:
         self._parts.append("</svg>")
         return "\n".join(self._parts)
 
-    def _add_bar(self, bar: BarSpec, unit: MetricUnit) -> None:
-        value_str = fmt_value(bar.value, unit)
+    def _add_bar(self, bar: BarSpec, scale: float) -> None:
         self._parts.append(
             f'<rect x="{LEFT_MARGIN}" y="{bar.y:.1f}" '
             f'width="{bar.width:.1f}" height="{BAR_HEIGHT}" '
             f'rx="3" fill="{bar.color}">'
-            f"<title>{escape(bar.series_label)}: "
-            f"{fmt_value_exact(bar.value, unit)}</title>"
+            f"<title>{escape(bar.series_label)}: {bar.timing:.3f}s</title>"
             f"</rect>"
         )
+        time_str = fmt_time(bar.timing)
         text_y = bar.y + BAR_HEIGHT - 4
         if bar.width > TEXT_INSIDE_THRESHOLD:
             tx = LEFT_MARGIN + bar.width - 8
             self._parts.append(
                 f'<text x="{tx:.1f}" y="{text_y:.1f}" '
                 f'text-anchor="end" font-size="10" fill="{COLOR_TEXT_ON_BAR}">'
-                f"{value_str}</text>"
+                f"{time_str}</text>"
             )
         else:
             tx = LEFT_MARGIN + bar.width + 4
             self._parts.append(
                 f'<text x="{tx:.1f}" y="{text_y:.1f}" '
                 f'text-anchor="start" font-size="10" fill="{COLOR_TEXT_OFF_BAR}">'
-                f"{value_str}</text>"
+                f"{time_str}</text>"
             )
 
-    def _add_speedup(self, pair: TestPair, unit: MetricUnit) -> None:
-        text, color = ratio_text(pair.ratio, unit)
+    def _add_speedup(self, pair: TestPair) -> None:
+        text, color = ratio_text(pair.ratio)
         x = CHART_WIDTH - RIGHT_MARGIN + 10
         if pair.ratio_secondary is not None:
             # Stack two ratios for the 3-way comparison: oc-sub vs upstream
             # above, russh vs oc-sub below.
-            sec_text, sec_color = ratio_text(pair.ratio_secondary, unit)
+            sec_text, sec_color = ratio_text(pair.ratio_secondary)
             y_top = pair.center_y - 4
             y_bot = pair.center_y + 12
             self._parts.append(
@@ -864,11 +694,10 @@ def generate_chart(data: dict) -> str:
         f"{size_mb} MB, {files} files \u2014 Linux x86_64 CI",
     )
 
-    # No global x-axis grid: with per-group scaling -- and with modes that do
-    # not even share a unit -- a single shared axis would be misleading. Each
-    # bar carries its own label in its mode's unit instead.
+    # No global x-axis grid: with per-group scaling a single shared axis would
+    # be misleading. Each bar carries its own ms label instead.
     for group in layout.groups:
-        builder.add_mode_group(group)
+        builder.add_mode_group(group, layout.scale)
 
     builder.add_legend(
         chart_height - 30 - extra_legend,

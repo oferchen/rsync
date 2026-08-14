@@ -441,7 +441,7 @@ turn it on from a release `oc-rsync` invocation.
 
 ## References
 
-### zsync 0.6.2 (gianm/zsync mirror, librcksum/)
+### zsync 0.6.2 librcksum/, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`)
 
 - `internal.h:83` - `BITHASHBITS` definition
 - `hash.c:62-84` - `i` selection for hash table sizing

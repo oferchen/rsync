@@ -432,10 +432,21 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: start_daemon() with stdin/stdout fds uses 127.0.0.1:0 as the
-    // synthetic peer address. In remote-shell daemon mode the real peer address
-    // is not available since there is no TCP socket to query.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    // Remote-shell daemon mode (upstream's `am_daemon < 0`). There is no socket
+    // to query, so upstream seeds "0.0.0.0" and then consults the peer-address
+    // variables a remote shell may have set - REMOTE_HOST, SSH_CONNECTION,
+    // SSH_CLIENT, SSH2_CLIENT (clientname.c:63-77).
+    //
+    // If stdin IS a socket after all (some spawners hand one over), prefer the
+    // kernel's answer over anything the environment claims.
+    //
+    // The fallback is "0.0.0.0", never localhost: an unknown peer must match no
+    // `hosts allow` token so access control fails CLOSED. Reporting 127.0.0.1
+    // made `hosts allow = 127.0.0.1` admit every client.
+    let peer_addr = crate::peer_address::stdio_peer_addr(
+        crate::peer_address::StdioMode::RemoteShell,
+        crate::peer_address::inherited_peer_addr(),
+    );
 
     // Resolve hostname for the synthetic peer (will resolve localhost).
     // upstream: clientname.c `client_name` forward-confirms unconditionally;

@@ -1740,7 +1740,7 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:650-653 - `case 'L'` with no width modifier breaks with
+    // upstream: log.c:648-651 - `case 'L'` with no width modifier breaks with
     // n = "" for a non-link entry, so %L renders empty.
     assert_eq!(render_format("%L", &event), "\n");
 }

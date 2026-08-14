@@ -83,11 +83,7 @@ pub(in crate::local_copy) fn copy_special_as_regular_file(
     context.record_hard_link(metadata, hard_link_path);
 
     let elapsed = start.elapsed();
-    // A placeholder is written from nothing: no literal bytes off the wire
-    // and no basis block matched.
-    context
-        .summary_mut()
-        .record_file(metadata.len(), 0, crate::local_copy::MATCHED_NONE, None);
+    context.summary_mut().record_file(metadata.len(), 0, None);
     context.summary_mut().record_elapsed(elapsed);
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());

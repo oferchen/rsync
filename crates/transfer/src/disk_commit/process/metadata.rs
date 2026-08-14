@@ -28,7 +28,6 @@ pub(super) fn apply_file_metadata(
     target_path: &Path,
     begin: &BeginMessage,
     config: &DiskCommitConfig,
-    inplace_pre_transfer: Option<&std::fs::Metadata>,
 ) -> Option<(PathBuf, String)> {
     // The desired metadata rides on the begin message per-file (see
     // `BeginMessage::file_entry`), so the disk thread no longer indexes a shared
@@ -38,28 +37,19 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
-        // upstream: receiver.c:964 dest_mode() runs against the PRE-transfer
+        // upstream: rsync.c:954-965 dest_mode() runs against the PRE-transfer
         // destination stat. When metadata is applied to a temp/staged file
         // (target_path != final path), the final destination still holds the
         // file it had before this transfer, so stat it to reproduce
         // dest_mode()'s `stat_mode`/`exists` inputs: `Some(meta)` -> keep the
         // prior perm bits; a missing final path (`None`) -> brand-new file,
-        // apply the umask-masked source mode.
-        //
-        // Writing directly to the final path (inplace) destroys the
-        // pre-transfer state by the time we get here, so the caller stats the
-        // destination BEFORE `open_output_file` and hands it in. Passing `None`
-        // here instead would take the brand-new-file branch and chmod an
-        // existing destination to `source_mode & (~CHMOD_BITS | dflt_perms)` -
-        // mode 000 whenever the entry carries no perm bits - where upstream
-        // preserves the destination's own bits.
-        //
-        // upstream: rsync.c:449-472 dest_mode() is called (receiver.c:964) with
-        // `statret == 0` for an inplace write, because the destination exists.
+        // apply the umask-masked source mode. When metadata is applied
+        // directly to the final path (inplace/device/cross-device), the
+        // pre-transfer state is already gone, so pass `None`.
         let pre_transfer_meta = if target_path != begin.file_path {
             std::fs::symlink_metadata(&begin.file_path).ok()
         } else {
-            inplace_pre_transfer.cloned()
+            None
         };
         apply_metadata_acls_and_xattrs(
             target_path,
@@ -273,7 +263,7 @@ mod tests {
 
         // target_path == file_path: the final-destination apply path.
         let begin = begin_for(&path, Some(entry));
-        let err = apply_file_metadata(&path, &begin, &config, None);
+        let err = apply_file_metadata(&path, &begin, &config);
         assert!(err.is_none(), "metadata apply reported an error: {err:?}");
 
         let meta = std::fs::metadata(&path).unwrap();
@@ -304,7 +294,7 @@ mod tests {
             ..DiskCommitConfig::default()
         };
         let begin = begin_for(&path, None);
-        assert!(apply_file_metadata(&path, &begin, &config, None).is_none());
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
     }
 
     /// ACL case: the access/default ACL indices live in the entry's `extras`
@@ -346,6 +336,6 @@ mod tests {
             metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
             ..DiskCommitConfig::default()
         };
-        assert!(apply_file_metadata(&path, &begin, &config, None).is_none());
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
     }
 }

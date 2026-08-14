@@ -91,7 +91,7 @@ wire-affecting risk-wise even if not bytes-wise.
 
 ## zsync source mapping
 
-zsync librcksum (gianm/zsync mirror, line-equivalent to 0.6.2):
+zsync librcksum, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
 
 ### Bithash prefilter
 
@@ -255,9 +255,34 @@ Decisions and benchmarks recorded in `docs/design/zsync-test-inventory.md`
 and the per-technique PR descriptions. Final keep-or-revert decision
 for each technique is recorded in #2054 once benchmarks land.
 
+## Source provenance and citation verification
+
+These notes originally cited a third-party GitHub mirror. Every citation has
+since been re-verified line-by-line against the author's own release, fetched
+and digest-checked by `tools/ci/fetch_zsync_src.sh` into
+`target/interop/zsync-src/`. All ten cited locations matched the official
+0.6.2 exactly; only the provenance labels changed.
+
+Which release to cite depends on what is being checked:
+
+- **0.6.2 (C)** is the citation target for all three always-on techniques.
+  `librcksum/` is C here: `hash.c`, `rsum.c`, `state.c`, `internal.h`.
+- **0.7.2 (Go)** is the current release, but 0.7.0 rewrote the client in Go and
+  rcksum came with it (`internal/rcksum/*.go`). There is no C `librcksum` in
+  0.7.x, so 0.7.2 is a reimplementation rather than the original these
+  techniques were derived from. Cite it only as a current-behaviour reference.
+- **0.6.5** is the last C release. Between 0.6.2 and 0.6.5 `calc_rhash` changed
+  signature (one `hash_entry*` argument became two `rsum` arguments) and the
+  hash shift became a computed `hash_func_shift` rather than the constant
+  `BITHASHBITS`. The seq-match semantics are unchanged across all three.
+
+Digest algorithms differ per release because the project publishes different
+ones: 0.6.2 carries a sha1sum, 0.7.2 a sha256sum. Both are pinned in the fetch
+script and verified on every run.
+
 ## References
 
-- zsync 0.6.2 source (gianm/zsync mirror):
+- zsync 0.6.2 source, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
   - `librcksum/internal.h`, `hash.c`, `rsum.c`, `state.c`, `rcksum.h`
 - Upstream rsync 3.4.1: `target/interop/upstream-src/rsync-3.4.1/`
   - `match.c`, `token.c`, `checksum.c`

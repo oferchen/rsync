@@ -431,3 +431,63 @@ fn parse_host_list(
 
     Ok(patterns)
 }
+
+/// Access-control tests for the addresses the stdio daemon paths produce.
+///
+/// These live here rather than in `src/tests/chunks/` because [`HostPattern::matches`]
+/// is module-private; the property under test is the COMPOSITION of peer discovery
+/// with pattern matching, which is where the fail-open lived.
+#[cfg(test)]
+mod stdio_peer_access_tests {
+    use super::HostPattern;
+    use crate::peer_address::UNKNOWN_PEER;
+    use std::net::IpAddr;
+
+    /// Every peer-discovery fallback must be non-loopback.
+    ///
+    /// This is the security invariant, stated once for the whole class rather
+    /// than per call site: the daemon previously fabricated 127.0.0.1 on both
+    /// stdio paths, so `hosts allow = 127.0.0.1` admitted ANY peer and
+    /// `hosts deny` never fired. Upstream seeds `"0.0.0.0"` instead
+    /// (clientname.c:64). A loopback fallback is indistinguishable from a
+    /// genuine local client, which is exactly why it fails open.
+    #[test]
+    fn no_peer_discovery_fallback_may_be_loopback() {
+        assert!(
+            !UNKNOWN_PEER.ip().is_loopback(),
+            "UNKNOWN_PEER must never be loopback - that is the fail-open"
+        );
+        assert!(
+            UNKNOWN_PEER.ip().is_unspecified(),
+            "upstream clientname.c:64 seeds the unspecified address"
+        );
+    }
+
+    /// A loopback allow-rule must NOT admit the unknown-peer fallback.
+    ///
+    /// The end-to-end statement of the bug: with the old fabricated
+    /// 127.0.0.1 this assertion would fail, and a module restricted to
+    /// localhost would have accepted every remote client.
+    #[test]
+    fn loopback_allow_rule_does_not_admit_the_unknown_peer() {
+        let localhost_only = HostPattern::parse("127.0.0.1").expect("valid pattern");
+        assert!(
+            !localhost_only.matches(UNKNOWN_PEER.ip(), None),
+            "hosts allow = 127.0.0.1 must not match the unknown-peer fallback"
+        );
+
+        // The rule still works for a genuine loopback client.
+        let real_loopback: IpAddr = "127.0.0.1".parse().expect("valid addr");
+        assert!(localhost_only.matches(real_loopback, None));
+    }
+
+    /// A deny-rule aimed at loopback must not be dodged by the fallback.
+    #[test]
+    fn loopback_deny_rule_is_not_dodged_by_the_unknown_peer() {
+        let deny_localhost = HostPattern::parse("127.0.0.0/8").expect("valid pattern");
+        assert!(
+            !deny_localhost.matches(UNKNOWN_PEER.ip(), None),
+            "the fallback must not land inside 127.0.0.0/8"
+        );
+    }
+}

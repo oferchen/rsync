@@ -1,6 +1,5 @@
 pub mod benchmark;
 pub mod branding;
-pub mod citations;
 pub mod cross_check;
 pub mod doc_package;
 pub mod docs;

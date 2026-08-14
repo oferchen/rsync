@@ -10,7 +10,7 @@ use std::path::Path;
 
 use logging::debug_log;
 use protocol::CompatibilityFlags;
-use protocol::codec::{NDX_FLIST_OFFSET, create_ndx_codec};
+use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
 use protocol::flist::{FileEntry, IncrementalFileListBuilder, sort_and_clean_file_list};
 
 use super::super::ReceiverContext;
@@ -238,14 +238,25 @@ impl ReceiverContext {
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        let start_len = self.file_list.len();
+        let mut total_extra = 0;
 
-        // The batched drain is the lazy fetch run to the terminator, so it goes
-        // through the same shared marker-aware reader rather than repeating the
-        // branch order. Sub-list slots are tombstoned, never compacted, so the
-        // length delta is the entry count the wire carried.
-        self.ensure_all_segments_loaded(reader, &mut ndx_codec)?;
-        let total_extra = self.file_list.len() - start_len;
+        loop {
+            // Snapshot before the header ndx: upstream's raw counter ticks on
+            // arrival (io.c:820), so the segment header and EOF marker bytes are
+            // attributed to an adjacent recv_file_list span on any real link;
+            // covering them here reproduces upstream's observable flist_size.
+            let span_start = self.flist_span_start();
+            let ndx = ndx_codec.read_ndx(reader)?;
+
+            if ndx == NDX_FLIST_EOF {
+                debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+                self.flist_eof = true;
+                self.flist_span_end(span_start);
+                break;
+            }
+
+            total_extra += self.receive_one_extra_segment(reader, ndx, span_start)?;
+        }
 
         debug_log!(
             Flist,

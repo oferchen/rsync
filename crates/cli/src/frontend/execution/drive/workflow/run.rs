@@ -858,16 +858,11 @@ where
 
     let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
     let fsync_flag = fsync_option.unwrap_or(false);
+    // upstream: options.c:2413-2419 - `--write-devices` forces the global
+    // inplace flag on, so device targets are written in place rather than via a
+    // temp file.
+    let inplace_enabled = inplace.unwrap_or(false) || write_devices.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
-    // upstream: options.c:2400-2419 - `--append` and `--write-devices` each
-    // force the global inplace flag on. Both live in
-    // `engine::write_strategy::implies_inplace`, the single owner of the rule,
-    // so this front end and the `ServerConfig` promotion cannot drift apart.
-    let inplace_enabled = engine::write_strategy::implies_inplace(
-        inplace.unwrap_or(false),
-        append_enabled,
-        write_devices.unwrap_or(false),
-    );
     let whole_file_enabled = whole_file_option;
 
     let checksum_for_config = checksum.unwrap_or(false);
@@ -1071,7 +1066,7 @@ where
         from0,
     };
 
-    let mut builder = match filters::apply_filters(builder, filter_inputs, stderr) {
+    let builder = match filters::apply_filters(builder, filter_inputs, stderr) {
         Ok(builder) => builder,
         Err(code) => return code,
     };

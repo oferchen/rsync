@@ -17,29 +17,11 @@ mod execute;
 mod finalize;
 mod open;
 mod special;
-mod verify_redo;
 mod write_strategy;
 
+pub(super) use execute::execute_transfer;
 #[cfg(test)]
 pub(crate) use open::take_fsync_call_count;
-pub(super) use verify_redo::execute_transfer;
-
-/// Whether a single transfer pass completed or must be redone.
-///
-/// Mirrors upstream's `recv_ok` for the two outcomes the local executor can
-/// produce: `recv_ok == 1` (committed) and `recv_ok == 0` (the whole-file
-/// re-checksum failed, so the update is kept and the file is queued for the
-/// phase-2 redo). upstream: receiver.c:1061-1101.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::local_copy) enum TransferOutcome {
-    /// The pass committed; nothing further is owed for this file.
-    Complete,
-    /// An `--append-verify` pass appended its tail but the whole-file
-    /// re-checksum disagreed. The appended bytes stay on disk and the caller
-    /// must rerun the file as an ordinary delta transfer.
-    /// upstream: receiver.c:1096 `send_msg_int(MSG_REDO, ndx)`.
-    VerificationFailed,
-}
 
 /// Boolean flags controlling file transfer behavior.
 ///

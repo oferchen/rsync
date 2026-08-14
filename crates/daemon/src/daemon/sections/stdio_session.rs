@@ -105,10 +105,17 @@ pub fn run_stdio_session(
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientserver.c:1300-1301 - for rsh-daemon, am_daemon is set
-    // to -1 as a flag distinguishing it from a network daemon. We use a
-    // loopback address as the synthetic peer for log messages and access checks.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    // upstream: clientserver.c:1300-1301 - for rsh-daemon, am_daemon is set to
+    // -1 as a flag distinguishing it from a network daemon. That flag selects
+    // the ENVIRONMENT peer-discovery chain (clientname.c:63-77), seeded with
+    // `0.0.0.0` - never loopback. A synthetic localhost peer would make
+    // `hosts allow = 127.0.0.1`, the canonical "local connections only" rule,
+    // admit every client, because access control cannot tell a fabricated
+    // loopback from a genuine local one.
+    let peer_addr = crate::peer_address::stdio_peer_addr(
+        crate::peer_address::StdioMode::RemoteShell,
+        crate::peer_address::inherited_peer_addr(),
+    );
 
     let outcome = handle_legacy_session(
         stream,
@@ -118,7 +125,17 @@ pub fn run_stdio_session(
             motd_lines: &motd_lines,
             daemon_limit: bandwidth_limit,
             log_sink,
-            peer_host: Some("localhost".to_owned()),
+            // upstream: clientname.c:114-115 - `client_name` returns the
+            // default name rather than inventing one whenever the address is
+            // still the unresolved seed, and per-module `reverse lookup`
+            // governs whether a name is resolved at all. Asserting "localhost"
+            // here both mislabelled the log line and let a hostname-based
+            // `hosts allow` rule match a peer that was never identified.
+            peer_host: if reverse_lookup {
+                crate::daemon::resolve_peer_hostname(peer_addr.ip(), true)
+            } else {
+                None
+            },
             reverse_lookup,
         },
     );

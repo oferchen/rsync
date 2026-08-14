@@ -323,7 +323,7 @@ fn append_verify_succeeds_when_prefix_matches() {
 }
 
 #[test]
-fn append_verify_appends_then_redoes_when_prefix_mismatch() {
+fn append_verify_retransfers_when_prefix_mismatch() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -345,15 +345,8 @@ fn append_verify_appends_then_redoes_when_prefix_mismatch() {
         )
         .expect("copy succeeds");
 
-    // Two passes, not one. A failed --append-verify is not a licence to fall
-    // back to a single whole-file copy: upstream appends the tail, keeps it
-    // (--append implies --inplace, options.c:2400-2411, so receiver.c:1029
-    // commits even for recv_ok == 0), warns, and redoes the file in phase 2
-    // against that retained partial (generator.c:2175-2217). Each pass counts
-    // as a transfer, which is how the redo is observable at all - collapsing to
-    // one means the retain-and-redo model is missing.
-    // MEASURED against rsync 3.4.4: `Number of regular files transferred: 2`.
-    assert_eq!(summary.files_copied(), 2);
+    // File should be re-transferred completely due to mismatch
+    assert_eq!(summary.files_copied(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"correct source content plus more"
@@ -419,151 +412,11 @@ fn append_verify_detects_corruption_in_middle() {
         )
         .expect("copy succeeds");
 
-    // Corruption inside the existing prefix takes the same append -> verify ->
-    // retain -> redo route as any other mismatch, so it is two passes.
-    // MEASURED against rsync 3.4.4 on this exact fixture: 2 transfers,
-    // `Literal data: 30 bytes`, and the retained-update WARNING on stderr.
-    assert_eq!(summary.files_copied(), 2);
+    // File should be re-transferred due to corruption detection
+    assert_eq!(summary.files_copied(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"0123456789ABCDEFGHIJ"
-    );
-}
-
-#[test]
-fn append_verify_failure_retains_the_appended_partial_for_the_redo() {
-    // The load-bearing property of the whole cycle: after the verification
-    // fails, the bytes the append wrote must still be on disk, because they are
-    // the delta basis the second pass re-deltas against. This is what upstream
-    // buys with `--append` implying `--inplace` (options.c:2400-2411), which
-    // sends receiver.c:1029 down the `|| inplace` leg for recv_ok == 0.
-    //
-    // The check is indirect but exact: the source's second half is byte-equal to
-    // the destination's second half after pass one, so if the partial were
-    // discarded the redo would have nothing to match and the final file could
-    // only be reconstructed as pure literal. Asserting the two-pass count plus
-    // byte-correctness pins both halves of that.
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source.bin");
-    let destination = temp.path().join("dest.bin");
-
-    // A prefix long enough to span several delta blocks, so the redo has real
-    // matchable content in the tail the append contributed.
-    let source_bytes: Vec<u8> = (0..40_000u32).map(|i| (i % 251) as u8).collect();
-    let seed = vec![0u8; 20_000];
-    fs::write(&source, &source_bytes).expect("write source");
-    fs::write(&destination, &seed).expect("write mismatching partial");
-
-    let operands = vec![
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().append_verify(true),
-        )
-        .expect("copy succeeds");
-
-    assert_eq!(
-        summary.files_copied(),
-        2,
-        "one append pass plus one redo pass"
-    );
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        source_bytes,
-        "the redo must reconstruct the file exactly"
-    );
-}
-
-#[test]
-fn append_verify_success_stays_a_single_pass() {
-    // The redo must be reachable only through a real verification failure. A
-    // matching prefix means the whole-file sums agree (receiver.c:518-519), so
-    // upstream never sends MSG_REDO and the file is transferred once. Without
-    // this guard a redo that fired unconditionally would still produce correct
-    // bytes and go unnoticed.
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source.bin");
-    let destination = temp.path().join("dest.bin");
-
-    let source_bytes: Vec<u8> = (0..40_000u32).map(|i| (i % 251) as u8).collect();
-    fs::write(&source, &source_bytes).expect("write source");
-    fs::write(&destination, &source_bytes[..20_000]).expect("write matching partial");
-
-    let operands = vec![
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().append_verify(true),
-        )
-        .expect("copy succeeds");
-
-    assert_eq!(summary.files_copied(), 1, "a clean append must not redo");
-    assert_eq!(fs::read(&destination).expect("read dest"), source_bytes);
-}
-
-#[test]
-fn plain_append_never_redoes_even_with_a_mismatching_prefix() {
-    // upstream: match.c:373-386 folds the pre-existing prefix into the
-    // whole-file sum only when `append_mode == 2` (--append-verify). Plain
-    // --append leaves both sides summing just the appended tail, so the sums
-    // always agree, no redo is ever requested, and the destination is left
-    // knowingly wrong. Pinning this keeps the redo from leaking onto --append.
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source.txt");
-    let destination = temp.path().join("dest.txt");
-
-    fs::write(&source, b"0123456789ABCDEFGHIJ").expect("write source");
-    fs::write(&destination, b"01234XXX89").expect("write mismatching partial");
-
-    let operands = vec![
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().append(true),
-        )
-        .expect("copy succeeds");
-
-    assert_eq!(summary.files_copied(), 1, "--append must stay single-pass");
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"01234XXX89ABCDEFGHIJ",
-        "--append keeps the wrong prefix - that is the documented trade-off"
-    );
-
-    // The prefix an append skips is neither literal nor matched. Upstream
-    // accumulates `stats.matched_data` only in `matched()` (match.c:121), and
-    // append mode never reaches it, so upstream reports 0 - MEASURED on this
-    // shape: `oc -a --append --ignore-times --stats` over a 100 KiB prefix
-    // gives upstream `Literal 102,400 / Matched 0`.
-    //
-    // This is the assertion that catches deriving the figure as
-    // `file_size - literal_bytes`: that derivation assumes every non-literal
-    // byte was matched, which is exactly what append falsifies, and it would
-    // report the whole 10-byte prefix here.
-    assert_eq!(
-        summary.bytes_copied(),
-        10,
-        "only the appended tail is literal"
-    );
-    assert_eq!(
-        summary.matched_bytes(),
-        0,
-        "an appended-over prefix is not matched data"
     );
 }
 

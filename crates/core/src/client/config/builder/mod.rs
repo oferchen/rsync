@@ -319,39 +319,17 @@ pub struct ClientConfigBuilder {
 }
 
 impl ClientConfigBuilder {
-    /// Applies the option implications upstream resolves after argument
-    /// parsing, before its conflict table runs.
+    /// Checks for mutually exclusive option combinations.
     ///
-    /// upstream: options.c:2410 - `if (append_mode) { ...; inplace = 1; }`.
-    /// From here on `inplace` is the only flag any consumer reads: the
-    /// receiver's write target (`receiver.c:968`), its closing truncate
-    /// (`receiver.c:496`), the pre-write backup copy (`generator.c:1862,1898`),
-    /// the basis switch to that backup (`receiver.c:872`), the
-    /// retained-vs-discarded branch (`receiver.c:1029`), the `keptstr` wording
-    /// (`receiver.c:1074`), the sender's `updating_basis_file`
-    /// (`sender.c:337`) and the protocol < 29 basis-dir refusal
-    /// (`compat.c:688`). Idempotent, so `validate` and `build` may both call it.
-    fn apply_implied_options(&mut self) {
-        if self.append {
-            self.inplace = true;
-        }
-    }
-
-    /// Resolves implied options, then checks for mutually exclusive
-    /// combinations.
-    ///
-    /// Mirrors upstream `options.c` in both content and order: the `--append`
-    /// implication lands first (`options.c:2410`), so the `inplace` conflict
-    /// table below fires for `--append` without naming the flag twice.
-    ///
-    /// - `--append` conflicts with `--whole-file`
-    ///   (upstream: options.c:2401 `if (append_mode) { if (whole_file > 0) ... }`)
+    /// Mirrors upstream rsync `options.c` validation:
     /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
-    ///   (upstream: options.c:2424-2432), reported against the option the user
-    ///   typed - upstream's `append_mode ? "append" : "inplace"` ternary
+    /// - `--append` conflicts with `--partial-dir` and `--delay-updates`
+    ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
+    /// - `--append` conflicts with `--whole-file`
+    ///   (upstream: options.c:2400 `if (append_mode) { if (whole_file > 0) ... }`)
     /// - `--rsh`/`-e` conflicts with an `ssh://` URL operand (oc-specific: the
     ///   URL scheme selects the built-in SSH client, which ignores `--rsh`)
-    pub fn validate(&mut self) -> Result<(), ConfigConflict> {
+    pub fn validate(&self) -> Result<(), ConfigConflict> {
         // oc-specific: an explicit --rsh/-e (or RSYNC_RSH) selects the external
         // system ssh binary, which is consulted only for `host:path` operands.
         // An `ssh://` URL operand instead dispatches to the built-in SSH
@@ -384,8 +362,6 @@ impl ClientConfigBuilder {
         // upstream: options.c:1974-1977 - --old-args conflicts with --protect-args.
         // Any active level (>= 1) triggers the conflict, matching upstream's
         // `else if (old_style_args)` truthiness test.
-        self.apply_implied_options();
-
         if self.old_args.unwrap_or(0) >= 1 && self.protect_args == Some(true) {
             return Err(ConfigConflict {
                 option1: "old-args",
@@ -403,7 +379,8 @@ impl ClientConfigBuilder {
             });
         }
 
-        if self.inplace {
+        let is_inplace = self.inplace || self.append;
+        if is_inplace {
             let mode = if self.append { "append" } else { "inplace" };
 
             if self.delay_updates {
@@ -440,8 +417,6 @@ impl ClientConfigBuilder {
     ///   `whole_file = 1` whenever the negotiated transfer checksum is
     ///   `CSUM_NONE`. The delta pipeline cannot run without a transfer
     ///   checksum, so whole-file transfer is the only valid mode.
-    /// - `--append` promotes `inplace` to `true`. Mirrors upstream
-    ///   `options.c:2410`, which sets `inplace = 1` for any `append_mode`.
     #[must_use]
     pub fn build(mut self) -> ClientConfig {
         // upstream: checksum.c:197-198 parse_checksum_choice() forces
@@ -449,7 +424,6 @@ impl ClientConfigBuilder {
         if self.checksum_choice.transfer_is_none() {
             self.whole_file = Some(true);
         }
-        self.apply_implied_options();
         // upstream: options.c:2336-2339 - inject `P *<suffix>` so files saved
         // as backups beside the destination are protected from the delete pass.
         self.push_backup_protect_filter();

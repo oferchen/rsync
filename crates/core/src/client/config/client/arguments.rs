@@ -89,7 +89,7 @@ impl ClientConfig {
     /// report `true` when the destination is remote AND every source is
     /// local - the exact case upstream renders as `<`.
     ///
-    /// upstream: log.c:707-710 - `!local_server && *op == 's' ? '<' : '>'`
+    /// upstream: log.c:701-704 - `!local_server && *op == 's' ? '<' : '>'`
     #[must_use]
     pub fn is_local_sender(&self) -> bool {
         use crate::client::remote::operand_is_remote;

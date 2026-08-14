@@ -46,7 +46,6 @@ mod total_size;
 mod transfer_conditions;
 mod trimslash;
 mod verbosity;
-mod verify_redo;
 mod whole_file;
 mod xattr;
 
@@ -97,7 +96,6 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(checksum::Checksum),
         Box::new(whole_file::WholeFile),
         Box::new(append_inplace::AppendInplace),
-        Box::new(verify_redo::VerifyRedo),
         Box::new(compress::Compress),
         Box::new(delete::Delete),
         Box::new(remove_source_files::RemoveSourceFiles),

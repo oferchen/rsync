@@ -8,11 +8,10 @@
 //! cover. This module provides that primitive as methods on
 //! [`ReceiverContext`]:
 //!
-//! - [`ReceiverContext::read_next_frame`] classifies and dispatches one frame
-//!   through the shared marker-aware reader
-//!   ([`crate::receiver::ndx_stream::read_ndx_step`]), which appends a segment
-//!   via [`receive_one_extra_segment`](ReceiverContext::receive_one_extra_segment)
-//!   and sets `flist_eof` at the terminator.
+//! - [`ReceiverContext::read_next_frame`] classifies and dispatches one frame,
+//!   appending a segment via
+//!   [`receive_one_extra_segment`](ReceiverContext::receive_one_extra_segment)
+//!   and setting `flist_eof` at the terminator.
 //! - [`ReceiverContext::ensure_flat_idx`] pulls segments until a target flat
 //!   index is materialized (or the list ends), never indexing out of bounds.
 //! - [`ReceiverContext::ensure_all_segments_loaded`] drains every remaining
@@ -32,29 +31,65 @@
 
 use std::io::{self, Read};
 
-use protocol::codec::NdxCodecEnum;
+use protocol::codec::{NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 
 use super::super::ReceiverContext;
-use super::super::ndx_stream::{NdxStep, read_ndx_step};
+
+/// Classification of one frame read off the sender's flist/transfer stream.
+///
+/// Mirrors the four outcomes of upstream `read_ndx_and_attrs()`
+/// (`rsync.c:318-429`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::receiver) enum FrameKind {
+    /// An INC_RECURSE sub-list segment for the content-directory wire NDX was
+    /// consumed and appended to `file_list`.
+    Segment(i32),
+    /// `NDX_FLIST_EOF`: no more segments follow. `flist_eof` is now set.
+    FlistEof,
+    /// `NDX_DONE`: the sender signalled phase completion.
+    Done,
+    /// A non-negative NDX - a per-file reply/echo.
+    Reply(i32),
+}
 
 impl ReceiverContext {
     /// Reads and dispatches one frame off the sender's stream.
     ///
-    /// A thin adapter over [`read_ndx_step`], the shared marker-aware reader:
-    /// the receiver *is* the lazy file-list sink, so a segment marker is
-    /// consumed in full via
+    /// A segment marker (`ndx <= NDX_FLIST_OFFSET`) is consumed in full via
     /// [`receive_one_extra_segment`](Self::receive_one_extra_segment) and
-    /// `NDX_FLIST_EOF` sets `flist_eof`, both as side effects of the step.
+    /// reported as [`FrameKind::Segment`]. `NDX_FLIST_EOF` sets `flist_eof` and
+    /// reports [`FrameKind::FlistEof`]; `NDX_DONE` reports [`FrameKind::Done`];
+    /// any non-negative value reports [`FrameKind::Reply`].
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:329-381` - the `read_loop` this steps through
+    /// - `rsync.c:330-381` - segment marker vs NDX_DONE vs positive-ndx dispatch
     pub(in crate::receiver) fn read_next_frame<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
         ndx_codec: &mut NdxCodecEnum,
-    ) -> io::Result<NdxStep> {
-        read_ndx_step(reader, ndx_codec, self)
+    ) -> io::Result<FrameKind> {
+        // Snapshot before the ndx read: upstream's raw counter ticks on arrival
+        // (io.c:820), so a segment header or the EOF marker is attributed to an
+        // adjacent recv_file_list span on any real link. The span is kept only
+        // when the frame turns out to be flist traffic; NDX_DONE and per-file
+        // replies are transfer-phase frames upstream never counts.
+        let span_start = self.flist_span_start();
+        let ndx = ndx_codec.read_ndx(reader)?;
+
+        if ndx == NDX_FLIST_EOF {
+            self.flist_eof = true;
+            self.flist_span_end(span_start);
+            return Ok(FrameKind::FlistEof);
+        }
+        if ndx == NDX_DONE {
+            return Ok(FrameKind::Done);
+        }
+        if ndx <= NDX_FLIST_OFFSET {
+            self.receive_one_extra_segment(reader, ndx, span_start)?;
+            return Ok(FrameKind::Segment(NDX_FLIST_OFFSET - ndx));
+        }
+        Ok(FrameKind::Reply(ndx))
     }
 
     /// Ensures `file_list[flat_idx]` is materialized, pulling INC_RECURSE
@@ -66,7 +101,7 @@ impl ReceiverContext {
     /// when `flist_eof` is already set - so on a non-INC_RECURSE transfer this
     /// simply reports `flat_idx < file_list.len()` without touching the reader.
     ///
-    /// Encountering a per-file [`NdxStep::File`] while fetching a segment is
+    /// Encountering a per-file [`FrameKind::Reply`] while fetching a segment is
     /// a protocol desync and surfaces as [`io::ErrorKind::InvalidData`].
     ///
     /// # Upstream Reference
@@ -87,14 +122,14 @@ impl ReceiverContext {
                 return Ok(false);
             }
             match self.read_next_frame(reader, ndx_codec)? {
-                NdxStep::Segment(_) | NdxStep::FlistEof | NdxStep::DelStats => {}
-                NdxStep::Done => {
+                FrameKind::Segment(_) | FrameKind::FlistEof => {}
+                FrameKind::Done => {
                     // The sender signalled completion before NDX_FLIST_EOF;
                     // treat it as the end of the list.
                     self.flist_eof = true;
                     return Ok(false);
                 }
-                NdxStep::File(ndx) => return Err(unexpected_reply(ndx)),
+                FrameKind::Reply(ndx) => return Err(unexpected_reply(ndx)),
             }
         }
     }
@@ -113,9 +148,9 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         while !self.flist_eof {
             match self.read_next_frame(reader, ndx_codec)? {
-                NdxStep::Segment(_) | NdxStep::FlistEof | NdxStep::DelStats => {}
-                NdxStep::Done => self.flist_eof = true,
-                NdxStep::File(ndx) => return Err(unexpected_reply(ndx)),
+                FrameKind::Segment(_) | FrameKind::FlistEof => {}
+                FrameKind::Done => self.flist_eof = true,
+                FrameKind::Reply(ndx) => return Err(unexpected_reply(ndx)),
             }
         }
         Ok(())
@@ -138,11 +173,11 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         while !self.flist_eof && self.file_list.len() < self.hardlink_lookahead_target {
             match self.read_next_frame(reader, ndx_codec)? {
-                NdxStep::Segment(_) | NdxStep::FlistEof | NdxStep::DelStats => {}
-                NdxStep::Done => self.flist_eof = true,
+                FrameKind::Segment(_) | FrameKind::FlistEof => {}
+                FrameKind::Done => self.flist_eof = true,
                 // A per-file reply here means the transfer phase has started;
                 // stop prefetching rather than treat it as a desync.
-                NdxStep::File(_) => break,
+                FrameKind::Reply(_) => break,
             }
         }
         Ok(())

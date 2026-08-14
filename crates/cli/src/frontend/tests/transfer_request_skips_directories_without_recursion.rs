@@ -6,7 +6,7 @@ use super::*;
 ///
 /// Upstream's `recurse` defaults to `0` (options.c:112) and `xfer_dirs` falls
 /// back to `0` when neither `-r` nor `-d` is supplied (options.c:2200-2203).
-/// In `flist.c:2452`, a directory operand with `!xfer_dirs` triggers
+/// In `flist.c:2451`, a directory operand with `!xfer_dirs` triggers
 /// `rprintf(FINFO, "skipping directory %s\n", fbuf)` and is omitted from the
 /// flist, so the destination tree remains empty.
 ///

@@ -943,11 +943,6 @@ impl GeneratorContext {
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
                     updating_basis_file,
-                    // upstream: sender.c:109-110 - receive_sums() gives the
-                    // LAST basis block this length instead of blength, and only
-                    // when it is non-zero. The field is read and range-checked
-                    // at io.c:2061-2064, so it is always available here.
-                    remainder: sum_head.remainder,
                 };
                 // Upstream scans and emits tokens over the same map_ptr()
                 // window, so a read error is absorbed by the scan too. oc scans

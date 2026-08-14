@@ -890,8 +890,7 @@ fn emit_relative_implied_parents(
 
     // Dot-dir transfer root ".": upstream flist.c:2368+2417-2419 injects a
     // synthetic "." entry into the flist only for an operand that *begins* with
-    // `./` (`implied_dot_dir`), so it counts toward "Number of files" whenever
-    // directories are being transferred (the `xfer_dirs` gate below). A dot in
+    // `./` (`implied_dot_dir`), so it counts toward "Number of files". A dot in
     // the middle of the path (e.g. `src/./sub`) reroots the relative path but
     // adds no "." entry. `dot_dir_anchor()` returns "." exactly for the leading
     // form (its prefix-skip is zero). The receiver never itemizes the
@@ -902,60 +901,39 @@ fn emit_relative_implied_parents(
     if source.dot_dir_anchor().as_deref() == Some(Path::new(".")) {
         let dot = PathBuf::from(".");
         if context.mark_implied_dir_emitted(&dot) {
-            // upstream: flist.c:2419 routes the synthetic "." through
-            // send_file_name() -> make_file(), whose `if (S_ISDIR(st.st_mode))
-            // { if (!xfer_dirs) { rprintf(FINFO, "skipping directory %s\n",
-            // thisname); return NULL; } }` (flist.c:1336-1340) drops it when
-            // directories are not being transferred. `thisname` is the
-            // cleaned name passed in, so the text is exactly
-            // `skipping directory .`. A NULL from make_file means no flist
-            // entry at all: the "." is neither sized into the flist nor
-            // counted under "Number of files (dir: N)".
-            //
-            // upstream: options.c:2197-2203 resolves `xfer_dirs` to
-            // `recurse || -d || (list_only when neither was given)`;
-            // options.c:2190-2191 forces it on for --files-from, which takes
-            // the operand's own path and never reaches this branch.
-            let xfer_dirs = context.recursive_enabled()
-                || context.dirs_enabled()
-                || context.list_only_enabled();
-            if xfer_dirs {
-                context.record_file_list_entry(non_empty_path(dot.as_path()));
-                context.summary_mut().record_directory_total();
+            context.record_file_list_entry(non_empty_path(dot.as_path()));
+            context.summary_mut().record_directory_total();
 
-                // The leading-dot "." maps to the destination transfer root. When
-                // that root is freshly created this run, upstream itemizes it
-                // `cd+++++++++ ./` and counts it as a created dir (main.c:803-808);
-                // a pre-existing root stays count-only (unchanged, suppressed under
-                // -i). `--no-implied-dirs` (itemize == false) drops both. In dry-run
-                // the mkdir is elided, so "would create" is inferred from the root's
-                // absence on disk. The itemize row snapshots the source anchor dir,
-                // which exists in both modes (the destination may not yet).
-                let root_created = destination_root_created
-                    || (context.mode().is_dry_run() && !destination_path.exists());
-                if root_created
-                    && itemize
-                    && let Some(anchor) = source.dot_dir_anchor()
-                    && let Ok(meta) = fs::symlink_metadata(&anchor)
-                    && meta.file_type().is_dir()
-                {
-                    context.summary_mut().record_directory();
-                    let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
-                    let snapshot_len = snapshot.len();
-                    context.record(
-                        LocalCopyRecord::new(
-                            dot.clone(),
-                            LocalCopyAction::DirectoryCreated,
-                            0,
-                            Some(snapshot_len),
-                            Duration::default(),
-                            Some(snapshot),
-                        )
-                        .with_creation(true),
-                    );
-                }
-            } else {
-                context.record_skipped_directory(non_empty_path(dot.as_path()));
+            // The leading-dot "." maps to the destination transfer root. When
+            // that root is freshly created this run, upstream itemizes it
+            // `cd+++++++++ ./` and counts it as a created dir (main.c:803-808);
+            // a pre-existing root stays count-only (unchanged, suppressed under
+            // -i). `--no-implied-dirs` (itemize == false) drops both. In dry-run
+            // the mkdir is elided, so "would create" is inferred from the root's
+            // absence on disk. The itemize row snapshots the source anchor dir,
+            // which exists in both modes (the destination may not yet).
+            let root_created = destination_root_created
+                || (context.mode().is_dry_run() && !destination_path.exists());
+            if root_created
+                && itemize
+                && let Some(anchor) = source.dot_dir_anchor()
+                && let Ok(meta) = fs::symlink_metadata(&anchor)
+                && meta.file_type().is_dir()
+            {
+                context.summary_mut().record_directory();
+                let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
+                let snapshot_len = snapshot.len();
+                context.record(
+                    LocalCopyRecord::new(
+                        dot.clone(),
+                        LocalCopyAction::DirectoryCreated,
+                        0,
+                        Some(snapshot_len),
+                        Duration::default(),
+                        Some(snapshot),
+                    )
+                    .with_creation(true),
+                );
             }
         }
     }

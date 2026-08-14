@@ -31,8 +31,13 @@ the `rcksum_state` struct:
 
 - `next_match`: a single `hash_entry*` (or NULL) that names the next
   block expected to match. Set by `rsum.c:262` after a confirmed
-  match: `z->next_match = z->rover->next` (effectively, the hash entry
-  for block `i+1`).
+  match: `z->next_match = &(z->blockhashes[id + check_md4]);` - the
+  entry is addressed by BASIS BLOCK INDEX, not by following the bucket
+  chain. (An earlier revision of this note quoted this as
+  `z->next_match = z->rover->next`. That assignment does not exist in
+  the official source; `rover->next` is the bucket-chain walk at
+  `rsum.c:203`, an unrelated mechanism. The distinction matters - see
+  "Divergence: no basis-index adjacency check" below.)
 - `onlyone`: a one-shot flag passed into `check_checksums_on_hash_chain`
   at `rsum.c:352-356`. When set, the function probes exactly one
   hash-entry candidate and returns; it does NOT walk the rest of the
@@ -428,13 +433,86 @@ above. Concretely:
   signature exchange (append-only path), the generator is not
   invoked. Seq-match has no effect on that path.
 
+## Divergence: no basis-index adjacency check
+
+**Status: OPEN, awaiting a user decision. Do not "fix" this toward zsync
+without one.** oc's gate is deliberately not being changed on the strength
+of the upstream comparison alone.
+
+Canonical zsync requires a run's blocks to be adjacent **in basis block
+index**, and enforces it at three independent layers. All three are present
+identically in 0.6.2 (C), 0.6.5 (C) and 0.7.2 (Go):
+
+1. **The hash key is the pair.** `calc_rhash` (`internal.h:100-108` in
+   0.6.2) folds in `e[1].r.b` - the NEXT basis block's rolling sum - when
+   `seq_matches > 1`. A bucket lookup therefore cannot even be reached
+   unless two source chunks match two index-adjacent basis blocks.
+2. **Only run-starts are indexed.** `build_hash` iterates
+   `id < z->blocks + (1 - seq_matches)`, so the final block never gets an
+   entry as a run start.
+3. **An explicit rejection.** `rsum.c:211` re-checks the candidate's
+   `e[1].r` against `z->r[1]` and `continue`s on mismatch; the strong-sum
+   loop then verifies `e[check_md4]` for `check_md4 < seq_matches`, i.e.
+   basis blocks `id, id+1, ...`.
+
+oc's `generate_gated` (`crates/matching/src/generator.rs`) has none of
+this. It builds a run by repeating a full, unconstrained
+`find_match_slices_filtered` at each successive SOURCE offset and pushes
+whatever basis index comes back (`run.push(basis_idx)`, unconditional).
+oc therefore requires only **source adjacency**, never basis adjacency.
+
+Provenance: this was never implemented. `git log -S "generate_gated"`
+returns exactly one commit, #6490, which introduced the routine with
+`run.push((basis_idx, src));` - unconditional then, unconditional now.
+
+### Why this is not a correctness bug
+
+oc emits one `Copy { index, len }` per run element, each carrying its own
+basis index, so reconstruction is correct for a non-adjacent run. zsync
+cannot do that: it writes `seq_matches` consecutive blocks from a single
+basis offset, so adjacency is a structural requirement there, not a
+verification policy.
+
+### What it does cost
+
+The gate is the sole justification for halving the per-file strong sum
+(`effective_s2length`, `crates/protocol/src/compatibility/flags.rs`).
+Two half-length strong-sum confirmations are still required, so the
+per-pair false-accept probability matches zsync's. What oc drops is
+zsync's ADDITIONAL constraint that the second match land on `id+1`,
+which is worth a further factor of roughly the basis block count. Against
+that, oc's weaker gate trusts pairs zsync would reject, so it matches
+more and sends fewer literals.
+
+Backstops if a false run is ever accepted: the whole-file checksum and
+the phase-2 verification redo.
+
+### Decision required
+
+Either (a) accept the weaker gate and record it as an intentional oc
+divergence, given the extension is default-off and both backstops apply,
+or (b) add the `basis_idx == prev + 1` check to match zsync and take the
+compression loss. This note does not choose.
+
 ## References
 
 - Parent design: `docs/design/zsync-inspired-matching.md`.
-- zsync 0.6.2 source (gianm/zsync mirror):
+- zsync 0.6.2 source, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
   - `librcksum/rsum.c:190` (`next_match` cleared on miss).
   - `librcksum/rsum.c:262` (`next_match` advanced after match).
   - `librcksum/rsum.c:352-356` (`onlyone=1` probe at top of loop).
+  - `librcksum/internal.h:100-108` (`calc_rhash` folds in `e[1].r.b`).
+  - `librcksum/rsum.c:211` (explicit `e[1].r` adjacency rejection).
+  - `librcksum/rsum.c:246` (strong sums over `e[check_md4]`).
+  - `NEWS`, 0.6.1: "use sequential_matches=1 when there is only one
+    block" - oc implements the equivalent guard in
+    `DeltaGenerator::generate`, falling back to the ungated scan when
+    `index.full_block_count() < consecutive_match_needed`.
+- zsync 0.7.2 (Go reimplementation), same semantics:
+  - `internal/rcksum/hash.go:40` (run-start-only indexing).
+  - `internal/rcksum/hash.go:45` (`rs[1] = z.rsums[id+1]`).
+  - `internal/rcksum/seed_sink.go:183` (explicit `id+1` rejection).
+  - `internal/rcksum/seed_sink.go:194-212` (`seqMatches` strong sums).
 - oc-rsync match crate (HEAD on master):
   - `crates/match/src/generator.rs:103` (`want_i` declaration).
   - `crates/match/src/generator.rs:177-187` (byte-by-byte hint check).

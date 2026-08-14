@@ -318,7 +318,7 @@ are wins on paper and on zsync's own measurements; this one is not.
   - `crates/match/src/index/tests.rs` - correctness tests
   - `crates/match/tests/block_matching_accuracy.rs`
   - `crates/match/tests/integration_tests.rs`
-- zsync 0.6.2 source (gianm/zsync mirror):
+- zsync 0.6.2 source, official release (zsync.moria.org.uk, fetched by `tools/ci/fetch_zsync_src.sh`):
   - `librcksum/hash.c:62-84` - hash-table sizing
   - `librcksum/hash.c:101-102` - bithash insertion (context for #2059)
   - `librcksum/state.c:48` - `rsum_a_mask` compact-key derivation

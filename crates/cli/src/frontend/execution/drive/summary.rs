@@ -159,7 +159,9 @@ where
     let is_local_transfer = !config.is_pull() && !is_sender;
     // upstream: main.c:650-653 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
-    // whole-file. This decides the `delta-transmission` wording.
+    // whole-file. This decides the `delta-transmission` wording and gates the
+    // `total:` line (whose zero match counts are only provable in whole-file
+    // mode).
     let whole_file = config.whole_file();
     // upstream: generator.c:2291-2294 + match.c:439-446 - the delta-transmission
     // notice fires at DEBUG_GTE(FLIST, 1) and the match_report `total:` line at
@@ -173,11 +175,7 @@ where
     };
     let delta_notice = DeltaTransmissionSummary {
         notice: (is_local_transfer && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
-        // upstream: match_report() (match.c:440) is gated on DEBUG_GTE(DELTASUM, 1)
-        // alone - `--whole-file` does not suppress it, it just leaves the match
-        // counters at zero. MEASURED against rsync 3.4.4: both `-rvv` and
-        // `-rvv --no-whole-file` print the line.
-        emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
+        emit_total: is_local_transfer && whole_file && debug_gte(DebugFlag::Deltasum, 1),
     };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
