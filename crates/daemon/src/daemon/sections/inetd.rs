@@ -94,7 +94,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     // Build a DaemonStream::Stdio from process stdin/stdout.
-    // upstream: clientserver.c:1559 - start_daemon(STDIN_FILENO, STDIN_FILENO)
+    // upstream: clientserver.c:1738 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // passes the same fd for both read and write. We use separate stdin/stdout
     // handles since Rust's std::io separates them.
     let stdin = io::stdin();
@@ -102,7 +102,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientserver.c:1559 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
+    // upstream: clientserver.c:1738 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
     // `getpeername` (clientname.c:37-45).
