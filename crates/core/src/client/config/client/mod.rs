@@ -227,6 +227,8 @@ pub struct ClientConfig {
     pub(super) copy_devices: bool,
     pub(super) write_devices: bool,
     pub(super) preserve_specials: bool,
+    /// `--drop-D`: receiver refuses to create devices/specials.
+    pub(super) drop_devices: bool,
     pub(super) list_only: bool,
     /// Whether the user passed `--list-only` explicitly (upstream `list_only > 1`).
     ///
@@ -464,6 +466,7 @@ impl Default for ClientConfig {
             copy_devices: false,
             write_devices: false,
             preserve_specials: false,
+            drop_devices: false,
             list_only: false,
             list_only_arg: false,
             quiet: false,

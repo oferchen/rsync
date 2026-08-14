@@ -63,7 +63,13 @@ impl ReceiverContext {
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
+        // upstream: generator.c:2031 `!drop_devices && ...` - --drop-D
+        // withholds CREATION without touching preserve_devices /
+        // preserve_specials, which also frame the file list's rdev fields.
+        // Entries fall through to the non-regular skip path exactly as they do
+        // when -D was never given.
         if self.config.flags.skip_dest_writes()
+            || self.config.flags.drop_devices
             || (!self.config.flags.devices && !self.config.flags.specials)
         {
             return Ok(());
@@ -282,7 +288,9 @@ impl ReceiverContext {
         _dest_dir: &Path,
         _writer: &mut W,
     ) -> std::io::Result<()> {
+        // upstream: generator.c:2031 - see the unix arm above.
         if self.config.flags.skip_dest_writes()
+            || self.config.flags.drop_devices
             || (!self.config.flags.devices && !self.config.flags.specials)
         {
             return Ok(());
