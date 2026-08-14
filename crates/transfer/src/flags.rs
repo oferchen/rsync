@@ -1236,3 +1236,124 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod delivery_classification {
+    use super::*;
+
+    /// CLASS GUARD for the "long-form-only flag was never bridged" defect.
+    ///
+    /// `ParsedServerFlags` exists to be *parsed from the compact flag string*.
+    /// That is what made the defect invisible three times: everything around a
+    /// given field arrives for free, so a field the string CANNOT carry looks
+    /// no different from one it can. `--preallocate`, `--remove-source-files`
+    /// and (in `DeletionConfig`) `--ignore-errors` were each dropped this way.
+    ///
+    /// The exhaustive destructure below is the guard. Adding a field to
+    /// `ParsedServerFlags` stops the build with `error[E0027]` until the author
+    /// puts it in one of the four groups, which forces the question "how does
+    /// this reach the peer, and the LOCAL receiver on a pull?" to be answered
+    /// once, here, instead of being discovered by an operator.
+    ///
+    /// The classification was MEASURED, not inspected: each option was set on a
+    /// `ClientConfig`, round-tripped through `build_server_flag_string` ->
+    /// `from_flag_string_and_args`, then through `apply_common_server_flags`.
+    /// An automated text-analysis pass over `parse()` was tried first and
+    /// returned 44 of 56 fields as "never assigned", including `compress`,
+    /// `delete` and `dry_run` - obviously wrong. That is why these are hand
+    /// classifications: the automation gives a confidently incorrect answer.
+    ///
+    /// ⚠ `build_server_flag_string` alone is NOT the wire. It is role-agnostic
+    /// on purpose, so measuring only through it makes the role-gated letters
+    /// look absent when they are emitted one layer up. Group 3 below is exactly
+    /// that set; check the role-aware emitters before concluding anything is
+    /// missing from the wire.
+    #[test]
+    fn every_parsed_server_flags_field_is_classified() {
+        #[allow(unused_variables)]
+        let ParsedServerFlags {
+            // -- DECODED FROM THE FLAG STRING (parse_transfer_flag assigns it,
+            //    and build_server_flag_string emits the letter). ------------
+            links,
+            owner,
+            group,
+            devices,
+            specials,
+            times,
+            atimes,
+            perms,
+            recursive,
+            rsh,
+            archive,
+            verbose,
+            verbose_level,
+            compress,
+            checksum,
+            hard_links,
+            acls,
+            xattrs,
+            xattrs_level,
+            dry_run,
+            dirs,
+            whole_file,
+            sparse,
+            one_file_system,
+            relative,
+            update,
+            crtimes,
+            ignore_times,
+            backup,
+            cvs_exclude,
+
+            // -- CARRIED BY apply_common_server_flags (no compact letter, so
+            //    the string cannot deliver it and a bridge is mandatory). ---
+            preallocate,
+            remove_source_files,
+            no_implied_dirs,
+            copy_unsafe_links,
+            safe_links,
+            append,
+            append_verify,
+            copy_devices,
+            info_flags,
+
+            // -- EMITTED ONLY BY THE ROLE-AWARE EMITTERS. Upstream packs these
+            //    inside the direction branches of server_options()
+            //    (options.c:2641-2660 `if (am_sender) { K m O J y } else { L k
+            //    }`, plus :2690-2693 `else if (preserve_executability &&
+            //    am_sender) 'E'`), so the letter's presence depends on which
+            //    side we are. `build_server_flag_string` is deliberately
+            //    role-agnostic and therefore cannot pack them; the two emitters
+            //    that know the role do:
+            //    `core::client::remote::invocation::builder` (SSH argv) and
+            //    `daemon_transfer::orchestration::arguments` (daemon argv,
+            //    where upstream's `am_sender` is oc's `!is_sender`).
+            //    A new field belonging here must be added to BOTH of those with
+            //    upstream's own condition - not to build_server_flag_string, and
+            //    not to the bridge, which would drop the role gate.
+            keep_dirlinks,
+            copy_dirlinks,
+            copy_links,
+            preserve_executability,
+            fuzzy_level,
+            omit_dir_times,
+            omit_link_times,
+            prune_empty_dirs,
+
+            // -- ⚠ NEITHER MECHANISM. No compact letter, no bridge. Each needs
+            //    a decision; tracked as task 647. `partial` is forwarded as a
+            //    long arg so it is delivered, just not through these two.
+            //    `parallel_delta_scan` is an oc extension with no upstream
+            //    letter, so a bridge is its only possible route.
+            partial,
+            parallel_delta_scan,
+            mkpath,
+            incremental_recursion,
+            msgs_to_stderr,
+            numeric_ids,
+            delete,
+            list_only,
+            only_write_batch,
+        } = ParsedServerFlags::default();
+    }
+}
