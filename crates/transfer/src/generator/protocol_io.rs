@@ -762,8 +762,17 @@ impl GeneratorContext {
             self.flist_send_stats.record(entry);
         }
 
-        // upstream: flist.c:2553 - write io_error with end marker (SAFE_FILE_LIST)
-        let io_error_for_end = if self.io_error != 0 {
+        // upstream: flist.c:2781-2788 - `if (io_error == 0 || ignore_errors)
+        // write_end_of_flist(f, 0); else if (use_safe_inc_flist)
+        // write_end_of_flist(f, 1); ...`. --ignore-errors suppresses the value
+        // exactly as it does on the pre-30 path (send_io_error_flag above,
+        // flist.c:2825 `write_int(f, ignore_errors ? 0 : io_error)`): the
+        // operator asked for scan errors not to steer the peer's delete pass,
+        // and that request applies to both eras of the wire encoding. The
+        // `use_safe_inc_flist` half of upstream's rule lives inside
+        // `FileListWriter::write_end`, which emits the marker only when the
+        // peer negotiated a safe file list.
+        let io_error_for_end = if self.io_error != 0 && !self.config.deletion.ignore_errors {
             Some(self.io_error)
         } else {
             None
