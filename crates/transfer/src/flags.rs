@@ -1345,8 +1345,14 @@ mod delivery_classification {
             //    long arg so it is delivered, just not through these two.
             //    `parallel_delta_scan` is an oc extension with no upstream
             //    letter, so a bridge is its only possible route.
+            //    `drop_devices` needs no decision: it is deliberately
+            //    client-local, which is what makes the argv byte-identical.
+            //    The server decodes `--drop-D` only so a restricted shell can
+            //    inject it (upstream's rrsync forces it; see
+            //    cli/src/frontend/server/flags.rs:478).
             partial,
             parallel_delta_scan,
+            drop_devices,
             mkpath,
             incremental_recursion,
             msgs_to_stderr,
