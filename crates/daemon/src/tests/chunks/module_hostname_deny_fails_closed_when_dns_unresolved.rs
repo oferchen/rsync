@@ -45,7 +45,7 @@ fn module_hostname_deny_fails_closed_when_dns_unresolved() {
     // attacker who controls their PTR record (or simply blackholes reverse
     // DNS) cannot dodge the deny list.
     assert!(
-        !module.permits(peer, resolved),
+        !module.permits(peer, PeerHost::new(resolved, true)),
         "hostname-pattern deny rule must reject peers whose reverse DNS \
          fails (GHSA-rjfm-3w2m-jf4f)"
     );

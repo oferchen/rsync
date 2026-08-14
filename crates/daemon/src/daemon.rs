@@ -245,10 +245,9 @@ mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
 use self::module_state::build_module_runtimes;
-use self::module_state::resolve_peer_hostname;
 pub(crate) use self::module_state::{
     AuthUser, ConnectionLimiter, GidSetting, MaxConnections, ModuleConnectionError,
-    ModuleDefinition, ModuleRuntime, UserAccessLevel, module_peer_hostname,
+    ModuleDefinition, ModuleRuntime, PeerHost, UserAccessLevel, module_peer_hostname,
 };
 #[cfg(test)]
 pub(crate) use self::module_state::{
@@ -256,6 +255,7 @@ pub(crate) use self::module_state::{
     clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
     set_test_netgroup_members,
 };
+use self::module_state::{peer_host_display, resolve_peer_hostname};
 
 // upstream: log.c:122-132 logit() - every daemon log-file line is stamped
 // with `%Y/%m/%d %H:%M:%S [pid] `, provided by the LogFileWriter wrapper.
@@ -472,7 +472,11 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     };
 
     if let Some(log) = log_sink.as_ref() {
-        log_connection(log, peer_host.as_deref(), peer_addr);
+        log_connection(
+            log,
+            peer_host_display(peer_host.as_deref(), reverse_lookup),
+            peer_addr,
+        );
     }
 
     let outcome = handle_legacy_session(

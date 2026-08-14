@@ -7,7 +7,7 @@ fn module_peer_hostname_skips_lookup_when_disabled() {
     let mut cache = None;
     let resolved = module_peer_hostname(&module, &mut cache, peer, false);
     assert!(resolved.is_none());
-    assert!(!module.permits(peer, resolved));
+    assert!(!module.permits(peer, PeerHost::new(resolved, true)));
     clear_test_hostname_overrides();
 }
 

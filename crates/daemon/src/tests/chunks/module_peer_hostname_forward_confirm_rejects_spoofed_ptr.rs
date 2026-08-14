@@ -29,7 +29,7 @@ fn module_peer_hostname_forward_confirm_rejects_spoofed_ptr() {
         "a PTR name that does not forward-resolve to the peer must be rejected"
     );
     assert!(
-        !module.permits(peer, resolved),
+        !module.permits(peer, PeerHost::new(resolved, true)),
         "spoofed PTR must not satisfy a hostname `hosts allow` rule"
     );
 
@@ -39,7 +39,7 @@ fn module_peer_hostname_forward_confirm_rejects_spoofed_ptr() {
     set_test_forward_override("trusted.example.com", &[peer]);
     let resolved = module_peer_hostname(&module, &mut cache, peer, true);
     assert_eq!(resolved, Some("trusted.example.com"));
-    assert!(module.permits(peer, resolved));
+    assert!(module.permits(peer, PeerHost::new(resolved, true)));
 
     clear_test_hostname_overrides();
 }

@@ -22,7 +22,7 @@ fn module_hostname_allow_forward_resolve_non_matching_denies() {
     );
 
     assert!(
-        !module.permits(peer, None),
+        !module.permits(peer, PeerHost::new(None, true)),
         "a hostname allow token resolving to a different address must not \
          admit an unrelated peer"
     );

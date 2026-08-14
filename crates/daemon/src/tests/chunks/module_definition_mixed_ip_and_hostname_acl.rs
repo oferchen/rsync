@@ -10,20 +10,16 @@ fn module_definition_mixed_ip_and_hostname_acl() {
         &["192.168.1.99"],
     );
     // IP in allowed range, not in deny list - permitted by allow.
-    assert!(module.permits(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), None));
+    assert!(module.permits(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), PeerHost::new(None, true)));
     // IP in allowed range and also in deny list - the allow match short-
     // circuits the deny check, matching upstream `allow_access`.
-    assert!(module.permits(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 99)), None));
+    assert!(module.permits(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 99)), PeerHost::new(None, true)));
     // IP outside allowed range but hostname matches allow pattern - allow.
     assert!(module.permits(
-        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)),
-        Some("build.trusted.org"),
-    ));
+        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)), PeerHost::new(Some("build.trusted.org"), true)));
     // IP outside allowed range, hostname not in allow, IP not in deny -
     // fall-through after a non-matching allow list with a non-empty deny
     // list admits the peer per upstream access.c:290.
     assert!(module.permits(
-        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)),
-        Some("build.untrusted.org"),
-    ));
+        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)), PeerHost::new(Some("build.untrusted.org"), true)));
 }

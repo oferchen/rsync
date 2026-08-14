@@ -8,6 +8,6 @@ fn module_peer_hostname_missing_resolution_denies_hostname_only_rules() {
     if let Some(host) = resolved {
         assert_ne!(host, "trusted.example.com");
     }
-    assert!(!module.permits(peer, resolved));
+    assert!(!module.permits(peer, PeerHost::new(resolved, true)));
 }
 

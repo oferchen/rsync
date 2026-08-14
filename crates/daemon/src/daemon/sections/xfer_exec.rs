@@ -21,7 +21,7 @@ struct XferExecContext<'a> {
     module_name: &'a str,
     module_path: &'a Path,
     host_addr: IpAddr,
-    host_name: Option<&'a str>,
+    host_name: &'a str,
     user_name: Option<&'a str>,
     request: &'a str,
     /// Numbered client arguments for `RSYNC_ARG0`, `RSYNC_ARG1`, etc.
@@ -63,7 +63,7 @@ fn build_base_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessC
     cmd.env("RSYNC_MODULE_NAME", ctx.module_name);
     cmd.env("RSYNC_MODULE_PATH", ctx.module_path);
     cmd.env("RSYNC_HOST_ADDR", ctx.host_addr.to_string());
-    cmd.env("RSYNC_HOST_NAME", ctx.host_name.unwrap_or_default());
+    cmd.env("RSYNC_HOST_NAME", ctx.host_name);
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
     cmd.env("RSYNC_PID", std::process::id().to_string());
 
@@ -316,7 +316,7 @@ mod xfer_exec_tests {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
             host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            host_name: Some("client.example.com"),
+            host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
             client_args: &TEST_ARGS,
@@ -361,12 +361,16 @@ mod xfer_exec_tests {
     }
 
     #[test]
-    fn build_xfer_command_handles_missing_optional_fields() {
+    /// upstream: clientserver.c:770 sets `RSYNC_HOST_NAME` from the same `host`
+    /// the ACL and `%h` use, which is never empty - it is `UNKNOWN` or
+    /// `UNDETERMINED` when no name was resolved. The previous assertion pinned
+    /// oc's empty-string divergence.
+    fn build_xfer_command_renders_the_unresolved_host_sentinel() {
         let ctx = XferExecContext {
             module_name: "mod",
             module_path: Path::new("/data"),
             host_addr: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            host_name: None,
+            host_name: crate::daemon::module_state::UNKNOWN_HOSTNAME,
             user_name: None,
             request: "mod",
             client_args: &TEST_ARGS,
@@ -380,7 +384,7 @@ mod xfer_exec_tests {
                 .and_then(|(_, v)| v.map(|s| s.to_string_lossy().into_owned()))
         };
 
-        assert_eq!(find_env("RSYNC_HOST_NAME").as_deref(), Some(""));
+        assert_eq!(find_env("RSYNC_HOST_NAME").as_deref(), Some("UNKNOWN"));
         assert_eq!(find_env("RSYNC_USER_NAME").as_deref(), Some(""));
     }
 
@@ -633,7 +637,7 @@ mod xfer_exec_tests {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
             host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            host_name: Some("client.example.com"),
+            host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
             client_args: &args,
@@ -663,7 +667,7 @@ mod xfer_exec_tests {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
             host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            host_name: Some("client.example.com"),
+            host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
             client_args: &args,
@@ -730,7 +734,7 @@ mod xfer_exec_tests {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
             host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            host_name: Some("client.example.com"),
+            host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
             client_args: &args,
@@ -760,7 +764,7 @@ mod xfer_exec_tests {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
             host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            host_name: Some("client.example.com"),
+            host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
             client_args: &args,

@@ -17,7 +17,7 @@
 fn run_post_xfer_finalizer(
     ctx: &ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-    host_name: Option<&str>,
+    host_name: &str,
     user_name: Option<&str>,
     client_args: &[String],
     exit_status: i32,
@@ -40,7 +40,7 @@ fn run_post_xfer_finalizer(
         module_name: &module.name,
         username: "",
         remote_addr: &addr_str,
-        hostname: host_name.unwrap_or(""),
+        hostname: host_name,
         pid: std::process::id(),
     };
     let expanded_command = expand_exec_command(command, &path_ctx);
@@ -77,7 +77,7 @@ fn process_approved_module(
     };
 
     if let Some(log) = ctx.log_sink {
-        log_module_request(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+        log_module_request(log, ctx.host_display(), ctx.peer_ip, ctx.request);
     }
 
     if let Some(refused) = refused_option(module, options) {
@@ -103,7 +103,7 @@ fn process_approved_module(
             }
         }
         let client_addr = ctx.peer_ip.to_string();
-        let client_host = ctx.effective_host().unwrap_or(&client_addr);
+        let client_host = ctx.host_display();
         expand_module_vars(&mut definition, &client_addr, client_host);
         ModuleRuntime::from(definition)
     };
@@ -140,7 +140,7 @@ fn process_approved_module(
                 module_name: &module.name,
                 username: auth_user.as_deref().unwrap_or(""),
                 remote_addr: &ctx.peer_ip.to_string(),
-                hostname: ctx.effective_host().unwrap_or(""),
+                hostname: ctx.host_display(),
                 pid: std::process::id(),
             };
             let expanded_command = expand_exec_command(command, &early_path_ctx);
@@ -148,7 +148,7 @@ fn process_approved_module(
                 module_name: &module.name,
                 module_path: &module.path,
                 host_addr: ctx.peer_ip,
-                host_name: ctx.effective_host(),
+                host_name: ctx.host_display(),
                 user_name: auth_user.as_deref(),
                 request: ctx.request,
                 // Early exec runs before client args are received.
@@ -168,11 +168,11 @@ fn process_approved_module(
                     // upstream: clientserver.c:945-949 - early exec runs after
                     // the post-xfer-exec fork point, so its failure is a
                     // child exit the waiting parent still observes.
-                    let host_owned = ctx.effective_host().map(str::to_owned);
+                    let host_owned = ctx.host_display().to_owned();
                     run_post_xfer_finalizer(
                         ctx,
                         module,
-                        host_owned.as_deref(),
+                        &host_owned,
                         auth_user.as_deref(),
                         &[],
                         MODULE_ABORT_EXIT_CODE,
@@ -185,11 +185,11 @@ fn process_approved_module(
                         ctx.request
                     ));
                     send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                    let host_owned = ctx.effective_host().map(str::to_owned);
+                    let host_owned = ctx.host_display().to_owned();
                     run_post_xfer_finalizer(
                         ctx,
                         module,
-                        host_owned.as_deref(),
+                        &host_owned,
                         auth_user.as_deref(),
                         &[],
                         MODULE_ABORT_EXIT_CODE,
@@ -211,11 +211,11 @@ fn process_approved_module(
     if !validate_module_path(ctx, module)? {
         // upstream: clientserver.c:992-993 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
-        let host_owned = ctx.effective_host().map(str::to_owned);
+        let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
             ctx,
             module,
-            host_owned.as_deref(),
+            &host_owned,
             auth_user.as_deref(),
             &[],
             MODULE_ABORT_EXIT_CODE,
@@ -242,11 +242,11 @@ fn process_approved_module(
                 ctx.limiter,
                 &AtError::message("daemon security issue -- contact admin"),
             )?;
-            let host_owned = ctx.effective_host().map(str::to_owned);
+            let host_owned = ctx.host_display().to_owned();
             run_post_xfer_finalizer(
                 ctx,
                 module,
-                host_owned.as_deref(),
+                &host_owned,
                 auth_user.as_deref(),
                 &[],
                 RERR_UNSUPPORTED_EXIT_CODE,
@@ -292,7 +292,7 @@ fn process_approved_module(
     // `MPLEX_BASE = 7`). upstream: clientserver.c:1169 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
-        let host_owned = ctx.effective_host().map(str::to_owned);
+        let host_owned = ctx.host_display().to_owned();
         let result = handle_refused_option_post_handshake(
             ctx,
             &refused,
@@ -306,7 +306,7 @@ fn process_approved_module(
         run_post_xfer_finalizer(
             ctx,
             module,
-            host_owned.as_deref(),
+            &host_owned,
             auth_user.as_deref(),
             &client_args,
             RERR_UNSUPPORTED_EXIT_CODE,
@@ -347,7 +347,7 @@ fn process_approved_module(
     // rejection first (the child's `rprintf(FERROR, ...)` + `exit_cleanup`),
     // then run the post-xfer finalizer, matching that ordering.
     if effective_read_only && matches!(role, ServerRole::Receiver) {
-        let host_owned = ctx.effective_host().map(str::to_owned);
+        let host_owned = ctx.host_display().to_owned();
         let result = handle_access_denied_post_handshake(
             ctx,
             MODULE_READ_ONLY_PAYLOAD,
@@ -357,7 +357,7 @@ fn process_approved_module(
         run_post_xfer_finalizer(
             ctx,
             module,
-            host_owned.as_deref(),
+            &host_owned,
             auth_user.as_deref(),
             &client_args,
             RERR_SYNTAX_EXIT_CODE,
@@ -365,7 +365,7 @@ fn process_approved_module(
         return result;
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        let host_owned = ctx.effective_host().map(str::to_owned);
+        let host_owned = ctx.host_display().to_owned();
         let result = handle_access_denied_post_handshake(
             ctx,
             MODULE_WRITE_ONLY_PAYLOAD,
@@ -375,7 +375,7 @@ fn process_approved_module(
         run_post_xfer_finalizer(
             ctx,
             module,
-            host_owned.as_deref(),
+            &host_owned,
             auth_user.as_deref(),
             &client_args,
             RERR_SYNTAX_EXIT_CODE,
@@ -411,7 +411,7 @@ fn process_approved_module(
             module_name: &module.name,
             username: auth_user.as_deref().unwrap_or(""),
             remote_addr: &ctx.peer_ip.to_string(),
-            hostname: ctx.effective_host().unwrap_or(""),
+            hostname: ctx.host_display(),
             pid: std::process::id(),
         };
         let expanded = expand_exec_command(cmd, &nc_path_ctx);
@@ -423,11 +423,11 @@ fn process_approved_module(
                 // upstream: clientserver.c:965-970 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure
                 // is a child exit the waiting parent still observes.
-                let host_owned = ctx.effective_host().map(str::to_owned);
+                let host_owned = ctx.host_display().to_owned();
                 run_post_xfer_finalizer(
                     ctx,
                     module,
-                    host_owned.as_deref(),
+                    &host_owned,
                     auth_user.as_deref(),
                     &client_args,
                     MODULE_ABORT_EXIT_CODE,
@@ -467,11 +467,11 @@ fn process_approved_module(
             // upstream: clientserver.c - config assembly runs after the
             // post-xfer-exec fork point (post-chroot, post-args), so a
             // failure here is a child exit the waiting parent still hooks.
-            let host_owned = ctx.effective_host().map(str::to_owned);
+            let host_owned = ctx.host_display().to_owned();
             run_post_xfer_finalizer(
                 ctx,
                 module,
-                host_owned.as_deref(),
+                &host_owned,
                 auth_user.as_deref(),
                 &client_args,
                 MODULE_ABORT_EXIT_CODE,
@@ -488,11 +488,11 @@ fn process_approved_module(
         Err(err) => {
             let error = AtError::message(format!("failed to load module filter rules: {err}"));
             send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-            let host_owned = ctx.effective_host().map(str::to_owned);
+            let host_owned = ctx.host_display().to_owned();
             run_post_xfer_finalizer(
                 ctx,
                 module,
-                host_owned.as_deref(),
+                &host_owned,
                 auth_user.as_deref(),
                 &client_args,
                 MODULE_ABORT_EXIT_CODE,
@@ -526,11 +526,11 @@ fn process_approved_module(
         .map(|p| p.as_path())
         .collect();
     if !engage_landlock_sandbox(ctx, module, &extra_allowed)? {
-        let host_owned = ctx.effective_host().map(str::to_owned);
+        let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
             ctx,
             module,
-            host_owned.as_deref(),
+            &host_owned,
             auth_user.as_deref(),
             &client_args,
             MODULE_ABORT_EXIT_CODE,
@@ -564,11 +564,11 @@ fn process_approved_module(
     let mut streams = match setup_transfer_streams(ctx, arm_drain, zero_copy_policy)? {
         Some(s) => s,
         None => {
-            let host_owned = ctx.effective_host().map(str::to_owned);
+            let host_owned = ctx.host_display().to_owned();
             run_post_xfer_finalizer(
                 ctx,
                 module,
-                host_owned.as_deref(),
+                &host_owned,
                 auth_user.as_deref(),
                 &client_args,
                 MODULE_ABORT_EXIT_CODE,
@@ -579,13 +579,13 @@ fn process_approved_module(
 
     // Extract host name before building structs that borrow ctx, so the
     // borrow is released before the FSM transition mutates ctx.conn_state.
-    let host_name_owned = ctx.effective_host().map(str::to_owned);
+    let host_name_owned = ctx.host_display().to_owned();
 
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
         host_addr: ctx.peer_ip,
-        host_name: host_name_owned.as_deref(),
+        host_name: &host_name_owned,
         user_name: auth_user.as_deref(),
         request: ctx.request,
         client_args: &client_args,
@@ -600,7 +600,7 @@ fn process_approved_module(
         module_name: &module.name,
         username: "",
         remote_addr: &addr_str_exec,
-        hostname: host_name_owned.as_deref().unwrap_or(""),
+        hostname: &host_name_owned,
         pid: std::process::id(),
     };
 
@@ -650,7 +650,7 @@ fn process_approved_module(
                 run_post_xfer_finalizer(
                     ctx,
                     module,
-                    host_name_owned.as_deref(),
+                    &host_name_owned,
                     auth_user.as_deref(),
                     &client_args,
                     RERR_UNSUPPORTED_EXIT_CODE,
@@ -673,7 +673,7 @@ fn process_approved_module(
                 run_post_xfer_finalizer(
                     ctx,
                     module,
-                    host_name_owned.as_deref(),
+                    &host_name_owned,
                     auth_user.as_deref(),
                     &client_args,
                     MODULE_ABORT_EXIT_CODE,

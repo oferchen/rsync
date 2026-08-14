@@ -23,7 +23,7 @@ fn module_hostname_forward_lookup_off_skips_token_resolution() {
     set_test_forward_override("trusted.example.com", &[peer]);
 
     assert!(
-        !module.permits(peer, None),
+        !module.permits(peer, PeerHost::new(None, true)),
         "forward lookup = no must skip forward resolution of hostname tokens"
     );
 
@@ -31,7 +31,7 @@ fn module_hostname_forward_lookup_off_skips_token_resolution() {
     // peer, confirming the deny above is due to the disabled parameter alone.
     let enabled = module_with_host_patterns(&["trusted.example.com"], &[]);
     assert!(
-        enabled.permits(peer, None),
+        enabled.permits(peer, PeerHost::new(None, true)),
         "forward lookup = yes (default) must admit via the same token"
     );
 

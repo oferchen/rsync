@@ -19,7 +19,7 @@ fn module_hostname_allow_forward_resolve_failure_fails_closed() {
     // No forward override is registered, so the token "does not resolve" and
     // the resolver returns an empty address set.
     assert!(
-        !module.permits(peer, None),
+        !module.permits(peer, PeerHost::new(None, true)),
         "an unresolvable hostname allow token must fail closed (deny)"
     );
 

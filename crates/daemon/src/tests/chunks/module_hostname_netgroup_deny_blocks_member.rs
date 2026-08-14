@@ -16,11 +16,11 @@ fn module_hostname_netgroup_deny_blocks_member() {
     set_test_netgroup_members("blocked", &["bad.example.com"]);
 
     assert!(
-        !module.permits(peer, Some("bad.example.com")),
+        !module.permits(peer, PeerHost::new(Some("bad.example.com"), true)),
         "a member of the @netgroup deny rule must be blocked"
     );
     assert!(
-        module.permits(peer, Some("good.example.com")),
+        module.permits(peer, PeerHost::new(Some("good.example.com"), true)),
         "a non-member must not be caught by the @netgroup deny rule"
     );
 

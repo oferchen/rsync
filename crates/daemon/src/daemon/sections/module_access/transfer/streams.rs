@@ -314,7 +314,7 @@ fn execute_transfer(
         let text = format!(
             "module '{}' from {} ({}): protocol {}, role: {:?}",
             ctx.request,
-            ctx.effective_host().unwrap_or("unknown"),
+            ctx.host_display(),
             ctx.peer_ip,
             final_protocol.as_u8(),
             role
@@ -369,7 +369,7 @@ fn execute_transfer(
 
                     let log_ctx = LogFormatContext {
                         operation,
-                        hostname: ctx.effective_host().unwrap_or("unknown"),
+                        hostname: ctx.host_display(),
                         remote_addr: &addr_str,
                         module_name: ctx.request,
                         username: "",
@@ -411,7 +411,7 @@ fn execute_transfer(
             if let Some(log) = ctx.log_sink {
                 let text = format!(
                     "transfer failed to {} ({}): module={} error={}",
-                    ctx.effective_host().unwrap_or("unknown"),
+                    ctx.host_display(),
                     ctx.peer_ip,
                     ctx.request,
                     err

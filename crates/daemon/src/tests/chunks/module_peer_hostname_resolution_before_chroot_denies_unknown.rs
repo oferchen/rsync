@@ -46,7 +46,7 @@ fn module_peer_hostname_resolution_before_chroot_denies_unknown() {
     // The critical security property: with no resolved hostname, the
     // hostname-only allow rule cannot match, so access must be denied.
     assert!(
-        !module.permits(peer, resolved),
+        !module.permits(peer, PeerHost::new(resolved, true)),
         "module must deny access when hostname resolution fails and only \
          hostname-based allow rules are configured (CVE-2026-43617)"
     );

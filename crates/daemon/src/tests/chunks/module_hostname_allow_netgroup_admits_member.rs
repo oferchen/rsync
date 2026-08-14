@@ -18,7 +18,7 @@ fn module_hostname_allow_netgroup_admits_member() {
     set_test_netgroup_members("trusted", &["client.example.com"]);
 
     assert!(
-        module.permits(peer, Some("client.example.com")),
+        module.permits(peer, PeerHost::new(Some("client.example.com"), true)),
         "a client whose hostname is a member of the @netgroup allow rule must be admitted"
     );
 

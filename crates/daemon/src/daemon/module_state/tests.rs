@@ -30,8 +30,8 @@ fn module_definition_default() {
 fn module_definition_permits_all_when_no_rules() {
     let def = ModuleDefinition::default();
     let addr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-    assert!(def.permits(addr, None));
-    assert!(def.permits(addr, Some("example.com")));
+    assert!(def.permits(addr, PeerHost::new(None, true)));
+    assert!(def.permits(addr, PeerHost::new(Some("example.com"), true)));
 }
 
 #[test]
@@ -45,8 +45,8 @@ fn module_definition_permits_respects_hosts_allow() {
     };
     let allowed = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-    assert!(def.permits(allowed, None));
-    assert!(!def.permits(denied, None));
+    assert!(def.permits(allowed, PeerHost::new(None, true)));
+    assert!(!def.permits(denied, PeerHost::new(None, true)));
 }
 
 #[test]
@@ -60,8 +60,8 @@ fn module_definition_permits_respects_hosts_deny() {
     };
     let allowed = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-    assert!(def.permits(allowed, None));
-    assert!(!def.permits(denied, None));
+    assert!(def.permits(allowed, PeerHost::new(None, true)));
+    assert!(!def.permits(denied, PeerHost::new(None, true)));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn module_definition_allow_match_short_circuits_deny() {
         ..Default::default()
     };
     let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-    assert!(def.permits(peer, None));
+    assert!(def.permits(peer, PeerHost::new(None, true)));
 }
 
 #[test]
@@ -100,14 +100,14 @@ fn module_definition_deny_applies_when_allow_does_not_match() {
         ..Default::default()
     };
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-    assert!(!def.permits(denied, None));
+    assert!(!def.permits(denied, PeerHost::new(None, true)));
 
     // Peer outside both allow and deny: admitted because access.c:287
     // returns 0 only on a deny-list match; otherwise access.c:291 allows.
     // The allow-list non-match short-circuits to refuse only when the
     // deny list is empty (access.c:281-282).
     let outside_both = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
-    assert!(def.permits(outside_both, None));
+    assert!(def.permits(outside_both, PeerHost::new(None, true)));
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
         ..Default::default()
     };
     let allowed = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
-    assert!(def.permits(allowed, None));
+    assert!(def.permits(allowed, PeerHost::new(None, true)));
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn module_definition_matches_upstream_rsync_fns_allow_list() {
         Ipv4Addr::new(10, 255, 255, 254),
     ] {
         assert!(
-            def.permits(IpAddr::V4(ip), None),
+            def.permits(IpAddr::V4(ip), PeerHost::new(None, true)),
             "{ip} must be permitted by testsuite allow list",
         );
     }
@@ -178,7 +178,7 @@ fn module_definition_matches_upstream_rsync_fns_allow_list() {
         Ipv4Addr::new(203, 0, 113, 5),
     ] {
         assert!(
-            !def.permits(IpAddr::V4(ip), None),
+            !def.permits(IpAddr::V4(ip), PeerHost::new(None, true)),
             "{ip} must be refused by testsuite allow list",
         );
     }
