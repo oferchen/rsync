@@ -886,6 +886,57 @@ impl<'a> CopyContext<'a> {
     /// (backup.c:352) under `INFO_GTE(BACKUP, 1)` once the backup has been
     /// placed successfully. The wording matches upstream byte-for-byte:
     /// `backed up <fname> to <buf>`.
+    /// Reports whether `--safe-links` forbids backing up `destination`,
+    /// emitting upstream's `SYMSAFE,1` notice when it does.
+    ///
+    /// upstream: `backup.c:289-310` gates the hard-link/rename fast path and
+    /// `backup.c:368-375` gates the copy fallback on the same rule. Upstream
+    /// carries both because `link_or_rename()` would otherwise hard-link an
+    /// escaping symlink into the backup area and `goto success`, never reaching
+    /// the copy path's check - its own comment at `backup.c:282-288` says so.
+    /// Routing both oc sites through one predicate is what stops them drifting
+    /// apart again, which is exactly how the fast path came to be unguarded.
+    ///
+    /// A `readlink` failure refuses the backup rather than permitting it:
+    /// upstream fails closed at `backup.c:295-300` on the same reasoning, that
+    /// an unverifiable target must not be preserved into the backup area.
+    fn backup_refused_by_safe_links(&self, destination: &Path, file_type: fs::FileType) -> bool {
+        if !(file_type.is_symlink()
+            && self.options.links_enabled()
+            && self.options.safe_links_enabled())
+        {
+            return false;
+        }
+
+        let Ok(target) = fs::read_link(destination) else {
+            // upstream: backup.c:296-297
+            info_log!(
+                Symsafe,
+                1,
+                "not backing up symlink with unreadable target \"{}\"",
+                destination.display()
+            );
+            return true;
+        };
+
+        let safety_rel = destination
+            .strip_prefix(self.destination_root())
+            .unwrap_or(destination);
+        if symlink_target_is_safe(&target, safety_rel) {
+            return false;
+        }
+
+        // upstream: backup.c:303-306
+        info_log!(
+            Symsafe,
+            1,
+            "not backing up unsafe symlink \"{}\" -> \"{}\"",
+            destination.display(),
+            target.display()
+        );
+        true
+    }
+
     pub(super) fn backup_existing_entry(
         &mut self,
         destination: &Path,
@@ -927,6 +978,14 @@ impl<'a> CopyContext<'a> {
                 parent,
                 &self.metadata_options(),
             )?;
+        }
+
+        // upstream: backup.c:289-310 - honour --safe-links BEFORE the
+        // hard-link/rename fast path. Without this the fast path preserves an
+        // escaping symlink in the backup area and returns successfully, so the
+        // cross-device check further down is never consulted.
+        if self.backup_refused_by_safe_links(destination, file_type) {
+            return Ok(());
         }
 
         // upstream: backup.c:200-207 link_or_rename() - try a hard link into
@@ -986,27 +1045,12 @@ impl<'a> CopyContext<'a> {
                 BackupStrategy::Rename
             }
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                // upstream: backup.c:290 - when copying across devices, the
-                // symlink fallback honours --safe-links. Unsafe symlinks are
-                // not recreated at the backup location and SYMSAFE,1 fires.
-                if file_type.is_symlink()
-                    && self.options.safe_links_enabled()
-                    && let Ok(target) = fs::read_link(destination)
-                {
-                    let safety_rel = destination
-                        .strip_prefix(self.destination_root())
-                        .unwrap_or(destination);
-                    if !symlink_target_is_safe(&target, safety_rel) {
-                        // upstream: backup.c:291 - INFO_GTE(SYMSAFE, 1)
-                        info_log!(
-                            Symsafe,
-                            1,
-                            "not backing up unsafe symlink \"{}\" -> \"{}\"",
-                            destination.display(),
-                            target.display()
-                        );
-                        return Ok(());
-                    }
+                // upstream: backup.c:368-375 - the copy fallback re-checks
+                // --safe-links before recreating the symlink. Upstream keeps
+                // this alongside the fast-path check above; both go through the
+                // one predicate so they cannot implement different rules.
+                if self.backup_refused_by_safe_links(destination, file_type) {
+                    return Ok(());
                 }
                 match copy_entry_to_backup(
                     destination,
