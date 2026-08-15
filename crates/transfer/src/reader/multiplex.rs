@@ -236,20 +236,43 @@ const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 /// Returns the timeout the client should adopt from a daemon-advertised
 /// `MSG_IO_TIMEOUT` value `val`, or `None` to keep the current setting.
 ///
-/// Mirrors upstream `io.c:1726` `if (!io_timeout || io_timeout > val)`: adopt
+/// Mirrors upstream `io.c:1727` `if (!io_timeout || io_timeout > val)`: adopt
 /// the stricter (smaller, non-zero) timeout. A current value of `None` or `0`
 /// means the client set no timeout (infinite), so any daemon value is adopted;
 /// otherwise the daemon value is adopted only when it is smaller than the
 /// client's own. This is the single reconciliation point for adoption.
 ///
-/// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+/// A value outside `1..=86400` is ignored, keeping the local setting. Upstream
+/// added this range check in 3.5.0; without it a daemon sending 0 turns the
+/// client's `--timeout` OFF, and a stalled daemon then hangs the client
+/// forever. That is the whole of CVE-2026-70462.
+///
+/// ⚠ `val == 0` where upstream writes `val <= 0`: the payload is decoded as
+/// `u32` here (upstream reads a signed `int`), so a negative value is not
+/// representable and the two conditions are the same predicate over this
+/// domain. That also means oc's immunity to the negative half is a property of
+/// the DECODE TYPE, not of this guard - changing the decode to `i32` to "match
+/// upstream" would reintroduce it, so the u32 decode is pinned by test.
+///
+/// upstream: io.c:1712-1731 `read_a_msg()` case `MSG_IO_TIMEOUT`; the 86400
+/// ceiling is an inline literal at `:1724`, not a macro.
 fn reconcile_io_timeout(current: Option<u32>, val: u32) -> Option<u32> {
+    if val == 0 || val > MAX_DAEMON_IO_TIMEOUT_SECS {
+        return None;
+    }
     match current {
         None | Some(0) => Some(val),
         Some(c) if c > val => Some(val),
         Some(_) => None,
     }
 }
+
+/// Largest `MSG_IO_TIMEOUT` value a daemon may impose, in seconds (24 hours).
+///
+/// upstream: io.c:1724 - a very large value would overflow the half-interval
+/// computation `(io_timeout + 1) / 2` in `set_io_timeout()`, wrapping the
+/// select timeout negative, which reads as "wait forever".
+const MAX_DAEMON_IO_TIMEOUT_SECS: u32 = 86400;
 
 impl<R> MultiplexReader<R> {
     pub(super) fn new(inner: R) -> Self {
@@ -1074,6 +1097,79 @@ mod io_timeout_adoption_tests {
         reader.handle_io_timeout_msg(&mut RealSink);
         assert_eq!(reader.io_timeout, Some(30));
         assert_eq!(observed.load(Ordering::SeqCst), 30);
+    }
+
+    /// A daemon value of 0 must NOT disable the client's `--timeout`.
+    ///
+    /// This is CVE-2026-70462. Without upstream's `val <= 0` check the zero
+    /// wins the `c > val` comparison, is adopted as the effective timeout, and
+    /// downstream becomes `set_read_timeout(None)` - the client then waits
+    /// forever on a daemon that has stopped sending. A malicious daemon turns
+    /// off the one defence `--timeout` exists to provide.
+    ///
+    /// The observation is the RE-APPLY HOOK, not the return value: the hook
+    /// must not fire, so `observed` keeps its never-invoked sentinel. The
+    /// sibling tests prove that instrument is live - `adopts_stricter_daemon_
+    /// timeout` shows it firing with 30, and `keeps_client_timeout_when_not_
+    /// stricter` shows the sentinel surviving - so a sentinel here means
+    /// "refused", not "machinery inert".
+    #[test]
+    fn daemon_zero_must_not_disable_client_timeout() {
+        let (mut reader, observed) = reader_with_adoption(Some(10));
+        reader.buffer = 0u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, Some(10), "client keeps its --timeout=10");
+        assert_eq!(
+            observed.load(Ordering::SeqCst),
+            u32::MAX,
+            "re-apply hook must not fire for an out-of-range value"
+        );
+        assert!(reader.check_io_timeout().is_ok());
+    }
+
+    /// A client with NO timeout is also not given one by a zero.
+    ///
+    /// Guards the `None | Some(0) => Some(val)` arm, which would otherwise
+    /// adopt 0 and store a meaningless "timeout" of zero.
+    #[test]
+    fn daemon_zero_is_ignored_even_with_no_client_timeout() {
+        let (mut reader, observed) = reader_with_adoption(None);
+        reader.buffer = 0u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, None, "still no timeout, not Some(0)");
+        assert_eq!(observed.load(Ordering::SeqCst), u32::MAX, "hook silent");
+    }
+
+    /// The 24-hour ceiling, and that it is a CEILING rather than a clamp.
+    ///
+    /// upstream ignores an over-range value (`break`), keeping the local
+    /// setting - it does not truncate to 86400. 86400 itself is still valid.
+    #[test]
+    fn daemon_value_above_the_day_ceiling_is_ignored_not_clamped() {
+        assert_eq!(reconcile_io_timeout(Some(10), 86_401), None, "ignored");
+        assert_eq!(reconcile_io_timeout(None, 86_401), None, "ignored");
+        assert_eq!(
+            reconcile_io_timeout(None, 86_400),
+            Some(86_400),
+            "the ceiling itself is in range"
+        );
+    }
+
+    /// The payload is decoded as `u32`, and that choice is load-bearing.
+    ///
+    /// Upstream reads a SIGNED int, so its `val <= 0` also catches a negative.
+    /// Here 0xFFFFFFFF decodes to 4294967295, which the 86400 ceiling refuses
+    /// anyway - but before that ceiling existed, oc was immune to the negative
+    /// half purely by decode type. Pinning it so a later "match upstream's
+    /// signed read" change cannot silently reopen the hole.
+    #[test]
+    fn all_ones_payload_is_a_huge_value_not_a_negative_one() {
+        let (mut reader, observed) = reader_with_adoption(Some(10));
+        reader.buffer = u32::MAX.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, Some(10));
+        assert_eq!(observed.load(Ordering::SeqCst), u32::MAX, "hook silent");
+        assert_eq!(reconcile_io_timeout(Some(10), u32::MAX), None);
     }
 
     /// A client whose timeout is already at least as strict keeps its own value
