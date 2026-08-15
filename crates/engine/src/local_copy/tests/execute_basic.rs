@@ -1015,8 +1015,7 @@ fn execute_does_not_preserve_permissions_by_default() {
     fs::write(&source, b"perms").expect("write source");
 
     let mut perms = fs::metadata(&source).expect("source metadata").permissions();
-    // Use 0o777 so any non-zero umask produces a visibly different mode,
-    // proving that permissions are not preserved by default.
+    // 0o777 makes every umask bit observable in the destination mode.
     perms.set_mode(0o777);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -1033,8 +1032,14 @@ fn execute_does_not_preserve_permissions_by_default() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
-    // Default options do not preserve permissions - dest gets umask-applied mode
-    assert_ne!(dest_perms.mode() & 0o777, 0o777);
+    // Without --perms a new destination takes `flist_mode & (~CHMOD_BITS |
+    // dflt_perms)` where dflt_perms is `ACCESSPERMS & ~orig_umask`
+    // (upstream: rsync.c dest_mode(), exists == 0) - i.e. the source mode with
+    // the umask applied. Asserting the exact mode rather than "not 0o777"
+    // also fails at umask 000, where the old inequality could not distinguish
+    // "not preserved" from "preserved".
+    // `::` because `local_copy::test_support` shadows the crate name here.
+    assert_eq!(dest_perms.mode() & 0o777, ::test_support::umask_masked(0o777));
 }
 
 #[cfg(unix)]

@@ -12,6 +12,8 @@ pub mod daemon_port;
 pub mod dir_diff;
 pub mod lsh;
 pub mod skip;
+#[cfg(unix)]
+pub mod umask;
 pub mod upstream_compat;
 
 pub use bin_path::{oc_rsync_bin, target_profile_dir, workspace_bin, workspace_bin_path};
@@ -24,6 +26,8 @@ pub use skip::{
     locate_command_on_path, locate_workspace_binary, require_binary, require_command_on_path,
     require_unix,
 };
+#[cfg(unix)]
+pub use umask::umask_masked;
 pub use upstream_compat::{
     UpstreamRsync, UpstreamVersion, locate_upstream_rsync, require_upstream_rsync,
     upstream_compat_enabled, upstream_install_bin, workspace_root,

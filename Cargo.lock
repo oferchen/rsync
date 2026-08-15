@@ -1410,6 +1410,7 @@ dependencies = [
  "rayon",
  "rustix",
  "tempfile",
+ "test-support",
  "thiserror",
  "tracing",
  "windows-sys 0.61.2",

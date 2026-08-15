@@ -519,8 +519,9 @@ fn no_implied_dirs_collection_reports_correct_events() {
 
 // Mirrors the upstream `relative-implied` testsuite `--no-implied-dirs` half:
 // `-aR --no-implied-dirs b/c/file dst/` must transfer dst/b/c/file, creating
-// the implied leading dirs with the default mode (umask-masked 0755) rather
-// than the source dir's distinctive 0750. Previously oc-rsync errored with
+// the implied leading dirs with the default mode - upstream's make_path()
+// passes ACCESSPERMS (0777) to do_mkdir_at, so the umask decides - rather than
+// the source dir's distinctive 0750. Previously oc-rsync errored with
 // "file has vanished". upstream: generator.c:1329-1333 make_path().
 #[cfg(unix)]
 #[test]
@@ -566,9 +567,12 @@ fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
         .permissions()
         .mode()
         & 0o777;
-    assert_ne!(
-        b_mode, 0o750,
-        "--no-implied-dirs must not mirror the source's 0750 onto the implied dir"
+    assert_eq!(
+        b_mode,
+        // `::` because `local_copy::test_support` shadows the crate name here.
+        ::test_support::umask_masked(0o777),
+        "--no-implied-dirs must give the implied dir the umask-applied default \
+         mode, not the source's 0750"
     );
 }
 
