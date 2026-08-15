@@ -313,9 +313,12 @@ mod linux {
             let dest = dir.path().join("mode_test.txt");
             if link_anonymous_tmpfile(&file, &dest).is_ok() {
                 let meta = std::fs::metadata(&dest).unwrap();
-                // Mode should have at least the requested bits (umask may clear some)
+                // `O_TMPFILE` applies the umask like any other `O_CREAT`, so the
+                // surviving bits are the requested ones minus the mask. Deriving
+                // rather than asserting a bare 0o600 keeps this exact under a
+                // umask that clears owner bits.
                 let mode = meta.mode() & 0o777;
-                assert_eq!(mode & 0o600, 0o600);
+                assert_eq!(mode & 0o600, test_support::umask_masked(0o600));
             }
         }
     }
