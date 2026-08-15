@@ -208,6 +208,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Network
 tempfile = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
+test-support = { path = "../test-support" }
 
 [target.'cfg(unix)'.dev-dependencies]
 # The dir_sandbox descriptor-exhaustion test lowers RLIMIT_NOFILE to provoke a

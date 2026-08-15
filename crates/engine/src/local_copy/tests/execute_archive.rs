@@ -731,8 +731,7 @@ fn archive_no_perms_skips_permission_preservation() {
         b"restricted",
         test_helpers::TEST_TIMESTAMP,
     );
-    // Use 0o777 so any non-zero umask produces a visibly different mode,
-    // proving that permissions are not preserved from the source.
+    // 0o777 makes every umask bit observable in the destination mode.
     test_helpers::set_permissions(&ctx.source.join("restricted.txt"), 0o777);
 
     // archive but with perms disabled
@@ -743,12 +742,15 @@ fn archive_no_perms_skips_permission_preservation() {
         .expect("copy");
 
     let dest_perms = test_helpers::get_permissions(&ctx.dest.join("restricted.txt"));
-    // With perms disabled, the destination gets umask-applied permissions,
-    // not the source's exact 0o777.
-    assert_ne!(
+    // With perms disabled the destination takes the source mode with the umask
+    // applied (upstream: rsync.c dest_mode(), exists == 0). Asserting the exact
+    // mode also fails at umask 000, where "not 0o777" could not tell
+    // "not preserved" apart from "preserved".
+    assert_eq!(
         dest_perms & 0o777,
-        0o777,
-        "with perms disabled, mode should not be exactly 0o777"
+        // `::` because `local_copy::test_support` shadows the crate name here.
+        ::test_support::umask_masked(0o777),
+        "with perms disabled, mode should be the umask-applied source mode"
     );
 }
 
