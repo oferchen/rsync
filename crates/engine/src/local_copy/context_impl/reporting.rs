@@ -8,7 +8,7 @@ impl<'a> CopyContext<'a> {
     /// byte-for-byte: `skipping non-regular file "%s"`.
     pub(super) fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
-            info_log!(Nonreg, 1, "skipping non-regular file \"{}\"", path.display());
+            self.note_skipped_non_regular(path);
             self.record(LocalCopyRecord::new(
                 path.to_path_buf(),
                 LocalCopyAction::SkippedNonRegular,
@@ -18,6 +18,22 @@ impl<'a> CopyContext<'a> {
                 None,
             ));
         }
+    }
+
+    /// Emits the NONREG notice alone, without recording a transfer entry.
+    ///
+    /// This is the single owner of the message text and of its `INFO_GTE`
+    /// gate. Callers that build their own `SkippedNonRegular` record - the
+    /// symlink path needs one carrying a link-target snapshot - must call
+    /// this, or the entry is reported only through the verbose renderer and
+    /// therefore vanishes at default verbosity, where upstream still prints.
+    pub(super) fn note_skipped_non_regular(&mut self, relative: &Path) {
+        info_log!(
+            Nonreg,
+            1,
+            "skipping non-regular file \"{}\"",
+            relative.display()
+        );
     }
 
     /// Records a skip event for a symbolic link whose creation the platform

@@ -1121,13 +1121,15 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedNonRegular => {
-                writeln_wrapped(
-                    stdout,
-                    "skipping non-regular file \"",
-                    event.relative_path(),
-                    escape,
-                    "\"",
-                )?;
+                // Deliberately silent here. The `skipping non-regular file`
+                // notice is emitted on the NONREG info channel by the engine
+                // (context_impl/reporting.rs). Upstream gates it on
+                // INFO_GTE(NONREG, 1), and NONREG sits in info_verbosity[0]
+                // (options.c), so it prints once at DEFAULT verbosity. Writing
+                // it again from this renderer produced a second copy at -v and
+                // above - and, because this arm has no info gate at all while
+                // every sibling checks InfoFlag::Skip, `--info=nononreg` could
+                // not suppress it.
                 continue;
             }
             ClientEventKind::SkippedDirectory => {
