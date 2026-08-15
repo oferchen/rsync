@@ -229,6 +229,21 @@ impl<'a> CopyContext<'a> {
             loaded_markers: Vec::new(),
         };
 
+        // upstream: exclude.c:359-375 add_rule - a merge file that is already
+        // registered is not registered again. Seed the registry with the same
+        // set upstream's `mergelist_parents` holds on entry: the program's own
+        // dir-merge rules (loaded per directory by the loop below) plus the
+        // rules inherited from the parent frame. Without this, a `.rsync-filter`
+        // whose own body names `.rsync-filter` re-registers itself on every
+        // pass and the growing loop below never terminates.
+        let mut registry = MergeFileRegistry::default();
+        for rule in program.dir_merge_rules() {
+            registry.register(rule.pattern());
+        }
+        for rule in &new_frame.active_rules {
+            registry.register(&rule.pattern);
+        }
+
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
 
@@ -300,9 +315,10 @@ impl<'a> CopyContext<'a> {
             // Append them to the dynamic frame's active set; the growing while
             // loop below picks them up so `dir-merge .filt2` in `bar/.filt` loads
             // `bar/.filt2` here as well as in descendants.
-            new_frame
-                .active_rules
-                .append(&mut entries.nested_dir_merges);
+            registry.retain_unregistered(
+                &mut new_frame.active_rules,
+                &mut entries.nested_dir_merges,
+            );
 
             // If the filter file had a clear directive, we should clear inherited rules
             // from parent directories before adding any new rules from this directory.
@@ -387,7 +403,11 @@ impl<'a> CopyContext<'a> {
                 });
             }
             new_frame.loaded_markers.append(&mut loaded.markers);
-            new_frame.active_rules.append(&mut loaded.nested);
+            // Registration is what bounds this loop: a merge file already
+            // active is dropped here, mirroring upstream's `free_filter(rule);
+            // return;` (exclude.c:373-374), so a self-referential or mutually
+            // recursive dir-merge terminates instead of growing the list.
+            registry.retain_unregistered(&mut new_frame.active_rules, &mut loaded.nested);
         }
 
         drop(ephemeral_stack);
