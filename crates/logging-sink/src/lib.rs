@@ -71,8 +71,9 @@
 //! - [`core::message`] for message construction and formatting helpers.
 //! - `logging` crate for verbosity flags and the `info_log!`/`debug_log!` macros.
 
-mod line_mode;
 /// Upstream `logit()`-compatible log-file line formatting.
+pub mod escape;
+mod line_mode;
 pub mod logfile;
 mod sink;
 /// Syslog backend for daemon-mode logging.

@@ -389,7 +389,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_id_preservation(preserve_owner, preserve_group)
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
-        .with_escape_style(EscapeStyle::log_file())
+        .with_escape_style(EscapeStyle::passthrough())
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
     // upstream: log.c:290-305 - FLOG messages are written to the log file
@@ -434,7 +434,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         // that `--8-bit-output` does not reach, so a name carrying `ESC`, a
         // newline or an 8-bit CSI cannot forge a log line (CWE-117) while DEL
         // and 0xA0-0xFF stay verbatim.
-        EscapeStyle::log_file(),
+        EscapeStyle::passthrough(),
         &mut log.file,
     )?;
     // upstream: cleanup.c:222-226 gates log_exit() on
