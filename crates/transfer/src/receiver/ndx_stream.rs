@@ -241,7 +241,7 @@ pub(crate) enum NdxFrame {
 /// `who_am_i()`. Tagged as a protocol violation so the exit-code mapper yields
 /// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
 /// `rsync.c:351`.
-fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
+pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
         "Invalid file index: {ndx} ({NDX_DONE} - {last}) {}{}",
         crate::role_trailer::error_location!(),

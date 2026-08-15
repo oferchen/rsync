@@ -11,10 +11,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use logging::{debug_log, info_log};
-use protocol::codec::{
-    MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec,
-    create_ndx_codec,
-};
+use protocol::codec::{MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NdxCodec, create_ndx_codec};
 use protocol::stats::DeleteStats;
 
 use super::super::delta::{
@@ -539,11 +536,6 @@ impl GeneratorContext {
                         }
                         continue;
                     }
-                    NDX_FLIST_EOF => {
-                        // End of incremental file lists (upstream io.c:1738-1741)
-                        debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
-                        continue;
-                    }
                     NDX_DEL_STATS => {
                         // Deletion statistics (upstream main.c:238-247).
                         // During dry-run the connection may drop mid-read.
@@ -563,15 +555,24 @@ impl GeneratorContext {
                         );
                         continue;
                     }
-                    _ if ndx <= NDX_FLIST_OFFSET => {
-                        // Incremental file list directory index (upstream flist.c)
-                        debug_log!(Flist, 2, "received NDX_FLIST_OFFSET {}, not supported", ndx);
-                        continue;
-                    }
+                    // upstream: rsync.c:343-353 - `if (!inc_recurse || am_sender)`
+                    // rejects EVERY remaining negative index with
+                    // "Invalid file index: %d (%d - %d) [%s]" and
+                    // exit_cleanup(RERR_PROTOCOL). The gate sits ABOVE the
+                    // NDX_FLIST_EOF branch (:354) and the sub-list branch
+                    // (:360), so for a sender those are protocol violations
+                    // too, not markers to skip: only a receiver inside the
+                    // INC_RECURSE window may grow its list from the stream.
+                    // Continuing here instead would let a peer desync this
+                    // loop silently.
                     _ => {
-                        // Unknown negative NDX - log and continue
-                        debug_log!(Flist, 1, "received unknown negative NDX value {}", ndx);
-                        continue;
+                        return Err(crate::receiver::ndx_stream::invalid_file_index(
+                            ndx,
+                            // Mirrors GoodbyeNdxSink::last_file_ndx (goodbye.rs),
+                            // upstream rsync.c:345-348.
+                            self.file_list().len() as i32 - 1,
+                            crate::receiver::ndx_stream::StreamRole::Sender,
+                        ));
                     }
                 }
             }
@@ -1887,6 +1888,82 @@ mod phase2_guard_tests {
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
         ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
             .map(|_| ())
+    }
+
+    /// Every negative NDX the sender does not itself define is a protocol
+    /// violation, not a marker to skip.
+    ///
+    /// upstream: rsync.c:343-353 - the `if (!inc_recurse || am_sender)` gate
+    /// runs BEFORE the NDX_FLIST_EOF branch (:354) and the sub-list branch
+    /// (:360), so a sender rejects all three with
+    /// `exit_cleanup(RERR_PROTOCOL)`. Only a receiver inside the INC_RECURSE
+    /// window may grow its file list from the stream.
+    ///
+    /// Each case previously logged at debug level and `continue`d, so a peer
+    /// could desync this loop with no diagnostic and no exit code. The whole
+    /// suite passed either way, which is why the divergence survived.
+    fn assert_sender_rejects_negative_ndx(marker: i32, case: &str) {
+        let (_dir, mut ctx) = generator_with_one_file();
+
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, marker).expect("write marker");
+
+        let err = drive(&mut ctx, wire).expect_err(case);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains(&format!("Invalid file index: {marker}")),
+            "{case}: expected upstream's rejection text, got {rendered}"
+        );
+    }
+
+    #[test]
+    fn sender_rejects_flist_eof_as_protocol_violation() {
+        assert_sender_rejects_negative_ndx(
+            protocol::codec::NDX_FLIST_EOF,
+            "NDX_FLIST_EOF reaches a sender only from a broken peer",
+        );
+    }
+
+    #[test]
+    fn sender_rejects_sublist_index_as_protocol_violation() {
+        // A directory sub-list request: upstream's dir_ndx encoding, which only
+        // an INC_RECURSE receiver may consume.
+        assert_sender_rejects_negative_ndx(
+            protocol::codec::NDX_FLIST_OFFSET - 3,
+            "a sub-list index reaches a sender only from a broken peer",
+        );
+    }
+
+    #[test]
+    fn sender_rejects_unknown_negative_ndx_as_protocol_violation() {
+        assert_sender_rejects_negative_ndx(-42, "unknown negative NDX");
+    }
+
+    /// Non-vacuity companion: the rejection must not swallow the one negative
+    /// marker upstream DOES handle above the gate (rsync.c:337-342), or the
+    /// fix would turn a legitimate frame into a fatal.
+    #[test]
+    fn sender_still_accepts_del_stats_then_done() {
+        let (_dir, mut ctx) = generator_with_one_file();
+
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, protocol::codec::NDX_DEL_STATS)
+            .expect("write del stats marker");
+        protocol::DeleteStats {
+            files: 2,
+            dirs: 1,
+            symlinks: 0,
+            devices: 0,
+            specials: 0,
+        }
+        .write_to(&mut wire)
+        .expect("write del stats");
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
+
+        drive(&mut ctx, wire).expect("NDX_DEL_STATS is handled above the gate");
     }
 
     #[test]
