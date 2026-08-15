@@ -101,6 +101,12 @@ impl ModuleDefinitionBuilder {
             .auth_users
             .or_else(|| defaults.auth_users.clone())
             .unwrap_or_default();
+        // upstream: daemon-parm.h:273 - `auth digest` is P_LOCAL, so a value in
+        // the global section is the default for every module that does not set
+        // its own, exactly like `auth users` above.
+        let auth_digest = self
+            .auth_digest
+            .or_else(|| defaults.auth_digest.clone());
         let secrets_file = if auth_users.is_empty() {
             self.secrets_file
         } else if let Some(path) = self.secrets_file {
@@ -150,6 +156,7 @@ impl ModuleDefinitionBuilder {
             hosts_allow,
             hosts_deny,
             auth_users,
+            auth_digest,
             secrets_file,
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),

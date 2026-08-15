@@ -117,6 +117,16 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    /// Stores the module's `auth digest` floor.
+    ///
+    /// Infallible by design: upstream accepts any string here (P_STRING,
+    /// daemon-parm.h:273) and only discovers an unsupported name when a client
+    /// connects, refusing that one module rather than the daemon
+    /// (authenticate.c:316-322).
+    fn set_auth_digest(&mut self, digest: &str) {
+        self.auth_digest = normalize_auth_digest(digest);
+    }
+
     /// Stores the `secrets file` path after validating its ownership and mode.
     fn set_secrets_file(
         &mut self,

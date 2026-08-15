@@ -88,13 +88,20 @@ pub(crate) fn log_module_auth_failure(
     host: &str,
     peer_ip: IpAddr,
     module: &str,
+    reason: Option<&str>,
 ) {
     let module_display = sanitize_module_identifier(module);
-    // upstream: authenticate.c:249 / :335 - `auth failed on module %s from %s (%s)`.
-    // Upstream appends the specific reason (`: invalid challenge response`, or
-    // ` for %s: %s`); the failure reason is not propagated to this emission point,
-    // so only the invariant prefix is reproduced here.
-    let text = format!("auth failed on module {module_display} from {host} ({peer_ip})");
+    // upstream: authenticate.c:249 / :335 - `auth failed on module %s from %s (%s)`,
+    // with the specific reason appended after `: `. Reasons this layer can
+    // reconstruct arrive in `reason`; the credential-failure suffixes
+    // (`: invalid challenge response`, ` for %s: %s`) are not among them, so
+    // those lines stay the bare prefix.
+    let text = match reason {
+        Some(reason) => {
+            format!("auth failed on module {module_display} from {host} ({peer_ip}): {reason}")
+        }
+        None => format!("auth failed on module {module_display} from {host} ({peer_ip})"),
+    };
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
