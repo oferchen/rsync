@@ -178,6 +178,29 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
     EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
+/// Drain the events whose code `accept` selects, leaving the rest queued.
+///
+/// The buffer has several independent consumers - a log-file sink, a
+/// client-stream renderer, a server's peer framer - and each must take only
+/// its own codes without disturbing the others. Keeping one retain loop here
+/// means a new consumer supplies a policy, not another copy of the traversal.
+/// Returns matches in emission order.
+fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> {
+    EVENTS.with(|e| {
+        let mut events = e.borrow_mut();
+        let mut matched = Vec::new();
+        events.retain(|event| {
+            if accept(event.code()) {
+                matched.push(event.clone());
+                false
+            } else {
+                true
+            }
+        });
+        matched
+    })
+}
+
 /// Drain only the events carrying `code`, leaving all other events queued.
 ///
 /// This is how a log-file sink consumes `FLOG`-classified events without
@@ -186,18 +209,43 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
 /// before the client-stream dispatch (upstream: log.c:290-307), so the two
 /// destinations drain independently. Returns matches in emission order.
 pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
-    EVENTS.with(|e| {
-        let mut events = e.borrow_mut();
-        let mut matched = Vec::new();
-        events.retain(|event| {
-            if event.code() == code {
-                matched.push(event.clone());
-                false
-            } else {
-                true
-            }
-        });
-        matched
+    drain_events_where(|candidate| candidate == code)
+}
+
+/// Drain the events a server must frame to its peer, leaving the rest queued.
+///
+/// A server does not print these itself: upstream's `rwrite()` hands them to
+/// `send_msg()` and returns (upstream: log.c:357-366), so the message travels
+/// as a `MSG_*` frame and the client renders it. Without this drain the events
+/// stay in the buffer and die with the thread, which is why a daemon receiver
+/// could degrade to unconfined path syscalls without the operator ever seeing
+/// the warning that says so.
+///
+/// Takes exactly the codes upstream frames *unconditionally*:
+///
+/// - `FERROR_XFER`, `FERROR`, `FWARNING` - reach the stream switch and set
+///   `f` (upstream: log.c:336-342), so the `am_server` block always runs.
+/// - `FERROR_SOCKET` and `FERROR_UTF8` normalise to `FERROR` first
+///   (upstream: log.c:303-308), so they belong to the same class.
+///
+/// `FINFO` is deliberately excluded even though upstream does frame it. Its
+/// arm returns early under `quiet` (upstream: log.c:344-345), so forwarding it
+/// correctly needs the caller's quiet state, and `LogCode::Info` is also what
+/// [`emit_debug`] tags every debug trace with - draining it here would put the
+/// server's whole `--debug` output on the wire as a side effect of fixing a
+/// warning. `FLOG` is excluded because upstream returns before the switch
+/// (upstream: log.c:331-333); it belongs to [`drain_events_coded`].
+// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
+pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
+    drain_events_where(|code| {
+        matches!(
+            code,
+            LogCode::ErrorXfer
+                | LogCode::Error
+                | LogCode::Warning
+                | LogCode::ErrorSocket
+                | LogCode::ErrorUtf8
+        )
     })
 }
 
