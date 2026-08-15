@@ -27,6 +27,26 @@ pub trait NameConverterCallbacks: Send {
     fn name_to_gid(&mut self, name: &str) -> Option<u32>;
 }
 
+/// Runs `query` against the installed name converter, if there is one.
+///
+/// `Some(answer)` means a converter is installed and `answer` is its verdict -
+/// including `Some(None)` for "the converter does not recognise this id or
+/// name". `None` means no converter is installed, and only then may the caller
+/// consult the host user database.
+///
+/// upstream: uidlist.c:114-121, :131-138, :154-163, :180-189 - every lookup is
+/// `if (namecvt_pid) { namecvt_call(...) } else { getpw*()/getgr*() }`. The
+/// converter exists to isolate a session from the host database: a chrooted
+/// daemon module resolves names through the operator's script, not through
+/// `/etc/passwd`. Falling back to the host on "unknown" would defeat the reason
+/// the directive is configured, so the two arms are mutually exclusive and this
+/// helper is the single place that says so.
+pub(super) fn with_name_converter<T>(
+    query: impl FnOnce(&mut dyn NameConverterCallbacks) -> Option<T>,
+) -> Option<Option<T>> {
+    NAME_CONVERTER_SLOT.with(|slot| slot.borrow_mut().as_mut().map(|nc| query(&mut **nc)))
+}
+
 thread_local! {
     pub(super) static NAME_CONVERTER_SLOT: RefCell<Option<Box<dyn NameConverterCallbacks>>> =
         const { RefCell::new(None) };

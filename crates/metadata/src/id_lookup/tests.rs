@@ -493,3 +493,100 @@ fn cached_lookup_bypasses_cache_when_converter_installed() {
 
     clear_name_converter();
 }
+
+/// A converter that answers exactly one name and disclaims everything else.
+///
+/// The disclaimed answers are the point: they are what a real converter emits
+/// for a name outside the operator's mapping, and what a dead converter's
+/// caller sees.
+///
+/// Scoped to Unix because both its consumers are: the host-database contrast
+/// they assert only exists where there IS a host database to leak from.
+#[cfg(unix)]
+struct DisclaimingConverter;
+
+#[cfg(unix)]
+impl NameConverterCallbacks for DisclaimingConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> Option<String> {
+        None
+    }
+
+    fn gid_to_name(&mut self, _gid: u32) -> Option<String> {
+        None
+    }
+
+    fn name_to_uid(&mut self, name: &str) -> Option<u32> {
+        (name == "mapped-only").then_some(4242)
+    }
+
+    fn name_to_gid(&mut self, name: &str) -> Option<u32> {
+        (name == "mapped-only").then_some(4243)
+    }
+}
+
+/// An installed converter REPLACES the host user database; it is not merely
+/// consulted ahead of it.
+///
+/// upstream: uidlist.c:114-121, :131-138, :154-163, :180-189 - each lookup is
+/// `if (namecvt_pid) { namecvt_call(...) } else { getpw*()/getgr*() }`. The
+/// directive exists to isolate a session from the host database, so answering
+/// "unknown" must mean unknown, not "now go ask /etc/passwd".
+///
+/// The probe name is deliberately one the host DOES resolve. A bogus name such
+/// as `no_such_user_zzz` returns `None` whether or not the fall-through exists,
+/// so a test using one would pass with the bug intact.
+#[cfg(unix)]
+#[test]
+fn installed_converter_replaces_the_host_database() {
+    clear_name_converter();
+    let host_uid = lookup_user_by_name(b"root").expect("host lookup");
+    // Non-vacuity: `root` really is resolvable without a converter, so a `None`
+    // below is the converter's verdict and not simply an absent user.
+    assert!(
+        host_uid.is_some(),
+        "this host cannot resolve `root`, so the fall-through would be \
+         unobservable and this test cannot discriminate"
+    );
+
+    set_name_converter(Box::new(DisclaimingConverter));
+
+    // Non-vacuity: the converter is genuinely installed and genuinely answering.
+    assert_eq!(
+        lookup_user_by_name(b"mapped-only").expect("lookup"),
+        Some(4242),
+        "the converter is not installed, so the assertions below prove nothing"
+    );
+
+    assert_eq!(
+        lookup_user_by_name(b"root").expect("lookup"),
+        None,
+        "the converter disclaimed `root`, so the lookup must fail - falling \
+         through to the host database would return {host_uid:?} and defeat the \
+         isolation the directive exists for"
+    );
+    assert_eq!(
+        lookup_user_name(0).expect("lookup"),
+        None,
+        "the converter disclaimed uid 0; the host name must not leak through"
+    );
+
+    clear_name_converter();
+}
+
+/// upstream: uidlist.c:146 `user_to_uid()` / :172 `group_to_gid()` -
+/// `if (!name || !*name) return 0;`. An empty name is decided before either the
+/// converter or the host database is consulted, so no request is framed for it.
+#[cfg(unix)]
+#[test]
+fn an_empty_name_resolves_to_nothing_without_consulting_the_converter() {
+    set_name_converter(Box::new(DisclaimingConverter));
+    assert_eq!(lookup_user_by_name(b"").expect("lookup"), None);
+    assert_eq!(lookup_group_by_name(b"").expect("lookup"), None);
+    // Non-vacuity: the same converter still answers a real name, so the two
+    // `None`s above are the empty-name rule and not a broken fixture.
+    assert_eq!(
+        lookup_user_by_name(b"mapped-only").expect("lookup"),
+        Some(4242)
+    );
+    clear_name_converter();
+}
