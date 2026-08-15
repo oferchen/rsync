@@ -1,3 +1,18 @@
+/// Normalises an `auth digest` value into a module's digest floor.
+///
+/// An empty value is the same state as an absent directive: upstream guards the
+/// whole check with `if (min_digest && *min_digest)` (authenticate.c:313-314),
+/// so `auth digest =` imposes no floor. Collapsing it to `None` here leaves the
+/// enforcement site one `Option` to reason about instead of a second
+/// present-but-empty state that every caller would have to remember.
+///
+/// The name is deliberately NOT resolved to a digest here; see
+/// `ModuleDefinition::auth_digest` for why that has to happen per connection.
+fn normalize_auth_digest(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
 /// Splits a daemon config list value the way upstream's `conf_strtok` does.
 ///
 /// upstream: `util1.c:932 conf_strtok()`. It has TWO modes, selected by the

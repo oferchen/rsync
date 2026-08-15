@@ -488,9 +488,15 @@ fn handle_authentication(
                 .map_err(transition_error)?;
             Ok(None)
         }
-        AuthenticationStatus::Denied => {
+        AuthenticationStatus::Denied(denial) => {
             if let Some(log) = ctx.log_sink {
-                log_module_auth_failure(log, ctx.host_display(), ctx.peer_ip, ctx.request);
+                log_module_auth_failure(
+                    log,
+                    ctx.host_display(),
+                    ctx.peer_ip,
+                    ctx.request,
+                    denial.log_reason().as_deref(),
+                );
             }
             // FSM: -> Closing on auth failure (session ends).
             ctx.conn_state = ctx

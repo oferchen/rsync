@@ -55,6 +55,38 @@ impl DaemonAuthDigest {
         }
     }
 
+    /// Returns this digest's strength rank, where 0 is the strongest.
+    ///
+    /// upstream: checksum.c:94-106 `auth_digest_rank()` walks
+    /// `valid_auth_checksums_items[]` - which is written strongest-first - and
+    /// returns the index, or -1 for a name it cannot resolve.
+    /// [`SUPPORTED_DAEMON_DIGESTS`] carries that same order, and the
+    /// `strength_rank_matches_supported_order` test pins the two together, so
+    /// the rank cannot drift from the advertised preference.
+    ///
+    /// Unlike upstream this is total: upstream's -1 arm covers a name absent
+    /// from the *build* (its table is `#ifdef`-gated on the openssl digests),
+    /// whereas every variant here is always compiled in. An unresolvable
+    /// operator-supplied name is therefore represented by
+    /// [`daemon_auth_digest_by_name`] returning `None`, not by a sentinel rank.
+    ///
+    /// ⚠ `Md4Old` ranks as `md4`. Upstream ranks
+    /// `valid_auth_checksums.negotiated_nni->name`, and the `CSUM_MD4_OLD`
+    /// rewrite leaves that name `"md4"` (compat.c:879-881). Ranking it as
+    /// unknown would refuse exactly the pre-3.2.0 clients that land on the
+    /// no-list fallback - the ones an `auth digest = md4` floor must still
+    /// admit.
+    #[must_use]
+    pub const fn strength_rank(self) -> usize {
+        match self {
+            Self::Sha512 => 0,
+            Self::Sha256 => 1,
+            Self::Sha1 => 2,
+            Self::Md5 => 3,
+            Self::Md4 | Self::Md4Old => 4,
+        }
+    }
+
     /// Returns the expected length of the base64-encoded digest without padding.
     #[must_use]
     pub const fn base64_len(self) -> usize {
@@ -121,6 +153,23 @@ pub const SUPPORTED_DAEMON_DIGESTS: &[DaemonAuthDigest; 5] = &[
     DaemonAuthDigest::Md4,
 ];
 
+/// Resolves a wire/config digest token to the digest it names.
+///
+/// Matching is case-insensitive, mirroring upstream's `strcasecmp` in
+/// `auth_digest_rank()` (checksum.c:94-106) and `get_nni_by_name()`.
+///
+/// Returns `None` for any name outside [`SUPPORTED_DAEMON_DIGESTS`]. Note that
+/// [`DaemonAuthDigest::Md4Old`] is deliberately not producible here: it is not
+/// an advertisable name, only the post-negotiation rewrite of `md4`
+/// (compat.c:879-881).
+#[must_use]
+pub fn daemon_auth_digest_by_name(name: &str) -> Option<DaemonAuthDigest> {
+    SUPPORTED_DAEMON_DIGESTS
+        .iter()
+        .copied()
+        .find(|digest| digest.name().eq_ignore_ascii_case(name))
+}
+
 /// Parses the whitespace-separated digest list advertised in a greeting.
 ///
 /// Names this build does not implement are dropped while the peer's ordering is
@@ -129,14 +178,7 @@ pub const SUPPORTED_DAEMON_DIGESTS: &[DaemonAuthDigest; 5] = &[
 #[must_use]
 pub fn parse_daemon_digest_list(list: &str) -> Vec<DaemonAuthDigest> {
     list.split_whitespace()
-        .filter_map(|token| match token.to_ascii_lowercase().as_str() {
-            "sha512" => Some(DaemonAuthDigest::Sha512),
-            "sha256" => Some(DaemonAuthDigest::Sha256),
-            "sha1" => Some(DaemonAuthDigest::Sha1),
-            "md5" => Some(DaemonAuthDigest::Md5),
-            "md4" => Some(DaemonAuthDigest::Md4),
-            _ => None,
-        })
+        .filter_map(daemon_auth_digest_by_name)
         .collect()
 }
 
@@ -329,6 +371,54 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The drift guard for `strength_rank`. Upstream derives the rank by walking
+    // `valid_auth_checksums_items[]` (checksum.c:94-106), so rank and advertised
+    // preference are the same table by construction. Here they are two pieces of
+    // code, and this is what keeps them one fact: reorder either without the
+    // other and this fails.
+    #[test]
+    fn strength_rank_matches_supported_order() {
+        for (index, digest) in SUPPORTED_DAEMON_DIGESTS.iter().enumerate() {
+            assert_eq!(
+                digest.strength_rank(),
+                index,
+                "{} ranks {} but is advertised at index {index}",
+                digest.name(),
+                digest.strength_rank(),
+            );
+        }
+    }
+
+    // upstream ranks `negotiated_nni->name`, and the CSUM_MD4_OLD rewrite leaves
+    // that name "md4" (compat.c:879-881). Ranking Md4Old as anything else would
+    // refuse the pre-3.2.0 clients that an `auth digest = md4` floor must admit -
+    // exactly the peers that reach the no-list fallback in the first place.
+    #[test]
+    fn md4_old_ranks_as_md4() {
+        assert_eq!(
+            DaemonAuthDigest::Md4Old.strength_rank(),
+            DaemonAuthDigest::Md4.strength_rank()
+        );
+        assert_eq!(
+            DaemonAuthDigest::Md4Old.name(),
+            DaemonAuthDigest::Md4.name()
+        );
+    }
+
+    #[test]
+    fn digest_by_name_is_case_insensitive_and_rejects_unknown() {
+        assert_eq!(
+            daemon_auth_digest_by_name("SHA512"),
+            Some(DaemonAuthDigest::Sha512)
+        );
+        assert_eq!(
+            daemon_auth_digest_by_name("Md5"),
+            Some(DaemonAuthDigest::Md5)
+        );
+        assert_eq!(daemon_auth_digest_by_name("sponge"), None);
+        assert_eq!(daemon_auth_digest_by_name(""), None);
+    }
 
     #[test]
     fn advertised_list_preserves_order_and_filters_unknown() {

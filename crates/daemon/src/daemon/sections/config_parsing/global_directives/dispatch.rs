@@ -710,6 +710,11 @@ fn apply_global_directive(
             })?;
             state.module_defaults.auth_users = Some(users);
         }
+        // upstream: daemon-parm.h:273 - `auth digest` is P_LOCAL, so a global
+        // value becomes the floor every module inherits unless it sets its own.
+        "authdigest" => {
+            state.module_defaults.auth_digest = normalize_auth_digest(value);
+        }
         // `path` only makes sense per-module - silently accepted, not inherited.
         "path" => {}
         _ => {

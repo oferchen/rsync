@@ -89,6 +89,9 @@ fn apply_module_directive(
             })?;
             builder.set_auth_users(users, path, line_number)?;
         }
+        "authdigest" => {
+            builder.set_auth_digest(value);
+        }
         "secretsfile" => {
             if value.is_empty() {
                 return Err(config_parse_error(

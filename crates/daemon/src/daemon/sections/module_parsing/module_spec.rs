@@ -112,6 +112,7 @@ fn parse_module_definition(
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
         auth_users: Vec::new(),
+        auth_digest: None,
         secrets_file: None,
         refuse_options: Vec::new(),
         read_only: true,
@@ -359,6 +360,9 @@ fn apply_inline_module_options(
                 }
                 module.auth_users = users;
             }
+            "auth digest" | "auth-digest" => {
+                module.auth_digest = normalize_auth_digest(value);
+            }
             "secrets file" | "secrets-file" => {
                 if value.is_empty() {
                     return Err(config_error(
@@ -507,8 +511,8 @@ fn apply_daemon_param_overrides(
             }
             // Security-sensitive directives are not overridable via dparam.
             "hosts allow" | "hosts-allow" | "hosts deny" | "hosts-deny" | "auth users"
-            | "auth-users" | "secrets file" | "secrets-file" | "refuse options"
-            | "refuse-options" | "uid" | "gid" => {
+            | "auth-users" | "auth digest" | "auth-digest" | "secrets file"
+            | "secrets-file" | "refuse options" | "refuse-options" | "uid" | "gid" => {
                 return Err(config_error(format!(
                     "daemon param '{key_raw}' cannot be overridden via --dparam"
                 )));

@@ -20,8 +20,8 @@ enum AuthenticationStatus {
         /// Per-user access-level override applied to the session's `read only`.
         access_level: UserAccessLevel,
     },
-    /// Authentication was denied (bad credentials or missing response).
-    Denied,
+    /// Authentication was denied; the variant says why.
+    Denied(AuthDenial),
     /// No digest the client offered is implemented here, so the exchange cannot
     /// start. The refusal line has already been written and no challenge was
     /// sent.
@@ -31,6 +31,87 @@ enum AuthenticationStatus {
     /// and calls `exit_cleanup(RERR_UNSUPPORTED)` before `auth_server()` ever
     /// reaches `gen_challenge()`.
     DigestUnsupported,
+}
+
+/// Why a module authentication attempt was denied.
+///
+/// Upstream appends the specific reason to its
+/// `auth failed on module %s from %s (%s)` FLOG line. Carrying it in the result
+/// is what lets the emission point - which owns the log sink, unlike this layer -
+/// reproduce that suffix instead of logging the bare prefix.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AuthDenial {
+    /// Credentials were absent, malformed, or did not verify.
+    ///
+    /// Upstream's suffixes for these (`: invalid challenge response`,
+    /// ` for %s: %s`) are not reconstructable here, so the line stays the bare
+    /// prefix - unchanged from before this enum existed.
+    Credentials,
+    /// `auth digest = NAME` names a digest this build does not support.
+    ///
+    /// upstream: authenticate.c:316-322 - the `floor_rank < 0` arm.
+    DigestFloorUnsupported { configured: String },
+    /// The negotiated digest is weaker than the module's `auth digest` floor.
+    ///
+    /// upstream: authenticate.c:324-332 - the `got_rank > floor_rank` arm.
+    DigestTooWeak {
+        negotiated: DaemonAuthDigest,
+        floor: String,
+    },
+}
+
+impl AuthDenial {
+    /// The reason upstream appends after `auth failed on module %s from %s (%s)`,
+    /// or `None` when this layer cannot reconstruct it.
+    pub(crate) fn log_reason(&self) -> Option<String> {
+        match self {
+            Self::Credentials => None,
+            Self::DigestFloorUnsupported { configured } => Some(format!(
+                "the configured 'auth digest = {configured}' is not a supported digest on this build"
+            )),
+            Self::DigestTooWeak { negotiated, floor } => Some(format!(
+                "negotiated auth digest {} is weaker than the required 'auth digest = {floor}'",
+                negotiated.name()
+            )),
+        }
+    }
+}
+
+/// Applies the module's `auth digest` floor to the digest just negotiated.
+///
+/// `Ok(())` when no floor is configured or the negotiated digest meets it;
+/// `Err` when the connection must be refused.
+///
+/// upstream: authenticate.c:307-332. Two properties of that placement are
+/// load-bearing and mirrored by the caller:
+///
+/// - it runs *after* `negotiate_daemon_auth()`, so the floor is applied to what
+///   was actually negotiated - including the md5/md4 fallback a peer that sends
+///   no digest list lands on, which is the downgrade being defended against;
+/// - it runs *before* `gen_challenge()`, so a refused peer never receives a
+///   challenge it could take away and brute-force offline against a weak digest.
+///
+/// Rank ordering is upstream's: lower rank is stronger, so a *higher* rank than
+/// the floor is too weak.
+pub(crate) fn enforce_auth_digest_floor(
+    configured_floor: Option<&str>,
+    negotiated: DaemonAuthDigest,
+) -> Result<(), AuthDenial> {
+    let Some(floor) = configured_floor else {
+        return Ok(());
+    };
+    let Some(floor_digest) = daemon_auth_digest_by_name(floor) else {
+        return Err(AuthDenial::DigestFloorUnsupported {
+            configured: floor.to_owned(),
+        });
+    };
+    if negotiated.strength_rank() > floor_digest.strength_rank() {
+        return Err(AuthDenial::DigestTooWeak {
+            negotiated,
+            floor: floor.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Resolves the session's effective `read only` flag after authentication.
@@ -102,6 +183,13 @@ fn perform_module_authentication(
         }
     };
 
+    // upstream: authenticate.c:307-332 - the floor sits here, after the digest
+    // is negotiated and before any challenge is generated.
+    if let Err(denial) = enforce_auth_digest_floor(module.auth_digest.as_deref(), digest) {
+        send_auth_failed(reader.get_mut(), module, limiter)?;
+        return Ok(AuthenticationStatus::Denied(denial));
+    }
+
     let challenge = ChallengeGenerator::generate(peer_ip, digest);
     {
         let stream = reader.get_mut();
@@ -119,7 +207,7 @@ fn perform_module_authentication(
         line
     } else {
         send_auth_failed(reader.get_mut(), module, limiter)?;
-        return Ok(AuthenticationStatus::Denied);
+        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     };
 
     // Parse `<user> <response>` via the shared protocol helper - the exact
@@ -128,14 +216,14 @@ fn perform_module_authentication(
 
     if username.is_empty() || response_digest.is_empty() {
         send_auth_failed(reader.get_mut(), module, limiter)?;
-        return Ok(AuthenticationStatus::Denied);
+        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
     let auth_match = match module.get_auth_user(username) {
         Some(matched) => matched,
         None => {
             send_auth_failed(reader.get_mut(), module, limiter)?;
-            return Ok(AuthenticationStatus::Denied);
+            return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
         }
     };
     let auth_user = auth_match.user;
@@ -151,14 +239,14 @@ fn perform_module_authentication(
 
     if !verify_secret_response(module, username, auth_group, &challenge, response_digest, digest)? {
         send_auth_failed(reader.get_mut(), module, limiter)?;
-        return Ok(AuthenticationStatus::Denied);
+        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
     // upstream: authenticate.c:334-335 - `opt_ch == 'd'` ("deny") reports
     // "denied by rule" and auth_server() returns NULL (auth failure).
     if auth_user.access_level == UserAccessLevel::Deny {
         send_auth_failed(reader.get_mut(), module, limiter)?;
-        return Ok(AuthenticationStatus::Denied);
+        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
     // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back
