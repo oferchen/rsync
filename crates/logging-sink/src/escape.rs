@@ -20,11 +20,18 @@ use std::path::Path;
 ///   - the log-file sink gets `use_isprint = 0, escape_c1 = 1` (log.c:132),
 ///     which is deliberately *not* gated on `--8-bit-output`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EscapeStyle {
+pub struct EscapeStyle {
     /// Escape every byte libc `isprint()` rejects (upstream `use_isprint`).
     use_isprint: bool,
     /// Escape the C1 control range 0x80-0x9F (upstream `escape_c1`).
     escape_c1: bool,
+    /// Escape the C0 controls below 0x20, tab excepted.
+    ///
+    /// Upstream has no switch for this: every `filtered_fwrite` call site
+    /// escapes them (log.c:250 `*fp < ' '`). oc-rsync needs the switch because
+    /// it has a sink upstream does not - [`EscapeStyle::passthrough`], for a
+    /// producer whose own sink escapes.
+    escape_controls: bool,
 }
 
 impl Default for EscapeStyle {
@@ -42,10 +49,11 @@ impl EscapeStyle {
     /// which covers DEL (0x7F) and the whole high range 0x80-0xFF; with `-8`
     /// only the sub-0x20 controls (tab excepted) are.
     #[must_use]
-    pub(crate) const fn terminal(allow_8bit: bool) -> Self {
+    pub const fn terminal(allow_8bit: bool) -> Self {
         Self {
             use_isprint: !allow_8bit,
             escape_c1: false,
+            escape_controls: true,
         }
     }
 
@@ -58,10 +66,29 @@ impl EscapeStyle {
     /// 8-bit `CSI` can forge a log line or drive the operator's terminal. The
     /// pair does not depend on `--8-bit-output`.
     #[must_use]
-    pub(crate) const fn log_file() -> Self {
+    pub const fn log_file() -> Self {
         Self {
             use_isprint: false,
             escape_c1: true,
+            escape_controls: true,
+        }
+    }
+
+    /// Leaves every byte alone, for a producer whose sink already escapes.
+    ///
+    /// upstream has no `filtered_fwrite` call in `log_formatted()` at all: the
+    /// renderer builds the line and escaping happens later, once, in the
+    /// writer - `log.c:132 logit()` for the log file, `log.c:425 rwrite()` for
+    /// the terminal. [`LogFileWriter`](crate::logfile::LogFileWriter) now owns
+    /// the log-file half, so a renderer feeding it must select this style;
+    /// applying [`EscapeStyle::log_file`] there too would escape the backslash
+    /// of an already-emitted `\#033` and corrupt the line.
+    #[must_use]
+    pub const fn passthrough() -> Self {
+        Self {
+            use_isprint: false,
+            escape_c1: false,
+            escape_controls: false,
         }
     }
 }
@@ -84,7 +111,7 @@ fn is_c_print(byte: u8) -> bool {
 fn should_escape_byte(byte: u8, style: EscapeStyle) -> bool {
     byte != b'\t'
         && ((style.use_isprint && !is_c_print(byte))
-            || byte < b' '
+            || (style.escape_controls && byte < b' ')
             || (style.escape_c1 && (0x80..=0x9F).contains(&byte)))
 }
 
@@ -103,7 +130,14 @@ fn should_escape_byte(byte: u8, style: EscapeStyle) -> bool {
 /// must survive verbatim. A `String` cannot hold arbitrary invalid UTF-8, so
 /// returning `Vec<u8>` and writing it directly to a byte sink is the only way
 /// to reach byte-for-byte parity with upstream on that edge case.
-pub(crate) fn escape_for_output(input: &[u8], style: EscapeStyle) -> Vec<u8> {
+pub fn escape_for_output(input: &[u8], style: EscapeStyle) -> Vec<u8> {
+    // A producer feeding a sink that escapes must not pre-escape anything: the
+    // `\#ddd` guard below would otherwise fire on the sink's own output the
+    // moment it re-entered this function, turning `\#033` into `\#134#033`.
+    if style == EscapeStyle::passthrough() {
+        return input.to_vec();
+    }
+
     // Fast path: all bytes ASCII-printable or tab (0x09, 0x20-0x7E) -> no byte
     // needs escaping under any style and there is no literal `\#ddd` to guard,
     // so return the bytes verbatim.
@@ -197,7 +231,7 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
 /// transcode of otherwise-representable filenames: stable std offers no API to
 /// recover the raw WTF-8 bytes, so full byte-fidelity for lone surrogates is
 /// unreachable on Windows today.
-pub(crate) fn escape_path(path: &Path, style: EscapeStyle) -> Vec<u8> {
+pub fn escape_path(path: &Path, style: EscapeStyle) -> Vec<u8> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

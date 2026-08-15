@@ -82,7 +82,10 @@ use std::io::{self, Write};
 /// CLI argument parsing for the rsync frontend.
 pub mod arguments;
 mod command_builder;
-pub(crate) mod escape;
+// The escaper lives in `logging-sink` so the log-file sink can apply it
+// without depending on the CLI: upstream escapes inside `log.c:126 logit()`,
+// the single writer to `logfile_fp`, which is what makes it unbypassable.
+pub(crate) use logging_sink::escape;
 mod execution;
 pub(crate) mod outbuf;
 

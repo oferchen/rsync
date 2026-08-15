@@ -11,6 +11,8 @@
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::escape::{EscapeStyle, escape_for_output};
+
 /// Maximum epoch seconds accepted for timestamp formatting.
 ///
 /// Corresponds to 9999-12-31 23:59:59 UTC - the last representable date in a
@@ -115,32 +117,58 @@ impl<W: Write> LogFileWriter<W> {
     }
 }
 
+impl<W: Write> LogFileWriter<W> {
+    /// Writes one line body through the log-file escape filter.
+    ///
+    /// upstream: log.c:126 `logit()` is the only function that writes to
+    /// `logfile_fp`, and it hands every line to `filtered_fwrite(logfile_fp,
+    /// buf, len, 0, 1, trailing)` (log.c:132). Escaping there rather than in
+    /// each producer is what makes it unbypassable - a caller cannot forget it,
+    /// because there is no other way to reach the file.
+    ///
+    /// The timestamp/pid prefix and the line terminator are written raw, as
+    /// upstream does: `logit()` `fprintf`s the prefix before the call and
+    /// passes the stripped trailing newline to `filtered_fwrite` as `end_char`.
+    fn write_escaped(&mut self, body: &[u8]) -> io::Result<()> {
+        if body.is_empty() {
+            return Ok(());
+        }
+        self.inner
+            .write_all(&escape_for_output(body, EscapeStyle::log_file()))
+    }
+}
+
 impl<W: Write> Write for LogFileWriter<W> {
+    /// upstream: log.c:128-129 - `logit()` strips exactly ONE trailing newline
+    /// and hands everything before it to `filtered_fwrite`. A newline *inside*
+    /// the message is therefore escaped as `\#012` and stays on one log line;
+    /// only the newline that ends the message closes the record. That is the
+    /// whole CWE-117 defence: were an embedded newline to start a fresh line,
+    /// it would be stamped with a genuine timestamp/pid prefix and a filename
+    /// could forge an authentic-looking log entry.
+    ///
+    /// The message boundary is the `write` call, so a producer must deliver one
+    /// message per call - which both `MessageSink` and the CLI's `writeln!`
+    /// sites do. A partial write (a message split across calls) is carried by
+    /// `at_line_start`, so only the first fragment is prefixed.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Copy line segments through in batches, stamping the prefix whenever
-        // a non-empty line starts and dropping FCLIENT-style blank separators
-        // (log.c:288-289 - FCLIENT never reaches the log file).
-        let mut rest = buf;
-        while !rest.is_empty() {
-            if self.at_line_start && rest[0] == b'\n' {
-                rest = &rest[1..];
-                continue;
-            }
-            if self.at_line_start {
-                self.inner.write_all(log_line_prefix_now().as_bytes())?;
-                self.at_line_start = false;
-            }
-            match rest.iter().position(|&byte| byte == b'\n') {
-                Some(newline) => {
-                    self.inner.write_all(&rest[..=newline])?;
-                    self.at_line_start = true;
-                    rest = &rest[newline + 1..];
-                }
-                None => {
-                    self.inner.write_all(rest)?;
-                    rest = &[];
-                }
-            }
+        let (body, terminated) = match buf.split_last() {
+            Some((b'\n', head)) => (head, true),
+            _ => (buf, false),
+        };
+        // log.c:288-289 - FCLIENT blank separators never reach the log file, so
+        // an empty message must vanish rather than emit a bare prefix.
+        if body.is_empty() && self.at_line_start {
+            return Ok(buf.len());
+        }
+        if self.at_line_start {
+            self.inner.write_all(log_line_prefix_now().as_bytes())?;
+            self.at_line_start = false;
+        }
+        self.write_escaped(body)?;
+        if terminated {
+            self.inner.write_all(b"\n")?;
+            self.at_line_start = true;
         }
         Ok(buf.len())
     }
@@ -232,7 +260,10 @@ mod tests {
     fn writer_prefixes_every_line() {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"building file list\n").unwrap();
-        writer.write_all(b"first\nsecond\n").unwrap();
+        // One message per call: that is the boundary `logit()` works on, and
+        // the shape every real producer (MessageSink, `writeln!`) delivers.
+        writer.write_all(b"first\n").unwrap();
+        writer.write_all(b"second\n").unwrap();
         let output = String::from_utf8(writer.into_inner()).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3);
@@ -268,7 +299,8 @@ mod tests {
     fn writer_drops_blank_lines() {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"\n").unwrap();
-        writer.write_all(b"totals\n\n").unwrap();
+        writer.write_all(b"totals\n").unwrap();
+        writer.write_all(b"\n").unwrap();
         let output = String::from_utf8(writer.into_inner()).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(
@@ -277,5 +309,82 @@ mod tests {
             "blank lines must not reach the log: {output:?}"
         );
         assert!(lines[0].ends_with("totals"));
+    }
+
+    /// Returns the body of the single logged line, prefix stripped.
+    fn single_line_body(raw: &[u8]) -> Vec<u8> {
+        assert_eq!(
+            raw.iter().filter(|&&byte| byte == b'\n').count(),
+            1,
+            "expected exactly one line: {raw:?}"
+        );
+        let body_start = raw
+            .windows(2)
+            .position(|pair| pair == b"] ")
+            .expect("prefix ends with `] `")
+            + 2;
+        assert_eq!(*raw.last().expect("non-empty"), b'\n', "newline is raw");
+        raw[body_start..raw.len() - 1].to_vec()
+    }
+
+    /// upstream: log.c:132 - `logit()` hands every line to `filtered_fwrite`,
+    /// so a control byte that reached the log through *any* producer is
+    /// escaped. Escaping in the sink rather than in a renderer is what makes
+    /// this unbypassable: the daemon's log writers never touch the CLI's
+    /// out-format renderer, yet must not be able to emit a raw `ESC` that
+    /// forges a log line on the operator's terminal (CWE-117).
+    #[test]
+    fn writer_escapes_control_bytes_in_the_body() {
+        let mut writer = LogFileWriter::new(Vec::new());
+        writer.write_all(b"recv nope\x1b[31mX\n").unwrap();
+        let body = single_line_body(&writer.into_inner());
+        assert_eq!(
+            body,
+            b"recv nope\\#033[31mX".to_vec(),
+            "ESC must be escaped exactly once, as \\#033"
+        );
+    }
+
+    /// A line with nothing escapable must reach the file byte-identical. This
+    /// is the non-vacuity control for the test above: without it, an escaper
+    /// that mangled every line would still satisfy "the ESC is gone".
+    #[test]
+    fn writer_leaves_printable_lines_byte_identical() {
+        let mut writer = LogFileWriter::new(Vec::new());
+        writer.write_all(b"recv plain/name.txt\tok\n").unwrap();
+        let body = single_line_body(&writer.into_inner());
+        assert_eq!(body, b"recv plain/name.txt\tok".to_vec());
+    }
+
+    /// A newline inside the message must not open a second log record.
+    ///
+    /// This is the injection itself, not a cosmetic detail: every line the
+    /// sink emits is stamped with a real timestamp and pid, so a filename
+    /// carrying `\n` would otherwise produce a second, entirely authentic-
+    /// looking entry under the attacker's control. upstream: log.c:128-129
+    /// strips only the message's own trailing newline.
+    #[test]
+    fn writer_escapes_a_newline_inside_the_message() {
+        let mut writer = LogFileWriter::new(Vec::new());
+        writer
+            .write_all(b"recv a\n2026/01/01 00:00:00 [1] forged\n")
+            .unwrap();
+        let body = single_line_body(&writer.into_inner());
+        assert_eq!(
+            body,
+            b"recv a\\#0122026/01/01 00:00:00 [1] forged".to_vec(),
+            "an embedded newline must stay on one line as \\#012"
+        );
+    }
+
+    /// upstream: log.c:132 passes `use_isprint = 0` and `escape_c1 = 1`, so a
+    /// UTF-8 filename survives verbatim while the 8-bit CSI (0x9B) - which can
+    /// drive a terminal just as an `ESC [` pair does - is escaped.
+    #[test]
+    fn writer_escapes_c1_but_passes_utf8_through() {
+        let mut writer = LogFileWriter::new(Vec::new());
+        writer.write_all(b"recv caf\xc3\xa9\x9b31m\n").unwrap();
+        let body = single_line_body(&writer.into_inner());
+        assert_eq!(body, b"recv caf\xc3\xa9\\#23331m".to_vec());
     }
 }
