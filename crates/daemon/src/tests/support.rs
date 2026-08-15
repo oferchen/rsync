@@ -31,6 +31,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
         auth_users: Vec::new(),
+        auth_digest: None,
         secrets_file: None,
         refuse_options: Vec::new(),
         read_only: true,
@@ -89,6 +90,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
             .map(|pattern| HostPattern::parse(pattern).expect("parse deny pattern"))
             .collect(),
         auth_users: Vec::new(),
+        auth_digest: None,
         secrets_file: None,
         refuse_options: Vec::new(),
         read_only: true,

@@ -15,6 +15,7 @@ use tempfile::{NamedTempFile, tempdir};
 // Daemon internals exposed to tests via the include!() chunk modules.
 use crate::daemon::{
     AddressFamily,
+    AuthDenial,
     // From module_state.rs
     AuthUser,
     // Constants from daemon.rs
@@ -42,6 +43,7 @@ use crate::daemon::{
     clap_command,
     clear_test_hostname_overrides,
     default_secrets_path_if_present,
+    enforce_auth_digest_floor,
     // From sections/config_paths.rs
     first_existing_config_path,
     // From sections/server_runtime.rs
@@ -86,7 +88,7 @@ use crate::daemon::QuicIdentity;
 use crate::daemon::MODULE_ABORT_EXIT_CODE;
 
 use core::{
-    auth::DaemonAuthDigest,
+    auth::{DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS},
     branding::{self, Brand},
     exit_code::ExitCode,
 };
@@ -271,6 +273,7 @@ include!("tests/chunks/daemon_delta_transfer.rs");
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_module_implicit_list_only.rs");
 include!("tests/chunks/daemon_negotiation_empty_module_lists_modules.rs");
+include!("tests/chunks/daemon_auth_digest_floor.rs");
 include!("tests/chunks/daemon_auth_digest_negotiation.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");

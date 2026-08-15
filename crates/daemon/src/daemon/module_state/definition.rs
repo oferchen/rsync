@@ -43,6 +43,18 @@ pub(crate) struct ModuleDefinition {
     pub(crate) hosts_allow: Vec<HostPattern>,
     pub(crate) hosts_deny: Vec<HostPattern>,
     pub(crate) auth_users: Vec<AuthUser>,
+    /// Minimum daemon-auth digest this module accepts, as written by the
+    /// operator. `None` (the default) imposes no floor.
+    ///
+    /// Kept as the raw configured string rather than a resolved digest so an
+    /// unsupported name fails the way upstream fails it: the daemon still
+    /// starts and every other module keeps serving, while a connection to
+    /// *this* module is refused (authenticate.c:313-322). Resolving at parse
+    /// time would turn one module's typo into a daemon that will not start.
+    ///
+    /// upstream: daemon-parm.h:273 `{"auth digest", P_STRING, P_LOCAL, ...}`,
+    /// default NULL (:163).
+    pub(crate) auth_digest: Option<String>,
     pub(crate) secrets_file: Option<PathBuf>,
     pub(crate) refuse_options: Vec<String>,
     pub(crate) read_only: bool,
