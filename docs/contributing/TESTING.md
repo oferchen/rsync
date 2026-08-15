@@ -9,7 +9,8 @@ Tests are layered by scope and purpose:
 
 1. **Property tests** - verify algorithmic correctness with randomized inputs (proptest/quickcheck).
 2. **Golden byte tests** - pin exact wire format against captured upstream byte sequences.
-3. **Interop tests** - run oc-rsync against upstream rsync binaries (3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3).
+3. **Interop tests** - run oc-rsync against upstream rsync binaries; the version set is
+   `versions=(...)` in `tools/ci/run_interop.sh`.
 4. **Integration tests** - exercise end-to-end transfer pipelines using tempfile fixtures.
 5. **Fuzz targets** - find parser crashes and logic errors via cargo-fuzz.
 6. **SIMD parity tests** - ensure scalar and SIMD implementations produce identical output.
@@ -140,8 +141,10 @@ only the crates you changed.
 | interop (macOS) | macOS | Homebrew rsync smoke | Yes |
 | interop (Windows) | Windows | MSYS2 rsync smoke | No (best-effort) |
 
-Branch protection requires: fmt+clippy, nextest (stable), Windows (stable),
-macOS (stable), Linux musl (stable).
+Branch protection requires eight contexts: `fmt + clippy`, `nextest (stable)`,
+`Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`,
+`interop / interop with upstream rsync`, `upstream-testsuite / upstream testsuite`,
+and `upstream-testsuite / upstream testsuite (root)`.
 
 ### Nextest configuration
 
@@ -155,7 +158,8 @@ macOS (stable), Linux musl (stable).
 
 The interop harness lives at `tools/ci/run_interop.sh`. It:
 
-1. Downloads and builds upstream rsync for versions 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3.
+1. Downloads and builds upstream rsync for every version in its own `versions=(...)`
+   list, plus the extra build-only and source-only sets declared beside it.
 2. Starts an oc-rsync daemon on a non-privileged port.
 3. Runs push and pull scenarios (initial sync, delta update, checksums, compression,
    hardlinks, delete modes, numeric-ids, excludes, inplace, batch) against each

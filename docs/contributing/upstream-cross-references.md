@@ -216,7 +216,8 @@ pub const NDX_DONE: i32 = -1;
 
 When adding new protocol features:
 
-1. Read the upstream C source first (at `target/interop/upstream-src/rsync-3.4.1/`).
+1. Read the upstream C source first (at `target/interop/upstream-src/rsync-3.4.4/`,
+   the release `workspace.metadata.oc_rsync.upstream_version` pins).
 2. Add `// upstream:` on every non-obvious line that mirrors C behavior.
 3. Run `grep -rn "// upstream:" crates/<crate>/src/ | wc -l` to verify coverage
    trends upward, not downward, with new code.

@@ -136,7 +136,7 @@ Explicit states with validated transitions:
 
 ## How to Add a Feature
 
-1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.4.1/` is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
+1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.4.4/` - the release `workspace.metadata.oc_rsync.upstream_version` pins - is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
 
 2. **Create a feature branch:**
    ```sh
@@ -171,13 +171,17 @@ All of these must pass before a PR can merge:
 
 | Check | What it validates |
 |-------|-------------------|
-| fmt+clippy | `cargo fmt --check` and `cargo clippy` with `-D warnings` |
+| fmt + clippy | `cargo fmt --check` and `cargo clippy` with `-D warnings` |
 | nextest (stable) | Full workspace test suite on Linux |
 | Windows (stable) | Platform-specific compilation and targeted tests |
 | macOS (stable) | Platform-specific compilation and targeted tests |
 | Linux musl (stable) | Static linking compatibility |
+| interop / interop with upstream rsync | Wire compatibility against every pinned upstream release |
+| upstream-testsuite / upstream testsuite | Upstream's own testsuite, unprivileged |
+| upstream-testsuite / upstream testsuite (root) | Upstream's own testsuite, privileged (ownership, devices) |
 
-PRs require one approving review (admin can bypass).
+Master is protected, so every change lands through a pull request. No approving
+review is required - the checks above are the gate.
 
 ## Upstream Rsync Reference
 
@@ -187,10 +191,14 @@ The upstream C source is the authoritative reference for all protocol behavior.
 
 ```sh
 mkdir -p target/interop/upstream-src && cd target/interop/upstream-src
-curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz | tar xz
+curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
 ```
 
-Or run the interop harness which downloads all tested versions (3.0.9, 3.1.3, 3.4.1, 3.4.2):
+`3.4.4` is the version `workspace.metadata.oc_rsync.upstream_version` pins, and the
+one every `// upstream:` citation resolves against.
+
+Or run the interop harness, which downloads every tested version - the set lives in
+`versions=(...)` at `tools/ci/run_interop.sh:74`:
 
 ```sh
 bash tools/ci/run_interop.sh
