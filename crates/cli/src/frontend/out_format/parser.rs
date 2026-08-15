@@ -152,14 +152,29 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
 }
 
 /// Reports whether an `--out-format` / `--log-format` string contains the given
-/// `%esc` directive, mirroring upstream `log_format_has()` byte-for-byte so the
-/// client and server agree on which placeholders a format uses. Scans for `%`,
-/// skips the shared-iterator apostrophes, an optional `-`, a digit run, and any
-/// trailing apostrophes, then compares the escape character. All directives are
-/// ASCII, so scanning the lossy conversion of a non-UTF-8 `OsStr` is safe: ASCII
-/// bytes always round-trip and cannot be introduced by lossy replacement.
+/// `%esc` directive, so the client and server agree on which placeholders a
+/// format uses. Scans for `%`, skips the shared-iterator apostrophes, an
+/// optional `-`, a digit run, and any trailing apostrophes, then compares the
+/// escape character. All directives are ASCII, so scanning the lossy conversion
+/// of a non-UTF-8 `OsStr` is safe: ASCII bytes always round-trip and cannot be
+/// introduced by lossy replacement.
 ///
-/// upstream: log.c:793 `log_format_has()`.
+/// `%%` is a literal percent, so the second `%` is consumed rather than treated
+/// as the start of a new escape. Without that, `%%o` reports `o` while
+/// [`parse_out_format`] emits a literal - and the two disagreeing is the actual
+/// defect, because `run.rs` gates itemize/operation handling on this answer.
+///
+/// upstream: log.c:828 `log_format_has()`; the `%%` skip is log.c:856.
+///
+/// ONE DELIBERATE DEVIATION: upstream bounds its digit run at
+/// `LOG_FMT_SIZE - 8` (log.c:847) because `log_formatted()` copies each escape
+/// into a fixed 32-byte scratch buffer and its own scan stops there, so an
+/// unbounded scan here would make the two disagree about which char is the
+/// escape letter. oc has no such buffer - [`parse_out_format`] builds tokens -
+/// and BOTH oc scans are unbounded, so they already agree, which is the
+/// invariant that bound exists to preserve. Adding the limit here alone would
+/// manufacture the very disagreement upstream is guarding against; if it is
+/// ever wanted, it must land in both scanners at once or neither.
 pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
     let text = format.to_string_lossy();
     let bytes = text.as_bytes();
@@ -187,6 +202,12 @@ pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
         }
         if bytes[i] == esc as u8 {
             return true;
+        }
+        // upstream: log.c:856 - `%%` is a literal '%', not the start of an
+        // escape, so consume the second one. Leaving it makes the next loop
+        // iteration treat it as an escape start and match the char AFTER it.
+        if bytes[i] == b'%' {
+            i += 1;
         }
     }
     false
@@ -253,9 +274,53 @@ mod tests {
     #[test]
     fn log_format_has_ignores_escaped_percent() {
         // `%%` is a literal percent; the following char is not a directive.
+        //
+        // ⚠ `100%% done` is NON-DISCRIMINATING on its own: the char after `%%`
+        // is a space, so a parser that fails to consume the second `%` still
+        // answers `false` - by accident, not by rule. The escape letter must
+        // follow the `%%` immediately for the case to have any power.
         assert!(!log_format_has(&os("100%% done"), 'o'));
+        assert!(!log_format_has(&os("%%o"), 'o'));
+        assert!(!log_format_has(&os("done %%o now"), 'o'));
         // A trailing bare `%` has no directive char.
         assert!(!log_format_has(&os("done %"), 'o'));
+    }
+
+    #[test]
+    fn log_format_has_agrees_with_parse_out_format_on_escaped_percent() {
+        // The two parsers read the SAME operator string and must not disagree
+        // about whether a directive is present: `parse_out_format` emits a
+        // literal `%o` for `%%o` (parser.rs `if next == '%'`), so
+        // `log_format_has` reporting `o` would gate itemize/operation handling
+        // (run.rs) on a directive the formatter never resolves.
+        let fmt = os("%%o");
+        let parsed = parse_out_format(&fmt).expect("%%o is a valid format");
+        let renders_literally = format!("{parsed:?}").contains("Operation");
+        assert!(
+            !renders_literally,
+            "parse_out_format resolved %%o to an Operation placeholder"
+        );
+        assert!(
+            !log_format_has(&fmt, 'o'),
+            "log_format_has disagrees with parse_out_format about %%o"
+        );
+    }
+
+    #[test]
+    fn log_format_has_still_sees_a_real_directive_after_an_escaped_percent() {
+        // `%%%o` is a literal `%` followed by a REAL `%o`. Consuming the `%%`
+        // must not swallow the third `%`.
+        assert!(log_format_has(&os("%%%o"), 'o'));
+        assert!(log_format_has(&os("100%% done: %o"), 'o'));
+    }
+
+    #[test]
+    fn log_format_has_tolerates_an_enormous_width_run() {
+        // oc scans the digit run UNBOUNDED in BOTH parsers, deliberately: see
+        // the note on `log_format_has`. The invariant that matters is that the
+        // two agree on where the escape letter falls, which they do.
+        assert!(log_format_has(&os("%999999999o"), 'o'));
+        assert!(!log_format_has(&os("%999999999n"), 'o'));
     }
 
     #[test]
