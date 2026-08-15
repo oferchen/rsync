@@ -365,7 +365,7 @@ pub use traits::{FileReader, FileWriter};
 pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
-pub use confined_open::open_source_confined;
+pub use confined_open::{LeafPolicy, open_source_confined};
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
