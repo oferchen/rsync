@@ -2322,6 +2322,69 @@ fn symsafe_skip_backup_wording_matches_upstream() {
     );
 }
 
+/// The hard-link/rename fast path must not preserve an unsafe destination
+/// symlink into the backup area.
+///
+/// upstream: `backup.c:289-310` runs the `--safe-links` check BEFORE
+/// `link_or_rename()`, and its own comment at `backup.c:282-288` explains why:
+/// the fast path would otherwise hard-link an escaping symlink into the backup
+/// area and `goto success`, never reaching the copy path's check at
+/// `backup.c:368-375`. oc only had the second check, so the escaping link
+/// survived as `link~`.
+///
+/// This drives a real copy rather than asserting the message format, because a
+/// format-only assertion passes against a build where the check never runs.
+/// The oracle is real rsync 3.5.0, which on this fixture prints
+/// `not backing up unsafe symlink "d/link" -> "../../etc/passwd"` and leaves no
+/// `link~`; oc before this fix printed nothing and created
+/// `link~ -> ../../etc/passwd`.
+///
+/// The DESTINATION entry carries the unsafe target on purpose. A source-side
+/// unsafe link never reaches the backup path at all, because `--safe-links`
+/// drops it earlier - so a fixture built the other way round passes with or
+/// without the fix and proves nothing.
+#[cfg(unix)]
+#[test]
+fn safe_links_blocks_backup_of_unsafe_destination_symlink() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_dir = ctx.source.join("d");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    std::os::unix::fs::symlink("sibling", source_dir.join("link")).expect("safe source link");
+
+    let dest_dir = ctx.dest.join("source").join("d");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
+    // Four levels up from `<dest>/source/d/link` (depth 3) genuinely leaves the
+    // destination tree. Counting matters: `../../outside` from this depth still
+    // lands inside it, so a shallower target makes the case pass whether or not
+    // the check runs.
+    let dest_link = dest_dir.join("link");
+    std::os::unix::fs::symlink("../../../../outside", &dest_link).expect("unsafe dest link");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .links(true)
+        .safe_links(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest_dir.join("link~");
+    assert!(
+        !backup.exists() && fs::symlink_metadata(&backup).is_err(),
+        "--safe-links must not preserve the escaping symlink into the backup \
+         area; found {} -> {:?}",
+        backup.display(),
+        fs::read_link(&backup).ok()
+    );
+}
+
 /// Verifies the default verbosity (no `--info=SYMSAFE`) suppresses the
 /// notice, matching upstream's `INFO_GTE(SYMSAFE, 1)` gate at
 /// `backup.c:291`. SYMSAFE is in `info_verbosity[1]`, so it stays silent
