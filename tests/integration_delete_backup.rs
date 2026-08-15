@@ -263,7 +263,7 @@ fn backup_creates_backup_with_default_suffix() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     fs::write(src_dir.join("file.txt"), b"new content").unwrap();
-    fs::write(dest_dir.join("file.txt"), b"old content").unwrap();
+    write_stale_dest(dest_dir.join("file.txt"), b"old content");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -293,7 +293,7 @@ fn backup_with_custom_suffix() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     fs::write(src_dir.join("data.txt"), b"new").unwrap();
-    fs::write(dest_dir.join("data.txt"), b"old").unwrap();
+    write_stale_dest(dest_dir.join("data.txt"), b"old");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -317,7 +317,7 @@ fn backup_dir_creates_backups_in_separate_directory() {
     let backup_dir = test_dir.mkdir("backups").unwrap();
 
     fs::write(src_dir.join("file.txt"), b"new").unwrap();
-    fs::write(dest_dir.join("file.txt"), b"old").unwrap();
+    write_stale_dest(dest_dir.join("file.txt"), b"old");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -346,7 +346,7 @@ fn backup_dir_with_suffix() {
     let backup_dir = test_dir.mkdir("backups").unwrap();
 
     fs::write(src_dir.join("doc.txt"), b"version2").unwrap();
-    fs::write(dest_dir.join("doc.txt"), b"version1").unwrap();
+    write_stale_dest(dest_dir.join("doc.txt"), b"version1");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -372,7 +372,7 @@ fn backup_recursive_preserves_directory_structure() {
     fs::write(src_dir.join("subdir/file.txt"), b"new").unwrap();
 
     fs::create_dir(dest_dir.join("subdir")).unwrap();
-    fs::write(dest_dir.join("subdir/file.txt"), b"old").unwrap();
+    write_stale_dest(dest_dir.join("subdir/file.txt"), b"old");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -486,7 +486,7 @@ fn backup_nested_directory_structure() {
     fs::write(src_dir.join("a/b/c/file.txt"), b"new").unwrap();
 
     fs::create_dir_all(dest_dir.join("a/b/c")).unwrap();
-    fs::write(dest_dir.join("a/b/c/file.txt"), b"old").unwrap();
+    write_stale_dest(dest_dir.join("a/b/c/file.txt"), b"old");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
