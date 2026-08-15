@@ -361,6 +361,13 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
+        // upstream: io.c:1702-1712 - see the matching drain in `pipelined.rs`.
+        // The sender's MSG_IO_ERROR arrives before the phase-1 NDX_DONE
+        // (sender.c:809-817), so folding it in here is what lets the late sweep
+        // honour `delete_in_dir`'s IOERR_GENERAL guard (generator.c:304-311)
+        // instead of deleting entries upstream preserves.
+        stats.io_error |= reader.take_io_error();
+
         // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
         // the sweep only after every file (including each destination
         // `.rsync-filter` and any --delay-updates staged file committed just
