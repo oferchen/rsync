@@ -49,6 +49,16 @@ impl<'a> CopyContext<'a> {
             let guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             let proto_version = guard.config().protocol_version;
             let compat_flags_val = guard.config().compat_flags;
+            let checksum_seed = guard.config().checksum_seed;
+            // The preserve flags come from the header this same writer already
+            // recorded, not from `options`, because the header is what the
+            // reader configures itself from (batch/src/reader/flist.rs). Unlike
+            // upstream - whose batch file is a byte tee of one real stream, so
+            // a writer/reader disagreement is unspellable - the local
+            // --write-batch path re-encodes the flist with a second encoder,
+            // and deriving it from anything but the recorded flags lets the two
+            // sides drift into an undecodable batch.
+            let stream_flags = *guard.stream_flags();
             drop(guard);
             let protocol = protocol::ProtocolVersion::try_from(proto_version as u8)
                 .unwrap_or(protocol::ProtocolVersion::NEWEST);
@@ -62,20 +72,43 @@ impl<'a> CopyContext<'a> {
             } else {
                 protocol::flist::FileListWriter::new(protocol)
             };
-            writer
-                .with_preserve_uid(options.preserve_owner())
-                .with_preserve_gid(options.preserve_group())
-                .with_preserve_links(options.links_enabled())
-                .with_preserve_devices(options.devices_enabled())
-                .with_preserve_specials(options.specials_enabled())
-                .with_preserve_hard_links(options.hard_links_enabled())
+            let writer = writer
+                .with_preserve_uid(stream_flags.preserve_uid)
+                .with_preserve_gid(stream_flags.preserve_gid)
+                .with_preserve_links(stream_flags.preserve_links)
+                .with_preserve_devices(stream_flags.preserve_devices)
+                // upstream: batch.c flag_ptr[] bit 4 is `preserve_devices` and
+                // covers --specials too (upstream `-D` = both), so the reader
+                // derives specials from that one bit. Deriving it here from
+                // `options.specials_enabled()` instead would desync a
+                // `--specials --no-devices` batch.
+                .with_preserve_specials(stream_flags.preserve_devices)
+                .with_preserve_hard_links(stream_flags.preserve_hard_links)
+                .with_preserve_acls(stream_flags.preserve_acls)
+                .with_preserve_xattrs(stream_flags.preserve_xattrs)
+                // --atimes / --crtimes have no flag_ptr[] bit; the reader takes
+                // them from the replay invocation instead (reader/flist.rs), so
+                // the writer keeps using the live options here.
                 .with_preserve_atimes(options.preserve_atimes())
                 .with_preserve_crtimes(options.preserve_crtimes())
                 // The batch id-list trailer (write_batch_id_lists) emits bare
                 // terminators without names, so owner names must ride inline in
                 // every entry regardless of inc_recurse. Keep XMIT_*_NAME_FOLLOWS
                 // always enabled for the batch flist writer.
-                .with_name_follows(true)
+                .with_name_follows(true);
+
+            // upstream: flist.c:162 - under always_checksum every regular-file
+            // entry carries a trailing digest. The reader re-derives the length
+            // from the protocol version (batch/src/reader/flist.rs
+            // default_flist_csum_len), so the two must agree or the reader
+            // walks off the end of each entry.
+            if stream_flags.always_checksum {
+                writer
+                    .with_always_checksum(batch::reader::default_flist_csum_len(proto_version))
+                    .with_checksum_seed(checksum_seed)
+            } else {
+                writer
+            }
         });
 
         // upstream: batch.c:68 - stream-flag bit 8 records `do_compression`, and

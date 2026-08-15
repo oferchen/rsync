@@ -10,6 +10,8 @@
 
 mod delta;
 mod flist;
+
+pub use flist::default_flist_csum_len;
 mod stats;
 
 #[cfg(test)]

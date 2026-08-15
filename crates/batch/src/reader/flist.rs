@@ -84,6 +84,16 @@ impl BatchReader {
         // the stream flags, numeric_ids is not recorded in the batch header
         // (batch.c:59-76); it is carried in from the --read-batch invocation.
         let numeric_ids = self.config.numeric_ids;
+        // Same reason as numeric_ids: `batch.c:59-76 flag_ptr[]` has no bit for
+        // --atimes or --crtimes, so the recorded stream flags cannot describe
+        // them. Upstream does not need a bit because its batch file is a byte
+        // tee of a real wire stream and the replaying receiver takes
+        // preserve_atimes/preserve_crtimes from the replay script's argv. Both
+        // gate a per-entry field (`flist.c:625`, `flist.c:634`), so a reader
+        // that does not know about them decodes the following entry's flag
+        // byte as a timestamp and desynchronises the stream.
+        let preserve_atimes = self.config.preserve_atimes;
+        let preserve_crtimes = self.config.preserve_crtimes;
 
         let header = self.header.as_ref().expect("header checked above");
         let flags = header.stream_flags;
@@ -123,7 +133,9 @@ impl BatchReader {
             .with_preserve_specials(flags.preserve_devices)
             .with_preserve_hard_links(flags.preserve_hard_links)
             .with_preserve_acls(flags.preserve_acls)
-            .with_preserve_xattrs(flags.preserve_xattrs);
+            .with_preserve_xattrs(flags.preserve_xattrs)
+            .with_preserve_atimes(preserve_atimes)
+            .with_preserve_crtimes(preserve_crtimes);
 
         // upstream: flist.c:162 - when always_checksum is set, each regular file
         // entry in the flist carries a trailing checksum of flist_csum_len bytes.
@@ -294,7 +306,11 @@ impl BatchReader {
 /// # Upstream Reference
 ///
 /// - `checksum.c:csum_len_for_type()` - MD4=16, MD5=16, XXH3_128=16, XXH64=8
-pub(crate) fn default_flist_csum_len(protocol_version: i32) -> usize {
+///
+/// Public because the local `--write-batch` flist writer must emit exactly the
+/// number of bytes this reader will consume; sharing one function is what keeps
+/// the two from drifting.
+pub fn default_flist_csum_len(protocol_version: i32) -> usize {
     // All supported protocols (27-32) default to MD4 or MD5, both 16 bytes.
     // If XXH3-128 is negotiated via checksum seeds, it is also 16 bytes.
     // XXH64 and XXH3-64 are 8 bytes but require explicit negotiation which

@@ -366,7 +366,12 @@ fn replay_batch(
     let replay_cfg = batch_cfg
         .clone()
         .with_active_flags(config_batch_flags(config))
-        .with_numeric_ids(config.numeric_ids());
+        .with_numeric_ids(config.numeric_ids())
+        // --atimes / --crtimes have no flag_ptr[] bit either (batch.c:59-76),
+        // and each gates a per-entry flist field, so they must reach the
+        // reader from the replay invocation or the entry decode desyncs.
+        .with_preserve_atimes(config.preserve_atimes())
+        .with_preserve_crtimes(config.preserve_crtimes());
 
     let result = engine::batch::replay::replay(&replay_cfg, &dest_root, config.verbosity().into())
         .map_err(|e| match e {
