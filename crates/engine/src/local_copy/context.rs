@@ -638,6 +638,10 @@ pub(crate) enum BackupStrategy {
 }
 
 include!("context_impl/state.rs");
+include!("context_impl/batch_setup.rs");
+include!("context_impl/link_dest.rs");
+include!("context_impl/backup.rs");
+include!("context_impl/deferred_updates.rs");
 include!("context_impl/options/metadata.rs");
 include!("context_impl/options/transfer.rs");
 include!("context_impl/options/dirs.rs");
