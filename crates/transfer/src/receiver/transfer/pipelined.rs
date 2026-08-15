@@ -327,6 +327,24 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
+        // upstream: io.c:1702-1712 - the receiver ORs each MSG_IO_ERROR into the
+        // global `io_error` and forwards it to the generator, so by the time the
+        // generator runs its late sweep the bits are already visible to
+        // `delete_in_dir`'s guard (generator.c:304-311). oc has no generator
+        // peer - the receive path is unified - so the equivalent is to drain the
+        // reader's accumulator here, BEFORE the sweep consults `stats.io_error`.
+        //
+        // The sender emits MSG_IO_ERROR immediately before the phase-1 NDX_DONE
+        // (sender.c:809-817), which the pipeline loop above must consume to
+        // return, so the bits are already accumulated by this point. Draining
+        // only after `finalize_transfer` (below) would let --delete-after remove
+        // destination entries that upstream preserves.
+        //
+        // `take_io_error` is destructive, and both drains OR into the same field,
+        // so the later one still folds in anything that arrives during the
+        // goodbye handshake without double-counting these bits.
+        stats.io_error |= reader.take_io_error();
+
         // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
         // the sweep only after every file (including each destination
         // `.rsync-filter` and any --delay-updates staged file committed just
