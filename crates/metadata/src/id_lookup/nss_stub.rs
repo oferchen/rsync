@@ -3,8 +3,15 @@
 //! On platforms without POSIX NSS (Windows, etc.), lookups succeed only when
 //! a name converter is installed via [`super::set_name_converter`]. Without
 //! a converter, all lookups return `Ok(None)`.
+//!
+//! These share
+//! [`with_name_converter`](super::converter::with_name_converter) with the
+//! POSIX path. There is no host database to fall back to here, so the
+//! helper's "converter installed" and "converter answered" arms collapse to
+//! the same `Ok(None)` - but going through it keeps one description of how a
+//! converter is consulted instead of four copies of the slot dance.
 
-use super::converter::NAME_CONVERTER_SLOT;
+use super::converter::with_name_converter;
 use std::io;
 
 /// Looks up the username for a given UID.
@@ -12,12 +19,9 @@ use std::io;
 /// Delegates to the thread-local name converter if installed, otherwise
 /// returns `Ok(None)`.
 pub fn lookup_user_name(uid: u32) -> Result<Option<Vec<u8>>, io::Error> {
-    let converted = NAME_CONVERTER_SLOT.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .and_then(|nc| nc.uid_to_name(uid))
-    });
-    Ok(converted.map(String::into_bytes))
+    Ok(with_name_converter(|nc| nc.uid_to_name(uid))
+        .flatten()
+        .map(String::into_bytes))
 }
 
 /// Looks up the UID for a given username.
@@ -28,12 +32,7 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<u32>, io::Error> {
     let Ok(name_str) = std::str::from_utf8(name) else {
         return Ok(None);
     };
-    let converted = NAME_CONVERTER_SLOT.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .and_then(|nc| nc.name_to_uid(name_str))
-    });
-    Ok(converted)
+    Ok(with_name_converter(|nc| nc.name_to_uid(name_str)).flatten())
 }
 
 /// Looks up the group name for a given GID.
@@ -41,12 +40,9 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<u32>, io::Error> {
 /// Delegates to the thread-local name converter if installed, otherwise
 /// returns `Ok(None)`.
 pub fn lookup_group_name(gid: u32) -> Result<Option<Vec<u8>>, io::Error> {
-    let converted = NAME_CONVERTER_SLOT.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .and_then(|nc| nc.gid_to_name(gid))
-    });
-    Ok(converted.map(String::into_bytes))
+    Ok(with_name_converter(|nc| nc.gid_to_name(gid))
+        .flatten()
+        .map(String::into_bytes))
 }
 
 /// Looks up the GID for a given group name.
@@ -57,12 +53,7 @@ pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<u32>, io::Error> {
     let Ok(name_str) = std::str::from_utf8(name) else {
         return Ok(None);
     };
-    let converted = NAME_CONVERTER_SLOT.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .and_then(|nc| nc.name_to_gid(name_str))
-    });
-    Ok(converted)
+    Ok(with_name_converter(|nc| nc.name_to_gid(name_str)).flatten())
 }
 
 #[cfg(test)]
