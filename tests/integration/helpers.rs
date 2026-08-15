@@ -149,6 +149,21 @@ impl Drop for TestDir {
     }
 }
 
+/// Writes a destination file that rsync must treat as genuinely out of date.
+///
+/// upstream: generator.c:624-647 `quick_check_ok()` compares size and then
+/// mtime at whole-second granularity. A fixture that writes both sides in the
+/// same second with equal-length payloads therefore describes a file rsync
+/// legitimately skips, whatever the contents are. Backdating the destination
+/// states the intent - "this copy is stale" - without perturbing the byte
+/// contents the assertions read back.
+pub fn write_stale_dest<P: AsRef<Path>>(path: P, contents: &[u8]) {
+    let path = path.as_ref();
+    fs::write(path, contents).expect("write destination fixture");
+    let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
+    filetime::set_file_times(path, stale, stale).expect("backdate destination fixture");
+}
+
 /// Binary command builder for integration tests.
 pub struct RsyncCommand {
     binary: PathBuf,

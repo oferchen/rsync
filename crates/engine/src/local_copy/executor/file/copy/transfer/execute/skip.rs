@@ -22,9 +22,7 @@ use crate::local_copy::{
     LocalCopyMetadata, LocalCopyRecord,
 };
 
-use super::super::super::super::comparison::{
-    CopyComparison, files_checksum_match, should_skip_copy,
-};
+use super::super::super::super::comparison::{CopyComparison, should_skip_copy};
 use super::super::TransferFlags;
 
 /// Checks if the destination is already up-to-date and can be skipped.
@@ -50,6 +48,14 @@ pub(super) fn try_skip_up_to_date(
         None
     };
 
+    // upstream: generator.c:624-647 `quick_check_ok()` FT_REG - the up-to-date
+    // decision reads exactly four knobs: size, `always_checksum` (-c),
+    // `size_only`, `ignore_times` (-I), then mtime. `make_backups` is NOT among
+    // them; its only uses in generator.c are the backup action itself (:2018)
+    // and the inplace duplicate-backup guard (:1862, :1898, :2187, :2214).
+    // Deciding to transfer because a backup was requested would read both files
+    // that upstream never opens.
+    #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]
     let mut skip = should_skip_copy(CopyComparison {
         source_path: source,
         source: metadata,
@@ -63,7 +69,8 @@ pub(super) fn try_skip_up_to_date(
         prefetched_match,
     });
 
-    // upstream: generator.c:unchanged_file() compares st_rdev for devices. A
+    // upstream: generator.c:668-671 `quick_check_ok()` FT_DEVICE compares
+    // st_rdev against MAKEDEV(F_RDEV_P(file)) for devices. A
     // --fake-super placeholder can have identical content and mtime while its
     // %stat encodes a different device, so force a transfer when the encoded
     // node changed.
@@ -73,28 +80,6 @@ pub(super) fn try_skip_up_to_date(
         && super::super::super::super::comparison::fake_super_stat_differs(source, destination)
     {
         skip = false;
-    }
-
-    if skip {
-        let requires_content_verification =
-            existing.is_file() && !flags.checksum_enabled && context.options().backup_enabled();
-
-        if requires_content_verification {
-            skip = match files_checksum_match(
-                source,
-                destination,
-                context.options().checksum_algorithm(),
-            ) {
-                Ok(result) => result,
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "compare existing destination",
-                        destination.to_path_buf(),
-                        error,
-                    ));
-                }
-            };
-        }
     }
 
     if !skip {

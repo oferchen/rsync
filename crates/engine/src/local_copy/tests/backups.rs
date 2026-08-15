@@ -24,7 +24,7 @@ fn backup_hard_links_same_filesystem_backup() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original").expect("write dest");
+    write_stale_dest(&existing, b"original");
     let inode_before = fs::metadata(&existing).expect("stat dest").ino();
 
     let operands = vec![
@@ -73,7 +73,7 @@ fn backup_creation_uses_default_suffix() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original").expect("write dest");
+    write_stale_dest(&existing, b"original");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -108,7 +108,7 @@ fn backup_creation_respects_custom_suffix() {
     let dest_root = dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"baseline").expect("write dest");
+    write_stale_dest(&existing, b"baseline");
 
     let operands = vec![
         source.into_os_string(),
@@ -145,7 +145,7 @@ fn backup_creation_uses_relative_backup_directory() {
     let existing_parent = dest_root.join("dir");
     fs::create_dir_all(&existing_parent).expect("create dest root");
     let existing = existing_parent.join("file.txt");
-    fs::write(&existing, b"old contents").expect("write dest");
+    write_stale_dest(&existing, b"old contents");
 
     let operands = vec![
         source.into_os_string(),
@@ -185,7 +185,7 @@ fn backup_creation_uses_absolute_backup_directory() {
     let dest_root = dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"retained").expect("write dest");
+    write_stale_dest(&existing, b"retained");
 
     let operands = vec![
         source.into_os_string(),
@@ -219,7 +219,7 @@ fn backup_dir_places_backups_in_specified_directory() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("data.txt");
-    fs::write(&existing, b"old data").expect("write dest");
+    write_stale_dest(&existing, b"old data");
 
     let backup_dir = ctx.dest.join("my_backups");
 
@@ -304,7 +304,7 @@ fn backup_dir_works_with_custom_suffix() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("document.txt");
-    fs::write(&existing, b"version 1").expect("write dest");
+    write_stale_dest(&existing, b"version 1");
 
     let backup_dir = ctx.dest.join("archive");
 
@@ -360,6 +360,7 @@ fn backup_dir_handles_multiple_backups_correctly() {
     let options = LocalCopyOptions::default()
         .with_backup_directory(Some(backup_dir.clone()));
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -409,6 +410,7 @@ fn backup_dir_handles_repeated_syncs() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .with_backup_directory(Some(backup_dir.clone()));
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options.clone())
         .expect("first sync succeeds");
     assert_eq!(fs::read(&dest_file).expect("read dest after sync 1"), b"version 1");
@@ -416,6 +418,7 @@ fn backup_dir_handles_repeated_syncs() {
     // Second sync: update file, should create backup of version 1
     fs::write(&source_file, b"version 2").expect("write source v2");
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options.clone())
         .expect("second sync succeeds");
 
@@ -427,6 +430,7 @@ fn backup_dir_handles_repeated_syncs() {
     // Third sync: update again, backup should now contain version 2
     fs::write(&source_file, b"version 3").expect("write source v3");
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("third sync succeeds");
 
@@ -445,7 +449,7 @@ fn backup_dir_with_relative_path() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"old").expect("write dest");
+    write_stale_dest(&existing, b"old");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -508,7 +512,7 @@ fn backup_not_created_in_dry_run_mode() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original content").expect("write dest");
+    write_stale_dest(&existing, b"original content");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -633,7 +637,7 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original").expect("write dest");
+    write_stale_dest(&existing, b"original");
     fs::set_permissions(&existing, PermissionsExt::from_mode(0o604)).expect("chmod dest");
     let backup_mtime = FileTime::from_unix_time(1_600_000_000, 0);
     set_file_mtime(&existing, backup_mtime).expect("set dest mtime");
@@ -764,7 +768,7 @@ fn backup_with_special_characters_in_filename() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file with spaces & special!.txt");
-    fs::write(&existing, b"old content").expect("write dest");
+    write_stale_dest(&existing, b"old content");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -796,7 +800,7 @@ fn backup_suffix_with_date_format() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original").expect("write dest");
+    write_stale_dest(&existing, b"original");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -830,7 +834,7 @@ fn backup_directory_outside_destination_tree() {
     let dest_root = dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"old version").expect("write dest");
+    write_stale_dest(&existing, b"old version");
 
     let operands = vec![
         source.into_os_string(),
@@ -866,10 +870,10 @@ fn backup_only_when_content_differs() {
     fs::create_dir_all(&dest_root).expect("create dest root");
 
     let existing_different = dest_root.join("different.txt");
-    fs::write(&existing_different, b"old content").expect("write dest different");
+    write_stale_dest(&existing_different, b"old content");
 
     let existing_same = dest_root.join("same.txt");
-    fs::write(&existing_same, b"identical").expect("write dest same");
+    write_stale_dest(&existing_same, b"identical");
 
     // Set identical mtime so rsync's size+mtime check identifies them as unchanged
     let mtime = FileTime::from_unix_time(1_000_000, 0);
@@ -905,7 +909,7 @@ fn backup_with_empty_suffix() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"old").expect("write dest");
+    write_stale_dest(&existing, b"old");
 
     let backup_dir = ctx.dest.join("backups");
 
@@ -949,6 +953,7 @@ fn backup_overwrites_existing_backup() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().backup(true);
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options.clone())
         .expect("first sync succeeds");
 
@@ -959,6 +964,7 @@ fn backup_overwrites_existing_backup() {
     fs::write(&source_file, b"version 3").expect("write source v3");
 
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("second sync succeeds");
 
@@ -1054,7 +1060,7 @@ fn backup_enabled_implicitly_by_backup_dir() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"old").expect("write dest");
+    write_stale_dest(&existing, b"old");
 
     let backup_dir = ctx.dest.join("backups");
 
@@ -1086,7 +1092,7 @@ fn backup_enabled_implicitly_by_suffix() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"old").expect("write dest");
+    write_stale_dest(&existing, b"old");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1160,6 +1166,7 @@ fn backup_multiple_files_same_directory() {
         .backup(true)
         .with_backup_suffix(Some(".bak"));
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -1260,7 +1267,7 @@ fn backup_with_trailing_slash_source() {
     // Source files (trailing-slash means contents go directly into dest)
     fs::write(source.join("file.txt"), b"new data").expect("write source");
 
-    fs::write(dest.join("file.txt"), b"old data").expect("write dest");
+    write_stale_dest(dest.join("file.txt"), b"old data");
 
     let mut source_operand = source.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1292,7 +1299,7 @@ fn backup_with_trailing_slash_and_backup_dir() {
     fs::create_dir_all(&dest).expect("create dest");
 
     fs::write(source.join("report.txt"), b"updated report").expect("write source");
-    fs::write(dest.join("report.txt"), b"original report").expect("write dest");
+    write_stale_dest(dest.join("report.txt"), b"original report");
 
     let mut source_operand = source.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1325,7 +1332,7 @@ fn backup_with_inplace_mode() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"inplace old").expect("write dest");
+    write_stale_dest(&existing, b"inplace old");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1369,7 +1376,7 @@ fn backup_with_inplace_preserves_dest_inode_and_truncates() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"much-longer-original-content").expect("write dest");
+    write_stale_dest(&existing, b"much-longer-original-content");
     let inode_before = fs::metadata(&existing).expect("stat dest").ino();
 
     let operands = vec![
@@ -1530,7 +1537,7 @@ fn backup_suffix_with_dot_prefix() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("config.yaml"), b"old config").expect("write dest");
+    write_stale_dest(dest_root.join("config.yaml"), b"old config");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1560,7 +1567,7 @@ fn backup_suffix_with_long_extension() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("data.bin"), b"old binary").expect("write dest");
+    write_stale_dest(dest_root.join("data.bin"), b"old binary");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1588,8 +1595,8 @@ fn backup_with_delete_and_trailing_slash() {
 
     fs::write(source.join("remain.txt"), b"remain").expect("write source");
 
-    fs::write(dest.join("remain.txt"), b"old remain").expect("write dest remain");
-    fs::write(dest.join("extra.txt"), b"extra content").expect("write dest extra");
+    write_stale_dest(dest.join("remain.txt"), b"old remain");
+    write_stale_dest(dest.join("extra.txt"), b"extra content");
 
     let backup_dir = temp.path().join("backups");
 
@@ -1633,7 +1640,7 @@ fn backup_large_file_preserves_content() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let old_content: Vec<u8> = (0..100_000).map(|i| ((i + 128) % 256) as u8).collect();
-    fs::write(dest_root.join("large.bin"), &old_content).expect("write dest");
+    write_stale_dest(dest_root.join("large.bin"), &old_content);
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1679,6 +1686,7 @@ fn backup_recursive_multiple_directories() {
     let options = LocalCopyOptions::default()
         .with_backup_directory(Some(backup_dir.clone()));
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -1709,7 +1717,7 @@ fn backup_disabled_after_enabling_does_not_create_backups() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("file.txt"), b"old").expect("write dest");
+    write_stale_dest(dest_root.join("file.txt"), b"old");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1755,6 +1763,7 @@ fn backup_with_delete_during() {
         .delete(true)
         .with_backup_directory(Some(backup_dir.clone()));
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -1808,7 +1817,7 @@ fn backup_to_empty_file() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("zeroed.txt"), b"had content").expect("write dest");
+    write_stale_dest(dest_root.join("zeroed.txt"), b"had content");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -1852,6 +1861,7 @@ fn backup_dir_with_no_suffix_upstream_behavior() {
         .with_backup_directory(Some(backup_dir.clone()))
         .with_backup_suffix(Some(""));
 
+    backdate_tree(&ctx.dest);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -1873,7 +1883,7 @@ fn backup_hidden_files() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join(".hidden"), b"old hidden").expect("write dest");
+    write_stale_dest(dest_root.join(".hidden"), b"old hidden");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -2099,7 +2109,7 @@ fn backup_dir_relative_uses_destination_root() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("file.txt"), b"old").expect("write dest");
+    write_stale_dest(dest_root.join("file.txt"), b"old");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -2128,7 +2138,7 @@ fn backup_with_checksum_mode() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("file.txt"), b"old checksum content").expect("write dest");
+    write_stale_dest(dest_root.join("file.txt"), b"old checksum content");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -2177,7 +2187,7 @@ fn backup_emits_info_backup_notice() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
-    fs::write(&existing, b"original").expect("write dest");
+    write_stale_dest(&existing, b"original");
 
     // upstream: backup.c:353 emits paths relative to the destination root, not
     // absolute filesystem paths. Capture the relative form before `ctx.dest` is
@@ -2241,7 +2251,7 @@ fn backup_default_verbosity_suppresses_info_backup_notice() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("file.txt"), b"original").expect("write dest");
+    write_stale_dest(dest_root.join("file.txt"), b"original");
 
     let operands = vec![ctx.source.into_os_string(), ctx.dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -2450,7 +2460,7 @@ fn backup_with_no_whole_file_does_not_produce_vanished_error() {
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("delta.bin");
-    fs::write(&existing, &old_content).expect("write dest");
+    write_stale_dest(&existing, &old_content);
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -2559,7 +2569,7 @@ fn backup_delete_skips_already_suffixed_extraneous_file() {
 
     let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
-    fs::write(dest_root.join("keep.txt"), b"keep").expect("write dest keep");
+    write_stale_dest(dest_root.join("keep.txt"), b"keep");
     // Plain extraneous file -> backed up to plain~.
     fs::write(dest_root.join("plain"), b"extraneous").expect("write plain");
     // Already-suffixed extraneous file -> unlinked directly, never re-backed-up.
@@ -2621,7 +2631,7 @@ fn backup_dir_intermediate_inherits_source_dir_permissions() {
     let dest_root = dest.join("source");
     let dest_dir = dest_root.join("dir");
     fs::create_dir_all(&dest_dir).expect("create dest dir");
-    fs::write(dest_dir.join("file.txt"), b"old contents").expect("write dest");
+    write_stale_dest(dest_dir.join("file.txt"), b"old contents");
     // The backup subdirectory must inherit *this* mode, proving it mirrors the
     // destination-tree directory rather than the umask default.
     fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o700)).expect("chmod dest dir");
@@ -2673,7 +2683,7 @@ fn backup_dir_clears_nondir_obstruction() {
     let dest_root = dest.join("source");
     let dest_dir = dest_root.join("dir");
     fs::create_dir_all(&dest_dir).expect("create dest dir");
-    fs::write(dest_dir.join("file.txt"), b"old contents").expect("write dest");
+    write_stale_dest(dest_dir.join("file.txt"), b"old contents");
 
     // Stale non-directory exactly where the backup tree needs a directory
     // (backup path is dest/backups/source/dir/file.txt~).
@@ -2783,5 +2793,135 @@ fn backup_dir_preserves_directory_mtime() {
     assert_eq!(
         dest_mtime, dir_mtime,
         "with --backup-dir the implication does not apply, so the source dir mtime is preserved"
+    );
+}
+
+/// Writes a destination fixture and backdates it so the quick check cannot
+/// call it up to date.
+///
+/// upstream: generator.c:624-647 `quick_check_ok()` reports "unchanged" for a
+/// regular file when the size matches AND the mtime matches - it never reads
+/// content, and `make_backups` is not one of its inputs. Writing both sides of
+/// a fixture back to back with equal-length payloads therefore describes a
+/// file rsync legitimately SKIPS, so no transfer and no backup occur. Tests
+/// that mean "the destination is out of date" must say so with the mtime (or
+/// the size), which is exactly the guidance in this repo's Known Pitfalls.
+fn write_stale_dest<P: AsRef<Path>>(path: P, contents: &[u8]) {
+    let path = path.as_ref();
+    fs::write(path, contents).expect("write dest");
+    let stale = FileTime::from_unix_time(1_500_000_000, 0);
+    filetime::set_file_times(path, stale, stale).expect("backdate dest fixture");
+}
+
+/// Ages every file already in `dir` so a following sync sees a genuinely
+/// out-of-date destination.
+///
+/// Multi-sync fixtures write the source, sync, rewrite the source and sync
+/// again - all within the same wall-clock second. Upstream compares mtimes at
+/// whole-second granularity (`mtime_differs`, reached from `quick_check_ok`,
+/// generator.c:645), so without this the second sync sees size-equal and
+/// mtime-equal and correctly SKIPS, transferring nothing and backing up
+/// nothing. Ageing the destination is how the fixture says "time passed".
+fn backdate_tree(dir: &Path) {
+    let stale = FileTime::from_unix_time(1_500_000_000, 0);
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            backdate_tree(&path);
+        } else {
+            let _ = filetime::set_file_times(&path, stale, stale);
+        }
+    }
+}
+
+/// Builds a source/destination pair that upstream's quick check calls
+/// up to date - equal size, equal mtime - while the bytes differ.
+///
+/// This is the only fixture that can tell `quick_check_ok()`'s real inputs
+/// apart from a content comparison, because it is the one case where the two
+/// disagree. Returns the destination file path.
+fn setup_size_and_mtime_equal_but_content_differs(ctx: &test_helpers::CopyTestContext) -> PathBuf {
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"aaaaaaaa").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"bbbbbbbb").expect("write dest");
+
+    let same = FileTime::from_unix_time(1_500_000_000, 0);
+    filetime::set_file_times(&source_file, same, same).expect("pin source times");
+    filetime::set_file_times(&existing, same, same).expect("pin dest times");
+
+    existing
+}
+
+fn run_backup_copy(ctx: &test_helpers::CopyTestContext, options: LocalCopyOptions) {
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+}
+
+// upstream: generator.c:624-647 `quick_check_ok()` FT_REG reads size,
+// `always_checksum` (-c), `size_only`, `ignore_times` (-I) and then the
+// mtime. `make_backups` is not one of its inputs, so a file the quick check
+// calls up to date is not transferred and therefore not backed up - however
+// the bytes actually compare. Verified against rsync 3.5.0: this fixture
+// leaves the destination untouched and creates no `file.txt~`.
+//
+// oc used to re-open both files and compare checksums whenever --backup was
+// set without -c, which turned a skip into a transfer. That is --checksum
+// semantics attached to --backup. This is the only fixture shape that can
+// fail if it comes back: content must differ while size and mtime agree.
+#[test]
+fn backup_does_not_override_the_quick_check() {
+    let ctx = test_helpers::setup_copy_test();
+    let existing = setup_size_and_mtime_equal_but_content_differs(&ctx);
+
+    run_backup_copy(&ctx, LocalCopyOptions::default().backup(true));
+
+    assert!(
+        !existing.with_file_name("file.txt~").exists(),
+        "--backup must not itself force a transfer: upstream's quick check \
+         calls this destination up to date, so there is nothing to back up"
+    );
+    assert_eq!(
+        fs::read(&existing).expect("read dest"),
+        b"bbbbbbbb",
+        "the skipped destination must keep its own bytes"
+    );
+}
+
+// The companion that makes the assertion above non-vacuous: with -c the
+// content comparison is upstream's own rule (`always_checksum`,
+// generator.c:630), so the same fixture must transfer and back up. Without
+// this, `backup_does_not_override_the_quick_check` would also pass if the
+// fixture were simply incapable of producing a backup.
+#[test]
+fn checksum_does_override_the_quick_check_on_the_same_fixture() {
+    let ctx = test_helpers::setup_copy_test();
+    let existing = setup_size_and_mtime_equal_but_content_differs(&ctx);
+
+    run_backup_copy(
+        &ctx,
+        LocalCopyOptions::default().backup(true).checksum(true),
+    );
+
+    assert_eq!(
+        fs::read(existing.with_file_name("file.txt~")).expect("read backup"),
+        b"bbbbbbbb",
+        "-c compares content by upstream's own rule, so the pre-transfer \
+         bytes must land in the backup"
+    );
+    assert_eq!(
+        fs::read(&existing).expect("read dest"),
+        b"aaaaaaaa",
+        "and the destination must hold the source bytes"
     );
 }
