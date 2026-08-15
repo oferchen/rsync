@@ -1,3 +1,6 @@
+use core::message::{Message, Role};
+use core::rsync_error;
+
 /// Consumes exactly one rule separator (a single space, `_`, or `,`) that
 /// terminates the rule character and its modifiers, returning the rest of the
 /// line verbatim.
@@ -17,88 +20,97 @@ pub(super) fn consume_rule_separator(remainder: &str) -> &str {
     }
 }
 
-/// Splits a `+`/`-` short rule's text into `(modifiers, pattern)` at the first
-/// separator. With no separator the entire text is treated as modifiers and the
-/// pattern is empty, so invalid trailing bytes are rejected by the caller.
-pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
-    if text.is_empty() {
-        return ("", "");
-    }
-
-    if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_short_rule_modifiers(rest);
-        if modifiers.is_empty() {
-            return ("", remainder);
-        }
-        return (modifiers, remainder);
-    }
-
-    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
-        return ("", consume_rule_separator(text));
-    }
-
-    for (idx, ch) in text.char_indices() {
-        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
-            let modifiers = &text[..idx];
-            let remainder = consume_rule_separator(&text[idx..]);
-            return (modifiers, remainder);
-        }
-    }
-
-    // upstream: exclude.c:1214-1287 - after a `+`/`-` prefix, every byte up to the
-    // first ` `/`_` separator is a modifier. With no separator at all the whole
-    // remainder is modifiers (and the pattern is empty), so `+foo`/`+S` are
-    // rejected as invalid modifiers rather than silently treated as a pattern.
-    (text, "")
+/// An unrecognised modifier byte, located by its offset within the scanned
+/// slice. Callers add the offset of that slice within the whole rule to
+/// reproduce upstream's absolute position.
+#[derive(Debug)]
+pub(super) struct InvalidModifier {
+    /// The offending character.
+    pub(super) ch: char,
+    /// Byte offset of `ch` within the slice handed to the scanner.
+    pub(super) offset: usize,
 }
 
-/// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`. Only
-/// recognised modifier bytes are consumed; the first unrecognised byte or
-/// separator ends the modifier run.
+impl InvalidModifier {
+    /// Renders upstream's diagnostic for this byte.
+    ///
+    /// upstream: exclude.c:1371-1379 - `invalid modifier '%c' at position %d in
+    /// filter rule: %s`, where the position is
+    /// `(int)(s - (const uchar *)*rulestr_ptr)`, i.e. a 0-based byte offset from
+    /// the start of the whole rule. `rule_offset` is where the scanned slice
+    /// begins within `rule`, so a one-character prefix passes 1.
+    pub(super) fn into_message(self, rule_offset: usize, rule: &str) -> Message {
+        let position = rule_offset + self.offset;
+        let ch = self.ch;
+        rsync_error!(
+            1,
+            format!("invalid modifier '{ch}' at position {position} in filter rule: {rule}")
+        )
+        .with_role(Role::Client)
+    }
+}
+
+/// Scans the modifier run that follows a rule character.
+///
+/// `text` begins immediately after the rule character. Upstream consumes at
+/// most ONE optional `,` there (exclude.c:1075-1077, :1176-1177), then reads
+/// modifiers until the first ` `/`_` separator (exclude.c:1290-1291) and
+/// consumes exactly that one separator. Every other byte reaches `default:`
+/// and aborts with `RERR_SYNTAX` (exclude.c:1371-1379) - including a further
+/// `,`, which is why `,` is not a run terminator here.
+///
+/// Measured against rsync 3.5.0: `-s,r a` and `:n,e f` both fail with
+/// `invalid modifier ',' at position 2`, while `-,s a` succeeds; and
+/// `:,pattern` fails on `a` at position 3 because the leading `,` is consumed
+/// and `p` is a valid modifier.
+fn scan_modifiers(
+    text: &str,
+    is_modifier: impl Fn(char) -> bool,
+) -> Result<(&str, &str), InvalidModifier> {
+    let (body, base) = match text.strip_prefix(',') {
+        Some(rest) => (rest, 1usize),
+        None => (text, 0usize),
+    };
+
+    for (idx, ch) in body.char_indices() {
+        if ch == '_' || ch.is_ascii_whitespace() {
+            return Ok((&body[..idx], consume_rule_separator(&body[idx..])));
+        }
+        if !is_modifier(ch) {
+            return Err(InvalidModifier {
+                ch,
+                offset: base + idx,
+            });
+        }
+    }
+
+    // upstream: exclude.c:1214-1287 - with no separator at all the whole
+    // remainder is modifiers and the pattern is empty, so `+foo` is rejected as
+    // an invalid modifier rather than silently treated as a pattern.
+    Ok((body, ""))
+}
+
+/// Splits a `+`/`-` short rule's text into `(modifiers, pattern)`.
+///
+/// Character validity for these rules is decided by the caller, so the scan
+/// rejects only `,` - the one byte that can never be a modifier and that the
+/// previous separator-based split silently swallowed.
+pub(super) fn split_short_rule_modifiers(text: &str) -> Result<(&str, &str), InvalidModifier> {
+    scan_modifiers(text, |ch| ch != ',')
+}
+
+/// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`.
 ///
 /// upstream: exclude.c:1256-1264 - the `e` and `n` modifiers are guarded solely
 /// by `FILTRULE_MERGE_FILE`, which `parse_rule_tok` sets for a plain merge (`.`,
 /// exclude.c:1186) as well as a dir-merge (`:`), so both directives accept them.
-pub(super) fn split_short_merge_modifiers(text: &str) -> (&str, &str) {
-    if text.is_empty() {
-        return ("", "");
-    }
-
-    if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_short_merge_modifiers(rest);
-        if modifiers.is_empty() {
-            return ("", remainder);
-        }
-        return (modifiers, remainder);
-    }
-
-    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
-        return ("", consume_rule_separator(text));
-    }
-
-    let mut end = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
-            let modifiers = &text[..end];
-            let remainder = consume_rule_separator(&text[idx..]);
-            return (modifiers, remainder);
-        }
-
-        let lower = ch.to_ascii_lowercase();
-        if matches!(
-            lower,
+pub(super) fn split_short_merge_modifiers(text: &str) -> Result<(&str, &str), InvalidModifier> {
+    scan_modifiers(text, |ch| {
+        matches!(
+            ch.to_ascii_lowercase(),
             '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'e' | 'n'
-        ) {
-            end = idx + ch.len_utf8();
-            continue;
-        }
-
-        let modifiers = &text[..end];
-        let remainder = consume_rule_separator(&text[idx..]);
-        return (modifiers, remainder);
-    }
-
-    (&text[..end], "")
+        )
+    })
 }
 
 /// Splits a long-form keyword token into `(name, modifiers)` at the first
@@ -144,9 +156,19 @@ mod tests {
         assert_eq!(consume_rule_separator(",_pattern"), "_pattern");
     }
 
+    /// `(modifiers, pattern)` for a scan that must succeed.
+    fn split_rule(text: &str) -> (&str, &str) {
+        split_short_rule_modifiers(text).expect("modifier run must be accepted")
+    }
+
+    /// `(modifiers, pattern)` for a merge scan that must succeed.
+    fn split_merge(text: &str) -> (&str, &str) {
+        split_short_merge_modifiers(text).expect("modifier run must be accepted")
+    }
+
     #[test]
     fn split_short_rule_modifiers_empty() {
-        assert_eq!(split_short_rule_modifiers(""), ("", ""));
+        assert_eq!(split_rule(""), ("", ""));
     }
 
     #[test]
@@ -154,43 +176,60 @@ mod tests {
         // upstream: exclude.c:1214-1287 - with no ` `/`_` separator after the
         // prefix, every byte is a modifier and the pattern is empty. The caller
         // then rejects the unknown modifier bytes (e.g. `+foo` -> invalid 'f').
-        assert_eq!(split_short_rule_modifiers("pattern"), ("pattern", ""));
+        assert_eq!(split_rule("pattern"), ("pattern", ""));
     }
 
     #[test]
     fn split_short_rule_modifiers_whitespace_start() {
-        assert_eq!(split_short_rule_modifiers(" pattern"), ("", "pattern"));
+        assert_eq!(split_rule(" pattern"), ("", "pattern"));
     }
 
     #[test]
     fn split_short_rule_modifiers_underscore_start() {
-        assert_eq!(split_short_rule_modifiers("_pattern"), ("", "pattern"));
-    }
-
-    #[test]
-    fn split_short_rule_modifiers_comma_separated() {
-        let (mods, rem) = split_short_rule_modifiers("sr,pattern");
-        assert_eq!(mods, "sr");
-        assert_eq!(rem, "pattern");
+        assert_eq!(split_rule("_pattern"), ("", "pattern"));
     }
 
     #[test]
     fn split_short_rule_modifiers_space_separated() {
-        let (mods, rem) = split_short_rule_modifiers("sr pattern");
-        assert_eq!(mods, "sr");
-        assert_eq!(rem, "pattern");
+        assert_eq!(split_rule("sr pattern"), ("sr", "pattern"));
+    }
+
+    #[test]
+    fn split_short_rule_modifiers_consumes_one_leading_comma() {
+        // MEASURED against rsync 3.5.0: `--filter='-,s a'` exits 0. The comma
+        // that may follow the rule character (exclude.c:1075-1077) is consumed
+        // once and is not itself a modifier.
+        assert_eq!(split_rule(",s a"), ("s", "a"));
+    }
+
+    #[test]
+    fn split_short_rule_modifiers_rejects_a_comma_inside_the_run() {
+        // MEASURED against rsync 3.5.0: `--filter='-s,r a'` exits 1 with
+        // `invalid modifier ',' at position 2`. Only ONE comma is consumed, so a
+        // second one reaches `default:` (exclude.c:1371-1379). The previous
+        // separator-based split silently produced ("sr", "a") instead.
+        let invalid = split_short_rule_modifiers("s,r a").expect_err("`,` is never a modifier");
+        assert_eq!(invalid.ch, ',');
+        assert_eq!(invalid.offset + '-'.len_utf8(), 2);
+    }
+
+    #[test]
+    fn split_short_rule_modifiers_rejects_a_doubled_leading_comma() {
+        // MEASURED against rsync 3.5.0: `--filter='-,, a'` exits 1 with
+        // `invalid modifier ',' at position 2`.
+        let invalid = split_short_rule_modifiers(",, a").expect_err("`,,` is not a modifier run");
+        assert_eq!(invalid.ch, ',');
+        assert_eq!(invalid.offset + '-'.len_utf8(), 2);
     }
 
     #[test]
     fn split_short_merge_modifiers_empty() {
-        assert_eq!(split_short_merge_modifiers(""), ("", ""));
+        assert_eq!(split_merge(""), ("", ""));
     }
 
     #[test]
     fn split_short_merge_modifiers_base() {
-        let (mods, rem) = split_short_merge_modifiers("+-cs pattern");
-        assert_eq!(mods, "+-cs");
-        assert_eq!(rem, "pattern");
+        assert_eq!(split_merge("+-cs pattern"), ("+-cs", "pattern"));
     }
 
     #[test]
@@ -199,34 +238,59 @@ mod tests {
         // which a plain merge (`.`) sets too, so they are modifiers for both
         // merge forms. Previously `e` ended the run, so `.e FILE` mis-parsed as
         // the file name "e FILE".
-        let (mods, rem) = split_short_merge_modifiers("ce pattern");
-        assert_eq!(mods, "ce");
-        assert_eq!(rem, "pattern");
-
-        let (mods, rem) = split_short_merge_modifiers("cen pattern");
-        assert_eq!(mods, "cen");
-        assert_eq!(rem, "pattern");
+        assert_eq!(split_merge("ce pattern"), ("ce", "pattern"));
+        assert_eq!(split_merge("cen pattern"), ("cen", "pattern"));
     }
 
     #[test]
     fn split_short_merge_modifiers_whitespace_start() {
-        assert_eq!(split_short_merge_modifiers(" pattern"), ("", "pattern"));
+        assert_eq!(split_merge(" pattern"), ("", "pattern"));
     }
 
     #[test]
-    fn split_short_merge_modifiers_comma_prefix() {
-        // 'p' is a valid modifier, so it's extracted
-        let (mods, rem) = split_short_merge_modifiers(",pattern");
-        assert_eq!(mods, "p");
-        assert_eq!(rem, "attern");
+    fn split_short_merge_modifiers_rejects_an_unknown_byte() {
+        // MEASURED against rsync 3.5.0: `--filter=':n.rsync-filter'` exits 1
+        // with `invalid modifier '.' at position 2`. This is the headline case:
+        // the run previously stopped at `.` and silently produced a dir-merge of
+        // ".rsync-filter", exiting 0.
+        let invalid =
+            split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
+        assert_eq!(invalid.ch, '.');
+        assert_eq!(invalid.offset + ':'.len_utf8(), 2);
     }
 
     #[test]
-    fn split_short_merge_modifiers_comma_only_non_modifier() {
-        // 'x' is not a valid modifier
-        let (mods, rem) = split_short_merge_modifiers(",xyz");
-        assert_eq!(mods, "");
-        assert_eq!(rem, "xyz");
+    fn split_short_merge_modifiers_comma_prefix_scans_the_rest() {
+        // MEASURED against rsync 3.5.0: `--filter=':,pattern'` exits 1 with
+        // `invalid modifier 'a' at position 3` - the leading `,` is consumed and
+        // `p` IS a valid modifier, so the failure lands on `a`, not on `p`. The
+        // previous split returned ("p", "attern") and exited 0.
+        let invalid = split_short_merge_modifiers(",pattern").expect_err("`a` is not a modifier");
+        assert_eq!(invalid.ch, 'a');
+        assert_eq!(invalid.offset + ':'.len_utf8(), 3);
+    }
+
+    #[test]
+    fn split_short_merge_modifiers_rejects_a_doubled_leading_comma() {
+        // MEASURED against rsync 3.5.0: `--filter=':,,f'` exits 1 with
+        // `invalid modifier ',' at position 2`. The previous split swallowed the
+        // whole run and produced a dir-merge of "f".
+        let invalid = split_short_merge_modifiers(",,f").expect_err("`,,` is not a modifier run");
+        assert_eq!(invalid.ch, ',');
+        assert_eq!(invalid.offset + ':'.len_utf8(), 2);
+    }
+
+    #[test]
+    fn invalid_modifier_message_matches_upstream_text() {
+        // upstream: exclude.c:1376-1378 renders
+        // `invalid modifier '%c' at position %d in filter rule: %s`.
+        let invalid =
+            split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
+        let rendered = invalid.into_message(1, ":n.rsync-filter").to_string();
+        assert!(
+            rendered.contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter"),
+            "rendered message diverges from upstream: {rendered}"
+        );
     }
 
     #[test]

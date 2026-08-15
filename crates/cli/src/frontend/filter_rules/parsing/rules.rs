@@ -80,7 +80,12 @@ pub(super) fn parse_short_include_rule(
     builder: fn(String) -> FilterRuleSpec,
 ) -> Option<Result<FilterDirective, Message>> {
     let remainder = trimmed.strip_prefix(prefix)?;
-    let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
+    // `remainder` starts one byte past the `+`/`-`, so that is the offset the
+    // position in upstream's diagnostic is measured from.
+    let (modifier_text, remainder) = match split_short_rule_modifiers(remainder) {
+        Ok(split) => split,
+        Err(invalid) => return Some(Err(invalid.into_message(prefix.len_utf8(), trimmed))),
+    };
     // `+`/`-` rules never bind a side via their prefix, so the `s`/`r` modifiers
     // stay valid (prefix_specifies_side = false). upstream: exclude.c:1186-1190.
     let modifiers = match parse_rule_modifiers(modifier_text, trimmed, true, true, false) {
