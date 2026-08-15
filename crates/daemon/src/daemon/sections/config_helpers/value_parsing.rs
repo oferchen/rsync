@@ -1,7 +1,49 @@
+/// Splits a daemon config list value the way upstream's `conf_strtok` does.
+///
+/// upstream: `util1.c:932 conf_strtok()`. It has TWO modes, selected by the
+/// value itself:
+///
+/// - the value starts (after leading whitespace) with `,` - split on COMMAS
+///   ALONE, trimming each token's surrounding whitespace, so a single entry may
+///   CONTAIN spaces;
+/// - otherwise - split on `" ,\t\r\n"`, i.e. whitespace as well as commas.
+///
+/// The leading comma is the documented opt-in for entries containing spaces,
+/// which is how a group name with a space is written. Upstream states the
+/// consequence of getting this wrong at `authenticate.c:350`: splitting such an
+/// entry on whitespace "tore such an entry apart, so the rule the admin wrote
+/// never matched and a rule they never wrote appeared from its tail" - a
+/// false DENY and a false ALLOW at once.
+///
+/// ⚠ SCOPE: upstream routes exactly TWO directives through `conf_strtok` -
+/// `auth users` (authenticate.c:356) and `gid` (clientserver.c:844, :861).
+/// Everything else keeps its own splitter; in particular `hosts allow` /
+/// `hosts deny` use a plain `strtok(list2, " ,\t")` at `access.c:259` with NO
+/// leading-comma mode. Do not widen this helper to those directives - that
+/// would introduce a divergence rather than remove one.
+fn conf_split(value: &str) -> Vec<&str> {
+    let trimmed = value.trim_start();
+    let separators: &[char] = if trimmed.starts_with(',') {
+        &[',']
+    } else {
+        &[',', ' ', '\t', '\r', '\n']
+    };
+
+    trimmed
+        .split(separators)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
 /// Parses a comma/whitespace-separated list with deduplication.
 ///
 /// Splits input by comma and whitespace, trims tokens, skips empty ones,
 /// deduplicates based on a key function, and transforms tokens for storage.
+///
+/// Deliberately NOT [`conf_split`]: its only caller is
+/// [`parse_refuse_option_list`], and `refuse options` is not one of upstream's
+/// two `conf_strtok` directives.
 fn parse_dedup_list<K, V, F, G>(
     value: &str,
     key_fn: F,
@@ -70,15 +112,13 @@ where
 /// - bob is denied access
 /// - charlie has default access (uses module settings)
 pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String> {
-    let mut raw_entries = Vec::new();
-    for segment in value.split(',') {
-        for token in segment.split_whitespace() {
-            let trimmed = token.trim();
-            if !trimmed.is_empty() {
-                raw_entries.push(trimmed.to_owned());
-            }
-        }
-    }
+    // upstream: authenticate.c:356 iterates this value with conf_strtok(), so a
+    // leading comma opts the whole list into comma-only splitting and an entry
+    // may then contain spaces (e.g. a group name like `@domain admins`).
+    let raw_entries: Vec<String> = conf_split(value)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
 
     if raw_entries.is_empty() {
         return Err("must specify at least one username".to_owned());
@@ -314,10 +354,10 @@ pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
 /// added via `add_a_group`. The whole list is later installed with
 /// `setgroups`, clearing inherited supplementary groups.
 pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
-    let mut tokens = value
-        .split([',', ' ', '\t'])
-        .map(str::trim)
-        .filter(|token| !token.is_empty());
+    // upstream: clientserver.c:844 and :861 walk this value with conf_strtok(),
+    // the same splitter `auth users` uses - so `gid = ,domain users` names ONE
+    // group containing a space, not two groups.
+    let mut tokens = conf_split(value).into_iter();
 
     let Some(first) = tokens.next() else {
         return Err("directive is empty".to_owned());
@@ -394,4 +434,91 @@ pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
 /// `None`.
 pub(crate) fn parse_max_connections_directive(value: &str) -> Option<MaxConnections> {
     Some(MaxConnections::from_configured(parse_atoi(value)))
+}
+
+#[cfg(test)]
+mod conf_strtok_tests {
+    use super::*;
+
+    // upstream: util1.c:932 conf_strtok() - a value NOT starting with a comma
+    // splits on `" ,\t\r\n"`, so whitespace separates entries.
+    #[test]
+    fn without_a_leading_comma_whitespace_separates_entries() {
+        assert_eq!(conf_split("alice bob"), ["alice", "bob"]);
+        assert_eq!(conf_split("alice, bob"), ["alice", "bob"]);
+        assert_eq!(conf_split("alice\tbob\r\ncarol"), ["alice", "bob", "carol"]);
+    }
+
+    // The documented opt-in: a LEADING COMMA switches to comma-only splitting
+    // so an entry may contain spaces. This is how a group name with a space is
+    // written, and splitting it on whitespace is CVE-2026-70463.
+    #[test]
+    fn a_leading_comma_switches_to_comma_only_splitting() {
+        assert_eq!(conf_split(",domain admins"), ["domain admins"]);
+        assert_eq!(
+            conf_split(",domain admins,backup operators"),
+            ["domain admins", "backup operators"]
+        );
+        // Leading whitespace before the comma still selects comma-only mode -
+        // upstream skips it with `while (isSpace(str)) str++` before the test.
+        assert_eq!(conf_split("  ,domain admins"), ["domain admins"]);
+    }
+
+    // The security consequence, stated as a test: whitespace splitting produces
+    // BOTH a rule the admin never wrote AND loses the one they did.
+    #[test]
+    fn comma_only_mode_neither_invents_nor_loses_an_entry() {
+        let entries = conf_split(",domain admins");
+        assert!(
+            !entries.contains(&"admins"),
+            "invented an entry from the tail of a spaced name"
+        );
+        assert!(
+            entries.contains(&"domain admins"),
+            "lost the entry the admin actually wrote"
+        );
+    }
+
+    #[test]
+    fn empty_and_blank_values_yield_no_entries() {
+        assert!(conf_split("").is_empty());
+        assert!(conf_split("   ").is_empty());
+        assert!(conf_split(",").is_empty());
+        assert!(conf_split(" , ,  ").is_empty());
+    }
+
+    #[test]
+    fn auth_users_honours_the_leading_comma_form() {
+        let users = parse_auth_user_list(",domain admins,alice")
+            .expect("comma-only list parses");
+        let names: Vec<&str> = users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, ["domain admins", "alice"]);
+    }
+
+    #[test]
+    fn auth_users_without_a_leading_comma_still_splits_on_whitespace() {
+        let users = parse_auth_user_list("alice bob").expect("plain list parses");
+        let names: Vec<&str> = users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, ["alice", "bob"]);
+    }
+
+    // The SECOND conf_strtok consumer. Enumerating upstream's sites is the
+    // point: fixing `auth users` alone would have left `gid` divergent.
+    #[test]
+    fn gid_honours_the_leading_comma_form() {
+        // A spaced group name cannot resolve on the test host, so assert the
+        // SPLIT by observing that exactly one unresolvable token is reported -
+        // two tokens would name `admins` separately.
+        let err = parse_gid_setting(",no such group zz").expect_err("unresolvable group");
+        assert!(
+            err.contains("no such group zz"),
+            "gid split the spaced name apart: {err}"
+        );
+    }
+
+    #[test]
+    fn gid_star_must_still_be_first_under_comma_only_mode() {
+        let err = parse_gid_setting(",0,*").expect_err("'*' after another entry is invalid");
+        assert!(err.contains("must be the first entry"), "unexpected: {err}");
+    }
 }
