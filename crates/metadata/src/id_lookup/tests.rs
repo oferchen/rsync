@@ -499,8 +499,13 @@ fn cached_lookup_bypasses_cache_when_converter_installed() {
 /// The disclaimed answers are the point: they are what a real converter emits
 /// for a name outside the operator's mapping, and what a dead converter's
 /// caller sees.
+///
+/// Scoped to Unix because both its consumers are: the host-database contrast
+/// they assert only exists where there IS a host database to leak from.
+#[cfg(unix)]
 struct DisclaimingConverter;
 
+#[cfg(unix)]
 impl NameConverterCallbacks for DisclaimingConverter {
     fn uid_to_name(&mut self, _uid: u32) -> Option<String> {
         None
