@@ -48,6 +48,49 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
     out
 }
 
+/// Collapses a module-relative client tail the way upstream's `sanitize_path()`
+/// does for a daemon connection, returning a `/`-joined relative path.
+///
+/// upstream: `util1.c:1138 sanitize_path(dest, p, rootdir, depth, flags)`, whose
+/// documented contract is to "ALWAYS collapse `..` elements (except for those at
+/// the start of the string up to `depth` deep)". The daemon reaches it via
+/// `options.c:2405` `sanitize_path(NULL, argv[i], "", 0, SP_KEEP_DOT_DIRS)`,
+/// gated on `sanitize_paths`, which `clientserver.c:1068` sets for every daemon
+/// connection. **The depth there is 0**, so `util1.c:1183`'s
+/// `if (depth <= 0 || sanp != start)` arm always wins: a `..` either backs up
+/// over one already-emitted component or, with nothing to back up over, is
+/// discarded. There is no arm that refuses.
+///
+/// That is why collapsing is safe rather than permissive: the output is closed
+/// under the module root by construction. `a/../b` becomes `b`, and `../etc`
+/// becomes `etc` - both still resolve beneath the module directory. Upstream
+/// serves both; refusing them rejects requests that 3.4.4 and 3.5.0 both accept.
+///
+/// Joins with a literal `/` on every host, matching upstream's `pathjoin()`
+/// rather than `PathBuf::join`, which would emit `\` on Windows for a path that
+/// is about to be compared against module-relative wire names.
+///
+/// Deliberately NOT [`lexically_normalize`], which walks the same components but
+/// PRESERVES an unpoppable leading `..` so its caller's `starts_with` containment
+/// check can reject an escaping alt-basis path. Four differences - input type,
+/// output type, separator policy, leading-`..` policy - so they are two
+/// functions with two contracts, not one to be deduplicated.
+fn collapse_module_relative(tail: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for segment in tail.split(['/', '\\']) {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                // upstream util1.c:1183-1191 - back up one component, or drop
+                // the `..` outright when already at the start (depth 0).
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out.join("/")
+}
+
 /// Resolves the receiver's on-disk destination directory from the client's
 /// positional path args.
 ///
@@ -60,57 +103,36 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// Returns the module path itself when no positional was supplied or when
 /// the stripped tail is empty (push directly into the module root).
 ///
-/// Returns `None` when the destination tail contains a `..` traversal
-/// segment, symmetric to `resolve_sender_sources`. Downstream file-list
-/// sanitisation and the `DirSandbox` already confine the write, so this is a
-/// no-op for every currently-valid destination path (a `..`-free tail is
-/// unaffected); the guard rejects the escape up front as defense-in-depth.
-///
-/// This is deliberately STRICTER than upstream, not a mirror of it.
-/// `sanitize_path` (util1.c:1138) has no failure path for `..`: its contract
-/// is to ALWAYS collapse `..` elements beyond the allowed depth, dropping a
-/// leading `..` that has nothing to pop so the result clamps at the module
-/// root. With upstream's daemon depth of 0 an in-tree `sub/../other` is
-/// therefore rewritten to `other` and served. oc-rsync refuses the whole
-/// request instead, which is safe but rejects paths both 3.4.4 and 3.5.0
-/// accept; reconciling the two is tracked separately and needs the collapse,
-/// not the removal of this guard.
+/// `..` segments in the tail are COLLAPSED, never refused, mirroring
+/// upstream's `sanitize_path()` contract - see [`collapse_module_relative`]
+/// for the anchor table and why the collapse is closed under the module root.
 fn resolve_receiver_dest(
     module_path: &std::path::Path,
     client_args: &[String],
     module_name: &str,
-) -> Option<std::path::PathBuf> {
+) -> std::path::PathBuf {
     let positionals = extract_module_relative_paths(client_args, module_name);
     // upstream: main.c:1422-1423 - `local_name = get_local_name(flist, argv[0])`
     // uses the FIRST remaining positional (after the `.` placeholder has been
     // consumed by `do_server_recv` at lines 1174-1177). For a receiver that
     // translates to the last wire positional - the destination.
     let Some(last) = positionals.last() else {
-        return Some(module_path.to_path_buf());
+        return module_path.to_path_buf();
     };
     let tail = last.trim();
     if tail.is_empty() || tail == "." {
-        return Some(module_path.to_path_buf());
+        return module_path.to_path_buf();
     }
-    // Reject `..` traversal segments so the joined destination cannot escape
-    // the module root, symmetric to the sender-source guard below.
-    let trimmed_for_scan = tail.trim_start_matches(['/', '\\']);
-    for component in std::path::Path::new(trimmed_for_scan).components() {
-        if matches!(component, std::path::Component::ParentDir) {
-            return None;
-        }
+    // A leading separator is stripped first for the same reason upstream's
+    // `sanitize_path` consumes one before walking (`util1.c:1147` `p++`): an
+    // absolute client path is interpreted against the module root, not the
+    // host root. Collapsing then folds away every `.` and `..`, so the joined
+    // destination is under `module_path` by construction on any host.
+    let collapsed = collapse_module_relative(tail.trim_start_matches(['/', '\\']));
+    if collapsed.is_empty() {
+        return module_path.to_path_buf();
     }
-    // Defensive: a path arriving here that is absolute on the host OS
-    // (Unix `is_absolute()` or a leading `/` that Windows treats as
-    // drive-relative) cannot be allowed to escape the module root. Strip
-    // the leading separators and join the remainder so the destination is
-    // always under `module_path`. Tests cover both forms cross-platform.
-    let rel = std::path::Path::new(tail);
-    if rel.is_absolute() || tail.starts_with('/') || tail.starts_with('\\') {
-        let stripped = tail.trim_start_matches(['/', '\\']);
-        return Some(module_path.join(stripped));
-    }
-    Some(module_path.join(rel))
+    module_path.join(collapsed)
 }
 
 /// Resolves the sender's on-disk source paths from the client's positional
@@ -129,10 +151,12 @@ fn resolve_receiver_dest(
 /// stripped tail is empty, matching the pre-existing "pull from module root"
 /// behaviour exactly.
 ///
-/// Sub-paths that contain `..` segments or that resolve to a host-absolute
-/// path are rejected (returns `None`) so a malicious client cannot enumerate
-/// files outside the module root via a crafted `rsync://host/mod/../etc/...`
-/// URL. This is defense-in-depth on top of the chroot / Landlock sandbox.
+/// Sub-paths containing `..`, and host-absolute sub-paths, are COLLAPSED
+/// against the module root rather than refused - see
+/// [`collapse_module_relative`]. A crafted `rsync://host/mod/../etc/...` URL
+/// therefore resolves to `<module>/etc/...` and cannot enumerate outside the
+/// module root, which is the same containment upstream gets from
+/// `sanitize_path` at depth 0.
 ///
 /// # Upstream Reference
 ///
@@ -143,10 +167,10 @@ fn resolve_sender_sources(
     module_path: &std::path::Path,
     client_args: &[String],
     module_name: &str,
-) -> Option<Vec<std::path::PathBuf>> {
+) -> Vec<std::path::PathBuf> {
     let positionals = extract_module_relative_paths(client_args, module_name);
     if positionals.is_empty() {
-        return Some(vec![module_root_dotdir(module_path)]);
+        return vec![module_root_dotdir(module_path)];
     }
     let mut sources = Vec::with_capacity(positionals.len());
     let mut all_empty = true;
@@ -157,15 +181,14 @@ fn resolve_sender_sources(
             continue;
         }
         all_empty = false;
-        // Reject `..` traversal segments so the joined path cannot escape the
-        // module root. Upstream collapses rather than refuses here - see the
-        // divergence note on `resolve_receiver_dest` - so this arm is the
-        // stricter of the two behaviours, not a mirror of upstream's.
-        let trimmed = tail.trim_start_matches(['/', '\\']);
-        for component in std::path::Path::new(trimmed).components() {
-            if matches!(component, std::path::Component::ParentDir) {
-                return None;
-            }
+        // Collapse `.` and `..` exactly as upstream's `sanitize_path` does at
+        // depth 0 - see [`collapse_module_relative`]. The result cannot escape
+        // the module root, so there is nothing left to refuse.
+        let collapsed = collapse_module_relative(tail.trim_start_matches(['/', '\\']));
+        let trimmed = collapsed.as_str();
+        if trimmed.is_empty() {
+            sources.push(module_root_dotdir(module_path));
+            continue;
         }
         // Preserve the trailing slash so the sender can detect a dotdir-style
         // source (upstream flist.c:2312-2322 appends `.` and sets DOTDIR_NAME
@@ -195,7 +218,7 @@ fn resolve_sender_sources(
         sources.push(std::path::PathBuf::from(buf));
     }
     if all_empty {
-        return Some(vec![module_root_dotdir(module_path)]);
+        return vec![module_root_dotdir(module_path)];
     }
     // upstream: util1.c:804 `glob_expand_module()` runs each module-relative
     // positional through `glob_expand()` (util1.c:755) which in turn calls
@@ -219,9 +242,9 @@ fn resolve_sender_sources(
     //   * Expansion is rooted at the module path so the resulting absolute
     //     paths land inside the module's tree, the same containment
     //     guarantee that the chroot / Landlock allowlist enforces. The
-    //     `..` rejection above the loop runs before this, so a pattern
-    //     containing `..` is already rejected.
-    Some(expand_sender_source_globs(module_path, sources))
+    //     `..` collapse above the loop runs before this, so a pattern
+    //     reaching the globber is already confined to the module root.
+    expand_sender_source_globs(module_path, sources)
 }
 
 /// Returns the module root path with a trailing `/` appended (idempotent).

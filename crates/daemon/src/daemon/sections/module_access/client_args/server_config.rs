@@ -161,27 +161,19 @@ fn build_server_config(
     // sub-tree instead of the entire module root. The original argv[0] is
     // always the module root; legacy tests that push straight into the module
     // root keep that behaviour.
+    // Both resolvers are total: they collapse `..` the way upstream's
+    // `sanitize_path` does at depth 0, so the result is confined to the module
+    // root by construction and there is no "resolves outside module root"
+    // rejection to represent. Upstream has no such daemon error either - a
+    // traversing tail is rewritten and served (util1.c:1183).
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
-        match resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name) {
-            Some(dest) => vec![OsString::from(dest.as_os_str())],
-            None => {
-                let error = AtError::message("requested path resolves outside module root");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                return Ok(None);
-            }
-        }
+        let dest = resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name);
+        vec![OsString::from(dest.as_os_str())]
     } else {
-        match resolve_sender_sources(std::path::Path::new(&module.path), client_args, &module.name) {
-            Some(sources) => sources
-                .into_iter()
-                .map(|p| OsString::from(p.as_os_str()))
-                .collect(),
-            None => {
-                let error = AtError::message("requested path resolves outside module root");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                return Ok(None);
-            }
-        }
+        resolve_sender_sources(std::path::Path::new(&module.path), client_args, &module.name)
+            .into_iter()
+            .map(|p| OsString::from(p.as_os_str()))
+            .collect()
     };
 
     match ServerConfig::from_flag_string_and_args(
