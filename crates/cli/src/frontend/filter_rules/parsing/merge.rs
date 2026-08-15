@@ -138,7 +138,12 @@ pub(super) fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDir
     };
 
     let remainder = chars.as_str();
-    let (modifiers, rest) = split_short_merge_modifiers(remainder);
+    // `remainder` starts one byte past the `.`/`:`, so that is the offset the
+    // position in upstream's diagnostic is measured from.
+    let (modifiers, rest) = match split_short_merge_modifiers(remainder) {
+        Ok(split) => split,
+        Err(invalid) => return Some(Err(invalid.into_message(first.len_utf8(), text))),
+    };
     let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, text, is_dir_merge) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
