@@ -33,8 +33,38 @@ struct FieldGatingCase {
     ///
     /// The per-entry rdev field only appears for an entry that *is* special, so
     /// a `--specials` case over plain files would pass for want of a FIFO
-    /// rather than for want of a bug.
+    /// rather than for want of a bug. On a platform that cannot create one the
+    /// case is skipped for that reason rather than run vacuously.
     needs_special_file: bool,
+}
+
+/// Whether this platform can create the FIFO a `needs_special_file` case wants.
+///
+/// `cfg!` rather than `#[cfg]` deliberately: the field must be read on every
+/// platform, otherwise the Windows build sees a never-read field.
+const PLATFORM_HAS_FIFO: bool = cfg!(unix);
+
+impl FieldGatingCase {
+    /// Returns why this case cannot run here, or `None` if it can.
+    ///
+    /// Two independent reasons - a capability the binary was not built with,
+    /// and a fixture this platform cannot create - reported through one
+    /// accessor so callers cannot honour only one of them.
+    fn skip_reason(&self, capabilities: &Capabilities) -> Option<String> {
+        if self.needs_special_file && !PLATFORM_HAS_FIFO {
+            return Some(
+                "platform cannot create a FIFO, so the rdev field \
+                         would never be exercised"
+                    .to_owned(),
+            );
+        }
+        capabilities.skip_reason(self.requires)
+    }
+
+    /// Reports whether the case runs everywhere, so it can anchor non-vacuity.
+    const fn is_unconditional(&self) -> bool {
+        self.requires.is_empty() && (!self.needs_special_file || PLATFORM_HAS_FIFO)
+    }
 }
 
 /// Options that each gate a per-entry flist field on the local write path.
@@ -89,7 +119,7 @@ fn local_write_batch_replays_under_every_field_gating_option() {
     let mut ran = 0usize;
 
     for case in FIELD_GATING_CASES {
-        if let Some(reason) = capabilities.skip_reason(case.requires) {
+        if let Some(reason) = case.skip_reason(capabilities) {
             // Printed, not silent: a skipped row must leave a trace, or a build
             // with the feature off looks identical to one that passed.
             println!("skipping {:?}: {reason}", case.options);
@@ -99,13 +129,22 @@ fn local_write_batch_replays_under_every_field_gating_option() {
         ran += 1;
     }
 
-    // The unconditional cases (`-c`, `--specials`) require no optional feature,
-    // so this can only fail if the case table itself was gutted - which is the
-    // failure mode a "0 tests ran, success" outcome would otherwise hide.
+    // Derived, not a magic number: every case that needs no optional feature
+    // and no fixture this platform lacks must have run. That is what makes a
+    // "0 tests ran, success" outcome impossible, and it stays correct when the
+    // table grows or when a platform loses a capability.
+    let unconditional = FIELD_GATING_CASES
+        .iter()
+        .filter(|case| case.is_unconditional())
+        .count();
     assert!(
-        ran >= 2,
-        "only {ran} of {} cases ran; the unconditional cases must always \
-         execute or this test proves nothing",
+        unconditional >= 1,
+        "the case table has no unconditional case left, so this test could \
+         pass without exercising anything"
+    );
+    assert!(
+        ran >= unconditional,
+        "only {ran} of {} cases ran but {unconditional} are unconditional here",
         FIELD_GATING_CASES.len()
     );
 }
@@ -127,10 +166,10 @@ fn run_round_trip(case: &FieldGatingCase) {
             .write_file(&format!("src/{name}"), name.as_bytes())
             .expect("write source file");
     }
-    #[cfg(unix)]
     if case.needs_special_file {
         // Same `mkfifo(1)` shell-out as tests/drop_devices.rs, rather than a new
-        // dependency for one fixture.
+        // dependency for one fixture. Unreachable where `PLATFORM_HAS_FIFO` is
+        // false, so no `#[cfg]` is needed and the field stays read everywhere.
         let status = std::process::Command::new("mkfifo")
             .arg(src.join("fifo"))
             .status()
