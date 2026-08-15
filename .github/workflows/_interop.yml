@@ -130,6 +130,7 @@ jobs:
       # on pre-30 parity (RP28.k); promote to required by removing
       # `continue-on-error: true` once the parity baseline is green.
       - name: Run rsync 2.6.9 push interop (RP28.c)
+        id: rp28c
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -224,6 +225,7 @@ jobs:
       # baseline is green. Exits 0 gracefully when the 2.6.9 binary is
       # absent so the cell is a no-op without RP28.b cache.
       - name: Run rsync 2.6.9 pull interop (RP28.d)
+        id: rp28d
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -409,35 +411,47 @@ jobs:
             echo "no /tmp/rp28-f/daemon.log to capture"
           fi
 
-      # Drive upstream rsync's own `testsuite/*.test` corpus against
-      # oc-rsync as `$RSYNC`. The harness sources upstream's `rsync.fns`
-      # and reuses its helper tools (`tls`, `getgroups`, `support/lsh.sh`),
-      # so this is the canonical "does oc-rsync look like rsync from
-      # upstream's perspective" check. Expected failures are tracked in
-      # `tools/ci/upstream_testsuite_known_failures.conf` and reported as
-      # XFAIL. Non-blocking initially via `continue-on-error: true`;
-      # promote to required once the known-failure roster is stable.
-      - name: Run upstream rsync testsuite against oc-rsync
-        continue-on-error: true
+      # NOTE: upstream's own `testsuite/*.test` corpus is deliberately NOT run
+      # here. It is driven by `_upstream-testsuite.yml`, which calls the same
+      # `tools/ci/run_upstream_testsuite.sh` with the same `OC_RSYNC_BIN` and
+      # the same `upstream_rsync_version` ci.yml passes to both workflows - but
+      # blocking, as the required `upstream-testsuite / upstream testsuite`
+      # (and `(root)`) contexts. A second, `continue-on-error` copy inside this
+      # job re-ran an already-required gate and could only ever report a green
+      # `interop` context while the suite failed. Add suite coverage there, not
+      # here.
+
+      # The RP28.c/.d pre-protocol-30 cells stay `continue-on-error` until the
+      # RP28 parity baseline is green (RP28.k). That makes a green `interop`
+      # context weaker than it looks, so report their real outcome instead of
+      # letting it vanish: without this, a reader of the checks list cannot
+      # tell a passing cell from a failing one. `steps.<id>.outcome` is the
+      # pre-`continue-on-error` result, which is exactly the value that would
+      # otherwise be discarded.
+      - name: Report non-blocking interop cell outcomes
+        if: always()
         env:
-          OC_RSYNC_BIN: target/release/oc-rsync
-          UPSTREAM_VERSION: ${{ inputs.upstream_rsync_version }}
+          RP28C_OUTCOME: ${{ steps.rp28c.outcome }}
+          RP28D_OUTCOME: ${{ steps.rp28d.outcome }}
         run: |
           set -euo pipefail
-          # Ensure release oc-rsync exists for the harness.
-          if [[ ! -x target/release/oc-rsync ]]; then
-            cargo build --locked --release --bin oc-rsync
+          {
+            echo "### Non-blocking interop cells"
+            echo
+            echo "These do not gate the \`interop\` context. A green check does"
+            echo "not mean they passed."
+            echo
+            echo "| Cell | Outcome |"
+            echo "| --- | --- |"
+            echo "| RP28.c (rsync 2.6.9 push) | \`${RP28C_OUTCOME}\` |"
+            echo "| RP28.d (rsync 2.6.9 pull) | \`${RP28D_OUTCOME}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [[ "$RP28C_OUTCOME" == failure ]]; then
+            echo "::warning title=Non-blocking interop cell failed::RP28.c failed (not gating; tracked under RP28)"
           fi
-          bash tools/ci/run_upstream_testsuite.sh
-
-      - name: Upload upstream testsuite logs
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: upstream-testsuite-logs-interop
-          path: target/interop/upstream-testsuite/
-          if-no-files-found: ignore
-          retention-days: 14
+          if [[ "$RP28D_OUTCOME" == failure ]]; then
+            echo "::warning title=Non-blocking interop cell failed::RP28.d failed (not gating; tracked under RP28)"
+          fi
 
       - name: Run SSH interop tests
         run: |
