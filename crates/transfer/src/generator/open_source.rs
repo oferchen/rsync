@@ -3,10 +3,14 @@
 //! The sender opens every source file through [`SourceOpen::open`], which
 //! mirrors the branch upstream `sender.c` takes before reading a file:
 //!
-//! - **Daemon, non-chroot** (`use_secure_symlinks`): the file is opened
+//! - **Daemon, non-chroot** (`secure_relpath_active`): the file is opened
 //!   confined beneath the module root via [`fast_io::open_source_confined`],
 //!   so a swapped directory symlink cannot redirect the read outside the
-//!   module (TOCTOU escape). upstream: `sender.c:secure_relative_open`.
+//!   module (TOCTOU escape). The *leaf* rule still follows the operator's
+//!   symlink mode, which is why the confined open takes a
+//!   [`fast_io::LeafPolicy`] rather than one arm answering for both.
+//!   upstream: `rsync-3.5.0/sender.c:678-682`, choosing between
+//!   `sender_open_confined()` and `sender_open_copylinks_confined()`.
 //! - **Everything else** (`do_open_checklinks`): the file is opened with
 //!   `O_NOFOLLOW` on the leaf so a symlinked final component is refused,
 //!   UNLESS `--copy-links` / `--copy-unsafe-links` is set (then the symlink
@@ -60,17 +64,26 @@ impl SourceOpen {
 
     /// Opens `path` under this policy.
     ///
-    /// upstream: sender.c - `secure_relative_open` (daemon, confined) vs
-    /// `do_open_checklinks` (`O_NOFOLLOW` leaf unless copy-links).
+    /// upstream: `rsync-3.5.0/sender.c:678-682` - the confined pair
+    /// (`sender_open_confined` / `sender_open_copylinks_confined`) for a
+    /// daemon, `do_open_checklinks` otherwise.
     pub(crate) fn open(&self, path: &Path) -> io::Result<fs::File> {
         #[cfg(unix)]
         if let Some(root) = self.confine_root.as_deref() {
-            // upstream: sender.c:secure_relative_open - reconstruct the
-            // module-relative path and open it confined beneath the module
-            // root. oc keeps absolute source paths, so the module-relative
-            // component is the source path with the module root stripped.
+            // Reconstruct the module-relative path and open it confined
+            // beneath the module root. oc keeps absolute source paths, so the
+            // module-relative component is the source path with the module
+            // root stripped.
             if let Ok(relative) = path.strip_prefix(root) {
-                return fast_io::open_source_confined(root, relative, self.noatime);
+                // A symlink-following mode is an operator instruction, so it
+                // survives confinement rather than being downgraded to the
+                // O_NOFOLLOW leaf. upstream: sender.c:680-682.
+                let leaf = if self.follow_symlinks {
+                    fast_io::LeafPolicy::FollowConfined
+                } else {
+                    fast_io::LeafPolicy::Nofollow
+                };
+                return fast_io::open_source_confined(root, relative, leaf, self.noatime);
             }
             // A source path that is not beneath the module root should never
             // happen for a legitimate daemon transfer; fail safe by falling
@@ -323,9 +336,46 @@ mod tests {
             .expect_err("confined open must refuse the escape");
         let code = err.raw_os_error();
         assert!(
-            code == Some(libc::EXDEV) || code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
-            "expected EXDEV, ELOOP, or ENOTDIR for a confined escape, got: {err}"
+            code == Some(libc::EXDEV) || code == Some(libc::ELOOP),
+            "expected EXDEV or ELOOP for a confined escape, got: {err}"
         );
+    }
+
+    /// Confinement must not silently downgrade `--copy-links`.
+    ///
+    /// WHY: upstream keeps a separate confined entry point for the
+    /// symlink-following modes (`rsync-3.5.0/sender.c:680-682` selecting
+    /// `sender_open_copylinks_confined`). If the daemon arm answered the leaf
+    /// question by itself, a module served with `-L` would either stop
+    /// following links the operator asked it to follow, or - the direction oc
+    /// actually had on Linux - follow a leaf symlink even at the default,
+    /// losing the raced-leaf defence.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_confined_policy_still_honours_copy_links() {
+        use std::io::Read as _;
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("target"), b"followed").unwrap();
+        symlink("target", root.path().join("leaf")).unwrap();
+        let leaf = root.path().join("leaf");
+
+        // Default: the leaf symlink is refused even though it is in-module.
+        let strict = SourceOpen::new(Some(root.path().to_path_buf()), false, false);
+        let err = strict
+            .open(&leaf)
+            .expect_err("the default confined policy must refuse a leaf symlink");
+        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+
+        // --copy-links: the same leaf resolves, still confined.
+        let following = SourceOpen::new(Some(root.path().to_path_buf()), true, false);
+        let mut file = following
+            .open(&leaf)
+            .expect("copy-links must still follow an in-module leaf");
+        let mut buf = String::new();
+        file.read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "followed");
     }
 
     /// The confined daemon policy still opens a legitimate in-module file.
