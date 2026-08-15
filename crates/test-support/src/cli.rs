@@ -88,6 +88,8 @@ pub struct OcRsyncCliRunner {
     stdin: Option<Vec<u8>>,
     timeout: Duration,
     cwd: Option<PathBuf>,
+    #[cfg(unix)]
+    umask: Option<u32>,
 }
 
 impl Default for OcRsyncCliRunner {
@@ -113,6 +115,8 @@ impl OcRsyncCliRunner {
             stdin: None,
             timeout: DEFAULT_TIMEOUT,
             cwd: None,
+            #[cfg(unix)]
+            umask: None,
         }
     }
 
@@ -180,6 +184,33 @@ impl OcRsyncCliRunner {
         self
     }
 
+    /// Pins the umask the spawned `oc-rsync` runs under.
+    ///
+    /// Some rsync behaviour reads the ambient umask, so a test asserting the
+    /// resulting mode bits is only meaningful once the umask is pinned. The
+    /// clearest case is `--chmod` with a bare `+w`: `chmod.c:92` computes
+    /// `bits = (where * what) & ~orig_umask`, so under umask 022 a `+w` on an
+    /// already-user-writable directory adds *nothing* and the assertion holds
+    /// vacuously, while under 002 it adds group-write.
+    ///
+    /// upstream pins the umask for exactly this reason - suite-wide at
+    /// `testsuite/rsyncfns.py` (`os.umask(0o022)`, mirroring `rsync.fns`'s
+    /// `umask 022`), and narrowed per test where the subject is umask-sensitive
+    /// (`testsuite/chmod-option_test.py` uses `0o002`).
+    ///
+    /// ⚠ Applied to the CHILD ONLY, via `pre_exec`, rather than by mutating
+    /// this process's umask around the spawn. `umask(2)` is process-global, so
+    /// the mutate-and-restore form upstream uses in Python (where every test is
+    /// its own process) would be a race here the moment two runners are used
+    /// concurrently in one test binary. Scoping it to the child is race-free by
+    /// construction and needs no restore.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn umask(mut self, mask: u32) -> Self {
+        self.umask = Some(mask);
+        self
+    }
+
     /// Run synchronously, enforcing the timeout.
     ///
     /// Returns a [`CliOutput`] on any completed run (including non-zero exit).
@@ -206,6 +237,22 @@ impl OcRsyncCliRunner {
         });
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        if let Some(mask) = self.umask {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: runs in the forked child between fork and exec, where only
+            // async-signal-safe calls are permitted. `umask(2)` is one of them
+            // (POSIX.1-2017 async-signal-safe list) and touches no allocator,
+            // no lock, and no memory shared with the parent.
+            #[allow(unsafe_code)]
+            unsafe {
+                cmd.pre_exec(move || {
+                    libc::umask(mask as libc::mode_t);
+                    Ok(())
+                });
+            }
+        }
 
         let start = Instant::now();
         let mut child = cmd.spawn().map_err(RunnerError::Spawn)?;

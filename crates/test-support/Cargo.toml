@@ -12,6 +12,11 @@ description = "Shared test utilities for the oc-rsync workspace"
 [dependencies]
 tempfile = { workspace = true }
 
+# `OcRsyncCliRunner::umask` pins the spawned child's umask via `pre_exec`, so
+# tests asserting mode bits do not silently inherit the caller's umask.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
 # remote-shell code paths locally (design section 5).
