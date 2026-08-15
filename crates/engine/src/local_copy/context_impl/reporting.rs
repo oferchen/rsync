@@ -369,13 +369,22 @@ impl<'a> CopyContext<'a> {
         if self.deferred_ops.deletions.is_empty() {
             return Ok(());
         }
-        if self.delete_pass_blocked_by_io_error() {
-            // I/O errors occurred and --ignore-errors is not set; suppress
-            // deletions to prevent data loss and emit the one-shot skip
-            // notice. upstream: generator.c:304-311.
-            self.deferred_ops.deletions.clear();
-            return Ok(());
-        }
+        // No I/O-error gate here, deliberately. Upstream has exactly ONE
+        // `io_error & IOERR_GENERAL && !ignore_errors` test, inside
+        // `delete_in_dir()` (generator.c:304) - the site that DECIDES what to
+        // delete. `do_delayed_deletions()` (generator.c:265-278) is a pure
+        // executor: it replays the recorded plan through `delete_item()` with
+        // no gate at all. `--delete-delay` keeps `allow_inc_recurse` set
+        // (compat.c:174-177 clears it for delete_before/delete_after/
+        // delay_updates/prune_empty_dirs, not for delete_during == 2), so the
+        // decision is made while walking the root, before a later directory's
+        // scan error has been seen - and upstream deletes.
+        //
+        // Re-testing the gate at flush time asked the question at a moment
+        // upstream never asks it, and answered it against a value that had
+        // moved. oc's decision-time gate lives at
+        // `decide_and_defer_delayed_deletions`, which is the analogue of
+        // `delete_in_dir` and is where the check belongs.
         let preserve_times = self.metadata_options().times()
             && !self.omit_dir_times_enabled();
         let mut pending = std::mem::take(&mut self.deferred_ops.deletions);
