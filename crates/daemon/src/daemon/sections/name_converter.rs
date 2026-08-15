@@ -36,9 +36,19 @@ impl NameConverter {
     }
 
     /// Sends a query to the converter and reads one line of response.
+    ///
+    /// `arg` is rejected outright when it carries a control byte: the request
+    /// framing is one line per query, so an embedded newline would make the
+    /// converter answer twice while this reads once, leaving the surplus answer
+    /// buffered for the *next* lookup to consume.
     fn query(&mut self, cmd: &str, arg: &str) -> Option<String> {
+        if !is_safe_token(arg) {
+            return None;
+        }
         let request = format!("{cmd} {arg}\n");
-        if request.len() > 1024 {
+        // upstream: clientserver.c:1322 - `len >= (int)sizeof buf` on a 1024-byte
+        // buffer, so 1024 itself is already too long (snprintf truncated it).
+        if request.len() >= NAMECVT_REQUEST_LIMIT {
             return None;
         }
         if self.stdin.write_all(request.as_bytes()).is_err() {
@@ -73,13 +83,46 @@ impl NameConverter {
 
     /// Converts a username to a numeric UID.
     fn name_to_uid(&mut self, name: &str) -> Option<u32> {
-        self.query("usr", name)?.parse().ok()
+        parse_converter_id(&self.query("usr", name)?)
     }
 
     /// Converts a group name to a numeric GID.
     fn name_to_gid(&mut self, name: &str) -> Option<u32> {
-        self.query("grp", name)?.parse().ok()
+        parse_converter_id(&self.query("grp", name)?)
     }
+}
+
+/// Upper bound on a converter request, matching upstream's `char buf[1024]`.
+///
+/// upstream: clientserver.c:1313 - `char buf[1024]`, refused at `:1322` once the
+/// formatted request reaches that length.
+#[cfg(unix)]
+const NAMECVT_REQUEST_LIMIT: usize = 1024;
+
+/// Rejects a name that cannot be framed as a single request line.
+///
+/// upstream: clientserver.c:1362 `namecvt_safe_token()` - refuses any byte below
+/// `' '` or equal to `0x7f`, checked at `:1317` *before* the request is
+/// formatted. Newline is the byte that matters (it desynchronises the
+/// request/answer stream); the rest of the control range comes along because
+/// upstream refuses the whole class rather than one byte.
+#[cfg(unix)]
+fn is_safe_token(name: &str) -> bool {
+    !name.bytes().any(|byte| byte < b' ' || byte == 0x7f)
+}
+
+/// Parses a converter's id answer under upstream's strict digit rule.
+///
+/// upstream: clientserver.c:1341-1355 - an empty line, any non-digit byte, or a
+/// value that does not fit `id_t` yields `False` and leaves the id untouched.
+/// The explicit digit loop is why a leading `+` is refused, which Rust's
+/// `str::parse::<u32>` would otherwise accept.
+#[cfg(unix)]
+fn parse_converter_id(answer: &str) -> Option<u32> {
+    if answer.is_empty() || !answer.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    answer.parse().ok()
 }
 
 #[cfg(unix)]
@@ -229,6 +272,132 @@ mod name_converter_tests {
         // The query call blocks on read_line which returns EOF once the child exits.
         let mut nc = NameConverter::spawn("exit 0").expect("spawn should succeed");
         assert_eq!(nc.uid_to_name(1000), None);
+    }
+
+    /// Spawns a converter that answers per-name AND records one byte per request
+    /// it actually receives.
+    ///
+    /// Counting received requests is what makes the guard observable: a name
+    /// that is refused *before the write* must produce zero requests. Asserting
+    /// only the returned `None` cannot tell that apart from a request that was
+    /// sent and answered "unknown", which is how a guard that does nothing still
+    /// looks correct.
+    #[cfg(unix)]
+    fn spawn_counting_converter(log: &std::path::Path) -> (NameConverter, std::path::PathBuf) {
+        let log = log.to_path_buf();
+        // The count is written BEFORE the answer, so once a reply has been read
+        // the corresponding request is already on disk - no polling needed.
+        let script = format!(
+            r#"while read cmd arg; do
+                printf 'x' >> '{}'
+                case "$arg" in
+                    alice) echo 1001 ;;
+                    root)  echo 0 ;;
+                    plus)  echo '+5' ;;
+                    *)     echo '' ;;
+                esac
+            done"#,
+            log.display()
+        );
+        (
+            NameConverter::spawn(&script).expect("spawn should succeed"),
+            log,
+        )
+    }
+
+    #[cfg(unix)]
+    fn requests_seen(log: &std::path::Path) -> usize {
+        std::fs::read(log).map(|bytes| bytes.len()).unwrap_or(0)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_newline_in_a_name_desynchronises_nothing_because_it_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut nc, log) = spawn_counting_converter(&dir.path().join("seen"));
+
+        // Injection attempt: the tail `usr root` would be a SECOND request line.
+        assert_eq!(nc.name_to_uid("zz\nusr root"), None);
+        assert_eq!(requests_seen(&log), 0, "the request must never be written");
+
+        // THE ASSERTION THAT MATTERS. Unpatched, the converter answered twice
+        // ('' for `zz`, then 0 for `root`) while query() read once - so this
+        // lookup consumes the stale `0` and alice resolves to root. Every later
+        // lookup in the session stays shifted by one.
+        assert_eq!(
+            nc.name_to_uid("alice"),
+            Some(1001),
+            "a refused name must not leave a surplus answer buffered for the next lookup"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_whole_control_range_is_refused_not_just_newline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut nc, log) = spawn_counting_converter(&dir.path().join("seen"));
+
+        // upstream refuses the class (`< ' '` or 0x7f), not just the byte that
+        // happens to be exploitable. Only `\n` desynchronises the stream, so
+        // the returned None is NOT discriminating for these - the request count
+        // is. Each must be refused before any write.
+        for name in ["a\rb", "a\tb", "a\u{7f}b", "a\u{1}b"] {
+            assert_eq!(nc.name_to_uid(name), None, "{name:?} must be refused");
+            assert_eq!(requests_seen(&log), 0, "{name:?} must not be written");
+        }
+
+        // Non-vacuity control: an ordinary name IS sent, so the counter above
+        // is actually capable of moving.
+        assert_eq!(nc.name_to_uid("alice"), Some(1001));
+        assert_eq!(requests_seen(&log), 1, "a safe name reaches the converter");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_id_answer_must_be_all_digits_on_the_live_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut nc, _log) = spawn_counting_converter(&dir.path().join("seen"));
+
+        // Exercised through name_to_uid, not the helper directly: a test that
+        // calls parse_converter_id() alone still passes when the production
+        // path is wired straight to str::parse, which is the mistake to catch.
+        // upstream clientserver.c:1345-1348 walks the bytes explicitly, so the
+        // leading `+` that Rust's parse::<u32> accepts must be refused here.
+        assert_eq!(nc.name_to_uid("plus"), None, "`+5` is not a valid id");
+        assert_eq!(nc.name_to_uid("alice"), Some(1001), "stream still in sync");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_id_parser_matches_upstreams_digit_rule() {
+        for answer in ["+5", " 5", "5x", "-1", "", "99999999999999999999"] {
+            assert_eq!(
+                parse_converter_id(answer),
+                None,
+                "{answer:?} is not a valid id"
+            );
+        }
+        assert_eq!(parse_converter_id("0"), Some(0));
+        assert_eq!(parse_converter_id("4294967295"), Some(u32::MAX));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_request_that_fills_the_buffer_is_refused_before_the_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut nc, log) = spawn_counting_converter(&dir.path().join("seen"));
+
+        // "usr " + name + "\n" == NAMECVT_REQUEST_LIMIT exactly, which upstream
+        // already treats as truncated (`len >= sizeof buf`). Both sizes return
+        // None (neither name is known), so only the request count separates
+        // "refused" from "sent and unknown".
+        let exact = "n".repeat(NAMECVT_REQUEST_LIMIT - "usr ".len() - 1);
+        assert_eq!(nc.name_to_uid(&exact), None);
+        assert_eq!(requests_seen(&log), 0, "a full buffer is truncation");
+
+        let under = "n".repeat(NAMECVT_REQUEST_LIMIT - "usr ".len() - 2);
+        assert_eq!(nc.name_to_uid(&under), None, "unknown, but it WAS sent");
+        assert_eq!(requests_seen(&log), 1, "one byte shorter still fits");
     }
 
     #[cfg(unix)]
