@@ -220,6 +220,63 @@ fn skipped_entries_are_reported_as_non_regular_at_verbose() {
     }
 }
 
+/// Counts whole occurrences of the skip line for `name` in `rendered`.
+fn skip_line_count(rendered: &str, name: &str) -> usize {
+    let needle = format!("skipping non-regular file \"{name}\"");
+    rendered.matches(needle.as_str()).count()
+}
+
+/// EXACTLY ONE notice per entry, at EVERY verbosity.
+///
+/// upstream emits this from a single site - `recv_generator()`,
+/// generator.c:2110-2115 - gated on `INFO_GTE(NONREG, 1)`. NONREG lives in
+/// `info_verbosity[0]` (options.c), so upstream prints it once at default
+/// verbosity and still once at `-v`; raising verbosity does not multiply it.
+///
+/// oc reached the same text through two independent channels: the engine's
+/// NONREG info notice, and a `SkippedNonRegular` arm in the verbose renderer
+/// that had no info gate at all. Both fired for one entry, so `-v` printed the
+/// line twice - the second copy landing *after* the summary block, since the
+/// info queue drains once `execute()` returns.
+///
+/// The pre-existing assertion above cannot catch that: `contains` is satisfied
+/// by one occurrence and by five. Counting is the whole point of this test, and
+/// both verbosities are checked because the two channels differ in exactly that
+/// dimension - the renderer copy is unreachable at verbosity 0, so a
+/// default-verbosity-only test would have seen nothing wrong either.
+#[test]
+fn non_regular_skip_notice_is_emitted_exactly_once_per_entry() {
+    for verbosity in ["-a", "-av"] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (src, seeded) = seed_specials(temp.path());
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let src_arg = format!("{}/", src.display());
+        let dest_arg = format!("{}/", dest.display());
+        let output = run(&[
+            OsStr::new(verbosity),
+            OsStr::new("--drop-D"),
+            OsStr::new(&src_arg),
+            OsStr::new(&dest_arg),
+        ]);
+
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for name in &seeded {
+            assert_eq!(
+                skip_line_count(&rendered, name),
+                1,
+                "`{verbosity}`: expected exactly one skip notice for {name}, \
+                 upstream emits one at every verbosity; got:\n{rendered}"
+            );
+        }
+    }
+}
+
 /// THE WIRE-NEUTRALITY GATE.
 ///
 /// `--drop-D` is not forwarded (`rsync.1.md:1786`), and unlike `--no-D` it must
