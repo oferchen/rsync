@@ -2834,3 +2834,94 @@ fn backdate_tree(dir: &Path) {
         }
     }
 }
+
+/// Builds a source/destination pair that upstream's quick check calls
+/// up to date - equal size, equal mtime - while the bytes differ.
+///
+/// This is the only fixture that can tell `quick_check_ok()`'s real inputs
+/// apart from a content comparison, because it is the one case where the two
+/// disagree. Returns the destination file path.
+fn setup_size_and_mtime_equal_but_content_differs(ctx: &test_helpers::CopyTestContext) -> PathBuf {
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"aaaaaaaa").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"bbbbbbbb").expect("write dest");
+
+    let same = FileTime::from_unix_time(1_500_000_000, 0);
+    filetime::set_file_times(&source_file, same, same).expect("pin source times");
+    filetime::set_file_times(&existing, same, same).expect("pin dest times");
+
+    existing
+}
+
+fn run_backup_copy(ctx: &test_helpers::CopyTestContext, options: LocalCopyOptions) {
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+}
+
+// upstream: generator.c:624-647 `quick_check_ok()` FT_REG reads size,
+// `always_checksum` (-c), `size_only`, `ignore_times` (-I) and then the
+// mtime. `make_backups` is not one of its inputs, so a file the quick check
+// calls up to date is not transferred and therefore not backed up - however
+// the bytes actually compare. Verified against rsync 3.5.0: this fixture
+// leaves the destination untouched and creates no `file.txt~`.
+//
+// oc used to re-open both files and compare checksums whenever --backup was
+// set without -c, which turned a skip into a transfer. That is --checksum
+// semantics attached to --backup. This is the only fixture shape that can
+// fail if it comes back: content must differ while size and mtime agree.
+#[test]
+fn backup_does_not_override_the_quick_check() {
+    let ctx = test_helpers::setup_copy_test();
+    let existing = setup_size_and_mtime_equal_but_content_differs(&ctx);
+
+    run_backup_copy(&ctx, LocalCopyOptions::default().backup(true));
+
+    assert!(
+        !existing.with_file_name("file.txt~").exists(),
+        "--backup must not itself force a transfer: upstream's quick check \
+         calls this destination up to date, so there is nothing to back up"
+    );
+    assert_eq!(
+        fs::read(&existing).expect("read dest"),
+        b"bbbbbbbb",
+        "the skipped destination must keep its own bytes"
+    );
+}
+
+// The companion that makes the assertion above non-vacuous: with -c the
+// content comparison is upstream's own rule (`always_checksum`,
+// generator.c:630), so the same fixture must transfer and back up. Without
+// this, `backup_does_not_override_the_quick_check` would also pass if the
+// fixture were simply incapable of producing a backup.
+#[test]
+fn checksum_does_override_the_quick_check_on_the_same_fixture() {
+    let ctx = test_helpers::setup_copy_test();
+    let existing = setup_size_and_mtime_equal_but_content_differs(&ctx);
+
+    run_backup_copy(
+        &ctx,
+        LocalCopyOptions::default().backup(true).checksum(true),
+    );
+
+    assert_eq!(
+        fs::read(existing.with_file_name("file.txt~")).expect("read backup"),
+        b"bbbbbbbb",
+        "-c compares content by upstream's own rule, so the pre-transfer \
+         bytes must land in the backup"
+    );
+    assert_eq!(
+        fs::read(&existing).expect("read dest"),
+        b"aaaaaaaa",
+        "and the destination must hold the source bytes"
+    );
+}
