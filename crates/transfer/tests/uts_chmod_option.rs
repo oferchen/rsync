@@ -48,6 +48,23 @@ use std::path::Path;
 use test_support::{OcRsyncCliRunner, require_binaries, test_name};
 
 /// Low 12 permission bits (`0o7777`) of `path`, following the entry itself.
+/// Umask pinned for the `D+w` leg, matching upstream's own choice.
+///
+/// `--chmod`'s bare `+w` is masked by the process umask (`chmod.c:92`,
+/// `bits = (where * what) & ~orig_umask`), so this leg is only meaningful once
+/// the umask is fixed.
+///
+/// ⚠ 002 rather than the suite-wide 022, and the difference is the whole point.
+/// `dir1` starts 0700 and reaches 0755 after `a+rX`, so it is already
+/// user-writable: under umask 022 a bare `+w` adds NOTHING and the assertion
+/// would hold without exercising `+w` at all. Under 002 it adds group-write,
+/// which is observable. upstream pins the same value for the same reason -
+/// `testsuite/chmod-option_test.py` sets `os.umask(0o002)` while the suite
+/// baseline in `testsuite/rsyncfns.py` is 022 ("Individual tests may still
+/// narrow it (e.g. chmod-option uses 002)").
+#[cfg(unix)]
+const CHMOD_TEST_UMASK: u32 = 0o002;
+
 fn mode_bits(path: &Path) -> u32 {
     fs::symlink_metadata(path)
         .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
@@ -101,12 +118,22 @@ fn chmod_strip_setid_and_add_rx_dir_write() {
 
     let out = OcRsyncCliRunner::new()
         .args(["-a", "--chmod", "ug-s,a+rX,D+w"])
+        .umask(CHMOD_TEST_UMASK)
         .arg(slash(&from))
         .arg(slash(&to))
         .run()
         .expect("run oc-rsync");
     out.assert_success();
 
+    // `D+w` is a bare `+w`, so `chmod.c:92` masks it with the process umask:
+    // `bits = (where * what) & ~orig_umask`. Derive the expectation from the
+    // pinned umask rather than writing the resulting octal literal, so the
+    // two can never drift apart.
+    // upstream: testsuite/chmod-option_test.py `plus_w = 0o222 & ~0o002`.
+    let plus_w = 0o222 & !CHMOD_TEST_UMASK;
+
+    // Files are untouched by `D+w` (the `D` qualifier selects directories), so
+    // these two are umask-independent.
     assert_eq!(
         mode_bits(&to.join("name1")),
         0o755,
@@ -119,13 +146,13 @@ fn chmod_strip_setid_and_add_rx_dir_write() {
     );
     assert_eq!(
         mode_bits(&to.join("dir1")),
-        0o755,
-        "dir1: a+rX then D+w (0755)",
+        0o755 | plus_w,
+        "dir1: 0700 -> a+rX -> 0755, then D+w adds {plus_w:#o} under umask {CHMOD_TEST_UMASK:#o}",
     );
     assert_eq!(
         mode_bits(&to.join("dir2")),
-        0o775,
-        "dir2: a+rX then D+w (0775)",
+        0o775 | plus_w,
+        "dir2: 0770 -> a+rX -> 0775, then D+w adds {plus_w:#o} under umask {CHMOD_TEST_UMASK:#o}",
     );
 }
 
@@ -146,6 +173,11 @@ fn chmod_file_only_clears_world_execute() {
     let to = root.path().join("to");
     fs::create_dir_all(&from).expect("mkdir from");
     fs::create_dir(from.join("foo")).expect("mkdir foo");
+    // `create_dir` yields `0o777 & ~umask`, so the asserted 0755 below would
+    // only hold under umask 022 and this fixture would read 0775 under 002.
+    // Pin it, exactly as `bar` is pinned just below - the assertion is about
+    // `--chmod=Fo-x` leaving directories alone, not about the ambient umask.
+    fs::set_permissions(from.join("foo"), fs::Permissions::from_mode(0o755)).expect("chmod foo");
     fs::write(from.join("bar"), b"").expect("touch bar");
     // Match upstream: `chmod o+x "$fromdir"/bar`. Start from 0644, add o+x.
     fs::set_permissions(from.join("bar"), fs::Permissions::from_mode(0o645)).expect("chmod bar");
