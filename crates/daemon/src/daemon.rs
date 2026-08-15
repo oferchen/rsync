@@ -37,8 +37,8 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::client::TcpFastOpenMode;
 use core::{
     auth::{
-        DaemonAuthDigest, negotiate_server_daemon_digest, supported_daemon_digest_list,
-        verify_daemon_auth_response,
+        DaemonAuthDigest, daemon_auth_digest_by_name, negotiate_server_daemon_digest,
+        supported_daemon_digest_list, verify_daemon_auth_response,
     },
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,

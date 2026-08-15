@@ -59,4 +59,8 @@ struct GlobalModuleDefaults {
     // lp_auth_users(module) and requires authentication whenever it is non-empty,
     // so a module inheriting the default authenticates like one with its own list.
     auth_users: Option<Vec<AuthUser>>,
+    // upstream: daemon-parm.h:273 marks `auth digest` P_LOCAL, so a global
+    // value is every module's default by the same init_section()/copy_section()
+    // route as `auth users` above.
+    auth_digest: Option<String>,
 }

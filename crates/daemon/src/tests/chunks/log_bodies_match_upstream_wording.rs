@@ -16,7 +16,7 @@ fn log_bodies_match_upstream_wording() {
     // upstream: clientserver.c:742 - module access granted.
     log_module_request(&log, host, ip, "docs");
     // upstream: authenticate.c:249/:335 - auth failure prefix.
-    log_module_auth_failure(&log, host, ip, "docs");
+    log_module_auth_failure(&log, host, ip, "docs", None);
     // upstream: clientserver.c:729 - access denied by allow/deny rules.
     log_module_denied(&log, host, ip, "docs");
     // upstream: clientserver.c:1434 - request for an undefined module.
