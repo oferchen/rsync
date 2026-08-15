@@ -34,6 +34,11 @@ fn record_skipped_symlink(
     if let Some(relative_path) = record_path {
         match fs::read_link(source_path) {
             Ok(target) => {
+                // Same NONREG notice record_skipped_non_regular would emit; only
+                // the record differs, since this one carries a link-target
+                // snapshot. Without this the notice would exist solely as a
+                // verbose-renderer event and never appear at default verbosity.
+                context.note_skipped_non_regular(relative_path);
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
                 let record = LocalCopyRecord::new(
                     relative_path.to_path_buf(),
