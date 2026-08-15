@@ -446,6 +446,24 @@ pub struct BatchConfig {
     /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:465,473`
     /// (`numeric_ids <= 0`).
     pub numeric_ids: bool,
+
+    /// Whether `--atimes` was active for the batch invocation.
+    ///
+    /// Like [`Self::numeric_ids`], and for the same reason, this is not a
+    /// recorded stream flag: upstream's `batch.c:59-76 flag_ptr[]` has no bit
+    /// for it, because upstream's batch file is a byte tee of a real wire
+    /// stream and the replaying receiver takes `preserve_atimes` from the
+    /// replay script's argv. It gates the per-entry atime field, which the
+    /// flist writer emits under `preserve_atimes` (`flist.c:625`), so a reader
+    /// that does not know about it decodes the next entry's flag byte as an
+    /// atime and desynchronises the stream.
+    pub preserve_atimes: bool,
+
+    /// Whether `--crtimes` was active for the batch invocation.
+    ///
+    /// Same rationale as [`Self::preserve_atimes`]: no `flag_ptr[]` bit, comes
+    /// from the replay invocation, gates the per-entry crtime field.
+    pub preserve_crtimes: bool,
 }
 
 impl BatchConfig {
@@ -501,6 +519,8 @@ impl BatchConfig {
             active_flags: BatchFlags::default(),
             eol_nulls: false,
             numeric_ids: false,
+            preserve_atimes: false,
+            preserve_crtimes: false,
         }
     }
 
@@ -692,6 +712,48 @@ impl BatchConfig {
     /// ```
     pub const fn with_numeric_ids(mut self, numeric_ids: bool) -> Self {
         self.numeric_ids = numeric_ids;
+        self
+    }
+
+    /// Set whether `--atimes` was active for the batch invocation.
+    ///
+    /// Gates the per-entry atime field, which the flist writer emits under
+    /// `preserve_atimes` (`flist.c:625`). Like `--numeric-ids`, this has no
+    /// `batch.c:59-76 flag_ptr[]` bit and must come from the replay
+    /// invocation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Read, "/tmp/batch".to_string(), 31)
+    ///     .with_preserve_atimes(true);
+    ///
+    /// assert!(config.preserve_atimes);
+    /// ```
+    pub const fn with_preserve_atimes(mut self, preserve_atimes: bool) -> Self {
+        self.preserve_atimes = preserve_atimes;
+        self
+    }
+
+    /// Set whether `--crtimes` was active for the batch invocation.
+    ///
+    /// Same rationale as [`Self::with_preserve_atimes`]: no `flag_ptr[]` bit,
+    /// gates the per-entry crtime field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Read, "/tmp/batch".to_string(), 31)
+    ///     .with_preserve_crtimes(true);
+    ///
+    /// assert!(config.preserve_crtimes);
+    /// ```
+    pub const fn with_preserve_crtimes(mut self, preserve_crtimes: bool) -> Self {
+        self.preserve_crtimes = preserve_crtimes;
         self
     }
 
