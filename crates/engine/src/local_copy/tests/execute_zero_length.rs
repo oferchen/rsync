@@ -584,8 +584,17 @@ fn execute_empty_file_preserves_permissions_with_chmod() {
         .permissions()
         .mode() & 0o777;
 
-    // Should have 0o640 from source + execute bits added
-    assert_eq!(dest_mode, 0o751, "chmod should be applied to empty file permissions");
+    // 0o640 from the source plus the execute bits `+x` adds. `+x` names no
+    // who-class, so upstream masks the implied bits with the umask
+    // (chmod.c:parse_chmod, `bits & ~orig_umask`); at umask 022 that is the
+    // full 0o111, at 077 only 0o100. Deriving keeps this exact under any umask
+    // instead of pinning the 0o751 that only holds when umask & 0o111 == 0.
+    // `::` because `local_copy::test_support` shadows the crate name here.
+    let expected = 0o640 | ::test_support::umask_masked(0o111);
+    assert_eq!(
+        dest_mode, expected,
+        "chmod should be applied to empty file permissions"
+    );
 }
 
 #[test]

@@ -41,7 +41,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
@@ -220,22 +220,6 @@ fn new_destination_takes_the_masked_source_mode_on_every_write_path() {
 
 /// Returns `SOURCE_MODE` as the filesystem would create it, i.e. masked by the
 /// process umask.
-///
-/// Observed rather than computed: creating a file with `SOURCE_MODE` applies the
-/// umask exactly as the receiver's own `O_CREAT` does, which keeps this test
-/// free of `unsafe` (`crates/transfer` denies it) and of a `libc` dependency.
 fn masked_source_mode() -> u32 {
-    let probe_dir = test_support::create_tempdir();
-    let probe = probe_dir.path().join("umask-probe");
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(SOURCE_MODE)
-        .open(&probe)
-        .expect("create umask probe");
-    fs::metadata(&probe)
-        .expect("stat umask probe")
-        .permissions()
-        .mode()
-        & 0o7777
+    test_support::umask_masked(SOURCE_MODE)
 }

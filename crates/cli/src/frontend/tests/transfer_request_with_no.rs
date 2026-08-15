@@ -36,9 +36,7 @@ fn transfer_request_with_no_perms_overrides_archive() {
     let source = tmp.path().join("source-no-perms.txt");
     let destination = tmp.path().join("dest-no-perms.txt");
     std::fs::write(&source, b"data").expect("write source");
-    // Use 0o777 so that any non-zero umask will produce a different mode,
-    // proving that --no-perms applies umask-based defaults instead of
-    // preserving the source permissions.
+    // 0o777 makes every umask bit observable in the destination mode.
     std::fs::set_permissions(&source, PermissionsExt::from_mode(0o777)).expect("set perms");
 
     let (code, stdout, stderr) = run_with_args([
@@ -54,9 +52,14 @@ fn transfer_request_with_no_perms_overrides_archive() {
     assert!(stderr.is_empty());
 
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
-    assert_ne!(
+    // `--no-perms` gives a new destination `flist_mode & (~CHMOD_BITS |
+    // dflt_perms)` (upstream: rsync.c dest_mode(), exists == 0) - the source
+    // mode with the umask applied. Asserting the exact mode also fails at
+    // umask 000, where "not 0o777" could not tell "umask applied" apart from
+    // "source preserved".
+    assert_eq!(
         metadata.permissions().mode() & 0o777,
-        0o777,
+        test_support::umask_masked(0o777),
         "without --perms, destination should have umask-applied permissions"
     );
 }
