@@ -86,5 +86,8 @@ fn an_out_of_tree_source_does_not_disable_destination_confinement() {
         !outside.join("f0").exists(),
         "the payload escaped the destination tree: {err}"
     );
-    assert!(temp.exists(), "the refused rename must leave the temp intact");
+    assert!(
+        temp.exists(),
+        "the refused rename must leave the temp intact"
+    );
 }

@@ -561,8 +561,12 @@ impl DestinationWriteGuard {
                     remove_existing_destination(&self.final_path)?;
                     hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref())
                         .map_err(|rename_error| {
-                        LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
-                    })?;
+                            LocalCopyError::io(
+                                self.finalise_action(),
+                                temp_path.clone(),
+                                rename_error,
+                            )
+                        })?;
                     return Ok(false);
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
