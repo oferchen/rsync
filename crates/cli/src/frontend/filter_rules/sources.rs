@@ -424,8 +424,7 @@ mod tests {
     fn read_merge_file_reports_a_missing_file_like_upstream() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("nonexistent.txt");
-        let error =
-            read_merge_file(&path, false, RuleSource::Argument).expect_err("must fail");
+        let error = read_merge_file(&path, false, RuleSource::Argument).expect_err("must fail");
         assert_eq!(error.code(), Some(11));
         assert!(
             error.text().starts_with("failed to open exclude file "),

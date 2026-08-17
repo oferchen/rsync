@@ -27,7 +27,7 @@ fn apply_merge_directive_resolves_relative_paths() {
         &mut visited,
         filters::RuleSource::Argument,
     )
-        .expect("merge succeeds");
+    .expect("merge succeeds");
 
     assert!(visited.is_empty());
     let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
@@ -57,7 +57,7 @@ fn apply_merge_directive_respects_forced_include() {
         &mut visited,
         filters::RuleSource::Argument,
     )
-        .expect("merge succeeds");
+    .expect("merge succeeds");
 
     assert!(visited.is_empty());
     // upstream: exclude.c:1393-1402 - '!' inside a merge file clears only
