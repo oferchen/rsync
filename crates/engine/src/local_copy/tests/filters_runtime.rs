@@ -286,7 +286,12 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
 fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     let temp = tempdir().expect("tempdir");
     let filter = temp.path().join("filter.rules");
-    fs::write(&filter, b"exclude-if-present=.git clear -skip").expect("write filter");
+    // `-_skip`, not `-skip`: in word-split mode a token cannot contain a space,
+    // so `_` is the only separator available between the prefix and the pattern.
+    // MEASURED against rsync 3.5.0 - `--filter='-skip'` exits 1 with
+    // "invalid modifier 'k' at position 2", while `--filter='-_skip'` excludes
+    // `skip`. The old fixture spelled a rule upstream rejects.
+    fs::write(&filter, b"exclude-if-present=.git clear -_skip").expect("write filter");
 
     let mut visited = Vec::new();
     let options = DirMergeOptions::default()
