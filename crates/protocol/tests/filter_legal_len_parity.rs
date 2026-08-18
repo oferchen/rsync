@@ -80,13 +80,18 @@ fn serialize_rule_errors_with_too_modern_for_dir_merge_at_protocol_28() {
     );
 }
 
-/// Every modifier flag is independently unsendable at protocol 28.
+/// Every modifier upstream WRITES at protocol 28 is independently unsendable.
 ///
-/// Upstream `exclude.c:1530` budgets one prefix byte, so each modifier
-/// (anchored, negate, cvs_exclude, no_inherit, word_split, exclude_from_merge,
-/// xattr_only, sender_side, receiver_side, perishable) pushes the prefix
-/// length past `legal_len=1` and triggers the `RERR_PROTOCOL` exit at
-/// `send_rules:1623-1627`. The parameterised loop pins all ten flags.
+/// Upstream `exclude.c:1829` budgets one prefix byte and the length test at
+/// `:1878` rejects anything longer, so each of these modifiers pushes the
+/// prefix past `legal_len=1` and triggers the `RERR_PROTOCOL` exit at
+/// `send_rules:1922-1927`.
+///
+/// `perishable` is NOT in this list, and its absence is the point: upstream
+/// never writes `p` below protocol 30 (`:1872-1874`), so it cannot overflow.
+/// Its refusal is a separate, sender-only branch - see
+/// `perishable_is_omitted_not_refused_at_protocol_28` below. Listing it here
+/// made a receiving client abort a pre-29 pull that upstream completes.
 #[test]
 fn each_modifier_unsendable_at_protocol_28() {
     type Setter = fn(&mut FilterRuleWireFormat);
@@ -100,7 +105,6 @@ fn each_modifier_unsendable_at_protocol_28() {
         ("xattr_only", |r| r.xattr_only = true),
         ("sender_side", |r| r.sender_side = true),
         ("receiver_side", |r| r.receiver_side = true),
-        ("perishable", |r| r.perishable = true),
     ];
 
     for (name, setter) in cases {
@@ -125,6 +129,38 @@ fn each_modifier_unsendable_at_protocol_28() {
             "modifier '{name}': error must match upstream send_rules:1623-1627 wording; got {err}",
         );
     }
+}
+
+/// A perishable rule is OMITTED at protocol 28, not refused.
+///
+/// Upstream `get_rule_prefix` (`exclude.c:1872-1876`) writes `p` only at
+/// protocol >= 30. Below that it emits nothing and returns NULL solely when
+/// `am_sender` - a role this serializer does not know. So the wire form is the
+/// receiver's: the rule survives with a bare pattern and no modifier byte.
+///
+/// The sender's abort lives at the transfer call site
+/// (`perishable_rules_too_modern`), which runs before `write_filter_list`.
+/// Duplicating it here refused BOTH roles and broke pre-29 pulls that upstream
+/// completes - MEASURED against rsync 3.5.0, which exits 0 and transfers on a
+/// protocol-28 pull with `--filter='-p f'` while exiting 2 on the push.
+#[test]
+fn perishable_is_omitted_not_refused_at_protocol_28() {
+    let mut rule = FilterRuleWireFormat::exclude("pattern".to_owned());
+    rule.perishable = true;
+
+    assert_eq!(
+        build_rule_prefix(&rule, proto(PROTO_28)).as_deref(),
+        Some(""),
+        "perishable must not overflow legal_len - upstream never writes `p` below protocol 30",
+    );
+
+    let mut buf = Vec::new();
+    write_filter_list(&mut buf, std::slice::from_ref(&rule), proto(PROTO_28))
+        .expect("a perishable rule is serializable at protocol 28");
+    assert!(
+        !buf.is_empty(),
+        "the rule must reach the wire rather than being silently dropped",
+    );
 }
 
 /// The wire parser treats a `:`-prefixed payload at protocol 28 as a bare
