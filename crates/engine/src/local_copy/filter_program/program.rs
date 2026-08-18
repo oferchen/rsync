@@ -4,9 +4,9 @@
 
 use std::path::Path;
 
-#[cfg(all(any(unix, windows), feature = "xattr"))]
-use filters::FilterAction;
 use filters::FilterRule;
+#[cfg(all(any(unix, windows), feature = "xattr"))]
+use filters::{FilterAction, XattrSide};
 #[cfg(all(any(unix, windows), feature = "xattr"))]
 use globset::{GlobBuilder, GlobMatcher};
 use thiserror::Error;
@@ -84,8 +84,9 @@ impl FilterProgram {
                     #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         if rule.is_xattr_only() {
-                            let compiled = XattrRule::new(&rule)?;
-                            xattr_rules.push(compiled);
+                            if let Some(compiled) = XattrRule::new(&rule)? {
+                                xattr_rules.push(compiled);
+                            }
                         } else {
                             current_segment.push_rule(rule)?;
                         }
@@ -288,12 +289,18 @@ impl FilterProgram {
     }
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    pub(crate) fn allows_xattr(&self, name: &str) -> bool {
+    pub(crate) fn allows_xattr(&self, name: &str, side: XattrSide) -> bool {
         // upstream: exclude.c:check_filter() evaluates rules first-match-wins,
         // returning on the FIRST matching rule (include -> allow, exclude ->
         // deny). A later rule never overrides an earlier match, so `+x
         // user.keep` before `-x user.*` keeps user.keep.
         for rule in &self.xattr_rules {
+            // upstream: exclude.c:1010 - a rule flagged for the opposite side is
+            // elided before its pattern is consulted, so it can neither match
+            // nor shadow a later rule that does apply here.
+            if !rule.applies_to(side) {
+                continue;
+            }
             if rule.matches(name) {
                 return matches!(rule.action, FilterAction::Include);
             }
@@ -343,12 +350,28 @@ impl FilterProgramError {
 struct XattrRule {
     action: FilterAction,
     matcher: GlobMatcher,
+    /// Mirrors `FILTRULE_SENDER_SIDE` / `FILTRULE_RECEIVER_SIDE`. A rule with no
+    /// side prefix carries both, matching an upstream rule whose `elide` stays 0
+    /// and therefore never equals `cur_elide_value` (exclude.c:1010).
+    applies_to_sender: bool,
+    applies_to_receiver: bool,
 }
 
 #[cfg(all(any(unix, windows), feature = "xattr"))]
 impl XattrRule {
-    fn new(rule: &FilterRule) -> Result<Self, FilterProgramError> {
+    /// Returns `Ok(None)` for a meta action, which carries no xattr decision.
+    fn new(rule: &FilterRule) -> Result<Option<Self>, FilterProgramError> {
         debug_assert!(rule.is_xattr_only());
+
+        // upstream: exclude.c:1345-1358 via `FilterAction::xattr_decision` - the
+        // shared owner of the (include|exclude) x (sender|receiver) table. Left
+        // un-normalised, `risk,x` fell through `matches!(.., Include)` below and
+        // was treated as an EXCLUDE, inverting upstream's
+        // `R = FILTRULE_INCLUDE|RECEIVER_SIDE`.
+        let Some(action) = rule.action().xattr_decision() else {
+            return Ok(None);
+        };
+
         let pattern = rule.pattern().to_owned();
         let glob = GlobBuilder::new(&pattern)
             .literal_separator(true)
@@ -356,16 +379,24 @@ impl XattrRule {
             .build()
             .map_err(|error| FilterProgramError::new(pattern.clone(), error))?;
 
-        let action = rule.action();
-        debug_assert!(matches!(
-            action,
-            FilterAction::Include | FilterAction::Exclude
-        ));
-
-        Ok(Self {
+        Ok(Some(Self {
             action,
             matcher: glob.compile_matcher(),
-        })
+            applies_to_sender: rule.applies_to_sender(),
+            applies_to_receiver: rule.applies_to_receiver(),
+        }))
+    }
+
+    /// Whether this rule participates on `side`.
+    ///
+    /// upstream: exclude.c:1010 - `if (!*name || ex->elide == cur_elide_value)
+    /// return 0;`, which sits two lines above the `NAME_IS_XATTR` test at
+    /// :1013. The side is decided BEFORE the pattern is consulted.
+    const fn applies_to(&self, side: XattrSide) -> bool {
+        match side {
+            XattrSide::Sender => self.applies_to_sender,
+            XattrSide::Receiver => self.applies_to_receiver,
+        }
     }
 
     fn matches(&self, name: &str) -> bool {
@@ -637,12 +668,74 @@ mod tests {
         let program = FilterProgram::new(entries).unwrap();
 
         assert!(
-            program.allows_xattr("user.keep"),
+            program.allows_xattr("user.keep", XattrSide::Receiver),
             "earlier include rule must win under first-match-wins"
         );
         assert!(
-            !program.allows_xattr("user.other"),
+            !program.allows_xattr("user.other", XattrSide::Receiver),
             "later exclude rule must drop non-matching user.* xattrs"
+        );
+    }
+
+    /// A side-flagged rule participates only on its own side.
+    ///
+    /// upstream: exclude.c:1903-1913 stamps `elide` from the rule's side flags
+    /// and `am_sender`, and exclude.c:1010 returns 0 when `ex->elide ==
+    /// cur_elide_value` - two lines ABOVE the `NAME_IS_XATTR` biconditional at
+    /// :1013, so the side decision precedes the pattern entirely. Without this
+    /// dimension `allows_xattr` could return the same answer for both sides and
+    /// every other xattr test would still pass.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    #[test]
+    fn a_side_flagged_xattr_rule_is_elided_on_the_opposite_side() {
+        let sender_only = FilterProgram::new([FilterProgramEntry::Rule(
+            FilterRule::hide("user.secret").with_xattr_only(true),
+        )])
+        .unwrap();
+        assert!(
+            !sender_only.allows_xattr("user.secret", XattrSide::Sender),
+            "`H`/hide carries FILTRULE_SENDER_SIDE, so it must exclude on the sender"
+        );
+        assert!(
+            sender_only.allows_xattr("user.secret", XattrSide::Receiver),
+            "the same rule is elided on the receiver and cannot exclude there"
+        );
+
+        let receiver_only = FilterProgram::new([FilterProgramEntry::Rule(
+            FilterRule::protect("user.secret").with_xattr_only(true),
+        )])
+        .unwrap();
+        assert!(
+            receiver_only.allows_xattr("user.secret", XattrSide::Sender),
+            "`P`/protect carries FILTRULE_RECEIVER_SIDE and is elided on the sender"
+        );
+        assert!(
+            !receiver_only.allows_xattr("user.secret", XattrSide::Receiver),
+            "`P` is a plain exclude on its own side (exclude.c:1358)"
+        );
+    }
+
+    /// `R`/risk is `FILTRULE_INCLUDE|RECEIVER_SIDE` (exclude.c:1355), so on an
+    /// xattr chain it is an INCLUDE - the inverse of `P`. Modelling protect and
+    /// risk as distinct oc actions makes it possible to treat both as
+    /// "not Include" and silently invert this row, which is what
+    /// [`FilterAction::xattr_decision`] exists to prevent.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    #[test]
+    fn risk_resolves_to_include_on_an_xattr_chain() {
+        let program = FilterProgram::new([
+            FilterProgramEntry::Rule(FilterRule::risk("user.keep").with_xattr_only(true)),
+            FilterProgramEntry::Rule(FilterRule::exclude("user.*").with_xattr_only(true)),
+        ])
+        .unwrap();
+
+        assert!(
+            program.allows_xattr("user.keep", XattrSide::Receiver),
+            "`R` must resolve to include and win first-match against the later exclude"
+        );
+        assert!(
+            !program.allows_xattr("user.other", XattrSide::Receiver),
+            "the trailing exclude still drops every other user.* name"
         );
     }
 }
