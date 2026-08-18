@@ -3,7 +3,8 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::super::directive::FilterDirective;
-use super::helpers::consume_rule_separator;
+use super::helpers::split_short_rule_modifiers;
+use super::modifiers::{apply_rule_modifiers, parse_rule_modifiers};
 
 /// Parses a single-character rule prefix (`short`) followed by a separator and
 /// a pattern, building the rule via `builder`. Returns `None` when `short` does
@@ -33,22 +34,36 @@ pub(super) fn parse_filter_shorthand(
         return Some(Err(message));
     }
 
-    if !remainder
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_whitespace() || ch == '_')
-    {
-        return None;
-    }
+    // upstream: exclude.c:1330-1445 - the modifier loop runs for EVERY rule
+    // prefix, `H`/`S`/`P`/`R` included, so these accept a modifier run before
+    // the separator exactly as `+`/`-` do. Character validity is left to
+    // `parse_rule_modifiers`, matching `split_short_rule_modifiers`' contract,
+    // so an unknown letter reports "invalid modifier" rather than falling
+    // through to the unrelated "unsupported filter rule" diagnostic.
+    let (modifier_text, pattern) = match split_short_rule_modifiers(remainder) {
+        Ok(split) => split,
+        Err(invalid) => return Some(Err(invalid.into_message(short.len_utf8(), trimmed))),
+    };
 
-    let pattern = consume_rule_separator(remainder);
+    // `prefix_specifies_side = true`: H/S/P/R already bind a side, so upstream
+    // rejects a redundant `s`/`r` modifier on them (exclude.c:1423-1432) while
+    // leaving `p` and `x` unguarded (exclude.c:1421, :1438).
+    let modifiers = match parse_rule_modifiers(modifier_text, trimmed, true, true, true) {
+        Ok(state) => state,
+        Err(error) => return Some(Err(error)),
+    };
+
     if pattern.is_empty() {
         let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
         let message = rsync_error!(1, text).with_role(Role::Client);
         return Some(Err(message));
     }
 
-    Some(Ok(FilterDirective::Rule(builder(pattern.to_owned()))))
+    let rule = builder(pattern.to_owned());
+    match apply_rule_modifiers(rule, modifiers) {
+        Ok(rule) => Some(Ok(FilterDirective::Rule(rule))),
+        Err(error) => Some(Err(error)),
+    }
 }
 
 #[cfg(test)]
@@ -66,9 +81,18 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_without_separator() {
+    fn no_separator_reports_an_invalid_modifier() {
+        // MEASURED against rsync 3.5.0: `Ppattern` -> "invalid modifier 'a' at
+        // position 2". With no separator the whole remainder is scanned as
+        // modifiers (helpers.rs scan_modifiers, upstream exclude.c:1214-1287),
+        // so the first non-modifier byte is reported - it is NOT an unknown
+        // rule, and it must not fall through to the keyword parser.
         let result = parse_filter_shorthand("epattern", 'e', "exclude", mock_builder);
-        assert!(result.is_none());
+        assert!(
+            result
+                .expect("prefix matched, so the parser must not decline")
+                .is_err()
+        );
     }
 
     #[test]

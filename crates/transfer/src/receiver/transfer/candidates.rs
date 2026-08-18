@@ -956,9 +956,9 @@ impl ReceiverContext {
         // screens names through the same `x`-modifier rules the sender applied
         // to its side. Without it an excluded name survives on the destination
         // list alone and flips the itemize `x` column upstream leaves clear.
-        let filter = self
-            .xattr_name_filter()
-            .map(|set| move |name: &str| set.xattr_name_allowed(name));
+        let filter = self.xattr_name_filter().map(|set| {
+            move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+        });
         let opts = self.generator_xattr_opts(filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool));
         let sender = self.resolve_xattr_list(entry).unwrap_or_default();
         match path {
@@ -1041,9 +1041,9 @@ impl ReceiverContext {
             return None;
         }
 
-        let filter = self
-            .xattr_name_filter()
-            .map(|set| move |name: &str| set.xattr_name_allowed(name));
+        let filter = self.xattr_name_filter().map(|set| {
+            move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+        });
         let opts = self.generator_xattr_opts(filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool));
 
         // upstream: xattrs.c:967 get_xattr_data(fnamecmp, ...) - the diff reads
@@ -1283,9 +1283,9 @@ impl ReceiverContext {
         // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
         if has_xattrs {
             if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                let filter = self
-                    .xattr_name_filter()
-                    .map(|set| move |name: &str| set.xattr_name_allowed(name));
+                let filter = self.xattr_name_filter().map(|set| {
+                    move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+                });
                 let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
                 // upstream: rsync_xal_set resolves an abbreviated value against
                 // fnamecmp; the file is its own basis for the in-place case.

@@ -103,7 +103,7 @@ pub(super) fn parse_short_include_rule(
     }
 
     let rule = builder(pattern.to_owned());
-    let rule = match apply_rule_modifiers(rule, modifiers, trimmed) {
+    let rule = match apply_rule_modifiers(rule, modifiers) {
         Ok(rule) => rule,
         Err(error) => return Some(Err(error)),
     };
@@ -142,7 +142,7 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
             prefix_specifies_side,
         )?;
         let rule = builder(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        let rule = apply_rule_modifiers(rule, modifiers)?;
         Ok(FilterDirective::Rule(rule))
     };
 
@@ -166,19 +166,19 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
     // prefixes that set prefix_specifies_side, so `s`/`r` are invalid while `p`
     // (perishable) stays valid.
     if keyword == "show" {
-        return build_rule(FilterRuleSpec::show, true, false, true);
+        return build_rule(FilterRuleSpec::show, true, true, true);
     }
 
     if keyword == "hide" {
-        return build_rule(FilterRuleSpec::hide, true, false, true);
+        return build_rule(FilterRuleSpec::hide, true, true, true);
     }
 
     if keyword == "protect" {
-        return build_rule(FilterRuleSpec::protect, true, false, true);
+        return build_rule(FilterRuleSpec::protect, true, true, true);
     }
 
     if keyword == "risk" {
-        return build_rule(FilterRuleSpec::risk, true, false, true);
+        return build_rule(FilterRuleSpec::risk, true, true, true);
     }
 
     let message = rsync_error!(

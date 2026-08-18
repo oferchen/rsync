@@ -20,6 +20,7 @@ pub(crate) use clear::apply_clear_rule;
 use pattern::{compile_patterns, normalise_pattern};
 pub(crate) use rule::CompiledRule;
 pub(crate) use xattr::CompiledXattrRule;
+pub use xattr::XattrSide;
 
 impl CompiledRule {
     /// Compiles a [`FilterRule`] into optimised glob matchers.

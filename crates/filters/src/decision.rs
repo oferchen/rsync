@@ -4,7 +4,7 @@ use logging::debug_log;
 
 use crate::{
     FilterAction,
-    compiled::{CompiledRule, CompiledXattrRule},
+    compiled::{CompiledRule, CompiledXattrRule, XattrSide},
 };
 
 /// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
@@ -32,8 +32,15 @@ impl FilterSetInner {
     /// rule's include/exclude verdict; with no match the name is included by
     /// default. Mirrors upstream `exclude.c:name_is_excluded(name,
     /// NAME_IS_XATTR, ALL_FILTERS)` consulted from `xattrs.c:250`.
-    pub(crate) fn xattr_name_allowed(&self, name: &str) -> bool {
+    pub(crate) fn xattr_name_allowed(&self, name: &str, side: XattrSide) -> bool {
         for rule in &self.xattr {
+            // Side elision precedes the pattern test, as upstream's
+            // `ex->elide == cur_elide_value` guard precedes the match body
+            // (exclude.c:1010). A `P`/`H`-prefixed xattr rule must not decide
+            // anything on the end it does not name.
+            if !rule.applies_to(side) {
+                continue;
+            }
             if rule.matches(name) {
                 return matches!(rule.action(), FilterAction::Include);
             }

@@ -254,16 +254,45 @@ fn parse_filter_directive_accepts_xattr_only_rules() {
 }
 
 #[test]
-fn parse_filter_directive_rejects_xattr_on_unsupported_keywords() {
-    let protect_error =
-        parse_filter_directive(OsStr::new("protect,x secrets")).expect_err("protect,x should fail");
-    let rendered = protect_error.to_string();
-    assert!(rendered.contains("uses unsupported modifier 'x'"));
+fn parse_filter_directive_accepts_xattr_on_side_bound_rules_keeping_the_side() {
+    // MEASURED against rsync 3.5.0: `protect,x`, `show,x`, `Px`, `Sx` all exit 0.
+    // upstream: exclude.c:1438 `case 'x'` carries no guard, so it is legal on every
+    // prefix, and :1345-1358 shows H/S/P/R are nothing but (include|exclude) x
+    // (sender|receiver) - the `x` bit is orthogonal and must not widen the side.
+    let protect = parse_filter_directive(OsStr::new("protect,x secrets"))
+        .expect("upstream accepts protect,x");
+    assert_eq!(
+        protect,
+        FilterDirective::Rule(FilterRuleSpec::protect("secrets".to_owned()).with_xattr_only(true))
+    );
 
-    let show_error =
-        parse_filter_directive(OsStr::new("show,x meta")).expect_err("show,x should fail");
-    let rendered = show_error.to_string();
-    assert!(rendered.contains("uses unsupported modifier 'x'"));
+    let show = parse_filter_directive(OsStr::new("show,x meta")).expect("upstream accepts show,x");
+    assert_eq!(
+        show,
+        FilterDirective::Rule(FilterRuleSpec::show("meta".to_owned()).with_xattr_only(true))
+    );
+
+    // The single-letter forms must agree with their long spellings; upstream
+    // erases the distinction before transmission (exclude.c:1824-1881
+    // get_rule_prefix never emits H/S/P/R).
+    assert_eq!(
+        parse_filter_directive(OsStr::new("Px secrets")).expect("upstream accepts Px"),
+        parse_filter_directive(OsStr::new("protect,x secrets")).expect("long form"),
+    );
+    assert_eq!(
+        parse_filter_directive(OsStr::new("Sx meta")).expect("upstream accepts Sx"),
+        parse_filter_directive(OsStr::new("show,x meta")).expect("long form"),
+    );
+}
+
+#[test]
+fn parse_filter_directive_still_rejects_a_redundant_side_modifier() {
+    // Non-vacuity companion: `x` became legal on these rules, but `s`/`r` must
+    // stay rejected because the prefix already binds the side
+    // (upstream exclude.c:1423-1432, measured: `Ps user.a` exits 1).
+    let error = parse_filter_directive(OsStr::new("Ps secrets"))
+        .expect_err("s is redundant once P binds the side");
+    assert!(error.to_string().contains("unsupported modifier 's'"));
 }
 
 #[test]
