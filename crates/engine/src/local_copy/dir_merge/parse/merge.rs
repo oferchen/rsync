@@ -20,8 +20,11 @@ pub(super) fn parse_merge_directive(
         return Ok(None);
     }
 
+    // upstream: exclude.c:1310 `RULE_STRCMP(s, "merge")` under `case 'm':`, and
+    // `rule_strcmp` is `strncmp` (:1218) - `Merge` reaches `default:` and is
+    // reported as an unknown rule, not parsed as a merge directive.
     let (prefix, rest) = text.split_at(MERGE_PREFIX.len());
-    if !prefix.eq_ignore_ascii_case(MERGE_PREFIX) {
+    if prefix != MERGE_PREFIX {
         return Ok(None);
     }
 
@@ -164,11 +167,26 @@ mod tests {
         }
     }
 
+    /// upstream: exclude.c:1310 - `RULE_STRCMP(s, "merge")` is `strncmp`
+    /// (:1218), so the keyword is lower case only. MEASURED against rsync
+    /// 3.5.0: `--filter='Merge f'` reports `Unknown filter rule` and exits 1.
     #[test]
-    fn parse_merge_directive_case_insensitive() {
-        let result = parse_merge_directive("MERGE .rsync-filter");
-        assert!(result.is_ok());
-        let directive = result.unwrap().unwrap();
+    fn parse_merge_keyword_is_case_sensitive() {
+        assert!(
+            parse_merge_directive("MERGE .rsync-filter")
+                .expect("uppercase is not a parse error, just not a merge")
+                .is_none()
+        );
+    }
+
+    /// Non-vacuity companion for `parse_merge_keyword_is_case_sensitive`:
+    /// without it the case test would also pass if the parser recognised no
+    /// spelling at all.
+    #[test]
+    fn parse_merge_lower_case_keyword_still_parses() {
+        let directive = parse_merge_directive("merge .rsync-filter")
+            .expect("parse")
+            .expect("merge directive");
         match directive {
             ParsedFilterDirective::Merge { path, .. } => {
                 assert_eq!(path, PathBuf::from(".rsync-filter"));
