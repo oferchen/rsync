@@ -16,6 +16,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::compiled::XattrSide;
 use crate::{
     FilterAction, FilterError, FilterRule, MergeFileError,
     apple_double::default_patterns as apple_double_default_patterns,
@@ -101,8 +102,12 @@ impl FilterSet {
             // chain instead of dropping it so `--filter='-x user.foo'` can be
             // honoured by xattr-name matching (upstream: xattrs.c:250).
             if rule.is_xattr_only() {
-                if matches!(rule.action, FilterAction::Include | FilterAction::Exclude) {
-                    xattr.push(CompiledXattrRule::new(rule)?);
+                // `CompiledXattrRule` owns which actions carry an xattr
+                // decision: the four side-bound spellings all collapse onto
+                // upstream's include/exclude pair (exclude.c:1345-1358), and a
+                // meta action yields None.
+                if let Some(compiled) = CompiledXattrRule::new(rule)? {
+                    xattr.push(compiled);
                 }
                 continue;
             }
@@ -176,8 +181,8 @@ impl FilterSet {
     /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)` (exclude.c:914,
     /// consulted from xattrs.c:250).
     #[must_use]
-    pub fn xattr_name_allowed(&self, name: &str) -> bool {
-        self.inner.xattr_name_allowed(name)
+    pub fn xattr_name_allowed(&self, name: &str, side: XattrSide) -> bool {
+        self.inner.xattr_name_allowed(name, side)
     }
 
     /// Returns `true` if the path should be included in the transfer.
@@ -838,9 +843,9 @@ mod tests {
 
         assert!(set.has_xattr_rules());
         // The named xattr is excluded...
-        assert!(!set.xattr_name_allowed("user.foo"));
+        assert!(!set.xattr_name_allowed("user.foo", XattrSide::Receiver));
         // ...while an unrelated xattr name is still allowed (default include).
-        assert!(set.xattr_name_allowed("user.bar"));
+        assert!(set.xattr_name_allowed("user.bar", XattrSide::Receiver));
         // ...and the rule must NOT leak into path matching: a *file* called
         // "user.foo" is unaffected by the xattr-only rule.
         assert!(set.allows(Path::new("user.foo"), false));
@@ -856,8 +861,8 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(set.xattr_name_allowed("user.keep"));
-        assert!(!set.xattr_name_allowed("user.drop"));
+        assert!(set.xattr_name_allowed("user.keep", XattrSide::Receiver));
+        assert!(!set.xattr_name_allowed("user.drop", XattrSide::Receiver));
     }
 
     /// upstream: exclude.c:914 - a rule WITHOUT the `x` modifier never
@@ -870,7 +875,7 @@ mod tests {
         // The plain rule excludes the *file* path "user.foo"...
         assert!(!set.allows(Path::new("user.foo"), false));
         // ...but leaves the xattr NAME "user.foo" allowed - no `x` modifier.
-        assert!(set.xattr_name_allowed("user.foo"));
+        assert!(set.xattr_name_allowed("user.foo", XattrSide::Receiver));
     }
 
     /// An empty set (or one with only path rules) allows every xattr name and
@@ -880,6 +885,6 @@ mod tests {
     fn xattr_name_allowed_defaults_to_true() {
         let set = FilterSet::default();
         assert!(!set.has_xattr_rules());
-        assert!(set.xattr_name_allowed("user.anything"));
+        assert!(set.xattr_name_allowed("user.anything", XattrSide::Receiver));
     }
 }
