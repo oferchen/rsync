@@ -189,7 +189,7 @@ fn parse_filter_directive_dir_merge_with_modifiers() {
 
 #[test]
 fn parse_filter_directive_dir_merge_cvs_default_path() {
-    let directive = parse_filter_directive_line("dir-merge,c")
+    let directive = parse_filter_directive_line("dir-merge,C")
         .expect("parse")
         .expect("directive");
 
