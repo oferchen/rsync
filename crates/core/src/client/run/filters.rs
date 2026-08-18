@@ -21,7 +21,7 @@ pub(crate) fn compile_filter_program(
 
     let mut entries = Vec::new();
     for rule in rules {
-        // upstream: exclude.c:1330-1332 add_rule() applies an implicit
+        // upstream: exclude.c:1478-1481 parse_rule_tok() applies an implicit
         // FILTRULE_SENDER_SIDE when --delete-excluded is active and the
         // rule carries neither FILTRULES_SIDES nor merge/dir-merge.
         let mut rule = rule.clone();

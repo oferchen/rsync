@@ -133,6 +133,20 @@ fn list_attributes(
         .collect())
 }
 
+/// Selects the namespace screen for one read.
+///
+/// upstream: xattrs.c:250-257 (`rsync_xal_get`) and :375-382 (`copy_xattrs`) -
+/// the namespace test is the `else` of the `saw_xattr_filter` branch, so an
+/// `x`-modifier filter REPLACES it rather than stacking with it. Both readers
+/// make that same decision, so the rule has a single owner.
+const fn namespace_screen(filter_governs: bool, user_only: bool) -> NamespaceScreen {
+    if filter_governs {
+        NamespaceScreen::Bypass
+    } else {
+        NamespaceScreen::Apply { user_only }
+    }
+}
+
 /// Shorthand for the receiver/local-copy namespace screen.
 fn receiver_screen() -> NamespaceScreen {
     NamespaceScreen::Apply {
@@ -192,21 +206,12 @@ pub fn read_xattrs_for_wire(
 ) -> Result<XattrList, MetadataError> {
     use protocol::xattr::{XattrEntry, is_fake_super_store_attr, is_rsync_internal, local_to_wire};
 
-    // upstream: xattrs.c:250-257 - the filter branch and the namespace branch
-    // are mutually exclusive, so a transfer carrying `x`-modifier rules never
-    // evaluates the namespace test at all.
-    let screen = if opts.filter.is_some() {
-        NamespaceScreen::Bypass
-    } else {
-        // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`. The
-        // sender skips only the system.* namespace and still transmits user.*,
-        // security.* (e.g. SELinux labels), and trusted.*; a non-root
-        // generator reading the destination to diff it keeps user.* alone, so
-        // a namespace it could never store cannot flip the itemize `x` column.
-        NamespaceScreen::Apply {
-            user_only: opts.user_only(),
-        }
-    };
+    // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`. The
+    // sender skips only the system.* namespace and still transmits user.*,
+    // security.* (e.g. SELinux labels), and trusted.*; a non-root generator
+    // reading the destination to diff it keeps user.* alone, so a namespace it
+    // could never store cannot flip the itemize `x` column.
+    let screen = namespace_screen(opts.filter.is_some(), opts.user_only());
     let attrs = list_attributes(path, opts.follow_symlinks, screen)?;
     let mut entries = Vec::with_capacity(attrs.len());
 
@@ -350,11 +355,15 @@ pub fn sync_xattrs(
     follow_symlinks: bool,
     filters: XattrSyncFilters<'_>,
 ) -> Result<(), MetadataError> {
+    // Screening first and filtering second dropped `--filter='+x trusted.foo'`
+    // for a non-root receiver on Linux: the name never survived to reach the
+    // rule that was meant to admit it.
+    let screen = namespace_screen(filters.governs_selection(), receiver_user_only());
     let XattrSyncFilters {
         source: source_filter,
         destination: destination_filter,
     } = filters;
-    let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
+    let source_attrs = list_attributes(source, follow_symlinks, screen)?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
     let dest = DestinationXattrs::open(destination, follow_symlinks);
 
@@ -365,12 +374,20 @@ pub fn sync_xattrs(
             retained.insert(name.clone());
             continue;
         }
-        retained.insert(name.clone());
+        // Retain ONLY what the source side actually transfers. upstream's
+        // prune (xattrs.c:1074-1094) walks the destination list and removes any
+        // name absent from the sender's `xalp`; a name the sender's
+        // `rsync_xal_get` screened out (xattrs.c:262-264) never enters `xalp`,
+        // so upstream DELETES the destination copy. Inserting before the filter
+        // exempted it instead, leaving a stale value behind - measured against
+        // rsync 3.5.0 with `--filter='Hx user.shared'` present on both sides:
+        // upstream removes it, oc kept it.
         let allow = source_filter.is_none_or(|predicate| predicate(&name_str));
 
         if !allow {
             continue;
         }
+        retained.insert(name.clone());
 
         if let Some(value) = read_attribute(source, name, follow_symlinks)? {
             dest.write(name, &value)?;
@@ -379,7 +396,7 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = list_attributes(destination, follow_symlinks, receiver_screen())?;
+    let destination_attrs = list_attributes(destination, follow_symlinks, screen)?;
     for name in &destination_attrs {
         if retained.contains(name) {
             continue;
@@ -1438,6 +1455,43 @@ mod tests {
         );
     }
 
+    /// An `x`-modifier filter REPLACES the namespace screen, it does not stack
+    /// with it: upstream reaches the namespace test only through the `else` of
+    /// the `saw_xattr_filter` branch (xattrs.c:250-257, :375-382). Screening
+    /// first and filtering second made `--filter='+x trusted.foo'` inert for a
+    /// non-root Linux receiver - the name was gone before its rule ran.
+    ///
+    /// The decision is pinned here rather than through a real xattr because no
+    /// unprivileged fixture can express it: writing `trusted.*` needs
+    /// CAP_SYS_ADMIN on Linux, and off Linux `is_xattr_permitted` is constantly
+    /// true, so `Apply` and `Bypass` are indistinguishable by observation.
+    #[test]
+    fn a_filter_replaces_the_namespace_screen_rather_than_stacking() {
+        assert!(matches!(
+            namespace_screen(true, true),
+            NamespaceScreen::Bypass
+        ));
+        assert!(matches!(
+            namespace_screen(true, false),
+            NamespaceScreen::Bypass
+        ));
+    }
+
+    /// Non-vacuity companion: without a filter the screen still applies, and
+    /// carries `user_only` through unchanged. Without this row the rule above
+    /// would also hold for a `namespace_screen` that returned `Bypass` always.
+    #[test]
+    fn without_a_filter_the_namespace_screen_applies_verbatim() {
+        assert!(matches!(
+            namespace_screen(false, true),
+            NamespaceScreen::Apply { user_only: true }
+        ));
+        assert!(matches!(
+            namespace_screen(false, false),
+            NamespaceScreen::Apply { user_only: false }
+        ));
+    }
+
     #[test]
     fn is_xattr_permitted_allows_user_namespace() {
         // user.* should always be permitted regardless of platform or mode.
@@ -1598,6 +1652,41 @@ mod tests {
                 copied, expect_copied,
                 "a source name is gated by `filters.source` alone \
                  (block_source = {block_source})"
+            );
+        }
+
+        // The row that discriminates a REAL fork from a half fork: a name
+        // present on BOTH sides. `retained` must be keyed on what the source
+        // side actually transfers, so a source-denied name still reaches the
+        // prune loop and is deleted from the destination - upstream's
+        // xattrs.c:1074-1094 removes any destination name absent from the
+        // sender's `xalp`. With `retained.insert` above the source filter this
+        // row is the only one that fails; the two disjoint fixtures below
+        // cannot see it, which is why they are not sufficient on their own.
+        // Measured against rsync 3.5.0 with `--filter='Hx user.shared'`.
+        {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&source, &from_source, b"src", false).expect("source attr");
+            write_attribute(&destination, &from_source, b"dst", false).expect("dest attr");
+
+            let deny = blocked(name_of(&from_source));
+            sync_xattrs(
+                &source,
+                &destination,
+                false,
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                },
+            )
+            .expect("sync");
+
+            assert!(
+                read_attribute(&destination, &from_source, false)
+                    .expect("read")
+                    .is_none(),
+                "a source-denied name is not transferred, so the destination copy                  must be pruned - not exempted by having existed on the source"
             );
         }
 

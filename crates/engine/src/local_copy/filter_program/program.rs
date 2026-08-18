@@ -355,6 +355,11 @@ struct XattrRule {
     /// and therefore never equals `cur_elide_value` (exclude.c:1010).
     applies_to_sender: bool,
     applies_to_receiver: bool,
+    /// upstream: exclude.c:1005 - `ret_match = FILTRULE_NEGATE ? 0 : 1`, so `!`
+    /// inverts the verdict on an xattr chain exactly as on a path chain. The
+    /// filters crate's `CompiledXattrRule` already carried this; omitting it
+    /// here made `-x! user.keep` mean the opposite on the two chains.
+    negate: bool,
 }
 
 #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -384,6 +389,7 @@ impl XattrRule {
             matcher: glob.compile_matcher(),
             applies_to_sender: rule.applies_to_sender(),
             applies_to_receiver: rule.applies_to_receiver(),
+            negate: rule.is_negated(),
         }))
     }
 
@@ -399,8 +405,9 @@ impl XattrRule {
         }
     }
 
+    /// upstream: exclude.c:1005 - the `!` modifier inverts the verdict.
     fn matches(&self, name: &str) -> bool {
-        self.matcher.is_match(name)
+        self.matcher.is_match(name) ^ self.negate
     }
 }
 
@@ -712,6 +719,33 @@ mod tests {
         assert!(
             !receiver_only.allows_xattr("user.secret", XattrSide::Receiver),
             "`P` is a plain exclude on its own side (exclude.c:1358)"
+        );
+    }
+
+    /// The `!` modifier inverts an xattr rule exactly as it inverts a path rule.
+    ///
+    /// upstream: exclude.c:1005 - `ret_match = FILTRULE_NEGATE ? 0 : 1` is
+    /// applied before the xattr/path partition at :1013, so the flag is not
+    /// specific to either chain. The filters crate's `CompiledXattrRule`
+    /// carried it while this one did not, which made `-x! user.keep` mean
+    /// opposite things on the network and local-copy chains.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    #[test]
+    fn the_negate_modifier_inverts_an_xattr_rule() {
+        let program = FilterProgram::new([FilterProgramEntry::Rule(
+            FilterRule::exclude("user.keep")
+                .with_xattr_only(true)
+                .with_negate(true),
+        )])
+        .unwrap();
+
+        assert!(
+            program.allows_xattr("user.keep", XattrSide::Receiver),
+            "`!` inverts the match, so the NAMED xattr is the one that survives"
+        );
+        assert!(
+            !program.allows_xattr("user.other", XattrSide::Receiver),
+            "and every other name is excluded - without the flag this is backwards"
         );
     }
 

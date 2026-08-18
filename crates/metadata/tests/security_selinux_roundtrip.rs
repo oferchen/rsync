@@ -36,7 +36,7 @@
 use std::fs;
 use std::path::Path;
 
-use metadata::{apply_xattrs_from_list, sync_xattrs};
+use metadata::{XattrSyncFilters, apply_xattrs_from_list, sync_xattrs};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
 
