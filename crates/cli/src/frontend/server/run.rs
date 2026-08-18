@@ -296,6 +296,12 @@ where
     // merge files it just received protect matching destination entries at delete
     // time. --delete-delay decides during the walk and only defers the unlink.
     config.deletion.delete_after = long_flags.delete_after;
+    // upstream: exclude.c:1947-1948 / :1976-1977 - both ends compute
+    // `receiver_wants_list` from the same four inputs, so a server that reads
+    // `delete_excluded` as false while the client reads it as true will try to
+    // read a filter list the client never sent, consuming the file list as a
+    // rule length. Below protocol 29 that is the whole difference.
+    config.deletion.delete_excluded = long_flags.delete_excluded;
     // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
     // long-form when the client requested sender-side removal. The flag is
     // consumed by the sender's `successful_send()` after each transferred
