@@ -527,8 +527,9 @@ fn invalid_modifier(buf: &[u8], byte: u8, position: usize) -> io::Error {
 /// Upstream applies no `protocol_version` test anywhere in the modifier switch,
 /// which is why this function takes no protocol argument. The `p`-requires-30
 /// and `s`/`r`-require-29 rules are SENDER rules living in `get_rule_prefix`
-/// (exclude.c:1871-1876); applying them here made `-p foo` at protocol 29
-/// decode to the pattern `"p foo"`.
+/// (exclude.c:1865-1877 - `s` at :1865-1867, `r` at :1868-1871, `p` at
+/// :1872-1877); applying them here made `-p foo` at protocol 29 decode to the
+/// pattern `"p foo"`.
 fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
     // The rule-type prefix is always a single ASCII byte, so decode it as a
     // char without validating the rest of the buffer as UTF-8.
@@ -568,7 +569,7 @@ fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
         while idx < buf.len() {
             let c = buf[idx];
             // upstream: exclude.c:1365 - BOTH ' ' and '_' terminate the run, and
-            // exclude.c:1444 `if (*s) s++` consumes whichever one ended it.
+            // exclude.c:1444-1445 `if (*s) s++;` consumes whichever one ended it.
             // Missing the '_' arm left the underscore in the pattern body, so
             // `-p_foo` excluded `_foo` where upstream excludes `foo`.
             if c == b' ' || c == b'_' {
@@ -595,7 +596,9 @@ fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
                 // once NO_PREFIXES is set or the prefix already picked a side.
                 // Re-deriving the implied flags keeps an upstream peer's `:C`
                 // no-inherit/word-split semantics; get_rule_prefix collapses them
-                // back to a bare `C` (exclude.c:1846-1848), so a decoded `:C`
+                // back to a bare `C` (exclude.c:1847-1860 - the `C` arm emits
+                // just `C`, and the `else` branch that would have emitted
+                // `n`/`w`/`-`/`+` is skipped entirely), so a decoded `:C`
                 // re-encodes as `:C` with no double application.
                 b'C' if !rule.no_prefixes && !prefix_specifies_side => {
                     rule.cvs_exclude = true;

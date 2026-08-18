@@ -296,7 +296,7 @@ fn the_same_byte_is_a_valid_modifier_on_a_non_clear_rule() {
 //
 // Upstream has no protocol test in the modifier switch; the `p`-requires-30
 // and `s`/`r`-require-29 rules live in the SENDER (get_rule_prefix,
-// exclude.c:1871-1876).
+// exclude.c:1865-1877).
 // ---------------------------------------------------------------------------
 
 #[test]
