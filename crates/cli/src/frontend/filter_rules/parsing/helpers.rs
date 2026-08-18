@@ -108,7 +108,7 @@ pub(super) fn split_short_merge_modifiers(text: &str) -> Result<(&str, &str), In
     scan_modifiers(text, |ch| {
         matches!(
             ch.to_ascii_lowercase(),
-            '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'e' | 'n'
+            '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'e' | 'n' | 'x'
         )
     })
 }
