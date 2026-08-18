@@ -64,6 +64,27 @@ pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
 /// built-in `get_cvs_excludes()` patterns. Only the wrapper merge/dir-merge
 /// directives themselves are skipped (FILTRULE_MERGE_FILE /
 /// FILTRULE_PERDIR_MERGE bits), not the per-token rules they expand into.
+/// Reports upstream's "dodgy" side conflict between a merge template and a
+/// rule read out of the merge file.
+///
+/// upstream: exclude.c:1447-1456
+///
+/// ```c
+/// if (template->rflags & FILTRULES_SIDES) {
+///     if (rule->rflags & FILTRULES_SIDES)
+///         filter_rule_err("specified-side merge file contains specified-side filter", ...);
+///     rule->rflags |= template->rflags & FILTRULES_SIDES;
+/// }
+/// ```
+///
+/// The refusal sits ABOVE the inherit, so the conflicting side is never
+/// applied. oc spells "the rule has no side bit" as *both* sides applying, so
+/// any rule that is not both-sided has named one - `P`/`R` included, matching
+/// measured rsync 3.5.0 behaviour.
+pub(crate) fn dir_merge_side_conflict(rule: &FilterRule, options: &DirMergeOptions) -> bool {
+    options.specifies_side() && !(rule.applies_to_sender() && rule.applies_to_receiver())
+}
+
 pub(crate) fn apply_dir_merge_rule_defaults(
     mut rule: FilterRule,
     options: &DirMergeOptions,
@@ -281,6 +302,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
                 match parse_filter_directive_line(&directive) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
+                        if dir_merge_side_conflict(&rule, options) {
+                            return Err(map_error(FilterParseError::new(format!(
+                                "specified-side merge file contains specified-side filter: {directive}"
+                            ))));
+                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,
@@ -390,6 +416,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
                 match parse_filter_directive_line(trimmed) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
+                        if dir_merge_side_conflict(&rule, options) {
+                            return Err(map_error(FilterParseError::new(format!(
+                                "specified-side merge file contains specified-side filter: {trimmed}"
+                            ))));
+                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,

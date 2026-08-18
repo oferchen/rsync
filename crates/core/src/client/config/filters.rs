@@ -261,6 +261,20 @@ impl FilterRuleSpec {
         true
     }
 
+    /// Reports whether the rule itself names a side.
+    ///
+    /// upstream: exclude.c:1448 `rule->rflags & FILTRULES_SIDES`. oc spells
+    /// "no side bit set" as *both* sides applying, so any rule that is not
+    /// both-sided has named one. That deliberately includes `P`/`R`
+    /// (protect/risk), which default to receiver-only here and set
+    /// `FILTRULE_RECEIVER_SIDE` upstream - measured against rsync 3.5.0, a
+    /// `P` or `R` line inside a sided merge file is refused exactly like an
+    /// explicit `-r`/`-s`.
+    #[must_use]
+    pub const fn specifies_side(&self) -> bool {
+        !(self.applies_to_sender && self.applies_to_receiver)
+    }
+
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
     pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
         if matches!(self.kind, FilterRuleKind::Clear) {
