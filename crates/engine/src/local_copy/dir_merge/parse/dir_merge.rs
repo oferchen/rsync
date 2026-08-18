@@ -21,7 +21,12 @@ pub(super) fn parse_dir_merge_directive(
             continue;
         }
 
-        if text[..alias.len()].eq_ignore_ascii_case(alias) {
+        // upstream: exclude.c:1294 `RULE_STRCMP(s, "dir-merge")` under
+        // `case 'd':`; `rule_strcmp` is `strncmp` (:1218), so the keyword is
+        // matched exactly and `Dir-Merge` is an unknown rule. `per-dir` has no
+        // upstream counterpart at all; it is held to the same rule for
+        // consistency with its sibling alias.
+        if &text[..alias.len()] == alias {
             matched = Some((&text[..alias.len()], &text[alias.len()..]));
             break;
         }
@@ -206,11 +211,27 @@ mod tests {
         }
     }
 
+    /// upstream: exclude.c:1294 - `RULE_STRCMP(s, "dir-merge")` is `strncmp`
+    /// (:1218), so the keyword is lower case only. MEASURED against rsync
+    /// 3.5.0: `--filter='DIR-MERGE .rsync-filter'` reports
+    /// `Unknown filter rule` and exits 1.
     #[test]
-    fn parse_dir_merge_case_insensitive() {
-        let result = parse_dir_merge_directive("DIR-MERGE .rsync-filter");
-        assert!(result.is_ok());
-        let directive = result.unwrap().unwrap();
+    fn parse_dir_merge_keyword_is_case_sensitive() {
+        assert!(
+            parse_dir_merge_directive("DIR-MERGE .rsync-filter")
+                .expect("uppercase is not a parse error, just not a dir-merge")
+                .is_none()
+        );
+    }
+
+    /// Non-vacuity companion for `parse_dir_merge_keyword_is_case_sensitive`:
+    /// without it the case test would also pass if the parser recognised no
+    /// spelling at all.
+    #[test]
+    fn parse_dir_merge_lower_case_keyword_still_parses() {
+        let directive = parse_dir_merge_directive("dir-merge .rsync-filter")
+            .expect("parse")
+            .expect("dir-merge directive");
         match directive {
             ParsedFilterDirective::DirMerge { pattern, .. } => {
                 assert_eq!(pattern, PathBuf::from(".rsync-filter"));
