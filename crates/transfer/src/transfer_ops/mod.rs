@@ -48,7 +48,8 @@ use std::path::Path;
 use protocol::ProtocolVersion;
 
 use crate::reader::ServerReader;
-use crate::receiver::{SenderAttrs, SumHead};
+use crate::receiver::SumHead;
+use crate::receiver::ndx_stream::StreamRole;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
@@ -279,12 +280,42 @@ fn read_response_header<R: Read>(
 ) -> io::Result<ResponseHeader> {
     let expected_ndx = pending.ndx();
 
-    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec_xattr(
+    // upstream: rsync.c:322-431 `read_ndx_and_attrs()`. The NDX must be read
+    // through the marker-aware primitive, not the combined
+    // `read_with_codec_xattr` helper: `rsync.c:334-335` returns at `NDX_DONE`
+    // *before* consuming any attribute byte, and `NDX_DONE` is a single 0x00 at
+    // protocol >= 30. Reading the tail unconditionally would block in
+    // `read_exact` for two `iflags` bytes the peer never sends - see the note on
+    // `SenderAttrs::read_attrs_after_ndx`, which was split out for exactly this.
+    //
+    // `NoLazyFlist` keeps the previous semantics rather than widening them: its
+    // `inc_recurse()` is false, so every file-list marker stays a protocol
+    // violation via `rsync.c:343`, which is what this driver already did - it
+    // cannot consume sub-lists. `last_file_ndx` is diagnostic context for that
+    // error only; it is not a classification input.
+    let mut flist_sink =
+        crate::receiver::ndx_stream::NoLazyFlist::new(StreamRole::Receiver, expected_ndx);
+    let (echoed_ndx, sender_attrs) = crate::receiver::ndx_stream::read_ndx_and_attrs(
         reader,
         ndx_codec,
+        &mut flist_sink,
         ctx.config.preserve_xattrs,
         ctx.config.want_xattr_optim,
-    )?;
+    )?
+    .ok_or_else(|| {
+        // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase. Reaching it
+        // with a transfer still outstanding means the sender dropped a file
+        // without the receiver retiring it (e.g. an unconsumed `MSG_NO_SEND`,
+        // io.c:1639 -> got_flist_entry_status(), io.c:1089). Fail loudly here
+        // rather than reading attributes that were never sent.
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "sender ended the phase (NDX_DONE) while the response for NDX {expected_ndx} \
+                 was still outstanding - protocol violation"
+            ),
+        )
+    })?;
 
     // upstream: sender.c emits responses in NDX order; out-of-order is a protocol violation.
     if echoed_ndx != expected_ndx {
@@ -356,6 +387,7 @@ struct ResponseHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::receiver::SenderAttrs;
 
     #[test]
     fn resolve_use_inplace_writes_to_destination_for_inplace() {

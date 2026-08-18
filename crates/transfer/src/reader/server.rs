@@ -246,30 +246,6 @@ impl<R: Read> ServerReader<R> {
         }
     }
 
-    /// Returns and drains accumulated `MSG_NO_SEND` file indices from the sender.
-    ///
-    /// When the sender cannot open a file it was asked to transfer, it sends
-    /// `MSG_NO_SEND` with the 4-byte little-endian file index (protocol >= 30).
-    /// The receiver accumulates these indices during normal reads and drains
-    /// them via this method.
-    ///
-    /// Returns an empty `Vec` for plain-mode readers.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `io.c:1618-1627`: `MSG_NO_SEND` dispatches to `got_flist_entry_status(FES_NO_SEND, val)`
-    ///   on the generator side, or forwards to the generator if on the receiver side.
-    /// - `sender.c:367-368`: sender sends `MSG_NO_SEND` for protocol >= 30 when file open fails.
-    pub fn take_no_send_indices(&mut self) -> Vec<i32> {
-        match &mut self.inner {
-            ServerReaderInner::Multiplex(mux) => mux.take_no_send_indices(),
-            ServerReaderInner::Compressed(compressed) => {
-                compressed.get_mut().take_no_send_indices()
-            }
-            ServerReaderInner::Plain(_) => Vec::new(),
-        }
-    }
-
     /// Returns and drains accumulated `MSG_REDO` file indices from the receiver.
     ///
     /// When the receiver detects a whole-file checksum failure, it sends

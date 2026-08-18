@@ -512,10 +512,18 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
 }
 
 #[test]
-fn multiplex_reader_accumulates_msg_no_send() {
-    // upstream: io.c:1618-1627, sender.c:367-368
+fn multiplex_reader_surfaces_each_msg_no_send_before_the_data_after_it() {
+    // The sender emits MSG_NO_SEND and moves straight on to the next file
+    // without answering, so the decline must INTERRUPT the read that awaits
+    // that file. Recording it and continuing to wait is an unconditional hang.
+    //
+    // Consecutive declines surface one per read, in order: a receiver awaits
+    // exactly one file at a time, so draining them together would report the
+    // first and silently strand the rest.
+    //
+    // upstream: io.c:1809-1818 - MSG_NO_SEND retires the entry on the generator
+    // upstream: sender.c:669,723,751 - each emitter `continue`s, writing no response
     let mut stream = Vec::new();
-
     let ndx1: i32 = 42;
     protocol::send_msg(
         &mut stream,
@@ -523,9 +531,7 @@ fn multiplex_reader_accumulates_msg_no_send() {
         &ndx1.to_le_bytes(),
     )
     .unwrap();
-
     protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
-
     let ndx2: i32 = 99;
     protocol::send_msg(
         &mut stream,
@@ -533,27 +539,39 @@ fn multiplex_reader_accumulates_msg_no_send() {
         &ndx2.to_le_bytes(),
     )
     .unwrap();
-
     protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"world").unwrap();
 
     let mut mux = MultiplexReader::new(Cursor::new(stream));
-
     let mut buf = [0u8; 5];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 5);
+
+    let err = mux
+        .read(&mut buf)
+        .expect_err("the first decline must surface, not be swallowed");
+    assert_eq!(declined_ndx(&err), 42);
+
+    // The decline is consumed, so the data behind it is now deliverable.
+    assert_eq!(mux.read(&mut buf).unwrap(), 5);
     assert_eq!(&buf, b"hello");
 
-    assert_eq!(mux.no_send_indices, vec![42]);
+    let err = mux
+        .read(&mut buf)
+        .expect_err("the second decline must surface independently");
+    assert_eq!(declined_ndx(&err), 99);
 
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 5);
+    assert_eq!(mux.read(&mut buf).unwrap(), 5);
     assert_eq!(&buf, b"world");
 
-    assert_eq!(mux.no_send_indices, vec![42, 99]);
-
-    let taken = mux.take_no_send_indices();
-    assert_eq!(taken, vec![42, 99]);
+    // Each index is reported exactly once and leaves no residue behind.
     assert!(mux.no_send_indices.is_empty());
+}
+
+/// Extracts the declined file index from a surfaced `MSG_NO_SEND` error,
+/// asserting the typed inner error survives the `io::Error` wrapper.
+fn declined_ndx(err: &std::io::Error) -> i32 {
+    err.get_ref()
+        .and_then(|inner| inner.downcast_ref::<multiplex::FileDeclinedError>())
+        .expect("inner FileDeclinedError must survive the io::Error wrapper")
+        .ndx
 }
 
 #[test]
@@ -578,13 +596,9 @@ fn multiplex_reader_no_send_wrong_payload_length_aborts() {
 }
 
 #[test]
-fn server_reader_take_no_send_indices_plain_returns_empty() {
-    let mut reader = ServerReader::new_plain(Cursor::new(vec![]));
-    assert!(reader.take_no_send_indices().is_empty());
-}
-
-#[test]
-fn server_reader_take_no_send_indices_multiplex_accumulates() {
+fn server_reader_surfaces_msg_no_send_through_the_multiplex_arm() {
+    // The same contract must hold through `ServerReader`, which is the type
+    // the receiver actually reads from.
     let mut stream = Vec::new();
     let ndx: i32 = 7;
     protocol::send_msg(
@@ -600,14 +614,13 @@ fn server_reader_take_no_send_indices_multiplex_accumulates() {
         .unwrap();
 
     let mut buf = [0u8; 4];
-    let n = reader.read(&mut buf).unwrap();
-    assert_eq!(n, 4);
+    let err = reader
+        .read(&mut buf)
+        .expect_err("the decline must surface through ServerReader too");
+    assert_eq!(declined_ndx(&err), 7);
+
+    assert_eq!(reader.read(&mut buf).unwrap(), 4);
     assert_eq!(&buf, b"data");
-
-    let indices = reader.take_no_send_indices();
-    assert_eq!(indices, vec![7]);
-
-    assert!(reader.take_no_send_indices().is_empty());
 }
 
 #[test]
@@ -706,8 +719,10 @@ fn server_reader_take_redo_indices_multiplex_accumulates() {
 
 #[test]
 fn multiplex_reader_redo_and_no_send_interleaved() {
+    // A redo index is still accumulated for later collection; only the
+    // no-send decline interrupts the read, because only it means a response
+    // the caller is waiting for will never arrive.
     let mut stream = Vec::new();
-
     let redo_ndx: i32 = 3;
     protocol::send_msg(
         &mut stream,
@@ -715,7 +730,6 @@ fn multiplex_reader_redo_and_no_send_interleaved() {
         &redo_ndx.to_le_bytes(),
     )
     .unwrap();
-
     let no_send_ndx: i32 = 7;
     protocol::send_msg(
         &mut stream,
@@ -723,17 +737,17 @@ fn multiplex_reader_redo_and_no_send_interleaved() {
         &no_send_ndx.to_le_bytes(),
     )
     .unwrap();
-
     protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"x").unwrap();
 
     let mut mux = MultiplexReader::new(Cursor::new(stream));
     let mut buf = [0u8; 1];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 1);
-    assert_eq!(&buf, b"x");
 
+    let err = mux.read(&mut buf).expect_err("the decline must surface");
+    assert_eq!(declined_ndx(&err), 7);
     assert_eq!(mux.redo_indices, vec![3]);
-    assert_eq!(mux.no_send_indices, vec![7]);
+
+    assert_eq!(mux.read(&mut buf).unwrap(), 1);
+    assert_eq!(&buf, b"x");
 }
 
 #[test]
