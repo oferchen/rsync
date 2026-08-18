@@ -101,8 +101,8 @@ pub use phase_timer::PhaseTimer;
 pub use stream::{BadLogCode, MessageStream, Msgs2Stderr, StreamContext, message_stream};
 pub use thread_local::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events,
-    drain_events_coded, emit_debug, emit_debug_coded, emit_info, emit_info_coded, emit_warning,
-    info_gte, init,
+    drain_events_coded, drain_events_for_peer, emit_debug, emit_debug_coded, emit_info,
+    emit_info_coded, emit_warning, info_gte, init,
 };
 pub use verify_failure::{VerifyFailure, verification_failure};
 
