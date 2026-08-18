@@ -144,6 +144,20 @@ pub(super) struct ServerLongFlags {
     ///
     /// [`late_delete`]: Self::late_delete
     pub(super) delete_after: bool,
+    /// Also delete destination entries the filter list excludes (upstream:
+    /// `--delete-excluded`, long-form only).
+    ///
+    /// Tracked apart from [`delete`] because it is an input to
+    /// `receiver_wants_filter_list`, which BOTH ends must compute identically:
+    /// `prune_empty_dirs || (delete_mode && (!delete_excluded || protocol >= 29))`
+    /// (upstream exclude.c:1947-1948 `send_filter_list` / :1976-1977
+    /// `recv_filter_list`). Folding it into [`delete`] left this side reading
+    /// `false`, so below protocol 29 the client correctly sent no list while the
+    /// server still tried to read one and consumed the file list as a rule
+    /// length.
+    ///
+    /// [`delete`]: Self::delete
+    pub(super) delete_excluded: bool,
     /// Remove source files after a successful transfer.
     ///
     /// upstream: options.c:2964-2965 - `server_options()` emits
@@ -415,6 +429,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delete: false,
         late_delete: false,
         delete_after: false,
+        delete_excluded: false,
         remove_source_files: false,
         copy_devices: false,
         stats: false,
@@ -563,8 +578,22 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --numeric-ids is long-form only (options.c:2887-2888)
             "--numeric-ids" => flags.numeric_ids = true,
             // upstream: --delete variants are long-form only (options.c:2818-2827)
-            "--delete" | "--delete-before" | "--delete-during" | "--delete-excluded" => {
+            "--delete" | "--delete-before" | "--delete-during" => {
                 flags.delete = true;
+            }
+            // upstream: options.c:3010-3013 server_options() emits `--delete`
+            // only in the `else if (delete_mode && !delete_excluded)` arm, then
+            // adds `--delete-excluded` separately - so `--delete-excluded`
+            // arrives INSTEAD of `--delete`, not alongside it, and setting
+            // `delete` here is what carries delete_mode over. That matches
+            // options.c:2334, where `delete_mode || delete_excluded` turns
+            // `--delete-excluded` alone into a delete mode.
+            //
+            // Keeping only `delete` made the server disagree with the client
+            // about `receiver_wants_filter_list`.
+            "--delete-excluded" => {
+                flags.delete = true;
+                flags.delete_excluded = true;
             }
             // upstream: generator.c:124 EARLY_DELETE_DONE_MSG = !(delete_during==2
             // || delete_after). --delete-delay defers only the goodbye del-stats

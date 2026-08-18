@@ -405,6 +405,41 @@ fn parse_server_args_skips_append_flag() {
     );
 }
 
+/// `--delete-excluded` must be recorded distinctly, not folded into `delete`.
+///
+/// It is an input to `receiver_wants_filter_list` (exclude.c:1947-1948), which
+/// both ends compute independently, so losing it here desynced the filter-list
+/// exchange below protocol 29. `delete` is also set because upstream emits
+/// `--delete-excluded` INSTEAD of `--delete` (options.c:3010-3013, the
+/// `else if (delete_mode && !delete_excluded)` arm), and `--delete-excluded`
+/// alone implies a delete mode (options.c:2334).
+#[test]
+fn long_flags_captures_delete_excluded_distinctly() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--delete-excluded"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(
+        flags.delete,
+        "--delete-excluded alone must still imply a delete mode"
+    );
+    assert!(
+        flags.delete_excluded,
+        "--delete-excluded must be tracked apart from the generic delete flag"
+    );
+}
+
+/// Non-vacuity companion: a plain `--delete` must NOT set `delete_excluded`,
+/// so the test above cannot pass by the field being unconditionally true.
+#[test]
+fn long_flags_plain_delete_leaves_delete_excluded_unset() {
+    let args = vec![OsString::from("--server"), OsString::from("--delete")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.delete);
+    assert!(!flags.delete_excluded);
+}
+
 /// `parse_server_long_flags` records a single `--append` as `append_mode == 1`
 /// (plain append, prefix trusted) and never sets `append_verify`.
 #[test]
