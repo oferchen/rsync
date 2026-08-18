@@ -1,46 +1,50 @@
 use super::types::FilterParseError;
 use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
 
-fn trim_short_rule_remainder(remainder: &str) -> &str {
-    let remainder = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    if let Some(rest) = remainder.strip_prefix(',') {
-        return rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+/// Consumes exactly one separator byte from the front of the remainder.
+///
+/// upstream: exclude.c:1444-1445 - `if (*s) s++;` advances past the single byte
+/// that ended the modifier run, and the pattern is then taken verbatim
+/// (`len = strlen(s)`, :1465). Consuming more than one turns `- <space><space>x`
+/// into a rule matching `x` where upstream matches `<space>x`, and consuming a
+/// `,` here would swallow a byte upstream treats as an invalid modifier.
+fn consume_rule_separator(remainder: &str) -> &str {
+    let mut chars = remainder.chars();
+    match chars.next() {
+        Some(ch) if ch == '_' || ch == ' ' => chars.as_str(),
+        _ => remainder,
     }
-    remainder
 }
 
 /// Splits the modifier prefix of a short-form `+`/`-` rule from its pattern.
 ///
-/// Returns `(modifiers, pattern)` where `modifiers` is the contiguous run of
-/// modifier characters following the rule sigil and `pattern` is the
-/// remaining text with separating commas, underscores, and whitespace
-/// stripped. A leading separator yields empty modifiers.
+/// Returns `(modifiers, pattern)`. The caller validates each modifier byte, so
+/// this only has to delimit the run the way upstream does.
+///
+/// upstream: exclude.c:1365 - the run ends ONLY at `' '`, `'_'` or end of
+/// input. A `,` is deliberately NOT a terminator: it reaches the `default:` arm
+/// at :1371 and is reported as an invalid modifier. The single optional comma
+/// upstream does accept is consumed earlier, in the outer prefix switch
+/// (:1325-1329 `if (s[1] == ',') s++;`), which is the `strip_prefix(',')` below.
+///
+/// With no separator at all the whole remainder is modifiers and the pattern is
+/// empty, so `-foo` is rejected on the `f` rather than silently becoming an
+/// exclude of `foo`. This matches the sibling CLI scanner; the two previously
+/// held opposite conventions for this case.
 pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
     }
 
-    if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_short_rule_modifiers(rest);
-        if modifiers.is_empty() {
-            return ("", remainder);
-        }
-        return (modifiers, remainder);
-    }
-
-    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
-        return ("", trim_short_rule_remainder(text));
-    }
+    let text = text.strip_prefix(',').unwrap_or(text);
 
     for (idx, ch) in text.char_indices() {
-        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
-            let modifiers = &text[..idx];
-            let remainder = trim_short_rule_remainder(&text[idx..]);
-            return (modifiers, remainder);
+        if ch == '_' || ch == ' ' {
+            return (&text[..idx], consume_rule_separator(&text[idx..]));
         }
     }
 
-    ("", text)
+    (text, "")
 }
 
 /// Splits the modifier prefix of a short-form merge directive (`.`/`:`).
@@ -54,41 +58,32 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
         return ("", "");
     }
 
-    if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_short_merge_modifiers(rest, allow_extended);
-        if modifiers.is_empty() {
-            return ("", remainder);
-        }
-        return (modifiers, remainder);
-    }
-
-    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
-        return ("", trim_short_rule_remainder(text));
-    }
+    let text = text.strip_prefix(',').unwrap_or(text);
 
     let mut end = 0usize;
     for (idx, ch) in text.char_indices() {
-        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
-            let modifiers = &text[..end];
-            let remainder = trim_short_rule_remainder(&text[idx..]);
-            return (modifiers, remainder);
+        if ch == '_' || ch == ' ' {
+            return (&text[..end], consume_rule_separator(&text[idx..]));
         }
 
-        let lower = ch.to_ascii_lowercase();
-        // upstream: exclude.c:1438 - `x` is unguarded and legal on every
-        // prefix, so it must be consumed here or it terminates the scan and the
+        // upstream: exclude.c:1370 switches on the RAW byte, so the modifier
+        // alphabet is case-sensitive. `C` (:1402) is the CVS modifier and `c` is
+        // not a modifier at all - folding case here made `:c f` parse as a CVS
+        // dir-merge where upstream exits 1. Same defect PR #7361 fixed on the
+        // rule side; the merge side never received it.
+        //
+        // upstream: exclude.c:1438 - `x` is unguarded and legal on every prefix,
+        // so it must be consumed here or it terminates the scan and the
         // remainder is misread as the merge filename.
-        let base_modifier = matches!(lower, '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'x');
-        let extended_modifier = matches!(lower, 'e' | 'n');
+        let base_modifier = matches!(ch, '+' | '-' | 'C' | 'w' | 's' | 'r' | 'p' | '/' | 'x');
+        let extended_modifier = matches!(ch, 'e' | 'n');
 
         if base_modifier || (allow_extended && extended_modifier) {
             end = idx + ch.len_utf8();
             continue;
         }
 
-        let modifiers = &text[..end];
-        let remainder = trim_short_rule_remainder(&text[idx..]);
-        return (modifiers, remainder);
+        return (&text[..end], consume_rule_separator(&text[idx..]));
     }
 
     (&text[..end], "")
@@ -246,47 +241,44 @@ pub(super) fn parse_merge_modifiers(
 mod tests {
     use super::*;
 
-    mod trim_short_rule_remainder_tests {
+    mod consume_rule_separator_tests {
         use super::*;
 
         #[test]
         fn empty_string() {
-            assert_eq!(trim_short_rule_remainder(""), "");
+            assert_eq!(consume_rule_separator(""), "");
         }
 
         #[test]
-        fn only_underscores() {
-            assert_eq!(trim_short_rule_remainder("___"), "");
+        fn consumes_exactly_one_underscore() {
+            // upstream: exclude.c:1444-1445 advances by ONE byte. The previous
+            // helper used trim_start_matches and ate the whole run, which turned
+            // `-__foo` into a rule matching `foo` where upstream matches `_foo`.
+            assert_eq!(consume_rule_separator("___"), "__");
         }
 
         #[test]
-        fn only_whitespace() {
-            assert_eq!(trim_short_rule_remainder("   "), "");
+        fn consumes_exactly_one_space() {
+            assert_eq!(consume_rule_separator("   "), "  ");
         }
 
         #[test]
-        fn mixed_underscore_whitespace() {
-            assert_eq!(trim_short_rule_remainder("_ _ _"), "");
+        fn does_not_cross_separator_kinds() {
+            assert_eq!(consume_rule_separator("_ _ _"), " _ _");
         }
 
         #[test]
-        fn comma_prefix() {
-            assert_eq!(trim_short_rule_remainder(",pattern"), "pattern");
+        fn a_comma_is_not_a_separator() {
+            // upstream: exclude.c:1365 lists only ' ' and '_' as terminators, so
+            // a `,` reaching here is pattern text - it must NOT be eaten. The
+            // single comma upstream accepts is consumed by the outer prefix
+            // switch (:1325-1329), before this function is ever reached.
+            assert_eq!(consume_rule_separator(",pattern"), ",pattern");
         }
 
         #[test]
-        fn comma_with_leading_underscores() {
-            assert_eq!(trim_short_rule_remainder("__,pattern"), "pattern");
-        }
-
-        #[test]
-        fn comma_with_trailing_underscores() {
-            assert_eq!(trim_short_rule_remainder(",__pattern"), "pattern");
-        }
-
-        #[test]
-        fn pattern_without_separator() {
-            assert_eq!(trim_short_rule_remainder("pattern"), "pattern");
+        fn leaves_a_non_separator_untouched() {
+            assert_eq!(consume_rule_separator("pattern"), "pattern");
         }
     }
 
@@ -299,10 +291,15 @@ mod tests {
         }
 
         #[test]
-        fn comma_separated() {
+        fn a_leading_comma_is_skipped_then_the_rest_is_modifiers() {
+            // upstream: exclude.c:1325-1329 - the outer prefix switch consumes ONE
+            // optional comma (`if (s[1] == ',') s++`). What follows is the modifier
+            // run, not the pattern: `-,pattern` reaches the loop at `p` (a valid
+            // perishable modifier) and then fails on `a`. The caller does that
+            // rejection; this function only delimits.
             let (mods, rest) = split_short_rule_modifiers(",pattern");
-            assert_eq!(mods, "");
-            assert_eq!(rest, "pattern");
+            assert_eq!(mods, "pattern");
+            assert_eq!(rest, "");
         }
 
         #[test]
@@ -320,10 +317,14 @@ mod tests {
         }
 
         #[test]
-        fn modifiers_with_comma() {
+        fn an_interior_comma_does_not_end_the_modifier_run() {
+            // upstream: exclude.c:1365 - the run ends only at ' ', '_' or NUL, so a
+            // `,` here is just another byte handed to the modifier switch, where it
+            // hits `default:` and exits 1. Treating it as a terminator is what made
+            // `-s,*.o` a silent sender-side exclude of `*.o`.
             let (mods, rest) = split_short_rule_modifiers("abc,pattern");
-            assert_eq!(mods, "abc");
-            assert_eq!(rest, "pattern");
+            assert_eq!(mods, "abc,pattern");
+            assert_eq!(rest, "");
         }
 
         #[test]
@@ -341,10 +342,15 @@ mod tests {
         }
 
         #[test]
-        fn no_separator_returns_empty_modifiers() {
+        fn no_separator_means_all_modifiers_and_no_pattern() {
+            // The convention this crate previously used was the exact INVERSE of the
+            // CLI sibling's (cli/.../parsing/helpers.rs), which PR #7361 already
+            // fixed. Upstream never reaches a "pattern" at all here: with no
+            // separator the loop runs to end-of-input over modifier bytes, so `-foo`
+            // fails on `f` instead of excluding a file named `foo`.
             let (mods, rest) = split_short_rule_modifiers("pattern");
-            assert_eq!(mods, "");
-            assert_eq!(rest, "pattern");
+            assert_eq!(mods, "pattern");
+            assert_eq!(rest, "");
         }
     }
 
@@ -393,10 +399,15 @@ mod tests {
         }
 
         #[test]
-        fn modifiers_with_comma_separator() {
+        fn an_interior_comma_stops_the_merge_scan_without_being_consumed() {
+            // The merge scanner stops at the first non-modifier byte, and `,` is one
+            // - it is NOT a separator (exclude.c:1365), so it must stay at the front
+            // of the remainder rather than being eaten. Leaving it visible is what
+            // lets the caller report it instead of silently reading `pattern` as the
+            // merge filename.
             let (mods, rest) = split_short_merge_modifiers("+-,pattern", true);
             assert_eq!(mods, "+-");
-            assert_eq!(rest, "pattern");
+            assert_eq!(rest, ",pattern");
         }
 
         #[test]
