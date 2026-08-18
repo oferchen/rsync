@@ -22,6 +22,7 @@
 
 use crate::error::MetadataError;
 use crate::xattr_send::XattrSendOptions;
+use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
 use std::collections::HashSet;
 use std::io;
@@ -347,8 +348,12 @@ pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
-    filter: Option<&dyn Fn(&str) -> bool>,
+    filters: XattrSyncFilters<'_>,
 ) -> Result<(), MetadataError> {
+    let XattrSyncFilters {
+        source: source_filter,
+        destination: destination_filter,
+    } = filters;
     let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
     let dest = DestinationXattrs::open(destination, follow_symlinks);
@@ -361,7 +366,7 @@ pub fn sync_xattrs(
             continue;
         }
         retained.insert(name.clone());
-        let allow = filter.is_none_or(|predicate| predicate(&name_str));
+        let allow = source_filter.is_none_or(|predicate| predicate(&name_str));
 
         if !allow {
             continue;
@@ -387,7 +392,7 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter.is_none_or(|predicate| predicate(&name_str));
+        let allow = destination_filter.is_none_or(|predicate| predicate(&name_str));
 
         if allow {
             dest.remove(name)?;
@@ -894,7 +899,7 @@ mod tests {
         write_attribute(&source, &attr1, b"value1", false).expect("write attr1");
         write_attribute(&source, &attr2, b"value2", false).expect("write attr2");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         assert_eq!(
             read_attribute(&destination, &attr1, false)
@@ -968,7 +973,7 @@ mod tests {
         write_attribute(&destination, &attr1, b"old_value1", false).expect("write dest attr1");
         write_attribute(&destination, &attr2, b"extra_value", false).expect("write dest attr2");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         // attr1 should be updated
         assert_eq!(
@@ -1017,7 +1022,7 @@ mod tests {
         write_attribute(&destination, &stat_name, b"100000 0,0 2:2", false)
             .expect("write dest %stat");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         // The destination's fake-super %stat must be preserved verbatim - not
         // overwritten by the source copy nor deleted by the removal pass.
@@ -1410,7 +1415,13 @@ mod tests {
 
         // Filter that only allows attrs NOT containing "blocked"
         let filter = |name: &str| !name.contains("blocked");
-        sync_xattrs(&source, &destination, false, Some(&filter)).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::uniform(&filter),
+        )
+        .expect("sync");
 
         // allowed should be synced
         assert_eq!(
@@ -1505,7 +1516,13 @@ mod tests {
 
         // Filter that blocks "preserved" - it should NOT be touched
         let filter = |name: &str| !name.contains("preserved");
-        sync_xattrs(&source, &destination, false, Some(&filter)).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::uniform(&filter),
+        )
+        .expect("sync");
 
         // src_attr should be synced
         assert_eq!(
@@ -1521,6 +1538,100 @@ mod tests {
                 .expect("preserved"),
             b"keep_me"
         );
+    }
+
+    /// The source read and the destination prune consult DIFFERENT filters.
+    ///
+    /// upstream: the source read is the sender's `rsync_xal_get()`
+    /// (xattrs.c:262) and the prune is the generator's sweep in
+    /// `rsync_xal_set()` (xattrs.c:1078); `rule_matches()` elides a
+    /// side-flagged rule before its pattern is consulted (exclude.c:1010), so
+    /// an `H`/`S` rule reaches only the first and a `P`/`R` rule only the
+    /// second.
+    ///
+    /// Each half is asserted in BOTH directions. With a single shared
+    /// predicate the two rows of each pair collapse onto the same answer, so
+    /// the inverse row is what makes this non-vacuous rather than decoration.
+    #[test]
+    fn sync_xattrs_consults_each_side_filter_for_its_own_half() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+        fs::write(&source, "source").expect("write source");
+        fs::write(&destination, "dest").expect("write dest");
+
+        if !xattrs_supported(&source) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let from_source = test_xattr_name("from_source");
+        let dest_only = test_xattr_name("dest_only");
+        let name_of = |raw: &[u8]| String::from_utf8_lossy(raw).into_owned();
+        let blocked = |target: String| move |name: &str| name != target;
+        let allow_all = |_: &str| true;
+
+        // Source-read half: only `filters.source` may suppress the copy.
+        for (block_source, expect_copied) in [(true, false), (false, true)] {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&source, &from_source, b"v", false).expect("write source attr");
+
+            let deny = blocked(name_of(&from_source));
+            let filters = if block_source {
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                }
+            } else {
+                XattrSyncFilters {
+                    source: Some(&allow_all),
+                    destination: Some(&deny),
+                }
+            };
+            sync_xattrs(&source, &destination, false, filters).expect("sync");
+
+            let copied = read_attribute(&destination, &from_source, false)
+                .expect("read")
+                .is_some();
+            assert_eq!(
+                copied, expect_copied,
+                "a source name is gated by `filters.source` alone \
+                 (block_source = {block_source})"
+            );
+        }
+
+        // Destination-prune half: only `filters.destination` may spare it.
+        let _ = fs::remove_file(&source);
+        fs::write(&source, "source").expect("rewrite source");
+        for (block_destination, expect_survives) in [(true, true), (false, false)] {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&destination, &dest_only, b"v", false).expect("write dest attr");
+
+            let deny = blocked(name_of(&dest_only));
+            let filters = if block_destination {
+                XattrSyncFilters {
+                    source: Some(&allow_all),
+                    destination: Some(&deny),
+                }
+            } else {
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                }
+            };
+            sync_xattrs(&source, &destination, false, filters).expect("sync");
+
+            let survives = read_attribute(&destination, &dest_only, false)
+                .expect("read")
+                .is_some();
+            assert_eq!(
+                survives, expect_survives,
+                "an extraneous destination name is gated by `filters.destination` \
+                 alone (block_destination = {block_destination})"
+            );
+        }
     }
 
     #[test]
@@ -1676,7 +1787,8 @@ mod tests {
 
         // sync_xattrs: copies the source set, then removes destination strays.
         let (source, destination) = readonly_pair("sync");
-        sync_xattrs(&source, &destination, false, None).expect("sync_xattrs on read-only dest");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default())
+            .expect("sync_xattrs on read-only dest");
         assert_mode_restored(&destination, "sync_xattrs");
 
         // strip_source_xattrs: removes only names the source also carries. This

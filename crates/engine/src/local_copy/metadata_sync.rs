@@ -21,6 +21,9 @@ use super::FilterProgram;
 #[cfg(all(unix, feature = "xattr"))]
 use ::filters::XattrSide;
 
+#[cfg(all(unix, feature = "xattr"))]
+use ::metadata::XattrSyncFilters;
+
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use ::metadata::{sync_acls, sync_acls_via_fake_super};
 
@@ -51,23 +54,37 @@ pub(crate) fn sync_xattrs_if_requested(
     if preserve_xattrs && !mode.is_dry_run() {
         if let Some(program) = filter_program {
             if program.has_xattr_rules() {
-                // upstream: copy_xattrs (xattrs.c:358) is this function's
-                // analogue, and every live caller is generator-side -
-                // gen_entry_copy_xattrs (generator.c:1599), the backup copy
-                // (generator.c:2430) and copy_file (util1.c:513). Its
-                // `user_only = am_sender ? 0 : am_root <= 0` therefore always
-                // evaluates with `am_sender == 0`, so the filter is consulted
-                // with receiver semantics even though the names are read from
-                // the SOURCE.
-                let filter = |name: &str| program.allows_xattr(name, XattrSide::Receiver);
-                sync_xattrs(source, destination, follow_symlinks, Some(&filter))
+                // The two halves of this call are upstream's two sides - see
+                // [`XattrSyncFilters`]. Reading the source names is the
+                // sender's `rsync_xal_get()`, deleting the extraneous
+                // destination names is the generator's prune in
+                // `rsync_xal_set()`, and a side-flagged rule participates in
+                // exactly one of them (exclude.c:1010).
+                let sender = |name: &str| program.allows_xattr(name, XattrSide::Sender);
+                let receiver = |name: &str| program.allows_xattr(name, XattrSide::Receiver);
+                let filters = XattrSyncFilters {
+                    source: Some(&sender),
+                    destination: Some(&receiver),
+                };
+                sync_xattrs(source, destination, follow_symlinks, filters)
                     .map_err(map_metadata_error)?;
             } else {
-                sync_xattrs(source, destination, follow_symlinks, None)
-                    .map_err(map_metadata_error)?;
+                sync_xattrs(
+                    source,
+                    destination,
+                    follow_symlinks,
+                    XattrSyncFilters::default(),
+                )
+                .map_err(map_metadata_error)?;
             }
         } else {
-            sync_xattrs(source, destination, follow_symlinks, None).map_err(map_metadata_error)?;
+            sync_xattrs(
+                source,
+                destination,
+                follow_symlinks,
+                XattrSyncFilters::default(),
+            )
+            .map_err(map_metadata_error)?;
         }
     }
     Ok(())

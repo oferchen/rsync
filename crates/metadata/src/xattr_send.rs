@@ -330,3 +330,54 @@ mod macos_provenance_tests {
         );
     }
 }
+
+/// The two xattr-name filters [`sync_xattrs`] consults, one per upstream side.
+///
+/// A local copy is upstream's forked sender + generator, and the two halves of
+/// this function are exactly that fork:
+///
+/// - reading the SOURCE names is the sender's `rsync_xal_get()`
+///   (xattrs.c:250-267), which runs with `am_sender = 1`;
+/// - deleting the extraneous DESTINATION names is the generator's prune in
+///   `rsync_xal_set()` (xattrs.c:1078-1082), which runs with `am_sender = 0`.
+///
+/// `rule_matches()` elides a side-flagged rule before it consults the pattern
+/// (exclude.c:1010), so the two halves genuinely see different rule sets: an
+/// `H`/`S` rule shapes only the source read and a `P`/`R` rule only the
+/// destination prune. Sharing one predicate across both collapses that
+/// distinction - and measured against rsync 3.5.0 it is observable, e.g.
+/// `--filter='Hx user.foo'` must not copy the attribute while
+/// `--filter='Px user.foo'` must not delete an extraneous one.
+///
+/// [`Default`] leaves both sides unfiltered, which is `-X` with no `x` rules.
+#[derive(Clone, Copy, Default)]
+pub struct XattrSyncFilters<'a> {
+    /// Consulted with each name read from the source, upstream's sender side.
+    pub source: Option<&'a dyn Fn(&str) -> bool>,
+    /// Consulted with each extraneous destination name, upstream's generator side.
+    pub destination: Option<&'a dyn Fn(&str) -> bool>,
+}
+
+impl<'a> XattrSyncFilters<'a> {
+    /// Applies one predicate to both sides.
+    ///
+    /// Correct only where the caller has no side distinction to make - a rule
+    /// set with no side-flagged rules, or a test fixture. Production callers
+    /// that own a filter chain should build the two sides separately.
+    #[must_use]
+    pub const fn uniform(filter: &'a dyn Fn(&str) -> bool) -> Self {
+        Self {
+            source: Some(filter),
+            destination: Some(filter),
+        }
+    }
+}
+
+impl std::fmt::Debug for XattrSyncFilters<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("XattrSyncFilters")
+            .field("source", &self.source.is_some())
+            .field("destination", &self.destination.is_some())
+            .finish()
+    }
+}
