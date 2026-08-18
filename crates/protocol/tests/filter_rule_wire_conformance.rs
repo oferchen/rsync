@@ -243,15 +243,29 @@ fn a_cvs_rule_may_carry_an_empty_pattern() {
 }
 
 #[test]
-fn a_bare_slash_is_a_legal_one_byte_pattern() {
-    // Pins the empty-pattern check ABOVE the trailing-`/` strip. Upstream
-    // computes its length on the raw remainder (exclude.c:1462-1465), so `- /`
-    // has length 1 and is legal. If the check moved below the strip this would
-    // error while serialize_rule still emits `- /` - an encoder/decoder
-    // asymmetry the fuzz round-trip oracle asserts against.
+fn a_bare_slash_is_a_legal_one_byte_pattern_and_is_not_directory_only() {
+    // Two upstream rules meet on this input.
+    //
+    // 1. The empty-pattern check sits ABOVE the trailing-`/` strip: upstream
+    //    measures length on the raw remainder (exclude.c:1462-1465), so `- /`
+    //    has length 1 and is legal.
+    // 2. The strip itself is guarded - `if (pat_len > 1 && pat[pat_len-1] ==
+    //    '/')` (exclude.c:287) - so a pattern of exactly `/` is NOT stripped
+    //    and NOT directory-only. Without the guard oc produced an empty
+    //    pattern plus directory_only, a rule upstream cannot express.
     let rule = one(b"- /", 32);
+    assert_eq!(rule.pattern, "/");
+    assert!(!rule.directory_only);
+}
+
+#[test]
+fn a_two_byte_pattern_ending_in_slash_still_strips() {
+    // Non-vacuity for the length guard: at the very next length up, the strip
+    // must still fire. A guard of `>= 1` and a guard of `> 1` differ on exactly
+    // one input, so this pair is what discriminates them.
+    let rule = one(b"- */", 32);
+    assert_eq!(rule.pattern, "*");
     assert!(rule.directory_only);
-    assert!(rule.pattern.is_empty());
 }
 
 // ---------------------------------------------------------------------------

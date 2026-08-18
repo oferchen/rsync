@@ -480,12 +480,7 @@ fn parse_wire_rule_old_prefix(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
         ..FilterRuleWireFormat::default()
     };
 
-    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
-        rule.directory_only = true;
-        rule.pattern = wire_bytes_to_pattern(stripped);
-    } else {
-        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
-    }
+    strip_directory_suffix(&mut rule, pattern_bytes);
 
     Ok(rule)
 }
@@ -682,14 +677,25 @@ fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
         pattern_bytes = &pattern_bytes[1..];
     }
 
-    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
-        rule.directory_only = true;
-        rule.pattern = wire_bytes_to_pattern(stripped);
-    } else {
-        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
-    }
+    strip_directory_suffix(&mut rule, pattern_bytes);
 
     Ok(rule)
+}
+
+/// Splits a trailing `/` off the pattern, marking the rule directory-only.
+///
+/// upstream: exclude.c:287 `add_rule` - `if (pat_len > 1 && pat[pat_len-1] == '/')`.
+/// The length guard is load-bearing: a pattern of exactly `/` is left intact and
+/// is NOT directory-only, because stripping it would leave no pattern at all.
+/// Both decode paths share this so they cannot drift apart.
+fn strip_directory_suffix(rule: &mut FilterRuleWireFormat, pattern_bytes: &[u8]) {
+    match pattern_bytes.strip_suffix(b"/".as_slice()) {
+        Some(stripped) if pattern_bytes.len() > 1 => {
+            rule.directory_only = true;
+            rule.pattern = wire_bytes_to_pattern(stripped);
+        }
+        _ => rule.pattern = wire_bytes_to_pattern(pattern_bytes),
+    }
 }
 
 /// Serializes a filter rule to wire format bytes.
