@@ -420,7 +420,7 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
         return parse_wire_rule_old_prefix(buf);
     }
 
-    parse_wire_rule_modern(buf, protocol)
+    parse_wire_rule_modern(buf)
 }
 
 /// Parses a wire rule using old-style prefix rules (protocol < 29).
@@ -480,24 +480,52 @@ fn parse_wire_rule_old_prefix(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
         ..FilterRuleWireFormat::default()
     };
 
-    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
-        rule.directory_only = true;
-        rule.pattern = wire_bytes_to_pattern(stripped);
-    } else {
-        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
-    }
+    strip_directory_suffix(&mut rule, pattern_bytes);
 
     Ok(rule)
 }
 
+/// Builds the diagnostic for a modifier byte upstream refuses.
+///
+/// upstream: exclude.c:1371-1379 - the `invalid:` label formats
+/// `" '%c' at position %d"` into `"invalid modifier%s in filter rule: %s"` and
+/// then calls `exit_cleanup(RERR_SYNTAX)`. `position` is the byte offset into
+/// the rule text, which is exactly the loop index.
+///
+/// Every rejection in the modifier scan funnels through here, matching
+/// upstream's own control flow: each `goto invalid` targets this one label.
+///
+/// The error is a plain `InvalidData`, like the two sibling diagnostics in this
+/// file, so it maps to `RERR_STREAMIO` (12) where upstream exits `RERR_SYNTAX`
+/// (1). Reaching 1 from an `io::Error` needs a marker type that
+/// `ExitCode::from_io_error` can downcast, which is a separate decision from
+/// this conformance change; because every rejection funnels through this one
+/// helper it is a single-site swap once that lands.
+fn invalid_modifier(buf: &[u8], byte: u8, position: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "invalid modifier '{}' at position {position} in filter rule: {}",
+            byte as char,
+            String::from_utf8_lossy(buf)
+        ),
+    )
+}
+
 /// Parses a wire rule using modern prefix rules (protocol >= 29).
 ///
-/// Supports full modifier parsing including `/`, `!`, `C`, `n`, `w`, `e`,
-/// `x`, `s`, `r`, `p` flags.
-fn parse_wire_rule_modern(
-    buf: &[u8],
-    protocol: ProtocolVersion,
-) -> io::Result<FilterRuleWireFormat> {
+/// Mirrors upstream `parse_rule_tok()` (exclude.c:1241-1489). `recv_filter_list()`
+/// (exclude.c:1971-1984) feeds peer bytes through that same parser with
+/// `xflags = 0` at protocol >= 29, so every guard below applies to a wire rule
+/// exactly as it does to a command-line one.
+///
+/// Upstream applies no `protocol_version` test anywhere in the modifier switch,
+/// which is why this function takes no protocol argument. The `p`-requires-30
+/// and `s`/`r`-require-29 rules are SENDER rules living in `get_rule_prefix`
+/// (exclude.c:1865-1877 - `s` at :1865-1867, `r` at :1868-1871, `p` at
+/// :1872-1877); applying them here made `-p foo` at protocol 29 decode to the
+/// pattern `"p foo"`.
+fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
     // The rule-type prefix is always a single ASCII byte, so decode it as a
     // char without validating the rest of the buffer as UTF-8.
     let first = *buf
@@ -516,89 +544,122 @@ fn parse_wire_rule_modern(
         ..FilterRuleWireFormat::default()
     };
 
-    let mut pattern_start = 1;
-    // Every modifier byte is ASCII; scan them directly and stop at the first
-    // non-modifier byte, which begins the (possibly non-UTF-8) pattern body.
-    for (i, &c) in buf[1..].iter().enumerate() {
-        match c {
-            b'/' if i == 0 => {
-                rule.anchored = true;
-                pattern_start += 1;
-            }
-            b'!' => {
-                rule.negate = true;
-                pattern_start += 1;
-            }
-            b'C' => {
-                // upstream: exclude.c:1248-1255 parse_rule_tok() case 'C' sets
-                // FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
-                // | FILTRULE_CVS_IGNORE together, so a `C` rule carries all the
-                // flags it implies. Re-derive them here so a `:C` dir-merge from
-                // an upstream peer keeps its no-inherit/word-split/no-prefixes
-                // semantics (the receiver gates DirMergeConfig::with_inherit on
-                // no_inherit). The serializer collapses these back to a bare `C`
-                // (get_rule_prefix emits only `C` and suppresses the implied
-                // flags, exclude.c:1548-1561), so re-encoding a decoded `:C`
-                // stays `:C` - no double-application.
-                rule.cvs_exclude = true;
-                rule.no_inherit = true;
-                rule.word_split = true;
-                rule.no_prefixes = true;
-                pattern_start += 1;
-            }
-            b'n' => {
-                rule.no_inherit = true;
-                pattern_start += 1;
-            }
-            b'w' => {
-                rule.word_split = true;
-                pattern_start += 1;
-            }
-            b'e' => {
-                rule.exclude_from_merge = true;
-                pattern_start += 1;
-            }
-            b'x' => {
-                rule.xattr_only = true;
-                pattern_start += 1;
-            }
-            // upstream: exclude.c:1227-1237 - `-` and `+` set FILTRULE_NO_PREFIXES
-            // on merge/dir-merge rules. `+` additionally sets FILTRULE_INCLUDE.
-            // Acceptance is gated on Merge/DirMerge to mirror upstream's
-            // FILTRULE_MERGE_FILE precondition; on other rule types these
-            // characters fall through to `_` and terminate modifier parsing.
-            b'-' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
-                rule.no_prefixes = true;
-                pattern_start += 1;
-            }
-            b'+' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
-                rule.no_prefixes = true;
-                rule.no_prefixes_include = true;
-                pattern_start += 1;
-            }
-            b's' if protocol.supports_sender_receiver_modifiers() => {
-                rule.sender_side = true;
-                pattern_start += 1;
-            }
-            b'r' if protocol.supports_sender_receiver_modifiers() => {
-                rule.receiver_side = true;
-                pattern_start += 1;
-            }
-            b'p' if protocol.supports_perishable_modifier() => {
-                rule.perishable = true;
-                pattern_start += 1;
-            }
-            b' ' => {
-                // Trailing space terminates the modifier section per upstream
-                // exclude.c parser.
-                pattern_start += 1;
+    // upstream: exclude.c:1332-1338 - `:` and `.` both set FILTRULE_MERGE_FILE
+    // by fall-through.
+    let merge_file = matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge);
+    // upstream: exclude.c:1345-1358 - `S`/`H`/`R`/`P` set prefix_specifies_side.
+    // oc's wire RuleType spells only the `P`/`R` pair; `H`/`S` are refused by
+    // from_prefix_char above and so cannot reach this predicate.
+    let prefix_specifies_side = matches!(rule.rule_type, RuleType::Protect | RuleType::Risk);
+    let is_clear = matches!(rule.rule_type, RuleType::Clear);
+
+    // upstream: exclude.c:1325-1329 - `default: ch = *s; if (s[1] == ',') s++;`
+    // A comma directly after the rule-type byte is a legal separator, so
+    // `-,p foo` and `:,C f` parse as `-p foo` and `:C f`.
+    let mut idx = if buf.get(1) == Some(&b',') { 2 } else { 1 };
+
+    // upstream: exclude.c:1365 - the `ch != '!'` term short-circuits before the
+    // first `*++s`, so a clear rule never enters the modifier run at all.
+    if !is_clear {
+        while idx < buf.len() {
+            let c = buf[idx];
+            // upstream: exclude.c:1365 - BOTH ' ' and '_' terminate the run, and
+            // exclude.c:1444-1445 `if (*s) s++;` consumes whichever one ended it.
+            // Missing the '_' arm left the underscore in the pattern body, so
+            // `-p_foo` excluded `_foo` where upstream excludes `foo`.
+            if c == b' ' || c == b'_' {
+                idx += 1;
                 break;
             }
-            _ => break,
+            match c {
+                // upstream: exclude.c:1381-1390 - BITS_SETnUNSET requires
+                // MERGE_FILE set AND NO_PREFIXES not yet set, so both `:C-` and
+                // `:--` are invalid.
+                b'-' if merge_file && !rule.no_prefixes => rule.no_prefixes = true,
+                b'+' if merge_file && !rule.no_prefixes => {
+                    rule.no_prefixes = true;
+                    rule.no_prefixes_include = true;
+                }
+                // upstream: exclude.c:1392-1394 - FILTRULE_ABS_PATH. There is no
+                // position gate: `/` is legal anywhere in the run, not only first.
+                b'/' => rule.anchored = true,
+                // upstream: exclude.c:1395-1400 - negation belongs to the
+                // pattern, so it is invalid as a merge-file default.
+                b'!' if !merge_file => rule.negate = true,
+                // upstream: exclude.c:1402-1409 - `C` sets NO_PREFIXES |
+                // WORD_SPLIT | NO_INHERIT | CVS_IGNORE together, and is refused
+                // once NO_PREFIXES is set or the prefix already picked a side.
+                // Re-deriving the implied flags keeps an upstream peer's `:C`
+                // no-inherit/word-split semantics; get_rule_prefix collapses them
+                // back to a bare `C` (exclude.c:1847-1860 - the `C` arm emits
+                // just `C`, and the `else` branch that would have emitted
+                // `n`/`w`/`-`/`+` is skipped entirely), so a decoded `:C`
+                // re-encodes as `:C` with no double application.
+                b'C' if !rule.no_prefixes && !prefix_specifies_side => {
+                    rule.cvs_exclude = true;
+                    rule.no_inherit = true;
+                    rule.word_split = true;
+                    rule.no_prefixes = true;
+                }
+                // upstream: exclude.c:1410-1414
+                b'e' if merge_file => rule.exclude_from_merge = true,
+                // upstream: exclude.c:1415-1419
+                b'n' if merge_file => rule.no_inherit = true,
+                // upstream: exclude.c:1420-1422 - `p` carries no guard.
+                b'p' => rule.perishable = true,
+                // upstream: exclude.c:1423-1427
+                b'r' if !prefix_specifies_side => rule.receiver_side = true,
+                // upstream: exclude.c:1428-1432
+                b's' if !prefix_specifies_side => rule.sender_side = true,
+                // upstream: exclude.c:1433-1437
+                b'w' if merge_file => rule.word_split = true,
+                // upstream: exclude.c:1438-1441 - no guard.
+                b'x' => rule.xattr_only = true,
+                // upstream: exclude.c:1371-1379 - `default: goto invalid`. Every
+                // failed guard above falls here, which is exactly upstream's
+                // control flow: each `goto invalid` targets this same label.
+                _ => return Err(invalid_modifier(buf, c, idx)),
+            }
+            idx += 1;
         }
     }
 
-    let mut pattern_bytes = &buf[pattern_start..];
+    let mut pattern_bytes = &buf[idx.min(buf.len())..];
+
+    if is_clear {
+        // upstream: exclude.c:1467-1471 - with modern prefixes and no
+        // FILTRULE_NO_PREFIXES on the template, any text after `!` is fatal.
+        // Pairs with the encoder: a clear rule is exactly one byte on the wire,
+        // so a conformant peer never produces text here.
+        if !pattern_bytes.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "'!' rule has trailing characters: {}",
+                    String::from_utf8_lossy(buf)
+                ),
+            ));
+        }
+        return Ok(rule);
+    }
+
+    // upstream: exclude.c:1474-1475 - an empty pattern is fatal unless the rule
+    // carries FILTRULE_CVS_IGNORE, whose pattern is filled in downstream.
+    //
+    // This MUST stay above the trailing-`/` strip below. Upstream computes its
+    // length on the raw remainder (exclude.c:1462-1465) and never strips, so
+    // `- /` is a legal one-byte pattern there. Checking after the strip would
+    // reject bytes upstream accepts, and would desynchronise this decoder from
+    // serialize_rule, which still emits `- /` for the decoded rule.
+    if pattern_bytes.is_empty() && !rule.cvs_exclude {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "unexpected end of filter rule: {}",
+                String::from_utf8_lossy(buf)
+            ),
+        ));
+    }
 
     // Non-merge rules encode the anchor as a leading `/` in the pattern body
     // (upstream keeps it in ent->pattern with FILTRULE_ABS_PATH unset). Fold it
@@ -616,14 +677,25 @@ fn parse_wire_rule_modern(
         pattern_bytes = &pattern_bytes[1..];
     }
 
-    if let Some(stripped) = pattern_bytes.strip_suffix(b"/".as_slice()) {
-        rule.directory_only = true;
-        rule.pattern = wire_bytes_to_pattern(stripped);
-    } else {
-        rule.pattern = wire_bytes_to_pattern(pattern_bytes);
-    }
+    strip_directory_suffix(&mut rule, pattern_bytes);
 
     Ok(rule)
+}
+
+/// Splits a trailing `/` off the pattern, marking the rule directory-only.
+///
+/// upstream: exclude.c:287 `add_rule` - `if (pat_len > 1 && pat[pat_len-1] == '/')`.
+/// The length guard is load-bearing: a pattern of exactly `/` is left intact and
+/// is NOT directory-only, because stripping it would leave no pattern at all.
+/// Both decode paths share this so they cannot drift apart.
+fn strip_directory_suffix(rule: &mut FilterRuleWireFormat, pattern_bytes: &[u8]) {
+    match pattern_bytes.strip_suffix(b"/".as_slice()) {
+        Some(stripped) if pattern_bytes.len() > 1 => {
+            rule.directory_only = true;
+            rule.pattern = wire_bytes_to_pattern(stripped);
+        }
+        _ => rule.pattern = wire_bytes_to_pattern(pattern_bytes),
+    }
 }
 
 /// Serializes a filter rule to wire format bytes.
@@ -948,18 +1020,46 @@ mod tests {
     #[test]
     fn no_prefixes_modifier_rejected_on_non_merge_rule() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        // Raw wire bytes: "--foo" - the leading `-` is the rule type prefix
-        // (Exclude); the second `-` is not a legal modifier on Exclude rules
-        // and must fall through to the pattern.
-        let rules = read_filter_list(
+        // Raw wire bytes: "--foo". The leading `-` is the rule-type prefix
+        // (Exclude); the second `-` is a modifier whose guard fails, because
+        // upstream requires FILTRULE_MERGE_FILE for `-` (exclude.c:1381-1388).
+        //
+        // This test previously asserted the byte FELL THROUGH into the pattern,
+        // yielding `-foo`. That encoded oc's own bug: upstream's failed guard is
+        // `goto invalid`, landing on the same label as an unknown byte, and it
+        // exits RERR_SYNTAX (exclude.c:1371-1379). Falling through produced a
+        // rule upstream never creates, silently and at exit 0.
+        let err = read_filter_list(
             &mut &[5u8, 0, 0, 0, b'-', b'-', b'f', b'o', b'o', 0, 0, 0, 0][..],
             protocol,
         )
-        .unwrap();
+        .expect_err("`-` on a non-merge rule must be refused, not folded into the pattern");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string()
+                .contains("invalid modifier '-' at position 1"),
+            "the diagnostic must name the byte and its offset, got: {err}"
+        );
+    }
+
+    /// Non-vacuity companion for the test above: the same modifier byte in the
+    /// same slot is ACCEPTED where upstream's guard passes, so the rejection
+    /// pins the guard rather than a blanket refusal of `-`.
+    #[test]
+    fn no_prefixes_modifier_accepted_on_a_dir_merge_rule() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        // ":- .excl" - `-` on a DirMerge, where FILTRULE_MERGE_FILE is set.
+        let rules = read_filter_list(
+            &mut &[
+                8u8, 0, 0, 0, b':', b'-', b' ', b'.', b'e', b'x', b'c', b'l', 0, 0, 0, 0,
+            ][..],
+            protocol,
+        )
+        .expect("`-` on a dir-merge is upstream-legal");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].rule_type, RuleType::Exclude);
-        assert!(!rules[0].no_prefixes);
-        assert_eq!(rules[0].pattern, "-foo");
+        assert_eq!(rules[0].rule_type, RuleType::DirMerge);
+        assert!(rules[0].no_prefixes);
+        assert_eq!(rules[0].pattern, ".excl");
     }
 
     #[test]

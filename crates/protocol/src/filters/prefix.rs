@@ -186,9 +186,14 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('p');
     }
 
-    // upstream: exclude.c:1880 `get_rule_prefix` appends the separating space
-    // that divides the prefix from the pattern. A clear rule has no pattern, and
-    // upstream's own parser refuses one: for a `!` rule with any trailing byte,
+    // upstream: exclude.c:1880-1881 `get_rule_prefix` appends the separating
+    // space that divides the prefix from the pattern, gated only on `legal_len`
+    // (zeroed at :1841 for the protocol<29 bare-pattern form). It has no
+    // clear-rule branch at all, because upstream never emits one: parse_filter_str
+    // pops the list and `goto free_continue`s at exclude.c:1542-1551 before a `!`
+    // rule can enter filter_list, so send_rules never sees it. That makes this
+    // oc-only traffic, judged by upstream's PARSER rather than its emitter: for a
+    // `!` rule with any trailing byte,
     // exclude.c:1467-1473 raises `'!' rule has trailing characters` and
     // exit_cleanup(RERR_SYNTAX). MEASURED against rsync 3.5.0 - `--filter='! '`
     // exits 1 with that message while `--filter='!'` exits 0 - so emitting the
