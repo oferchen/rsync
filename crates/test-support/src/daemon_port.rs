@@ -7,21 +7,27 @@
 //! time-of-check / time-of-use window: between the drop and the daemon's own
 //! `bind`, a concurrently-running test can be handed the same ephemeral port.
 //!
-//! The oc-rsync daemon binds its default single listener with `SO_REUSEADDR`
-//! only (matching upstream `socket.c:447`), so such a collision is a **clean
-//! `EADDRINUSE` daemon-startup failure** - never a silent co-bind. (Only the
-//! opt-in `acceptor threads > 1` multi-acceptor daemon sets `SO_REUSEPORT`, for
-//! its own replica sockets.) That means a losing daemon simply exits, and the
-//! winner owns the port exclusively - no two daemons ever share a port and no
-//! cross-connection load-balancing is possible.
+//! The oc-rsync daemon binds its listeners with `SO_REUSEADDR` only (matching
+//! upstream `socket.c:447`), so such a collision is a **clean `EADDRINUSE` bind
+//! failure** - never a silent co-bind. (Only the opt-in `acceptor threads > 1`
+//! multi-acceptor daemon sets `SO_REUSEPORT`, for its own replica sockets.) No
+//! two daemons ever share a port and no cross-connection load-balancing is
+//! possible.
 //!
-//! [`spawn_daemon_on_free_port`] turns that into a bounded retry: allocate a
-//! candidate port, spawn the daemon on it, and confirm the spawned process
-//! itself is listening on that port (matched by pid via [`daemon_listen_port`]).
-//! If the daemon lost the bind race it exits and we retry with a fresh port.
-//! Matching by pid - rather than merely connecting to the port - is what closes
-//! the window: it never mistakes a *different* winning daemon on the same port
-//! for our own.
+//! Losing that race does **not** necessarily stop the daemon, though. On its
+//! default bind it opens one socket per address family and, mirroring upstream
+//! `socket.c:463-465`, treats a per-family failure as a warning and serves on
+//! whichever families did bind. So a daemon that loses only the IPv4 half stays
+//! alive listening on IPv6 - on the requested port, yet unreachable to a client
+//! dialling `127.0.0.1`.
+//!
+//! [`spawn_daemon_on_free_port`] therefore allocates a candidate port, spawns
+//! the daemon on it, and confirms the spawned process is listening on that port
+//! *at an address that client will actually reach* ([`daemon_listen_port`],
+//! matched by pid). A total or partial bind loss both fail that check, and the
+//! attempt retries with a fresh port. Matching by pid - rather than merely
+//! connecting to the port - is what closes the window: it never mistakes a
+//! *different* winning daemon on the same port for our own.
 
 use std::io;
 use std::net::{Ipv4Addr, TcpListener};
@@ -107,14 +113,30 @@ where
     Err(last_err.unwrap_or_else(|| io::Error::other("could not allocate a free daemon port")))
 }
 
-/// Returns the TCP port that process `pid` is listening on (loopback), or
-/// `None` if it has no `LISTEN` TCP socket yet.
+/// Whether a listener bound to `addr` can serve a client dialling
+/// `127.0.0.1` - the address every daemon test connects to.
+///
+/// Only IPv4 sockets are candidates: the daemon sets `IPV6_V6ONLY` on every
+/// IPv6 socket it opens (`daemon/sections/server_runtime/listener.rs`, keeping
+/// each family's socket independent per upstream `socket.c:447-465`), so an
+/// IPv6 listener never accepts an IPv4 connection - not even a mapped one. Of
+/// the IPv4 sockets, the wildcard and loopback addresses serve that client; a
+/// socket bound to some other interface address does not.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn serves_ipv4_loopback(addr: Ipv4Addr) -> bool {
+    addr.is_unspecified() || addr.is_loopback()
+}
+
+/// Returns the TCP port that process `pid` is listening on at an address
+/// reachable from the IPv4 loopback, or `None` if it has no such socket yet.
 ///
 /// Used by [`spawn_daemon_on_free_port`] to confirm a specific daemon process
-/// owns its port. Only the daemon's own socket table is consulted (matched by
-/// the socket inodes it owns on Linux, or scoped to the pid by `lsof` on
-/// macOS), so an unrelated process listening on loopback is never mistaken for
-/// the daemon.
+/// owns its port *and* can answer the connection the test is about to make.
+/// Only the daemon's own socket table is consulted (matched by the socket
+/// inodes it owns on Linux, or scoped to the pid by `lsof` on macOS), so an
+/// unrelated process listening on loopback is never mistaken for the daemon.
+/// A daemon that bound only its IPv6 socket is deliberately *not* reported:
+/// see [`serves_ipv4_loopback`] and this module's header.
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn daemon_listen_port(pid: u32) -> Option<u16> {
@@ -137,33 +159,56 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
         return None;
     }
 
-    // `/proc/<pid>/net/tcp{,6}` columns: sl local_address rem_address st ...
-    // inode. `st == 0A` is TCP_LISTEN; `local_address` is HEXIP:HEXPORT.
-    for family in ["tcp", "tcp6"] {
-        let Ok(table) = fs::read_to_string(format!("/proc/{pid}/net/{family}")) else {
+    // `/proc/<pid>/net/tcp` columns: sl local_address rem_address st ... inode.
+    // `st == 0A` is TCP_LISTEN; `local_address` is HEXIP:HEXPORT. Only the IPv4
+    // table is read - `tcp6` holds the daemon's `IPV6_V6ONLY` sockets, which
+    // cannot serve the IPv4 loopback client.
+    let table = fs::read_to_string(format!("/proc/{pid}/net/tcp")).ok()?;
+    for line in table.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 10 || cols[3] != "0A" || !inodes.contains(cols[9]) {
+            continue;
+        }
+        let Some((addr_hex, port_hex)) = cols[1].split_once(':') else {
             continue;
         };
-        for line in table.lines().skip(1) {
-            let cols: Vec<&str> = line.split_whitespace().collect();
-            if cols.len() < 10 || cols[3] != "0A" || !inodes.contains(cols[9]) {
-                continue;
-            }
-            if let Some((_, port_hex)) = cols[1].rsplit_once(':') {
-                if let Ok(port) = u16::from_str_radix(port_hex, 16) {
-                    if port != 0 {
-                        return Some(port);
-                    }
-                }
-            }
+        let (Ok(addr), Ok(port)) = (
+            u32::from_str_radix(addr_hex, 16),
+            u16::from_str_radix(port_hex, 16),
+        ) else {
+            continue;
+        };
+        // The kernel prints `local_address` as a native-endian word holding the
+        // network-order address, so its native bytes are the address octets on
+        // either endianness.
+        if port != 0 && serves_ipv4_loopback(Ipv4Addr::from(addr.to_ne_bytes())) {
+            return Some(port);
         }
     }
     None
+}
+
+/// Parses the endpoint in an `lsof -Fn` name line for an IPv4 socket, which is
+/// either `*:<port>` (wildcard) or `<dotted quad>:<port>`.
+#[cfg(target_os = "macos")]
+fn parse_lsof_ipv4_endpoint(name: &str) -> Option<(Ipv4Addr, u16)> {
+    let (addr, port) = name.rsplit_once(':')?;
+    let addr = if addr == "*" {
+        Ipv4Addr::UNSPECIFIED
+    } else {
+        addr.parse().ok()?
+    };
+    Some((addr, port.parse().ok()?))
 }
 
 /// macOS variant backed by `lsof`, which is present by default.
 #[cfg(target_os = "macos")]
 #[must_use]
 pub fn daemon_listen_port(pid: u32) -> Option<u16> {
+    // `-Ft` emits each socket's address family (`tIPv4` / `tIPv6`) immediately
+    // before its `-Fn` name. That field is what separates the families here:
+    // lsof renders BOTH wildcard sockets as `*:<port>`, so the name alone
+    // cannot tell an IPv4 listener from an IPv6-only one.
     let output = std::process::Command::new("lsof")
         .args([
             "-nP",
@@ -172,17 +217,23 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
             &pid.to_string(),
             "-iTCP",
             "-sTCP:LISTEN",
-            "-Fn",
+            "-Fnt",
         ])
         .output()
         .ok()?;
+    let mut is_ipv4 = false;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        // e.g. "n127.0.0.1:52345" or "n[::1]:52345".
-        if let Some((_, port)) = line.strip_prefix('n').and_then(|a| a.rsplit_once(':')) {
-            if let Ok(p) = port.parse::<u16>() {
-                if p != 0 {
-                    return Some(p);
-                }
+        if let Some(family) = line.strip_prefix('t') {
+            is_ipv4 = family == "IPv4";
+        } else if let Some(name) = line.strip_prefix('n') {
+            if !is_ipv4 {
+                continue;
+            }
+            let Some((addr, port)) = parse_lsof_ipv4_endpoint(name) else {
+                continue;
+            };
+            if port != 0 && serves_ipv4_loopback(addr) {
+                return Some(port);
             }
         }
     }
