@@ -1,4 +1,6 @@
-use super::parse::{FilterParseError, ParsedFilterDirective, parse_filter_directive_line};
+use super::parse::{
+    FilterParseError, ParsedFilterDirective, directive_takes_argument, parse_filter_directive_line,
+};
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, ExcludeIfPresentRule, FilterProgramError,
@@ -244,17 +246,15 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                let token_lower = token.to_ascii_lowercase();
-                if token == "!" || token_lower == "clear" {
+                if token == "!" || token == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
                         entries.clear_inherited = true;
                         continue;
                     }
-                    let directive = if token == "!" { "!" } else { token };
                     return Err(map_error(FilterParseError::new(format!(
-                        "list-clearing '{directive}' is not permitted in this filter file"
+                        "list-clearing '{token}' is not permitted in this filter file"
                     ))));
                 }
 
@@ -272,19 +272,9 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 }
 
                 let mut directive = token.to_owned();
-                let lower = directive.to_ascii_lowercase();
-                let needs_argument = matches!(
-                    lower.as_str(),
-                    "merge"
-                        | "include"
-                        | "exclude"
-                        | "show"
-                        | "hide"
-                        | "protect"
-                        | "exclude-if-present"
-                ) || lower.starts_with("dir-merge");
-
-                if needs_argument && let Some(next) = iter.next() {
+                if directive_takes_argument(token)
+                    && let Some(next) = iter.next()
+                {
                     directive.push(' ');
                     directive.push_str(next);
                 }
@@ -373,7 +363,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                if trimmed == "!" || trimmed.eq_ignore_ascii_case("clear") {
+                if trimmed == "!" || trimmed == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();

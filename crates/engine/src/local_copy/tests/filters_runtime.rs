@@ -304,6 +304,83 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     assert!(entries.exclude_if_present.is_empty());
 }
 
+/// The two list-clear checks in `load_dir_merge_rules_recursive` short-circuit
+/// before `parse_filter_directive_line` runs, so they carry their own copy of
+/// the keyword rule and a parser-level test cannot reach them.
+///
+/// upstream: exclude.c:1290 - `clear` is matched with `strncmp` (:1218) under
+/// the lower-case-only `case 'c':`, so `CLEAR` reaches the unknown-rule arm
+/// (:1362). A merge file carries no `FILTRULE_NO_PREFIXES`, so there is no
+/// bare-pattern fallback: the line is a hard error, not an exclude.
+///
+/// MEASURED against rsync 3.5.0, with `- keep` / `CLEAR` in a `.rsync-filter`
+/// read via `-rF`:
+///   `Unknown filter rule: <rule from .../.rsync-filter line 2>`
+///   `rsync error: syntax or usage error (code 1) at exclude.c(136)`
+#[test]
+fn dir_merge_clear_keyword_is_case_sensitive_in_both_parser_modes() {
+    let temp = tempdir().expect("tempdir");
+
+    for (name, body, options) in [
+        (
+            "lines.rules",
+            &b"- keep\nCLEAR\n"[..],
+            DirMergeOptions::default(),
+        ),
+        (
+            "words.rules",
+            &b"-_keep CLEAR"[..],
+            DirMergeOptions::default()
+                .use_whitespace()
+                .allow_list_clearing(true),
+        ),
+    ] {
+        let filter = temp.path().join(name);
+        fs::write(&filter, body).expect("write filter");
+        let mut visited = Vec::new();
+        match load_dir_merge_rules_recursive(&filter, &options, false, &mut visited) {
+            Ok(_) => panic!("{name}: an upper-case CLEAR is neither a directive nor a pattern"),
+            Err(error) => assert!(
+                error.to_string().contains("Unknown filter rule"),
+                "unexpected error for {name}: {error}"
+            ),
+        }
+    }
+}
+
+/// Non-vacuity companion for the test above: the same two fixtures with the
+/// lower-case spelling DO clear the list, so the case test cannot pass merely
+/// because the loader rejects the fixture shape.
+#[test]
+fn dir_merge_lower_case_clear_still_clears_in_both_parser_modes() {
+    let temp = tempdir().expect("tempdir");
+
+    for (name, body, options) in [
+        (
+            "lines.ok",
+            &b"- keep\nclear\n"[..],
+            DirMergeOptions::default(),
+        ),
+        (
+            "words.ok",
+            &b"-_keep clear"[..],
+            DirMergeOptions::default()
+                .use_whitespace()
+                .allow_list_clearing(true),
+        ),
+    ] {
+        let filter = temp.path().join(name);
+        fs::write(&filter, body).expect("write filter");
+        let mut visited = Vec::new();
+        let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
+            .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+        assert!(
+            entries.rules.is_empty() && entries.clear_inherited,
+            "{name}: lower-case clear must discard the earlier rule"
+        );
+    }
+}
+
 /// Nested `dir-merge` inside a per-directory merge file should register the
 /// referenced filename for lookup in each visited subdirectory, NOT load it
 /// eagerly against the enclosing file's directory.

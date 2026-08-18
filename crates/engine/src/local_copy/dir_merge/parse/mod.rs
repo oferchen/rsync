@@ -11,5 +11,5 @@ mod merge;
 mod modifiers;
 mod types;
 
-pub(crate) use line::parse_filter_directive_line;
+pub(crate) use line::{directive_takes_argument, parse_filter_directive_line};
 pub(crate) use types::{FilterParseError, ParsedFilterDirective};

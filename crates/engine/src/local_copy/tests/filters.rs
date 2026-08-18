@@ -113,11 +113,27 @@ fn parse_filter_directive_clear_keyword() {
     let directive = parse_filter_directive_line("clear").expect("parse clear");
     assert!(matches!(directive, Some(ParsedFilterDirective::Clear)));
 
-    let uppercase = parse_filter_directive_line("  CLEAR  ").expect("parse uppercase");
-    assert!(matches!(uppercase, Some(ParsedFilterDirective::Clear)));
-
     let bang = parse_filter_directive_line("!").expect("parse bang");
     assert!(matches!(bang, Some(ParsedFilterDirective::Clear)));
+}
+
+/// upstream: exclude.c:1290 - `RULE_STRCMP(s, "clear")` sits under `case 'c':`
+/// of the switch at :1288, which has only lower-case initials, and
+/// `rule_strcmp` is `strncmp` (:1218). `CLEAR` therefore takes the `default:`
+/// arm at :1324 and is reported as an unknown rule.
+///
+/// MEASURED against rsync 3.5.0: `--filter=CLEAR` prints
+/// `Unknown filter rule: CLEAR` and exits 1; `--filter=clear` exits 0.
+#[test]
+fn parse_filter_directive_clear_keyword_is_case_sensitive() {
+    for spelling in ["CLEAR", "Clear", "  CLEAR  "] {
+        let error = parse_filter_directive_line(spelling)
+            .expect_err("an upper-case clear is not a filter rule oc knows");
+        assert!(
+            error.to_string().contains("Unknown filter rule"),
+            "unexpected error for {spelling:?}: {error}"
+        );
+    }
 }
 
 #[test]

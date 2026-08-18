@@ -165,6 +165,51 @@ fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
     }
 }
 
+/// The list-clearing keyword, lower case only.
+///
+/// upstream: exclude.c:1290 `RULE_STRCMP(s, "clear")`, reached only from the
+/// `case 'c':` arm of the switch at :1288. `CLEAR` takes the `default:` arm and
+/// is reported as an unknown rule.
+const CLEAR_KEYWORD: &str = "clear";
+
+/// The oc-only `exclude-if-present` keyword.
+///
+/// Upstream has no such directive, so there is no upstream case rule to mirror.
+/// The spelling stays case-insensitive to match the CLI option of the same name
+/// (`crates/cli/src/frontend/filters/parsing/rules.rs`), which accepts any case.
+const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
+
+/// Reports whether `token` names a directive whose pattern arrives as the next
+/// whitespace-delimited word in a word-split filter file.
+///
+/// ⚠ This table has NO upstream counterpart, and it is not a reconstruction of
+/// one. Upstream's word-split *file reader* ends every token at the first
+/// whitespace before any keyword parsing runs (exclude.c:1772,
+/// `if (word_split && isspace(ch)) break;`), so `exclude foo` in a `merge,w`
+/// file is two tokens and the bare `exclude` is a fatal
+/// `unexpected end of filter rule`. MEASURED against rsync 3.5.0: that input
+/// exits 1, while `exclude_foo` excludes `foo` and exits 0.
+///
+/// oc instead glues the following token on, accepting a form upstream rejects.
+/// Removing the glue is upstream parity but changes accepted input, so it is
+/// deliberately left for its own change rather than folded in here; this
+/// function only preserves the pre-existing set verbatim so the keyword-case
+/// fix stays behaviour-neutral apart from case. In particular `risk` and
+/// `per-dir` are absent because they were absent before - adding them would
+/// widen the divergence, not narrow it.
+///
+/// The case policy is shared with [`parse_filter_directive_line`]: the upstream
+/// keywords match exactly (`rule_strcmp` is `strncmp`, exclude.c:1218), while
+/// the oc-only `exclude-if-present` keeps the case-insensitive spelling its own
+/// parser accepts.
+pub(crate) fn directive_takes_argument(token: &str) -> bool {
+    matches!(
+        token,
+        "merge" | "include" | "exclude" | "show" | "hide" | "protect"
+    ) || token.starts_with("dir-merge")
+        || token.eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
+}
+
 /// The single-character rule prefixes this parser dispatches, upper case only.
 ///
 /// upstream: exclude.c:1288-1330 - the long-keyword switch matches lower-case
@@ -195,7 +240,7 @@ pub(crate) fn parse_filter_directive_line(
 
     let trimmed = trimmed.trim_end();
 
-    if trimmed == "!" || trimmed.eq_ignore_ascii_case("clear") {
+    if trimmed == "!" || trimmed == CLEAR_KEYWORD {
         return Ok(Some(ParsedFilterDirective::Clear));
     }
 
@@ -210,8 +255,6 @@ pub(crate) fn parse_filter_directive_line(
     if let Some(directive) = parse_dir_merge_directive(trimmed)? {
         return Ok(Some(directive));
     }
-
-    const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
 
     if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
         && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
@@ -303,28 +346,18 @@ pub(crate) fn parse_filter_directive_line(
         }
     }
 
-    if keyword.eq_ignore_ascii_case("include") {
-        return handle_keyword(remainder, FilterRule::include, false);
-    }
-
-    if keyword.eq_ignore_ascii_case("exclude") {
-        return handle_keyword(remainder, FilterRule::exclude, false);
-    }
-
-    if keyword.eq_ignore_ascii_case("show") {
-        return handle_keyword(remainder, FilterRule::show, true);
-    }
-
-    if keyword.eq_ignore_ascii_case("hide") {
-        return handle_keyword(remainder, FilterRule::hide, true);
-    }
-
-    if keyword.eq_ignore_ascii_case("protect") {
-        return handle_keyword(remainder, FilterRule::protect, true);
-    }
-
-    if keyword.eq_ignore_ascii_case("risk") {
-        return handle_keyword(remainder, FilterRule::risk, true);
+    // upstream: exclude.c:1288-1327 - the keyword switch dispatches on the raw
+    // first byte (only lower-case initials `c d e h i m p r s` have arms) and
+    // compares with `rule_strcmp`, which is `strncmp` (:1218). `EXCLUDE` falls
+    // to `default: ch = *s` and then to the `Unknown filter rule` arm (:1362).
+    match keyword {
+        "include" => return handle_keyword(remainder, FilterRule::include, false),
+        "exclude" => return handle_keyword(remainder, FilterRule::exclude, false),
+        "show" => return handle_keyword(remainder, FilterRule::show, true),
+        "hide" => return handle_keyword(remainder, FilterRule::hide, true),
+        "protect" => return handle_keyword(remainder, FilterRule::protect, true),
+        "risk" => return handle_keyword(remainder, FilterRule::risk, true),
+        _ => {}
     }
 
     Err(FilterParseError::new(format!(
@@ -458,6 +491,83 @@ mod tests {
                 "{line:?} is the upper-case prefix upstream does accept"
             );
         }
+    }
+
+    /// upstream: exclude.c:1288-1327 - the long-keyword switch dispatches on
+    /// the raw first byte and has arms only for the lower-case initials
+    /// `c d e h i m p r s`, and `rule_strcmp` is `strncmp` (:1218). An
+    /// upper-case spelling therefore takes `default: ch = *s` and lands on
+    /// `filter_rule_err("Unknown filter rule")` at :1362.
+    ///
+    /// Every upper-case spelling is refused, but in one of TWO ways, and which
+    /// one depends on whether the keyword's first letter is itself a rule
+    /// prefix. `show`/`hide`/`protect`/`risk` begin with `S`/`H`/`P`/`R`, so
+    /// upstream consumes that byte as the prefix and the modifier loop
+    /// (exclude.c:1365) then fails on the SECOND letter. `include`/`exclude`
+    /// begin with `I`/`E`, which are not prefixes, so they reach the unknown-
+    /// rule arm instead.
+    ///
+    /// MEASURED against rsync 3.5.0, one cell per row:
+    ///   `INCLUDE foo` -> `Unknown filter rule: INCLUDE foo`
+    ///   `EXCLUDE foo` -> `Unknown filter rule: EXCLUDE foo`
+    ///   `Show foo`    -> `invalid modifier 'h' at position 1`
+    ///   `Hide foo`    -> `invalid modifier 'i' at position 1`
+    ///   `PROTECT foo` -> `invalid modifier 'R' at position 1`
+    ///   `Risk foo`    -> `invalid modifier 'i' at position 1`
+    /// all exit 1.
+    #[test]
+    fn the_long_keywords_are_case_sensitive() {
+        for (line, expected_fragment) in [
+            ("INCLUDE foo", "Unknown filter rule"),
+            ("EXCLUDE foo", "Unknown filter rule"),
+            ("Show foo", "modifier 'h'"),
+            ("Hide foo", "modifier 'i'"),
+            ("PROTECT foo", "modifier 'R'"),
+            ("Risk foo", "modifier 'i'"),
+        ] {
+            let error = parse_filter_directive_line(line)
+                .expect_err("an upper-case keyword is not a filter directive");
+            assert!(
+                error.to_string().contains(expected_fragment),
+                "{line:?} should be refused with {expected_fragment:?}, got: {error}"
+            );
+        }
+    }
+
+    /// Non-vacuity companion for `the_long_keywords_are_case_sensitive`:
+    /// without it that test would also pass if the parser rejected every
+    /// keyword form.
+    #[test]
+    fn the_long_keywords_still_parse_in_lower_case() {
+        for line in [
+            "include foo",
+            "exclude foo",
+            "show foo",
+            "hide foo",
+            "protect foo",
+            "risk foo",
+        ] {
+            assert!(
+                parse_filter_directive_line(line).is_ok(),
+                "{line:?} is the spelling upstream accepts"
+            );
+        }
+    }
+
+    /// `SHOW foo` is the sharpest cell: `S` IS a valid prefix, so upstream
+    /// consumes it and then runs the modifier loop over `HOW`, failing on the
+    /// first byte. MEASURED against rsync 3.5.0: `--filter='SHOW foo'` prints
+    /// `invalid modifier 'H' at position 1` and exits 1 - a different error
+    /// from the `Unknown filter rule` the other five produce.
+    #[test]
+    fn an_upper_case_keyword_starting_with_a_prefix_letter_fails_in_the_modifier_run() {
+        let error = parse_filter_directive_line("SHOW foo")
+            .expect_err("S is a prefix, so HOW is scanned as modifiers");
+        let message = error.to_string();
+        assert!(
+            message.contains("modifier") && message.contains('H'),
+            "expected a modifier error naming 'H', got: {message}"
+        );
     }
 
     /// upstream: exclude.c:1395-1401 - `!` sets FILTRULE_NEGATE after any
