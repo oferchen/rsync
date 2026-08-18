@@ -78,13 +78,23 @@ fn parse_filter_directive_keyword_with_xattr_modifier() {
     assert_eq!(rule.pattern(), "user.keep");
 }
 
+/// upstream: exclude.c:1438 - `case 'x'` carries no guard, so it is legal after
+/// the side-bound prefixes too. `show,x` is upstream's
+/// `FILTRULE_INCLUDE|SENDER_SIDE|XATTR`: a sender-side xattr include.
 #[test]
-fn parse_filter_directive_rejects_xattr_on_show_keyword() {
-    let error = parse_filter_directive_line("show,x user.skip")
-        .expect_err("show keyword should reject xattr modifier");
-    assert!(error
-        .to_string()
-        .contains("uses unsupported modifier 'x'"));
+fn parse_filter_directive_accepts_xattr_on_show_keyword() {
+    let rule = match parse_filter_directive_line("show,x user.skip").expect("parse") {
+        Some(ParsedFilterDirective::Rule(rule)) => rule,
+        other => panic!("expected rule, got {other:?}"),
+    };
+
+    assert!(rule.is_xattr_only());
+    assert!(rule.applies_to_sender());
+    assert!(
+        !rule.applies_to_receiver(),
+        "`show` binds the sender side (exclude.c:1345-1351)"
+    );
+    assert_eq!(rule.pattern(), "user.skip");
 }
 
 #[test]

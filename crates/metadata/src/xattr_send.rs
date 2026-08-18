@@ -231,7 +231,32 @@ fn without_macos_auto_xattrs(list: &XattrList) -> XattrList {
 
 #[cfg(test)]
 mod tests {
-    use super::{XattrRole, XattrSendOptions};
+    use super::{XattrRole, XattrSendOptions, XattrSyncFilters};
+
+    /// The filter chain governs the selection as soon as EITHER half carries a
+    /// rule: upstream's `saw_xattr_filter` (exclude.c:1440) is a process-wide
+    /// latch set by any `x` rule, not a per-side one, and it is what suppresses
+    /// the namespace screen for the whole read.
+    #[test]
+    fn governs_selection_when_either_half_carries_a_rule() {
+        let admit_all = |_: &str| true;
+        assert!(!XattrSyncFilters::default().governs_selection());
+        assert!(
+            XattrSyncFilters {
+                source: Some(&admit_all),
+                destination: None,
+            }
+            .governs_selection()
+        );
+        assert!(
+            XattrSyncFilters {
+                source: None,
+                destination: Some(&admit_all),
+            }
+            .governs_selection()
+        );
+        assert!(XattrSyncFilters::uniform(&admit_all).governs_selection());
+    }
 
     /// `user_only` is a function of the role first and privilege second.
     ///
@@ -328,5 +353,75 @@ mod macos_provenance_tests {
             dest_xattrs_differ(&changed, &dest, &opts),
             "a real user-xattr difference must still report an xattr change",
         );
+    }
+}
+
+/// The two xattr-name filters `sync_xattrs` consults, one per upstream side.
+///
+/// `sync_xattrs` is oc's analogue of upstream `copy_xattrs` (xattrs.c:358),
+/// whose two halves consult the filter chain for two different decisions:
+///
+/// - reading the SOURCE names decides what is COPIED (xattrs.c:375);
+/// - the caller's prune of extraneous DESTINATION names, mirroring
+///   `rsync_xal_set` (xattrs.c:1078), decides what is DELETED.
+///
+/// ⚠ Both run with the generator's `user_only` - `copy_xattrs` computes
+/// `am_sender ? 0 : am_root <= 0` (xattrs.c:364) and every live caller is
+/// generator-side (generator.c:1599, generator.c:2430, util1.c:513), so
+/// `am_sender == 0` throughout. The SIDE below is about which filter RULES
+/// participate, which is a separate axis from the namespace screen.
+///
+/// `rule_matches()` elides a side-flagged rule before it consults the pattern
+/// (exclude.c:1010), so the two halves genuinely see different rule sets: an
+/// `H`/`S` rule shapes only the source read and a `P`/`R` rule only the
+/// destination prune. Sharing one predicate across both collapses that
+/// distinction - and measured against rsync 3.5.0 it is observable, e.g.
+/// `--filter='Hx user.foo'` must not copy the attribute while
+/// `--filter='Px user.foo'` must not delete an extraneous one.
+///
+/// [`Default`] leaves both sides unfiltered, which is `-X` with no `x` rules.
+#[derive(Clone, Copy, Default)]
+pub struct XattrSyncFilters<'a> {
+    /// Consulted with each name read from the source, upstream's sender side.
+    pub source: Option<&'a dyn Fn(&str) -> bool>,
+    /// Consulted with each extraneous destination name, upstream's generator side.
+    pub destination: Option<&'a dyn Fn(&str) -> bool>,
+}
+
+impl<'a> XattrSyncFilters<'a> {
+    /// Whether an `x`-modifier filter governs the selection on either side.
+    ///
+    /// upstream: `saw_xattr_filter` (exclude.c:1440) is a process-wide latch set
+    /// by ANY `x` rule, and both `rsync_xal_get` (xattrs.c:262-269) and
+    /// `copy_xattrs` (xattrs.c:375-382) read it as
+    /// `if (saw_xattr_filter) { ...filter... } else if (namespace screen)`. The
+    /// namespace screen is the ELSE, so a filter suppresses it entirely - "when
+    /// you specify an xattr-affecting filter rule, rsync requires that you do
+    /// your own system/user filtering" (rsync.1.md).
+    #[must_use]
+    pub const fn governs_selection(&self) -> bool {
+        self.source.is_some() || self.destination.is_some()
+    }
+
+    /// Applies one predicate to both sides.
+    ///
+    /// Correct only where the caller has no side distinction to make - a rule
+    /// set with no side-flagged rules, or a test fixture. Production callers
+    /// that own a filter chain should build the two sides separately.
+    #[must_use]
+    pub const fn uniform(filter: &'a dyn Fn(&str) -> bool) -> Self {
+        Self {
+            source: Some(filter),
+            destination: Some(filter),
+        }
+    }
+}
+
+impl std::fmt::Debug for XattrSyncFilters<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("XattrSyncFilters")
+            .field("source", &self.source.is_some())
+            .field("destination", &self.destination.is_some())
+            .finish()
     }
 }

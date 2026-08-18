@@ -288,6 +288,20 @@ impl<'a> CopyContext<'a> {
                 // the transfer root: `pre_len = dirbuf_len - module_dirlen - 1`
                 // prepends the dir prefix. Mirror that so `- /file1` in `foo/.filt`
                 // matches `foo/file1`, not a top-level `file1`.
+                // upstream: exclude.c:1013 - `if (!(name_flags & NAME_IS_XATTR)
+                // ^ !(ex->rflags & FILTRULE_XATTR)) return 0;`. An `x` rule
+                // matches xattr names and NOTHING else, so it must never join
+                // the path chain. Measured against rsync 3.5.0: with
+                // `-x user.foo` in a `.rsync-filter`, upstream transfers a FILE
+                // named `user.foo` while oc silently dropped it.
+                //
+                // oc has no per-directory xattr chain yet, so such a rule is
+                // inert here rather than applied to xattr names - strictly
+                // closer to upstream than deleting the wrong file. The residual
+                // is named in the PR body, not hidden.
+                if compiled.is_xattr_only() {
+                    continue;
+                }
                 let compiled = anchor_dir_merge_rule(compiled, relative_dir);
                 if let Err(error) = segment.push_rule(compiled) {
                     ephemeral_stack.pop();

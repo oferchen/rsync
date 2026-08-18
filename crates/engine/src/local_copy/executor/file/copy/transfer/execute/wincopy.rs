@@ -275,9 +275,21 @@ fn reconcile_copied_ads(
     // filter admits, so a filtered-out source stream `CopyFileExW` pre-copied
     // does not survive on the destination.
     ::metadata::strip_source_xattrs(source, destination, false).map_err(map_metadata_error)?;
-    let filter = |name: &str| program.allows_xattr(name);
-    ::metadata::sync_xattrs(source, destination, false, Some(&filter))
-        .map_err(map_metadata_error)?;
+    // Source read is upstream's sender, destination prune its generator - see
+    // `metadata::XattrSyncFilters`. upstream: exclude.c:1010 elides a
+    // side-flagged rule on the other side before its pattern is consulted.
+    let sender = |name: &str| program.allows_xattr(name, filters::XattrSide::Sender);
+    let receiver = |name: &str| program.allows_xattr(name, filters::XattrSide::Receiver);
+    ::metadata::sync_xattrs(
+        source,
+        destination,
+        false,
+        ::metadata::XattrSyncFilters {
+            source: Some(&sender),
+            destination: Some(&receiver),
+        },
+    )
+    .map_err(map_metadata_error)?;
     Ok(())
 }
 

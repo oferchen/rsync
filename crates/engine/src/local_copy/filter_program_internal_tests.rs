@@ -54,9 +54,13 @@ fn filter_program_xattr_rules_control_allowance() {
     .expect("compile program");
 
     assert!(program.has_xattr_rules());
-    assert!(!program.allows_xattr("user.skip"));
-    assert!(program.allows_xattr("user.keep"));
-    assert!(program.allows_xattr("user.other"));
+    for side in [filters::XattrSide::Sender, filters::XattrSide::Receiver] {
+        // Neither rule carries a side prefix, so both participate on either end
+        // exactly as an upstream rule with `elide == 0` does (exclude.c:1010).
+        assert!(!program.allows_xattr("user.skip", side));
+        assert!(program.allows_xattr("user.keep", side));
+        assert!(program.allows_xattr("user.other", side));
+    }
 }
 
 #[test]

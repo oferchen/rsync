@@ -15,6 +15,7 @@ struct RuleModifierState {
     receiver: Option<bool>,
     perishable: bool,
     xattr_only: bool,
+    negate: bool,
 }
 
 fn unsupported_modifier_error(directive: &str, modifier: impl fmt::Display) -> FilterParseError {
@@ -23,43 +24,58 @@ fn unsupported_modifier_error(directive: &str, modifier: impl fmt::Display) -> F
     ))
 }
 
+/// Parses the `,modifier` run that may follow a rule prefix.
+///
+/// `prefix_specifies_side` mirrors upstream's variable of the same name, set by
+/// the four side-bound prefixes (exclude.c:1345-1358 for `S`/`H`/`R`/`P`, and
+/// the long keywords that map onto them). When it is set, a further `s` or `r`
+/// is a redundant side and upstream refuses the rule (exclude.c:1423-1432).
 fn parse_rule_modifiers(
     modifiers: &str,
     directive: &str,
-    allow_perishable: bool,
-    allow_xattr: bool,
+    prefix_specifies_side: bool,
 ) -> Result<RuleModifierState, FilterParseError> {
     let mut state = RuleModifierState::default();
 
+    // upstream: exclude.c:1365 - the modifier loop switches on the raw byte.
+    // `R`/`S`/`P`/`X` are not modifiers at all; they reach the default arm and
+    // raise RERR_SYNTAX (exclude.c:1371-1379). Case-folding them here silently
+    // applied a side or perishable restriction the rule never asked for.
     for modifier in modifiers.chars() {
-        let lower = modifier.to_ascii_lowercase();
-        match lower {
+        match modifier {
             '/' => state.anchor_root = true,
             's' => {
+                if prefix_specifies_side {
+                    return Err(unsupported_modifier_error(directive, modifier));
+                }
                 state.sender = Some(true);
                 if state.receiver.is_none() {
                     state.receiver = Some(false);
                 }
             }
             'r' => {
+                if prefix_specifies_side {
+                    return Err(unsupported_modifier_error(directive, modifier));
+                }
                 state.receiver = Some(true);
                 if state.sender.is_none() {
                     state.sender = Some(false);
                 }
             }
-            'p' => {
-                if allow_perishable {
-                    state.perishable = true;
-                } else {
-                    return Err(unsupported_modifier_error(directive, modifier));
-                }
-            }
+            // upstream: exclude.c:1395-1401 - `!` sets FILTRULE_NEGATE and is
+            // refused only on a merge rule. Merge prefixes never reach this
+            // function (they are dispatched to the merge/dir-merge parsers
+            // above), so the guard has no expressible case here.
+            '!' => state.negate = true,
+            // upstream: exclude.c:1420 (`p`) and exclude.c:1438 (`x`) are the
+            // only modifiers besides `/` that carry NO guard at all - not the
+            // merge-file test that gates `- + e n w`, not the `!`-on-merge
+            // test, and not the `prefix_specifies_side` test that `C`, `r` and
+            // `s` consult. Both are therefore legal after every prefix,
+            // including the four side-bound ones.
+            'p' => state.perishable = true,
             'x' => {
-                if allow_xattr {
-                    state.xattr_only = true;
-                } else {
-                    return Err(unsupported_modifier_error(directive, modifier));
-                }
+                state.xattr_only = true;
             }
             _ => {
                 return Err(unsupported_modifier_error(directive, modifier));
@@ -91,32 +107,72 @@ fn apply_rule_modifiers(
         rule = rule.with_perishable(true);
     }
 
+    if modifiers.negate {
+        rule = rule.with_negate(true);
+    }
+
     if modifiers.xattr_only {
-        match rule.action() {
-            filters::FilterAction::Include | filters::FilterAction::Exclude => {
-                rule = rule
-                    .with_xattr_only(true)
-                    .with_sender(true)
-                    .with_receiver(true);
-            }
-            _ => {
-                return Err(FilterParseError::new(format!(
-                    "filter directive '{directive}' cannot combine 'x' modifiers with this directive"
-                )));
-            }
+        // upstream: exclude.c:1438 - `case 'x': rule->rflags |=
+        // FILTRULE_XATTR;`. The modifier sets one bit and binds no side, so
+        // forcing both sides here erased whatever `s`/`r` had already
+        // selected: `-sx pat` became a both-sides rule.
+        //
+        // Every prefix that carries an include/exclude decision accepts it.
+        // Restricting the set to oc's `Include`/`Exclude` variants excluded
+        // `protect`/`risk`, which upstream stores as the same two decisions
+        // with a receiver-side bit (exclude.c:1352-1358) - so `protect,x` was
+        // refused where upstream builds an ordinary receiver-side xattr rule.
+        // [`FilterAction::xattr_decision`] is the shared owner of that table.
+        if rule.action().xattr_decision().is_none() {
+            return Err(FilterParseError::new(format!(
+                "filter directive '{directive}' cannot combine 'x' modifiers with this directive"
+            )));
         }
+        rule = rule.with_xattr_only(true);
     }
 
     Ok(rule)
 }
 
+/// Splits a rule token into its prefix and the modifier run that follows.
+///
+/// upstream: exclude.c:1325-1329 - the prefix switch's `default:` arm takes
+/// `ch = *s` and advances past only an OPTIONAL comma, leaving the modifier
+/// loop at :1365 to read from the very next byte. So for a single-letter
+/// prefix the comma is decoration: `Px pat` and `P,x pat` parse identically,
+/// and the pattern cannot start until a space or `_` (:1365 loop exit).
+///
+/// A long keyword is different: `rule_strcmp` (exclude.c:1218-1227) accepts it
+/// only when followed by space/`_`/NUL or `,`, so `protect,x` is valid and
+/// `protectx` is not. Splitting on the comma alone - the whole rule oc used to
+/// apply - therefore handled the keyword form and silently rejected the
+/// adjacent single-letter form as an unknown rule.
 fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
+    let mut chars = keyword.chars();
+    if let Some(first) = chars.next() {
+        if SINGLE_LETTER_PREFIXES.contains(first) {
+            let rest = chars.as_str();
+            return (
+                &keyword[..first.len_utf8()],
+                rest.strip_prefix(',').unwrap_or(rest),
+            );
+        }
+    }
     if let Some((name, modifiers)) = keyword.split_once(',') {
         (name, modifiers)
     } else {
         (keyword, "")
     }
 }
+
+/// The single-character rule prefixes this parser dispatches, upper case only.
+///
+/// upstream: exclude.c:1288-1330 - the long-keyword switch matches lower-case
+/// initials and the `default:` arm passes the raw byte through, so `S H R P`
+/// are prefixes while `s h r p` fail `RULE_STRCMP` and fall to
+/// `filter_rule_err("Unknown filter rule")` at :1362-1363. Case-folding the
+/// prefix accepted four spellings upstream rejects.
+const SINGLE_LETTER_PREFIXES: &str = "SHRP";
 
 /// Parses a single line of a per-directory merge file.
 ///
@@ -181,7 +237,7 @@ pub(crate) fn parse_filter_directive_line(
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
         let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, false)?;
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '+' requires a pattern"));
@@ -193,7 +249,7 @@ pub(crate) fn parse_filter_directive_line(
 
     if let Some(remainder) = trimmed.strip_prefix('-') {
         let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, false)?;
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '-' requires a pattern"));
@@ -210,14 +266,12 @@ pub(crate) fn parse_filter_directive_line(
 
     let handle_keyword = |pattern: &str,
                           builder: fn(String) -> FilterRule,
-                          allow_perishable: bool,
-                          allow_xattr: bool|
+                          prefix_specifies_side: bool|
      -> Result<Option<ParsedFilterDirective>, FilterParseError> {
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter directive missing pattern"));
         }
-        let modifiers =
-            parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
+        let modifiers = parse_rule_modifiers(keyword_modifiers, trimmed, prefix_specifies_side)?;
         let rule = builder(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         Ok(Some(ParsedFilterDirective::Rule(rule)))
@@ -227,53 +281,50 @@ pub(crate) fn parse_filter_directive_line(
         let shorthand = keyword
             .chars()
             .next()
-            .expect("keyword has exactly one char")
-            .to_ascii_lowercase();
+            .expect("keyword has exactly one char");
+        // upstream: exclude.c:1365 - the modifier loop runs after EVERY rule
+        // prefix, so `P`/`R` take a modifier run exactly as `S`/`H` do. The
+        // blanket refusal that used to sit on these two arms had no upstream
+        // counterpart; per-modifier validity is `parse_rule_modifiers`' job.
         match shorthand {
-            'p' => {
-                if !keyword_modifiers.is_empty() {
-                    return Err(unsupported_modifier_error(trimmed, keyword_modifiers));
-                }
-                return handle_keyword(remainder, FilterRule::protect, false, false);
+            'P' => {
+                return handle_keyword(remainder, FilterRule::protect, true);
             }
-            'r' => {
-                if !keyword_modifiers.is_empty() {
-                    return Err(unsupported_modifier_error(trimmed, keyword_modifiers));
-                }
-                return handle_keyword(remainder, FilterRule::risk, false, false);
+            'R' => {
+                return handle_keyword(remainder, FilterRule::risk, true);
             }
-            's' => {
-                return handle_keyword(remainder, FilterRule::show, false, false);
+            'S' => {
+                return handle_keyword(remainder, FilterRule::show, true);
             }
-            'h' => {
-                return handle_keyword(remainder, FilterRule::hide, false, false);
+            'H' => {
+                return handle_keyword(remainder, FilterRule::hide, true);
             }
             _ => {}
         }
     }
 
     if keyword.eq_ignore_ascii_case("include") {
-        return handle_keyword(remainder, FilterRule::include, true, true);
+        return handle_keyword(remainder, FilterRule::include, false);
     }
 
     if keyword.eq_ignore_ascii_case("exclude") {
-        return handle_keyword(remainder, FilterRule::exclude, true, true);
+        return handle_keyword(remainder, FilterRule::exclude, false);
     }
 
     if keyword.eq_ignore_ascii_case("show") {
-        return handle_keyword(remainder, FilterRule::show, false, false);
+        return handle_keyword(remainder, FilterRule::show, true);
     }
 
     if keyword.eq_ignore_ascii_case("hide") {
-        return handle_keyword(remainder, FilterRule::hide, false, false);
+        return handle_keyword(remainder, FilterRule::hide, true);
     }
 
     if keyword.eq_ignore_ascii_case("protect") {
-        return handle_keyword(remainder, FilterRule::protect, false, false);
+        return handle_keyword(remainder, FilterRule::protect, true);
     }
 
     if keyword.eq_ignore_ascii_case("risk") {
-        return handle_keyword(remainder, FilterRule::risk, false, false);
+        return handle_keyword(remainder, FilterRule::risk, true);
     }
 
     Err(FilterParseError::new(format!(
@@ -284,6 +335,170 @@ pub(crate) fn parse_filter_directive_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rule_of(line: &str) -> FilterRule {
+        match parse_filter_directive_line(line) {
+            Ok(Some(ParsedFilterDirective::Rule(rule))) => rule,
+            other => panic!("expected a rule from {line:?}, got {other:?}"),
+        }
+    }
+
+    /// MEASURED against rsync 3.5.0: `-R FOO` / `-S FOO` / `-P FOO` / `-X FOO`
+    /// all exit 1. oc case-folded the modifier byte, so they parsed as
+    /// receiver / sender / perishable / xattr and applied a restriction the
+    /// rule never expressed - at exit 0. `-S FOO` dropped FOO while `-R FOO`
+    /// kept it, which is what made this a silent wrong transfer rather than a
+    /// cosmetic difference.
+    ///
+    /// upstream: exclude.c:1365 switches on the raw byte; the uppercase forms
+    /// reach the default arm at :1371 and raise RERR_SYNTAX.
+    #[test]
+    fn uppercase_modifier_letters_are_not_modifiers() {
+        for line in ["-R FOO", "-S FOO", "-P FOO", "-X FOO", "+R FOO"] {
+            assert!(
+                parse_filter_directive_line(line).is_err(),
+                "{line:?} must be refused: upstream has no uppercase modifiers"
+            );
+        }
+    }
+
+    /// Non-vacuity companion to the case test: the LOWERCASE letters must still
+    /// work. Without this, deleting the whole modifier match arm would also
+    /// make the test above pass.
+    #[test]
+    fn lowercase_modifier_letters_are_still_accepted() {
+        assert!(rule_of("-s FOO").applies_to_sender());
+        assert!(!rule_of("-s FOO").applies_to_receiver());
+        assert!(rule_of("-r FOO").applies_to_receiver());
+        assert!(!rule_of("-r FOO").applies_to_sender());
+        assert!(rule_of("-x user.drop").is_xattr_only());
+    }
+
+    /// upstream: exclude.c:1423-1432 - `s`/`r` are refused once a prefix has
+    /// already bound a side, which the four side-bound spellings all do
+    /// (exclude.c:1345-1358). oc accepted `protect,s`, building a SENDER-side
+    /// protect rule - a rule upstream cannot express.
+    #[test]
+    fn a_side_bound_prefix_refuses_a_redundant_side_modifier() {
+        for line in [
+            "protect,s FOO",
+            "protect,r FOO",
+            "risk,s FOO",
+            "show,r FOO",
+            "hide,r FOO",
+            "Ps FOO",
+            "Hr FOO",
+        ] {
+            assert!(
+                parse_filter_directive_line(line).is_err(),
+                "{line:?} must be refused: the prefix already binds a side"
+            );
+        }
+    }
+
+    /// Non-vacuity companion: `p` is one of the three arms upstream leaves
+    /// unguarded (exclude.c:1420), so it must be accepted on exactly the
+    /// prefixes that reject `s`/`r`. Without this the guard above could be
+    /// implemented as "side-bound prefixes take no modifiers at all", which is
+    /// what oc previously did for `P`/`R` and is equally wrong.
+    #[test]
+    fn a_side_bound_prefix_still_accepts_the_unguarded_perishable_modifier() {
+        for line in ["protect,p FOO", "risk,p FOO", "show,p FOO", "P,p FOO"] {
+            assert!(
+                parse_filter_directive_line(line).is_ok(),
+                "{line:?} must parse: upstream's `p` arm has no prefix guard"
+            );
+        }
+    }
+
+    /// For a single-letter prefix the comma is decoration.
+    ///
+    /// upstream: exclude.c:1325-1329 - the prefix switch's `default:` arm
+    /// advances past only an OPTIONAL comma, so the modifier loop at :1365
+    /// starts at the same byte either way. `Pp FOO` and `P,p FOO` are the same
+    /// rule. A long keyword is the opposite: `rule_strcmp` (exclude.c:1218)
+    /// requires the comma, so `protect,x` parses and `protectx` does not.
+    #[test]
+    fn a_single_letter_prefix_takes_adjacent_modifiers_the_keyword_form_needs_a_comma() {
+        for line in ["Pp FOO", "P,p FOO", "Px user.drop", "P,x user.drop"] {
+            assert!(
+                parse_filter_directive_line(line).is_ok(),
+                "{line:?} must parse: the comma is optional after a one-letter prefix"
+            );
+        }
+        assert_eq!(
+            rule_of("Pp FOO").is_perishable(),
+            rule_of("P,p FOO").is_perishable(),
+            "the two spellings must produce the same rule, not merely both parse"
+        );
+        assert!(
+            parse_filter_directive_line("protectx user.drop").is_err(),
+            "a long keyword still requires the comma (rule_strcmp, exclude.c:1218)"
+        );
+    }
+
+    /// Lower-case single letters are NOT prefixes.
+    ///
+    /// upstream: exclude.c:1288-1330 - the first switch matches lower-case
+    /// keyword initials, so `p`/`r`/`s`/`h` enter `RULE_STRCMP`, fail it, leave
+    /// `ch == 0` and reach `filter_rule_err("Unknown filter rule")` at :1362.
+    /// Only `S H R P` reach the `default:` arm as prefixes. Measured against
+    /// rsync 3.5.0: `p *.tmp` in a dir-merge file exits 1.
+    #[test]
+    fn lower_case_single_letters_are_not_rule_prefixes() {
+        for line in ["p *.tmp", "r *.tmp", "s *.tmp", "h *.tmp"] {
+            assert!(
+                parse_filter_directive_line(line).is_err(),
+                "{line:?} must be refused: upstream has no lower-case prefix"
+            );
+        }
+        for line in ["P *.tmp", "R *.tmp", "S *.tmp", "H *.tmp"] {
+            assert!(
+                parse_filter_directive_line(line).is_ok(),
+                "{line:?} is the upper-case prefix upstream does accept"
+            );
+        }
+    }
+
+    /// upstream: exclude.c:1395-1401 - `!` sets FILTRULE_NEGATE after any
+    /// non-merge prefix. Measured against 3.5.0: `-! *.tmp` transfers only the
+    /// `*.tmp` files (the sense is inverted), where oc used to exit 1.
+    #[test]
+    fn the_negate_modifier_is_accepted_after_every_non_merge_prefix() {
+        for line in ["-! *.tmp", "+! *.tmp", "P! *.tmp", "R! *.tmp"] {
+            assert!(
+                parse_filter_directive_line(line).is_ok(),
+                "{line:?} must parse: `!` carries no prefix guard upstream"
+            );
+        }
+        assert!(
+            rule_of("-! *.tmp").is_negated(),
+            "the modifier must reach the rule, not merely be tolerated"
+        );
+        assert!(
+            !rule_of("- *.tmp").is_negated(),
+            "and the same rule without `!` must not be negated"
+        );
+    }
+
+    /// upstream: exclude.c:1438 - the `x` arm sets `FILTRULE_XATTR` and nothing
+    /// else. oc forced both sides on, so `-sx` silently widened a sender-only
+    /// xattr rule to both ends.
+    #[test]
+    fn the_x_modifier_does_not_clobber_an_explicit_side() {
+        let sender_only = rule_of("-sx user.drop");
+        assert!(sender_only.is_xattr_only());
+        assert!(sender_only.applies_to_sender());
+        assert!(
+            !sender_only.applies_to_receiver(),
+            "`x` must not re-enable the receiver side that `s` switched off"
+        );
+
+        let receiver_only = rule_of("-rx user.drop");
+        assert!(receiver_only.is_xattr_only());
+        assert!(receiver_only.applies_to_receiver());
+        assert!(!receiver_only.applies_to_sender());
+    }
 
     #[test]
     fn split_keyword_modifiers_no_modifiers() {
