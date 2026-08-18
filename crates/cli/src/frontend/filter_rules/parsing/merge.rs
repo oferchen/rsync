@@ -104,6 +104,13 @@ pub(crate) fn parse_merge_modifiers(
             '/' => {
                 options = options.anchor_root(true);
             }
+            // upstream: exclude.c:1438 - `x` carries no guard and is legal on
+            // every prefix, `.` and `:` included. It is consumed and then
+            // deliberately dropped: FILTRULES_FROM_CONTAINER (exclude.c:1229)
+            // is ABS_PATH|INCLUDE|DIRECTORY|NEGATE|PERISHABLE, so XATTR is NOT
+            // inherited by the merged rules. Marking the container xattr-only
+            // would silently turn every rule in the file into an xattr rule.
+            'x' => {}
             _ => {
                 let message = rsync_error!(
                     1,
@@ -317,7 +324,9 @@ mod tests {
 
     #[test]
     fn parse_merge_modifiers_unknown() {
-        let result = parse_merge_modifiers("x", ":x file", true);
+        // `z` is outside upstream's modifier set `- + / ! C e n p r s w x`
+        // (exclude.c:1381-1441); `x` is in it and must parse.
+        let result = parse_merge_modifiers("z", ":z file", true);
         assert!(result.is_err());
     }
 
