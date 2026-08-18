@@ -102,8 +102,12 @@ impl FilterSet {
             // chain instead of dropping it so `--filter='-x user.foo'` can be
             // honoured by xattr-name matching (upstream: xattrs.c:250).
             if rule.is_xattr_only() {
-                if matches!(rule.action, FilterAction::Include | FilterAction::Exclude) {
-                    xattr.push(CompiledXattrRule::new(rule)?);
+                // `CompiledXattrRule` owns which actions carry an xattr
+                // decision: the four side-bound spellings all collapse onto
+                // upstream's include/exclude pair (exclude.c:1345-1358), and a
+                // meta action yields None.
+                if let Some(compiled) = CompiledXattrRule::new(rule)? {
+                    xattr.push(compiled);
                 }
                 continue;
             }

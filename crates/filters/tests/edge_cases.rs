@@ -527,6 +527,49 @@ fn xattr_only_rules_apply_to_names_not_paths() {
     assert!(set.xattr_name_allowed("user.keep", XattrSide::Receiver));
 }
 
+/// Verifies a side-flagged xattr rule participates only on its own side.
+///
+/// upstream: exclude.c:1903-1912 send_rules() stamps `elide` from the rule's
+/// side flags and `am_sender`; exclude.c:1010 rule_matches() then returns 0 for
+/// any rule whose `elide` equals `cur_elide_value`, two lines before the
+/// NAME_IS_XATTR test at :1013. So the side is decided BEFORE the pattern is
+/// consulted, and `hide,x` (SENDER_SIDE, exclude.c:1349) must be inert on the
+/// receiver while `protect,x` (RECEIVER_SIDE, :1357) is inert on the sender.
+#[test]
+fn side_flagged_xattr_rules_participate_only_on_their_own_side() {
+    let hide = FilterRule::hide("user.sender").with_xattr_only(true);
+    let protect = FilterRule::protect("user.receiver").with_xattr_only(true);
+    let set = FilterSet::from_rules([hide, protect]).unwrap();
+
+    // `hide` carries SENDER_SIDE: it excludes on the sender and is elided on
+    // the receiver, where the name must survive.
+    assert!(!set.xattr_name_allowed("user.sender", XattrSide::Sender));
+    assert!(set.xattr_name_allowed("user.sender", XattrSide::Receiver));
+
+    // `protect` carries RECEIVER_SIDE: the mirror image.
+    assert!(!set.xattr_name_allowed("user.receiver", XattrSide::Receiver));
+    assert!(set.xattr_name_allowed("user.receiver", XattrSide::Sender));
+}
+
+/// Non-vacuity companion to the side test: an unflagged rule keeps both sides.
+///
+/// Without this, dropping the side dimension entirely - making every rule apply
+/// everywhere - would still leave a passing suite for the unflagged case, and
+/// the side test above could not be distinguished from a broken matcher that
+/// simply never matches anything.
+///
+/// upstream: exclude.c:1903-1912 - a rule with neither side flag never has
+/// `elide` assigned, so it stays 0, which never equals `cur_elide_value`
+/// (`LOCAL_RULE` = 1 / `REMOTE_RULE` = 2, exclude.c:180).
+#[test]
+fn an_unflagged_xattr_rule_participates_on_both_sides() {
+    let rule = FilterRule::exclude("user.both").with_xattr_only(true);
+    let set = FilterSet::from_rules([rule]).unwrap();
+
+    assert!(!set.xattr_name_allowed("user.both", XattrSide::Sender));
+    assert!(!set.xattr_name_allowed("user.both", XattrSide::Receiver));
+}
+
 /// Verifies Unicode patterns.
 #[test]
 fn unicode_patterns() {
