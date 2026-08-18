@@ -13,8 +13,8 @@ mod server;
 mod tests;
 
 pub(crate) use counting::CountingReader;
-pub use multiplex::RemoteExitError;
 pub(crate) use multiplex::{DeletedRender, MultiplexReader};
+pub use multiplex::{FileDeclinedError, RemoteExitError};
 pub use server::ServerReader;
 
 /// Reports whether the next `Read` call is serviceable entirely from an
