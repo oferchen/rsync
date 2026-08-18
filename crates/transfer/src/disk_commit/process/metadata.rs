@@ -185,7 +185,9 @@ fn apply_metadata_acls_and_xattrs(
 
     // upstream: xattrs.c:set_xattr() - apply xattrs after metadata and ACLs
     if let Some(xattr_list) = xattr_list {
-        let filter = xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
+        let filter = xattr_filter.map(|set| {
+            move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+        });
         let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
         // upstream: rsync_xal_set(fname, ..., fnamecmp) resolves an abbreviated
         // value against the basis file - the pre-transfer destination, which

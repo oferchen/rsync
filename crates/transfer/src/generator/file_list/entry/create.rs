@@ -349,8 +349,9 @@ impl GeneratorContext {
                 // Follow symlinks only for non-symlink entries (lgetxattr for symlinks)
                 let follow = !file_type.is_symlink();
                 let xattr_filter = self.xattr_name_filter();
-                let predicate =
-                    xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
+                let predicate = xattr_filter.map(|set| {
+                    move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Sender)
+                });
                 let opts = metadata::XattrSendOptions {
                     role: metadata::XattrRole::Sender,
                     follow_symlinks: follow,
