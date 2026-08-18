@@ -289,6 +289,20 @@ impl DirMergeOptions {
         }
     }
 
+    /// Reports whether the merge directive itself named a side.
+    ///
+    /// upstream: exclude.c:1447 `template->rflags & FILTRULES_SIDES`, where
+    /// `FILTRULES_SIDES` is `FILTRULE_SENDER_SIDE | FILTRULE_RECEIVER_SIDE`
+    /// (rsync.h:1050-1057). `SideState::Unspecified` is oc's spelling of "the
+    /// bit is clear", so a side counts as named whenever either state moved
+    /// off `Unspecified` - including the `Disabled` direction, which upstream
+    /// also records by setting the opposite side's bit.
+    #[must_use]
+    pub const fn specifies_side(&self) -> bool {
+        !matches!(self.sender_side, SideState::Unspecified)
+            || !matches!(self.receiver_side, SideState::Unspecified)
+    }
+
     /// Reports whether patterns should be anchored to the transfer root.
     #[must_use]
     pub const fn anchor_root_enabled(&self) -> bool {

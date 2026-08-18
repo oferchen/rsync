@@ -224,6 +224,24 @@ pub(crate) fn process_merge_directive(
 ) -> Result<(), Message> {
     match parse_filter_directive(OsStr::new(directive)) {
         Ok(FilterDirective::Rule(mut rule)) => {
+            // upstream: exclude.c:1447-1456 - when the merge directive named a
+            // side and the rule inside the file names one too, the inherit is
+            // "dodgy (and won't work correctly if the template is a one-sided
+            // per-dir merge rule)", so upstream refuses the whole run via
+            // filter_rule_err -> exit_cleanup(RERR_SYNTAX). The check sits
+            // ABOVE the `rule->rflags |= template->rflags & FILTRULES_SIDES`
+            // inherit, so the conflicting side is never applied.
+            if options.specifies_side() && rule.specifies_side() {
+                // Exit 1 is upstream's RERR_SYNTAX, the code filter_rule_err
+                // passes to exit_cleanup (exclude.c:133-137).
+                return Err(rsync_error!(
+                    1,
+                    format!(
+                        "specified-side merge file contains specified-side filter: {directive}"
+                    )
+                )
+                .with_role(Role::Client));
+            }
             rule.apply_dir_merge_overrides(options);
             destination.push(rule);
         }
