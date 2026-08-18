@@ -52,10 +52,21 @@ pub(super) fn parse_dir_merge_directive(
     let mut saw_minus = false;
     let mut used_cvs_default = false;
 
+    // upstream: exclude.c:1365-1444 (`parse_rule_tok`) scans modifiers
+    // case-sensitively - `C` is the CVS modifier, `c` is not a modifier at all.
     for modifier in modifiers.chars() {
-        let lower = modifier.to_ascii_lowercase();
-        match lower {
+        match modifier {
+            // upstream: exclude.c:1381-1390 - `-`/`+` require
+            // BITS_SETnUNSET(FILTRULE_MERGE_FILE, FILTRULE_NO_PREFIXES), and `C`
+            // sets NO_PREFIXES, so a `C` scanned earlier in the same run
+            // invalidates them. Order matters: `:-C` is legal, `:C-` is not.
             '-' => {
+                if used_cvs_default {
+                    let message = format!(
+                        "{label} directive '{text}' cannot combine '-' with the 'C' modifier"
+                    );
+                    return Err(FilterParseError::new(message));
+                }
                 if saw_plus {
                     let message =
                         format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
@@ -65,6 +76,12 @@ pub(super) fn parse_dir_merge_directive(
                 options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
             }
             '+' => {
+                if used_cvs_default {
+                    let message = format!(
+                        "{label} directive '{text}' cannot combine '+' with the 'C' modifier"
+                    );
+                    return Err(FilterParseError::new(message));
+                }
                 if saw_minus {
                     let message =
                         format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
@@ -92,7 +109,19 @@ pub(super) fn parse_dir_merge_directive(
             '/' => {
                 options = options.anchor_root(true);
             }
-            'c' => {
+            // upstream: exclude.c:1419-1421 - `p` is unguarded, and
+            // FILTRULE_PERISHABLE is in FILTRULES_FROM_CONTAINER (exclude.c:1229)
+            // so it propagates to the rules read out of the merged file.
+            'p' => {
+                options = options.mark_perishable();
+            }
+            // upstream: exclude.c:1402-1409 - `C` is invalid once NO_PREFIXES is
+            // already set, which a preceding `C` in the same run does.
+            'C' => {
+                if used_cvs_default {
+                    let message = format!("{label} directive '{text}' repeats the 'C' modifier");
+                    return Err(FilterParseError::new(message));
+                }
                 used_cvs_default = true;
                 options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
                 options = options.use_whitespace();
@@ -269,7 +298,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_c_modifier_defaults_cvsignore() {
-        let result = parse_dir_merge_directive("dir-merge,c");
+        let result = parse_dir_merge_directive("dir-merge,C");
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -279,6 +308,80 @@ mod tests {
             }
             _ => panic!("expected DirMerge directive"),
         }
+    }
+
+    /// upstream: exclude.c:1365-1444 - the modifier scan is case-sensitive, so
+    /// the lower-case spelling of a modifier letter is not that modifier.
+    /// `c` is the case that mattered: it used to be accepted as an alias for `C`.
+    #[test]
+    fn parse_dir_merge_modifier_letters_are_case_sensitive() {
+        for directive in [
+            "dir-merge,c",
+            "dir-merge,N f",
+            "dir-merge,E f",
+            "dir-merge,P f",
+        ] {
+            assert!(
+                parse_dir_merge_directive(directive).is_err(),
+                "{directive} must be rejected - upstream matches modifiers case-sensitively"
+            );
+        }
+    }
+
+    /// Non-vacuity companion for the case-sensitivity pin: without it, that test
+    /// would also pass if the parser simply rejected every one of these letters.
+    #[test]
+    fn parse_dir_merge_upper_and_lower_case_letters_are_not_interchangeable() {
+        for directive in [
+            "dir-merge,C",
+            "dir-merge,n f",
+            "dir-merge,e f",
+            "dir-merge,p f",
+        ] {
+            assert!(
+                parse_dir_merge_directive(directive).is_ok(),
+                "{directive} is the correctly-cased spelling and must parse"
+            );
+        }
+    }
+
+    /// upstream: exclude.c:1419-1421 - `p` sets FILTRULE_PERISHABLE, which is in
+    /// FILTRULES_FROM_CONTAINER (exclude.c:1229) and so reaches the merged rules.
+    #[test]
+    fn parse_dir_merge_p_modifier_marks_rules_perishable() {
+        let directive = parse_dir_merge_directive("dir-merge,p .rsync-filter")
+            .expect("parses")
+            .expect("directive");
+        match directive {
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert!(options.perishable());
+            }
+            _ => panic!("expected DirMerge directive"),
+        }
+        // Without `p` the flag must stay clear, or the assertion above holds for
+        // the wrong reason.
+        let plain = parse_dir_merge_directive("dir-merge .rsync-filter")
+            .expect("parses")
+            .expect("directive");
+        match plain {
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert!(!options.perishable());
+            }
+            _ => panic!("expected DirMerge directive"),
+        }
+    }
+
+    /// upstream: exclude.c:1381-1390 - `-`/`+` require NO_PREFIXES to be unset,
+    /// and `C` (exclude.c:1402-1409) sets it. The scan is left-to-right, so the
+    /// rejection is order-dependent: `:-C` is legal, `:C-` is not.
+    #[test]
+    fn parse_dir_merge_cvs_modifier_forbids_a_later_sign_modifier() {
+        assert!(parse_dir_merge_directive("dir-merge,C- f").is_err());
+        assert!(parse_dir_merge_directive("dir-merge,C+ f").is_err());
+        assert!(parse_dir_merge_directive("dir-merge,CC f").is_err());
+        // The reverse order is accepted upstream - `C` only guards what follows it.
+        assert!(parse_dir_merge_directive("dir-merge,-C f").is_ok());
+        assert!(parse_dir_merge_directive("dir-merge,+C f").is_ok());
     }
 
     #[test]
