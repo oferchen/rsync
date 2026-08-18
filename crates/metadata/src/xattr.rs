@@ -22,6 +22,7 @@
 
 use crate::error::MetadataError;
 use crate::xattr_send::XattrSendOptions;
+use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
 use std::collections::HashSet;
 use std::io;
@@ -132,6 +133,20 @@ fn list_attributes(
         .collect())
 }
 
+/// Selects the namespace screen for one read.
+///
+/// upstream: xattrs.c:250-257 (`rsync_xal_get`) and :375-382 (`copy_xattrs`) -
+/// the namespace test is the `else` of the `saw_xattr_filter` branch, so an
+/// `x`-modifier filter REPLACES it rather than stacking with it. Both readers
+/// make that same decision, so the rule has a single owner.
+const fn namespace_screen(filter_governs: bool, user_only: bool) -> NamespaceScreen {
+    if filter_governs {
+        NamespaceScreen::Bypass
+    } else {
+        NamespaceScreen::Apply { user_only }
+    }
+}
+
 /// Shorthand for the receiver/local-copy namespace screen.
 fn receiver_screen() -> NamespaceScreen {
     NamespaceScreen::Apply {
@@ -191,21 +206,12 @@ pub fn read_xattrs_for_wire(
 ) -> Result<XattrList, MetadataError> {
     use protocol::xattr::{XattrEntry, is_fake_super_store_attr, is_rsync_internal, local_to_wire};
 
-    // upstream: xattrs.c:250-257 - the filter branch and the namespace branch
-    // are mutually exclusive, so a transfer carrying `x`-modifier rules never
-    // evaluates the namespace test at all.
-    let screen = if opts.filter.is_some() {
-        NamespaceScreen::Bypass
-    } else {
-        // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`. The
-        // sender skips only the system.* namespace and still transmits user.*,
-        // security.* (e.g. SELinux labels), and trusted.*; a non-root
-        // generator reading the destination to diff it keeps user.* alone, so
-        // a namespace it could never store cannot flip the itemize `x` column.
-        NamespaceScreen::Apply {
-            user_only: opts.user_only(),
-        }
-    };
+    // upstream: xattrs.c:249 - `user_only = am_sender ? 0 : !am_root`. The
+    // sender skips only the system.* namespace and still transmits user.*,
+    // security.* (e.g. SELinux labels), and trusted.*; a non-root generator
+    // reading the destination to diff it keeps user.* alone, so a namespace it
+    // could never store cannot flip the itemize `x` column.
+    let screen = namespace_screen(opts.filter.is_some(), opts.user_only());
     let attrs = list_attributes(path, opts.follow_symlinks, screen)?;
     let mut entries = Vec::with_capacity(attrs.len());
 
@@ -347,9 +353,17 @@ pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
-    filter: Option<&dyn Fn(&str) -> bool>,
+    filters: XattrSyncFilters<'_>,
 ) -> Result<(), MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
+    // Screening first and filtering second dropped `--filter='+x trusted.foo'`
+    // for a non-root receiver on Linux: the name never survived to reach the
+    // rule that was meant to admit it.
+    let screen = namespace_screen(filters.governs_selection(), receiver_user_only());
+    let XattrSyncFilters {
+        source: source_filter,
+        destination: destination_filter,
+    } = filters;
+    let source_attrs = list_attributes(source, follow_symlinks, screen)?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
     let dest = DestinationXattrs::open(destination, follow_symlinks);
 
@@ -360,12 +374,20 @@ pub fn sync_xattrs(
             retained.insert(name.clone());
             continue;
         }
-        retained.insert(name.clone());
-        let allow = filter.is_none_or(|predicate| predicate(&name_str));
+        // Retain ONLY what the source side actually transfers. upstream's
+        // prune (xattrs.c:1074-1094) walks the destination list and removes any
+        // name absent from the sender's `xalp`; a name the sender's
+        // `rsync_xal_get` screened out (xattrs.c:262-264) never enters `xalp`,
+        // so upstream DELETES the destination copy. Inserting before the filter
+        // exempted it instead, leaving a stale value behind - measured against
+        // rsync 3.5.0 with `--filter='Hx user.shared'` present on both sides:
+        // upstream removes it, oc kept it.
+        let allow = source_filter.is_none_or(|predicate| predicate(&name_str));
 
         if !allow {
             continue;
         }
+        retained.insert(name.clone());
 
         if let Some(value) = read_attribute(source, name, follow_symlinks)? {
             dest.write(name, &value)?;
@@ -374,7 +396,7 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = list_attributes(destination, follow_symlinks, receiver_screen())?;
+    let destination_attrs = list_attributes(destination, follow_symlinks, screen)?;
     for name in &destination_attrs {
         if retained.contains(name) {
             continue;
@@ -387,7 +409,7 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter.is_none_or(|predicate| predicate(&name_str));
+        let allow = destination_filter.is_none_or(|predicate| predicate(&name_str));
 
         if allow {
             dest.remove(name)?;
@@ -894,7 +916,7 @@ mod tests {
         write_attribute(&source, &attr1, b"value1", false).expect("write attr1");
         write_attribute(&source, &attr2, b"value2", false).expect("write attr2");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         assert_eq!(
             read_attribute(&destination, &attr1, false)
@@ -968,7 +990,7 @@ mod tests {
         write_attribute(&destination, &attr1, b"old_value1", false).expect("write dest attr1");
         write_attribute(&destination, &attr2, b"extra_value", false).expect("write dest attr2");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         // attr1 should be updated
         assert_eq!(
@@ -1017,7 +1039,7 @@ mod tests {
         write_attribute(&destination, &stat_name, b"100000 0,0 2:2", false)
             .expect("write dest %stat");
 
-        sync_xattrs(&source, &destination, false, None).expect("sync");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
 
         // The destination's fake-super %stat must be preserved verbatim - not
         // overwritten by the source copy nor deleted by the removal pass.
@@ -1410,7 +1432,13 @@ mod tests {
 
         // Filter that only allows attrs NOT containing "blocked"
         let filter = |name: &str| !name.contains("blocked");
-        sync_xattrs(&source, &destination, false, Some(&filter)).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::uniform(&filter),
+        )
+        .expect("sync");
 
         // allowed should be synced
         assert_eq!(
@@ -1425,6 +1453,43 @@ mod tests {
                 .expect("read")
                 .is_none()
         );
+    }
+
+    /// An `x`-modifier filter REPLACES the namespace screen, it does not stack
+    /// with it: upstream reaches the namespace test only through the `else` of
+    /// the `saw_xattr_filter` branch (xattrs.c:250-257, :375-382). Screening
+    /// first and filtering second made `--filter='+x trusted.foo'` inert for a
+    /// non-root Linux receiver - the name was gone before its rule ran.
+    ///
+    /// The decision is pinned here rather than through a real xattr because no
+    /// unprivileged fixture can express it: writing `trusted.*` needs
+    /// CAP_SYS_ADMIN on Linux, and off Linux `is_xattr_permitted` is constantly
+    /// true, so `Apply` and `Bypass` are indistinguishable by observation.
+    #[test]
+    fn a_filter_replaces_the_namespace_screen_rather_than_stacking() {
+        assert!(matches!(
+            namespace_screen(true, true),
+            NamespaceScreen::Bypass
+        ));
+        assert!(matches!(
+            namespace_screen(true, false),
+            NamespaceScreen::Bypass
+        ));
+    }
+
+    /// Non-vacuity companion: without a filter the screen still applies, and
+    /// carries `user_only` through unchanged. Without this row the rule above
+    /// would also hold for a `namespace_screen` that returned `Bypass` always.
+    #[test]
+    fn without_a_filter_the_namespace_screen_applies_verbatim() {
+        assert!(matches!(
+            namespace_screen(false, true),
+            NamespaceScreen::Apply { user_only: true }
+        ));
+        assert!(matches!(
+            namespace_screen(false, false),
+            NamespaceScreen::Apply { user_only: false }
+        ));
     }
 
     #[test]
@@ -1505,7 +1570,13 @@ mod tests {
 
         // Filter that blocks "preserved" - it should NOT be touched
         let filter = |name: &str| !name.contains("preserved");
-        sync_xattrs(&source, &destination, false, Some(&filter)).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::uniform(&filter),
+        )
+        .expect("sync");
 
         // src_attr should be synced
         assert_eq!(
@@ -1521,6 +1592,135 @@ mod tests {
                 .expect("preserved"),
             b"keep_me"
         );
+    }
+
+    /// The source read and the destination prune consult DIFFERENT filters.
+    ///
+    /// upstream: the source read is the sender's `rsync_xal_get()`
+    /// (xattrs.c:262) and the prune is the generator's sweep in
+    /// `rsync_xal_set()` (xattrs.c:1078); `rule_matches()` elides a
+    /// side-flagged rule before its pattern is consulted (exclude.c:1010), so
+    /// an `H`/`S` rule reaches only the first and a `P`/`R` rule only the
+    /// second.
+    ///
+    /// Each half is asserted in BOTH directions. With a single shared
+    /// predicate the two rows of each pair collapse onto the same answer, so
+    /// the inverse row is what makes this non-vacuous rather than decoration.
+    #[test]
+    fn sync_xattrs_consults_each_side_filter_for_its_own_half() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+        fs::write(&source, "source").expect("write source");
+        fs::write(&destination, "dest").expect("write dest");
+
+        if !xattrs_supported(&source) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let from_source = test_xattr_name("from_source");
+        let dest_only = test_xattr_name("dest_only");
+        let name_of = |raw: &[u8]| String::from_utf8_lossy(raw).into_owned();
+        let blocked = |target: String| move |name: &str| name != target;
+        let allow_all = |_: &str| true;
+
+        // Source-read half: only `filters.source` may suppress the copy.
+        for (block_source, expect_copied) in [(true, false), (false, true)] {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&source, &from_source, b"v", false).expect("write source attr");
+
+            let deny = blocked(name_of(&from_source));
+            let filters = if block_source {
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                }
+            } else {
+                XattrSyncFilters {
+                    source: Some(&allow_all),
+                    destination: Some(&deny),
+                }
+            };
+            sync_xattrs(&source, &destination, false, filters).expect("sync");
+
+            let copied = read_attribute(&destination, &from_source, false)
+                .expect("read")
+                .is_some();
+            assert_eq!(
+                copied, expect_copied,
+                "a source name is gated by `filters.source` alone \
+                 (block_source = {block_source})"
+            );
+        }
+
+        // The row that discriminates a REAL fork from a half fork: a name
+        // present on BOTH sides. `retained` must be keyed on what the source
+        // side actually transfers, so a source-denied name still reaches the
+        // prune loop and is deleted from the destination - upstream's
+        // xattrs.c:1074-1094 removes any destination name absent from the
+        // sender's `xalp`. With `retained.insert` above the source filter this
+        // row is the only one that fails; the two disjoint fixtures below
+        // cannot see it, which is why they are not sufficient on their own.
+        // Measured against rsync 3.5.0 with `--filter='Hx user.shared'`.
+        {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&source, &from_source, b"src", false).expect("source attr");
+            write_attribute(&destination, &from_source, b"dst", false).expect("dest attr");
+
+            let deny = blocked(name_of(&from_source));
+            sync_xattrs(
+                &source,
+                &destination,
+                false,
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                },
+            )
+            .expect("sync");
+
+            assert!(
+                read_attribute(&destination, &from_source, false)
+                    .expect("read")
+                    .is_none(),
+                "a source-denied name is not transferred, so the destination copy                  must be pruned - not exempted by having existed on the source"
+            );
+        }
+
+        // Destination-prune half: only `filters.destination` may spare it.
+        let _ = fs::remove_file(&source);
+        fs::write(&source, "source").expect("rewrite source");
+        for (block_destination, expect_survives) in [(true, true), (false, false)] {
+            let _ = fs::remove_file(&destination);
+            fs::write(&destination, "dest").expect("write dest");
+            write_attribute(&destination, &dest_only, b"v", false).expect("write dest attr");
+
+            let deny = blocked(name_of(&dest_only));
+            let filters = if block_destination {
+                XattrSyncFilters {
+                    source: Some(&allow_all),
+                    destination: Some(&deny),
+                }
+            } else {
+                XattrSyncFilters {
+                    source: Some(&deny),
+                    destination: Some(&allow_all),
+                }
+            };
+            sync_xattrs(&source, &destination, false, filters).expect("sync");
+
+            let survives = read_attribute(&destination, &dest_only, false)
+                .expect("read")
+                .is_some();
+            assert_eq!(
+                survives, expect_survives,
+                "an extraneous destination name is gated by `filters.destination` \
+                 alone (block_destination = {block_destination})"
+            );
+        }
     }
 
     #[test]
@@ -1676,7 +1876,8 @@ mod tests {
 
         // sync_xattrs: copies the source set, then removes destination strays.
         let (source, destination) = readonly_pair("sync");
-        sync_xattrs(&source, &destination, false, None).expect("sync_xattrs on read-only dest");
+        sync_xattrs(&source, &destination, false, XattrSyncFilters::default())
+            .expect("sync_xattrs on read-only dest");
         assert_mode_restored(&destination, "sync_xattrs");
 
         // strip_source_xattrs: removes only names the source also carries. This

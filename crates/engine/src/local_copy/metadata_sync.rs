@@ -18,6 +18,12 @@ use super::LocalCopyExecution;
 #[cfg(all(any(unix, windows), feature = "xattr"))]
 use super::FilterProgram;
 
+#[cfg(all(unix, feature = "xattr"))]
+use ::filters::XattrSide;
+
+#[cfg(all(unix, feature = "xattr"))]
+use ::metadata::XattrSyncFilters;
+
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use ::metadata::{sync_acls, sync_acls_via_fake_super};
 
@@ -48,15 +54,37 @@ pub(crate) fn sync_xattrs_if_requested(
     if preserve_xattrs && !mode.is_dry_run() {
         if let Some(program) = filter_program {
             if program.has_xattr_rules() {
-                let filter = |name: &str| program.allows_xattr(name);
-                sync_xattrs(source, destination, follow_symlinks, Some(&filter))
+                // The two halves of this call are upstream's two sides - see
+                // [`XattrSyncFilters`]. Reading the source names is the
+                // sender's `rsync_xal_get()`, deleting the extraneous
+                // destination names is the generator's prune in
+                // `rsync_xal_set()`, and a side-flagged rule participates in
+                // exactly one of them (exclude.c:1010).
+                let sender = |name: &str| program.allows_xattr(name, XattrSide::Sender);
+                let receiver = |name: &str| program.allows_xattr(name, XattrSide::Receiver);
+                let filters = XattrSyncFilters {
+                    source: Some(&sender),
+                    destination: Some(&receiver),
+                };
+                sync_xattrs(source, destination, follow_symlinks, filters)
                     .map_err(map_metadata_error)?;
             } else {
-                sync_xattrs(source, destination, follow_symlinks, None)
-                    .map_err(map_metadata_error)?;
+                sync_xattrs(
+                    source,
+                    destination,
+                    follow_symlinks,
+                    XattrSyncFilters::default(),
+                )
+                .map_err(map_metadata_error)?;
             }
         } else {
-            sync_xattrs(source, destination, follow_symlinks, None).map_err(map_metadata_error)?;
+            sync_xattrs(
+                source,
+                destination,
+                follow_symlinks,
+                XattrSyncFilters::default(),
+            )
+            .map_err(map_metadata_error)?;
         }
     }
     Ok(())
@@ -89,9 +117,17 @@ pub(crate) fn xattrs_differ_from_source(
     fake_super: bool,
     filter_program: Option<&FilterProgram>,
 ) -> bool {
-    let filter = filter_program
-        .filter(|program| program.has_xattr_rules())
-        .map(|program| move |name: &str| program.allows_xattr(name));
+    // The two sides read their lists with different `am_sender`, so they must
+    // also consult the xattr chain with different sides: upstream elides a
+    // side-flagged rule before its pattern is consulted (exclude.c:1010), so a
+    // `H`/`S` rule shapes only the sender's list and a `P`/`R` rule only the
+    // generator's. Sharing one closure across both reads would compare
+    // asymmetrically filtered lists and manufacture a spurious `x` column.
+    let rules = filter_program.filter(|program| program.has_xattr_rules());
+    let sender_filter =
+        rules.map(|program| move |name: &str| program.allows_xattr(name, XattrSide::Sender));
+    let receiver_filter =
+        rules.map(|program| move |name: &str| program.allows_xattr(name, XattrSide::Receiver));
     let sender_opts = ::metadata::XattrSendOptions {
         role: ::metadata::XattrRole::Sender,
         follow_symlinks,
@@ -100,7 +136,7 @@ pub(crate) fn xattrs_differ_from_source(
         // strip always applies on the sender side. upstream: xattrs.c:260-267.
         preserve_xattrs: 1,
         fake_super,
-        filter: filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+        filter: sender_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
         // Both lists are read from local disk with full values, so the
         // abbreviation digest is never consulted. upstream: xattrs.c:584-594.
         checksum_seed: 0,
@@ -113,6 +149,7 @@ pub(crate) fn xattrs_differ_from_source(
         destination,
         &::metadata::XattrSendOptions {
             role: ::metadata::XattrRole::Generator,
+            filter: receiver_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
             ..sender_opts
         },
     )

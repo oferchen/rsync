@@ -62,6 +62,52 @@ pub enum FilterAction {
     DirMerge,
 }
 
+impl FilterAction {
+    /// Resolves this action to the include/exclude decision upstream stores for
+    /// an xattr-name rule, or `None` for a meta action that carries none.
+    ///
+    /// upstream: exclude.c:1345-1358 - the four side-bound prefixes are nothing
+    /// but (include|exclude) x (sender|receiver) bit pairs:
+    ///
+    /// | prefix      | upstream rflags                   | decision |
+    /// |-------------|-----------------------------------|----------|
+    /// | `S`/show    | `FILTRULE_INCLUDE\|SENDER_SIDE`   | include  |
+    /// | `H`/hide    | `FILTRULE_SENDER_SIDE`            | exclude  |
+    /// | `R`/risk    | `FILTRULE_INCLUDE\|RECEIVER_SIDE` | include  |
+    /// | `P`/protect | `FILTRULE_RECEIVER_SIDE`          | exclude  |
+    ///
+    /// There is no distinct protect/risk *action* upstream. oc models the two
+    /// receiver-side spellings as their own variants because its delete pass
+    /// needs them separable on the PATH chain; but an xattr name is never
+    /// deleted, so on an xattr chain the extra variants have no meaning and
+    /// must collapse back onto upstream's two-value decision.
+    ///
+    /// This is the single owner of that table: both the [`crate`] xattr chain
+    /// and the engine's local-copy chain resolve through it, so the two cannot
+    /// drift apart.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use filters::FilterAction;
+    /// assert_eq!(FilterAction::Protect.xattr_decision(), Some(FilterAction::Exclude));
+    /// assert_eq!(FilterAction::Risk.xattr_decision(), Some(FilterAction::Include));
+    /// assert_eq!(FilterAction::Clear.xattr_decision(), None);
+    /// ```
+    #[must_use]
+    pub const fn xattr_decision(self) -> Option<Self> {
+        match self {
+            Self::Include | Self::Risk => Some(Self::Include),
+            Self::Exclude | Self::Protect => Some(Self::Exclude),
+            // `!`/clear is handled by the set's clear pass, and the merge
+            // prefixes consume `x` and drop it (upstream: exclude.c:1229
+            // FILTRULES_FROM_CONTAINER omits XATTR), so no merge rule reaches
+            // an xattr chain carrying the flag.
+            Self::Clear | Self::Merge | Self::DirMerge => None,
+        }
+    }
+}
+
 impl fmt::Display for FilterAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

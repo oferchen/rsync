@@ -36,7 +36,7 @@
 use std::fs;
 use std::path::Path;
 
-use metadata::{apply_xattrs_from_list, sync_xattrs};
+use metadata::{XattrSyncFilters, apply_xattrs_from_list, sync_xattrs};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
 
@@ -99,7 +99,7 @@ fn security_selinux_xattr_round_trips() {
 
     xattr::set(&source, "security.selinux", FIXTURE_LABEL).expect("seed source label");
 
-    sync_xattrs(&source, &destination, false, None).expect("sync xattrs");
+    sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync xattrs");
 
     let landed = xattr::get(&destination, "security.selinux")
         .expect("read dest label")

@@ -21,7 +21,7 @@ pub(crate) fn compile_filter_program(
 
     let mut entries = Vec::new();
     for rule in rules {
-        // upstream: exclude.c:1330-1332 add_rule() applies an implicit
+        // upstream: exclude.c:1478-1481 parse_rule_tok() applies an implicit
         // FILTRULE_SENDER_SIDE when --delete-excluded is active and the
         // rule carries neither FILTRULES_SIDES nor merge/dir-merge.
         let mut rule = rule.clone();
@@ -45,16 +45,23 @@ pub(crate) fn compile_filter_program(
                     .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
+            // `P`/`R` carry the `x` modifier exactly as `-`/`+` do: upstream's
+            // modifier loop runs for EVERY prefix (exclude.c:1365-1443) and
+            // `x` (:1438) has no side guard. Dropping the flag here turned
+            // `Px user.foo` into an ordinary PATH protect rule, so the xattr
+            // chain never saw it and the destination prune ran unfiltered.
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
+                    .with_xattr_only(rule.is_xattr_only())
                     .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::risk(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
+                    .with_xattr_only(rule.is_xattr_only())
                     .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::DirMerge => {
