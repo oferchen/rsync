@@ -322,7 +322,9 @@ fn parse_filter_directive_accepts_merge_anchor_and_whitespace_modifiers() {
 
 #[test]
 fn parse_filter_directive_rejects_merge_with_unknown_modifier() {
-    let error = parse_filter_directive(OsStr::new("merge,x rules"))
+    // `z` is outside upstream's modifier set `- + / ! C e n p r s w x`
+    // (exclude.c:1381-1441); `x` is in it and must parse.
+    let error = parse_filter_directive(OsStr::new("merge,z rules"))
         .expect_err("merge with unsupported modifier should error");
     let rendered = error.to_string();
     assert!(rendered.contains("uses unsupported modifier"));

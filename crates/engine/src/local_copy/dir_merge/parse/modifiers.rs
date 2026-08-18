@@ -75,7 +75,10 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
         }
 
         let lower = ch.to_ascii_lowercase();
-        let base_modifier = matches!(lower, '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/');
+        // upstream: exclude.c:1438 - `x` is unguarded and legal on every
+        // prefix, so it must be consumed here or it terminates the scan and the
+        // remainder is misread as the merge filename.
+        let base_modifier = matches!(lower, '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'x');
         let extended_modifier = matches!(lower, 'e' | 'n');
 
         if base_modifier || (allow_extended && extended_modifier) {
@@ -215,6 +218,13 @@ pub(super) fn parse_merge_modifiers(
                     return Err(FilterParseError::new(message));
                 }
             }
+            // upstream: exclude.c:1438 - `x` carries no guard and is legal on
+            // every prefix. Consumed and then deliberately dropped:
+            // FILTRULES_FROM_CONTAINER (exclude.c:1229) is
+            // ABS_PATH|INCLUDE|DIRECTORY|NEGATE|PERISHABLE, so XATTR is NOT
+            // inherited by the merged rules - marking the container xattr-only
+            // would silently turn every rule in the file into an xattr rule.
+            'x' => {}
             _ => {
                 let message = format!(
                     "{label} directive '{directive}' uses unsupported modifier '{modifier}'"
@@ -477,7 +487,9 @@ mod tests {
 
         #[test]
         fn unknown_modifier_is_error() {
-            let result = parse_merge_modifiers("x", ".", true);
+            // `z` is outside upstream's modifier set `- + / ! C e n p r s w x`
+            // (exclude.c:1381-1441); `x` is in it and must parse.
+            let result = parse_merge_modifiers("z", ".", true);
             assert!(result.is_err());
         }
 
