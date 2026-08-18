@@ -434,15 +434,18 @@ fn dir_merge_all_merge_modifiers_roundtrip() {
 
 #[test]
 fn clear_rule_roundtrips() {
-    // upstream: exclude.c:1208-1210 / 1315-1323 - a bare `!` (with the trailing
-    // separator space) is FILTRULE_CLEAR_LIST and carries no pattern.
+    // upstream: exclude.c:1208-1210 / 1315-1323 - a bare `!` is
+    // FILTRULE_CLEAR_LIST and carries no pattern, so it takes NO separator
+    // space. exclude.c:1467-1473 rejects a `!` rule with any trailing byte
+    // (`'!' rule has trailing characters`, exit_cleanup(RERR_SYNTAX)), which
+    // real rsync 3.5.0 was measured doing - so the encoding is exactly one byte.
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::Clear,
             ..FilterRuleWireFormat::default()
         },
         proto(32),
-        b"! ",
+        b"!",
     );
 }
 
