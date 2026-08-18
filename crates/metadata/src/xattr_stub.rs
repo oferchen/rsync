@@ -7,6 +7,7 @@
 
 use crate::error::MetadataError;
 use crate::xattr_send::XattrSendOptions;
+use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
 use std::path::Path;
 use std::sync::Once;
@@ -29,7 +30,7 @@ pub fn sync_xattrs(
     _source: &Path,
     _destination: &Path,
     _follow_symlinks: bool,
-    _filter: Option<&dyn Fn(&str) -> bool>,
+    _filters: XattrSyncFilters<'_>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())
@@ -91,7 +92,7 @@ mod tests {
     fn sync_xattrs_returns_ok() {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
-        let result = sync_xattrs(src, dst, false, None);
+        let result = sync_xattrs(src, dst, false, XattrSyncFilters::default());
         assert!(result.is_ok());
     }
 
@@ -100,7 +101,7 @@ mod tests {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
         let filter = |_name: &str| true;
-        let result = sync_xattrs(src, dst, true, Some(&filter));
+        let result = sync_xattrs(src, dst, true, XattrSyncFilters::uniform(&filter));
         assert!(result.is_ok());
     }
 
