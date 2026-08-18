@@ -44,7 +44,26 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         return None;
     }
 
-    // upstream: exclude.c:1530 - any modifier exceeds legal_len = 1 and is unsendable
+    // upstream: exclude.c:1829 - `legal_len = 1`, and the final length test at
+    // :1878 rejects any prefix that outgrew it. Every flag listed here is written
+    // to the buffer unconditionally (:1845-1864), so each one overflows and makes
+    // the rule unsendable.
+    //
+    // `perishable` is deliberately ABSENT. Upstream never writes `p` below
+    // protocol 30 (:1872-1874), so it cannot contribute to the overflow; the only
+    // perishable NULL is the separate `else if (am_sender) return NULL` at :1875,
+    // which oc owns at the call site (`perishable_rules_too_modern`, transfer)
+    // where the sending role is known - this function is role-blind. A receiver
+    // omits the modifier and keeps the rule, exactly as the protocol >= 29 path
+    // already does via `supports_perishable_modifier`. Including it here made a
+    // receiving client abort a pre-29 pull that upstream completes.
+    //
+    // `sender_side` / `receiver_side` are still listed even though upstream also
+    // gates their emission (:1865-1871): the `r` gate has a third arm
+    // (`delete_excluded && am_sender`) under which upstream DOES write the byte
+    // and DOES overflow, and neither input reaches this function today. Relaxing
+    // them needs that plumbing, so they stay conservative here rather than
+    // becoming half-right.
     let has_modifiers = rule.anchored
         || rule.negate
         || rule.cvs_exclude
@@ -54,7 +73,6 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         || rule.xattr_only
         || rule.sender_side
         || rule.receiver_side
-        || rule.perishable
         || rule.no_prefixes;
 
     if has_modifiers {
@@ -342,12 +360,33 @@ mod tests {
         assert!(build_rule_prefix(&rule, protocol).is_none());
     }
 
+    /// upstream: exclude.c:1872-1876 - below protocol 30 the `p` byte is never
+    /// written, so a perishable rule does NOT overflow `legal_len` and is not
+    /// unsendable. The only perishable refusal is `else if (am_sender)`, which
+    /// this role-blind builder cannot make; `perishable_rules_too_modern`
+    /// (transfer) owns it. Here the rule keeps its bare-pattern form, matching
+    /// what upstream's receiver puts on the wire.
+    ///
+    /// MEASURED against rsync 3.5.0: a protocol-28 PULL with `--filter='-p f'`
+    /// exits 0 and transfers, while the same rule on a PUSH exits 2.
     #[test]
-    fn v28_cannot_represent_perishable() {
+    fn v28_omits_perishable_instead_of_refusing_the_rule() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
-        // v28 uses old prefixes which cannot encode modifiers - returns None
+        assert_eq!(build_rule_prefix(&rule, protocol).as_deref(), Some(""));
+    }
+
+    /// Non-vacuity companion: a modifier upstream DOES write at protocol 28
+    /// still overflows `legal_len` and is refused, so the test above is not
+    /// passing merely because the builder stopped refusing anything.
+    #[test]
+    fn v28_still_refuses_a_modifier_upstream_actually_emits() {
+        let protocol = ProtocolVersion::from_supported(28).unwrap();
+        // `!` is written unconditionally at exclude.c:1846, so it overflows.
+        let mut rule = FilterRuleWireFormat::exclude("test".to_owned());
+        rule.negate = true;
+
         assert!(build_rule_prefix(&rule, protocol).is_none());
     }
 
