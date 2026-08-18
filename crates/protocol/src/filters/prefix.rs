@@ -186,7 +186,16 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('p');
     }
 
-    prefix.push(' ');
+    // upstream: exclude.c:1880 `get_rule_prefix` appends the separating space
+    // that divides the prefix from the pattern. A clear rule has no pattern, and
+    // upstream's own parser refuses one: for a `!` rule with any trailing byte,
+    // exclude.c:1467-1473 raises `'!' rule has trailing characters` and
+    // exit_cleanup(RERR_SYNTAX). MEASURED against rsync 3.5.0 - `--filter='! '`
+    // exits 1 with that message while `--filter='!'` exits 0 - so emitting the
+    // space here made every clear rule oc sent abort a real upstream peer.
+    if !matches!(rule.rule_type, RuleType::Clear) {
+        prefix.push(' ');
+    }
 
     prefix
 }
@@ -382,7 +391,28 @@ mod tests {
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "! ");
+        // Exactly one byte: real rsync 3.5.0 aborts on `"! "` with
+        // `'!' rule has trailing characters` (exclude.c:1467-1473).
+        assert_eq!(prefix, "!");
+    }
+
+    /// Non-vacuity companion: the separating space is still emitted for every
+    /// rule type that carries a pattern, so the assertion above is pinning the
+    /// clear-rule exception rather than a blanket removal.
+    #[test]
+    fn non_clear_rules_keep_the_separating_space() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        for rule_type in [RuleType::Exclude, RuleType::Include, RuleType::DirMerge] {
+            let rule = FilterRuleWireFormat {
+                rule_type,
+                ..FilterRuleWireFormat::default()
+            };
+            let prefix = build_rule_prefix(&rule, protocol).unwrap();
+            assert!(
+                prefix.ends_with(' '),
+                "{rule_type:?} must keep the prefix/pattern separator, got {prefix:?}"
+            );
+        }
     }
 
     #[test]
