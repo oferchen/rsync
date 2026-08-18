@@ -515,9 +515,9 @@ impl ReceiverContext {
                 }
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
                 if let Some(ref xattr_list) = xattr_list {
-                    let filter = xattr_filter
-                        .as_ref()
-                        .map(|set| move |name: &str| set.xattr_name_allowed(name));
+                    let filter = xattr_filter.as_ref().map(|set| {
+                        move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+                    });
                     let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
                     // upstream: rsync_xal_set resolves an abbreviated value
                     // against fnamecmp; a directory is its own basis.
@@ -885,9 +885,9 @@ impl ReceiverContext {
             }
         } else if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
             // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-            let filter = self
-                .xattr_name_filter()
-                .map(|set| move |name: &str| set.xattr_name_allowed(name));
+            let filter = self.xattr_name_filter().map(|set| {
+                move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+            });
             let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
             // upstream: rsync_xal_set resolves an abbreviated value against
             // fnamecmp; a directory is its own basis.

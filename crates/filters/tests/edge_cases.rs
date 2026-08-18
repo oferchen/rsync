@@ -6,6 +6,7 @@
 //!
 //! Reference: rsync 3.4.1 exclude.c for pattern handling edge cases.
 
+use filters::XattrSide;
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::path::Path;
 
@@ -522,8 +523,8 @@ fn xattr_only_rules_apply_to_names_not_paths() {
     // The xattr-only rule does not affect file (path) matching...
     assert!(set.allows(Path::new("file.xattr"), false));
     // ...but it does exclude a matching xattr NAME.
-    assert!(!set.xattr_name_allowed("user.xattr"));
-    assert!(set.xattr_name_allowed("user.keep"));
+    assert!(!set.xattr_name_allowed("user.xattr", XattrSide::Receiver));
+    assert!(set.xattr_name_allowed("user.keep", XattrSide::Receiver));
 }
 
 /// Verifies Unicode patterns.
