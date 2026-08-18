@@ -111,8 +111,10 @@ impl DeletedRender {
 /// accumulated value via [`MultiplexReader::take_io_error`].
 ///
 /// When `MSG_NO_SEND` frames are received, the 4-byte little-endian file index
-/// is accumulated into an internal queue. Callers drain the queue via
-/// [`MultiplexReader::take_no_send_indices`].
+/// is queued and then surfaced as a [`FileDeclinedError`] from the very next
+/// read, one index per read. It cannot be delivered as a value the caller polls
+/// for: the sender writes no response for a declined file, so the read that
+/// awaits it would block forever before any poll could happen.
 ///
 /// When a `batch_recorder` is attached, all demuxed `MSG_DATA` payloads are
 /// copied to the recorder. This mirrors upstream rsync's `write_batch_monitor_in`
@@ -225,6 +227,40 @@ impl std::fmt::Display for RemoteExitError {
 }
 
 impl std::error::Error for RemoteExitError {}
+
+/// The sender declined to send a file it had already been asked for.
+///
+/// Carried as the inner error of an [`io::ErrorKind::Other`] `io::Error` so the
+/// receiver's response reader can `downcast_ref` it, retire the outstanding
+/// request, and carry on with the next file.
+///
+/// # Why this must interrupt a read rather than accumulate silently
+///
+/// The sender answers `MSG_NO_SEND` and moves straight on to the next file
+/// (`sender.c:723`, and `:669` / `:751` for the other two refusal cases), so no
+/// response for this index will ever arrive. Recording the index and continuing
+/// to wait for a frame is therefore an unconditional hang: the message is
+/// consumed *inside* the very read it needs to abort.
+///
+/// Upstream never faces this because the message lands on the generator's
+/// channel and the generator retires the entry (`io.c:1809-1818` ->
+/// `got_flist_entry_status(FES_NO_SEND, ndx)`), while its receiver is
+/// NDX-addressed and simply never awaits the file (`rsync.c:322-431`). oc fuses
+/// those two roles into one loop, so the decline has to be able to unwind an
+/// in-flight positional read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileDeclinedError {
+    /// File index the sender refused to send.
+    pub ndx: i32,
+}
+
+impl std::fmt::Display for FileDeclinedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "sender declined to send file index {}", self.ndx)
+    }
+}
+
+impl std::error::Error for FileDeclinedError {}
 
 /// Default buffer capacity for `MultiplexReader`.
 ///
@@ -361,16 +397,6 @@ impl<R> MultiplexReader<R> {
     /// - `main.c:1630-1631`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub(super) fn xfer_error_count(&self) -> u32 {
         self.xfer_error_count
-    }
-
-    /// Returns and drains the accumulated `MSG_NO_SEND` file indices.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `io.c:1618-1627`: `MSG_NO_SEND` handling.
-    /// - `sender.c:367-368`: sender sends `MSG_NO_SEND` when `protocol_version >= 30`.
-    pub(super) fn take_no_send_indices(&mut self) -> Vec<i32> {
-        std::mem::take(&mut self.no_send_indices)
     }
 
     /// Returns and drains the accumulated `MSG_REDO` file indices.
@@ -636,6 +662,35 @@ impl<R> MultiplexReader<R> {
     /// control frame (`MSG_IO_ERROR`/`MSG_REDO`/`MSG_NO_SEND`/`MSG_SUCCESS`) is
     /// fatal (`exit_cleanup(RERR_STREAMIO)`); oc surfaces it as an `InvalidData`
     /// error so the read loop aborts the transfer instead of dropping the frame.
+    /// Surfaces the oldest pending `MSG_NO_SEND` as an error, one file per call.
+    ///
+    /// Drains a single index rather than the whole ledger: consecutive
+    /// unreadable files produce consecutive declines, and each has to unwind
+    /// the read that awaits *that* file. Draining them together would report
+    /// the first and silently strand the rest.
+    ///
+    /// Called at the top of the read loop so an index recorded during a
+    /// previous read fires without first blocking for a frame that is not
+    /// coming.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1809-1818` - `MSG_NO_SEND` retires the entry on the generator.
+    /// - `sender.c:669,723,751` - each emitter `continue`s without a response.
+    fn check_file_declined(&mut self) -> io::Result<()> {
+        if self.no_send_indices.is_empty() {
+            return Ok(());
+        }
+        // The frame that carried this index is still staged in `buffer`. The
+        // read loop normally retires a non-data frame by overwriting it on the
+        // next `next_frame()`, so leaving the loop early has to retire it here
+        // instead: otherwise the next `read` takes the buffered-bytes shortcut
+        // and hands the caller the 4-byte MSG_NO_SEND payload AS FILE DATA.
+        self.pos = self.buffer.len();
+        let ndx = self.no_send_indices.remove(0);
+        Err(io::Error::other(FileDeclinedError { ndx }))
+    }
+
     fn check_control_msg(&self) -> io::Result<()> {
         if self.invalid_control_msg {
             return Err(io::Error::new(
@@ -806,6 +861,9 @@ impl<R: Read> MultiplexReader<R> {
         // deliverable payload until the frame completes.
         if self.frames.in_progress() || self.pos >= self.buffer.len() {
             loop {
+                // See the sibling check in `Read::read`: a declined file has no
+                // frame coming, so this must fire before blocking.
+                self.check_file_declined()?;
                 let code = self.next_frame()?;
 
                 if self.dispatch_message(code) {
@@ -898,6 +956,9 @@ impl<R: Read> Read for MultiplexReader<R> {
 
         // Loop until we get a MSG_DATA message
         loop {
+            // Checked before blocking: a file the sender already declined will
+            // never produce a frame, so waiting for one is a hang.
+            self.check_file_declined()?;
             let code = self.next_frame()?;
 
             if self.dispatch_message(code) {
