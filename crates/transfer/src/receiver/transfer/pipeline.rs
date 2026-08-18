@@ -28,6 +28,67 @@ use crate::transfer_ops::{
     send_file_request_xattr,
 };
 
+/// Per-file state the response handler needs for an in-flight request: the
+/// flat file-list index, destination path, the owned entry (Stage 0 clones it
+/// so the loop holds no borrow into `self.file_list`) and the generator's
+/// base iflags.
+type InFlightFile = (usize, PathBuf, FileEntry, u32);
+
+/// The receiver's in-flight request window - wire state and per-file state
+/// held as one unit.
+///
+/// [`PipelineState`] tracks the outstanding wire requests, while the response
+/// handler additionally needs an [`InFlightFile`] per request. Upstream needs
+/// no such pairing: its receiver is NDX-ADDRESSED, reading the index off the
+/// wire and then looking the file up by it (`rsync.c:322-431`), so the two can
+/// never disagree. oc's pipelined driver is instead FIFO-POSITIONAL, which
+/// makes two parallel queues a standing hazard - and a live one, because an
+/// entry can be dropped out of band when the sender declines a file
+/// (`MSG_NO_SEND`). A single missed drop does not fail loudly; it silently
+/// pairs every later response with the wrong file.
+///
+/// Owning push, pop and eviction here is what makes that unrepresentable at a
+/// call site, rather than a rule each of the three sites has to remember.
+struct InFlightRequests {
+    wire: PipelineState,
+    files: VecDeque<InFlightFile>,
+}
+
+impl InFlightRequests {
+    fn new(config: PipelineConfig) -> Self {
+        let wire = PipelineState::new(config);
+        let files = VecDeque::with_capacity(wire.window_size());
+        Self { wire, files }
+    }
+
+    fn push(&mut self, pending: crate::pipeline::PendingTransfer, file: InFlightFile) {
+        self.wire.push(pending);
+        self.files.push_back(file);
+    }
+
+    /// Removes the oldest request together with its file state.
+    fn pop(&mut self) -> Option<(crate::pipeline::PendingTransfer, InFlightFile)> {
+        let pending = self.wire.pop()?;
+        let file = self
+            .files
+            .pop_front()
+            .expect("in-flight queues are only ever pushed and popped together");
+        Some((pending, file))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.wire.is_empty()
+    }
+
+    fn outstanding(&self) -> usize {
+        self.wire.outstanding()
+    }
+
+    fn available_slots(&self) -> usize {
+        self.wire.available_slots()
+    }
+}
+
 /// Result type for the pipelined transfer closure:
 /// `(files_transferred, transferred_file_size, bytes, literal, matched, redo_indices,
 /// delayed_updates)`. `transferred_file_size` mirrors upstream `receiver.c:784`
@@ -332,13 +393,11 @@ impl ReceiverContext {
         // stream), so the reader is built once and reused for the session.
         let mut token_reader = request_config.create_token_reader()?;
 
-        let mut pipeline = PipelineState::new(pipeline_config);
-        let mut file_iter = files_to_transfer.into_iter();
         // Stage 0: the in-flight window OWNS its FileEntry (cloned at push,
         // bounded to the pipeline window = O(window)), so the loop no longer
         // holds a borrow into `self.file_list`.
-        let mut pending_files_info: VecDeque<(usize, PathBuf, FileEntry, u32)> =
-            VecDeque::with_capacity(pipeline.window_size());
+        let mut pipeline = InFlightRequests::new(pipeline_config);
+        let mut file_iter = files_to_transfer.into_iter();
         let mut files_transferred = 0usize;
         // upstream: receiver.c:784 stats.total_transferred_size += F_LENGTH(file),
         // summed at the same point as files_transferred.
@@ -544,7 +603,6 @@ impl ReceiverContext {
                                     writer,
                                     &mut *ndx_write_codec,
                                     &mut pipeline,
-                                    &mut pending_files_info,
                                     file_idx,
                                     file_entry,
                                     file_path,
@@ -578,13 +636,7 @@ impl ReceiverContext {
                                 xattr_request.as_ref(),
                             )?;
 
-                            pipeline.push(pending);
-                            pending_files_info.push_back((
-                                file_idx,
-                                file_path,
-                                file_entry,
-                                base_iflags,
-                            ));
+                            pipeline.push(pending, (file_idx, file_path, file_entry, base_iflags));
                         }
                     }
                 }
@@ -600,10 +652,9 @@ impl ReceiverContext {
                 }
 
                 // Process one response from a previously flushed request.
-                let pending = pipeline.pop().expect("pipeline not empty");
+                let (pending, (file_idx, file_path, file_entry, base_iflags)) =
+                    pipeline.pop().expect("pipeline not empty");
                 flushed_pending = flushed_pending.saturating_sub(1);
-                let (file_idx, file_path, file_entry, base_iflags) =
-                    pending_files_info.pop_front().expect("pipeline not empty");
 
                 // upstream: sender.c:292-294 - a non-transfer item is logged by
                 // the sender and echoed back via write_ndx_and_attrs(); consume
@@ -632,7 +683,7 @@ impl ReceiverContext {
 
                 let xattr_list = self.resolve_xattr_list(&file_entry);
                 let is_device_target = self.config.write.write_devices && file_entry.is_device();
-                let result = process_file_response_streaming(
+                let response = process_file_response_streaming(
                     reader,
                     &mut *ndx_read_codec,
                     pending,
@@ -645,7 +696,44 @@ impl ReceiverContext {
                     is_device_target,
                     xattr_list,
                     &mut token_reader,
-                )?;
+                );
+                let result = match response {
+                    Ok(result) => result,
+                    Err(err) => {
+                        // upstream: io.c:1809-1818 - the sender declined this
+                        // file and moved on, so no response is coming. The
+                        // sender has already reported why (FERROR_XFER,
+                        // sender.c:719) and set io_error, which is what makes
+                        // the run exit 23; the receiver simply drops the file,
+                        // exactly as upstream's generator retires the entry via
+                        // got_flist_entry_status(FES_NO_SEND).
+                        let declined = err
+                            .get_ref()
+                            .and_then(|inner| {
+                                inner.downcast_ref::<crate::reader::FileDeclinedError>()
+                            })
+                            .copied();
+                        let awaited = self.flat_to_wire_ndx(file_idx);
+                        match declined {
+                            // The sender answers requests in NDX order and the
+                            // window pops in the same order, so a decline can
+                            // only ever name the file being awaited. Anything
+                            // else means the two have drifted apart.
+                            Some(d) if d.ndx == awaited => continue,
+                            Some(d) => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!(
+                                        "sender declined NDX {} while the receiver awaited NDX \
+                                         {awaited} - request stream desynchronised",
+                                        d.ndx
+                                    ),
+                                ));
+                            }
+                            None => return Err(err),
+                        }
+                    }
+                };
 
                 pipelined_receiver.note_commit_sent(
                     result.expected_checksum,
@@ -814,8 +902,7 @@ impl ReceiverContext {
         &self,
         writer: &mut W,
         ndx_write_codec: &mut impl protocol::codec::NdxCodec,
-        pipeline: &mut PipelineState,
-        pending_files_info: &mut VecDeque<(usize, PathBuf, FileEntry, u32)>,
+        pipeline: &mut InFlightRequests,
         file_idx: usize,
         file_entry: FileEntry,
         file_path: PathBuf,
@@ -824,12 +911,10 @@ impl ReceiverContext {
         let wire_ndx = self.flat_to_wire_ndx(file_idx);
         ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
         writer.write_all(&((base_iflags & 0xFFFF) as u16).to_le_bytes())?;
-        pipeline.push(crate::pipeline::PendingTransfer::new_full_transfer(
-            wire_ndx,
-            file_path.clone(),
-            0,
-        ));
-        pending_files_info.push_back((file_idx, file_path, file_entry, base_iflags));
+        pipeline.push(
+            crate::pipeline::PendingTransfer::new_full_transfer(wire_ndx, file_path.clone(), 0),
+            (file_idx, file_path, file_entry, base_iflags),
+        );
         Ok(())
     }
 
