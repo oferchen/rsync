@@ -1,4 +1,4 @@
-use core::client::{FilterRuleKind, FilterRuleSpec};
+use core::client::FilterRuleSpec;
 use core::message::{Message, Role};
 use core::rsync_error;
 
@@ -103,7 +103,6 @@ pub(super) fn parse_rule_modifiers(
 pub(super) fn apply_rule_modifiers(
     mut rule: FilterRuleSpec,
     modifiers: RuleModifierState,
-    directive: &str,
 ) -> Result<FilterRuleSpec, Message> {
     if modifiers.anchor_root {
         rule = rule.with_anchor();
@@ -125,24 +124,14 @@ pub(super) fn apply_rule_modifiers(
         rule = rule.with_negate(true);
     }
 
+    // upstream: exclude.c:1438 - `case 'x': rule->rflags |= FILTRULE_XATTR;`.
+    // The modifier sets one bit and touches nothing else; in particular it does
+    // not bind a side. `+`/`-` already default to both sides, so forcing them
+    // here was a no-op there while silently erasing the one-sided semantics of
+    // the H/S/P/R prefixes (hide/show/protect/risk), which exist precisely to
+    // express a side (exclude.c:1345-1358).
     if modifiers.xattr_only {
-        if !matches!(
-            rule.kind(),
-            FilterRuleKind::Include | FilterRuleKind::Exclude
-        ) {
-            let message = rsync_error!(
-                1,
-                format!(
-                    "filter rule '{directive}' cannot combine 'x' modifiers with this directive"
-                )
-            )
-            .with_role(Role::Client);
-            return Err(message);
-        }
-        rule = rule
-            .with_xattr_only(true)
-            .with_sender(true)
-            .with_receiver(true);
+        rule = rule.with_xattr_only(true);
     }
 
     Ok(rule)
@@ -287,7 +276,7 @@ mod tests {
             xattr_only: false,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.pattern().starts_with('/'));
     }
 
@@ -302,7 +291,7 @@ mod tests {
             xattr_only: false,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.applies_to_sender());
     }
 
@@ -317,7 +306,7 @@ mod tests {
             xattr_only: false,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.applies_to_receiver());
     }
 
@@ -332,7 +321,7 @@ mod tests {
             xattr_only: false,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.is_perishable());
     }
 
@@ -347,7 +336,7 @@ mod tests {
             xattr_only: true,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.is_xattr_only());
         assert!(result.applies_to_sender());
         assert!(result.applies_to_receiver());
@@ -364,12 +353,17 @@ mod tests {
             xattr_only: true,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "-").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.is_xattr_only());
     }
 
     #[test]
-    fn apply_rule_modifiers_xattr_only_for_non_include_exclude_fails() {
+    fn xattr_modifier_keeps_a_protect_rule_receiver_only() {
+        // upstream: exclude.c:1355-1357 - `P` sets FILTRULE_RECEIVER_SIDE, and
+        // :1438 `case 'x'` sets only FILTRULE_XATTR. The two are independent, so
+        // `Px` stays receiver-only. Forcing both sides here would erase exactly
+        // the distinction the `P` prefix exists to express, and upstream
+        // ACCEPTS `Px` (measured against rsync 3.5.0: exit 0).
         let rule = FilterRuleSpec::protect("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
@@ -379,8 +373,15 @@ mod tests {
             xattr_only: true,
             negate: false,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "P");
-        assert!(result.is_err());
+        let result = apply_rule_modifiers(rule, modifiers).expect("upstream accepts `Px`");
+        assert!(
+            result.is_xattr_only(),
+            "the x modifier must set the xattr bit"
+        );
+        assert!(
+            !result.applies_to_sender() && result.applies_to_receiver(),
+            "P binds receiver-only; the x modifier must not widen it"
+        );
     }
 
     #[test]
@@ -394,7 +395,7 @@ mod tests {
             xattr_only: false,
             negate: true,
         };
-        let result = apply_rule_modifiers(rule, modifiers, "-").expect("apply");
+        let result = apply_rule_modifiers(rule, modifiers).expect("apply");
         assert!(result.is_negated());
     }
 
@@ -402,7 +403,7 @@ mod tests {
     fn apply_rule_modifiers_empty_state() {
         let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState::default();
-        let result = apply_rule_modifiers(rule.clone(), modifiers, "+").expect("apply");
+        let result = apply_rule_modifiers(rule.clone(), modifiers).expect("apply");
         assert_eq!(result.pattern(), rule.pattern());
     }
 }
