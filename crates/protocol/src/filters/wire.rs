@@ -249,6 +249,25 @@ fn wire_bytes_to_pattern(bytes: &[u8]) -> OsString {
     OsString::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
+/// Largest filter-rule record accepted from a peer, in bytes.
+///
+/// upstream: rsync.h:765-769 defines
+/// `BIGPATHBUFLEN = MAXPATHLEN < 4096 ? 4096+1024 : MAXPATHLEN+1024`, and
+/// `recv_filter_list` sizes its receive buffer with it (exclude.c:1973).
+///
+/// The value is 5120 on every platform oc supports, but not for the same
+/// reason on each: rsync.h:761 defines `MAXPATHLEN 1024` only `#ifndef`, and
+/// rsync.h:389 includes `<sys/param.h>` first, so the system value wins - 4096
+/// on Linux, 1024 on macOS. Linux takes the `MAXPATHLEN+1024` arm and macOS
+/// takes the `4096+1024` arm, and both land on 5120.
+///
+/// This is the WIRE-FRAME bound and is deliberately not the only one upstream
+/// applies: `parse_filter_str` separately discards an individual rule whose
+/// pattern reaches `MAXPATHLEN` with a non-fatal "discarding over-long filter"
+/// warning (exclude.c:1533-1537). That second, smaller limit is per-pattern and
+/// platform-dependent; this one is per-record and fixed.
+const MAX_FILTER_RULE_LEN: u32 = 5120;
+
 /// Reads filter list from wire format.
 ///
 /// Reads a sequence of filter rules terminated by a 4-byte integer 0.
@@ -268,7 +287,13 @@ pub fn read_filter_list(
             break;
         }
 
-        if len < 0 {
+        // upstream: exclude.c:1980-1981 - `recv_filter_list` reads into
+        // `char line[BIGPATHBUFLEN]` (:1973) and calls `overflow_exit("recv_rules")`
+        // for `len >= sizeof line`. Its `len` is an `unsigned int`, so a negative
+        // wire value widens to a huge unsigned and takes the SAME branch; casting
+        // to u32 here reproduces that, which is why this one bound also subsumes
+        // the old negative-length arm.
+        if u32::from_ne_bytes(len.to_ne_bytes()) >= MAX_FILTER_RULE_LEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid filter rule length: {len}"),
@@ -326,7 +351,13 @@ where
             break;
         }
 
-        if len < 0 {
+        // upstream: exclude.c:1980-1981 - `recv_filter_list` reads into
+        // `char line[BIGPATHBUFLEN]` (:1973) and calls `overflow_exit("recv_rules")`
+        // for `len >= sizeof line`. Its `len` is an `unsigned int`, so a negative
+        // wire value widens to a huge unsigned and takes the SAME branch; casting
+        // to u32 here reproduces that, which is why this one bound also subsumes
+        // the old negative-length arm.
+        if u32::from_ne_bytes(len.to_ne_bytes()) >= MAX_FILTER_RULE_LEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid filter rule length: {len}"),

@@ -543,16 +543,38 @@ fn filter_list_negative_length_rejected() {
 }
 
 #[test]
-fn filter_list_oversized_length_truncates_to_eof() {
-    // Bug it catches: an attacker-controlled length must surface EOF
-    // (truncated read) rather than allocate the full claimed payload.
-    // Length here is 1 MiB but no payload follows.
+fn filter_list_oversized_length_rejected_before_allocation() {
+    // Bug it catches: an attacker-controlled length must be refused against the
+    // frame bound BEFORE any buffer is sized from it.
+    //
+    // This test previously asserted UnexpectedEof and was named
+    // `..._truncates_to_eof`. That outcome did not mean what its comment
+    // claimed: the 1 MiB buffer WAS allocated, and the EOF only followed
+    // because no payload happened to be present. A peer that sent the payload
+    // got the allocation. upstream refuses first - exclude.c:1980-1981
+    // `overflow_exit("recv_rules")` precedes the `read_sbuf` at :1982 - so the
+    // rejection, not the truncation, is the behaviour to pin.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&(1_024_i32 * 1_024).to_le_bytes());
     let mut cursor = Cursor::new(&bytes[..]);
     let protocol = ProtocolVersion::from_supported(32).expect("v32 supported");
     let err = read_filter_list(&mut cursor, protocol)
-        .expect_err("oversized length without payload must surface EOF");
+        .expect_err("oversized length must be refused against the frame bound");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn filter_list_length_within_the_bound_still_reaches_the_read() {
+    // Non-vacuity companion. Without it, the assertion above would also hold if
+    // the bound rejected every non-zero length. A record just inside the frame
+    // bound must still be attempted, and then fail on the absent payload -
+    // proving the guard discriminates on size rather than refusing outright.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&5_119_i32.to_le_bytes());
+    let mut cursor = Cursor::new(&bytes[..]);
+    let protocol = ProtocolVersion::from_supported(32).expect("v32 supported");
+    let err = read_filter_list(&mut cursor, protocol)
+        .expect_err("in-bound length with no payload must surface EOF");
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
