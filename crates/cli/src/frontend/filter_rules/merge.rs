@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
+use filters::RuleSource;
 
 use super::cvs::cvs_default_exclude_rules;
 use super::directive::{
@@ -16,11 +17,18 @@ use super::sources::{read_merge_file, read_merge_from_standard_input};
 /// Loads a merge file referenced by `directive`, parsing each of its lines and
 /// appending the resulting rules to `destination`. `visited` guards against
 /// recursive merge cycles; stdin (`-`) is read once.
+///
+/// `source` says who named this merge file: the operator (`--filter='. FILE'`,
+/// `RuleSource::Argument`) or another filter file's contents (a nested `. FILE`
+/// line). Upstream keys its open-failure diagnostic on exactly that distinction
+/// (exclude.c:1703-1720), so it has to travel with the directive rather than be
+/// re-derived at the open.
 pub(crate) fn apply_merge_directive(
     directive: MergeDirective,
     base_dir: &Path,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut HashSet<PathBuf>,
+    source: RuleSource<'_>,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
@@ -87,6 +95,7 @@ pub(crate) fn apply_merge_directive(
             read_merge_file(
                 &resolved_path,
                 options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
+                source,
             )?
         };
 
@@ -162,12 +171,27 @@ fn parse_merge_contents(
                 token.to_owned()
             };
 
-            process_merge_directive(&directive, options, base_dir, display, destination, visited)?;
+            // upstream: rule_src_line = word_split ? -1 : 0 (exclude.c:1754) -
+            // a word-split merge file yields tokens, not lines, so there is no
+            // line number to report and rule_src_where returns the name alone.
+            process_merge_directive(
+                &directive,
+                options,
+                base_dir,
+                display,
+                RuleSource::FileWordSplit { name: display },
+                destination,
+                visited,
+            )?;
         }
         return Ok(());
     }
 
-    for line in contents.lines() {
+    // upstream counts PHYSICAL lines: rule_src_line increments once per read
+    // iteration (exclude.c:1759-1760), before the comment and empty-token
+    // filter at :1806, so comments and blank lines advance the count.
+    for (index, line) in contents.lines().enumerate() {
+        let line_number = index + 1;
         // upstream: exclude.c:1514 parse_filter_file - a line is skipped only
         // when it is empty or (line parsing) begins with `;`/`#`. Whitespace is
         // never stripped, so leading whitespace and whitespace-only lines fall
@@ -205,7 +229,18 @@ fn parse_merge_contents(
             continue;
         }
 
-        process_merge_directive(line, options, base_dir, display, destination, visited)?;
+        process_merge_directive(
+            line,
+            options,
+            base_dir,
+            display,
+            RuleSource::File {
+                name: display,
+                line: line_number,
+            },
+            destination,
+            visited,
+        )?;
     }
 
     Ok(())
@@ -219,6 +254,7 @@ pub(crate) fn process_merge_directive(
     options: &DirMergeOptions,
     base_dir: &Path,
     display: &str,
+    source: RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), Message> {
@@ -234,10 +270,17 @@ pub(crate) fn process_merge_directive(
             if options.specifies_side() && rule.specifies_side() {
                 // Exit 1 is upstream's RERR_SYNTAX, the code filter_rule_err
                 // passes to exit_cleanup (exclude.c:133-137).
+                //
+                // The rule text goes through RuleSource because filter_rule_err
+                // renders it with rule_text (exclude.c:135), and this guard can
+                // only fire on a rule read out of a merge file - the peer picks
+                // which file that is. See
+                // docs/design/upstream-3.5.0-filter-rule-text-provenance.md.
                 return Err(rsync_error!(
                     1,
                     format!(
-                        "specified-side merge file contains specified-side filter: {directive}"
+                        "specified-side merge file contains specified-side filter: {}",
+                        source.rule_text(directive)
                     )
                 )
                 .with_role(Role::Client));
@@ -248,14 +291,28 @@ pub(crate) fn process_merge_directive(
         Ok(FilterDirective::Merge(nested)) => {
             let effective_options = merge_directive_options(options, &nested);
             let nested = nested.with_options(effective_options);
-            apply_merge_directive(nested, base_dir, destination, visited).map_err(|error| {
-                let detail = error.to_string();
-                rsync_error!(
-                    1,
-                    format!("failed to process merge file '{display}': {detail}")
-                )
-                .with_role(Role::Client)
-            })?;
+            // This merge file was named by ANOTHER filter file's contents, so
+            // `source` travels down: it selects upstream's redacted open-failure
+            // arm (exclude.c:1708-1712) for the nested file.
+            //
+            // The nested error keeps its own exit code. upstream reports a
+            // failed open as RERR_FILEIO (11) from `exit_cleanup` at
+            // exclude.c:1719 whether the name came from a file or from the
+            // command line - only the TEXT differs between the two arms, never
+            // the code. Re-wrapping at a fixed 1 here turned every nested open
+            // failure into a syntax-error exit; `code` preserves whichever the
+            // inner site chose, so RERR_SYNTAX rules still surface as 1.
+            apply_merge_directive(nested, base_dir, destination, visited, source).map_err(
+                |error| {
+                    let code = error.code().unwrap_or(1);
+                    let detail = error.to_string();
+                    rsync_error!(
+                        code,
+                        format!("failed to process merge file '{display}': {detail}")
+                    )
+                    .with_role(Role::Client)
+                },
+            )?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
         // A blank line inside a merge file contributes no rule.

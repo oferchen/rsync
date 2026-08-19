@@ -8,6 +8,8 @@ use core::message::{Message, Role};
 use core::rsync_error;
 use engine::local_copy::upstream_io_error;
 
+use filters::RuleSource;
+
 use super::directive::FilterDirective;
 use super::parsing::parse_old_prefix_rule;
 
@@ -82,21 +84,53 @@ pub(crate) fn append_filter_rules_from_files(
 /// Reports a filter file that could not be opened the way upstream's
 /// `parse_filter_file` does, under upstream's exit code.
 ///
-/// upstream: exclude.c:1712-1719 - `rsyserr(FERROR, errno, "failed to open
-/// %sclude file %s", ...)` then `exit_cleanup(RERR_FILEIO)`. The include/exclude
-/// wording follows `template->rflags & FILTRULE_INCLUDE`, so a merge rule
-/// carrying a `+` modifier (`.+ FILE`, `merge,+ FILE`) says "include file".
+/// upstream: exclude.c:1703-1720 is ONE `if (!fp)` block with TWO arms selected
+/// by `TEXT_FROM_FILE(template)`:
+///
+/// ```c
+/// if (TEXT_FROM_FILE(template)) {
+///         /* errno too: it answers "does this path exist". */
+///         rprintf(FERROR, "failed to open %sclude file %s\n", ...,
+///                 rule_text(template, fname));
+/// } else {
+///         rsyserr(FERROR, errno, "failed to open %sclude file %s", ..., fname);
+/// }
+/// exit_cleanup(RERR_FILEIO);
+/// ```
+///
+/// So when the name came out of a file's contents, BOTH channels are withheld:
+/// the path (via `rule_text`, which substitutes `<rule from FILE line N>`) and
+/// `strerror(errno)`. The peer chooses what a merge file names, so errno would
+/// answer "does this path exist, and may this process read it" for any path -
+/// a filesystem probe through the filter parser. Only the TEXT differs between
+/// the arms; both exit `RERR_FILEIO`, which is why the code is set once below.
+///
+/// The include/exclude wording follows `template->rflags & FILTRULE_INCLUDE` in
+/// BOTH arms, so a merge rule carrying a `+` modifier (`.+ FILE`,
+/// `merge,+ FILE`) says "include file" either way.
 ///
 /// This rule is deliberately NOT shared with `--files-from`, whose own open
 /// failure upstream reports from a different site and exits 1, not 11
 /// (main.c:1886) - measured on 3.5.0.
-fn filter_file_open_error(path: &Path, include: bool, error: &io::Error) -> Message {
-    let text = format!(
-        "failed to open {}clude file {}: {}",
-        if include { "in" } else { "ex" },
-        path.display(),
-        upstream_io_error(error)
-    );
+fn filter_file_open_error(
+    path: &Path,
+    include: bool,
+    error: &io::Error,
+    source: RuleSource<'_>,
+) -> Message {
+    let word = if include { "in" } else { "ex" };
+    let name = path.display().to_string();
+    let text = if source.is_from_file() {
+        format!(
+            "failed to open {word}clude file {}",
+            source.rule_text(&name)
+        )
+    } else {
+        format!(
+            "failed to open {word}clude file {name}: {}",
+            upstream_io_error(error)
+        )
+    };
     rsync_error!(FILE_IO_EXIT_CODE, text).with_role(Role::Client)
 }
 
@@ -112,7 +146,11 @@ pub(crate) fn load_filter_file_patterns(
         return read_filter_patterns_from_standard_input(eol_nulls);
     }
 
-    let file = File::open(path).map_err(|error| filter_file_open_error(path, include, &error))?;
+    // `--include-from` / `--exclude-from` name the file on the command line, so
+    // this is always upstream's non-file arm: the operator already knows the
+    // path they typed, and errno is theirs to see.
+    let file = File::open(path)
+        .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
 
     let mut reader = BufReader::new(file);
     read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
@@ -125,13 +163,19 @@ pub(crate) fn load_filter_file_patterns(
 }
 
 /// Reads a merge file's entire contents as a string. `include` selects
-/// upstream's include/exclude wording if the open fails.
-pub(super) fn read_merge_file(path: &Path, include: bool) -> Result<String, Message> {
+/// upstream's include/exclude wording if the open fails; `source` says whether
+/// this merge file was named by the operator or by another filter file's
+/// contents, which selects the arm of `filter_file_open_error`.
+pub(super) fn read_merge_file(
+    path: &Path,
+    include: bool,
+    source: RuleSource<'_>,
+) -> Result<String, Message> {
     // Opened separately from the read so that only a genuine open failure takes
     // upstream's wording and exit code; a mid-file read error (or non-UTF-8
     // contents) is a different condition and keeps its own report.
     let mut file =
-        File::open(path).map_err(|error| filter_file_open_error(path, include, &error))?;
+        File::open(path).map_err(|error| filter_file_open_error(path, include, &error, source))?;
     let mut contents = String::new();
     file.read_to_string(&mut contents).map_err(|error| {
         let text = format!("failed to read filter file '{}': {error}", path.display());
@@ -364,21 +408,74 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("merge.txt");
         std::fs::write(&path, "content here").expect("write");
-        let result = read_merge_file(&path, false).expect("read");
+        let result = read_merge_file(&path, false, RuleSource::Argument).expect("read");
         assert_eq!(result, "content here");
     }
 
     /// A merge rule naming a missing file is fatal under the same rule
     /// (upstream: exclude.c:1587 passes XFLG_FATAL_ERRORS for `merge`/`.`).
+    ///
+    /// This is the OPERATOR-named arm: the path they typed and `strerror` are
+    /// both theirs to see (upstream's `rsyserr` branch, exclude.c:1714-1717).
+    /// MEASURED on rsync 3.5.0: `--include-from=/definitely/missing` prints
+    /// `failed to open include file /definitely/missing: No such file or
+    /// directory (2)` and exits 11.
     #[test]
     fn read_merge_file_reports_a_missing_file_like_upstream() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("nonexistent.txt");
-        let error = read_merge_file(&path, false).expect_err("must fail");
+        let error =
+            read_merge_file(&path, false, RuleSource::Argument).expect_err("must fail");
         assert_eq!(error.code(), Some(11));
         assert!(
             error.text().starts_with("failed to open exclude file "),
             "unexpected text: {}",
+            error.text()
+        );
+        assert!(
+            error.text().contains("nonexistent.txt"),
+            "the operator arm keeps the path they typed: {}",
+            error.text()
+        );
+    }
+
+    /// The FILE-named arm withholds BOTH channels: the path AND errno.
+    ///
+    /// upstream: exclude.c:1703-1720 is one `if (!fp)` block whose arms are
+    /// selected by `TEXT_FROM_FILE(template)`. When the name came out of a
+    /// file's contents it uses `rprintf` + `rule_text()` - no `strerror`,
+    /// because errno answers "does this path exist, and may this process read
+    /// it" for any path a peer chooses to name. Both arms exit `RERR_FILEIO`;
+    /// only the TEXT differs, which is why the code is asserted equal here.
+    ///
+    /// MEASURED on rsync 3.5.0, a merge file containing `. /definitely/missing`:
+    /// `failed to open exclude file <rule from FILE line 1>`, exit 11.
+    #[test]
+    fn read_merge_file_withholds_path_and_errno_when_the_name_came_from_a_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nonexistent.txt");
+        let source = RuleSource::File {
+            name: "outer.rules",
+            line: 1,
+        };
+        let error = read_merge_file(&path, false, source).expect_err("must fail");
+
+        // Same exit code as the operator arm - upstream never varies it.
+        assert_eq!(error.code(), Some(11));
+        assert!(
+            error.text().contains("<rule from outer.rules line 1>"),
+            "must name where the rule is: {}",
+            error.text()
+        );
+        assert!(
+            !error.text().contains("nonexistent.txt"),
+            "must not echo the peer-chosen path: {}",
+            error.text()
+        );
+        // The errno channel is the one a `rule_text`-only fix would leave open.
+        assert!(
+            !error.text().contains("No such file"),
+            "must not leak strerror as an existence oracle: {}",
             error.text()
         );
     }
