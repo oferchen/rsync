@@ -19,10 +19,15 @@ use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::log_code::LogCode;
 use super::sequence::Stamped;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 thread_local! {
     static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
+    /// upstream: log.c:345 - `quiet` is its own global, consulted in the FINFO
+    /// arm of `rwrite()`. It is NOT the same state as the verbosity level, so
+    /// folding `--quiet` into `verbose = 0` cannot express it: a notice
+    /// upstream prints at DEFAULT verbosity still has to disappear under `-q`.
+    static QUIET: Cell<bool> = const { Cell::new(false) };
     /// Events are held stamped with their production order so a consumer that
     /// interleaves them with another output channel can recover that order.
     /// The buffer itself stays thread-local; only the ordering key is shared
@@ -81,6 +86,28 @@ pub fn init(config: VerbosityConfig) {
     VERBOSITY.with(|v| {
         *v.borrow_mut() = config;
     });
+}
+
+/// Record whether `-q` / `--quiet` was requested, for the current thread.
+///
+/// Upstream keeps `quiet` as a global of its own, separate from `verbose` and
+/// from `info_levels[]`, and consults it in exactly one place: the `FINFO` arm
+/// of `rwrite()` returns without writing (upstream: log.c:344-345). Anything
+/// that only folds `--quiet` into `verbose = 0` cannot express a notice
+/// upstream prints at default verbosity and suppresses only under `-q` - the
+/// two states become indistinguishable.
+pub fn set_quiet(quiet: bool) {
+    QUIET.with(|q| q.set(quiet));
+}
+
+/// Whether `FINFO` output is suppressed on this thread.
+///
+/// The single question a producer or renderer should ask before emitting an
+/// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
+// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
+#[must_use]
+pub fn finfo_suppressed() -> bool {
+    QUIET.with(Cell::get)
 }
 
 /// Check if the info flag is at or above the specified level.
