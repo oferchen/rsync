@@ -782,14 +782,21 @@ run_python_suite_mode() {
         echo "==> Scratch tree under ${scratch_home} (outside the tmpfs-shadowed HOME)" >&2
     fi
 
+    # `|| rc=...` is load-bearing, not defensive. Under `set -e` + `pipefail` a
+    # bare failing pipeline aborts the script AT THIS LINE, so `rc=${PIPESTATUS[0]}`
+    # and everything after it - the step summary AND the expect-result manifest -
+    # never ran whenever the suite failed. That made the manifest generator
+    # reachable only when every test passed, i.e. exactly when no manifest is
+    # needed. Putting the pipeline in an OR list exempts it from `set -e` while
+    # PIPESTATUS still carries runtests.py's own status, which `return "$rc"`
+    # below propagates unchanged.
     local rc=0
     (
         cd "$upstream_src_dir"
         # scratchbase -> runtests.py places $scratchbase/testtmp here, off the
         # source tree, so the cleanup above owns the whole scratch lifecycle.
         scratchbase="$scratch_home" "${runtests_argv[@]}"
-    ) 2>&1 | tee "$output_log"
-    rc=${PIPESTATUS[0]}
+    ) 2>&1 | tee "$output_log" || rc=${PIPESTATUS[0]}
 
     # Force-clear the scratch tree again so the NEXT leg (or a re-run on the
     # same self-hosted runner) never inherits a mode-0 dir from this leg.

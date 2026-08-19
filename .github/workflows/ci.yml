@@ -901,6 +901,13 @@ jobs:
       # operator override drag the conformance gate back to 3.4.4 as a side
       # effect of retargeting interop.
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      # The accepted-divergence ledger, GENERATED from run 32260924822 and
+      # committed. --expect-result runs ONLY these tests and fails on any
+      # mismatch INCLUDING an unexpected PASS, so a test that starts passing
+      # reddens the gate until the baseline is regenerated - the divergence
+      # set can only shrink deliberately, never drift.
+      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt
+      expect_result_root: tools/ci/upstream-3.5.0-expect.root.txt
 
   # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)

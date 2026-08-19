@@ -15,13 +15,21 @@ on:
         description: 'Which variant(s) to run: all | nonroot | root'
         type: string
         default: 'all'
-      expect_result:
+      expect_result_nonroot:
         description: >-
-          Optional path to a runtests.py --expect-result manifest. When set,
-          ONLY the tests it names are run and every outcome must match, so a
-          truncated manifest shrinks coverage instead of failing - the driver
-          refuses a missing or empty one. Leave empty to run the whole suite
-          and fail on any failure. Ignored by the 3.4.4 shell-loop path.
+          Path to the non-root leg's runtests.py --expect-result manifest. When
+          set, ONLY the tests it names are run and every outcome must match, so
+          a truncated manifest shrinks coverage instead of failing - the driver
+          refuses a missing or empty one. Leave empty to run the whole suite and
+          fail on any failure. Ignored by the 3.4.4 shell-loop path.
+        type: string
+        default: ''
+      expect_result_root:
+        description: >-
+          The ROOT leg's manifest. Deliberately a separate input: the two legs
+          run the same 345 tests at different privilege, and 40 of them resolve
+          to a DIFFERENT outcome (measured, run 32260924822), so one shared file
+          would be wrong for 40 tests.
         type: string
         default: ''
 
@@ -81,7 +89,7 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
-          EXPECT_RESULT: ${{ inputs.expect_result }}
+          EXPECT_RESULT: ${{ inputs.expect_result_nonroot }}
           # Always emit the manifest this run would hold itself to. It is the
           # only honest source for `expect_result`: hand-curating the ledger is
           # exactly how it drifts out of agreement with the suite, and because
@@ -239,7 +247,7 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
-          EXPECT_RESULT: ${{ inputs.expect_result }}
+          EXPECT_RESULT: ${{ inputs.expect_result_root }}
           EMIT_EXPECT_RESULT: target/interop/expect-result.root.txt
         run: |
           set -uo pipefail
