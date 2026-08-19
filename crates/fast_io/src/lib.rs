@@ -88,11 +88,6 @@ pub mod cached_sort;
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
 pub mod confined_open;
-/// Unix-only: ownership-trusted resolution for operator-supplied paths
-/// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
-/// `owner_walk_parent` (`syscall.c:558`).
-#[cfg(unix)]
-pub mod owner_walk;
 /// Path-confinement activation: who is confined, and against what root.
 ///
 /// Pure policy with no I/O, so it builds and is tested on every target.
@@ -127,6 +122,11 @@ pub mod net_reader;
 /// Receiver-side basis open with `O_NOFOLLOW` on the basename, matching
 /// upstream rsync's `do_open_at()` dirname/basename split.
 pub mod nofollow_open;
+/// Unix-only: ownership-trusted resolution for operator-supplied paths
+/// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
+/// `owner_walk_parent` (`syscall.c:558`).
+#[cfg(unix)]
+pub mod owner_walk;
 /// Page-aligned buffer pool for IOCP no-buffering mode.
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
@@ -372,8 +372,6 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 #[cfg(unix)]
 pub use confined_open::{LeafPolicy, open_source_confined};
 #[cfg(unix)]
-pub use owner_walk::{operator_link, operator_rename, owner_trusted_parent};
-#[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
     UnlinkResidue, confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
@@ -394,6 +392,8 @@ pub use kernel_version::{
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
+#[cfg(unix)]
+pub use owner_walk::{operator_link, operator_rename, owner_trusted_parent};
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::{open_trusted_dir, secure_open_dir};

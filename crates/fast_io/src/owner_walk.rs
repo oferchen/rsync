@@ -25,8 +25,6 @@
 //!   outside the tree, so the trust signal is authority (ownership), not
 //!   location."
 
-#![cfg(unix)]
-
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -81,7 +79,7 @@ fn split_parent(path: &Path) -> Option<(Vec<OsString>, OsString)> {
             Component::Normal(name) => names.push(name.to_os_string()),
             Component::ParentDir => names.push(OsString::from("..")),
             // `/` is expressed by the walk starting at the root; `.` is a no-op;
-            // a Windows prefix cannot occur under `#![cfg(unix)]`.
+            // a Windows prefix cannot occur on a Unix-only module.
             Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
         }
     }
