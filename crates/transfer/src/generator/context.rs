@@ -663,10 +663,16 @@ impl GeneratorContext {
     /// - `clientserver.c:1345-1357` - why the daemon chroot does not set it
     /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
     pub(crate) fn source_open(&self) -> open_source::SourceOpen {
+        // upstream: syscall.c:136 `confinement_root()` -
+        // `am_daemon ? module_dir : confine_root`. The daemon arm wins
+        // unconditionally: its module directory is already the boundary, and
+        // `--confine-root` arrives in a peer-supplied argv where honouring it
+        // could only WIDEN the module (options.c:2382-2386 nulls it out for a
+        // daemon before it is ever read).
         let confine_root = if self.config.connection.is_daemon_connection {
             self.config.connection.daemon_module_root.clone()
         } else {
-            None
+            self.config.connection.confine_root.clone()
         };
         let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
         open_source::SourceOpen::new(
