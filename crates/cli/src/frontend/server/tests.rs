@@ -290,6 +290,63 @@ fn parse_server_args_skips_known_long_args() {
     assert_eq!(pos_args, vec![OsString::from("src/")]);
 }
 
+/// A restricted-directory wrapper's exact server argv must not turn
+/// `--confine-root=DIR` into the destination path.
+///
+/// This is the half that actually broke. MEASURED against the 3.5.0 suite
+/// before the fix: `--confine-root=` was in neither `is_known_server_long_flag`
+/// nor `is_two_arg_server_long_flag` (which only covers the space-separated
+/// `safe_arg("", value)` pairs), so the joined single-slot form fell through to
+/// the positional list and became the destination root -
+/// `failed to create destination root --confine-root=/...: No such file or
+/// directory`, rc=12, on every `rrsync-*` test that serves a non-"/" dir.
+///
+/// upstream: `support/rrsync` main():637-644 appends it; options.c:690 is the
+/// POPT_ARG_STRING entry that consumes it.
+#[test]
+fn parse_server_args_does_not_leak_confine_root_into_the_destination() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--confine-root=/srv/restricted"),
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dest")],
+        "--confine-root=DIR must be consumed as a flag, never left in the \
+         positional list where it is taken for the destination root"
+    );
+}
+
+/// The value must also survive to the config, not merely be swallowed.
+///
+/// Paired with the operand test above on purpose: they exercise DIFFERENT
+/// functions (`parse_server_flag_string_and_args` vs
+/// `parse_server_long_flags`), and recognising the flag in only one of them
+/// leaves either a positional leak or a silently dropped confinement root.
+#[test]
+fn long_flags_capture_confine_root() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--confine-root=/srv/restricted"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.confine_root.as_deref(), Some("/srv/restricted"));
+}
+
+/// Absent by default - the option is opt-in, and a server that never receives
+/// it must not invent a confinement root.
+#[test]
+fn long_flags_default_confine_root_is_absent() {
+    let args = vec![OsString::from("--server")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.confine_root.is_none());
+}
+
 #[test]
 fn parse_server_args_skips_secluded_flag() {
     let args = vec![
