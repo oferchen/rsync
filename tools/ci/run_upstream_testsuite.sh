@@ -67,23 +67,40 @@ else
     upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
     upstream_label="release ${upstream_version}"
 fi
+# Echo $1 unchanged when it is empty or already absolute, otherwise resolved
+# against the workspace root.
+#
+# EVERY operator-supplied path must go through this before it reaches
+# runtests.py. The suite is invoked from inside the extracted upstream tree
+# (`cd "$upstream_src_dir"` below) and the individual test scripts cd further
+# still, so a relative path handed across that boundary resolves against the
+# wrong directory. MEASURED: `--expect-result tools/ci/upstream-3.5.0-expect.
+# root.txt` reached runtests.py verbatim and died with FileNotFoundError -
+# after this script had already stat'd the very same file successfully from
+# the workspace root, which is why the validation block above it could not
+# catch the problem it was standing next to.
+absolutize_under_workspace() {
+    case "$1" in
+        '' | /*) printf '%s' "$1" ;;
+        *) printf '%s/%s' "$workspace_root" "$1" ;;
+    esac
+}
+
 # Optional peer binary for the Python suite's --rsync-bin2: the rsync used for
 # the daemon side and for remote-shell --rsync-path. Setting it to a real
 # upstream build is what turns the run into a version-MIXING run (oc on one end
 # of the wire, upstream on the other) rather than oc-against-oc.
-upstream_peer_bin="${UPSTREAM_PEER_BIN:-}"
+upstream_peer_bin="$(absolutize_under_workspace "${UPSTREAM_PEER_BIN:-}")"
 # Expected-outcome manifest (runtests.py --expect-result). When set, ONLY the
 # listed tests run and every outcome must match, an unexpected PASS included.
-expect_result_file="${EXPECT_RESULT:-}"
+expect_result_file="$(absolutize_under_workspace "${EXPECT_RESULT:-}")"
 # Composable expected-skip spec (runtests.py --expect-skipped), e.g.
-# "@testsuite/skiplist/common.txt,@testsuite/skiplist/linux.txt".
+# "@testsuite/skiplist/common.txt,@testsuite/skiplist/linux.txt". Deliberately
+# NOT absolutized: its entries are `@`-prefixed and are documented relative to
+# the upstream tree, which is the cwd runtests.py already runs in.
 expect_skipped_spec="${EXPECT_SKIPPED:-}"
-oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
-# Resolve to absolute path - test scripts cd into the upstream source tree,
-# so a relative OC_RSYNC_BIN would break.
-if [[ "$oc_rsync_bin" != /* ]]; then
-    oc_rsync_bin="${workspace_root}/${oc_rsync_bin}"
-fi
+oc_rsync_bin="$(absolutize_under_workspace \
+    "${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}")"
 known_failures_conf="${workspace_root}/tools/ci/upstream_testsuite_known_failures.conf"
 log_root="${workspace_root}/target/interop/upstream-testsuite"
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
