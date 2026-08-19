@@ -60,7 +60,7 @@ use filters::FilterRule;
 use logging::info_log;
 use protocol::flist::FileListWriter;
 
-use super::overrides::{backup_rename, create_backup_hard_link, create_hard_link};
+use super::overrides::{backup_rename, create_backup_hard_link};
 #[cfg(target_os = "linux")]
 use super::overrides::{cached_parent_device, same_filesystem};
 
