@@ -85,7 +85,8 @@ pub fn workspace_bin(name: &str) -> PathBuf {
 /// the binary without one, which is what every CI cell produces. The per-unit
 /// `deps/<crate>-<hash>.d` is *not* a substitute: measured on this workspace it
 /// names 3 sources (`src/bin/oc-rsync.rs` and its two `include!`d files) where
-/// the aggregated file names 1451. Checking against it would pass while the
+/// the aggregated file names 1461, of which 1451 are `.rs` spanning every
+/// workspace crate. Checking against it would pass while the
 /// binary was stale with respect to every workspace crate - precisely the case
 /// this guard exists to catch - so it would be a false oracle rather than a
 /// weaker one. Absent evidence is reported as absent by doing nothing.
@@ -381,6 +382,59 @@ mod tests {
             deps,
             vec![PathBuf::from("/my src/lib.rs"), PathBuf::from("/other.rs")]
         );
+    }
+
+    /// One line of genuine `cargo build` output for the `oc-rsync` bin,
+    /// abridged to a representative entry per category and with the checkout
+    /// root replaced. Verbatim in every respect the parser can observe: one
+    /// line, one target, space-separated absolute paths, no continuations.
+    ///
+    /// Cargo aggregates path dependencies into this file - the real one lists
+    /// 1461 entries across every workspace crate - which is what makes it a
+    /// usable source set. The per-unit `deps/` file lists 3.
+    const REAL_DEPFILE_LINE: &str = concat!(
+        "/root/target/debug/oc-rsync:",
+        " /root/.git/HEAD /root/.git/packed-refs",
+        " /root/Cargo.toml",
+        " /root/crates/apple-fs/README.md",
+        " /root/crates/filters/src/lib.rs",
+        " /root/src/bin/oc-rsync.rs /root/src/bin/client.rs"
+    );
+
+    #[test]
+    fn genuine_cargo_output_parses_into_the_expected_source_set() {
+        // Why: every other parser case here is synthetic, and the one test
+        // that reads the real file on disk cannot run where no `cargo build`
+        // has happened - which includes CI. Without this, nothing pins the
+        // parser against Cargo's actual format anywhere automatic.
+        let deps: Vec<PathBuf> = dependencies(REAL_DEPFILE_LINE).collect();
+
+        assert!(
+            !deps
+                .iter()
+                .any(|p| p.ends_with("oc-rsync") && p.starts_with("/root/target")),
+            "the target itself must not be parsed as one of its own sources: {deps:?}"
+        );
+        assert!(
+            !deps
+                .iter()
+                .any(|p| p.components().any(|c| c.as_os_str() == ".git")),
+            "revision metadata must be filtered - it changes on every commit: {deps:?}"
+        );
+        // Non-`.rs` entries are real build inputs and must survive: a manifest
+        // or an included README edit does rebuild the binary.
+        for expected in [
+            "/root/Cargo.toml",
+            "/root/crates/apple-fs/README.md",
+            "/root/crates/filters/src/lib.rs",
+            "/root/src/bin/oc-rsync.rs",
+        ] {
+            assert!(
+                deps.contains(&PathBuf::from(expected)),
+                "{expected} missing from parsed set: {deps:?}"
+            );
+        }
+        assert_eq!(deps.len(), 5, "exactly the non-.git entries: {deps:?}");
     }
 
     #[test]
