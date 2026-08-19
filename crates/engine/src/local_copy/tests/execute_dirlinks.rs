@@ -188,9 +188,13 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    let real_target = temp.path().join("real-target");
+    // Relative, in-tree target: the only shape upstream's confined walk
+    // follows. `ds_descend` refuses any absolute target with ELOOP
+    // (rsync-3.5.0/syscall.c:2953), so an absolute one exits 23 and writes
+    // nothing - the refusal is pinned separately below.
+    let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -512,10 +516,12 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
     // real-sub at destination is an actual directory
     fs::create_dir(dest_root.join("real-sub")).expect("create real dest subdir");
 
-    // link-sub at destination is a symlink to a real directory
-    let link_target = temp.path().join("link-target");
+    // link-sub at destination is a symlink to a real directory. The target is
+    // relative and in-tree because upstream's confined walk refuses an absolute
+    // one outright (rsync-3.5.0/syscall.c:2953 ds_descend).
+    let link_target = dest_root.join("link-target");
     fs::create_dir(&link_target).expect("create link target");
-    symlink(&link_target, dest_root.join("link-sub")).expect("create symlink link-sub");
+    symlink("link-target", dest_root.join("link-sub")).expect("create symlink link-sub");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
