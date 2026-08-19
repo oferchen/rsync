@@ -420,12 +420,22 @@ impl DestinationWriteGuard {
     /// directory listing. Calling [`commit`](Self::commit) materializes it at the
     /// destination using `linkat(2)`.
     ///
+    /// `dest_root` confines that `linkat` exactly as it confines the commit
+    /// rename: this strategy publishes the file under its final name with
+    /// `linkat` instead of `rename`, so it is the same commit decision and
+    /// needs the same anchoring. Leaving it unconfined made the escape
+    /// platform-split - `O_TMPFILE` exists only on Linux, so the destination
+    /// tree was protected on macOS and open on Linux.
+    ///
     /// # Errors
     ///
     /// Returns an error if `O_TMPFILE` is not supported or the directory is not
     /// writable. Callers should fall back to [`new`](Self::new) on failure.
     #[cfg(target_os = "linux")]
-    pub fn new_anonymous(destination: &Path) -> Result<(Self, fs::File), LocalCopyError> {
+    pub fn new_anonymous(
+        destination: &Path,
+        dest_root: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
         let dir = destination.parent().unwrap_or(Path::new("."));
         let file = fast_io::open_anonymous_tmpfile(dir, 0o644)
             .map_err(|error| LocalCopyError::io("open anonymous temp file", destination, error))?;
@@ -439,11 +449,7 @@ impl DestinationWriteGuard {
                 final_path: destination.to_path_buf(),
                 strategy: GuardStrategy::Anonymous { file: Some(file) },
                 committed: false,
-                // The anonymous path commits with `linkat(2)` against the final
-                // path, not a rename, so it does not go through
-                // `hardened_rename`. Confining that sink is task 605's
-                // leaf-sink sweep, not this rename fix.
-                dest_root: None,
+                dest_root: dest_root.map(Path::to_path_buf),
             },
             writer,
         ))
@@ -616,7 +622,14 @@ impl DestinationWriteGuard {
         })?;
         // Remove existing destination so linkat does not fail with EEXIST.
         remove_existing_destination(&self.final_path)?;
-        fast_io::link_anonymous_tmpfile(&file, &self.final_path).map_err(|error| {
+        let result = match self.dest_root.as_deref() {
+            Some(root) => {
+                use std::os::fd::AsFd;
+                fast_io::confined_link_anonymous(file.as_fd(), root, &self.final_path)
+            }
+            None => fast_io::link_anonymous_tmpfile(&file, &self.final_path),
+        };
+        result.map_err(|error| {
             LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
         })
     }
@@ -1073,7 +1086,7 @@ mod tests {
                 return;
             }
 
-            let (guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, _file) = DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             assert!(guard.is_anonymous());
             // Anonymous files have no visible staging path - staging_path returns final_path.
             assert_eq!(guard.staging_path(), guard.final_path());
@@ -1088,7 +1101,8 @@ mod tests {
                 return;
             }
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"anonymous content").expect("write");
             drop(file);
 
@@ -1110,7 +1124,8 @@ mod tests {
 
             fs::write(&dest, b"old").expect("create existing");
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"new").expect("write");
             drop(file);
 
@@ -1126,7 +1141,8 @@ mod tests {
                 return;
             }
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"discarded").expect("write");
             drop(file);
             guard.discard();
@@ -1146,7 +1162,8 @@ mod tests {
             }
 
             {
-                let (_guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+                let (_guard, _file) =
+                    DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             }
 
             assert!(!dest.exists());

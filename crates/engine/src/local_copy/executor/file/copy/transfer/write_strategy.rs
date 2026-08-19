@@ -175,7 +175,10 @@ pub(in crate::local_copy) fn open_destination_writer(
         WriteStrategy::AnonymousTempFile => {
             #[cfg(target_os = "linux")]
             {
-                match DestinationWriteGuard::new_anonymous(destination) {
+                match DestinationWriteGuard::new_anonymous(
+                    destination,
+                    Some(context.destination_root()),
+                ) {
                     Ok((new_guard, file)) => {
                         debug_log!(
                             Io,

@@ -44,8 +44,8 @@ mod unlink;
 mod tests;
 
 pub use create::{
-    linkat, linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, symlinkat,
-    symlinkat_via_sandbox_or_fallback,
+    confined_link_anonymous, linkat, linkat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
 };
 pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_nofollow};

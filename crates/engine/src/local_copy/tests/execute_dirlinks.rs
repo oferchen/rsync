@@ -620,6 +620,16 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
 /// 4. The source file is modified slightly, triggering a delta (not whole-file) transfer.
 /// 5. The second sync with `-K` must succeed - the receiver sandbox (RESOLVE_BENEATH)
 ///    must resolve the path through the directory symlink correctly for verification.
+///
+/// The symlink target is **relative and in-tree**, which is the shape upstream
+/// serves: `ds_descend` follows a relative target and refuses an absolute one.
+/// An out-of-tree target is the refusal case, pinned by
+/// [`keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree`];
+/// the two together are the discriminating pair, since a fixture that merely
+/// failed to transfer anything would satisfy the refusal test alone.
+///
+/// upstream: `rsync-3.5.0/syscall.c:2961` `ds_descend()` - measured against the
+/// real 3.5.0 binary: this shape exits 0 and updates through the link.
 #[cfg(unix)]
 #[test]
 fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
@@ -632,9 +642,10 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    let real_target = temp.path().join("real-target");
+    // Relative, in-tree target: the shape upstream's confined walk follows.
+    let real_target = dest_root.join("real-target");
     fs::create_dir_all(&real_target).expect("create real target");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     // Write a file large enough to exercise the delta algorithm (>= 2 blocks).
     // The file has a prefix that stays constant and a suffix that changes,
@@ -720,5 +731,62 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     assert!(
         subdir_meta.file_type().is_symlink(),
         "subdir should remain a symlink after delta transfer with -K"
+    );
+}
+
+/// `-K` must **not** publish through a destination directory symlink whose
+/// target is absolute and outside the transfer tree.
+///
+/// This is the sibling of
+/// [`keep_dirlinks_delta_transfer_through_symlink_succeeds`]: the two fixtures
+/// differ only in the symlink's target, and upstream 3.5.0 answers them
+/// differently. `ds_descend` follows a relative in-tree target and refuses an
+/// absolute one with `ELOOP`, so `-K` does not license an escape - it only
+/// licenses treating an in-tree symlinked directory as a directory.
+///
+/// Measured directly against the real `rsync 3.5.0` binary on both macOS and
+/// Linux: this shape exits 23 with "Too many levels of symbolic links" and
+/// leaves the out-of-tree target byte-for-byte untouched.
+///
+/// upstream: `rsync-3.5.0/syscall.c:2953` `ds_descend()` - "absolute target:
+/// refuse".
+#[cfg(unix)]
+#[test]
+fn keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // Absolute target OUTSIDE dest_root - the escape upstream refuses.
+    let outside = temp.path().join("outside-target");
+    fs::create_dir_all(&outside).expect("create outside target");
+    symlink(&outside, dest_root.join("subdir")).expect("create escaping symlink");
+
+    let source_file = source_root.join("subdir/file.bin");
+    fs::write(&source_file, b"payload-from-source").expect("write source file");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    );
+
+    assert!(
+        result.is_err(),
+        "-K must not publish through an out-of-tree destination symlink"
+    );
+    assert!(
+        !outside.join("file.bin").exists(),
+        "the payload escaped the destination tree into {}",
+        outside.display()
     );
 }

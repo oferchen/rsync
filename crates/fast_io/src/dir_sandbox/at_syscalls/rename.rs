@@ -210,13 +210,20 @@ pub fn renameat_via_sandbox_or_fallback(
     std::fs::rename(old_link_path, new_link_path)
 }
 
-/// One endpoint of a [`confined_rename`], already reduced to a dirfd plus a
-/// name to pass to `renameat(2)`.
+/// One endpoint of a confined commit, already reduced to a dirfd plus a name to
+/// pass to the `*at` syscall.
 ///
 /// The [`Anchored`](Self::Anchored) arm owns the walked [`DirSandbox`], so the
 /// parent descriptor stays open for the duration of the syscall.
+///
+/// Shared by [`confined_rename`] and by the `O_TMPFILE` `linkat(2)` commit
+/// ([`super::create::confined_link_anonymous`]): both publish a staged file
+/// under its final name, so both must anchor that name the same way. Keeping
+/// one owner of the rule is what stops the two commit strategies drifting -
+/// the Linux `O_TMPFILE` path silently skipped confinement while the named-temp
+/// rename enforced it, so the same escape was open on one platform only.
 #[cfg(unix)]
-enum RenameEndpoint<'a> {
+pub(super) enum ConfinedEndpoint<'a> {
     /// The endpoint lives beneath the confinement root; `sandbox` holds the
     /// walked parent and `leaf` is the final component.
     Anchored {
@@ -236,22 +243,25 @@ enum RenameEndpoint<'a> {
 /// [`DirSandbox::open_dest_anchor_confined`], which follows relative in-tree
 /// symlinks and refuses absolute targets and climbs above the anchor.
 ///
-/// Anything else degrades to [`RenameEndpoint::Ambient`] - the pre-existing
+/// Anything else degrades to [`ConfinedEndpoint::Ambient`] - the pre-existing
 /// path-based behaviour for that side - rather than failing the rename.
 #[cfg(unix)]
-fn anchor_rename_endpoint<'a>(root: &Path, path: &'a Path) -> io::Result<RenameEndpoint<'a>> {
+pub(super) fn anchor_confined_endpoint<'a>(
+    root: &Path,
+    path: &'a Path,
+) -> io::Result<ConfinedEndpoint<'a>> {
     use crate::dir_sandbox::{ConfinePolicy, DirSandbox, NoExclude};
 
     let Ok(relative) = path.strip_prefix(root) else {
-        return Ok(RenameEndpoint::Ambient(path.as_os_str()));
+        return Ok(ConfinedEndpoint::Ambient(path.as_os_str()));
     };
     let Some(leaf) = relative.file_name() else {
-        return Ok(RenameEndpoint::Ambient(path.as_os_str()));
+        return Ok(ConfinedEndpoint::Ambient(path.as_os_str()));
     };
     let parent = relative.parent().unwrap_or_else(|| Path::new(""));
     let sandbox =
         DirSandbox::open_dest_anchor_confined(root, parent, ConfinePolicy::confined(NoExclude))?;
-    Ok(RenameEndpoint::Anchored { sandbox, leaf })
+    Ok(ConfinedEndpoint::Anchored { sandbox, leaf })
 }
 
 /// Rename `old_path` to `new_path`, confining **each side independently**
@@ -297,16 +307,16 @@ pub fn confined_rename(
     #[allow(unsafe_code)]
     let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
 
-    let old = anchor_rename_endpoint(root, old_path)?;
-    let new = anchor_rename_endpoint(root, new_path)?;
+    let old = anchor_confined_endpoint(root, old_path)?;
+    let new = anchor_confined_endpoint(root, new_path)?;
 
     let (old_dirfd, old_name) = match &old {
-        RenameEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
-        RenameEndpoint::Ambient(path) => (cwd, *path),
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
     };
     let (new_dirfd, new_name) = match &new {
-        RenameEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
-        RenameEndpoint::Ambient(path) => (cwd, *path),
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
     };
 
     renameat(old_dirfd, old_name, new_dirfd, new_name, replace)

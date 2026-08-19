@@ -336,3 +336,77 @@ pub fn linkat_via_sandbox_or_fallback(
     }
     crate::hard_link(leader_path, new_path)
 }
+
+/// Publish an anonymous `O_TMPFILE` inode at `dest`, confining `dest`'s parent
+/// beneath `root`.
+///
+/// This is the `linkat(2)` counterpart of
+/// [`confined_rename`](super::rename::confined_rename). The `O_TMPFILE` write
+/// strategy stages the payload in an unnamed inode and gives it a name only at
+/// commit, so `linkat` - not `rename` - is the operation that publishes the
+/// file. It therefore needs the same confinement: without it a destination
+/// parent flipped to a symlink between the decision to commit and the syscall
+/// redirects the transferred file outside the tree, which is the escape
+/// upstream's `rename-fullpath-symlink-race` test demonstrates.
+///
+/// Only the destination is anchored. The source is the `/proc/self/fd/N` magic
+/// link naming the staged inode - not a tree path - and `AT_SYMLINK_FOLLOW` is
+/// required for the kernel to resolve it, so confining it is meaningless.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:676` `do_link_at()` - resolves the parent of each
+///   side and issues `linkat` against the resulting dirfd.
+/// - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk that
+///   refuses an absolute symlink target.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component of the destination parent is a refused symlink
+///   or a climb above `root`. Deliberately **not** `EXDEV`, which callers treat
+///   as cross-device and answer with a copy+remove fallback.
+/// - Otherwise the `linkat(2)` errno verbatim, including `EEXIST` when `dest`
+///   already exists and a genuine `EXDEV`.
+#[cfg(unix)]
+pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path) -> io::Result<()> {
+    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+
+    let proc_path = format!("/proc/self/fd/{}", staged.as_raw_fd());
+    let c_old = CString::new(proc_path).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    let endpoint = anchor_confined_endpoint(root, dest)?;
+    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
+    // `*at` syscall; it is never closed and outlives any borrow of it.
+    #[allow(unsafe_code)]
+    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let (new_dirfd, new_name) = match &endpoint {
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
+    };
+    let c_new = CString::new(new_name.as_bytes())
+        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    // SAFETY:
+    // - `c_old`/`c_new` are valid NUL-terminated C strings borrowed for the
+    //   duration of the call; the kernel does not retain the pointers.
+    // - `new_dirfd` is either the walked parent (kept open by `endpoint`) or
+    //   `AT_FDCWD`; both outlive the syscall.
+    // - `AT_SYMLINK_FOLLOW` is required so the kernel resolves the
+    //   `/proc/self/fd/N` magic link to the staged inode.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::linkat(
+            libc::AT_FDCWD,
+            c_old.as_ptr(),
+            new_dirfd.as_raw_fd(),
+            c_new.as_ptr(),
+            libc::AT_SYMLINK_FOLLOW,
+        )
+    };
+
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
