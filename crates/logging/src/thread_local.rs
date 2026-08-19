@@ -18,10 +18,11 @@
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::log_code::LogCode;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 thread_local! {
     static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
+    static QUIET: Cell<bool> = const { Cell::new(false) };
     #[allow(clippy::missing_const_for_thread_local)]
     static EVENTS: RefCell<Vec<DiagnosticEvent>> = RefCell::new(Vec::new());
 }
@@ -76,6 +77,28 @@ pub fn init(config: VerbosityConfig) {
     VERBOSITY.with(|v| {
         *v.borrow_mut() = config;
     });
+}
+
+/// Record whether `-q` / `--quiet` was requested, for the current thread.
+///
+/// Upstream keeps `quiet` as a global of its own, separate from `verbose` and
+/// from `info_levels[]`, and consults it in exactly one place: the `FINFO` arm
+/// of `rwrite()` returns without writing (upstream: log.c:344-345). Anything
+/// that only folds `--quiet` into `verbose = 0` cannot express a notice
+/// upstream prints at default verbosity and suppresses only under `-q` - the
+/// two states become indistinguishable.
+pub fn set_quiet(quiet: bool) {
+    QUIET.with(|q| q.set(quiet));
+}
+
+/// Whether `FINFO` output is suppressed on this thread.
+///
+/// The single question a producer or renderer should ask before emitting an
+/// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
+// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
+#[must_use]
+pub fn finfo_suppressed() -> bool {
+    QUIET.with(Cell::get)
 }
 
 /// Check if the info flag is at or above the specified level.

@@ -79,11 +79,15 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
         // rule; a second copy here is what made #352 and #357 two separate
         // bugs instead of one.
         let ctx = logging::StreamContext {
-            // This renderer runs after the CLI has already folded `--quiet`
-            // into the verbosity level, so the events that reach it are
-            // pre-filtered; passing `quiet: false` keeps that behaviour
-            // unchanged. Wiring the real flag through is task #346.
-            quiet: false,
+            // upstream: log.c:345 `if (quiet)` - the FINFO arm of rwrite()
+            // returns without writing when quiet is set. Folding
+            // `--quiet` into `verbose = 0` at parse time silences only the
+            // verbosity-gated events; a notice upstream prints at DEFAULT
+            // verbosity - `skipping non-regular file "%s"` under
+            // `INFO_GTE(NONREG, 1)`, which `info_verbosity[0]` enables - still
+            // reaches this renderer and must be suppressed here, where
+            // upstream suppresses it.
+            quiet: logging::finfo_suppressed(),
             // `Never` and `Default` select the same stream (log.c:253 keys on
             // `== 1`), so a caller that only knows the boolean loses nothing
             // here. The tri-state is available for callers that have it.
@@ -334,56 +338,62 @@ mod tests {
     fn test_renderer_delegates_every_code_to_the_shared_funnel() {
         for code in LogCode::ALL {
             for msgs2stderr in [false, true] {
-                let ctx = logging::StreamContext {
-                    quiet: false,
-                    msgs2stderr: if msgs2stderr {
-                        logging::Msgs2Stderr::Always
-                    } else {
-                        logging::Msgs2Stderr::Default
-                    },
-                    log_destination: false,
-                };
-                let events = vec![DiagnosticEvent::Info {
-                    flag: InfoFlag::Misc,
-                    level: 1,
-                    code,
-                    message: "probe".to_owned(),
-                }];
-                let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-                let result =
-                    render_diagnostic_events(&events, &mut stdout, &mut stderr, msgs2stderr);
+                for quiet in [false, true] {
+                    logging::set_quiet(quiet);
+                    let ctx = logging::StreamContext {
+                        quiet,
+                        msgs2stderr: if msgs2stderr {
+                            logging::Msgs2Stderr::Always
+                        } else {
+                            logging::Msgs2Stderr::Default
+                        },
+                        log_destination: false,
+                    };
+                    let events = vec![DiagnosticEvent::Info {
+                        flag: InfoFlag::Misc,
+                        level: 1,
+                        code,
+                        message: "probe".to_owned(),
+                    }];
+                    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+                    let result =
+                        render_diagnostic_events(&events, &mut stdout, &mut stderr, msgs2stderr);
 
-                match logging::message_stream(code, ctx) {
-                    Ok(logging::MessageStream::Stdout) => {
-                        assert!(result.is_ok(), "{code} must render");
-                        assert!(
-                            String::from_utf8_lossy(&stdout).contains("probe"),
-                            "{code} belongs on stdout with msgs2stderr={msgs2stderr}",
-                        );
-                        assert!(stderr.is_empty(), "{code} must not also hit stderr");
-                    }
-                    Ok(logging::MessageStream::Stderr) => {
-                        assert!(result.is_ok(), "{code} must render");
-                        assert!(
-                            String::from_utf8_lossy(&stderr).contains("probe"),
-                            "{code} belongs on stderr with msgs2stderr={msgs2stderr}",
-                        );
-                        assert!(stdout.is_empty(), "{code} must not also hit stdout");
-                    }
-                    Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {
-                        assert!(result.is_ok(), "{code} must render");
-                        assert!(
-                            stdout.is_empty() && stderr.is_empty(),
-                            "{code} must emit nothing"
-                        );
-                    }
-                    Err(_) => {
-                        assert!(result.is_err(), "{code} must be rejected, not rendered");
-                        assert!(stdout.is_empty(), "a rejected code must not reach stdout");
+                    match logging::message_stream(code, ctx) {
+                        Ok(logging::MessageStream::Stdout) => {
+                            assert!(result.is_ok(), "{code} must render");
+                            assert!(
+                                String::from_utf8_lossy(&stdout).contains("probe"),
+                                "{code} belongs on stdout with msgs2stderr={msgs2stderr}",
+                            );
+                            assert!(stderr.is_empty(), "{code} must not also hit stderr");
+                        }
+                        Ok(logging::MessageStream::Stderr) => {
+                            assert!(result.is_ok(), "{code} must render");
+                            assert!(
+                                String::from_utf8_lossy(&stderr).contains("probe"),
+                                "{code} belongs on stderr with msgs2stderr={msgs2stderr}",
+                            );
+                            assert!(stdout.is_empty(), "{code} must not also hit stdout");
+                        }
+                        Ok(
+                            logging::MessageStream::LogOnly | logging::MessageStream::Suppressed,
+                        ) => {
+                            assert!(result.is_ok(), "{code} must render");
+                            assert!(
+                                stdout.is_empty() && stderr.is_empty(),
+                                "{code} must emit nothing"
+                            );
+                        }
+                        Err(_) => {
+                            assert!(result.is_err(), "{code} must be rejected, not rendered");
+                            assert!(stdout.is_empty(), "a rejected code must not reach stdout");
+                        }
                     }
                 }
             }
         }
+        logging::set_quiet(false);
     }
 
     /// `--msgs-to-stderr` moves the stdout-bound codes only; a warning was

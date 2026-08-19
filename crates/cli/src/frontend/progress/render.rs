@@ -1167,17 +1167,17 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedDirectory => {
-                // upstream: flist.c:1338 and flist.c:2452 -
-                // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare
-                // relative name with no surrounding quotes and no trailing
-                // "(no recursion)" suffix.
-                writeln_wrapped(
-                    stdout,
-                    "skipping directory ",
-                    event.relative_path(),
-                    escape,
-                    "",
-                )?;
+                // Deliberately silent here, for the same reason as
+                // `SkippedNonRegular` above. Upstream gates the notice on
+                // `!xfer_dirs` and nothing else - no INFO_GTE, no verbosity
+                // test - so it prints at DEFAULT verbosity, where this
+                // renderer never runs: the event log itself is only collected
+                // when `verbosity > 0 || progress || list_only`
+                // (core: client/config/client/output.rs `collect_events`), so
+                // at `-q` and at the default the record never reaches here.
+                // The engine emits it on the info channel instead
+                // (context_impl/reporting.rs), which is where `--quiet` can
+                // still suppress it via `message_stream`.
                 continue;
             }
             ClientEventKind::SkippedUnsafeSymlink => {
@@ -1503,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_directory_matches_upstream_bare_message() {
+    fn skipped_directory_renders_nothing_because_the_engine_owns_the_notice() {
         let event = ClientEvent::for_test(
             PathBuf::from("subdir"),
             ClientEventKind::SkippedDirectory,
@@ -1511,11 +1511,20 @@ mod tests {
             Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
             LocalCopyChangeSet::new(),
         );
-        // upstream: flist.c:1338 and flist.c:2452 emit
-        // `rprintf(FINFO, "skipping directory %s\n", ...)` - a bare relative
-        // name with no surrounding quotes and no "(no recursion)" suffix. Byte
-        // fidelity with upstream requires exactly this form.
-        assert_eq!(render_verbose(event), "skipping directory subdir\n");
+        // Upstream gates `skipping directory %s` on `!xfer_dirs` alone, so it
+        // prints at DEFAULT verbosity - but this renderer only ever runs over a
+        // collected event log, and collection requires
+        // `verbosity > 0 || progress || list_only`. Rendering the notice here
+        // therefore emitted it at `-v` and above while staying silent in
+        // exactly the case upstream prints. The notice now comes from
+        // `record_skipped_directory` in the engine; a second copy here would
+        // duplicate it at `-v`.
+        //
+        // The upstream byte form - bare relative name, no quotes, no
+        // "(no recursion)" suffix - is pinned end to end against the real
+        // binary's stdout by `skipping_directory_prints_without_name_output`,
+        // which compares whole lines, not by this unit.
+        assert_eq!(render_verbose(event), "");
     }
 
     /// Renders the summary trailer for an empty (default) transfer at the given
