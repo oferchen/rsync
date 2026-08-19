@@ -53,13 +53,20 @@ impl<'a> CopyContext<'a> {
     /// Whether a symlinked source *leaf* should be followed when its content is
     /// opened.
     ///
-    /// upstream: `sender.c:do_open_checklinks` follows the leaf with a plain
-    /// `do_open` under `--copy-links` / `--copy-unsafe-links` and otherwise
-    /// uses `do_open_nofollow`. This is a separate decision from the ancestor
-    /// confinement: a symlink-following mode is an operator instruction and
-    /// survives confinement rather than being downgraded.
+    /// upstream: `sender.c:685` gates the confined open on
+    /// `!copy_links && !copy_unsafe_links && !copy_dirlinks && !insecure_links`
+    /// and lets every other case fall through to the unconfined
+    /// `do_open_checklinks`, which follows the leaf. All three link-following
+    /// options belong in the predicate: `-k` follows a symlinked *parent*, so
+    /// confining beneath the transfer root would refuse exactly the traversal
+    /// the operator asked for.
+    ///
+    /// `--insecure-links` is upstream's fourth term; oc does not implement that
+    /// option yet, so it cannot be spelled here.
     pub(super) const fn follow_source_symlinks(&self) -> bool {
-        self.options.copy_links_enabled() || self.options.copy_unsafe_links_enabled()
+        self.options.copy_links_enabled()
+            || self.options.copy_unsafe_links_enabled()
+            || self.options.copy_dirlinks_enabled()
     }
 
     pub(super) const fn sparse_enabled(&self) -> bool {
