@@ -11,6 +11,35 @@ use super::parse::{
 };
 use super::read::{read_rules, read_rules_recursive};
 
+/// Asserts a rule was rejected for an invalid modifier without echoing the rule
+/// text or naming the offending character.
+///
+/// upstream: exclude.c:135 renders `filter_rule_err`'s text through `rule_text`,
+/// which substitutes `<rule from FILE line N>` whenever the rule came from a
+/// file, and exclude.c:127-131 drops the `'%c' at position %d` detail for the
+/// same reason - the peer chooses which file gets merged, so both the text and
+/// any offset into it are peer-controlled.
+///
+/// MEASURED against rsync 3.5.0, the same rule reached two ways:
+///   merge file -> `invalid modifier in filter rule: <rule from f.rules line 1>`
+///   argument   -> `invalid modifier 'e' at position 1 in filter rule: -e *.log`
+///
+/// These parsers only ever see file content - every production caller passes a
+/// merge file's bytes (`chain/mod.rs`, `merge/read.rs`) - so the redacted arm is
+/// the only reachable one here. The which-character discrimination is pinned on
+/// the argument-sourced parser instead, where upstream keeps it verbatim:
+/// `crates/cli/src/frontend/filter_rules/parsing/helpers.rs`.
+fn assert_modifier_rejected_without_echo(rendered: &str, rule: &str) {
+    assert!(
+        rendered.contains("invalid modifier in filter rule: <rule from"),
+        "expected the redacted upstream wording for `{rule}`, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains(rule),
+        "must not echo the peer-chosen rule text `{rule}`, got: {rendered}"
+    );
+}
+
 #[test]
 fn parse_include_short() {
     let rules = parse_rules("+ *.txt", Path::new("test")).unwrap();
@@ -427,10 +456,7 @@ fn parse_modifier_unknown_char_without_separator_errors() {
     // perishable modifier and the following `a` hits the `invalid:` label
     // rather than being treated as the start of the pattern.
     let err = parse_rules("-!/path/*.txt", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'a'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-!/path/*.txt");
 }
 
 #[test]
@@ -514,10 +540,7 @@ fn parse_modifiers_non_merge_flags() {
 #[test]
 fn parse_exclude_self_modifier_rejected_on_non_merge_rule() {
     let err = parse_rules("-e *.bak", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'e'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-e *.bak");
 }
 
 /// `e` word-split combinations on a non-merge rule are equally invalid: the
@@ -525,10 +548,7 @@ fn parse_exclude_self_modifier_rejected_on_non_merge_rule() {
 #[test]
 fn parse_exclude_self_modifier_rejected_with_word_split() {
     let err = parse_rules("-ew foo bar", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'e'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-ew foo bar");
 }
 
 /// `e` is accepted on a dir-merge rule (upstream sets `FILTRULE_EXCLUDE_SELF`
@@ -560,10 +580,7 @@ fn parse_exclude_self_modifier_accepted_on_merge_rule() {
 #[test]
 fn parse_no_inherit_modifier_rejected_on_non_merge_rule() {
     let err = parse_rules("-n *.tmp", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'n'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-n *.tmp");
 }
 
 /// `n` parses on a dir-merge rule, where it maps to FILTRULE_NO_INHERIT.
@@ -585,20 +602,14 @@ fn parse_no_inherit_modifier_accepted_on_dir_merge_rule() {
 #[test]
 fn parse_word_split_modifier_rejected_on_non_merge_rule() {
     let err = parse_rules("-w foo bar baz", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'w'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-w foo bar baz");
 }
 
 /// `w` on an include rule is equally invalid.
 #[test]
 fn parse_word_split_include_rejected_on_non_merge_rule() {
     let err = parse_rules("+w *.rs *.toml", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'w'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "+w *.rs *.toml");
 }
 
 /// `w` parses on a dir-merge rule (FILTRULE_WORD_SPLIT), the only context
@@ -659,10 +670,7 @@ fn parse_no_prefixes_modifier_on_non_merge_errors() {
     // upstream: exclude.c:1197-1199 - `-`/`+` require FILTRULE_MERGE_FILE, so a
     // plain exclude rule with `-` in its modifiers is invalid.
     let err = parse_rules("-- pattern", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier '-'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-- pattern");
 }
 
 #[test]
@@ -670,10 +678,7 @@ fn parse_negate_modifier_on_merge_errors() {
     // upstream: exclude.c:1191-1196 - `!` is meaningless on a merge default and
     // is rejected on merge / dir-merge rules.
     let err = parse_rules(":! .filt", Path::new("test")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier '!'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), ":! .filt");
 }
 
 #[test]
@@ -919,11 +924,7 @@ fn parse_rejects_s_modifier_on_side_specific_prefix() {
     // H/S/P/R prefixes and rejects 's' or 'r' modifiers on them.
     for line in ["Hs foo", "Ss foo", "Ps foo", "Rs foo"] {
         let err = parse_rules(line, Path::new("test")).unwrap_err();
-        assert!(
-            err.message.contains("invalid modifier 's'"),
-            "expected rejection for `{line}`, got `{}`",
-            err.message
-        );
+        assert_modifier_rejected_without_echo(&err.message, line);
     }
 }
 
@@ -931,18 +932,14 @@ fn parse_rejects_s_modifier_on_side_specific_prefix() {
 fn parse_rejects_r_modifier_on_side_specific_prefix() {
     for line in ["Hr foo", "Sr foo", "Pr foo", "Rr foo"] {
         let err = parse_rules(line, Path::new("test")).unwrap_err();
-        assert!(
-            err.message.contains("invalid modifier 'r'"),
-            "expected rejection for `{line}`, got `{}`",
-            err.message
-        );
+        assert_modifier_rejected_without_echo(&err.message, line);
     }
 }
 
 #[test]
 fn parse_rejects_side_modifier_with_word_split_on_side_prefix() {
     let err = parse_rules("Hsw foo bar", Path::new("test")).unwrap_err();
-    assert!(err.message.contains("invalid modifier 's'"));
+    assert_modifier_rejected_without_echo(&err.message, "Hsw foo bar");
 }
 
 #[test]
@@ -952,11 +949,7 @@ fn parse_rejects_c_modifier_on_side_specific_prefix() {
     // that rejects `s`/`r` on those prefixes.
     for line in ["HC foo", "SC foo", "PC foo", "RC foo"] {
         let err = parse_rules(line, Path::new("test")).unwrap_err();
-        assert!(
-            err.message.contains("invalid modifier 'C'"),
-            "expected rejection for `{line}`, got `{}`",
-            err.message
-        );
+        assert_modifier_rejected_without_echo(&err.message, line);
     }
 }
 
@@ -966,11 +959,7 @@ fn parse_rejects_c_modifier_after_no_prefixes() {
     // is set by a preceding `-`/`+`, mirroring upstream's prefix/no-prefix
     // incompatibility rather than silently accepting the nonsensical combination.
     let err = parse_rules(":-C", Path::new("test")).unwrap_err();
-    assert!(
-        err.message.contains("invalid modifier 'C'"),
-        "expected rejection for `:-C`, got `{}`",
-        err.message
-    );
+    assert_modifier_rejected_without_echo(&err.message, ":-C");
 }
 
 // upstream: exclude.c:1404-1408 - merge / dir-merge with the `C`

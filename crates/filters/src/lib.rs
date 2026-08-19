@@ -119,6 +119,7 @@ pub mod implied;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;
 mod rule;
+pub mod rule_source;
 mod set;
 mod wildmatch;
 
@@ -135,6 +136,7 @@ pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
+pub use rule_source::RuleSource;
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
 pub use wildmatch::{iwildmatch, wildmatch};
 

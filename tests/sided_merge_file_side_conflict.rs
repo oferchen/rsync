@@ -88,6 +88,51 @@ fn assert_refused(filter: &str, rules_name: &str, rule_line: &str) {
     );
 }
 
+/// The refusal names WHERE the bad rule is, never WHAT it says.
+///
+/// upstream: `filter_rule_err` renders its rule text through `rule_text`
+/// (exclude.c:135), which replaces file-sourced text with `<rule from ...>`
+/// because the peer chooses which file gets merged (exclude.c:49-56). This
+/// guard is unconditionally file-sourced - it fires only when a merge template
+/// names a side AND a rule *inside the merged file* names one - so there is no
+/// argument-sourced case here to keep verbatim.
+#[test]
+fn refusal_reports_where_the_rule_is_not_what_it_says() {
+    let fixture = Fixture::new("f.rules", "-r foo");
+    let (code, text) = fixture.run(".s f.rules");
+    assert_eq!(code, 1, "must still exit 1; got {code}, output: {text}");
+    assert!(
+        text.contains("<rule from f.rules line 1>"),
+        "must name the merge file and line; got: {text}"
+    );
+    assert!(
+        !text.contains("-r foo"),
+        "must not echo the peer-chosen merge-file line; got: {text}"
+    );
+}
+
+/// Non-vacuity companion: the line number is real, not a hardcoded 1.
+///
+/// upstream counts PHYSICAL lines, so the leading comment and blank line both
+/// advance the count (exclude.c:1759-1760 increments before the `;`/`#` and
+/// empty-token filter at :1806). Without this row, numbering only the rules
+/// that parse would pass the test above.
+#[test]
+fn refusal_line_number_counts_comments_and_blanks() {
+    let fixture = Fixture::new("f.rules", "-r foo");
+    fs::write(
+        fixture.dir.path().join("f.rules"),
+        b"# a comment\n\n- keep\n-r foo\n",
+    )
+    .expect("write rules");
+    let (code, text) = fixture.run(".s f.rules");
+    assert_eq!(code, 1, "must exit 1; got {code}, output: {text}");
+    assert!(
+        text.contains("<rule from f.rules line 4>"),
+        "physical line 4, counting the comment and the blank; got: {text}"
+    );
+}
+
 fn assert_accepted(filter: &str, rules_name: &str, rule_line: &str) {
     let fixture = Fixture::new(rules_name, rule_line);
     let (code, text) = fixture.run(filter);
