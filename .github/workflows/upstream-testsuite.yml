@@ -4,6 +4,12 @@ name: Upstream Testsuite (rsync 3.5.0)
 # pass/fail status is visible as a README badge. This is the same suite that
 # CI gates on as the required "upstream testsuite" check, run against upstream
 # rsync 3.5.0's own runtests.py testsuite corpus. Scheduled daily plus on-demand.
+#
+# It must pass the SAME --expect-result manifest ci.yml passes. Without one,
+# runtests.py runs the whole corpus and fails on any failure, so the badge
+# would be permanently red against the known 3.5.0 divergences and would stop
+# carrying information. With it, only a CHANGE in outcome - a regression or an
+# unexpected pass - turns the badge red.
 on:
   workflow_dispatch:
   schedule:
@@ -22,3 +28,4 @@ jobs:
     with:
       upstream_rsync_version: '3.5.0'
       variant: 'nonroot'
+      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt

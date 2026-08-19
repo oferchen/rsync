@@ -4,6 +4,13 @@ name: Upstream Testsuite root (rsync 3.5.0)
 # pass/fail status is visible as a README badge. This re-runs the same 3.5.0
 # runtests.py corpus under passwordless sudo so root-only tests execute
 # (device nodes, ownership, etc.). Scheduled daily plus on-demand.
+#
+# It must pass the SAME --expect-result manifest ci.yml passes, and its OWN
+# one: the two legs run the same 345 tests at different privilege and 40 of
+# them resolve to a different outcome, so the non-root manifest would be wrong
+# for those 40. Without a manifest, runtests.py runs the whole corpus and fails
+# on any failure, so the badge would be permanently red against the known 3.5.0
+# divergences and would stop carrying information.
 on:
   workflow_dispatch:
   schedule:
@@ -22,3 +29,4 @@ jobs:
     with:
       upstream_rsync_version: '3.5.0'
       variant: 'root'
+      expect_result_root: tools/ci/upstream-3.5.0-expect.root.txt
