@@ -134,16 +134,27 @@ fn dependencies(listing: &str) -> impl Iterator<Item = PathBuf> + '_ {
 }
 
 /// Split on unescaped whitespace, turning `\ ` back into a literal space.
+///
+/// A backslash escapes only a space or a line-continuation newline. Anything
+/// else after it is data: Windows dependency paths are written with their
+/// `\` separators unescaped, so consuming the next character unconditionally
+/// would turn `C:\src\lib.rs` into `C:srclib.rs` - a path that never exists
+/// and therefore always looks fresh.
 fn split_escaped(deps: &str) -> impl Iterator<Item = String> + '_ {
     let mut entries = Vec::new();
     let mut current = String::new();
-    let mut chars = deps.chars();
+    let mut chars = deps.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => match chars.next() {
-                // A trailing `\` before a newline continues the dep list.
-                Some('\n') | None => {}
-                Some(escaped) => current.push(escaped),
+            '\\' => match chars.peek() {
+                Some(' ') => {
+                    current.push(' ');
+                    chars.next();
+                }
+                Some('\n') | Some('\r') => {
+                    chars.next();
+                }
+                _ => current.push('\\'),
             },
             c if c.is_whitespace() => {
                 if !current.is_empty() {
