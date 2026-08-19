@@ -332,7 +332,12 @@ pub(in crate::local_copy) fn execute_transfer_once(
         return Ok(TransferOutcome::Complete);
     }
 
-    let mut reader = open_source_file(source, context.open_noatime_enabled())
+    let mut reader = open_source_file(
+        source,
+        context.open_noatime_enabled(),
+        context.source_anchor(),
+        context.follow_source_symlinks(),
+    )
         .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
         append_allowed,
@@ -399,7 +404,17 @@ pub(in crate::local_copy) fn execute_transfer_once(
     };
 
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
-        let file = match open_source_file(override_path, context.open_noatime_enabled()) {
+        // The override is an ALT-BASE candidate (`--copy-dest` / `--link-dest`
+        // after a cross-device degrade), i.e. an operator-named path outside the
+        // source tree. It takes the operator-path resolver, not the transfer-root
+        // confinement, so no anchor is passed here; that routing is the alt-dest
+        // family's own change.
+        let file = match open_source_file(
+            override_path,
+            context.open_noatime_enabled(),
+            None,
+            context.follow_source_symlinks(),
+        ) {
             Ok(file) => file,
             Err(error) => {
                 // upstream: generator.c:931 - rsyserr(FINFO, errno,

@@ -1,4 +1,23 @@
-//! Source file opening with optional `O_NOATIME` support.
+//! Source file opening: symlink-race confinement plus optional `O_NOATIME`.
+//!
+//! Every content read goes through [`open_source_file`], which mirrors the
+//! branch upstream's sender takes before reading a file:
+//!
+//! - the leaf is opened `O_NOFOLLOW` so a final component swapped for a symlink
+//!   is refused, unless `--copy-links` / `--copy-unsafe-links` asked for links
+//!   to be followed. upstream: `sender.c:do_open_checklinks`, which picks
+//!   between `do_open` and `do_open_nofollow`;
+//! - when the operand's transfer root is known, the *parent* components are
+//!   walked confined beneath it, so a directory flipped to a symlink pointing
+//!   outside the source tree between scan and read cannot redirect the read.
+//!   upstream 3.5.0's `symlink-race-source` test covers exactly this: "the
+//!   sender now opens each file's content through the confined
+//!   held-ancestor-dirfd stack anchored at the transfer root".
+//!
+//! The leaf rule is a separate decision from the ancestor rule, which is why
+//! the confined open takes a [`fast_io::LeafPolicy`]: a symlink-following mode
+//! is an operator instruction and survives confinement rather than being
+//! downgraded.
 //!
 //! On Linux/Android, files are opened with `O_NOATIME` when requested to avoid
 //! updating access times during transfers. This mirrors upstream rsync behavior
@@ -15,7 +34,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -44,14 +63,106 @@ static FSYNC_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub(in crate::local_copy) fn open_source_file(
     path: &Path,
     use_noatime: bool,
+    anchor: Option<&Path>,
+    follow_symlinks: bool,
 ) -> io::Result<fs::File> {
-    let file = if use_noatime && let Some(file) = try_open_noatime(path)? {
-        file
-    } else {
-        fs::File::open(path)?
-    };
+    let file = open_source_handle(path, use_noatime, anchor, follow_symlinks)?;
     apply_macos_read_hint(&file);
     Ok(file)
+}
+
+/// Opens the source handle under the confinement and leaf policies, before the
+/// platform read hint is applied.
+#[cfg(unix)]
+fn open_source_handle(
+    path: &Path,
+    use_noatime: bool,
+    anchor: Option<&Path>,
+    follow_symlinks: bool,
+) -> io::Result<fs::File> {
+    if let Some(root) = anchor
+        && let Ok(relative) = path.strip_prefix(root)
+    {
+        let leaf = if follow_symlinks {
+            fast_io::LeafPolicy::FollowConfined
+        } else {
+            fast_io::LeafPolicy::Nofollow
+        };
+        return fast_io::open_source_confined(root, relative, leaf, use_noatime);
+    }
+    // No anchor, or a source outside it (an absolute operand reached through a
+    // path the anchor does not prefix): fall back to the leaf rule alone rather
+    // than anchoring somewhere the operand does not live.
+    open_source_leaf(path, use_noatime, follow_symlinks)
+}
+
+/// Non-Unix: `O_NOFOLLOW` and the confined walk are Unix concepts, so the open
+/// degrades to the plain read, matching the upstream limitation that its
+/// `do_open_nofollow` guarantee is `O_NOFOLLOW`-platform only.
+#[cfg(not(unix))]
+fn open_source_handle(
+    path: &Path,
+    use_noatime: bool,
+    _anchor: Option<&Path>,
+    _follow_symlinks: bool,
+) -> io::Result<fs::File> {
+    open_plain(path, use_noatime)
+}
+
+/// Opens `path` applying only the leaf rule: `O_NOFOLLOW` unless a
+/// symlink-following mode is active.
+///
+/// upstream: `sender.c:do_open_checklinks`.
+#[cfg(unix)]
+fn open_source_leaf(
+    path: &Path,
+    use_noatime: bool,
+    follow_symlinks: bool,
+) -> io::Result<fs::File> {
+    if follow_symlinks {
+        return open_plain(path, use_noatime);
+    }
+    let nofollow = libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    if use_noatime && let Some(extra) = noatime_flag() {
+        let mut options = fs::OpenOptions::new();
+        options.read(true).custom_flags(nofollow | extra);
+        match options.open(path) {
+            Ok(file) => return Ok(file),
+            Err(error) if noatime_retryable(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(nofollow);
+    options.open(path)
+}
+
+/// Opens `path` following symlinks, honouring `--open-noatime`.
+fn open_plain(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
+    if use_noatime && let Some(file) = try_open_noatime(path)? {
+        return Ok(file);
+    }
+    fs::File::open(path)
+}
+
+/// Returns `O_NOATIME` on Linux/Android, `None` where the flag is undefined.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const fn noatime_flag() -> Option<i32> {
+    Some(libc::O_NOATIME)
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+const fn noatime_flag() -> Option<i32> {
+    None
+}
+
+/// Whether an `O_NOATIME` open failure should be retried without the flag.
+#[cfg(unix)]
+fn noatime_retryable(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EPERM | libc::EACCES | libc::EINVAL | libc::ENOTSUP | libc::EROFS)
+    )
 }
 
 /// Applies the macOS `F_NOCACHE` advisory hint for sequential source reads.
@@ -125,7 +236,7 @@ mod tests {
         let path = dir.path().join("source.bin");
         std::fs::write(&path, b"payload").unwrap();
 
-        let mut file = open_source_file(&path, false).expect("open source");
+        let mut file = open_source_file(&path, false, None, false).expect("open source");
         let mut contents = Vec::new();
         file.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"payload");
@@ -142,7 +253,7 @@ mod tests {
         let payload = vec![0xABu8; (fast_io::F_NOCACHE_THRESHOLD + 16) as usize];
         std::fs::write(&path, &payload).unwrap();
 
-        let mut file = open_source_file(&path, false).expect("open large source");
+        let mut file = open_source_file(&path, false, None, false).expect("open large source");
         let mut contents = Vec::new();
         file.read_to_end(&mut contents).unwrap();
         assert_eq!(contents.len(), payload.len());

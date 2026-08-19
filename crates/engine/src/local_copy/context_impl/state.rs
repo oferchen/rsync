@@ -58,6 +58,7 @@ impl<'a> CopyContext<'a> {
             stop_at: stop_at_wallclock,
             last_progress: Instant::now(),
             destination_root,
+            source_anchor: None,
             safety_depth_offset: 0,
             use_buffer_pool: true,
             buffer_pool,
@@ -194,6 +195,20 @@ impl<'a> CopyContext<'a> {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub(in crate::local_copy) const fn has_bandwidth_limiter(&self) -> bool {
         self.limiter.is_some()
+    }
+
+    /// Sets the source-tree confinement anchor for the operand about to be
+    /// walked.
+    ///
+    /// upstream: `rsync-3.5.0/sender.c` - the sender's content opens are
+    /// confined beneath the transfer root, which is per source argument.
+    pub(in crate::local_copy) fn set_source_anchor(&mut self, anchor: Option<PathBuf>) {
+        self.source_anchor = anchor;
+    }
+
+    /// Returns the source-tree confinement anchor for the current operand.
+    pub(in crate::local_copy) fn source_anchor(&self) -> Option<&Path> {
+        self.source_anchor.as_deref()
     }
 
     /// Returns the root destination directory for the transfer.

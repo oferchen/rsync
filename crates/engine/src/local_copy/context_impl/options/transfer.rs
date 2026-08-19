@@ -50,6 +50,18 @@ impl<'a> CopyContext<'a> {
         self.options.open_noatime_enabled()
     }
 
+    /// Whether a symlinked source *leaf* should be followed when its content is
+    /// opened.
+    ///
+    /// upstream: `sender.c:do_open_checklinks` follows the leaf with a plain
+    /// `do_open` under `--copy-links` / `--copy-unsafe-links` and otherwise
+    /// uses `do_open_nofollow`. This is a separate decision from the ancestor
+    /// confinement: a symlink-following mode is an operator instruction and
+    /// survives confinement rather than being downgraded.
+    pub(super) const fn follow_source_symlinks(&self) -> bool {
+        self.options.copy_links_enabled() || self.options.copy_unsafe_links_enabled()
+    }
+
     pub(super) const fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
     }

@@ -145,6 +145,16 @@ pub(crate) struct CopyContext<'a> {
     stop_at: Option<SystemTime>,
     last_progress: Instant,
     destination_root: PathBuf,
+    /// Confinement anchor for source-file content reads: the directory the
+    /// sender would `chdir` into for the operand currently being walked.
+    ///
+    /// `None` before the first operand and for any operand whose anchor cannot
+    /// be determined, in which case the open degrades to the `O_NOFOLLOW` leaf
+    /// rule alone. Set per operand because each source argument has its own
+    /// transfer root. upstream: `rsync-3.5.0/sender.c` opens file content
+    /// through the confined held-ancestor-dirfd stack anchored at the transfer
+    /// root, so a parent component flipped to a symlink is refused.
+    source_anchor: Option<PathBuf>,
     /// Number of leading path components in `relative` that represent the
     /// transfer root name (e.g. the source directory name when copying
     /// without a trailing slash).  These components inflate the depth
