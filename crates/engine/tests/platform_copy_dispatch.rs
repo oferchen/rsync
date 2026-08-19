@@ -46,6 +46,9 @@ impl CountingPlatformCopy {
         self.calls.load(Ordering::SeqCst)
     }
 
+    /// Only the macOS dispatch test reads this; gate it with its consumer so a
+    /// Linux build does not trip `-D dead-code`.
+    #[cfg(target_os = "macos")]
     fn reflink_queries(&self) -> usize {
         self.reflink_queries.load(Ordering::SeqCst)
     }
