@@ -40,7 +40,13 @@ impl<'a> CopyContext<'a> {
         let mut best: Option<(PathBuf, u8)> = None;
         for entry in self.options.link_dest_entries() {
             let candidate = entry.resolve(self.destination_root(), relative);
-            let candidate_metadata = match fs::metadata(&candidate) {
+            // upstream: generator.c try_dests_reg() -
+            // `if (basis_link_stat(cmpbuf, &sxp->st) < 0 || !S_ISREG(sxp->st.st_mode)) continue;`
+            // basis_link_stat resolves the leaf with `link_stat_at(dfd, leaf, stp, 0)`, i.e. an
+            // LSTAT, so a basis entry that is itself a symlink reports S_IFLNK and is skipped
+            // rather than followed. Using a following stat here would accept a symlink-to-regular
+            // candidate and then hard-link or read THROUGH it - the read oracle upstream closed.
+            let candidate_metadata = match fs::symlink_metadata(&candidate) {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
