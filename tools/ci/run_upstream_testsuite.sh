@@ -762,7 +762,24 @@ run_python_suite_mode() {
             echo "       empty manifest would pass without running anything." >&2
             exit 1
         fi
-        echo "==> Expected-outcome manifest: ${expect_result_file} (${expect_count} tests)" >&2
+        # A zero-test guard is not enough. MEASURED against runtests.py: dropping
+        # ONE line shrinks the run set with NO diagnostic and still exits 0 (2
+        # tests -> 1 test, no warning), so coverage can erode a line at a time
+        # while the gate stays green. Only an outcome MISMATCH is self-reporting.
+        # Require the manifest to name every test the extracted tree ships, so
+        # the ledger cannot quietly cover less than the suite. Derived from the
+        # tree rather than hardcoded, so an upstream bump that adds or removes
+        # tests re-baselines instead of tripping a stale constant.
+        local suite_count
+        suite_count=$(find "${upstream_src_dir}/testsuite" -maxdepth 1 -name '*_test.py' | wc -l | tr -d ' ')
+        if (( suite_count > 0 && expect_count < suite_count )); then
+            echo "ERROR: EXPECT_RESULT covers ${expect_count} of ${suite_count} tests: ${expect_result_file}" >&2
+            echo "       --expect-result runs ONLY what it names, so the missing" >&2
+            echo "       $(( suite_count - expect_count )) would silently not run." >&2
+            echo "       Regenerate with EMIT_EXPECT_RESULT rather than editing." >&2
+            exit 1
+        fi
+        echo "==> Expected-outcome manifest: ${expect_result_file} (${expect_count}/${suite_count} tests)" >&2
         runtests_argv+=(--expect-result="$expect_result_file")
     fi
     if [[ -n "$expect_skipped_spec" ]]; then
