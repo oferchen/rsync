@@ -187,6 +187,24 @@ pub struct ConnectionConfig {
     /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
     /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
     pub daemon_module_root: Option<PathBuf>,
+    /// `--confine-root=DIR`: the confinement root for a NON-daemon server.
+    ///
+    /// Upstream keeps one `confinement_root()` accessor and picks the root by
+    /// role - `am_daemon ? module_dir : confine_root` - so the two never apply
+    /// at once. A daemon deliberately ignores `--confine-root`: its module
+    /// directory is already the boundary, and the option arrives in a
+    /// peer-supplied argv, where honouring it could only *widen* the module
+    /// (options.c:2382-2386). Mirrored by
+    /// [`GeneratorContext::source_open`](crate::generator::GeneratorContext),
+    /// which reads [`daemon_module_root`](Self::daemon_module_root) for a
+    /// daemon and this field otherwise.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:64-65` - `confine_root` / `confine_rootlen`
+    /// - `options.c:2382-2399` - daemon-ignores / absolute / normalize rules
+    /// - `syscall.c:128-143` - `confinement_root()`
+    pub confine_root: Option<PathBuf>,
     /// Filter rules to send to remote daemon (client_mode only).
     pub filter_rules: Vec<FilterRuleWireFormat>,
     /// Optional filename encoding converter for `--iconv` support.

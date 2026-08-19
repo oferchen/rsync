@@ -225,6 +225,12 @@ where
     config.trust_sender = true;
     config.qsort = long_flags.qsort;
     config.file_selection.files_from_path = long_flags.files_from;
+    // upstream: options.c:2382-2399 - a restricted-directory wrapper appends
+    // `--confine-root=DIR` to the server argv, and the server honours it for
+    // every path it resolves. The daemon arm is handled where the root is READ
+    // (`GeneratorContext::source_open`), which prefers the module directory, so
+    // a peer-supplied value cannot widen a module even if one arrives here.
+    config.connection.confine_root = long_flags.confine_root.map(std::path::PathBuf::from);
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2400-2411 - append mode implies inplace. The promotion
