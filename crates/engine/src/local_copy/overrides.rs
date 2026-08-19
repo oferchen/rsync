@@ -132,9 +132,26 @@ where
 
 /// Renames a destination entry to its backup location.
 ///
+/// On Unix both endpoints are resolved by the ownership walk
+/// ([`fast_io::operator_rename`]): every path component is inspected without
+/// following it, a symlink owned by uid 0 or our euid is followed as the
+/// operator's own layout, and one owned by anyone else is refused. A backup
+/// directory may legitimately sit outside the transfer tree, so location cannot
+/// be the trust signal here - authority is.
+///
+/// Without that, an attacker who can create entries inside the backup tree
+/// flips a parent component between a real directory and a symlink pointing
+/// outside, and the path-based rename lands the backup wherever the symlink
+/// pointed at the instant the kernel resolved it - upstream's
+/// `backup-dir-symlink-race`.
+///
+/// upstream: `rsync-3.5.0/backup.c:200-219` `make_backup()` sets
+/// `operator_path_resolve` around the rename; `syscall.c:1894` `do_rename_at()`
+/// then walks each side with `owner_walk_parent()`.
+///
 /// In tests a thread-local override can force a specific outcome (e.g. an
 /// `EXDEV` cross-device error) to exercise the copy-tree fallback without a
-/// real second filesystem; production always calls `std::fs::rename`.
+/// real second filesystem.
 pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(test)]
     if let Some(result) = BACKUP_RENAME_OVERRIDE.with(|cell| {
@@ -145,7 +162,14 @@ pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
         return result;
     }
 
-    fs::rename(from, to)
+    #[cfg(unix)]
+    {
+        fast_io::operator_rename(from, to, true)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::rename(from, to)
+    }
 }
 
 pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {

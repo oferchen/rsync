@@ -88,6 +88,11 @@ pub mod cached_sort;
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
 pub mod confined_open;
+/// Unix-only: ownership-trusted resolution for operator-supplied paths
+/// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
+/// `owner_walk_parent` (`syscall.c:558`).
+#[cfg(unix)]
+pub mod owner_walk;
 /// Path-confinement activation: who is confined, and against what root.
 ///
 /// Pure policy with no I/O, so it builds and is tested on every target.
@@ -366,6 +371,8 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
 pub use confined_open::{LeafPolicy, open_source_confined};
+#[cfg(unix)]
+pub use owner_walk::{operator_rename, owner_trusted_parent};
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
