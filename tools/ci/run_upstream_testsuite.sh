@@ -25,6 +25,8 @@
 #                             # upstream build is what makes the run a VERSION-
 #                             # MIXING run; without it the suite is oc vs oc.
 #   EXPECT_RESULT=<file>      # --expect-result: expected-outcome manifest.
+#   EMIT_EXPECT_RESULT=<file> # write an EXPECT_RESULT manifest from this run,
+#                             # so the ledger is generated, never hand-typed.
 #   EXPECT_SKIPPED=<spec>     # --expect-skipped, e.g.
 #                             # "@testsuite/skiplist/common.txt,@.../linux.txt"
 #
@@ -65,23 +67,40 @@ else
     upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
     upstream_label="release ${upstream_version}"
 fi
+# Echo $1 unchanged when it is empty or already absolute, otherwise resolved
+# against the workspace root.
+#
+# EVERY operator-supplied path must go through this before it reaches
+# runtests.py. The suite is invoked from inside the extracted upstream tree
+# (`cd "$upstream_src_dir"` below) and the individual test scripts cd further
+# still, so a relative path handed across that boundary resolves against the
+# wrong directory. MEASURED: `--expect-result tools/ci/upstream-3.5.0-expect.
+# root.txt` reached runtests.py verbatim and died with FileNotFoundError -
+# after this script had already stat'd the very same file successfully from
+# the workspace root, which is why the validation block above it could not
+# catch the problem it was standing next to.
+absolutize_under_workspace() {
+    case "$1" in
+        '' | /*) printf '%s' "$1" ;;
+        *) printf '%s/%s' "$workspace_root" "$1" ;;
+    esac
+}
+
 # Optional peer binary for the Python suite's --rsync-bin2: the rsync used for
 # the daemon side and for remote-shell --rsync-path. Setting it to a real
 # upstream build is what turns the run into a version-MIXING run (oc on one end
 # of the wire, upstream on the other) rather than oc-against-oc.
-upstream_peer_bin="${UPSTREAM_PEER_BIN:-}"
+upstream_peer_bin="$(absolutize_under_workspace "${UPSTREAM_PEER_BIN:-}")"
 # Expected-outcome manifest (runtests.py --expect-result). When set, ONLY the
 # listed tests run and every outcome must match, an unexpected PASS included.
-expect_result_file="${EXPECT_RESULT:-}"
+expect_result_file="$(absolutize_under_workspace "${EXPECT_RESULT:-}")"
 # Composable expected-skip spec (runtests.py --expect-skipped), e.g.
-# "@testsuite/skiplist/common.txt,@testsuite/skiplist/linux.txt".
+# "@testsuite/skiplist/common.txt,@testsuite/skiplist/linux.txt". Deliberately
+# NOT absolutized: its entries are `@`-prefixed and are documented relative to
+# the upstream tree, which is the cwd runtests.py already runs in.
 expect_skipped_spec="${EXPECT_SKIPPED:-}"
-oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
-# Resolve to absolute path - test scripts cd into the upstream source tree,
-# so a relative OC_RSYNC_BIN would break.
-if [[ "$oc_rsync_bin" != /* ]]; then
-    oc_rsync_bin="${workspace_root}/${oc_rsync_bin}"
-fi
+oc_rsync_bin="$(absolutize_under_workspace \
+    "${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}")"
 known_failures_conf="${workspace_root}/tools/ci/upstream_testsuite_known_failures.conf"
 log_root="${workspace_root}/target/interop/upstream-testsuite"
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
@@ -760,7 +779,24 @@ run_python_suite_mode() {
             echo "       empty manifest would pass without running anything." >&2
             exit 1
         fi
-        echo "==> Expected-outcome manifest: ${expect_result_file} (${expect_count} tests)" >&2
+        # A zero-test guard is not enough. MEASURED against runtests.py: dropping
+        # ONE line shrinks the run set with NO diagnostic and still exits 0 (2
+        # tests -> 1 test, no warning), so coverage can erode a line at a time
+        # while the gate stays green. Only an outcome MISMATCH is self-reporting.
+        # Require the manifest to name every test the extracted tree ships, so
+        # the ledger cannot quietly cover less than the suite. Derived from the
+        # tree rather than hardcoded, so an upstream bump that adds or removes
+        # tests re-baselines instead of tripping a stale constant.
+        local suite_count
+        suite_count=$(find "${upstream_src_dir}/testsuite" -maxdepth 1 -name '*_test.py' | wc -l | tr -d ' ')
+        if (( suite_count > 0 && expect_count < suite_count )); then
+            echo "ERROR: EXPECT_RESULT covers ${expect_count} of ${suite_count} tests: ${expect_result_file}" >&2
+            echo "       --expect-result runs ONLY what it names, so the missing" >&2
+            echo "       $(( suite_count - expect_count )) would silently not run." >&2
+            echo "       Regenerate with EMIT_EXPECT_RESULT rather than editing." >&2
+            exit 1
+        fi
+        echo "==> Expected-outcome manifest: ${expect_result_file} (${expect_count}/${suite_count} tests)" >&2
         runtests_argv+=(--expect-result="$expect_result_file")
     fi
     if [[ -n "$expect_skipped_spec" ]]; then
@@ -780,14 +816,21 @@ run_python_suite_mode() {
         echo "==> Scratch tree under ${scratch_home} (outside the tmpfs-shadowed HOME)" >&2
     fi
 
+    # `|| rc=...` is load-bearing, not defensive. Under `set -e` + `pipefail` a
+    # bare failing pipeline aborts the script AT THIS LINE, so `rc=${PIPESTATUS[0]}`
+    # and everything after it - the step summary AND the expect-result manifest -
+    # never ran whenever the suite failed. That made the manifest generator
+    # reachable only when every test passed, i.e. exactly when no manifest is
+    # needed. Putting the pipeline in an OR list exempts it from `set -e` while
+    # PIPESTATUS still carries runtests.py's own status, which `return "$rc"`
+    # below propagates unchanged.
     local rc=0
     (
         cd "$upstream_src_dir"
         # scratchbase -> runtests.py places $scratchbase/testtmp here, off the
         # source tree, so the cleanup above owns the whole scratch lifecycle.
         scratchbase="$scratch_home" "${runtests_argv[@]}"
-    ) 2>&1 | tee "$output_log"
-    rc=${PIPESTATUS[0]}
+    ) 2>&1 | tee "$output_log" || rc=${PIPESTATUS[0]}
 
     # Force-clear the scratch tree again so the NEXT leg (or a re-run on the
     # same self-hosted runner) never inherits a mode-0 dir from this leg.
@@ -795,7 +838,55 @@ run_python_suite_mode() {
     rm -rf "$scratch_home" 2>/dev/null || true
 
     emit_git_ref_step_summary "$output_log" "$rc"
+    emit_expect_result_manifest "$output_log"
     return "$rc"
+}
+
+# Write an --expect-result manifest from a completed runtests.py run.
+#
+# The consuming side already exists (EXPECT_RESULT above). Without a generator
+# the ledger has to be hand-curated, which is precisely how it drifts out of
+# agreement with the suite - and because --expect-result runs ONLY the tests it
+# names, a stale manifest silently narrows coverage instead of failing. So the
+# manifest is derived from a real run, never typed.
+#
+# runtests.py prints one line per test as `<OUTCOME><spaces><name>` (MEASURED:
+# four spaces, not a tab - assuming a tab here parsed zero lines and would have
+# emitted an empty manifest). SKIP additionally carries a trailing " (reason)"
+# that is NOT part of the name, so split on whitespace and keep field 2: the
+# reason falls into $3+ and is dropped without a second rule. Emit the
+# `<name> <outcome>` form --expect-result parses, sorted so a re-baseline diffs
+# as a set of outcome changes rather than a reordering.
+emit_expect_result_manifest() {
+    local output_log=$1
+    local manifest=${EMIT_EXPECT_RESULT:-}
+    [[ -z "$manifest" ]] && return 0
+    [[ -f "$output_log" ]] || return 0
+
+    mkdir -p "$(dirname "$manifest")"
+    {
+        echo "# Generated by tools/ci/run_upstream_testsuite.sh - do not hand-edit."
+        echo "# Regenerate: EMIT_EXPECT_RESULT=<path> bash tools/ci/run_upstream_testsuite.sh"
+        echo "# Source: ${upstream_label} (${mode_tag}/${transport_tag})"
+        awk '
+            NF < 2 { next }
+            $1 == "PASS"  { print $2 " pass"  }
+            $1 == "FAIL"  { print $2 " fail"  }
+            $1 == "SKIP"  { print $2 " skip"  }
+            $1 == "XFAIL" { print $2 " xfail" }
+        ' "$output_log" | sort -u
+    } >"$manifest"
+
+    local n
+    n=$(grep -cvE '^[[:space:]]*(#|$)' "$manifest" || true)
+    # A manifest that names nothing would make a later --expect-result run pass
+    # without executing a single test. Refuse to write that.
+    if (( n == 0 )); then
+        echo "ERROR: emitted manifest lists no tests: ${manifest}" >&2
+        echo "       runtests.py output had no '<OUTCOME>  <name>' lines to parse." >&2
+        return 1
+    fi
+    echo "==> Wrote expected-outcome manifest: ${manifest} (${n} tests)" >&2
 }
 
 # Write a $GITHUB_STEP_SUMMARY table for a git-ref (runtests.py) run: PASS/FAIL/
