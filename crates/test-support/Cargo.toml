@@ -12,6 +12,11 @@ description = "Shared test utilities for the oc-rsync workspace"
 [dependencies]
 tempfile = { workspace = true }
 
+# The binary-freshness guard compares mtimes, so its tests must set them
+# explicitly rather than rely on filesystem timestamp granularity.
+[dev-dependencies]
+filetime = { workspace = true }
+
 # `OcRsyncCliRunner::umask` pins the spawned child's umask via `pre_exec`, so
 # tests asserting mode bits do not silently inherit the caller's umask.
 [target.'cfg(unix)'.dependencies]
