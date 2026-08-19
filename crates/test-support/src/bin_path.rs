@@ -75,9 +75,10 @@ pub fn workspace_bin(name: &str) -> PathBuf {
 /// Assert `binary` is newer than every source Cargo compiled it from.
 ///
 /// Existence proves only that *some* build happened. Cargo records which
-/// files that build consumed in a Makefile-style dependency file beside the
-/// binary (`--emit=dep-info`), so the source set is Cargo's own answer rather
-/// than a heuristic scan of the tree.
+/// files that build consumed in a Makefile-style dependency file
+/// (`--emit=dep-info`), so the source set is Cargo's own answer rather than a
+/// heuristic scan of the tree. [`dependency_file`] locates it - which of the
+/// two places Cargo writes one depends on how the build was invoked.
 ///
 /// Deliberately not memoized: the check costs one `read` plus a `stat` per
 /// dependency, and a test process that resolves the binary a handful of times
