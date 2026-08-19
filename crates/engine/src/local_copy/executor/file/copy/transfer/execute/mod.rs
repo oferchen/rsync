@@ -338,7 +338,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         context.source_anchor(),
         context.follow_source_symlinks(),
     )
-        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+    .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
         append_allowed,
         append_verify,
