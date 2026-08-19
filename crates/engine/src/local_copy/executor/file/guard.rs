@@ -620,18 +620,33 @@ impl DestinationWriteGuard {
                 io::Error::other("anonymous fd already consumed"),
             )
         })?;
-        // Remove existing destination so linkat does not fail with EEXIST.
-        remove_existing_destination(&self.final_path)?;
-        let result = match self.dest_root.as_deref() {
+        // Link first and only clear the destination on EEXIST, mirroring
+        // `hardened_rename`'s retry shape. Removing up front would make a
+        // *refused* commit destructive: the confined walk rejects an escaping
+        // destination after the unlink, leaving nothing behind. Upstream
+        // refuses without touching the file, and so must this.
+        let attempt = |guard: &Self| match guard.dest_root.as_deref() {
             Some(root) => {
                 use std::os::fd::AsFd;
-                fast_io::confined_link_anonymous(file.as_fd(), root, &self.final_path)
+                fast_io::confined_link_anonymous(file.as_fd(), root, &guard.final_path)
             }
-            None => fast_io::link_anonymous_tmpfile(&file, &self.final_path),
+            None => fast_io::link_anonymous_tmpfile(&file, &guard.final_path),
         };
-        result.map_err(|error| {
-            LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
-        })
+
+        match attempt(self) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination(&self.final_path)?;
+                attempt(self).map_err(|error| {
+                    LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
+                })
+            }
+            Err(error) => Err(LocalCopyError::io(
+                "finalise anonymous temp file",
+                &self.final_path,
+                error,
+            )),
+        }
     }
 
     /// Returns the final destination path.

@@ -790,3 +790,48 @@ fn keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree() {
         outside.display()
     );
 }
+
+/// A refused `-K` commit must leave the out-of-tree target **intact**.
+///
+/// The refusal is a security decision, not a licence to destroy: upstream
+/// 3.5.0 refuses this shape without touching the file (measured - the target
+/// survives byte-for-byte at exit 23). An implementation that cleared the
+/// destination before discovering the escape would turn a refusal into data
+/// loss, which is strictly worse than the escape it prevents.
+#[cfg(unix)]
+#[test]
+fn a_refused_keep_dirlinks_commit_does_not_destroy_the_existing_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+    fs::write(source_root.join("subdir/file.bin"), b"incoming").expect("write source");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // The out-of-tree target already holds a file under the same name.
+    let outside = temp.path().join("outside-target");
+    fs::create_dir_all(&outside).expect("create outside target");
+    let victim = outside.join("file.bin");
+    fs::write(&victim, b"pre-existing payload").expect("write victim");
+    symlink(&outside, dest_root.join("subdir")).expect("create escaping symlink");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    );
+
+    assert!(result.is_err(), "the escaping commit must be refused");
+    assert_eq!(
+        fs::read(&victim).expect("the refused commit must not delete the existing target"),
+        b"pre-existing payload",
+        "a refused commit must leave the target byte-for-byte unchanged"
+    );
+}
