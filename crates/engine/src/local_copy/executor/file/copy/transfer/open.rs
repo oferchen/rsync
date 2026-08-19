@@ -244,6 +244,94 @@ mod tests {
         assert_eq!(contents, b"payload");
     }
 
+    /// Non-vacuity companion for the confinement cells below: with the anchor
+    /// set and no symlink in play, a nested in-tree source opens normally.
+    /// Without this, the refusal test would also pass if the confined open
+    /// simply failed for every input.
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_reads_a_nested_in_tree_source() {
+        use std::io::Read as _;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("sub")).unwrap();
+        std::fs::write(root.path().join("sub/data"), b"in-tree").unwrap();
+
+        let mut file = open_source_file(
+            &root.path().join("sub/data"),
+            false,
+            Some(root.path()),
+            false,
+        )
+        .expect("in-tree source must open");
+        let mut buf = String::new();
+        file.read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "in-tree");
+    }
+
+    /// Default symlink handling must refuse a source whose PARENT component is
+    /// a symlink pointing outside the transfer root.
+    ///
+    /// WHY: this is the sink upstream 3.5.0's `symlink-race-source` test
+    /// exercises. An attacker who controls a subtree of the source races a
+    /// parent directory between a real directory (seen at scan time) and a
+    /// symlink pointing outside (followed at read time), and an unconfined
+    /// open copies a file from outside the tree into the output. The race is
+    /// timing-dependent; this pins the same decision deterministically by
+    /// handing the open the flipped state directly.
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_refuses_a_parent_symlinked_outside() {
+        use std::os::unix::fs::symlink;
+
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("src");
+        let outside = base.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret"), b"do-not-leak").unwrap();
+        symlink(&outside, root.join("sub")).unwrap();
+
+        let error = open_source_file(&root.join("sub/secret"), false, Some(&root), false)
+            .expect_err("a parent symlinked outside the root must be refused");
+        assert_ne!(
+            std::fs::read(root.join("sub/secret")).ok(),
+            None,
+            "fixture sanity: the path does resolve without confinement"
+        );
+        let _ = error;
+    }
+
+    /// A symlink-following mode keeps the legacy unconfined open, so the same
+    /// out-of-tree target IS read.
+    ///
+    /// WHY: upstream `sender.c:685` gates the confined open on
+    /// `!copy_links && !copy_unsafe_links && !copy_dirlinks`, falling through to
+    /// `do_open_checklinks`. `--copy-unsafe-links` exists precisely to
+    /// materialise links pointing outside the tree; confining it would break the
+    /// option outright. This is the cell that discriminates the gate from a
+    /// blanket confinement.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_following_mode_still_reads_through_the_escape() {
+        use std::io::Read as _;
+        use std::os::unix::fs::symlink;
+
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("src");
+        let outside = base.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("payload"), b"followed").unwrap();
+        symlink(&outside, root.join("sub")).unwrap();
+
+        let mut file = open_source_file(&root.join("sub/payload"), false, Some(&root), true)
+            .expect("a symlink-following mode must not be confined");
+        let mut buf = String::new();
+        file.read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "followed");
+    }
+
     #[test]
     fn open_source_file_large_file_succeeds_with_hint() {
         // The macOS `F_NOCACHE` hint runs through `apply_macos_read_hint` for
