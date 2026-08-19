@@ -3,21 +3,26 @@
 //! Every content read goes through [`open_source_file`], which mirrors the
 //! branch upstream's sender takes before reading a file:
 //!
-//! - the leaf is opened `O_NOFOLLOW` so a final component swapped for a symlink
-//!   is refused, unless `--copy-links` / `--copy-unsafe-links` asked for links
-//!   to be followed. upstream: `sender.c:do_open_checklinks`, which picks
-//!   between `do_open` and `do_open_nofollow`;
-//! - when the operand's transfer root is known, the *parent* components are
-//!   walked confined beneath it, so a directory flipped to a symlink pointing
-//!   outside the source tree between scan and read cannot redirect the read.
-//!   upstream 3.5.0's `symlink-race-source` test covers exactly this: "the
-//!   sender now opens each file's content through the confined
-//!   held-ancestor-dirfd stack anchored at the transfer root".
+//! - **Default symlink handling** - no `-L` / `--copy-unsafe-links` / `-k`: the
+//!   parent components are walked confined beneath the operand's transfer root
+//!   and the leaf is opened `O_NOFOLLOW`. A directory flipped to a symlink
+//!   pointing outside the source tree between scan and read cannot redirect the
+//!   read, and a raced leaf symlink is refused. upstream: `sender.c:685-705`
+//!   `sender_open_confined(NULL, fname, O_RDONLY)` - a NULL anchor means
+//!   relative-to-cwd, and upstream chdirs to the transfer root, so the two
+//!   anchors name the same directory.
+//! - **A symlink-following mode** - `-L` / `--copy-unsafe-links` / `-k`: the
+//!   legacy open, following the leaf, NOT confined. upstream: `sender.c:706`
+//!   falls through to `do_open_checklinks(fname)`. Confining here would break
+//!   the option outright: `--copy-unsafe-links` exists precisely to materialise
+//!   links whose targets lie OUTSIDE the tree.
 //!
-//! The leaf rule is a separate decision from the ancestor rule, which is why
-//! the confined open takes a [`fast_io::LeafPolicy`]: a symlink-following mode
-//! is an operator instruction and survives confinement rather than being
-//! downgraded.
+//! The confined/copy-links pairing upstream also keeps (`sender.c:682`
+//! `sender_open_copylinks_confined`) belongs to the DAEMON branch only, where
+//! the anchor is the module root and leaving it is a module escape. The
+//! non-daemon sender this module implements takes the plain
+//! `do_open_checklinks` branch instead. `--insecure-links` joins the same
+//! escape hatch upstream; oc does not implement that option yet.
 //!
 //! On Linux/Android, files are opened with `O_NOATIME` when requested to avoid
 //! updating access times during transfers. This mirrors upstream rsync behavior
@@ -80,20 +85,25 @@ fn open_source_handle(
     anchor: Option<&Path>,
     follow_symlinks: bool,
 ) -> io::Result<fs::File> {
+    if follow_symlinks {
+        // upstream: sender.c:706 - a symlink-following mode takes
+        // do_open_checklinks, an unconfined open that follows the leaf.
+        return open_plain(path, use_noatime);
+    }
     if let Some(root) = anchor
         && let Ok(relative) = path.strip_prefix(root)
     {
-        let leaf = if follow_symlinks {
-            fast_io::LeafPolicy::FollowConfined
-        } else {
-            fast_io::LeafPolicy::Nofollow
-        };
-        return fast_io::open_source_confined(root, relative, leaf, use_noatime);
+        return fast_io::open_source_confined(
+            root,
+            relative,
+            fast_io::LeafPolicy::Nofollow,
+            use_noatime,
+        );
     }
     // No anchor, or a source outside it (an absolute operand reached through a
     // path the anchor does not prefix): fall back to the leaf rule alone rather
     // than anchoring somewhere the operand does not live.
-    open_source_leaf(path, use_noatime, follow_symlinks)
+    open_source_nofollow_leaf(path, use_noatime)
 }
 
 /// Non-Unix: `O_NOFOLLOW` and the confined walk are Unix concepts, so the open
@@ -109,19 +119,11 @@ fn open_source_handle(
     open_plain(path, use_noatime)
 }
 
-/// Opens `path` applying only the leaf rule: `O_NOFOLLOW` unless a
-/// symlink-following mode is active.
+/// Opens `path` with `O_NOFOLLOW` on the leaf, honouring `--open-noatime`.
 ///
-/// upstream: `sender.c:do_open_checklinks`.
+/// upstream: `syscall.c:do_open_nofollow`.
 #[cfg(unix)]
-fn open_source_leaf(
-    path: &Path,
-    use_noatime: bool,
-    follow_symlinks: bool,
-) -> io::Result<fs::File> {
-    if follow_symlinks {
-        return open_plain(path, use_noatime);
-    }
+fn open_source_nofollow_leaf(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
     let nofollow = libc::O_NOFOLLOW | libc::O_CLOEXEC;
     if use_noatime && let Some(extra) = noatime_flag() {
         let mut options = fs::OpenOptions::new();
