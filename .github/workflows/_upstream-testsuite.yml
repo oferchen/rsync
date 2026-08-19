@@ -10,11 +10,28 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.4.4'
+        default: '3.5.0'
       variant:
         description: 'Which variant(s) to run: all | nonroot | root'
         type: string
         default: 'all'
+      expect_result_nonroot:
+        description: >-
+          Path to the non-root leg's runtests.py --expect-result manifest. When
+          set, ONLY the tests it names are run and every outcome must match, so
+          a truncated manifest shrinks coverage instead of failing - the driver
+          refuses a missing or empty one. Leave empty to run the whole suite and
+          fail on any failure. Ignored by the 3.4.4 shell-loop path.
+        type: string
+        default: ''
+      expect_result_root:
+        description: >-
+          The ROOT leg's manifest. Deliberately a separate input: the two legs
+          run the same 345 tests at different privilege, and 40 of them resolve
+          to a DIFFERENT outcome (measured, run 32260924822), so one shared file
+          would be wrong for 40 tests.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -72,6 +89,14 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          EXPECT_RESULT: ${{ inputs.expect_result_nonroot }}
+          # Always emit the manifest this run would hold itself to. It is the
+          # only honest source for `expect_result`: hand-curating the ledger is
+          # exactly how it drifts out of agreement with the suite, and because
+          # --expect-result runs ONLY the tests it names, that drift shrinks
+          # coverage silently instead of failing. Uploaded as an artifact so a
+          # re-baseline is a reviewable diff of outcome changes.
+          EMIT_EXPECT_RESULT: target/interop/expect-result.nonroot.txt
         run: |
           set -euo pipefail
           mkdir -p target/interop
@@ -149,29 +174,26 @@ jobs:
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-output.log
+            target/interop/expect-result.nonroot.txt
           if-no-files-found: ignore
           retention-days: 14
 
   # ===========================================================================
   # Root leg (FAILS LOUD; not yet a required gate). The non-root job above is
-  # the REQUIRED gate. This job re-runs the SAME 3.4.4 shell suite under sudo so
-  # the root-only tests (chown/devices/xattrs/dir-sgid/protected-regular) that
+  # the REQUIRED gate. This job re-runs the SAME suite under sudo so the
+  # root-only tests (chown/devices/xattrs/dir-sgid/protected-regular) that
   # self-skip as the runner user actually RUN. A non-zero harness exit now FAILS
   # this job - there is no `continue-on-error` and no run-step `|| true`, so a
   # root-only regression surfaces as a RED check instead of a silently-masked
   # green. This job is deliberately NOT in the required status checks, so a red
   # leg does not block the merge queue; it is a visible signal. Promote it to a
-  # required gate once it is reliably green. The 3.4.4 shell suite has no
-  # --use-tcp support (a runtests.py flag added on master), so this gate is
-  # privilege-only; the transport dimension applies solely to the 3.5.0dev tracker.
+  # required gate once it is reliably green.
   #
-  # Status: the root `devices` test passes end to end (create/replace/hardlink/
-  # fifo/--link-dest all byte-match upstream 3.4.4). A full sudo run is 54 pass /
-  # 2 skip (crtimes, simd-checksum) / 1 FAIL: `xattrs` (a `--fake-super
-  # --link-dest` hard-link divergence that also fails on master - pre-existing,
-  # tracked separately). This leg will therefore show RED on that xattrs failure
-  # until it is fixed; that is intended (fail loud), not a regression of this
-  # change, and it does not block merges.
+  # The two legs differ only in privilege, so their outcomes differ per test and
+  # each needs its OWN `expect_result` manifest - hence the separate
+  # `expect-result.root.txt` emission. Measured on a 4-leg 3.5.0 run: 348
+  # distinct test names, 78 of which resolve to a DIFFERENT outcome between
+  # legs, so a single shared manifest would be wrong for 78 tests.
   # ===========================================================================
   upstream-testsuite-root:
     name: upstream testsuite (root)
@@ -225,6 +247,8 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          EXPECT_RESULT: ${{ inputs.expect_result_root }}
+          EMIT_EXPECT_RESULT: target/interop/expect-result.root.txt
         run: |
           set -uo pipefail
           mkdir -p target/interop
@@ -237,6 +261,8 @@ jobs:
             "PATH=$PATH" \
             "OC_RSYNC_BIN=$OC_RSYNC_BIN" \
             "UPSTREAM_VERSION=$UPSTREAM_VERSION" \
+            "EXPECT_RESULT=${EXPECT_RESULT:-}" \
+            "EMIT_EXPECT_RESULT=${EMIT_EXPECT_RESULT:-}" \
             "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
             "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \
@@ -254,5 +280,6 @@ jobs:
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-root-output.log
+            target/interop/expect-result.root.txt
           if-no-files-found: ignore
           retention-days: 14
