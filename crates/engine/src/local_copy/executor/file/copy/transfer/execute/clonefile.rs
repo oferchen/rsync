@@ -45,7 +45,15 @@ pub(super) fn eligible(
         ..
     } = flags;
 
-    let transfer_ok = existing_metadata.is_none()
+    // The injected `PlatformCopy` still decides whether this tier runs at all:
+    // `NoReflinkPlatformCopy` (and any test fake) reports no reflink support and
+    // vetoes the fast path, leaving the standard copy to do the work. The
+    // *destination write* no longer goes through the strategy - a path-based
+    // `copy_file(src, dst)` cannot express an anchored destination, which is
+    // exactly what made it an escape - so the strategy's role here is the gate,
+    // not the write.
+    let transfer_ok = context.options().platform_copy().supports_reflink()
+        && existing_metadata.is_none()
         && whole_file_enabled
         && !inplace_enabled
         && !partial_enabled
@@ -108,6 +116,34 @@ pub(super) fn try_clone(
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
 
+    // A reflink both creates and fills the destination in one syscall, so the
+    // create IS the confinement decision - there is no later commit to anchor.
+    // `confined_clone_file` walks the destination's parent per component and
+    // clones through that dirfd, which is the only race-free form: a
+    // check-then-`clonefile` gate would still lose to a parent flipped between
+    // the two.
+    //
+    // A confinement refusal is an error and propagates. Only "this filesystem
+    // will not reflink" falls through to the standard copy path, which anchors
+    // its own create.
+    //
+    // upstream: `rsync-3.5.0/receiver.c` has no CoW fast path at all - it
+    // always stages into a temp and commits with `do_rename_at()`, inheriting
+    // confinement from the rename. This keeps oc's optimisation on the same
+    // invariant rather than beside it.
+    #[cfg(unix)]
+    let clone_method =
+        match fast_io::confined_clone_file(context.destination_root(), source, destination) {
+            Ok(fast_io::CloneAttempt::Cloned) => Some(
+                context
+                    .options()
+                    .platform_copy()
+                    .preferred_method(file_size),
+            ),
+            Ok(fast_io::CloneAttempt::Unsupported) => None,
+            Err(error) => return Err(LocalCopyError::io("copy file", destination, error)),
+        };
+    #[cfg(not(unix))]
     let clone_method =
         match context
             .options()

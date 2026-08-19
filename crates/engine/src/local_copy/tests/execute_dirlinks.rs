@@ -373,10 +373,13 @@ fn keep_dirlinks_deeply_nested_parent_symlink_to_dir() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(dest_root.join("a")).expect("create dest/a");
 
-    // Make dest/a/b a symlink to a real directory
-    let real_b = temp.path().join("real-b");
+    // Make dest/a/b a symlink to a real directory. The target is relative and
+    // in-tree because that is the only shape upstream's confined walk follows;
+    // an absolute one exits 23 and transfers nothing (measured against rsync
+    // 3.5.0, refused at `ds_descend` rsync-3.5.0/syscall.c:2953).
+    let real_b = dest_root.join("a/real-b");
     fs::create_dir_all(real_b.join("c")).expect("create real-b/c");
-    symlink(&real_b, dest_root.join("a/b")).expect("create symlink a/b -> real-b");
+    symlink("real-b", dest_root.join("a/b")).expect("create symlink a/b -> real-b");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -455,15 +458,22 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
     fs::write(source_root.join("subdir/keep.txt"), b"keep").expect("write keep");
+    // The symlink target must exist in the source too, or --delete reaps it as
+    // extraneous and takes the symlink down with it - measured against rsync
+    // 3.5.0, which then leaves `subdir` a real directory.
+    fs::create_dir(source_root.join("real-target")).expect("create source real-target");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create a real directory as the symlink target, with extraneous content
-    let real_target = temp.path().join("real-target");
+    // A real directory as the symlink target, with extraneous content. Relative
+    // and in-tree: an absolute target is refused outright by upstream's confined
+    // walk (rsync-3.5.0/syscall.c:2953 `ds_descend`), so that shape exits 23 and
+    // deletes nothing - the refusal is pinned separately.
+    let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
     fs::write(real_target.join("extra.txt"), b"extraneous").expect("write extraneous file");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());

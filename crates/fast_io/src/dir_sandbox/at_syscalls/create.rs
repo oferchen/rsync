@@ -410,3 +410,238 @@ pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path)
         Err(io::Error::last_os_error())
     }
 }
+
+/// Create `dest` exclusively, with its parent confined beneath `root`.
+///
+/// This is the direct-write counterpart of [`confined_rename`] and
+/// [`confined_link_anonymous`]: the parent is resolved by the same
+/// per-component walk through [`anchor_confined_endpoint`], then the leaf is
+/// created with `O_CREAT | O_EXCL | O_NOFOLLOW` relative to that dirfd. A
+/// destination parent flipped to a symlink between the decision to write and
+/// the create therefore cannot redirect the new file out of the tree.
+///
+/// Upstream never needs this primitive because `receiver.c` always stages into
+/// a `.name.XXXXXX` temp and commits with a rename, so its confinement comes
+/// from `do_rename_at()`. oc's direct-write strategy skips that staging as an
+/// optimisation for a not-yet-existing destination, which drops the invariant
+/// unless the create is confined here.
+///
+/// `O_EXCL` is retained from the unconfined path: it is what makes a
+/// concurrent writer lose the race with `EEXIST` rather than silently share
+/// the file. The creation mode is `0o666` for the same reason - that is what
+/// `std::fs::OpenOptions` passes, so confining the create does not also change
+/// the mode a `--no-perms` copy leaves behind.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk.
+/// - `rsync-3.5.0/receiver.c` - upstream's always-stage-then-rename shape.
+///
+/// # Errors
+///
+/// - `ELOOP` when a parent component is a refused symlink (an absolute target,
+///   or one climbing above the anchor). Deliberately not `EXDEV`, which
+///   callers treat as cross-device and retry by another route.
+/// - `EEXIST` when `dest` already exists.
+/// - Otherwise the underlying `openat(2)` error verbatim.
+pub fn confined_create_new(root: &Path, dest: &Path) -> io::Result<std::fs::File> {
+    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+    use std::os::fd::FromRawFd;
+
+    let endpoint = anchor_confined_endpoint(root, dest)?;
+    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
+    // `*at` syscall; it is never closed and outlives any borrow of it.
+    #[allow(unsafe_code)]
+    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let (dirfd, name) = match &endpoint {
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
+    };
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY:
+    // - `c_name` is a valid NUL-terminated C string borrowed for the duration
+    //   of the call; the kernel does not retain the pointer.
+    // - `dirfd` is either the walked parent (kept open by `endpoint`) or
+    //   `AT_FDCWD`; both outlive the syscall.
+    // - The returned descriptor is owned here and handed to `File`, which
+    //   closes it exactly once.
+    #[allow(unsafe_code)]
+    let fd = unsafe { libc::openat(dirfd.as_raw_fd(), c_name.as_ptr(), flags, 0o666) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    #[allow(unsafe_code)]
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+/// Outcome of an anchored copy-on-write clone attempt.
+///
+/// Distinguishes "the filesystem will not reflink" - a routine condition the
+/// caller answers by falling back to a data copy - from a confinement refusal,
+/// which is an error and must never degrade to an unconfined write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneAttempt {
+    /// A true zero-copy reflink was created at the anchored destination.
+    Cloned,
+    /// The platform or filesystem cannot reflink here (not APFS/Btrfs/XFS,
+    /// cross-device, unsupported kernel). Nothing was created.
+    Unsupported,
+}
+
+/// Clone `src` to `dest` with `dest`'s parent confined beneath `root`.
+///
+/// The copy-on-write fast path is the one destination sink that cannot be
+/// confined by anchoring the *commit*: a reflink both creates and populates
+/// the destination in a single syscall, so the create IS the confinement
+/// decision. Anchoring the parent and cloning through that dirfd is therefore
+/// the only race-free form - a check-then-`clonefile` gate would still lose to
+/// a parent flipped between the two.
+///
+/// Upstream has no counterpart: `receiver.c` always stages into a
+/// `.name.XXXXXX` temp and commits with a rename, so it never reflinks onto
+/// the final name and inherits `do_rename_at()`'s confinement. This primitive
+/// exists so oc's CoW optimisation keeps the same invariant.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk.
+///
+/// # Errors
+///
+/// - `ELOOP` when a parent component is a refused symlink (an absolute target,
+///   or one climbing above the anchor). The caller must propagate this, not
+///   fall back to a path-based copy.
+/// - `EEXIST` when `dest` already exists - the same race semantics `O_EXCL`
+///   gives the plain create.
+/// - Any other error from opening `src` or anchoring `dest`'s parent.
+///
+/// A filesystem that simply cannot reflink reports `Ok(CloneAttempt::Unsupported)`,
+/// never an error.
+pub fn confined_clone_file(root: &Path, src: &Path, dest: &Path) -> io::Result<CloneAttempt> {
+    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+
+    let endpoint = anchor_confined_endpoint(root, dest)?;
+    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
+    // `*at` syscall; it is never closed and outlives any borrow of it.
+    #[allow(unsafe_code)]
+    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let (dirfd, name) = match &endpoint {
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
+    };
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    clone_at(src, dirfd, &c_name)
+}
+
+/// macOS: `fclonefileat(2)` publishes the clone under the anchored dirfd.
+///
+/// The source is passed as an already-open descriptor, so the flag that
+/// controls source-symlink following (`CLONE_NOFOLLOW`) is not applicable;
+/// whether the source may be a symlink is the source-confinement decision made
+/// by the caller before it opens the file.
+#[cfg(target_os = "macos")]
+fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
+    let source = std::fs::File::open(src)?;
+    // SAFETY: `source` is owned here and outlives the call; `dirfd` is the
+    // walked parent held by the caller's endpoint; `name` is a valid
+    // NUL-terminated string borrowed for the duration of the call.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::fclonefileat(
+            source.as_raw_fd(),
+            dirfd.as_raw_fd(),
+            name.as_ptr(),
+            0, /* flags */
+        )
+    };
+    if rc == 0 {
+        return Ok(CloneAttempt::Cloned);
+    }
+    let error = io::Error::last_os_error();
+    classify_clone_error(error)
+}
+
+/// Linux: create the destination confined, then reflink into it with `FICLONE`.
+///
+/// Unlike macOS there is no single anchored clone syscall, so the two halves
+/// are composed: [`confined_create_new`] provides the anchored, `O_EXCL` inode
+/// and the ioctl fills it. A failed ioctl must not leave the empty inode
+/// behind - the caller is entitled to treat `Unsupported` as "nothing was
+/// created" and fall through to a data copy that expects to create the file.
+#[cfg(target_os = "linux")]
+fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
+    use std::os::fd::FromRawFd;
+
+    let source = std::fs::File::open(src)?;
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY: `dirfd` outlives the call and `name` is a valid NUL-terminated
+    // string; the returned descriptor is owned here and closed exactly once by
+    // the `File` below.
+    #[allow(unsafe_code)]
+    let fd = unsafe { libc::openat(dirfd.as_raw_fd(), name.as_ptr(), flags, 0o666) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    #[allow(unsafe_code)]
+    let destination = unsafe { std::fs::File::from_raw_fd(fd) };
+
+    // SAFETY: both descriptors are owned and open for the duration of the
+    // ioctl; `FICLONE` takes the source fd by value, not a pointer.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::ioctl(
+            destination.as_raw_fd(),
+            libc::FICLONE,
+            source.as_raw_fd() as libc::c_int,
+        )
+    };
+    if rc == 0 {
+        return Ok(CloneAttempt::Cloned);
+    }
+    let error = io::Error::last_os_error();
+    drop(destination);
+    // Remove the empty inode the failed reflink left anchored under `dirfd`,
+    // so `Unsupported` really does mean "nothing was created".
+    // SAFETY: `dirfd` and `name` are still valid; failure is ignored because
+    // the reflink error is the one worth reporting.
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::unlinkat(dirfd.as_raw_fd(), name.as_ptr(), 0);
+    }
+    classify_clone_error(error)
+}
+
+/// Platforms with no anchored reflink primitive never take the fast path.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
+    let _ = (src, dirfd, name);
+    Ok(CloneAttempt::Unsupported)
+}
+
+/// Split "this filesystem will not reflink" from a real failure.
+///
+/// Only the former may fall back to a data copy. Anything else - notably a
+/// confinement refusal, which surfaces before this point - propagates.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn classify_clone_error(error: io::Error) -> io::Result<CloneAttempt> {
+    match error.raw_os_error() {
+        // ENOTSUP/EOPNOTSUPP: filesystem has no reflink. EXDEV: different
+        // filesystems. EINVAL: same-file or an unsupported combination.
+        // ENOSYS: kernel too old for the ioctl.
+        Some(code)
+            if code == libc::ENOTSUP
+                || code == libc::EOPNOTSUPP
+                || code == libc::EXDEV
+                || code == libc::EINVAL
+                || code == libc::ENOSYS =>
+        {
+            Ok(CloneAttempt::Unsupported)
+        }
+        _ => Err(error),
+    }
+}

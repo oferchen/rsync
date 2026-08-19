@@ -373,16 +373,17 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 pub use confined_open::{LeafPolicy, open_source_confined};
 #[cfg(unix)]
 pub use dir_sandbox::{
-    AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
-    UnlinkResidue, confined_link_anonymous, confined_rename, fchmodat,
-    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_nofollow,
-    linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
-    mkdirat_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
-    read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
-    recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
-    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chown_at, secure_utimes_at,
-    symlinkat, symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback, unlinkat,
-    utimensat, utimensat_via_sandbox_or_fallback,
+    AtMetadata, CloneAttempt, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome,
+    UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
+    confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    fchownat_via_sandbox_or_fallback, fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback,
+    lstat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, openat,
+    openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
+    readlinkat_via_sandbox_or_fallback, recursive_unlinkat,
+    recursive_unlinkat_via_sandbox_or_fallback, renameat, renameat_via_sandbox_or_fallback,
+    secure_chmod_at, secure_chown_at, secure_utimes_at, symlinkat,
+    symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
+    utimensat_via_sandbox_or_fallback,
 };
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,

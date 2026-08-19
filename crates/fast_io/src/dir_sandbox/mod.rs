@@ -80,8 +80,9 @@ pub mod at_syscalls;
 mod tests;
 
 pub use at_syscalls::{
-    AtMetadata, DirEntryView, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags, UnlinkResidue,
-    confined_link_anonymous, confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    AtMetadata, CloneAttempt, DirEntryView, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
+    UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
+    confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback,
     lstat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, openat,
     openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
