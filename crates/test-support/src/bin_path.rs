@@ -87,14 +87,20 @@ pub fn workspace_bin(name: &str) -> PathBuf {
 /// # Panics
 ///
 /// Panics naming the newest offending source when the binary predates it, and
-/// when the dependency file is absent - a missing `.d` would otherwise turn
+/// when no dependency file can be found - absent evidence would otherwise turn
 /// this guarantee off silently, which is the failure mode it exists to stop.
 fn assert_fresh(name: &str, binary: &Path) {
-    let depfile = binary.with_extension("d");
+    let depfile = dependency_file(binary).unwrap_or_else(|| {
+        panic!(
+            "no Cargo dependency file for {name}: neither {} nor a `deps/` unit \
+             linked to it; without one the binary cannot be proven current. \
+             Run `cargo build --bin {name}` for this profile.",
+            binary.with_extension("d").display()
+        )
+    });
     let listing = std::fs::read_to_string(&depfile).unwrap_or_else(|e| {
         panic!(
-            "cannot read Cargo's dependency file {} for {name}: {e}; \
-             without it the binary cannot be proven current",
+            "cannot read Cargo's dependency file {} for {name}: {e}",
             depfile.display()
         )
     });
@@ -109,6 +115,66 @@ fn assert_fresh(name: &str, binary: &Path) {
             source.display()
         );
     }
+}
+
+/// The dependency file Cargo wrote for `binary`.
+///
+/// Cargo emits `<profile>/<name>.d` beside the uplifted binary only when that
+/// binary is a primary target of the invocation - `cargo build`. A
+/// `cargo test` / nextest build produces and uplifts the binary but leaves no
+/// `.d` next to it, and that is the shape every CI cell runs. What every build
+/// does write is the per-unit dependency file beside the compilation output in
+/// `deps/`, so that is the fallback.
+///
+/// `deps/` holds one unit per feature set, each under its own hash, and the
+/// uplifted binary is a hard link of exactly one of them. Selecting by file
+/// identity picks that one; selecting by name could not, because the hash
+/// encodes a feature set this crate cannot see.
+fn dependency_file(binary: &Path) -> Option<PathBuf> {
+    let uplifted = binary.with_extension("d");
+    if uplifted.is_file() {
+        return Some(uplifted);
+    }
+    let id = file_identity(binary)?;
+    std::fs::read_dir(binary.parent()?.join("deps"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|unit| file_identity(unit) == Some(id))
+        .map(|unit| unit.with_extension("d"))
+        .filter(|depfile| depfile.is_file())
+}
+
+/// A value equal for two paths exactly when they name the same file.
+///
+/// Cargo uplifts by hard link, so the binary under test and the `deps/` unit
+/// it was compiled into are one file under two names.
+#[cfg(unix)]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
+/// Windows counterpart of the Unix `(dev, ino)` pair.
+///
+/// Both fields are `None` for metadata taken from a directory entry, so this
+/// reads through `fs::metadata`, which opens the file to fill them in.
+#[cfg(windows)]
+fn file_identity(path: &Path) -> Option<(u32, u64)> {
+    use std::os::windows::fs::MetadataExt;
+
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.volume_serial_number()?, meta.file_index()?))
+}
+
+/// Platforms with no file-identity API get no fallback, only the uplifted
+/// `.d`. Returning `None` keeps [`dependency_file`] total rather than failing
+/// to compile off the two supported families.
+#[cfg(not(any(unix, windows)))]
+fn file_identity(_path: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// The source paths listed in a Cargo dependency file.
@@ -330,13 +396,89 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cannot read Cargo's dependency file")]
+    #[should_panic(expected = "no Cargo dependency file")]
     fn a_missing_dependency_file_panics_rather_than_skipping_the_check() {
         // Why: silently passing when the evidence is absent is exactly the
         // vacuous-skip pattern this module exists to refuse.
         let tmp = TempDir::new().expect("tempdir");
         let binary = tmp.path().join("fakebin");
         fs::write(&binary, b"").expect("binary");
+        assert_fresh("fakebin", &binary);
+    }
+
+    /// Hard-link `binary` into a `deps/` unit carrying `listing`, then delete
+    /// the uplifted `.d` - reproducing what a `cargo test` build leaves on
+    /// disk, where only the per-unit dependency file exists.
+    #[cfg(any(unix, windows))]
+    fn uplift_from_deps_unit(dir: &Path, binary: &Path) {
+        let deps = dir.join("deps");
+        fs::create_dir_all(&deps).expect("deps dir");
+        let listing = fs::read_to_string(binary.with_extension("d")).expect("read depfile");
+        // A sibling unit from another feature set, to prove selection is by
+        // identity and not by "the first entry in deps/".
+        let other = deps.join("fakebin-0000000000000000");
+        fs::write(&other, b"other").expect("other unit");
+        fs::write(
+            other.with_extension("d"),
+            "/nonexistent: /nonexistent/src/lib.rs",
+        )
+        .expect("other depfile");
+
+        let unit = deps.join("fakebin-1111111111111111");
+        fs::hard_link(binary, &unit).expect("hard link the uplifted binary");
+        fs::write(unit.with_extension("d"), listing).expect("unit depfile");
+        fs::remove_file(binary.with_extension("d")).expect("drop the uplifted depfile");
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    #[should_panic(expected = "built from an earlier revision")]
+    fn a_binary_with_no_uplifted_depfile_is_checked_against_its_deps_unit() {
+        // Why: `cargo build` writes `<profile>/<name>.d`, but a `cargo test` /
+        // nextest build does not - and that is how every CI cell and the
+        // documented local workflow build the binary. Reading only the
+        // uplifted path made the guard abort there instead of checking.
+        let tmp = TempDir::new().expect("tempdir");
+        let binary = fixture(tmp.path(), OLDER_THAN_SOURCES, &["src/lib.rs"]);
+        uplift_from_deps_unit(tmp.path(), &binary);
+        assert_fresh("fakebin", &binary);
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    fn the_deps_unit_fallback_still_accepts_a_current_binary() {
+        // Why: the non-vacuity companion to the row above. Without it a
+        // fallback that resolved the *wrong* unit - the sibling planted by
+        // `uplift_from_deps_unit`, whose sources do not exist - would satisfy
+        // that panic while checking nothing.
+        let tmp = TempDir::new().expect("tempdir");
+        let binary = fixture(tmp.path(), NEWER_THAN_SOURCES, &["src/lib.rs"]);
+        uplift_from_deps_unit(tmp.path(), &binary);
+        assert_fresh("fakebin", &binary);
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    fn the_uplifted_dependency_file_is_preferred_over_a_deps_scan() {
+        // Why: when `cargo build` did write one, reading it directly is both
+        // correct and cheaper than a directory scan. Planting a deps/ unit
+        // whose listing names a source newer than the binary would panic if
+        // the scan won, so a clean run proves the precedence.
+        let tmp = TempDir::new().expect("tempdir");
+        let binary = fixture(tmp.path(), NEWER_THAN_SOURCES, &["src/lib.rs"]);
+        let deps = tmp.path().join("deps");
+        fs::create_dir_all(&deps).expect("deps dir");
+        let unit = deps.join("fakebin-2222222222222222");
+        fs::hard_link(&binary, &unit).expect("hard link");
+        let newer = tmp.path().join("src/newer.rs");
+        fs::write(&newer, b"").expect("newer source");
+        filetime::set_file_mtime(&newer, filetime::FileTime::from_unix_time(9, 0))
+            .expect("stamp newer");
+        fs::write(
+            unit.with_extension("d"),
+            format!("{}: {}", unit.display(), newer.display()),
+        )
+        .expect("unit depfile");
         assert_fresh("fakebin", &binary);
     }
 
@@ -378,11 +520,21 @@ mod tests {
         // Returning early when the binary was never built is not a vacuous
         // skip: in that state `workspace_bin` already panics for every
         // consumer, so there is no path this test could still protect.
+        //
+        // Resolving through `dependency_file` rather than reading
+        // `<binary>.d` directly is deliberate: under `cargo nextest run` -
+        // how CI builds - Cargo writes no uplifted `.d`, so this is also the
+        // gate proving the `deps/` fallback finds one where CI runs.
         let binary = workspace_bin_path("oc-rsync");
         if !binary.is_file() {
             return;
         }
-        let depfile = binary.with_extension("d");
+        let depfile = dependency_file(&binary).unwrap_or_else(|| {
+            panic!(
+                "no dependency file resolved for the real {} - the guard would be inert here",
+                binary.display()
+            )
+        });
         let listing = fs::read_to_string(&depfile)
             .unwrap_or_else(|e| panic!("read {}: {e}", depfile.display()));
         let deps: Vec<PathBuf> = dependencies(&listing).collect();
