@@ -1,8 +1,8 @@
-name: Upstream Testsuite root (rsync 3.4.4)
+name: Upstream Testsuite root (rsync 3.5.0)
 
 # Standalone entry point for the ROOT (sudo) upstream rsync testsuite so its
-# pass/fail status is visible as a README badge. This re-runs the same 3.4.4
-# testsuite/*.test corpus under passwordless sudo so root-only tests execute
+# pass/fail status is visible as a README badge. This re-runs the same 3.5.0
+# runtests.py corpus under passwordless sudo so root-only tests execute
 # (device nodes, ownership, etc.). Scheduled daily plus on-demand.
 on:
   workflow_dispatch:
@@ -20,5 +20,5 @@ jobs:
   upstream-testsuite-root:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
-      upstream_rsync_version: '3.4.4'
+      upstream_rsync_version: '3.5.0'
       variant: 'root'

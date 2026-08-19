@@ -873,22 +873,34 @@ jobs:
       timeout_minutes: 30
 
   # ===========================================================================
-  # Upstream Testsuite - Drive upstream rsync's own testsuite/*.test corpus
-  # against oc-rsync (reusable workflow)
+  # Upstream Testsuite - Drive upstream rsync's own testsuite corpus against
+  # oc-rsync (reusable workflow)
   # ---------------------------------------------------------------------------
-  # Required check. The harness exits non-zero only on UNEXPECTED failures
-  # (tests not in tools/ci/upstream_testsuite_known_failures.conf) or
-  # UNEXPECTED passes (known-failure tests that start passing); both surface
-  # regressions worth blocking on. The ci-skip umbrella emits the matching
-  # `upstream-testsuite / upstream testsuite` context on doc-only PRs so this
-  # required check never deadlocks.
+  # Required check. Pinned to 3.5.0, the release this project targets. The
+  # driver dispatches on the extracted tree's SHAPE, not its version string:
+  # 3.5.0 ships runtests.py + 345 `*_test.py` and takes upstream's own runner,
+  # where 3.4.4 shipped 57 `*.test` shell scripts. That matters because the
+  # behavioural axis is what 3.5.0 changed (33 CVEs, a rewritten path resolver,
+  # new options and daemon directives) - the wire format did not move, so the
+  # interop cells above cannot see any of it.
+  #
+  # The harness exits non-zero on UNEXPECTED failures or UNEXPECTED passes;
+  # both surface regressions worth blocking on. The ci-skip umbrella emits the
+  # matching `upstream-testsuite / upstream testsuite` context on doc-only PRs
+  # so this required check never deadlocks.
   # ===========================================================================
   upstream-testsuite:
     needs: lint
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
+      # Its OWN variable, deliberately not the interop job's
+      # `UPSTREAM_RSYNC_VERSION`. The two now want different versions - interop
+      # sweeps a multi-version matrix from run_interop.sh, this gate pins the
+      # single release we conform to - so sharing one knob would let an
+      # operator override drag the conformance gate back to 3.4.4 as a side
+      # effect of retargeting interop.
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
 
   # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)
