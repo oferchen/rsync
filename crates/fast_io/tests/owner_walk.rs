@@ -101,7 +101,11 @@ fn a_symlink_cycle_is_refused_with_eloop() {
     let err = fast_io::owner_trusted_parent(&root.path().join("a/f"))
         .expect_err("a symlink cycle must not resolve");
 
-    assert_eq!(err.raw_os_error(), Some(libc::ELOOP), "refusal must be ELOOP");
+    assert_eq!(
+        err.raw_os_error(),
+        Some(libc::ELOOP),
+        "refusal must be ELOOP"
+    );
 }
 
 /// `operator_rename` reaches a destination behind a trusted symlink - the
