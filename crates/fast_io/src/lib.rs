@@ -372,7 +372,7 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 #[cfg(unix)]
 pub use confined_open::{LeafPolicy, open_source_confined};
 #[cfg(unix)]
-pub use owner_walk::{operator_rename, owner_trusted_parent};
+pub use owner_walk::{operator_link, operator_rename, owner_trusted_parent};
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,

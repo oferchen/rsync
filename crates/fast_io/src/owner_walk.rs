@@ -203,3 +203,28 @@ pub fn operator_rename(old_path: &Path, new_path: &Path, replace: bool) -> io::R
         replace,
     )
 }
+
+/// Hard-link `old_path` to `new_path` with both endpoints resolved by the
+/// ownership walk.
+///
+/// The link tier runs *before* the rename tier in a backup, so confining only
+/// the rename would leave the escape wide open - upstream sets the
+/// operator-path mode around `link_or_rename()` as a whole, covering both.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:200-207` `link_or_rename()` - `do_link_at` first,
+///   `do_rename_at` on failure.
+/// - `rsync-3.5.0/syscall.c:676` `do_link_at()` under `operator_path_resolve` -
+///   `owner_walk_parent` on each side, then `linkat`.
+///
+/// # Errors
+///
+/// Propagates the walk's refusal (`ELOOP`) or the `linkat(2)` errno - notably
+/// `EXDEV` when the backup area is on another filesystem, which the caller
+/// treats as its signal to fall through to the next tier.
+pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    let (old_dirfd, old_leaf) = owner_trusted_parent(old_path)?;
+    let (new_dirfd, new_leaf) = owner_trusted_parent(new_path)?;
+    crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
+}

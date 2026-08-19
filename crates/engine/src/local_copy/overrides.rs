@@ -67,6 +67,42 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
     fast_io::hard_link(source, destination)
 }
 
+/// Hard-links a destination entry into the backup area.
+///
+/// Same test-override seam as [`create_hard_link`], but on Unix production
+/// resolves both endpoints through the ownership walk
+/// ([`fast_io::operator_link`]). A backup area is an operator path, and the link
+/// tier runs *before* the rename tier, so confining only [`backup_rename`]
+/// would leave upstream's `backup-dir-symlink-race` escape wide open: the
+/// attacker's flipped parent redirects the link and the rename is never
+/// reached.
+///
+/// This is deliberately NOT folded into [`create_hard_link`]: that one also
+/// serves `-H` hardlink materialisation, which is a *transfer* path and takes
+/// the confined resolver, not the ownership one.
+///
+/// upstream: `rsync-3.5.0/backup.c:200-207` `link_or_rename()`;
+/// `syscall.c:676` `do_link_at()` under `operator_path_resolve`.
+pub(super) fn create_backup_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(result) = HARD_LINK_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|override_fn| override_fn(source, destination))
+    }) {
+        return result;
+    }
+
+    #[cfg(unix)]
+    {
+        fast_io::operator_link(source, destination)
+    }
+    #[cfg(not(unix))]
+    {
+        fast_io::hard_link(source, destination)
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static DEVICE_ID_OVERRIDE: RefCell<Option<Box<DeviceIdOverrideFn>>> =
