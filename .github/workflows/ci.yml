@@ -14,11 +14,14 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - '.github/actions/**'
-      - '.github/workflows/_test-features.yml'
-      - '.github/workflows/_interop.yml'
-      - '.github/workflows/_interop-macos.yml'
-      - '.github/workflows/_interop-windows.yml'
-      - '.github/workflows/_upstream-testsuite.yml'
+      # ANY workflow change runs the real matrix. Listing the reusable
+      # workflows individually left every other workflow file to ci-skip.yml,
+      # and `paths` is an ANY-match: a PR touching both an excluded file and
+      # any other workflow still fired the shim, which then published a
+      # stand-in green for contexts it never ran. Matching the whole directory
+      # here makes the two trigger sets disjoint, so exactly one workflow
+      # emits each required context.
+      - '.github/workflows/**'
       - 'docker/**'
       - 'Cross.toml'
   pull_request:
@@ -33,11 +36,14 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - '.github/actions/**'
-      - '.github/workflows/_test-features.yml'
-      - '.github/workflows/_interop.yml'
-      - '.github/workflows/_interop-macos.yml'
-      - '.github/workflows/_interop-windows.yml'
-      - '.github/workflows/_upstream-testsuite.yml'
+      # ANY workflow change runs the real matrix. Listing the reusable
+      # workflows individually left every other workflow file to ci-skip.yml,
+      # and `paths` is an ANY-match: a PR touching both an excluded file and
+      # any other workflow still fired the shim, which then published a
+      # stand-in green for contexts it never ran. Matching the whole directory
+      # here makes the two trigger sets disjoint, so exactly one workflow
+      # emits each required context.
+      - '.github/workflows/**'
       - 'docker/**'
       - 'Cross.toml'
   # Merge-queue validation. This is the workflow that publishes every required
