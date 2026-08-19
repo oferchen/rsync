@@ -92,6 +92,19 @@ pub(super) struct ServerLongFlags {
     pub(super) stop_at: Option<String>,
     pub(super) stop_after: Option<String>,
     pub(super) files_from: Option<String>,
+    /// `--confine-root=DIR` - the root every operator/peer-supplied path this
+    /// server resolves must stay under.
+    ///
+    /// A wrapper serving a restricted directory over a remote shell appends
+    /// this to the server argv whenever its restricted dir is not "/"
+    /// (upstream `support/rrsync` main():637-644), because a wrapper can vet
+    /// the argv it is handed but filter rules travel over the protocol where
+    /// it cannot see them (rsync.1.md:1420-1429).
+    ///
+    /// upstream: options.c:64-65 (`confine_root`/`confine_rootlen`), :690 (the
+    /// popt entry), :2382-2399 (validation), syscall.c:136
+    /// `confinement_root()` - `am_daemon ? module_dir : confine_root`.
+    pub(super) confine_root: Option<String>,
     pub(super) from0: bool,
     pub(super) inplace: bool,
     /// Append data onto shorter destination files (upstream: `--append`).
@@ -418,6 +431,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         stop_at: None,
         stop_after: None,
         files_from: None,
+        confine_root: None,
         from0: false,
         inplace: false,
         append: false,
@@ -786,6 +800,8 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.stop_after = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--files-from=") {
         flags.files_from = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--confine-root=") {
+        flags.confine_root = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-delete=") {
         flags.max_delete = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--suffix=") {
@@ -973,6 +989,15 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
+        // upstream: options.c:690 - `--confine-root` is POPT_ARG_STRING, and a
+        // restricted-directory wrapper appends the JOINED `--confine-root=DIR`
+        // form to the server argv (support/rrsync main():637-644). Without this
+        // entry the token is not recognised as a flag at all and leaks into the
+        // positional list, where it becomes the destination root: MEASURED as
+        // `failed to create destination root --confine-root=/...: No such file
+        // or directory`, rc=12. Same allow-list-drift class as the alt-dest and
+        // --backup-dir/--temp-dir joined forms above.
+        || arg.starts_with("--confine-root=")
         // upstream: options.c:2966-2967 - server_options() emits `--bwlimit=%d`
         // (whole KiB) as a JOINED long flag. Recognise it so the value is not
         // mistaken for a positional destination path; a separate pass captures
