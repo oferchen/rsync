@@ -199,11 +199,12 @@ pub(in crate::local_copy) fn open_destination_writer(
                 }
             }
             // Fallback: named temp file (also the only path on non-Linux).
-            let (new_guard, file) = DestinationWriteGuard::new(
+            let (new_guard, file) = DestinationWriteGuard::new_confined(
                 destination,
                 partial_enabled,
                 context.partial_directory_path(),
                 context.temp_directory_path(),
+                Some(context.destination_root()),
             )?;
             *staging_path = Some(new_guard.staging_path().to_path_buf());
             debug_log!(
@@ -217,11 +218,12 @@ pub(in crate::local_copy) fn open_destination_writer(
             Ok(file)
         }
         WriteStrategy::TempFileRename => {
-            let (new_guard, file) = DestinationWriteGuard::new(
+            let (new_guard, file) = DestinationWriteGuard::new_confined(
                 destination,
                 partial_enabled,
                 context.partial_directory_path(),
                 context.temp_directory_path(),
+                Some(context.destination_root()),
             )?;
             *staging_path = Some(new_guard.staging_path().to_path_buf());
             debug_log!(

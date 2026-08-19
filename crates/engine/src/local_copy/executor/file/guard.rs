@@ -146,7 +146,24 @@ fn create_new_temp(path: &Path) -> io::Result<fs::File> {
 ///
 /// `replace_existing` is always `true`: upstream `do_rename` overwrites the
 /// destination, matching `std::fs::rename`'s replace semantics.
-fn hardened_rename(temp_path: &Path, final_path: &Path) -> io::Result<()> {
+///
+/// On Unix a known `dest_root` routes the rename through
+/// `fast_io::confined_rename`, which resolves each endpoint that lies beneath
+/// the root through the per-component confined walk. Without that, an
+/// attacker who flips a destination parent directory to a symlink between
+/// temp-create and commit redirects the transferred file outside the tree -
+/// the escape upstream's `rename-fullpath-symlink-race` test demonstrates, and
+/// which an absolute `--temp-dir` makes reachable because the source endpoint
+/// then lives outside the tree.
+///
+/// upstream: `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - "Confine each side
+/// independently. [...] Doing each side independently means an absolute source
+/// never disables confinement of a relative destination."
+fn hardened_rename(
+    temp_path: &Path,
+    final_path: &Path,
+    dest_root: Option<&Path>,
+) -> io::Result<()> {
     // Test-only fault injection: force the EXDEV boundary so the copy+remove
     // fallback runs deterministically on a single filesystem (and on Windows CI,
     // where a real second volume is unavailable).
@@ -156,10 +173,14 @@ fn hardened_rename(temp_path: &Path, final_path: &Path) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
+        let _ = dest_root;
         fast_io::rename_no_follow(temp_path, final_path, true)
     }
     #[cfg(not(windows))]
     {
+        if let Some(root) = dest_root {
+            return fast_io::confined_rename(root, temp_path, final_path, true);
+        }
         if let Some(result) = fast_io::try_rename_via_io_uring(temp_path, final_path) {
             result
         } else {
@@ -285,13 +306,19 @@ pub struct DestinationWriteGuard {
     final_path: PathBuf,
     strategy: GuardStrategy,
     committed: bool,
+    /// Root of the destination tree, when the caller knows one. Confines the
+    /// commit rename; see [`hardened_rename`].
+    dest_root: Option<PathBuf>,
 }
 
 impl DestinationWriteGuard {
-    /// Creates a new write guard with an associated temporary file.
+    /// Creates a new write guard whose commit rename is **not** confined.
     ///
-    /// The temporary file is created in the same directory as the
-    /// destination (or in `temp_dir` if provided) to ensure atomic rename.
+    /// Equivalent to [`new_confined`](Self::new_confined) with no destination
+    /// root. Callers that know the root - every production copy path does, via
+    /// the plan's destination root - must use `new_confined` instead, or a
+    /// destination parent flipped to a symlink mid-transfer can redirect the
+    /// commit outside the tree.
     ///
     /// # Errors
     ///
@@ -302,6 +329,26 @@ impl DestinationWriteGuard {
         partial: bool,
         partial_dir: Option<&Path>,
         temp_dir: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
+        Self::new_confined(destination, partial, partial_dir, temp_dir, None)
+    }
+
+    /// Creates a new write guard with an associated temporary file, confining
+    /// the commit rename beneath `dest_root`.
+    ///
+    /// The temporary file is created in the same directory as the
+    /// destination (or in `temp_dir` if provided) to ensure atomic rename.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the temporary file cannot be created, the
+    /// destination directory does not exist, or permission is denied.
+    pub fn new_confined(
+        destination: &Path,
+        partial: bool,
+        partial_dir: Option<&Path>,
+        temp_dir: Option<&Path>,
+        dest_root: Option<&Path>,
     ) -> Result<(Self, fs::File), LocalCopyError> {
         let partial_kind = if partial {
             match partial_dir {
@@ -351,6 +398,7 @@ impl DestinationWriteGuard {
                                 partial: partial_kind,
                             },
                             committed: false,
+                            dest_root: dest_root.map(Path::to_path_buf),
                         },
                         file,
                     ));
@@ -391,6 +439,11 @@ impl DestinationWriteGuard {
                 final_path: destination.to_path_buf(),
                 strategy: GuardStrategy::Anonymous { file: Some(file) },
                 committed: false,
+                // The anonymous path commits with `linkat(2)` against the final
+                // path, not a rename, so it does not go through
+                // `hardened_rename`. Confining that sink is task 605's
+                // leaf-sink sweep, not this rename fix.
+                dest_root: None,
             },
             writer,
         ))
@@ -502,11 +555,12 @@ impl DestinationWriteGuard {
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
         loop {
-            match hardened_rename(&temp_path, &self.final_path) {
+            match hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref()) {
                 Ok(()) => return Ok(false),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
-                    hardened_rename(&temp_path, &self.final_path).map_err(|rename_error| {
+                    hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref())
+                        .map_err(|rename_error| {
                         LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
                     })?;
                     return Ok(false);

@@ -197,7 +197,10 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns the root destination directory for the transfer.
-    pub(super) fn destination_root(&self) -> &Path {
+    ///
+    /// Also the confinement anchor for the temp -> final commit rename; see
+    /// `DestinationWriteGuard::new_confined`.
+    pub(in crate::local_copy) fn destination_root(&self) -> &Path {
         &self.destination_root
     }
 

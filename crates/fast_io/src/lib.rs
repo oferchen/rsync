@@ -369,7 +369,7 @@ pub use confined_open::{LeafPolicy, open_source_confined};
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
-    UnlinkResidue, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    UnlinkResidue, confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback,
     lstat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, openat,
     openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
