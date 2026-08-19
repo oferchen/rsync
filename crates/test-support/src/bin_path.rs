@@ -23,8 +23,9 @@
 //! fail, the diff looks innocent - and has been misdiagnosed as a code defect
 //! more than once. [`workspace_bin`] therefore also asserts the binary is
 //! newer than every source Cargo says it was compiled from, reading Cargo's
-//! own `<binary>.d` dependency file rather than guessing at a source set.
+//! own dependency file rather than guessing at a source set.
 
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -128,54 +129,57 @@ fn assert_fresh(name: &str, binary: &Path) {
 /// `deps/`, so that is the fallback.
 ///
 /// `deps/` holds one unit per feature set, each under its own hash, and the
-/// uplifted binary is a hard link of exactly one of them. Selecting by file
-/// identity picks that one; selecting by name could not, because the hash
+/// uplifted binary is a hard link of exactly one of them. Selecting by sameness
+/// of file picks that one; selecting by name could not, because the hash
 /// encodes a feature set this crate cannot see.
 fn dependency_file(binary: &Path) -> Option<PathBuf> {
     let uplifted = binary.with_extension("d");
     if uplifted.is_file() {
         return Some(uplifted);
     }
-    let id = file_identity(binary)?;
-    std::fs::read_dir(binary.parent()?.join("deps"))
+    let built = std::fs::metadata(binary).ok()?;
+    let mut units = std::fs::read_dir(binary.parent()?.join("deps"))
         .ok()?
         .flatten()
-        .map(|entry| entry.path())
-        .find(|unit| file_identity(unit) == Some(id))
-        .map(|unit| unit.with_extension("d"))
-        .filter(|depfile| depfile.is_file())
+        .filter(|entry| {
+            entry
+                .metadata()
+                .is_ok_and(|unit| is_same_file(&built, &unit))
+        })
+        .map(|entry| entry.path().with_extension("d"))
+        .filter(|depfile| depfile.is_file());
+
+    let depfile = units.next()?;
+    // Refuse to guess between look-alikes. Feature sets differ by which
+    // `cfg`-gated sources they compile, so the wrong unit's list can name a
+    // file this binary never used - and that would demand a rebuild Cargo
+    // would not perform, failing a suite that is perfectly current.
+    units.next().is_none().then_some(depfile)
 }
 
-/// A value equal for two paths exactly when they name the same file.
+/// Whether two metadata reads describe the same file.
 ///
-/// Cargo uplifts by hard link, so the binary under test and the `deps/` unit
-/// it was compiled into are one file under two names.
+/// Cargo uplifts by hard link, so the binary under test and the `deps/` unit it
+/// was compiled into are normally one file under two names.
 #[cfg(unix)]
-fn file_identity(path: &Path) -> Option<(u64, u64)> {
+fn is_same_file(built: &Metadata, unit: &Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.dev(), meta.ino()))
+    (built.dev(), built.ino()) == (unit.dev(), unit.ino())
 }
 
-/// Windows counterpart of the Unix `(dev, ino)` pair.
+/// Length and write time stand in for the inode pair off Unix.
 ///
-/// Both fields are `None` for metadata taken from a directory entry, so this
-/// reads through `fs::metadata`, which opens the file to fill them in.
-#[cfg(windows)]
-fn file_identity(path: &Path) -> Option<(u32, u64)> {
-    use std::os::windows::fs::MetadataExt;
-
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.volume_serial_number()?, meta.file_index()?))
-}
-
-/// Platforms with no file-identity API get no fallback, only the uplifted
-/// `.d`. Returning `None` keeps [`dependency_file`] total rather than failing
-/// to compile off the two supported families.
-#[cfg(not(any(unix, windows)))]
-fn file_identity(_path: &Path) -> Option<(u64, u64)> {
-    None
+/// Windows exposes no stable inode equivalent - `file_index` sits behind the
+/// unstable `windows_by_handle` feature - and length plus a 100ns-resolution
+/// write time is what remains. A hard link shares both by construction, and so
+/// does the copy Cargo falls back to when linking is unavailable, which
+/// preserves the timestamp. [`dependency_file`] additionally requires the match
+/// to be unique, so a coincidence refuses rather than selecting a wrong unit.
+#[cfg(not(unix))]
+fn is_same_file(built: &Metadata, unit: &Metadata) -> bool {
+    built.len() == unit.len()
+        && matches!((built.modified(), unit.modified()), (Ok(a), Ok(b)) if a == b)
 }
 
 /// The source paths listed in a Cargo dependency file.
@@ -455,6 +459,24 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let binary = fixture(tmp.path(), NEWER_THAN_SOURCES, &["src/lib.rs"]);
         uplift_from_deps_unit(tmp.path(), &binary);
+        assert_fresh("fakebin", &binary);
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    #[should_panic(expected = "no Cargo dependency file")]
+    fn two_indistinguishable_units_refuse_rather_than_guess() {
+        // Why: off Unix the match is length plus write time, not an inode, so
+        // two units can look alike. Picking either would check this binary
+        // against a source list it may not have been built from - and a list
+        // naming an unused file demands a rebuild Cargo would never perform,
+        // failing a suite that is current. Refusing says so instead.
+        let tmp = TempDir::new().expect("tempdir");
+        let binary = fixture(tmp.path(), NEWER_THAN_SOURCES, &["src/lib.rs"]);
+        uplift_from_deps_unit(tmp.path(), &binary);
+        let twin = tmp.path().join("deps/fakebin-3333333333333333");
+        fs::hard_link(&binary, &twin).expect("second link");
+        fs::write(twin.with_extension("d"), "/other: /other/src/lib.rs").expect("twin depfile");
         assert_fresh("fakebin", &binary);
     }
 
