@@ -187,6 +187,7 @@ pub(crate) fn process_merge_directive(
     options: &DirMergeOptions,
     base_dir: &Path,
     display: &str,
+    source: filters::RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), Message> {
@@ -195,6 +196,7 @@ pub(crate) fn process_merge_directive(
         options,
         base_dir,
         display,
+        source,
         destination,
         visited,
     )

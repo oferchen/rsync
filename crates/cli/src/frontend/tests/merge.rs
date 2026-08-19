@@ -41,7 +41,14 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
-    apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).expect("apply merge");
+    apply_merge_directive(
+        directive,
+        temp.path(),
+        &mut rules,
+        &mut visited,
+        filters::RuleSource::Argument,
+    )
+    .expect("apply merge");
 
     assert!(visited.is_empty());
     assert!(
@@ -73,7 +80,16 @@ fn apply_merge_directive_rejects_per_dir_alias() {
     let mut visited = HashSet::new();
     // "per-dir" is not an upstream directive, so a merge file that uses it must
     // fail to load rather than silently accept the oc-only alias.
-    assert!(apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).is_err());
+    assert!(
+        apply_merge_directive(
+            directive,
+            temp.path(),
+            &mut rules,
+            &mut visited,
+            filters::RuleSource::Argument,
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -125,7 +141,14 @@ fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
     let directive = MergeDirective::new(OsString::from("a/b/../rules.txt"), None);
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
-    apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).expect("apply merge");
+    apply_merge_directive(
+        directive,
+        temp.path(),
+        &mut rules,
+        &mut visited,
+        filters::RuleSource::Argument,
+    )
+    .expect("apply merge");
 
     assert!(
         rules
@@ -148,5 +171,14 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
     let directive = MergeDirective::new(OsString::from("a/b/../missing.txt"), None);
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
-    assert!(apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).is_err());
+    assert!(
+        apply_merge_directive(
+            directive,
+            temp.path(),
+            &mut rules,
+            &mut visited,
+            filters::RuleSource::Argument,
+        )
+        .is_err()
+    );
 }

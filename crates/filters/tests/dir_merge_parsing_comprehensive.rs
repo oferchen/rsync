@@ -84,10 +84,7 @@ fn exclude_self_modifier_rejected_on_plain_rule() {
     fs::write(&rules_path, "-e *.bak\n").unwrap();
 
     let err = filters::merge::read_rules(&rules_path).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'e'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-e *.bak");
 }
 
 #[test]
@@ -125,16 +122,15 @@ fn dir_merge_requires_separator_before_pattern() {
 
     // upstream: exclude.c:1226 - without a separator, the modifier loop reads
     // `.` (after the `n` modifier) as another modifier character and rejects
-    // it. rsync 3.4.4 emits:
-    //   invalid modifier '.' at position 2 in filter rule: :n.rsync-filter
+    // it. The rule here is read from a FILE, so 3.5.0 redacts both the text
+    // and the offending character (exclude.c:49-56, :127-131):
+    //   invalid modifier in filter rule: <rule from rules.txt line 1>
+    // The `'.' at position 2` form is the ARGUMENT arm and is pinned in the
+    // CLI parser tests instead.
     fs::write(&rules_path, ":n.rsync-filter\n").unwrap();
 
     let err = filters::merge::read_rules(&rules_path).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), ":n.rsync-filter");
 }
 
 #[test]
@@ -569,4 +565,31 @@ fn dir_merge_with_empty_lines_around() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
+}
+
+/// Asserts a file-sourced rule was rejected for an invalid modifier without
+/// echoing the rule text or naming the offending character.
+///
+/// upstream: exclude.c:135 renders `filter_rule_err`'s text through `rule_text`,
+/// which substitutes `<rule from FILE line N>` when the rule came from a file,
+/// and exclude.c:127-131 drops the `'%c' at position %d` detail for the same
+/// reason - the peer chooses which file gets merged, so the text and any offset
+/// into it are both peer-controlled.
+///
+/// MEASURED against rsync 3.5.0, the same rule reached two ways:
+///   merge file -> `invalid modifier in filter rule: <rule from f.rules line 1>`
+///   argument   -> `invalid modifier 'e' at position 1 in filter rule: -e *.log`
+///
+/// The which-character discrimination is pinned on the argument-sourced parser,
+/// where upstream keeps it verbatim: see
+/// `crates/cli/src/frontend/filter_rules/parsing/helpers.rs`.
+fn assert_modifier_rejected_without_echo(rendered: &str, rule: &str) {
+    assert!(
+        rendered.contains("invalid modifier in filter rule: <rule from"),
+        "expected the redacted upstream wording for `{rule}`, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains(rule),
+        "must not echo the peer-chosen rule text `{rule}`, got: {rendered}"
+    );
 }

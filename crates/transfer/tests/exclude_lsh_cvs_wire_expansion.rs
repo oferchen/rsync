@@ -115,6 +115,14 @@ fn cvs_mode_dir_merge_does_not_inherit_to_subdirs() {
 /// Sanity check that the standard merge parser, used outside CVS-mode,
 /// rejects unprefixed tokens. This pins the failure mode the CVS-mode
 /// fix bypasses.
+///
+/// The rejection must name *where* the bad rule is, never *what it says*.
+/// The token came out of a merged file's contents, and the peer chooses
+/// which file gets merged, so echoing the line back would hand it a read
+/// primitive. upstream: exclude.c:55 "Report where the bad rule is, not what
+/// it says"; the substitution happens at the `rule_text()` chokepoint
+/// (exclude.c:90-118), which swaps file-sourced text for `<rule from FILE
+/// line N>` whenever `rule_src_in_file` is set.
 #[test]
 fn standard_dir_merge_rejects_unprefixed_cvsignore_token() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -129,8 +137,15 @@ fn standard_dir_merge_rejects_unprefixed_cvsignore_token() {
         .expect_err("standard merge parse must fail on unprefixed token");
     let msg = err.to_string();
     assert!(
-        msg.contains("one-in-one-out"),
-        "error must mention the offending token: {msg}",
+        !msg.contains("one-in-one-out"),
+        "the file's own line must not be echoed back: {msg}",
+    );
+    // Without this the redaction could degenerate into a message that says
+    // nothing at all, which would satisfy the assertion above while making
+    // the diagnostic useless - the outcome upstream's comment rules out.
+    assert!(
+        msg.contains(".cvsignore") && msg.contains("line 1"),
+        "error must still locate the bad rule by file and line: {msg}",
     );
 }
 

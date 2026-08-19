@@ -34,10 +34,7 @@ mod include_rules {
         // before the pattern. `+*.txt` reads `*` as a modifier and rejects it:
         //   invalid modifier '*' at position 1 in filter rule: +*.txt
         let err = parse_rules("+*.txt", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier '*'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "+*.txt");
     }
 
     #[test]
@@ -160,10 +157,7 @@ mod include_rules {
     #[test]
     fn include_with_word_split_rejected() {
         let err = parse_rules("+w *.rs *.toml *.md", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'w'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "+w *.rs *.toml *.md");
     }
 }
 
@@ -183,10 +177,7 @@ mod exclude_rules {
         // upstream: exclude.c:1226 - `-*.bak` reads `*` as a modifier:
         //   invalid modifier '*' at position 1 in filter rule: -*.bak
         let err = parse_rules("-*.bak", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier '*'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "-*.bak");
     }
 
     #[test]
@@ -280,10 +271,7 @@ mod exclude_rules {
         // and stored a flag no matching logic read, silently diverging from
         // upstream on malformed input.
         let err = parse_rules("-e *.log", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'e'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "-e *.log");
     }
 
     // upstream: exclude.c:1261-1264 / 1279-1283 - `n` and `w` are valid only
@@ -293,28 +281,19 @@ mod exclude_rules {
     #[test]
     fn exclude_with_no_inherit_modifier_rejected() {
         let err = parse_rules("-n *.tmp", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'n'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "-n *.tmp");
     }
 
     #[test]
     fn exclude_with_word_split_rejected() {
         let err = parse_rules("-w *.tmp *.bak *.swp", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'w'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "-w *.tmp *.bak *.swp");
     }
 
     #[test]
     fn exclude_with_combined_modifiers_and_word_split_rejected() {
         let err = parse_rules("-!pw *.o *.obj", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'w'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "-!pw *.o *.obj");
     }
 
     #[test]
@@ -563,10 +542,7 @@ mod hide_show_rules {
         // modifier, matching rsync 3.4.4:
         //   invalid modifier 'I' at position 1 in filter rule: HIDE *.secret
         let err = parse_rules("HIDE *.secret", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'I'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "HIDE *.secret");
     }
 
     #[test]
@@ -594,10 +570,7 @@ mod hide_show_rules {
         // an invalid `H` modifier:
         //   invalid modifier 'H' at position 1 in filter rule: SHOW *.public
         let err = parse_rules("SHOW *.public", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'H'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "SHOW *.public");
     }
 
     #[test]
@@ -701,10 +674,7 @@ mod protect_risk_rules {
         // then an invalid `R` modifier:
         //   invalid modifier 'R' at position 1 in filter rule: PROTECT /important
         let err = parse_rules("PROTECT /important", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'R'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "PROTECT /important");
     }
 
     #[test]
@@ -728,10 +698,7 @@ mod protect_risk_rules {
         // invalid `I` modifier:
         //   invalid modifier 'I' at position 1 in filter rule: RISK /temp
         let err = parse_rules("RISK /temp", Path::new("test")).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid modifier 'I'"),
-            "unexpected error: {err}"
-        );
+        crate::assert_modifier_rejected_without_echo(&err.to_string(), "RISK /temp");
     }
 
     #[test]
@@ -1299,4 +1266,31 @@ mod pattern_preservation {
         let rules = parse_rules("+ foo\\?bar", Path::new("test")).unwrap();
         assert_eq!(rules[0].pattern(), "foo\\?bar");
     }
+}
+
+/// Asserts a file-sourced rule was rejected for an invalid modifier without
+/// echoing the rule text or naming the offending character.
+///
+/// upstream: exclude.c:135 renders `filter_rule_err`'s text through `rule_text`,
+/// which substitutes `<rule from FILE line N>` when the rule came from a file,
+/// and exclude.c:127-131 drops the `'%c' at position %d` detail for the same
+/// reason - the peer chooses which file gets merged, so the text and any offset
+/// into it are both peer-controlled.
+///
+/// MEASURED against rsync 3.5.0, the same rule reached two ways:
+///   merge file -> `invalid modifier in filter rule: <rule from f.rules line 1>`
+///   argument   -> `invalid modifier 'e' at position 1 in filter rule: -e *.log`
+///
+/// The which-character discrimination is pinned on the argument-sourced parser,
+/// where upstream keeps it verbatim: see
+/// `crates/cli/src/frontend/filter_rules/parsing/helpers.rs`.
+fn assert_modifier_rejected_without_echo(rendered: &str, rule: &str) {
+    assert!(
+        rendered.contains("invalid modifier in filter rule: <rule from"),
+        "expected the redacted upstream wording for `{rule}`, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains(rule),
+        "must not echo the peer-chosen rule text `{rule}`, got: {rendered}"
+    );
 }

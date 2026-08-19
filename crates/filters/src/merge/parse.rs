@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::FilterRule;
+use crate::RuleSource;
 use crate::clear_token::{ClearToken, classify_clear_token};
 
 use super::error::MergeFileError;
@@ -355,12 +356,25 @@ fn invalid_modifier(
     source_path: &Path,
     line_num: usize,
 ) -> MergeFileError {
+    // upstream: exclude.c:1370-1379 builds the detail into a scratch buffer and
+    // passes it through rule_detail, which returns "" whenever the text itself
+    // is replaced - "a character of it, an offset into it. Dropped along with
+    // the text it describes" (exclude.c:127-131). Keeping the character or the
+    // offset while redacting the line would leak the file one byte at a time,
+    // which is a finer-grained oracle than echoing the whole rule.
+    let name = source_path.display().to_string();
+    let source = RuleSource::File {
+        name: &name,
+        line: line_num,
+    };
+    let detail = format!(" '{ch}' at position {}", idx + 1);
     MergeFileError::parse_error(
         source_path,
         line_num,
         format!(
-            "invalid modifier '{ch}' at position {} in filter rule: {full_line}",
-            idx + 1
+            "invalid modifier{} in filter rule: {}",
+            source.rule_detail(&detail),
+            source.rule_text(full_line)
         ),
     )
 }
@@ -580,10 +594,20 @@ fn parse_rule_line(
     match classify_clear_token(line.as_bytes()) {
         ClearToken::Clear => return Ok(FilterRule::clear()),
         ClearToken::TrailingCharacters => {
+            // upstream: exclude.c:1470 filter_rule_err, which renders the rule
+            // through rule_text (exclude.c:135).
+            let name = source_path.display().to_string();
+            let source = RuleSource::File {
+                name: &name,
+                line: line_num,
+            };
             return Err(MergeFileError::parse_error(
                 source_path,
                 line_num,
-                format!("'!' rule has trailing characters: {line}"),
+                format!(
+                    "'!' rule has trailing characters: {}",
+                    source.rule_text(line)
+                ),
             ));
         }
         ClearToken::NotClearToken => {}
@@ -597,9 +621,18 @@ fn parse_rule_line(
         return Ok(rule);
     }
 
+    // upstream: exclude.c:1363 filter_rule_err("Unknown filter rule", *rulestr_ptr),
+    // rendered through rule_text (exclude.c:135). Upstream does not quote the
+    // text, and quoting a `<rule from ...>` replacement would be meaningless, so
+    // the backticks go with the raw text they used to wrap.
+    let name = source_path.display().to_string();
+    let source = RuleSource::File {
+        name: &name,
+        line: line_num,
+    };
     Err(MergeFileError::parse_error(
         source_path,
         line_num,
-        format!("Unknown filter rule: `{line}'"),
+        format!("Unknown filter rule: {}", source.rule_text(line)),
     ))
 }

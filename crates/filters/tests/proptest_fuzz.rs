@@ -800,19 +800,13 @@ fn cvs_exclusion_rules_are_all_valid() {
 #[test]
 fn parse_word_split_empty_pattern_rejected() {
     let err = parse_rules("-w   ", Path::new("<test>")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'w'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-w   ");
 }
 
 #[test]
 fn parse_word_split_single_word_rejected() {
     let err = parse_rules("-w single", Path::new("<test>")).unwrap_err();
-    assert!(
-        err.to_string().contains("invalid modifier 'w'"),
-        "unexpected error: {err}"
-    );
+    assert_modifier_rejected_without_echo(&err.to_string(), "-w single");
 }
 
 #[test]
@@ -820,8 +814,32 @@ fn parse_word_split_many_words_rejected() {
     let words: Vec<String> = (0..100).map(|i| format!("word{i}")).collect();
     let input = format!("-w {}", words.join(" "));
     let err = parse_rules(&input, Path::new("<test>")).unwrap_err();
+    assert_modifier_rejected_without_echo(&err.to_string(), &input);
+}
+
+/// Asserts a file-sourced rule was rejected for an invalid modifier without
+/// echoing the rule text or naming the offending character.
+///
+/// upstream: exclude.c:135 renders `filter_rule_err`'s text through `rule_text`,
+/// which substitutes `<rule from FILE line N>` when the rule came from a file,
+/// and exclude.c:127-131 drops the `'%c' at position %d` detail for the same
+/// reason - the peer chooses which file gets merged, so the text and any offset
+/// into it are both peer-controlled.
+///
+/// MEASURED against rsync 3.5.0, the same rule reached two ways:
+///   merge file -> `invalid modifier in filter rule: <rule from f.rules line 1>`
+///   argument   -> `invalid modifier 'e' at position 1 in filter rule: -e *.log`
+///
+/// The which-character discrimination is pinned on the argument-sourced parser,
+/// where upstream keeps it verbatim: see
+/// `crates/cli/src/frontend/filter_rules/parsing/helpers.rs`.
+fn assert_modifier_rejected_without_echo(rendered: &str, rule: &str) {
     assert!(
-        err.to_string().contains("invalid modifier 'w'"),
-        "unexpected error: {err}"
+        rendered.contains("invalid modifier in filter rule: <rule from"),
+        "expected the redacted upstream wording for `{rule}`, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains(rule),
+        "must not echo the peer-chosen rule text `{rule}`, got: {rendered}"
     );
 }

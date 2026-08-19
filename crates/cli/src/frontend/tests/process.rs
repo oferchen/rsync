@@ -22,6 +22,10 @@ fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
         &options,
         temp.path(),
         "parent.rules",
+        filters::RuleSource::File {
+            name: "parent.rules",
+            line: 1,
+        },
         &mut rules,
         &mut visited,
     )

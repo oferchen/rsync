@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use core::client::{ClientConfigBuilder, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
 use core::message::Message;
+use filters::RuleSource;
 use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
@@ -104,7 +105,16 @@ fn push_filter_directive(
             let effective_options =
                 merge_directive_options(&DirMergeOptions::default(), &directive);
             let directive = directive.with_options(effective_options);
-            apply_merge_directive(directive, merge_base, filter_rules, merge_stack)?;
+            // The operator typed this `--filter='. FILE'` themselves, so the
+            // merge file's name is theirs to see: upstream's non-redacted
+            // open-failure arm (exclude.c:1713-1717, errno included).
+            apply_merge_directive(
+                directive,
+                merge_base,
+                filter_rules,
+                merge_stack,
+                RuleSource::Argument,
+            )?;
         }
         FilterDirective::Clear => filter_rules.clear(),
         FilterDirective::CvsDefaults => filter_rules.extend(cvs_default_exclude_rules()?),

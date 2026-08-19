@@ -20,8 +20,14 @@ fn apply_merge_directive_resolves_relative_paths() {
     let mut visited = HashSet::new();
     let directive = MergeDirective::new(OsString::from("outer.rules"), None)
         .with_options(DirMergeOptions::default().allow_list_clearing(true));
-    super::apply_merge_directive(directive, temp.path(), &mut rules, &mut visited)
-        .expect("merge succeeds");
+    super::apply_merge_directive(
+        directive,
+        temp.path(),
+        &mut rules,
+        &mut visited,
+        filters::RuleSource::Argument,
+    )
+    .expect("merge succeeds");
 
     assert!(visited.is_empty());
     let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
@@ -44,8 +50,14 @@ fn apply_merge_directive_respects_forced_include() {
                 .with_enforced_kind(Some(DirMergeEnforcedKind::Include))
                 .allow_list_clearing(true),
         );
-    super::apply_merge_directive(directive, temp.path(), &mut rules, &mut visited)
-        .expect("merge succeeds");
+    super::apply_merge_directive(
+        directive,
+        temp.path(),
+        &mut rules,
+        &mut visited,
+        filters::RuleSource::Argument,
+    )
+    .expect("merge succeeds");
 
     assert!(visited.is_empty());
     // upstream: exclude.c:1393-1402 - '!' inside a merge file clears only
