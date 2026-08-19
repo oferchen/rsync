@@ -14,6 +14,26 @@ use super::directive::{
 use super::parsing::parse_filter_directive;
 use super::sources::{read_merge_file, read_merge_from_standard_input};
 
+/// The merge-file name to put in diagnostics, which is not the path we open.
+///
+/// Upstream keeps the two apart: `parse_filter_file` opens `open_path` but
+/// reports `src_name`, a verbatim copy of the name it was handed
+/// (exclude.c:1727). That name comes from `parse_merge_name`, which "return[s]
+/// the name unchanged [if] it doesn't have any slashes" (exclude.c:704-715) and
+/// only joins it onto the filter dir when it does. So `--filter='. f.rules'`
+/// reports `f.rules`, not the absolute path the open resolved to.
+///
+/// Reporting the resolved path instead would leak the operator's directory
+/// layout into a message the peer can read back whenever the rule came from a
+/// merged file - the leak the `rule_text()` chokepoint exists to close.
+fn reported_merge_name(source: &OsStr, resolved: &Path) -> String {
+    let named = Path::new(source);
+    if named.components().count() == 1 && !named.has_root() {
+        return named.display().to_string();
+    }
+    resolved.display().to_string()
+}
+
 /// Loads a merge file referenced by `directive`, parsing each of its lines and
 /// appending the resulting rules to `destination`. `visited` guards against
 /// recursive merge cycles; stdin (`-`) is read once.
@@ -50,7 +70,7 @@ pub(crate) fn apply_merge_directive(
         // is why it succeeds when `a/b` does not exist - handing the raw name
         // to the OS instead fails with ENOENT.
         let resolved = filters::collapse_dot_dot_dirs(&joined);
-        let display = resolved.display().to_string();
+        let display = reported_merge_name(directive.source(), &resolved);
         let canonical = std::fs::canonicalize(&resolved).ok();
         (resolved, display, canonical)
     };
