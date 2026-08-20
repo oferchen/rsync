@@ -91,3 +91,14 @@ jobs:
 
   upstream-testsuite:
     uses: ./.github/workflows/_ci-skip-upstream-testsuite.yml
+
+  # ci.yml calls the same reusable testsuite workflow a second time under this
+  # job id for the loopback-TCP transport, so it publishes a second PAIR of
+  # contexts (`upstream-testsuite-tcp / upstream testsuite` and
+  # `... (root)`). The stand-in is the SAME stub workflow: the job id supplies
+  # the differing prefix, and the two job names it declares are exactly the two
+  # that need mirroring. Reusing it rather than copying keeps one file as the
+  # owner of "which contexts the testsuite publishes" - a copy is what drifts
+  # when a third leg is added.
+  upstream-testsuite-tcp:
+    uses: ./.github/workflows/_ci-skip-upstream-testsuite.yml
