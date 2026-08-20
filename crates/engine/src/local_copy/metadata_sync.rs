@@ -50,6 +50,7 @@ pub(crate) fn sync_xattrs_if_requested(
     destination: &Path,
     follow_symlinks: bool,
     filter_program: Option<&FilterProgram>,
+    confine_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     if preserve_xattrs && !mode.is_dry_run() {
         if let Some(program) = filter_program {
@@ -66,7 +67,7 @@ pub(crate) fn sync_xattrs_if_requested(
                     source: Some(&sender),
                     destination: Some(&receiver),
                 };
-                sync_xattrs(source, destination, follow_symlinks, filters, None)
+                sync_xattrs(source, destination, follow_symlinks, filters, confine_root)
                     .map_err(map_metadata_error)?;
             } else {
                 sync_xattrs(
@@ -74,7 +75,7 @@ pub(crate) fn sync_xattrs_if_requested(
                     destination,
                     follow_symlinks,
                     XattrSyncFilters::default(),
-                    None,
+                    confine_root,
                 )
                 .map_err(map_metadata_error)?;
             }
@@ -84,7 +85,7 @@ pub(crate) fn sync_xattrs_if_requested(
                 destination,
                 follow_symlinks,
                 XattrSyncFilters::default(),
-                None,
+                confine_root,
             )
             .map_err(map_metadata_error)?;
         }

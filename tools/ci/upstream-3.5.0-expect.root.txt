@@ -55,7 +55,7 @@ connect-prog-host-quoting pass
 connect-prog-nested-singlequote-host-injection fail
 copy-dest-source-symlink pass
 copy-dest-symlink-readleak pass
-copy-xattrs-symlink-race fail
+copy-xattrs-symlink-race pass
 crtimes skip
 cvs-exclude pass
 daemon pass
