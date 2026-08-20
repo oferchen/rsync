@@ -32,6 +32,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+use rustix::io::Errno;
 
 /// Symlink-follow budget for one walk, spent across every component.
 ///
@@ -85,49 +86,92 @@ fn open_dir_component(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<OwnedFd
     .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
-/// Split `path` into the components of its parent plus the final name.
+/// The components a walk must step through, in order.
 ///
-/// Returns `None` when the path has no final component (`/`, `.`, `..`, or
-/// empty), which no operator path being renamed onto can have.
-fn split_parent(path: &Path) -> Option<(Vec<OsString>, OsString)> {
-    let leaf = path.file_name()?.to_os_string();
-    let parent = path.parent().unwrap_or_else(|| Path::new(""));
-    let mut names = Vec::new();
-    for component in parent.components() {
-        match component {
-            Component::Normal(name) => names.push(name.to_os_string()),
-            Component::ParentDir => names.push(OsString::from("..")),
-            // `/` is expressed by the walk starting at the root; `.` is a no-op;
-            // a Windows prefix cannot occur on a Unix-only module.
-            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
-        }
-    }
-    Some((names, leaf))
+/// `/` is expressed by the walk starting at the root and `.` is a no-op, so
+/// both drop out. `..` is kept as a literal component: the walk spends it as
+/// movement against the directory it has actually reached, which is not the
+/// same as collapsing it textually. A Windows prefix cannot occur on a
+/// Unix-only module.
+fn walk_components(path: &Path) -> Vec<OsString> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name.to_os_string()),
+            Component::ParentDir => Some(OsString::from("..")),
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => None,
+        })
+        .collect()
 }
 
 /// Push the components of `path` onto the front of `pending`, in order.
 fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
-    let mut head: Vec<OsString> = path
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(name) => Some(name.to_os_string()),
-            Component::ParentDir => Some(OsString::from("..")),
-            _ => None,
-        })
-        .collect();
+    let mut head = walk_components(path);
     head.append(pending);
     *pending = head;
 }
 
-/// Open the parent directory of `path` via the ownership walk.
+/// Open the walk's starting directory: `/` for an absolute path, `.` otherwise.
+fn open_start_dir(absolute: bool) -> io::Result<OwnedFd> {
+    rustix::fs::open(
+        if absolute { "/" } else { "." },
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+}
+
+/// Open the walk's final component with the caller's flags.
 ///
-/// Every component is inspected with `AT_SYMLINK_NOFOLLOW` before it is opened.
-/// A symlink owned by uid 0 or the euid is followed (its target is spliced into
-/// the remaining path, an absolute target restarting the walk at `/`); a symlink
-/// owned by anyone else is refused.
+/// `O_NOFOLLOW` is added unconditionally, but by this point the component is
+/// already known not to be a symlink - the walk resolved that above. It is a
+/// race backstop, closing the window between the `statat` and this `openat`,
+/// not the leaf policy.
 ///
-/// Returns the parent descriptor plus the final component, ready for a `*at`
-/// operation.
+/// upstream: `rsync-3.5.0/syscall.c:469`.
+fn open_final(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    flags: OFlags,
+    mode: Mode,
+) -> io::Result<OwnedFd> {
+    rustix::fs::openat(
+        dirfd,
+        name,
+        flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        mode,
+    )
+    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+}
+
+/// Walk `path` component-by-component and open its final component.
+///
+/// This is the whole resolver. Every component - **parents and leaf alike** -
+/// is inspected with `AT_SYMLINK_NOFOLLOW` and then classified by one rule: a
+/// symlink owned by uid 0 or the euid is the operator's own layout and is
+/// followed (its target spliced into the remaining path, an absolute target
+/// restarting the walk at `/`), and a symlink owned by anyone else is refused.
+/// Only a component that is *not* a symlink is opened.
+///
+/// The leaf is not a special case, and that is the point. Upstream applies the
+/// ownership test to `is_last` exactly as it does to a parent - see the
+/// contract at `syscall.c:270-272`: "refusing to traverse any symlink (parent
+/// or leaf) not owned by uid 0 or our euid. A trusted-owned symlink (e.g.
+/// root's `/var/log -> /data/log`) is still followed; an untrusted one fails
+/// `ELOOP`." Refusing every leaf symlink instead would break the operator's own
+/// `/var/log -> /data/log`, which is the ordinary case this resolver exists to
+/// keep working.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:286` `ona_open()` - this walk. The loop at `:367`,
+///   the `O_CREAT` leaf arm at `:381-396`, the ownership test at `:406`, the
+///   splice at `:421-455`, the `is_last` open at `:460-469`, and the
+///   `S_ISDIR`/`ENOTDIR` guard on interior components at `:479`.
+/// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - `ona_open` on
+///   the full path, which is [`operator_open_with`].
+/// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same `ona_open` on
+///   the *parent directory*, which is [`owner_trusted_parent`]. One walk, two
+///   entry points; the difference is only what path each hands it.
 ///
 /// # Errors
 ///
@@ -135,58 +179,94 @@ fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
 ///   hop budget is exhausted. This is the security refusal, and it is
 ///   deliberately not `EXDEV`: callers treat `EXDEV` as cross-device and fall
 ///   back to copy+remove, which would defeat the refusal.
-/// - `EINVAL` when `path` has no final component.
+/// - `ENOTDIR` when an interior component is not a directory.
 /// - Otherwise the `openat`/`statat`/`readlinkat` errno verbatim.
-pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
-    let Some((mut pending, leaf)) = split_parent(path) else {
-        return Err(io::Error::from_raw_os_error(libc::EINVAL));
-    };
-
-    let start = if path.is_absolute() { "/" } else { "." };
-    let mut dirfd = rustix::fs::open(
-        start,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
-
+fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd> {
+    let mut pending = walk_components(path);
+    let mut dirfd = open_start_dir(path.is_absolute())?;
     let mut hops = MAX_SYMLINK_HOPS;
 
     while !pending.is_empty() {
         let name = pending.remove(0);
-        let stat = rustix::fs::statat(dirfd.as_fd(), name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+        let is_last = pending.is_empty();
 
-        if FileType::from_raw_mode(stat.st_mode as _) != FileType::Symlink {
-            dirfd = open_dir_component(dirfd.as_fd(), name.as_os_str())?;
+        let stat =
+            match rustix::fs::statat(dirfd.as_fd(), name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
+                // upstream: syscall.c:381-396 - the leaf may legitimately not exist
+                // yet under O_CREAT (the `--log-file=/tmp/dir/rsync.log` shape).
+                // Open it with O_NOFOLLOW so a leaf raced into a symlink between
+                // this failed stat and the open is still refused.
+                Err(errno)
+                    if is_last && errno == Errno::NOENT && flags.contains(OFlags::CREATE) =>
+                {
+                    return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
+                }
+                Err(errno) => return Err(io::Error::from_raw_os_error(errno.raw_os_error())),
+            };
+
+        if FileType::from_raw_mode(stat.st_mode as _) == FileType::Symlink {
+            // upstream: syscall.c:406 - an other-uid symlink is the attacker's
+            // and is refused; uid 0 or our own euid is the operator's own
+            // layout and is followed. This arm is reached for the leaf too.
+            if !symlink_owner_is_trusted(stat.st_uid) {
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
+            if hops == 0 {
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
+            hops -= 1;
+
+            let target = rustix::fs::readlinkat(dirfd.as_fd(), name.as_os_str(), Vec::new())
+                .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+            let target = PathBuf::from(OsStr::from_bytes(target.as_bytes()));
+            if target.is_absolute() {
+                // upstream: syscall.c:445 "followed an absolute target: restart from /".
+                dirfd = open_start_dir(true)?;
+            }
+            prepend_components(&mut pending, &target);
             continue;
         }
 
-        // upstream: syscall.c:406 - an other-uid symlink is the attacker's, and
-        // is refused; uid 0 or our own euid is the operator's own layout.
-        if !symlink_owner_is_trusted(stat.st_uid) {
-            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        if is_last {
+            return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
         }
-        if hops == 0 {
-            return Err(io::Error::from_raw_os_error(libc::ELOOP));
-        }
-        hops -= 1;
 
-        let target = rustix::fs::readlinkat(dirfd.as_fd(), name.as_os_str(), Vec::new())
-            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
-        let target = PathBuf::from(OsStr::from_bytes(target.as_bytes()));
-        if target.is_absolute() {
-            // upstream: syscall.c:422 "Absolute target restarts the walk from /".
-            dirfd = rustix::fs::open(
-                "/",
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+        // upstream: syscall.c:479 - an interior component that is not a
+        // directory is ENOTDIR, not a silent stop.
+        if FileType::from_raw_mode(stat.st_mode as _) != FileType::Directory {
+            return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
         }
-        prepend_components(&mut pending, &target);
+        dirfd = open_dir_component(dirfd.as_fd(), name.as_os_str())?;
     }
 
+    // No components at all (`/`, `.`, or empty): the start directory is itself
+    // the answer. Reached via `owner_trusted_parent` for a bare relative leaf
+    // such as `rsync.log`, whose parent is "" and whose anchor is therefore ".".
+    Ok(dirfd)
+}
+
+/// Open the parent directory of `path` via the ownership walk.
+///
+/// Returns the parent descriptor plus the final component, ready for a `*at`
+/// operation. The leaf is deliberately *not* resolved here: a rename or link
+/// targets the name itself, so replacing a symlink sitting at that name is the
+/// correct outcome, not something to refuse.
+///
+/// upstream: `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same walk
+/// as [`owner_walk_open`], handed the parent directory instead of the path.
+///
+/// # Errors
+///
+/// - `EINVAL` when `path` has no final component (`/`, `.`, `..`, or empty),
+///   which no operator path being renamed onto can have.
+/// - Otherwise see [`owner_walk_open`].
+pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
+    let Some(leaf) = path.file_name().map(OsStr::to_os_string) else {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let dirfd = owner_walk_open(parent, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())?;
     Ok((dirfd, leaf))
 }
 
@@ -243,4 +323,205 @@ pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
     let (old_dirfd, old_leaf) = owner_trusted_parent(old_path)?;
     let (new_dirfd, new_leaf) = owner_trusted_parent(new_path)?;
     crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
+}
+
+/// Open `path` with every component resolved by the ownership walk.
+///
+/// One policy applies end to end, leaf included: follow a symlink owned by uid
+/// 0 or our euid, refuse any other-uid one. Both directions matter here.
+///
+/// - It **defends** the `/tmp/attackerdir/rsync.log` shape, where a parent is
+///   flipped to a symlink and the leaf does not exist yet - so there is nothing
+///   for a leaf-only `O_NOFOLLOW` to reject.
+/// - It **permits** the operator's own `/var/log -> /data/log`. Refusing every
+///   leaf symlink would break the ordinary administrative layout this resolver
+///   exists to keep working, which is why upstream tests it
+///   (`operator-path-log-file`, the SAME-UID abs-leaf cell).
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:270-272` - the contract in upstream's own words:
+///   "refusing to traverse any symlink (parent or leaf) not owned by uid 0 or
+///   our euid. A trusted-owned symlink (e.g. root's `/var/log -> /data/log`) is
+///   still followed; an untrusted one fails `ELOOP`."
+/// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - the public
+///   entry point this mirrors, used for the opens that are not confined beneath
+///   a root (`--log-file`, `--*-from`, lock/motd - `syscall.c:232`).
+///
+/// # Errors
+///
+/// - `EINVAL` when `path` has no final component.
+/// - Otherwise see [`owner_walk_open`].
+fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std::fs::File> {
+    // `/`, `.` and `..` name a directory, never a file to open; the walk would
+    // otherwise hand back its own anchor.
+    if path.file_name().is_none() {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    owner_walk_open(path, flags, mode).map(std::fs::File::from)
+}
+
+/// Open an operator-supplied path read-only through the ownership walk.
+///
+/// The read-side counterpart for the operator paths rsync only consumes -
+/// `--password-file`, `--exclude-from`/`--include-from`/`--files-from`, the
+/// daemon config and secrets files.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
+    operator_open_with(path, OFlags::RDONLY, Mode::empty())
+}
+
+/// Open an operator-supplied path for appending, creating it if absent.
+///
+/// This is the `--log-file` shape, and the reason the leaf `O_NOFOLLOW` matters
+/// as much as the walk: a privileged rsync appending through a planted symlink
+/// writes attacker-chosen bytes into an attacker-chosen file.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_with(
+        path,
+        OFlags::WRONLY | OFlags::APPEND | OFlags::CREATE,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{operator_open_append, operator_open_read, symlink_owner_is_trusted, trusted_uid};
+    use std::io::{Read, Write};
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    /// A plain path with no symlink anywhere resolves and opens normally - the
+    /// walk must not break the ordinary case it guards.
+    #[test]
+    fn reads_a_plain_path_through_a_real_directory() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = temp.path().join("logs");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::write(dir.join("f"), b"payload").expect("write");
+
+        let mut opened = operator_open_read(&dir.join("f")).expect("open");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "payload");
+    }
+
+    /// A symlink AT the named path is FOLLOWED when the operator owns it.
+    ///
+    /// This is the `/var/log -> /data/log` layout, and upstream tests it as
+    /// `operator-path-log-file` (the "SAME-UID abs leaf safe" cell). The leaf
+    /// takes the same ownership rule as every parent - `syscall.c:270-272`:
+    /// "refusing to traverse any symlink (parent or leaf) not owned by uid 0 or
+    /// our euid. A trusted-owned symlink [...] is still followed".
+    ///
+    /// ⚠ This test previously asserted the OPPOSITE - that a self-owned leaf
+    /// symlink is refused - reading `syscall.c:469`'s `flags | O_NOFOLLOW` as
+    /// the leaf policy. That line sits inside the `/* Non-symlink. */ if
+    /// (is_last)` arm and is only reached once the walk has established the
+    /// component is not a symlink; it is a race backstop, not a policy. The old
+    /// assertion encoded the bug, which is why the suite stayed green while
+    /// upstream's cell failed.
+    #[test]
+    fn follows_a_self_owned_symlink_at_the_leaf() {
+        let temp = TempDir::new().expect("tempdir");
+        let target = temp.path().join("real.log");
+        std::fs::write(&target, b"SENTINEL").expect("write target");
+        let named = temp.path().join("log");
+        symlink(&target, &named).expect("symlink");
+
+        let mut opened = operator_open_read(&named).expect("a self-owned leaf symlink is followed");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(
+            body, "SENTINEL",
+            "the walk did not resolve through the operator's own leaf symlink"
+        );
+    }
+
+    /// A self-owned symlink in a PARENT component is followed.
+    ///
+    /// This is the `/backup -> /mnt/disk` admin layout: ownership, not location,
+    /// is the trust signal, so the walk must not refuse the operator's own
+    /// indirection. Pairs with the leaf cell above - together they show the two
+    /// halves are genuinely different policies rather than one blanket rule.
+    #[test]
+    fn follows_a_self_owned_parent_symlink() {
+        let temp = TempDir::new().expect("tempdir");
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).expect("mkdir");
+        let via = temp.path().join("via");
+        symlink(&real, &via).expect("symlink");
+
+        let mut created =
+            operator_open_append(&via.join("rsync.log"), 0o600).expect("append through parent");
+        created.write_all(b"line\n").expect("write");
+
+        assert_eq!(
+            std::fs::read(real.join("rsync.log")).expect("log"),
+            b"line\n",
+            "the log did not land in the directory the trusted parent pointed at"
+        );
+    }
+
+    /// Append creates the file when absent and does not truncate it when present.
+    #[test]
+    fn append_creates_then_appends() {
+        let temp = TempDir::new().expect("tempdir");
+        let log = temp.path().join("rsync.log");
+
+        operator_open_append(&log, 0o600)
+            .expect("create")
+            .write_all(b"one\n")
+            .expect("write");
+        operator_open_append(&log, 0o600)
+            .expect("reopen")
+            .write_all(b"two\n")
+            .expect("write");
+
+        assert_eq!(std::fs::read(&log).expect("log"), b"one\ntwo\n");
+    }
+
+    /// The non-vacuity companion to [`follows_a_self_owned_symlink_at_the_leaf`].
+    ///
+    /// That test proves a *trusted* symlink is followed. On its own it would
+    /// also pass if the walk simply followed everything, which is the whole
+    /// vulnerability. This pins the other half of the same rule: an owner that
+    /// is neither uid 0 nor our euid is refused.
+    ///
+    /// The predicate is exercised directly because the behavioural cell needs a
+    /// symlink owned by a *different* uid, and only root can create one -
+    /// upstream's own `operator-path-insecure-links-daemon` cell is skipped for
+    /// exactly that reason ("requires root to plant a symlink owned by a
+    /// non-self uid"). A runtime-skipped test would report a pass having
+    /// checked nothing; this checks the rule on every run.
+    ///
+    /// upstream: `syscall.c:406` `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`.
+    #[test]
+    fn refuses_an_owner_that_is_neither_root_nor_the_euid() {
+        assert!(symlink_owner_is_trusted(0), "uid 0 is the operator");
+        assert!(
+            symlink_owner_is_trusted(trusted_uid()),
+            "our own euid is the operator"
+        );
+
+        // Search a small range for a uid that is provably neither 0 nor the
+        // euid, rather than hardcoding one that could collide with whatever uid
+        // the suite happens to run as.
+        let foreign = (1..=8u32)
+            .find(|candidate| *candidate != trusted_uid())
+            .expect("at least one of uids 1..=8 differs from the euid");
+        assert!(
+            !symlink_owner_is_trusted(foreign),
+            "uid {foreign} is neither root nor the euid and must be refused"
+        );
+    }
 }

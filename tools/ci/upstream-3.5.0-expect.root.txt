@@ -181,7 +181,7 @@ link-dest-relative-basis pass
 link-dest-symlink-enotsup fail
 links pass
 log-control-chars pass
-log-file-symlink fail
+log-file-symlink pass
 longdir pass
 macos-setgid-ordinary-mode-regression skip
 malicious-dot-dir-delete-scope skip
