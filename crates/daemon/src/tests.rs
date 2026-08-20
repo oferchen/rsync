@@ -18,6 +18,7 @@ use crate::daemon::{
     AuthDenial,
     // From module_state.rs
     AuthUser,
+    AuthUserRule,
     // Constants from daemon.rs
     BRANDED_CONFIG_ENV,
     ConnectionLimiter,
