@@ -495,7 +495,7 @@ fn handle_authentication(
                     ctx.host_display(),
                     ctx.peer_ip,
                     ctx.request,
-                    denial.log_reason().as_deref(),
+                    denial.log_suffix().as_deref(),
                 );
             }
             // FSM: -> Closing on auth failure (session ends).
