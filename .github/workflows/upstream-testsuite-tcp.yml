@@ -1,0 +1,43 @@
+name: Upstream Testsuite 3.5.0 (nonroot, tcp)
+
+# Standalone entry point for the NON-ROOT upstream rsync 3.5.0 testsuite run
+# over a real loopback TCP daemon, so its pass/fail status is visible as a
+# README badge. Together with upstream-testsuite.yml, -root.yml and
+# -root-tcp.yml this completes the four 3.5.0 legs:
+#
+#            | pipe (secure default)      | tcp (127.0.0.1)
+#   ---------+----------------------------+--------------------------
+#   non-root | upstream-testsuite.yml     | THIS FILE
+#   root     | upstream-testsuite-root.yml| upstream-testsuite-root-tcp.yml
+#
+# The pipe legs run the whole 345-test corpus. This leg passes
+# --daemon-tests-only as well as --use-tcp, which is exactly the pairing
+# upstream ships the option for: "Intended for a --use-tcp pass that follows a
+# full default-transport run: the tests this drops never call
+# start_test_daemon(), so they cannot observe --use-tcp and would just repeat
+# themselves." So it runs the 155 transport-observing tests, and its manifest
+# is sized to match - the driver derives that expected size from upstream's own
+# select_daemon_tests(), so a short manifest is still refused.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-nonroot-tcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The job id prefixes the reported check context, so the transport is visible
+  # as `upstream-testsuite-tcp / upstream testsuite`. The reusable workflow's own
+  # job name is a literal on purpose - see the comment there.
+  upstream-testsuite-tcp:
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      upstream_rsync_version: '3.5.0'
+      variant: 'nonroot'
+      transport: 'tcp'
+      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.tcp.txt
