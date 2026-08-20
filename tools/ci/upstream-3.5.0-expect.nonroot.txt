@@ -171,7 +171,7 @@ itemize pass
 iwildmatch-fold pass
 keep-dirlinks-rule fail
 keep-dirlinks-symlinked-dest pass
-ki58-log-format-percent fail
+ki58-log-format-percent pass
 ki62-io-error-mask skip
 ki72-safe-links-backup pass
 ki73-cvs-clear-list pass
