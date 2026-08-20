@@ -1,39 +1,64 @@
 use super::debug::DebugFlagSettings;
 use super::info::{INFO_FLAG_SPECS, InfoFlagSettings};
+use super::output_words::{OutputWord, classify};
 use super::*;
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 use std::ffi::OsString;
 
-#[test]
-fn info_flag_parse_flag_and_level_default() {
-    let settings = InfoFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("progress");
-    assert_eq!(name, "progress");
-    assert_eq!(level, 1);
+fn named(token: &str) -> (String, u8) {
+    match classify(token) {
+        OutputWord::Named { name, level } => (name.to_owned(), level),
+        OutputWord::Help => ("<help>".to_owned(), 0),
+        OutputWord::Every(level) => ("<all>".to_owned(), level),
+    }
 }
 
 #[test]
-fn info_flag_parse_flag_and_level_with_number() {
-    let settings = InfoFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("progress2");
-    assert_eq!(name, "progress");
-    assert_eq!(level, 2);
+fn output_word_without_a_suffix_is_level_one() {
+    assert_eq!(named("progress"), ("progress".to_owned(), 1));
 }
 
 #[test]
-fn info_flag_parse_flag_and_level_no_prefix() {
-    let settings = InfoFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("noprogress");
-    assert_eq!(name, "progress");
-    assert_eq!(level, 0);
+fn output_word_takes_its_level_from_a_trailing_digit() {
+    assert_eq!(named("progress2"), ("progress".to_owned(), 2));
+}
+
+// upstream: options.c parse_output_words has no negation prefix - `no<word>`
+// and `-<word>` are ordinary (unknown) names and exit RERR_SYNTAX. The
+// portable spelling for silencing a word is the `<word>0` suffix, which
+// `output_word_level_zero_silences_a_word` pins as the surviving mechanism.
+#[test]
+fn a_no_prefixed_word_is_not_a_negation() {
+    assert_eq!(named("noprogress"), ("noprogress".to_owned(), 1));
+    let err = parse_info_flags(&[OsString::from("noprogress")])
+        .expect_err("`noprogress` is an unknown info word, not a negation");
+    assert!(
+        err.to_string().contains("noprogress"),
+        "error must name the rejected token: {err}"
+    );
 }
 
 #[test]
-fn info_flag_parse_flag_and_level_dash_prefix() {
-    let settings = InfoFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("-progress");
-    assert_eq!(name, "progress");
-    assert_eq!(level, 0);
+fn a_dash_prefixed_word_is_not_a_negation() {
+    assert_eq!(named("-progress"), ("-progress".to_owned(), 1));
+    let _ = parse_info_flags(&[OsString::from("-progress")])
+        .expect_err("`-progress` is an unknown info word, not a negation");
+}
+
+#[test]
+fn output_word_level_zero_silences_a_word() {
+    let settings = parse_info_flags(&[OsString::from("progress0")]).expect("progress0 parses");
+    assert_eq!(settings.progress, ProgressSetting::Disabled);
+}
+
+// upstream: options.c parse_output_words skips the trailing-digit scan when
+// the token starts with a digit (`if (!isDigit(str))`), so a bare integer is
+// its own name and reaches the unknown-item error.
+#[test]
+fn a_bare_integer_is_a_word_name_not_a_level() {
+    assert_eq!(named("2"), ("2".to_owned(), 1));
+    let _ =
+        parse_info_flags(&[OsString::from("2")]).expect_err("a bare integer is not an info word");
 }
 
 #[test]
@@ -83,10 +108,9 @@ fn info_flag_apply_invalid() {
 }
 
 #[test]
-fn parse_info_flags_empty_value() {
+fn parse_info_flags_empty_value_is_a_no_op() {
     let values = vec![OsString::from("")];
-    let result = parse_info_flags(&values);
-    assert!(result.is_err());
+    parse_info_flags(&values).expect("upstream skips empty items rather than erroring");
 }
 
 #[test]
@@ -135,19 +159,11 @@ fn parse_info_flags_server_mixes_known_and_unknown() {
 }
 
 #[test]
-fn debug_flag_parse_flag_and_level_default() {
-    let settings = DebugFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("io");
-    assert_eq!(name, "io");
-    assert_eq!(level, 1);
-}
-
-#[test]
-fn debug_flag_parse_flag_and_level_with_number() {
-    let settings = DebugFlagSettings::default();
-    let (name, level) = settings.parse_flag_and_level("io3");
-    assert_eq!(name, "io");
-    assert_eq!(level, 3);
+fn a_debug_word_shares_the_info_token_grammar() {
+    assert_eq!(named("io"), ("io".to_owned(), 1));
+    assert_eq!(named("io3"), ("io".to_owned(), 3));
+    let _ = parse_debug_flags(&[OsString::from("noio")])
+        .expect_err("`noio` is an unknown debug word, not a negation");
 }
 
 #[test]
@@ -191,10 +207,9 @@ fn debug_flag_apply_invalid() {
 }
 
 #[test]
-fn parse_debug_flags_empty_value() {
+fn parse_debug_flags_empty_value_is_a_no_op() {
     let values = vec![OsString::from("")];
-    let result = parse_debug_flags(&values);
-    assert!(result.is_err());
+    parse_debug_flags(&values).expect("upstream skips empty items rather than erroring");
 }
 
 #[test]
@@ -222,13 +237,6 @@ fn info_flag_progress0_disables() {
 }
 
 #[test]
-fn info_flag_progress3_rejected() {
-    let mut settings = InfoFlagSettings::default();
-    let result = settings.apply("progress3", "progress3");
-    assert!(result.is_err());
-}
-
-#[test]
 fn info_flag_stats2() {
     let mut settings = InfoFlagSettings::default();
     settings.apply("stats2", "stats2").unwrap();
@@ -240,13 +248,6 @@ fn info_flag_stats3() {
     let mut settings = InfoFlagSettings::default();
     settings.apply("stats3", "stats3").unwrap();
     assert_eq!(settings.stats, Some(3));
-}
-
-#[test]
-fn info_flag_stats4_rejected() {
-    let mut settings = InfoFlagSettings::default();
-    let result = settings.apply("stats4", "stats4");
-    assert!(result.is_err());
 }
 
 #[test]
@@ -292,24 +293,10 @@ fn info_flag_flist2() {
 }
 
 #[test]
-fn info_flag_flist3_rejected() {
-    let mut settings = InfoFlagSettings::default();
-    let result = settings.apply("flist3", "flist3");
-    assert!(result.is_err());
-}
-
-#[test]
 fn info_flag_misc2() {
     let mut settings = InfoFlagSettings::default();
     settings.apply("misc2", "misc2").unwrap();
     assert_eq!(settings.misc, Some(2));
-}
-
-#[test]
-fn info_flag_misc3_rejected() {
-    let mut settings = InfoFlagSettings::default();
-    let result = settings.apply("misc3", "misc3");
-    assert!(result.is_err());
 }
 
 #[test]
@@ -320,19 +307,13 @@ fn info_flag_skip2() {
 }
 
 #[test]
-fn info_flag_skip3_rejected() {
-    let mut settings = InfoFlagSettings::default();
-    let result = settings.apply("skip3", "skip3");
-    assert!(result.is_err());
-}
-
-#[test]
 fn info_flag_backup_any_level() {
     let mut settings = InfoFlagSettings::default();
     settings.apply("backup", "backup").unwrap();
     assert_eq!(settings.backup, Some(1));
+    // upstream clamps every explicit level to MAX_OUT_LEVEL (4).
     settings.apply("backup5", "backup5").unwrap();
-    assert_eq!(settings.backup, Some(5));
+    assert_eq!(settings.backup, Some(4));
 }
 
 #[test]
@@ -380,100 +361,9 @@ fn info_flag_symsafe_any_level() {
 }
 
 #[test]
-fn info_flag_no_prefix_copy() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nocopy", "nocopy").unwrap();
-    assert_eq!(settings.copy, Some(0));
-}
-
-#[test]
-fn info_flag_dash_prefix_copy() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("-copy", "-copy").unwrap();
-    assert_eq!(settings.copy, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_del() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nodel", "nodel").unwrap();
-    assert_eq!(settings.del, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_stats() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nostats", "nostats").unwrap();
-    assert_eq!(settings.stats, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_name() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("noname", "noname").unwrap();
-    assert_eq!(settings.name, Some(NameOutputLevel::Disabled));
-}
-
-#[test]
-fn info_flag_no_prefix_skip() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("noskip", "noskip").unwrap();
-    assert_eq!(settings.skip, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_flist() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("noflist", "noflist").unwrap();
-    assert_eq!(settings.flist, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_misc() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nomisc", "nomisc").unwrap();
-    assert_eq!(settings.misc, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_backup() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nobackup", "nobackup").unwrap();
-    assert_eq!(settings.backup, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_mount() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nomount", "nomount").unwrap();
-    assert_eq!(settings.mount, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_nonreg() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nononreg", "nononreg").unwrap();
-    assert_eq!(settings.nonreg, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_remove() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("noremove", "noremove").unwrap();
-    assert_eq!(settings.remove, Some(0));
-}
-
-#[test]
-fn info_flag_no_prefix_symsafe() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("nosymsafe", "nosymsafe").unwrap();
-    assert_eq!(settings.symsafe, Some(0));
-}
-
-#[test]
 fn info_flag_numeric_1_enables_all() {
     let mut settings = InfoFlagSettings::default();
-    settings.apply("1", "1").unwrap();
+    settings.apply("all1", "all1").unwrap();
     assert_eq!(settings.progress, ProgressSetting::PerFile);
     assert_eq!(settings.stats, Some(1));
     assert_eq!(settings.name, Some(NameOutputLevel::UpdatedOnly));
@@ -493,7 +383,7 @@ fn info_flag_numeric_1_enables_all() {
 fn info_flag_numeric_0_disables_all() {
     let mut settings = InfoFlagSettings::default();
     settings.apply("all", "all").unwrap();
-    settings.apply("0", "0").unwrap();
+    settings.apply("all0", "all0").unwrap();
     assert_eq!(settings.progress, ProgressSetting::Disabled);
     assert_eq!(settings.stats, Some(0));
     assert_eq!(settings.name, Some(NameOutputLevel::Disabled));
@@ -746,27 +636,9 @@ fn debug_flag_all_with_level() {
 }
 
 #[test]
-fn debug_flag_no_prefix_all_flags() {
-    let keywords = [
-        "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
-        "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
-        "recv", "send", "time",
-    ];
-    for keyword in &keywords {
-        let mut settings = DebugFlagSettings::default();
-        let negated = format!("no{keyword}");
-        let result = settings.apply(&negated, &negated);
-        assert!(
-            result.is_ok(),
-            "negated debug keyword 'no{keyword}' should be accepted but got: {result:?}"
-        );
-    }
-}
-
-#[test]
 fn debug_flag_numeric_1_enables_all() {
     let mut settings = DebugFlagSettings::default();
-    settings.apply("1", "1").unwrap();
+    settings.apply("all1", "all1").unwrap();
     assert_eq!(settings.io, Some(1));
     assert_eq!(settings.proto, Some(1));
     assert_eq!(settings.flist, Some(1));
@@ -777,7 +649,7 @@ fn debug_flag_numeric_1_enables_all() {
 fn debug_flag_numeric_0_disables_all() {
     let mut settings = DebugFlagSettings::default();
     settings.apply("all", "all").unwrap();
-    settings.apply("0", "0").unwrap();
+    settings.apply("all0", "all0").unwrap();
     assert_eq!(settings.io, Some(0));
     assert_eq!(settings.proto, Some(0));
     assert_eq!(settings.flist, Some(0));
@@ -891,20 +763,6 @@ fn info_help_text_does_not_advertise_no_or_dash_prefix() {
 // for backwards compatibility and server-mode token forwarding even though
 // they are no longer advertised in `--info=help`.
 #[test]
-fn info_flag_no_prefix_still_accepted_after_help_scrub() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("noprogress", "noprogress").unwrap();
-    assert_eq!(settings.progress, ProgressSetting::Disabled);
-}
-
-#[test]
-fn info_flag_dash_prefix_still_accepted_after_help_scrub() {
-    let mut settings = InfoFlagSettings::default();
-    settings.apply("-progress", "-progress").unwrap();
-    assert_eq!(settings.progress, ProgressSetting::Disabled);
-}
-
-#[test]
 fn debug_help_text_lists_all_keywords() {
     let keywords = [
         "ACL", "BACKUP", "BIND", "CHDIR", "CONNECT", "CMD", "DEL", "DELTASUM", "DUP", "EXIT",
@@ -962,7 +820,7 @@ fn debug_help_text_includes_opt_preface() {
 #[test]
 fn info_flag_numeric_2_enables_all_at_level_2() {
     let mut settings = InfoFlagSettings::default();
-    settings.apply("2", "2").unwrap();
+    settings.apply("all2", "all2").unwrap();
     assert_eq!(settings.progress, ProgressSetting::Overall);
     assert_eq!(settings.stats, Some(2));
     assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
@@ -982,7 +840,7 @@ fn info_flag_numeric_2_enables_all_at_level_2() {
 #[test]
 fn info_flag_numeric_3_clamps_per_flag() {
     let mut settings = InfoFlagSettings::default();
-    settings.apply("3", "3").unwrap();
+    settings.apply("all3", "all3").unwrap();
     // STATS supports level 3.
     assert_eq!(settings.stats, Some(3));
     // PROGRESS, NAME, FLIST, MISC, SKIP clamp at 2.
@@ -998,7 +856,7 @@ fn info_flag_numeric_3_clamps_per_flag() {
 #[test]
 fn info_flag_numeric_then_named_override() {
     let mut settings = InfoFlagSettings::default();
-    settings.apply("2", "2").unwrap();
+    settings.apply("all2", "all2").unwrap();
     settings.apply("name0", "name0").unwrap();
     assert_eq!(settings.name, Some(NameOutputLevel::Disabled));
     // Other flags retained from the numeric pre-fill.
@@ -1007,7 +865,7 @@ fn info_flag_numeric_then_named_override() {
 
 #[test]
 fn parse_info_flags_numeric_then_named_in_one_arg() {
-    let values = vec![OsString::from("2,name0")];
+    let values = vec![OsString::from("all2,name0")];
     let result = parse_info_flags(&values).unwrap();
     assert_eq!(result.name, Some(NameOutputLevel::Disabled));
     assert_eq!(result.stats, Some(2));
@@ -1018,7 +876,7 @@ fn parse_info_flags_numeric_then_named_in_one_arg() {
 fn info_flag_numeric_high_value_saturates() {
     // Out-of-range integers saturate at per-flag caps rather than erroring.
     let mut settings = InfoFlagSettings::default();
-    settings.apply("99", "99").unwrap();
+    settings.apply("all99", "all99").unwrap();
     assert_eq!(settings.stats, Some(3));
     assert_eq!(settings.flist, Some(2));
     assert_eq!(settings.copy, Some(1));
@@ -1029,7 +887,7 @@ fn info_flag_numeric_overflow_does_not_panic() {
     // A value that overflows u8 falls back to u8::MAX inside the parser,
     // which still saturates to per-flag caps.
     let mut settings = InfoFlagSettings::default();
-    settings.apply("999", "999").unwrap();
+    settings.apply("all999", "all999").unwrap();
     assert_eq!(settings.stats, Some(3));
 }
 
@@ -1061,7 +919,7 @@ fn info_flag_numeric_n_caps_each_priority_group_at_per_flag_max() {
     // `--info=2` enables every priority<=2 flag; per-flag caps still apply
     // (stats caps at 3, flist/misc/skip/name/progress at 2, others at 1).
     let mut settings = InfoFlagSettings::default();
-    settings.apply("2", "2").unwrap();
+    settings.apply("all2", "all2").unwrap();
     for spec in INFO_FLAG_SPECS {
         if spec.priority > 2 {
             continue;
@@ -1170,7 +1028,7 @@ fn apply_to_thread_local_numeric_level() {
     logging::init(logging::VerbosityConfig::default());
 
     let mut settings = InfoFlagSettings::default();
-    settings.apply("2", "2").unwrap();
+    settings.apply("all2", "all2").unwrap();
     settings.apply_to_thread_local();
 
     // Level 2 enables all flags, capped by per-flag max_level
@@ -1252,4 +1110,94 @@ fn apply_to_thread_local_unset_flags_not_touched() {
     // Other flags from verbose level 2 should remain untouched
     assert!(logging::info_gte(logging::InfoFlag::Mount, 1));
     assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+}
+
+// upstream: options.c parse_output_words matches a word by exact length
+// against the table, so `no<word>` and `-<word>` are simply unknown names.
+// Covering every word in the table rather than a sample keeps a future word
+// from silently reintroducing the removed prefix.
+#[test]
+fn no_info_word_accepts_a_negation_prefix() {
+    for spec in INFO_FLAG_SPECS {
+        for token in [format!("no{}", spec.name), format!("-{}", spec.name)] {
+            let _ = parse_info_flags(&[OsString::from(token.clone())]).expect_err(&format!(
+                "`{token}` must be rejected, not read as a negation"
+            ));
+        }
+    }
+}
+
+// Non-vacuity companion: the portable spelling upstream DOES accept must keep
+// working for every word, or the test above would pass on a parser that
+// rejects everything.
+#[test]
+fn every_info_word_accepts_the_level_zero_suffix() {
+    for spec in INFO_FLAG_SPECS {
+        let token = format!("{}0", spec.name);
+        parse_info_flags(&[OsString::from(token.clone())])
+            .unwrap_or_else(|e| panic!("`{token}` must parse: {e}"));
+    }
+}
+
+#[test]
+fn no_debug_word_accepts_a_negation_prefix() {
+    for word in [
+        "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+        "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
+        "recv", "send", "time", "iouring", "clone", "sockopt", "iocp",
+    ] {
+        for token in [format!("no{word}"), format!("-{word}")] {
+            let _ = parse_debug_flags(&[OsString::from(token.clone())]).expect_err(&format!(
+                "`{token}` must be rejected, not read as a negation"
+            ));
+        }
+        let zero = format!("{word}0");
+        parse_debug_flags(&[OsString::from(zero.clone())])
+            .unwrap_or_else(|e| panic!("`{zero}` must parse: {e}"));
+    }
+}
+
+#[test]
+fn info_flag_progress3_is_clamped_not_rejected() {
+    let mut settings = InfoFlagSettings::default();
+    settings
+        .apply("progress3", "progress3")
+        .expect("upstream clamps an out-of-range level, it never rejects one");
+    assert_eq!(settings.progress, ProgressSetting::Overall);
+}
+
+#[test]
+fn info_flag_stats4_is_clamped_not_rejected() {
+    let mut settings = InfoFlagSettings::default();
+    settings
+        .apply("stats4", "stats4")
+        .expect("upstream clamps an out-of-range level, it never rejects one");
+    assert_eq!(settings.stats, Some(4));
+}
+
+#[test]
+fn info_flag_flist3_is_clamped_not_rejected() {
+    let mut settings = InfoFlagSettings::default();
+    settings
+        .apply("flist3", "flist3")
+        .expect("upstream clamps an out-of-range level, it never rejects one");
+    assert_eq!(settings.flist, Some(3));
+}
+
+#[test]
+fn info_flag_misc3_is_clamped_not_rejected() {
+    let mut settings = InfoFlagSettings::default();
+    settings
+        .apply("misc3", "misc3")
+        .expect("upstream clamps an out-of-range level, it never rejects one");
+    assert_eq!(settings.misc, Some(3));
+}
+
+#[test]
+fn info_flag_skip3_is_clamped_not_rejected() {
+    let mut settings = InfoFlagSettings::default();
+    settings
+        .apply("skip3", "skip3")
+        .expect("upstream clamps an out-of-range level, it never rejects one");
+    assert_eq!(settings.skip, Some(3));
 }
