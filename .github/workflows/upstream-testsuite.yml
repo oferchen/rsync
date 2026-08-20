@@ -28,4 +28,7 @@ jobs:
     with:
       upstream_rsync_version: '3.5.0'
       variant: 'nonroot'
+      # Upstream's secure default: a stdio socketpair, no listening socket. The
+      # loopback-TCP half of this leg is upstream-testsuite-tcp.yml.
+      transport: 'pipe'
       expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt

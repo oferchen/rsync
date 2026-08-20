@@ -32,13 +32,35 @@ on:
           would be wrong for 40 tests.
         type: string
         default: ''
+      transport:
+        description: >-
+          Daemon transport for the Python suite: `pipe` (upstream's secure
+          default - a stdio socketpair, no listening socket) or `tcp` (a real
+          rsyncd bound to 127.0.0.1). Crossed with `variant` this gives the four
+          3.5.0 legs: {nonroot,root} x {pipe,tcp}.
+
+          `tcp` additionally passes --daemon-tests-only, which is what upstream
+          ships it for: "Intended for a --use-tcp pass that follows a full
+          default-transport run: the tests this drops never call
+          start_test_daemon(), so they cannot observe --use-tcp and would just
+          repeat themselves." So the tcp legs run the 155 transport-observing
+          tests, not all 345, and their manifests are sized to match - the
+          driver derives that expected size from upstream's OWN
+          select_daemon_tests(), so the coverage guard still refuses a manifest
+          that names fewer tests than the run will select.
+
+          Defaults to `pipe`, so existing callers - and the two REQUIRED check
+          contexts they declare - are unchanged.
+        type: string
+        default: 'pipe'
 
 permissions:
   contents: read
 
 jobs:
   upstream-testsuite:
-    name: upstream testsuite
+    # The `pipe` name is the REQUIRED check context and must stay byte-exact.
+    name: ${{ inputs.transport == 'tcp' && 'upstream testsuite (tcp)' || 'upstream testsuite' }}
     if: ${{ inputs.variant == 'all' || inputs.variant == 'nonroot' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -50,8 +72,22 @@ jobs:
       RUST_BACKTRACE: "full"
       CACHE_VERSION: ${{ inputs.cache_version }}
       UPSTREAM_RSYNC_VERSION: ${{ inputs.upstream_rsync_version }}
+      TRANSPORT: ${{ inputs.transport }}
+      USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
+      DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
 
     steps:
+      - name: Validate transport input
+        # `USE_TCP` above is a boolean collapse: anything that is not exactly
+        # 'tcp' silently becomes the pipe leg. A typo would then report a green
+        # "tcp" run that never opened a socket, so reject it here instead.
+        run: |
+          set -euo pipefail
+          case "${TRANSPORT}" in
+            pipe|tcp) ;;
+            *) echo "::error::transport must be 'pipe' or 'tcp', got '${TRANSPORT}'"; exit 1 ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -96,7 +132,7 @@ jobs:
           # --expect-result runs ONLY the tests it names, that drift shrinks
           # coverage silently instead of failing. Uploaded as an artifact so a
           # re-baseline is a reviewable diff of outcome changes.
-          EMIT_EXPECT_RESULT: target/interop/expect-result.nonroot.txt
+          EMIT_EXPECT_RESULT: target/interop/expect-result.nonroot.${{ inputs.transport }}.txt
         run: |
           set -euo pipefail
           mkdir -p target/interop
@@ -170,11 +206,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-testsuite-logs
+          name: upstream-testsuite-logs-${{ inputs.transport }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-output.log
-            target/interop/expect-result.nonroot.txt
+            target/interop/expect-result.nonroot.${{ inputs.transport }}.txt
           if-no-files-found: ignore
           retention-days: 14
 
@@ -196,7 +232,8 @@ jobs:
   # legs, so a single shared manifest would be wrong for 78 tests.
   # ===========================================================================
   upstream-testsuite-root:
-    name: upstream testsuite (root)
+    # The `pipe` name is the REQUIRED check context and must stay byte-exact.
+    name: ${{ inputs.transport == 'tcp' && 'upstream testsuite (root, tcp)' || 'upstream testsuite (root)' }}
     if: ${{ inputs.variant == 'all' || inputs.variant == 'root' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -208,8 +245,19 @@ jobs:
       RUST_BACKTRACE: "full"
       CACHE_VERSION: ${{ inputs.cache_version }}
       UPSTREAM_RSYNC_VERSION: ${{ inputs.upstream_rsync_version }}
+      TRANSPORT: ${{ inputs.transport }}
+      USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
+      DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
 
     steps:
+      - name: Validate transport input
+        run: |
+          set -euo pipefail
+          case "${TRANSPORT}" in
+            pipe|tcp) ;;
+            *) echo "::error::transport must be 'pipe' or 'tcp', got '${TRANSPORT}'"; exit 1 ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -248,7 +296,7 @@ jobs:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
           EXPECT_RESULT: ${{ inputs.expect_result_root }}
-          EMIT_EXPECT_RESULT: target/interop/expect-result.root.txt
+          EMIT_EXPECT_RESULT: target/interop/expect-result.root.${{ inputs.transport }}.txt
         run: |
           set -uo pipefail
           mkdir -p target/interop
@@ -263,6 +311,8 @@ jobs:
             "UPSTREAM_VERSION=$UPSTREAM_VERSION" \
             "EXPECT_RESULT=${EXPECT_RESULT:-}" \
             "EMIT_EXPECT_RESULT=${EMIT_EXPECT_RESULT:-}" \
+            "USE_TCP=${USE_TCP:-no}" \
+            "DAEMON_TESTS_ONLY=${DAEMON_TESTS_ONLY:-no}" \
             "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
             "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \
@@ -276,10 +326,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-testsuite-root-logs
+          name: upstream-testsuite-root-logs-${{ inputs.transport }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-root-output.log
-            target/interop/expect-result.root.txt
+            target/interop/expect-result.root.${{ inputs.transport }}.txt
           if-no-files-found: ignore
           retention-days: 14
