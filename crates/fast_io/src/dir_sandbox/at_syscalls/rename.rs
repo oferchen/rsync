@@ -294,7 +294,7 @@ pub(super) fn anchor_confined_endpoint<'a>(
 }
 
 /// Rename `old_path` to `new_path`, resolving **each side independently** by
-/// the resolver its provenance calls for (see [`anchor_confined_endpoint`]).
+/// the resolver its provenance calls for (see `anchor_confined_endpoint`).
 ///
 /// A side beneath `root` has its parent resolved by the confined per-component
 /// walk; an absolute side outside `root` - an operator path - by the ownership

@@ -406,9 +406,9 @@ pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path)
 
 /// Create `dest` exclusively, with its parent confined beneath `root`.
 ///
-/// This is the direct-write counterpart of [`confined_rename`] and
-/// [`confined_link_anonymous`]: the parent is resolved by the same
-/// per-component walk through [`anchor_confined_endpoint`], then the leaf is
+/// This is the direct-write counterpart of [`confined_rename`](super::confined_rename)
+/// and [`confined_link_anonymous`]: the parent is resolved by the same
+/// per-component walk through `anchor_confined_endpoint`, then the leaf is
 /// created with `O_CREAT | O_EXCL | O_NOFOLLOW` relative to that dirfd. A
 /// destination parent flipped to a symlink between the decision to write and
 /// the create therefore cannot redirect the new file out of the tree.
