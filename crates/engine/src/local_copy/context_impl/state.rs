@@ -411,17 +411,12 @@ impl<'a> CopyContext<'a> {
         self.destination_metadata_cache.remove(dest)
     }
 
-    /// Returns a mutable reference to the reusable readdir buffer.
+    /// Borrows the reusable readdir buffer and the anchor the directory scan
+    /// resolves beneath, if any.
     ///
     /// Callers should `clear()` the buffer before filling it. The Vec's heap
     /// capacity persists across calls, eliminating per-directory allocations
     /// during recursive traversal.
-    pub(super) fn readdir_buf(&mut self) -> &mut Vec<(OsString, PathBuf)> {
-        &mut self.readdir_buf
-    }
-
-    /// Borrows the readdir buffer and the anchor the directory scan resolves
-    /// beneath, if any.
     ///
     /// The scan needs both at once, and taking them through separate accessors
     /// would borrow `self` mutably and immutably in one call. Handing back
@@ -441,7 +436,7 @@ impl<'a> CopyContext<'a> {
         let confine = !self.follow_source_symlinks();
         (
             &mut self.readdir_buf,
-            confine.then(|| self.source_anchor.as_deref()).flatten(),
+            confine.then_some(self.source_anchor.as_deref()).flatten(),
         )
     }
 
