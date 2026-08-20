@@ -31,6 +31,7 @@ pub fn sync_xattrs(
     _destination: &Path,
     _follow_symlinks: bool,
     _filters: XattrSyncFilters<'_>,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())
@@ -53,6 +54,7 @@ pub fn strip_source_xattrs(
     _source: &Path,
     _destination: &Path,
     _follow_symlinks: bool,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     Ok(())
 }
@@ -77,6 +79,7 @@ pub fn apply_xattrs_from_list(
     _follow_symlinks: bool,
     _basis: Option<&Path>,
     _filter: Option<&dyn Fn(&str) -> bool>,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())
@@ -92,7 +95,7 @@ mod tests {
     fn sync_xattrs_returns_ok() {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
-        let result = sync_xattrs(src, dst, false, XattrSyncFilters::default());
+        let result = sync_xattrs(src, dst, false, XattrSyncFilters::default(), None);
         assert!(result.is_ok());
     }
 
@@ -101,8 +104,25 @@ mod tests {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
         let filter = |_name: &str| true;
-        let result = sync_xattrs(src, dst, true, XattrSyncFilters::uniform(&filter));
+        let result = sync_xattrs(src, dst, true, XattrSyncFilters::uniform(&filter), None);
         assert!(result.is_ok());
+    }
+
+    /// A confinement root is accepted and ignored on a platform with no
+    /// xattrs. The stub's contract is "warn once, succeed" for every input, so
+    /// the root must not become an error path here - a platform that cannot
+    /// store xattrs has nothing to confine. Without this the parameter would be
+    /// carried by arity alone, and the next signature change could drop it on
+    /// this platform unnoticed (which is exactly how it went missing).
+    #[test]
+    fn confine_root_is_accepted_and_ignored() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let root = Path::new("/nonexistent");
+        assert!(sync_xattrs(src, dst, false, XattrSyncFilters::default(), Some(root)).is_ok());
+        assert!(
+            apply_xattrs_from_list(dst, &XattrList::new(), false, None, None, Some(root)).is_ok()
+        );
     }
 
     #[test]
@@ -130,7 +150,7 @@ mod tests {
     fn apply_xattrs_from_list_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, false, None, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, false, None, None, None);
         assert!(result.is_ok());
     }
 
@@ -138,7 +158,7 @@ mod tests {
     fn apply_xattrs_from_list_follow_symlinks_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, true, None, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, true, None, None, None);
         assert!(result.is_ok());
     }
 }

@@ -287,6 +287,7 @@ pub fn strip_source_xattrs(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     if source_attrs.is_empty() {
@@ -294,7 +295,7 @@ pub fn strip_source_xattrs(
     }
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
-    let dest = DestinationXattrs::open(destination, follow_symlinks);
+    let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
     for name in list_attributes(destination, follow_symlinks, receiver_screen())? {
         if source_names.contains(&name) {
             dest.remove(&name)?;
@@ -354,6 +355,7 @@ pub fn sync_xattrs(
     destination: &Path,
     follow_symlinks: bool,
     filters: XattrSyncFilters<'_>,
+    confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     // Screening first and filtering second dropped `--filter='+x trusted.foo'`
     // for a non-root receiver on Linux: the name never survived to reach the
@@ -365,7 +367,7 @@ pub fn sync_xattrs(
     } = filters;
     let source_attrs = list_attributes(source, follow_symlinks, screen)?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
-    let dest = DestinationXattrs::open(destination, follow_symlinks);
+    let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
 
     for name in &source_attrs {
         let name_str = String::from_utf8_lossy(name);
@@ -464,6 +466,7 @@ pub fn apply_xattrs_from_list(
     follow_symlinks: bool,
     basis: Option<&Path>,
     filter: Option<&dyn Fn(&str) -> bool>,
+    confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
 
@@ -485,7 +488,7 @@ pub fn apply_xattrs_from_list(
     // xattr set/remove syscalls do not fail with EACCES/EPERM. The batch holds
     // that permission across both the write loop and the stale-attr removal
     // loop below, and restores the original mode on every exit path.
-    let dest = DestinationXattrs::open(destination, follow_symlinks);
+    let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
 
     for entry in xattr_list.iter() {
         let name_str = entry.name_str();
@@ -579,32 +582,121 @@ pub fn apply_xattrs_from_list(
 struct DestinationXattrs<'a> {
     path: &'a Path,
     follow_symlinks: bool,
+    sink: XattrSink,
     /// Held for the batch's lifetime; restores the original mode on drop.
     #[cfg(unix)]
     _write_permission: Option<TempWritePermission>,
 }
 
+/// Where a destination batch actually writes.
+///
+/// `lsetxattr` declines to follow the *leaf* symlink but the kernel still
+/// follows symlinks in PARENT components, and it re-walks them on every
+/// call. A parent flipped to a symlink mid-batch therefore redirects an
+/// attacker-chosen attribute outside the destination tree. Upstream closes
+/// that by driving the writes off a held `O_NOFOLLOW` fd, and by refusing
+/// outright when it cannot get one - never by falling back to the path.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
+/// - `rsync-3.5.0/rsync.c:519` - `xattr_refuse`, "no confined fd for a
+///   slashed path: skip path-based xattr/ACL"
+enum XattrSink {
+    /// The path-based l-variant. Upstream's `fd < 0` arm: what a
+    /// non-hardened receiver uses, and what oc uses when no confinement
+    /// root is supplied.
+    Path,
+    /// A confined `O_NOFOLLOW` fd pinning the leaf. A parent flipped after
+    /// the pin cannot redirect the write.
+    #[cfg(unix)]
+    Pinned(std::fs::File),
+    /// The pin was required and failed on a slashed path. Every mutation is
+    /// skipped: falling back to `Path` here would reinstate exactly the
+    /// redirect the pin exists to refuse.
+    #[cfg(unix)]
+    Refused,
+}
+
 impl<'a> DestinationXattrs<'a> {
     /// Opens a mutation batch on `path`, granting the temporary owner-write
     /// permission when the file lacks it.
-    fn open(path: &'a Path, follow_symlinks: bool) -> Self {
+    ///
+    /// `confine_root`, when supplied, is the destination tree the leaf must
+    /// stay beneath; `path` is then resolved through the confined walk and
+    /// pinned. `None` keeps upstream's path-based arm for a receiver that is
+    /// not hardened.
+    fn open(path: &'a Path, follow_symlinks: bool, confine_root: Option<&Path>) -> Self {
         Self {
             path,
             follow_symlinks,
+            sink: Self::pin(path, confine_root),
             #[cfg(unix)]
             _write_permission: TempWritePermission::grant(path),
         }
     }
 
-    /// Sets one attribute. upstream: `sys_lsetxattr` in `rsync_xal_set()`.
+    #[cfg(unix)]
+    fn pin(path: &Path, confine_root: Option<&Path>) -> XattrSink {
+        let Some(root) = confine_root else {
+            return XattrSink::Path;
+        };
+        let Ok(relative) = path.strip_prefix(root) else {
+            // Not beneath the root the caller named: the caller, not this
+            // batch, is the layer that knows what that means. Keep the
+            // pre-existing behaviour rather than inventing a refusal here.
+            return XattrSink::Path;
+        };
+        // upstream: rsync.c:589-594 - the flag comes from the INTENDED type,
+        // and a directory leaf needs O_DIRECTORY.
+        let kind = if path.is_dir() {
+            fast_io::DestLeafKind::Directory
+        } else {
+            fast_io::DestLeafKind::NonDirectory
+        };
+        match fast_io::pin_dest_leaf_confined(root, relative, kind) {
+            Ok(file) => XattrSink::Pinned(file),
+            // upstream: rsync.c:597 - `if (held_fd < 0 && strchr(fname, '/'))
+            // xattr_refuse = 1;`. A single-component name has no parent to
+            // flip, so the path-based call is still safe there.
+            Err(_) if relative.parent().is_some_and(|p| !p.as_os_str().is_empty()) => {
+                XattrSink::Refused
+            }
+            Err(_) => XattrSink::Path,
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn pin(_path: &Path, _confine_root: Option<&Path>) -> XattrSink {
+        // The confined pin is Unix-only; Windows destination attributes go
+        // through the ADS/DACL layer, which does not have this shape.
+        XattrSink::Path
+    }
+
+    /// Sets one attribute. upstream: `sys_fsetxattr` / `sys_lsetxattr` in
+    /// `rsync_xal_set()`, chosen by whether a confined fd is held.
     fn write(&self, name: &[u8], value: &[u8]) -> Result<(), MetadataError> {
-        write_attribute(self.path, name, value, self.follow_symlinks)
+        match &self.sink {
+            XattrSink::Path => write_attribute(self.path, name, value, self.follow_symlinks),
+            #[cfg(unix)]
+            XattrSink::Pinned(file) => crate::xattr_unix::write_attribute_at(file, name, value)
+                .map_err(|error| map_xattr_error("write extended attribute", self.path, error)),
+            #[cfg(unix)]
+            XattrSink::Refused => Ok(()),
+        }
     }
 
     /// Removes one attribute. upstream: `sys_lremovexattr` in
-    /// `rsync_xal_set()` (`xattrs.c:1043`).
+    /// `rsync_xal_set()` (`xattrs.c:1043`), with the same fd choice.
     fn remove(&self, name: &[u8]) -> Result<(), MetadataError> {
-        remove_attribute(self.path, name, self.follow_symlinks)
+        match &self.sink {
+            XattrSink::Path => remove_attribute(self.path, name, self.follow_symlinks),
+            #[cfg(unix)]
+            XattrSink::Pinned(file) => crate::xattr_unix::remove_attribute_at(file, name)
+                .map_err(|error| map_xattr_error("remove extended attribute", self.path, error)),
+            #[cfg(unix)]
+            XattrSink::Refused => Ok(()),
+        }
     }
 }
 
@@ -826,7 +918,7 @@ mod tests {
         write_attribute(&dest, &shared, b"from-source", false).expect("write dest shared");
         write_attribute(&dest, &dest_only, b"fs", false).expect("write dest-only attr");
 
-        strip_source_xattrs(&source, &dest, false).expect("strip");
+        strip_source_xattrs(&source, &dest, false, None).expect("strip");
 
         let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
         assert!(
@@ -858,7 +950,7 @@ mod tests {
         let dest_only = test_xattr_name("keep_me");
         write_attribute(&dest, &dest_only, b"v", false).expect("write dest attr");
 
-        strip_source_xattrs(&source, &dest, false).expect("strip with empty source");
+        strip_source_xattrs(&source, &dest, false, None).expect("strip with empty source");
 
         let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
         assert!(
@@ -916,7 +1008,14 @@ mod tests {
         write_attribute(&source, &attr1, b"value1", false).expect("write attr1");
         write_attribute(&source, &attr2, b"value2", false).expect("write attr2");
 
-        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::default(),
+            None,
+        )
+        .expect("sync");
 
         assert_eq!(
             read_attribute(&destination, &attr1, false)
@@ -990,7 +1089,14 @@ mod tests {
         write_attribute(&destination, &attr1, b"old_value1", false).expect("write dest attr1");
         write_attribute(&destination, &attr2, b"extra_value", false).expect("write dest attr2");
 
-        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::default(),
+            None,
+        )
+        .expect("sync");
 
         // attr1 should be updated
         assert_eq!(
@@ -1039,7 +1145,14 @@ mod tests {
         write_attribute(&destination, &stat_name, b"100000 0,0 2:2", false)
             .expect("write dest %stat");
 
-        sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::default(),
+            None,
+        )
+        .expect("sync");
 
         // The destination's fake-super %stat must be preserved verbatim - not
         // overwritten by the source copy nor deleted by the removal pass.
@@ -1437,6 +1550,7 @@ mod tests {
             &destination,
             false,
             XattrSyncFilters::uniform(&filter),
+            None,
         )
         .expect("sync");
 
@@ -1575,6 +1689,7 @@ mod tests {
             &destination,
             false,
             XattrSyncFilters::uniform(&filter),
+            None,
         )
         .expect("sync");
 
@@ -1643,7 +1758,7 @@ mod tests {
                     destination: Some(&deny),
                 }
             };
-            sync_xattrs(&source, &destination, false, filters).expect("sync");
+            sync_xattrs(&source, &destination, false, filters, None).expect("sync");
 
             let copied = read_attribute(&destination, &from_source, false)
                 .expect("read")
@@ -1679,6 +1794,7 @@ mod tests {
                     source: Some(&deny),
                     destination: Some(&allow_all),
                 },
+                None,
             )
             .expect("sync");
 
@@ -1710,7 +1826,7 @@ mod tests {
                     destination: Some(&allow_all),
                 }
             };
-            sync_xattrs(&source, &destination, false, filters).expect("sync");
+            sync_xattrs(&source, &destination, false, filters, None).expect("sync");
 
             let survives = read_attribute(&destination, &dest_only, false)
                 .expect("read")
@@ -1744,7 +1860,7 @@ mod tests {
             b"value2".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
         let attr1 = test_xattr_name("attr1");
         let attr2 = test_xattr_name("attr2");
@@ -1796,7 +1912,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("ro"), b"value".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None, None)
+        apply_xattrs_from_list(&file, &list, false, None, None, None)
             .expect("apply xattrs on read-only file");
 
         let name = test_xattr_name("ro");
@@ -1876,15 +1992,21 @@ mod tests {
 
         // sync_xattrs: copies the source set, then removes destination strays.
         let (source, destination) = readonly_pair("sync");
-        sync_xattrs(&source, &destination, false, XattrSyncFilters::default())
-            .expect("sync_xattrs on read-only dest");
+        sync_xattrs(
+            &source,
+            &destination,
+            false,
+            XattrSyncFilters::default(),
+            None,
+        )
+        .expect("sync_xattrs on read-only dest");
         assert_mode_restored(&destination, "sync_xattrs");
 
         // strip_source_xattrs: removes only names the source also carries. This
         // is the macOS clonefile correction, reachable under plain -a with no
         // -X, which is how the defect surfaced.
         let (source, destination) = readonly_pair("strip");
-        strip_source_xattrs(&source, &destination, false)
+        strip_source_xattrs(&source, &destination, false, None)
             .expect("strip_source_xattrs on read-only dest");
         assert!(
             read_attribute(&destination, &name, false)
@@ -1898,7 +2020,7 @@ mod tests {
         let (_source, destination) = readonly_pair("apply");
         let mut list = XattrList::new();
         list.push(XattrEntry::new(name.clone(), b"applied".to_vec()));
-        apply_xattrs_from_list(&destination, &list, false, None, None)
+        apply_xattrs_from_list(&destination, &list, false, None, None, None)
             .expect("apply_xattrs_from_list on read-only dest");
         assert_eq!(
             read_attribute(&destination, &name, false)
@@ -1935,7 +2057,8 @@ mod tests {
         // Exclude any name containing "skip" (matches on the local xattr name,
         // which carries the `user.` prefix on Linux and is bare elsewhere).
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, None, Some(&filter)).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None)
+            .expect("apply xattrs");
 
         // The allowed attr is applied.
         assert_eq!(
@@ -1979,7 +2102,8 @@ mod tests {
         list.push(XattrEntry::new(test_xattr_name("keep"), b"kept".to_vec()));
 
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, None, Some(&filter)).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None)
+            .expect("apply xattrs");
 
         // Excluded destination attr is preserved.
         assert_eq!(
@@ -2025,7 +2149,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
         // Stale attr should be removed
         assert!(
@@ -2072,7 +2196,7 @@ mod tests {
             b"full_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
         assert!(
             read_attribute(&file, &test_xattr_name("abbrev"), false)
@@ -2122,7 +2246,8 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::abbreviated(name.clone(), digest, value.len()));
 
-        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None).expect("apply xattrs");
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None)
+            .expect("apply xattrs");
 
         // The destination must carry the fully resolved value, identical to a
         // full-list transfer.
@@ -2157,7 +2282,8 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::abbreviated(name.clone(), vec![0xAAu8; 16], 100));
 
-        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None).expect("apply xattrs");
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None)
+            .expect("apply xattrs");
 
         assert!(
             read_attribute(&dest, &name, false).expect("read").is_none(),
@@ -2181,7 +2307,7 @@ mod tests {
         write_attribute(&file, &attr, b"value", false).expect("write existing");
 
         let list = XattrList::new();
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply empty list");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply empty list");
 
         // All permitted xattrs should be removed
         assert!(read_attribute(&file, &attr, false).expect("read").is_none());
@@ -2207,7 +2333,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
         assert_eq!(
             read_attribute(&file, &attr, false)
@@ -2231,12 +2357,98 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("empty_val"), b"".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
         let attr = test_xattr_name("empty_val");
         let value = read_attribute(&file, &attr, false)
             .expect("read")
             .expect("empty_val should exist");
         assert!(value.is_empty());
+    }
+
+    /// The whole point of the confined pin: with a `confine_root` supplied,
+    /// a parent component flipped to a symlink pointing OUT of the tree must
+    /// not carry the attribute to the outside file.
+    ///
+    /// A path-based `lsetxattr` follows parent symlinks (it declines only the
+    /// leaf), so this is exactly the redirect upstream's held-fd model
+    /// closes. upstream: rsync.c:573-599 + xattrs.c:386-390.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn a_flipped_parent_does_not_carry_the_attribute_outside_the_confine_root() {
+        let tmp = tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir(&root).expect("mkdir root");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        let victim = outside.join("victim");
+        std::fs::write(&victim, b"outside").expect("write victim");
+        std::os::unix::fs::symlink(&outside, root.join("sub")).expect("plant escaping parent");
+
+        let mut list = XattrList::default();
+        list.push(XattrEntry::new(b"user.marker".to_vec(), b"PWNED".to_vec()));
+
+        // The write is skipped, not redirected: upstream's `xattr_refuse`.
+        // Whether the call reports Ok is upstream's choice too - it drops the
+        // attribute and carries on - so the assertion that matters is on the
+        // SENTINEL, not the return value.
+        let _ = apply_xattrs_from_list(
+            &root.join("sub/victim"),
+            &list,
+            false,
+            None,
+            None,
+            Some(&root),
+        );
+
+        let landed = ::xattr::list(&victim)
+            .expect("list victim")
+            .any(|name| name == std::ffi::OsStr::new("user.marker"));
+        assert!(
+            !landed,
+            "the attacker-chosen xattr was written onto a file OUTSIDE the confine root"
+        );
+    }
+
+    /// Non-vacuity companion: with the SAME fixture shape but a legitimate
+    /// in-tree relative parent symlink, the attribute must still be applied.
+    /// Without this the test above would pass for a batch that simply never
+    /// writes anything.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn an_in_tree_parent_symlink_still_receives_the_attribute() {
+        let tmp = tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        std::fs::create_dir(root.join("real")).expect("mkdir real");
+        let target = root.join("real/data");
+        std::fs::write(&target, b"payload").expect("write");
+        std::os::unix::fs::symlink("real", root.join("sub")).expect("plant in-tree parent");
+
+        let mut list = XattrList::default();
+        list.push(XattrEntry::new(b"user.marker".to_vec(), b"OK".to_vec()));
+
+        if apply_xattrs_from_list(
+            &root.join("sub/data"),
+            &list,
+            false,
+            None,
+            None,
+            Some(&root),
+        )
+        .is_err()
+        {
+            // A filesystem without user-xattr support cannot exercise this.
+            return;
+        }
+
+        let landed = ::xattr::list(&target)
+            .expect("list target")
+            .any(|name| name == std::ffi::OsStr::new("user.marker"));
+        assert!(
+            landed,
+            "an in-tree relative parent symlink must still resolve, or the escape \
+             test above proves nothing"
+        );
     }
 }
