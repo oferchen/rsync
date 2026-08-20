@@ -681,16 +681,51 @@ mod long_options {
         );
     }
 
+    /// An absolute confinement root spelled for the host platform.
+    ///
+    /// `--confine-root` is accepted only when `Path::is_absolute()` holds - the
+    /// platform-aware reading of upstream's `*confine_root != '/'` test
+    /// (options.c:2386). A leading-slash path is drive-RELATIVE on Windows, not
+    /// absolute, so a Unix-shaped literal makes every case below fail there for a
+    /// reason that has nothing to do with what it asserts. Keeping the spelling
+    /// in one place means the platform split cannot drift between cases.
+    #[cfg(windows)]
+    const ABSOLUTE_CONFINE_ROOT: &str = r"C:\srv\restricted";
+    #[cfg(not(windows))]
+    const ABSOLUTE_CONFINE_ROOT: &str = "/srv/restricted";
+
+    /// `--confine-root=<absolute>` as a single argv token.
+    fn confine_root_arg() -> String {
+        format!("--confine-root={ABSOLUTE_CONFINE_ROOT}")
+    }
+
+    /// The fixture must actually satisfy the rule the cases below rely on.
+    ///
+    /// Every `--confine-root` case that expects ACCEPTANCE is silently
+    /// meaningless if the constant is not absolute on the host: the parser would
+    /// reject it for the wrong reason and the case would report a confusing
+    /// absolute-path error instead of what it set out to test. That is exactly
+    /// how the Unix-shaped literal failed on Windows. Asserting the property
+    /// here fails one obvious test with a clear message instead of several
+    /// obscure ones, on whatever platform the constant is wrong for.
+    #[test]
+    fn the_confine_root_fixture_is_absolute_on_this_platform() {
+        assert!(
+            std::path::Path::new(ABSOLUTE_CONFINE_ROOT).is_absolute(),
+            "{ABSOLUTE_CONFINE_ROOT} is not absolute here, so the acceptance \
+             cases below would fail for the wrong reason"
+        );
+    }
+
     /// `--confine-root=DIR` must be CONSUMED as an option rather than left as a
     /// positional operand, and its value must survive parsing verbatim.
     /// upstream: options.c:690 - POPT_ARG_STRING.
     #[test]
     fn confine_root_is_parsed_as_an_option_not_an_operand() {
-        let parsed =
-            parse_test_args(["--confine-root=/srv/restricted", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args([confine_root_arg().as_str(), "src/", "dst/"]).expect("parse");
         assert_eq!(
             parsed.confine_root.as_deref(),
-            Some(std::path::Path::new("/srv/restricted"))
+            Some(std::path::Path::new(ABSOLUTE_CONFINE_ROOT))
         );
         assert_eq!(
             parsed.remainder.len(),
@@ -725,7 +760,7 @@ mod long_options {
     fn insecure_links_conflicts_with_confine_root() {
         let err = parse_test_args([
             "--insecure-links",
-            "--confine-root=/srv/restricted",
+            confine_root_arg().as_str(),
             "src/",
             "dst/",
         ])
@@ -768,7 +803,7 @@ mod long_options {
     fn no_insecure_links_does_not_conflict_with_confine_root() {
         let parsed = parse_test_args([
             "--no-insecure-links",
-            "--confine-root=/srv/restricted",
+            confine_root_arg().as_str(),
             "src/",
             "dst/",
         ])
@@ -776,7 +811,7 @@ mod long_options {
         assert!(!parsed.insecure_links);
         assert_eq!(
             parsed.confine_root.as_deref(),
-            Some(std::path::Path::new("/srv/restricted"))
+            Some(std::path::Path::new(ABSOLUTE_CONFINE_ROOT))
         );
     }
 
