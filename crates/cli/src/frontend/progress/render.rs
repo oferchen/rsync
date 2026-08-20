@@ -846,6 +846,34 @@ fn is_uptodate_event(event: &ClientEvent) -> bool {
     event.is_uptodate()
 }
 
+/// Returns `true` when `"is uptodate"` is the right notice for an entry whose
+/// contents were not transferred, and `false` when upstream prints the bare
+/// name instead.
+///
+/// The discriminator is NOT "did the data move" - it is "did `set_file_attrs`
+/// change anything at all":
+///
+/// ```c
+/// /* rsync.c:823-828 */
+/// if (INFO_GTE(NAME, 2) && flags & ATTRS_REPORT) {
+///     if (updated)
+///         rprintf(FCLIENT, "%s\n", fname);
+///     else
+///         rprintf(FCLIENT, "%s is uptodate\n", fname);
+/// }
+/// ```
+///
+/// `updated` accumulates `UPDATED_MODE` / `_OWNER` / `_TIMES` / `_ACLS` /
+/// `_XATTRS`, so a chmod against a file whose content already matches reports
+/// the BARE NAME - it was updated, just not transferred. `change_set()` is oc's
+/// analogue, and it is the same source the itemize renderer derives
+/// `.f...p.....` from, so the two agree by construction.
+///
+/// upstream: rsync.c:823-828 `set_file_attrs()`.
+fn reports_uptodate_wording(event: &ClientEvent) -> bool {
+    !event.change_set().has_any_change()
+}
+
 /// Returns `true` for the per-file skip notices that upstream's `recv_generator`
 /// emits during the generator phase (`"exists"`, `"not creating new"`, `"is
 /// newer"`, `"is over max-size"`, `"is under min-size"`), ahead of the receiver
@@ -1030,8 +1058,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 {
                     continue;
                 }
-                writeln_wrapped(stdout, "", event.relative_path(), escape, " is uptodate")?;
-                continue;
+                // rsync.c:823-828 keys the wording on `updated`, so an entry
+                // whose attributes DID change falls through to the bare-name
+                // rendering below. The hardlink notice is a different upstream
+                // site (hlink.c:218-224) whose wording is unconditional.
+                if event.is_hardlink_uptodate() || reports_uptodate_wording(event) {
+                    writeln_wrapped(stdout, "", event.relative_path(), escape, " is uptodate")?;
+                    continue;
+                }
             }
 
             let mut rendered = verbose_listing_name(event, escape);
@@ -1196,7 +1230,15 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                     continue;
                 }
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln_wrapped(stdout, "", event.relative_path(), escape, " is uptodate")?;
+                    // Same `fname`, different trailer - rsync.c:824 prints the
+                    // bare name when `set_file_attrs` updated anything, and
+                    // rsync.c:826 the `is uptodate` notice only when it did not.
+                    let trailer = if reports_uptodate_wording(event) {
+                        " is uptodate"
+                    } else {
+                        ""
+                    };
+                    writeln_wrapped(stdout, "", event.relative_path(), escape, trailer)?;
                 }
                 continue;
             }
