@@ -339,6 +339,28 @@ pub(in crate::local_copy) fn execute_transfer_once(
         context.follow_source_symlinks(),
     )
     .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+
+    // The number of bytes to actually move, as opposed to `file_size`, which is
+    // the length the scan recorded and which every decision above is made from.
+    //
+    // upstream: sender.c - `do_fstat` on the OPENED handle, then `map_file` and
+    // `match_sums` size the transfer from `st.st_size`. A file appended to
+    // between the file-list scan and the send - a live log, say - is therefore
+    // sent whole; the recorded length is a basis for DECISIONS, never a ceiling
+    // on the transfer. Reading it as a ceiling truncates the destination
+    // silently, because the copy loop stops as soon as it has moved that many
+    // bytes.
+    //
+    // `--copy-devices` is the one case that must keep the recorded value: a
+    // device is streamed as `file_size` bytes (upstream sender.c:410-418) while
+    // its own `st_size` is 0, so fstat here would bound the copy to nothing.
+    let transfer_size = match device_as_file_size {
+        Some(size) => size,
+        None => reader
+            .metadata()
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?
+            .len(),
+    };
     let append_mode = determine_append_mode(
         append_allowed,
         append_verify,
@@ -604,7 +626,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         delta_basis,
         record_path,
         delta_signature.as_ref(),
-        file_size,
+        transfer_size,
         append_offset,
         preallocated_len,
         start,

@@ -701,6 +701,20 @@ impl<'a> CopyContext<'a> {
                 buffer.len()
             };
 
+            // Never read past the length this transfer was sized from. The
+            // loop guard above only stops us *between* chunks, so without this
+            // a final full-buffer read moves up to a whole chunk beyond the
+            // bound whenever the source has grown since it was sized.
+            //
+            // upstream: sender.c sizes `map_file`/`match_sums` from the
+            // `do_fstat` length and walks exactly that many bytes, so bytes
+            // appended after the stat are never sent. Mirror that here rather
+            // than letting the destination outrun what the transfer accounted.
+            let chunk_len = chunk_len.min(
+                usize::try_from(expected_remaining.saturating_sub(total_bytes))
+                    .unwrap_or(usize::MAX),
+            );
+
             let read = reader
                 .read(&mut buffer[..chunk_len])
                 .map_err(|error| LocalCopyError::io("copy file", source, error))?;
@@ -808,6 +822,15 @@ impl<'a> CopyContext<'a> {
             } else {
                 buffer.len()
             };
+
+            // Same bound as the dense loop above: the per-iteration guard
+            // cannot stop a full-buffer read from overshooting the length this
+            // transfer was sized from. upstream: sender.c walks exactly the
+            // `do_fstat` length.
+            let chunk_len = chunk_len.min(
+                usize::try_from(expected_remaining.saturating_sub(total_bytes))
+                    .unwrap_or(usize::MAX),
+            );
 
             let read = reader
                 .read(&mut buffer[..chunk_len])
