@@ -4,7 +4,12 @@
 //! Upstream rsync escapes non-printable bytes in filenames as `\#ooo`
 //! (backslash, hash, three octal digits). Which bytes qualify depends on the
 //! destination, so `filtered_fwrite` takes two independent switches - see
-//! [`EscapeStyle`].
+//! [`EscapeStyle`](crate::escape::EscapeStyle).
+//!
+//! The path is spelled out because `lib.rs` puts a `///` comment on
+//! `pub mod escape;`: rustdoc concatenates that with this `//!` block and
+//! resolves the result in the CRATE ROOT's scope, where a bare `EscapeStyle`
+//! does not exist.
 
 use std::io::Write;
 use std::path::Path;

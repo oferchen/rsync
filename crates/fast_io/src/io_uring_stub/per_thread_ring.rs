@@ -14,7 +14,7 @@ use std::io;
 /// Default submission queue depth declared for cross-platform API parity.
 ///
 /// Re-exported from the single source of truth in
-/// [`crate::io_uring_depth::DEFAULT_IO_URING_DEPTH`] so the stub and the Linux
+/// `crate::io_uring_depth::DEFAULT_IO_URING_DEPTH` so the stub and the Linux
 /// backend cannot drift. On non-Linux targets the constant is retained so
 /// callers compile against the same surface; the stub `with_ring` always
 /// returns [`io::ErrorKind::Unsupported`].
