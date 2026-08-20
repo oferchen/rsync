@@ -1,4 +1,4 @@
-name: Upstream Testsuite root (rsync 3.5.0)
+name: Upstream Testsuite 3.5.0 (root, pipe)
 
 # Standalone entry point for the ROOT (sudo) upstream rsync testsuite so its
 # pass/fail status is visible as a README badge. This re-runs the same 3.5.0

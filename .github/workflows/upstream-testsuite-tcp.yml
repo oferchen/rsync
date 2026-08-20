@@ -1,4 +1,4 @@
-name: Upstream Testsuite TCP (rsync 3.5.0)
+name: Upstream Testsuite 3.5.0 (nonroot, tcp)
 
 # Standalone entry point for the NON-ROOT upstream rsync 3.5.0 testsuite run
 # over a real loopback TCP daemon, so its pass/fail status is visible as a

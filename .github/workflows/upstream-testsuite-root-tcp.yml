@@ -1,4 +1,4 @@
-name: Upstream Testsuite TCP root (rsync 3.5.0)
+name: Upstream Testsuite 3.5.0 (root, tcp)
 
 # The ROOT half of the loopback-TCP leg. See upstream-testsuite-tcp.yml for the
 # four-leg table and why this leg runs --daemon-tests-only.
