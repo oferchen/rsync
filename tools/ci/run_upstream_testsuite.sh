@@ -29,6 +29,15 @@
 #                             # so the ledger is generated, never hand-typed.
 #   EXPECT_SKIPPED=<spec>     # --expect-skipped, e.g.
 #                             # "@testsuite/skiplist/common.txt,@.../linux.txt"
+#   USE_TCP=yes               # --use-tcp: run the daemon tests against a real
+#                             # rsyncd bound to 127.0.0.1 instead of the secure
+#                             # stdio-pipe default, which opens no socket.
+#   DAEMON_TESTS_ONLY=yes     # --daemon-tests-only: run only the tests that can
+#                             # reach the daemon transport. Upstream intends this
+#                             # to pair with USE_TCP, after a full default-
+#                             # transport run: the tests it drops never call
+#                             # start_test_daemon(), so they cannot observe
+#                             # --use-tcp and would just repeat themselves.
 #
 # Git-ref mode (any RsyncProject ref, e.g. a post-release dev branch):
 #   UPSTREAM_VERSION=master tools/ci/...sh            # git-clone + build master
@@ -663,6 +672,44 @@ world_traversable_scratch_base() {
 # shape means a future release needs no version list edited here, and a tree
 # that ships neither is caught by the zero-test guard rather than passing
 # vacuously.
+# Echo how many tests THIS invocation will select - the size an --expect-result
+# manifest has to cover. Normally every *_test.py the tree ships; under
+# --daemon-tests-only, the daemon-transport subset.
+#
+# That subset is obtained by importing upstream's OWN select_daemon_tests()
+# rather than re-deriving its token list here. The list is deliberately
+# over-broad ("a false positive only costs runtime, while a false negative would
+# silently drop real coverage") and grows with the suite, so a second copy would
+# drift - and a drifted count makes the guard below accept a manifest that
+# covers less than the run, which is the one thing it exists to prevent. Fails
+# loud rather than falling back: a silent 0 would disable the guard outright.
+# upstream: runtests.py select_daemon_tests() (3.5.0 runtests.py:311-327)
+selected_test_count() {
+    if [[ "${DAEMON_TESTS_ONLY:-no}" != "yes" ]]; then
+        find "${upstream_src_dir}/testsuite" -maxdepth 1 -name '*_test.py' \
+            | wc -l | tr -d ' '
+        return 0
+    fi
+    local count
+    if ! count=$(cd "$upstream_src_dir" && python3 - <<'PY'
+import glob, importlib.util, sys
+
+spec = importlib.util.spec_from_file_location('upstream_runtests', 'runtests.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+keep, _dropped = module.select_daemon_tests(sorted(glob.glob('testsuite/*_test.py')))
+if not keep:
+    sys.exit('select_daemon_tests() selected no tests')
+print(len(keep))
+PY
+    ); then
+        echo "ERROR: could not compute the daemon-transport test count from" >&2
+        echo "       ${upstream_src_dir}/runtests.py select_daemon_tests()." >&2
+        exit 1
+    fi
+    echo "$count"
+}
+
 python_suite_available() {
     [[ -f "${upstream_src_dir}/runtests.py" ]] || return 1
     compgen -G "${upstream_src_dir}/testsuite/*_test.py" >/dev/null 2>&1
@@ -739,6 +786,23 @@ run_python_suite_mode() {
         transport_tag="tcp"
         runtests_argv+=(--use-tcp)
     fi
+    # Narrow to the tests that can observe the transport. Upstream ships this
+    # for exactly one purpose: "Intended for a --use-tcp pass that follows a
+    # full default-transport run: the tests this drops never call
+    # start_test_daemon(), so they cannot observe --use-tcp and would just
+    # repeat themselves." Selecting it WITHOUT --use-tcp would run a strict
+    # subset of a pass already covered, so refuse rather than silently shrink
+    # coverage - the same failure mode the manifest guard below defends.
+    # upstream: runtests.py --daemon-tests-only (3.5.0 runtests.py:130-136)
+    if [[ "${DAEMON_TESTS_ONLY:-no}" == "yes" ]]; then
+        if [[ "${USE_TCP:-no}" != "yes" ]]; then
+            echo "ERROR: DAEMON_TESTS_ONLY=yes requires USE_TCP=yes." >&2
+            echo "       Without --use-tcp it selects a strict subset of the" >&2
+            echo "       default-transport run, shrinking coverage for nothing." >&2
+            exit 1
+        fi
+        runtests_argv+=(--daemon-tests-only)
+    fi
     runtests_argv+=(
         --rsync-bin="$rsync_bin_published"
         --tooldir="$upstream_src_dir"
@@ -786,7 +850,7 @@ run_python_suite_mode() {
         # tree rather than hardcoded, so an upstream bump that adds or removes
         # tests re-baselines instead of tripping a stale constant.
         local suite_count
-        suite_count=$(find "${upstream_src_dir}/testsuite" -maxdepth 1 -name '*_test.py' | wc -l | tr -d ' ')
+        suite_count=$(selected_test_count)
         if (( suite_count > 0 && expect_count < suite_count )); then
             echo "ERROR: EXPECT_RESULT covers ${expect_count} of ${suite_count} tests: ${expect_result_file}" >&2
             echo "       --expect-result runs ONLY what it names, so the missing" >&2

@@ -1,0 +1,32 @@
+name: Upstream Testsuite 3.5.0 (root, tcp)
+
+# The ROOT half of the loopback-TCP leg. See upstream-testsuite-tcp.yml for the
+# four-leg table and why this leg runs --daemon-tests-only.
+#
+# Privilege and transport are orthogonal: the root/non-root split exists because
+# the root-only tests (chown/devices/xattrs/dir-sgid/protected-regular) self-skip
+# as the runner user, and that is true under either transport. So each of the
+# four legs carries its OWN --expect-result manifest - measured, not assumed:
+# on the pipe legs 78 of 348 test names already resolve to a different outcome
+# between root and non-root.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-root-tcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Reported as `upstream-testsuite-root-tcp / upstream testsuite (root)`.
+  upstream-testsuite-root-tcp:
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      upstream_rsync_version: '3.5.0'
+      variant: 'root'
+      transport: 'tcp'
+      expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt

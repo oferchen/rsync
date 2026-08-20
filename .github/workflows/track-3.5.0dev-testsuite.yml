@@ -50,7 +50,7 @@
 # --mkpath, compress-options missing the --debug=NSTR line) are the genuine
 # pre-release divergence worklist, not harness noise.
 
-name: Track 3.5.0dev Testsuite
+name: Upstream Testsuite 3.5.0dev (development, not a gate)
 
 on:
   schedule:

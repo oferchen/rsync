@@ -1,8 +1,10 @@
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
-[![Upstream Testsuite (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
-[![Upstream Testsuite root (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
-[![Testsuite (rsync 3.5.0, tracking)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
+[![Upstream Testsuite 3.5.0 (nonroot, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
+[![Upstream Testsuite 3.5.0 (root, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
+[![Upstream Testsuite 3.5.0 (nonroot, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)
+[![Upstream Testsuite 3.5.0 (root, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)
+[![Upstream Testsuite 3.5.0dev (development, not a gate)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
@@ -19,7 +21,18 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, and 3.4.4, with 2.6.9 and 3.5.0 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`; against the 3.4.4 corpus all tests pass and the known-failures roster is empty.
 
-**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly: the 3.5.0 suite currently reports 133 divergences, measured nightly by the [3.5.0 testsuite tracker](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml). The gating upstream-testsuite check remains pinned to 3.4.4 until that set is closed or registered.
+**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
+
+The 3.5.0 **release** testsuite runs as four flows, one per cell of privilege x daemon transport. `runtests.py` offers two transports - the secure stdio-pipe default, which opens no listening socket, and `--use-tcp`, which binds a real `rsyncd` on 127.0.0.1 - and the root/non-root split decides whether the root-only tests (chown, device nodes, xattrs, dir-sgid, protected-regular) execute or self-skip:
+
+|          | pipe (secure default) | tcp (127.0.0.1) |
+|----------|-----------------------|-----------------|
+| non-root | [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
+| root     | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
+
+The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. Every leg carries its own expected-outcome manifest, generated from a real run, so only a *change* in outcome (a regression, or an unexpected pass) turns a badge red. The `upstream testsuite` and `upstream testsuite (root)` checks that gate every PR run this same 3.5.0 corpus.
+
+Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml) is a **development** tracker, not a gate and not the 3.5.0 release: it builds RsyncProject git master (`version.h` == `3.5.0dev`), a moving target, and is deliberately non-blocking so an upstream-side break can never fail a PR here.
 
 | Component | Status |
 |-----------|--------|
