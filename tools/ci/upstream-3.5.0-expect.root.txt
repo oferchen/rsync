@@ -265,7 +265,7 @@ relative-mkpath-dir-symlink fail
 relative-mkpath-symlink fail
 relative-symlinked-parent pass
 relative-symlinked-parent-dotdot pass
-remote-shell-newline-escaping fail
+remote-shell-newline-escaping pass
 rename-fullpath-symlink-race pass
 rename-mixed-parent-escape-poc pass
 rename-mixed-parent-symlink-race pass

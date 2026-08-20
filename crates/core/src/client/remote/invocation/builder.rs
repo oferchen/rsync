@@ -1210,10 +1210,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
 /// Shell metacharacters that upstream rsync escapes in filename arguments.
 ///
-/// upstream: options.c `SHELL_CHARS` - characters requiring backslash escaping
-/// when passing filename arguments through a remote shell that evaluates them
-/// via `eval "$@"`.
-const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\\";
+/// upstream: options.c:2695 `SHELL_CHARS` - characters requiring backslash
+/// escaping when passing filename arguments through a remote shell that
+/// evaluates them via `eval "$@"`.
+///
+/// `\n` and `\r` are load-bearing: without them a newline inside a filename
+/// argument reaches the remote shell unescaped and terminates the command,
+/// so everything after it is executed as a second command.
+const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
 
 /// Wildcard characters recognized by upstream rsync.
 ///
