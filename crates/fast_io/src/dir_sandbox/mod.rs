@@ -903,7 +903,7 @@ impl DirSandbox {
     /// - `ELOOP` - a refused symlink (absolute, empty, or landing outside the
     ///   confinement), a `..` that would rise above the anchor, or an
     ///   exhausted hop budget.
-    /// - `ENOMEM` - the path is deeper than [`DS_MAXDEPTH`].
+    /// - `ENOMEM` - the path is deeper than `DS_MAXDEPTH`.
     /// - Otherwise the underlying `openat`/`readlinkat` errno.
     #[cfg(unix)]
     pub fn open_dest_anchor_confined<O: ConfinementOracle>(
