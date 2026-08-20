@@ -244,7 +244,7 @@ pub(super) fn try_clone(
     // without --xattrs.
     #[cfg(all(unix, feature = "xattr"))]
     if !flags.preserve_xattrs {
-        ::metadata::strip_source_xattrs(source, destination, false)
+        ::metadata::strip_source_xattrs(source, destination, false, None)
             .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
     }
 

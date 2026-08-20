@@ -31,6 +31,7 @@ pub fn sync_xattrs(
     _destination: &Path,
     _follow_symlinks: bool,
     _filters: XattrSyncFilters<'_>,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())
@@ -53,6 +54,7 @@ pub fn strip_source_xattrs(
     _source: &Path,
     _destination: &Path,
     _follow_symlinks: bool,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     Ok(())
 }
@@ -77,6 +79,7 @@ pub fn apply_xattrs_from_list(
     _follow_symlinks: bool,
     _basis: Option<&Path>,
     _filter: Option<&dyn Fn(&str) -> bool>,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())

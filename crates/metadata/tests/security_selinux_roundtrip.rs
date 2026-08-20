@@ -99,7 +99,14 @@ fn security_selinux_xattr_round_trips() {
 
     xattr::set(&source, "security.selinux", FIXTURE_LABEL).expect("seed source label");
 
-    sync_xattrs(&source, &destination, false, XattrSyncFilters::default()).expect("sync xattrs");
+    sync_xattrs(
+        &source,
+        &destination,
+        false,
+        XattrSyncFilters::default(),
+        None,
+    )
+    .expect("sync xattrs");
 
     let landed = xattr::get(&destination, "security.selinux")
         .expect("read dest label")
@@ -143,7 +150,8 @@ fn security_selinux_xattr_preserved_via_wire_path() {
         FIXTURE_LABEL.to_vec(),
     ));
 
-    apply_xattrs_from_list(&destination, &list, false, None, None).expect("apply wire xattrs");
+    apply_xattrs_from_list(&destination, &list, false, None, None, None)
+        .expect("apply wire xattrs");
 
     let landed = xattr::get(&destination, "security.selinux")
         .expect("read dest label")

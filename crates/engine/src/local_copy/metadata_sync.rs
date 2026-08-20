@@ -66,7 +66,7 @@ pub(crate) fn sync_xattrs_if_requested(
                     source: Some(&sender),
                     destination: Some(&receiver),
                 };
-                sync_xattrs(source, destination, follow_symlinks, filters)
+                sync_xattrs(source, destination, follow_symlinks, filters, None)
                     .map_err(map_metadata_error)?;
             } else {
                 sync_xattrs(
@@ -74,6 +74,7 @@ pub(crate) fn sync_xattrs_if_requested(
                     destination,
                     follow_symlinks,
                     XattrSyncFilters::default(),
+                    None,
                 )
                 .map_err(map_metadata_error)?;
             }
@@ -83,6 +84,7 @@ pub(crate) fn sync_xattrs_if_requested(
                 destination,
                 follow_symlinks,
                 XattrSyncFilters::default(),
+                None,
             )
             .map_err(map_metadata_error)?;
         }

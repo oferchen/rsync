@@ -12,6 +12,7 @@
 //! `xattrs.c:rsync_xal_set()` (`xattr.c:setxattr/removexattr`).
 
 use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -161,6 +162,29 @@ pub fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> io::
     } else {
         xattr::remove(path, os_name)
     }
+}
+
+/// Writes a single xattr value through a held fd (`fsetxattr`).
+///
+/// The fd variant is not an optimisation: `lsetxattr` re-walks the path's
+/// parent components on every call, and it declines to follow only the
+/// *leaf* symlink - so a parent flipped to a symlink mid-batch redirects the
+/// write outside the tree. An fd cannot be redirected.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
+pub fn write_attribute_at(file: &File, name: &[u8], value: &[u8]) -> io::Result<()> {
+    xattr::FileExt::set_xattr(file, OsStr::from_bytes(name), value)
+}
+
+/// Removes an xattr through a held fd (`fremovexattr`).
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/xattrs.c:1041-1045` - the same fd-vs-path choice on removal
+pub fn remove_attribute_at(file: &File, name: &[u8]) -> io::Result<()> {
+    xattr::FileExt::remove_xattr(file, OsStr::from_bytes(name))
 }
 
 /// Converts the [`OsString`] returned by [`list_attributes`] into the raw
