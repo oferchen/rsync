@@ -420,6 +420,31 @@ impl<'a> CopyContext<'a> {
         &mut self.readdir_buf
     }
 
+    /// Borrows the readdir buffer and the anchor the directory scan resolves
+    /// beneath, if any.
+    ///
+    /// The scan needs both at once, and taking them through separate accessors
+    /// would borrow `self` mutably and immutably in one call. Handing back
+    /// disjoint field borrows keeps the anchor allocation-free on the recursive
+    /// traversal path, where copying it would cost one `PathBuf` per directory
+    /// visited.
+    ///
+    /// The anchor is withheld under a symlink-following mode, on the same rule
+    /// [`follow_source_symlinks`] applies to the content open: `-k` exists to
+    /// follow a symlinked *parent*, and the scan resolves exactly those parents,
+    /// so confining it would refuse the traversal the operator asked for.
+    ///
+    /// [`follow_source_symlinks`]: Self::follow_source_symlinks
+    pub(super) fn readdir_buf_with_confined_anchor(
+        &mut self,
+    ) -> (&mut Vec<(OsString, PathBuf)>, Option<&Path>) {
+        let confine = !self.follow_source_symlinks();
+        (
+            &mut self.readdir_buf,
+            confine.then(|| self.source_anchor.as_deref()).flatten(),
+        )
+    }
+
     /// Clears the checksum cache to free memory after directory processing.
     pub(super) fn clear_checksum_cache(&mut self) {
         if let Some(ref mut cache) = self.checksum_cache {

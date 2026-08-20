@@ -88,6 +88,7 @@ pub mod cached_sort;
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
 pub mod confined_open;
+pub mod confined_readdir;
 /// Path-confinement activation: who is confined, and against what root.
 ///
 /// Pure policy with no I/O, so it builds and is tested on every target.
@@ -371,6 +372,7 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
 pub use confined_open::{LeafPolicy, open_source_confined};
+pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, CloneAttempt, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome,

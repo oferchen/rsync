@@ -119,7 +119,7 @@ pub fn open_source_confined(
 /// `EINVAL`, matching upstream `secure_relative_open`'s portable front-door
 /// check (`path_has_dotdot_component`). `.` and normal components are
 /// allowed; the kernel / walk adjudicates the rest.
-fn validate_relative(relative: &Path) -> io::Result<()> {
+pub(crate) fn validate_relative(relative: &Path) -> io::Result<()> {
     for comp in relative.components() {
         match comp {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
