@@ -2149,12 +2149,19 @@ mod module_access_tests {
 
     // Non-vacuity companion: the SAME tail without the slash must NOT gain one,
     // or the fix would just be appending a slash unconditionally.
+    //
+    // The expectation is built with `join` rather than spelled out, because this
+    // arm returns `module_path.join(collapsed)` and `join` inserts the PLATFORM
+    // separator - a literal "/srv/upload/realdir" would be right on Unix and
+    // wrong on Windows, where `join` yields a backslash. Comparing against the
+    // same construction keeps the assertion about the trailing separator, which
+    // is what the test is for.
     #[test]
     fn resolve_receiver_dest_does_not_invent_a_trailing_slash() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir".to_owned()];
         let dest = resolve_receiver_dest(module_path, &args, "upload");
-        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/realdir"));
+        assert_eq!(dest.as_os_str(), module_path.join("realdir").as_os_str());
     }
 
     // The slash must survive `..` collapsing, which is what strips it.
