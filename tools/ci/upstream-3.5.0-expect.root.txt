@@ -65,7 +65,7 @@ daemon-argv-limit skip
 daemon-auth pass
 daemon-auth-digest-floor pass
 daemon-auth-group pass
-daemon-auth-users-comma-only fail
+daemon-auth-users-comma-only pass
 daemon-chroot skip
 daemon-chroot-acl skip
 daemon-chroot-munge-default fail

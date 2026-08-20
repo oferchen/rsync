@@ -292,22 +292,22 @@ fn auth_digest_floor_name_is_case_insensitive() {
 /// upstream: authenticate.c:318-321 and :327-331.
 #[test]
 fn auth_denial_log_reasons_match_upstream_wording() {
-    assert_eq!(AuthDenial::Credentials.log_reason(), None);
+    assert_eq!(AuthDenial::Credentials.log_suffix(), None);
     assert_eq!(
         AuthDenial::DigestFloorUnsupported {
             configured: "sponge".to_owned()
         }
-        .log_reason()
+        .log_suffix()
         .as_deref(),
-        Some("the configured 'auth digest = sponge' is not a supported digest on this build")
+        Some(": the configured 'auth digest = sponge' is not a supported digest on this build")
     );
     assert_eq!(
         AuthDenial::DigestTooWeak {
             negotiated: DaemonAuthDigest::Md5,
             floor: "sha256".to_owned(),
         }
-        .log_reason()
+        .log_suffix()
         .as_deref(),
-        Some("negotiated auth digest md5 is weaker than the required 'auth digest = sha256'")
+        Some(": negotiated auth digest md5 is weaker than the required 'auth digest = sha256'")
     );
 }

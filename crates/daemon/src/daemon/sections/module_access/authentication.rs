@@ -41,12 +41,22 @@ enum AuthenticationStatus {
 /// reproduce that suffix instead of logging the bare prefix.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AuthDenial {
-    /// Credentials were absent, malformed, or did not verify.
+    /// Credentials were absent, malformed, or the secret did not verify.
     ///
-    /// Upstream's suffixes for these (`: invalid challenge response`,
-    /// ` for %s: %s`) are not reconstructable here, so the line stays the bare
-    /// prefix - unchanged from before this enum existed.
+    /// The first two arrive before a username exists, so upstream's ` for %s:`
+    /// clause has nothing to name. The third - a failed secret check - does
+    /// have a username, but upstream's reason there is `check_secret()`'s
+    /// return ("no secrets file", "ignoring secrets file", "invalid username",
+    /// ...) and oc's `verify_secret_response` collapses all of them into one
+    /// bool, so naming any single reason would be a guess. These stay the bare
+    /// prefix until that outcome is split.
     Credentials,
+    /// An `auth users` rule refused the offered username.
+    ///
+    /// upstream: authenticate.c:433 logs these as
+    /// `auth failed on module %s from %s (%s) for %s: %s`, and the reason is
+    /// the discriminator an operator needs - see [`AuthUserRule`].
+    UserRule { user: String, rule: AuthUserRule },
     /// `auth digest = NAME` names a digest this build does not support.
     ///
     /// upstream: authenticate.c:316-322 - the `floor_rank < 0` arm.
@@ -60,17 +70,58 @@ pub(crate) enum AuthDenial {
     },
 }
 
+/// Which `auth users` rule outcome refused the username.
+///
+/// A closed set, not free text: these are the only two reasons upstream can
+/// report from the rule scan, and conflating them is the exact failure the
+/// upstream test guards against - "no matching rule" is what a rule list that
+/// parsed to nothing produces, so an operator seeing it knows the policy never
+/// matched, while "denied by rule" means the policy matched and did its job.
+///
+/// upstream: authenticate.c:411-414.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AuthUserRule {
+    /// No `auth users` entry matched the offered username.
+    ///
+    /// upstream: authenticate.c:412 - `if (!tok) err = "no matching rule";`
+    NoMatchingRule,
+    /// A matching entry carried the `:deny` modifier.
+    ///
+    /// upstream: authenticate.c:414 - `else if (opt_ch == 'd') err = "denied by
+    /// rule";`
+    DeniedByRule,
+}
+
+impl AuthUserRule {
+    /// upstream's literal reason text for this outcome.
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::NoMatchingRule => "no matching rule",
+            Self::DeniedByRule => "denied by rule",
+        }
+    }
+}
+
 impl AuthDenial {
-    /// The reason upstream appends after `auth failed on module %s from %s (%s)`,
+    /// The text upstream appends after `auth failed on module %s from %s (%s)`,
     /// or `None` when this layer cannot reconstruct it.
-    pub(crate) fn log_reason(&self) -> Option<String> {
+    ///
+    /// Returns the WHOLE suffix rather than just a reason, because upstream has
+    /// two shapes: `: %s` for the digest-floor refusals (authenticate.c:318 /
+    /// :325) and ` for %s: %s` once a username is known (:433). Handing the
+    /// emitter a ready-made suffix keeps that choice here, next to the variants
+    /// that determine it.
+    pub(crate) fn log_suffix(&self) -> Option<String> {
         match self {
             Self::Credentials => None,
+            Self::UserRule { user, rule } => {
+                Some(format!(" for {user}: {}", rule.reason()))
+            }
             Self::DigestFloorUnsupported { configured } => Some(format!(
-                "the configured 'auth digest = {configured}' is not a supported digest on this build"
+                ": the configured 'auth digest = {configured}' is not a supported digest on this build"
             )),
             Self::DigestTooWeak { negotiated, floor } => Some(format!(
-                "negotiated auth digest {} is weaker than the required 'auth digest = {floor}'",
+                ": negotiated auth digest {} is weaker than the required 'auth digest = {floor}'",
                 negotiated.name()
             )),
         }
@@ -223,7 +274,12 @@ fn perform_module_authentication(
         Some(matched) => matched,
         None => {
             send_auth_failed(reader.get_mut(), module, limiter)?;
-            return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
+            // upstream: authenticate.c:412 - the rule scan ended with no token,
+            // so `err = "no matching rule"`.
+            return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
+                user: username.to_owned(),
+                rule: AuthUserRule::NoMatchingRule,
+            }));
         }
     };
     let auth_user = auth_match.user;
@@ -246,7 +302,10 @@ fn perform_module_authentication(
     // "denied by rule" and auth_server() returns NULL (auth failure).
     if auth_user.access_level == UserAccessLevel::Deny {
         send_auth_failed(reader.get_mut(), module, limiter)?;
-        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
+        return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
+            user: username.to_owned(),
+            rule: AuthUserRule::DeniedByRule,
+        }));
     }
 
     // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back

@@ -57,3 +57,79 @@ fn log_bodies_match_upstream_wording() {
         );
     }
 }
+
+/// An `auth users` refusal must name the user AND the rule outcome.
+///
+/// upstream: authenticate.c:433 -
+/// `auth failed on module %s from %s (%s) for %s: %s`, where the reason comes
+/// from :411-414 - `"no matching rule"` when the scan matched no token and
+/// `"denied by rule"` when the matched entry carried `:deny`.
+///
+/// The reason is the point, not decoration: the two outcomes are what tells an
+/// operator whether their policy MATCHED and denied, or never matched at all
+/// (which is also what a rule list that parsed to nothing produces). Upstream's
+/// own testsuite/daemon-auth-users-comma-only asserts on this exact text for
+/// that reason.
+#[test]
+fn auth_users_refusals_name_the_user_and_the_rule() {
+    let dir = tempdir().expect("log dir");
+    let path = dir.path().join("daemon.log");
+    let log = open_log_sink(&path, Brand::Oc).expect("open log");
+
+    let host = "client.example";
+    let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17));
+
+    log_module_auth_failure(
+        &log,
+        host,
+        ip,
+        "docs",
+        AuthDenial::UserRule {
+            user: "alice".to_owned(),
+            rule: AuthUserRule::DeniedByRule,
+        }
+        .log_suffix()
+        .as_deref(),
+    );
+    log_module_auth_failure(
+        &log,
+        host,
+        ip,
+        "docs",
+        AuthDenial::UserRule {
+            user: "mallory".to_owned(),
+            rule: AuthUserRule::NoMatchingRule,
+        }
+        .log_suffix()
+        .as_deref(),
+    );
+
+    drop(log);
+    let contents = fs::read_to_string(&path).expect("read log");
+
+    for expected in [
+        "auth failed on module docs from client.example (192.0.2.17) for alice: denied by rule",
+        "auth failed on module docs from client.example (192.0.2.17) for mallory: no matching rule",
+    ] {
+        assert!(
+            contents.contains(expected),
+            "missing upstream-exact log body {expected:?} in: {contents:?}"
+        );
+    }
+
+    // Non-vacuity companion: the two outcomes must not collapse onto one text.
+    // Without this, mapping both variants to the same reason would satisfy a
+    // `contains` check for whichever string happened to be emitted twice.
+    let suffix_for = |rule| {
+        AuthDenial::UserRule {
+            user: "alice".to_owned(),
+            rule,
+        }
+        .log_suffix()
+    };
+    assert_ne!(
+        suffix_for(AuthUserRule::DeniedByRule),
+        suffix_for(AuthUserRule::NoMatchingRule),
+        "the two rule outcomes must stay distinguishable for the same user"
+    );
+}
