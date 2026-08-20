@@ -2703,6 +2703,53 @@ fn omits_munge_links_long_arg() {
     );
 }
 
+/// upstream: options.c:3068 - `--insecure-links` is deliberately absent from
+/// `server_options()`. It is a LOCAL-ONLY opt-out: a peer that received it
+/// could relax its own confinement on the client's say-so, which is exactly
+/// what the daemon's hard refusal (options.c:1084) exists to prevent. A
+/// forwarding leak is therefore the security-relevant failure here, so it is
+/// pinned on BOTH roles and in BOTH the set and the unset state.
+#[test]
+fn never_forwards_insecure_links_to_the_remote() {
+    for set in [false, true] {
+        let config = ClientConfig::builder().insecure_links(set).build();
+        for (role, args) in [
+            ("sender", build_sender_args(&config)),
+            ("receiver", build_receiver_args(&config)),
+        ] {
+            assert!(
+                !args.iter().any(|a| a.contains("insecure-links")),
+                "--insecure-links (set={set}) must never reach the {role} argv: {args:?}"
+            );
+        }
+    }
+}
+
+/// upstream: `confine_root` is a local global consulted by `confinement_root()`
+/// (syscall.c:128-143) and never appears in `server_options()`. A daemon
+/// ignores a peer-supplied one outright (options.c:2382-2386), and a restricted
+/// shell wrapper - not rsync - is what appends `--confine-root=DIR` to a server
+/// argv, so the client forwarding it would be a second, unaudited source.
+#[test]
+fn never_forwards_confine_root_to_the_remote() {
+    let config = ClientConfig::builder()
+        .confine_root(Some(std::path::PathBuf::from("/srv/restricted")))
+        .build();
+    for (role, args) in [
+        ("sender", build_sender_args(&config)),
+        ("receiver", build_receiver_args(&config)),
+    ] {
+        assert!(
+            !args.iter().any(|a| a.contains("confine-root")),
+            "--confine-root must never reach the {role} argv: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a.contains("/srv/restricted")),
+            "the confinement root must not leak as an operand on the {role} argv: {args:?}"
+        );
+    }
+}
+
 /// upstream: options.c:2711-2712 - `--ignore-times` is emitted as the compact
 /// `I` letter in the flag string, never as a long-form `--ignore-times` arg.
 /// The long form leaks onto the remote server's positional path list

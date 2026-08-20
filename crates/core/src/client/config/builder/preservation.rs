@@ -79,6 +79,30 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Drops the ownership check on operator-supplied path symlinks.
+    ///
+    /// Local-only: upstream never forwards `--insecure-links` to a peer
+    /// (`options.c:3068`) and a daemon hard-refuses one that arrives anyway
+    /// (`options.c:1084`), so a client can never relax a server's confinement.
+    #[must_use]
+    #[doc(alias = "--insecure-links")]
+    pub const fn insecure_links(mut self, insecure_links: bool) -> Self {
+        self.insecure_links = insecure_links;
+        self
+    }
+
+    /// Confines every operator- and peer-supplied path beneath `root`.
+    ///
+    /// The value is validated absolute at parse time
+    /// (`options.c:2386-2389`) and is mutually exclusive with
+    /// [`insecure_links`](Self::insecure_links) (`options.c:2391-2396`).
+    #[must_use]
+    #[doc(alias = "--confine-root")]
+    pub fn confine_root(mut self, confine_root: Option<PathBuf>) -> Self {
+        self.confine_root = confine_root;
+        self
+    }
+
     /// Enables or disables trusting the sender's file list without safety checks.
     ///
     /// When false (default), the receiver rejects file list entries with absolute

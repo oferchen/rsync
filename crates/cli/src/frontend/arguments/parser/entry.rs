@@ -969,6 +969,32 @@ where
         ));
     }
 
+    // upstream: options.c:2381-2400 - `--confine-root` carries two validation
+    // rules, and their ORDER is observable: a relative root reports the
+    // absolute-path error even when `--insecure-links` is also present.
+    //
+    // The daemon arm (`am_daemon` clears `confine_root` outright) is not
+    // reachable here: this parser only ever sees a client argv.
+    let insecure_links = matches.get_flag("insecure-links");
+    let confine_root = matches.get_one::<String>("confine-root").map(PathBuf::from);
+    if let Some(root) = confine_root.as_deref() {
+        if !root.is_absolute() {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::InvalidValue,
+                "--confine-root must be an absolute path\n",
+            ));
+        }
+        // The opt-out restores the legacy open, which short-circuits the walk
+        // that enforces the root - so the pair would silently mean no
+        // confinement at all.
+        if insecure_links {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--insecure-links cannot be combined with --confine-root\n",
+            ));
+        }
+    }
+
     // upstream: options.c:2158-2167 - `--read-batch` cannot be combined with
     // `--files-from` or `--remove-source-files`/`--remove-sent-files`.
     if read_batch.is_some() {
@@ -1141,6 +1167,8 @@ where
         keep_dirlinks,
         safe_links,
         munge_links,
+        insecure_links,
+        confine_root,
         trust_sender,
         server_mode,
         sender_mode,

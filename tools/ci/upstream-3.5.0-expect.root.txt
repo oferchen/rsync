@@ -218,7 +218,7 @@ operator-path-dir-daemon-outside pass
 operator-path-files-from fail
 operator-path-inplace-backup-dir fail
 operator-path-insecure-links-daemon pass
-operator-path-insecure-links-refused fail
+operator-path-insecure-links-refused pass
 operator-path-link-dest fail
 operator-path-log-file fail
 operator-path-partial-dir fail

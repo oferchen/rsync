@@ -415,7 +415,14 @@ fn is_option_refused(
     //     server-side logging.
     //   - `iconv` (options.c:1007-1008) is refused only when the module has no
     //     `charset` configured (`!*lp_charset(module_id)`).
+    //   - `insecure-links` (options.c:1087, new in 3.5.0) is a LOCAL-ONLY
+    //     opt-out, so a client must never be able to switch off the daemon's
+    //     symlink confinement by sending it. The daemon's own opt-out is the
+    //     `insecure links` module parameter, never this flag.
     if long_name.starts_with("log-file") {
+        return true;
+    }
+    if long_name == "insecure-links" {
         return true;
     }
     if long_name == "iconv"

@@ -357,6 +357,17 @@ pub struct ParsedArgs {
     /// `--munge-links` / `--no-munge-links` - munge symlinks for safety.
     pub munge_links: Option<bool>,
 
+    /// `--insecure-links` / `--no-insecure-links` - drop the ownership check on
+    /// operator-supplied path symlinks. Local-only: it is never forwarded to a
+    /// peer (upstream options.c:3068) and a daemon hard-refuses it
+    /// (options.c:1084).
+    pub insecure_links: bool,
+
+    /// `--confine-root=DIR` - confine every operator- and peer-supplied path
+    /// beneath DIR. Validated absolute at parse time
+    /// (upstream options.c:2386-2389).
+    pub confine_root: Option<PathBuf>,
+
     /// `--devices` / `--no-devices` - preserve device files.
     pub devices: Option<bool>,
 

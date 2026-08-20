@@ -62,6 +62,21 @@ impl ClientConfig {
         self.munge_links
     }
 
+    /// Reports whether `--insecure-links` dropped the ownership check on
+    /// operator-supplied path symlinks.
+    #[must_use]
+    #[doc(alias = "--insecure-links")]
+    pub const fn insecure_links(&self) -> bool {
+        self.insecure_links
+    }
+
+    /// The `--confine-root=DIR` confinement root, when one was given.
+    #[must_use]
+    #[doc(alias = "--confine-root")]
+    pub fn confine_root(&self) -> Option<&Path> {
+        self.confine_root.as_deref()
+    }
+
     /// Reports whether the sender's file list is trusted without safety checks.
     ///
     /// When false (default), the receiver validates paths from the sender to

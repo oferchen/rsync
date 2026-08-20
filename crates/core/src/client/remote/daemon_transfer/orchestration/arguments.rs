@@ -781,6 +781,21 @@ pub(super) fn build_full_daemon_args(
         args.push(arg);
     }
 
+    // upstream: options.c:3175-3182 - `server_options()` appends every -M /
+    // --remote-option value verbatim, after all other options. That function
+    // builds the argv for BOTH transports (clientserver.c:340 for a daemon,
+    // main.c:611 for a remote shell), so the daemon path forwards them exactly
+    // as the remote-shell path does; omitting them here silently discarded
+    // every `-M` on an rsync:// transfer.
+    //
+    // Byte fidelity is bounded by this builder's `Vec<String>` argv, the same
+    // constraint that already applies to --iconv, --usermap and
+    // --checksum-choice here; widening the whole vector to OsString is tracked
+    // separately.
+    for opt in config.remote_options() {
+        args.push(opt.to_string_lossy().into_owned());
+    }
+
     // upstream: dummy argument representing CWD.
     args.push(".".to_owned());
 
