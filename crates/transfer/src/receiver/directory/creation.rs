@@ -527,6 +527,7 @@ impl ReceiverContext {
                         true,
                         Some(&dir_path),
                         filter_ref,
+                        None,
                     ) {
                         return Some((dir_path, e.to_string()));
                     }
@@ -897,6 +898,7 @@ impl ReceiverContext {
                 true,
                 Some(dir_path),
                 filter_ref,
+                None,
             ) {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(

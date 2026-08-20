@@ -115,11 +115,77 @@ pub fn open_source_confined(
     imp::open_source_confined(root, relative, leaf, noatime)
 }
 
+/// What the destination leaf is expected to be, so the pin can ask for
+/// `O_DIRECTORY` where upstream does.
+///
+/// Upstream derives this from the *intended* mode rather than the on-disk
+/// one, because an attacker controls the latter through the very flip the
+/// pin exists to refuse.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/rsync.c:589-594` the `odir` computation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestLeafKind {
+    /// A regular file or a FIFO. `O_NONBLOCK` is what keeps the FIFO open
+    /// from blocking on a missing writer.
+    NonDirectory,
+    /// A directory: the open adds `O_DIRECTORY` so a leaf raced into a
+    /// non-directory is refused rather than pinned.
+    Directory,
+}
+
+/// Pins the destination leaf `root`/`relative` with a confined,
+/// `O_NOFOLLOW` open so metadata writes can be driven off the returned fd
+/// instead of re-resolving the path.
+///
+/// This is the destination-side counterpart to [`open_source_confined`]:
+/// same walk, same refusals, but it opens the leaf purely to *hold* it. A
+/// path-based `lsetxattr`/`lsetacl` re-walks the parent components on every
+/// call, so a parent flipped to a symlink between the confined create and
+/// the metadata write redirects an attacker-chosen xattr outside the
+/// destination tree. An fd cannot be redirected that way.
+///
+/// The parent walk follows relative in-tree symlinks and refuses absolute
+/// targets, `..` above the anchor, and an exhausted hop budget - the same
+/// `ds_descend()` rule [`open_source_confined`] uses. `O_NOFOLLOW` then
+/// governs the leaf alone.
+///
+/// A caller that gets an error here must **skip** the metadata write, not
+/// fall back to the path-based variant: falling back reinstates exactly the
+/// redirect this refuses. That is upstream's `xattr_refuse`.
+///
+/// # Errors
+///
+/// - `EINVAL` when `relative` is absolute or contains a `..` component.
+/// - `EISDIR` when `relative` has no leaf to pin: it is empty, all slashes,
+///   or its final component is `.` or `..`.
+/// - `ELOOP` when a symlink is refused - the leaf itself, an absolute or
+///   escaping target in the parent walk, or an exhausted hop budget.
+/// - `ENOTDIR` when [`DestLeafKind::Directory`] was asked for and the leaf
+///   is not one.
+/// - `ENOENT` when the leaf does not exist beneath `root`.
+/// - Any other I/O error from the underlying syscalls, forwarded verbatim.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/rsync.c:573-599` `set_file_attrs()`'s secure re-pin, and
+///   the `xattr_refuse` fallback when the re-pin also fails
+/// - `rsync-3.5.0/xattrs.c:386-390` `fsetxattr` vs `lsetxattr` on `fd >= 0`
+pub fn pin_dest_leaf_confined(
+    root: &Path,
+    relative: &Path,
+    kind: DestLeafKind,
+) -> io::Result<File> {
+    validate_relative(relative)?;
+    imp::pin_dest_leaf_confined(root, relative, kind)
+}
+
 /// Rejects an absolute `relative` or any `..` component up front with
 /// `EINVAL`, matching upstream `secure_relative_open`'s portable front-door
 /// check (`path_has_dotdot_component`). `.` and normal components are
 /// allowed; the kernel / walk adjudicates the rest.
-fn validate_relative(relative: &Path) -> io::Result<()> {
+pub(crate) fn validate_relative(relative: &Path) -> io::Result<()> {
     for comp in relative.components() {
         match comp {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
@@ -191,6 +257,32 @@ mod imp {
             LeafPolicy::Nofollow => walk_then_open_leaf(root, trimmed, noatime),
             LeafPolicy::FollowConfined => walk_following_leaf(root, trimmed, noatime),
         }
+    }
+
+    pub(super) fn pin_dest_leaf_confined(
+        root: &Path,
+        relative: &Path,
+        kind: DestLeafKind,
+    ) -> io::Result<File> {
+        // Deliberately the shared walk on every platform, with no `openat2`
+        // fast path: `openat2_confined` is shaped around the source open's
+        // read-a-regular-file semantics, and a second entry point into it
+        // would be a second place for the two arms to disagree. The walk is
+        // the same resolver either way - only the syscall count differs, and
+        // this is a once-per-file metadata pin, not the data path.
+        let (_, dir, leaf) = split_leaf(relative)?;
+        let parent = resolve_parent(root, dir)?;
+        // upstream: rsync.c:596 - O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|
+        // O_CLOEXEC, plus O_DIRECTORY for a directory leaf. O_NONBLOCK is
+        // load-bearing: without it, pinning a FIFO blocks until a writer
+        // appears. O_NOCTTY keeps a raced device leaf from becoming this
+        // process's controlling terminal.
+        let mut flags =
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+        if kind == DestLeafKind::Directory {
+            flags |= libc::O_DIRECTORY;
+        }
+        openat(parent.root_dirfd(), leaf, flags, 0)
     }
 
     /// Resolve `relative`'s parent through the shared confined resolver, then
@@ -470,6 +562,17 @@ mod imp {
             "confined source open is Unix-only (the daemon sender is Unix-only)",
         ))
     }
+
+    pub(super) fn pin_dest_leaf_confined(
+        _root: &Path,
+        _relative: &Path,
+        _kind: DestLeafKind,
+    ) -> io::Result<File> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "confined destination leaf pin is Unix-only (it exists for fd-based xattr/ACL writes)",
+        ))
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -477,6 +580,7 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
 
     fn read_to_string(mut file: File) -> String {
         let mut buf = String::new();
@@ -834,5 +938,124 @@ mod tests {
         let file = open_source_confined(&root, Path::new("sub/data/"), LeafPolicy::Nofollow, false)
             .expect("a trailing slash must be trimmed, not fatal");
         assert_eq!(read_to_string(file), "payload");
+    }
+
+    /// Builds `root/{sub -> outside, real}` plus an outside sentinel, and
+    /// returns `(root, outside)`. `sub` is the parent component an attacker
+    /// flips; `real` is the legitimate in-tree directory symlink target that
+    /// the follow-the-parent rule must keep working.
+    fn dest_tree() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir(&root).expect("mkdir root");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::write(outside.join("victim"), b"outside").expect("write victim");
+        (tmp, root, outside)
+    }
+
+    /// The defect this exists for: a parent component flipped to a symlink
+    /// pointing OUT of the tree must not yield a pin on the outside file.
+    /// A path-based `lsetxattr` would follow it, because `lsetxattr` only
+    /// declines to follow the *leaf*.
+    #[test]
+    fn a_parent_flipped_outside_the_root_is_refused() {
+        let (_tmp, root, outside) = dest_tree();
+        symlink(&outside, root.join("sub")).expect("plant escaping parent");
+
+        let error =
+            pin_dest_leaf_confined(&root, Path::new("sub/victim"), DestLeafKind::NonDirectory)
+                .expect_err("an escaping parent must refuse the pin");
+        assert!(
+            !outside.join("victim").is_symlink(),
+            "the sentinel must still be the real file the refusal protected"
+        );
+        assert_ne!(
+            error.kind(),
+            io::ErrorKind::NotFound,
+            "a refusal, not a missing file: got {error:?}"
+        );
+    }
+
+    /// Non-vacuity companion, and the regression this pin's first attempt
+    /// caused: a RELATIVE in-tree directory symlink is legitimate (it is
+    /// what `--keep-dirlinks` transfers into) and upstream's `ds_descend()`
+    /// follows it. A refuse-all walk would break ordinary local copies, so
+    /// the escape test above must not be passing for that reason.
+    #[test]
+    fn a_relative_in_tree_parent_symlink_is_followed() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::create_dir(root.join("real")).expect("mkdir real");
+        std::fs::write(root.join("real/data"), b"payload").expect("write");
+        symlink("real", root.join("sub")).expect("plant in-tree parent");
+
+        let file = pin_dest_leaf_confined(&root, Path::new("sub/data"), DestLeafKind::NonDirectory)
+            .expect("an in-tree relative parent symlink must still resolve");
+        assert_eq!(read_to_string(file), "payload");
+    }
+
+    /// The leaf rule is `O_NOFOLLOW`: a leaf raced into a symlink is refused
+    /// even when it points back inside the tree, because the pin exists to
+    /// hold the inode the receiver just wrote, not whatever the name means
+    /// now.
+    #[test]
+    fn a_symlinked_leaf_is_refused() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::write(root.join("target"), b"payload").expect("write");
+        symlink("target", root.join("leaf")).expect("plant leaf symlink");
+
+        let error = pin_dest_leaf_confined(&root, Path::new("leaf"), DestLeafKind::NonDirectory)
+            .expect_err("a symlinked leaf must be refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "got {error:?}");
+    }
+
+    /// `DestLeafKind::Directory` adds `O_DIRECTORY`, so a leaf that is not a
+    /// directory is refused rather than pinned - upstream derives the flag
+    /// from the INTENDED mode precisely so a raced non-directory cannot slip
+    /// through.
+    #[test]
+    fn a_directory_kind_refuses_a_non_directory_leaf() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::create_dir(root.join("adir")).expect("mkdir");
+        std::fs::write(root.join("afile"), b"payload").expect("write");
+
+        pin_dest_leaf_confined(&root, Path::new("adir"), DestLeafKind::Directory)
+            .expect("a real directory must pin");
+        let error = pin_dest_leaf_confined(&root, Path::new("afile"), DestLeafKind::Directory)
+            .expect_err("a non-directory must be refused under Directory");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOTDIR), "got {error:?}");
+    }
+
+    /// A FIFO must pin without blocking. `O_NONBLOCK` is the reason, and
+    /// dropping it from the flag set would hang this test rather than fail
+    /// it - which is why the assertion is that the call returns at all.
+    #[test]
+    fn a_fifo_leaf_pins_without_a_writer() {
+        let (_tmp, root, _outside) = dest_tree();
+        let fifo = root.join("pipe");
+        let c_path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).expect("cstring");
+        // SAFETY: `c_path` is a valid NUL-terminated string that outlives the
+        // call, and `mkfifo` only reads it.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo: {}", io::Error::last_os_error());
+
+        pin_dest_leaf_confined(&root, Path::new("pipe"), DestLeafKind::NonDirectory)
+            .expect("a FIFO leaf must pin without waiting for a writer");
+    }
+
+    /// Front-door validation is shared with the source open, so a `..` never
+    /// reaches the walk.
+    #[test]
+    fn a_dotdot_component_is_rejected_before_the_walk() {
+        let (_tmp, root, _outside) = dest_tree();
+        let error = pin_dest_leaf_confined(
+            &root,
+            Path::new("../outside/victim"),
+            DestLeafKind::NonDirectory,
+        )
+        .expect_err("`..` must be rejected");
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "got {error:?}");
     }
 }

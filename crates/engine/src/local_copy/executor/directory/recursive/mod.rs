@@ -200,7 +200,8 @@ fn copy_directory_recursive_inner(
     }
 
     let list_start = Instant::now();
-    let mut entries = read_directory_entries_sorted_reuse(source, context.readdir_buf())?;
+    let (readdir_buf, source_anchor) = context.readdir_buf_with_confined_anchor();
+    let mut entries = read_directory_entries_sorted_reuse(source, readdir_buf, source_anchor)?;
     // upstream: the file list is built once before the receiver mkdir's the
     // destination root, so a destination created inside the source tree (e.g.
     // `rsync -a src src/child`) never appears in the list. oc reads each source

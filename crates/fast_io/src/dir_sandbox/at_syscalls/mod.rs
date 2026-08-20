@@ -44,7 +44,8 @@ mod unlink;
 mod tests;
 
 pub use create::{
-    linkat, linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, symlinkat,
+    CloneAttempt, confined_clone_file, confined_create_new, confined_link_anonymous, linkat,
+    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, symlinkat,
     symlinkat_via_sandbox_or_fallback,
 };
 pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
@@ -58,7 +59,7 @@ pub use open::{
     openat, openat_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
 };
 pub use read_dir::{DirEntryView, EntryKind, ReadDirOutcome, read_dir_via_sandbox_or_fallback};
-pub use rename::{renameat, renameat_via_sandbox_or_fallback};
+pub use rename::{confined_rename, renameat, renameat_via_sandbox_or_fallback};
 pub use unlink::{
     UnlinkFlags, UnlinkResidue, recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback,
     unlink_via_sandbox_or_fallback, unlinkat,

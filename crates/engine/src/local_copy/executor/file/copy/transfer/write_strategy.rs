@@ -158,24 +158,49 @@ pub(in crate::local_copy) fn open_destination_writer(
             opened.map_err(|error| LocalCopyError::io("copy file", destination, error))
         }
         WriteStrategy::Direct => {
-            // upstream: receiver.c - direct write when no existing file to protect.
-            // create_new(true) prevents races with concurrent writers (EEXIST).
+            // Direct write when there is no existing file to protect.
+            //
+            // Upstream has no counterpart to this arm: receiver.c ALWAYS stages
+            // into a `.name.XXXXXX` temp (or --temp-dir) and commits with a
+            // rename, so it never opens the final name and inherits the
+            // parent-anchored confinement for free. `Direct` is an oc
+            // optimisation for a not-yet-existing destination, so it has to
+            // anchor the parent itself - otherwise it re-resolves `destination`
+            // by path and follows a parent flipped to a symlink mid-transfer,
+            // which is the same escape the commit rename closes above and the
+            // one `keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree`
+            // catches on platforms without O_TMPFILE.
+            //
+            // `O_EXCL` is preserved from the path-based form: it is what makes a
+            // concurrent writer lose the race with EEXIST rather than share the
+            // file.
             debug_log!(
                 Io,
                 3,
                 "direct write to {} (no existing destination)",
                 record_path.display()
             );
-            fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(destination)
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))
+            #[cfg(unix)]
+            {
+                fast_io::confined_create_new(context.destination_root(), destination)
+                    .map_err(|error| LocalCopyError::io("copy file", destination, error))
+            }
+            #[cfg(not(unix))]
+            {
+                fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(destination)
+                    .map_err(|error| LocalCopyError::io("copy file", destination, error))
+            }
         }
         WriteStrategy::AnonymousTempFile => {
             #[cfg(target_os = "linux")]
             {
-                match DestinationWriteGuard::new_anonymous(destination) {
+                match DestinationWriteGuard::new_anonymous(
+                    destination,
+                    Some(context.destination_root()),
+                ) {
                     Ok((new_guard, file)) => {
                         debug_log!(
                             Io,
@@ -199,11 +224,12 @@ pub(in crate::local_copy) fn open_destination_writer(
                 }
             }
             // Fallback: named temp file (also the only path on non-Linux).
-            let (new_guard, file) = DestinationWriteGuard::new(
+            let (new_guard, file) = DestinationWriteGuard::new_confined(
                 destination,
                 partial_enabled,
                 context.partial_directory_path(),
                 context.temp_directory_path(),
+                Some(context.destination_root()),
             )?;
             *staging_path = Some(new_guard.staging_path().to_path_buf());
             debug_log!(
@@ -217,11 +243,12 @@ pub(in crate::local_copy) fn open_destination_writer(
             Ok(file)
         }
         WriteStrategy::TempFileRename => {
-            let (new_guard, file) = DestinationWriteGuard::new(
+            let (new_guard, file) = DestinationWriteGuard::new_confined(
                 destination,
                 partial_enabled,
                 context.partial_directory_path(),
                 context.temp_directory_path(),
+                Some(context.destination_root()),
             )?;
             *staging_path = Some(new_guard.staging_path().to_path_buf());
             debug_log!(
