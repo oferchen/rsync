@@ -91,3 +91,41 @@ fn an_out_of_tree_source_does_not_disable_destination_confinement() {
         "the refused rename must leave the temp intact"
     );
 }
+
+/// The absolute `--temp-dir` source is resolved by the ownership walk, not left
+/// to ambient path resolution - so a foreign-owned parent flipped between the
+/// decision to commit and the syscall cannot substitute attacker content into
+/// the destination.
+///
+/// Planting a foreign-owned component needs a second uid, so the refusal itself
+/// is proven by the root leg of the upstream 3.5.0 suite
+/// (`temp-dir-symlink-injection`). What an unprivileged run can prove - and what
+/// this pins - is the direction that a blanket refusal would break: the walk
+/// must still *follow* a component the operator owns, because an operator path
+/// may legitimately live behind their own symlink.
+///
+/// upstream: `rsync-3.5.0/syscall.c:1926` `do_rename_at()`.
+#[test]
+fn an_out_of_tree_source_behind_an_owned_symlink_still_commits() {
+    let base = TempDir::new().expect("tempdir");
+    let root = base.path().join("dest");
+    let staging = base.path().join("staging");
+    fs::create_dir(&root).expect("mkdir dest");
+    fs::create_dir(&staging).expect("mkdir staging");
+    // The operator's own layout: an absolute --temp-dir reached through a
+    // symlink they own. The ownership walk follows it; a refuse-all walk would
+    // break this legitimate shape.
+    std::os::unix::fs::symlink(&staging, base.path().join("tmpd")).expect("plant symlink");
+
+    let temp = write_file(&base.path().join("tmpd"), "f0.tmp", "payload");
+    let final_path = root.join("f0");
+
+    fast_io::confined_rename(&root, &temp, &final_path, true)
+        .expect("an operator-owned symlink must be followed, not refused");
+
+    assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
+    assert!(
+        !staging.join("f0.tmp").exists(),
+        "the staged temp must have moved out of the staging directory"
+    );
+}

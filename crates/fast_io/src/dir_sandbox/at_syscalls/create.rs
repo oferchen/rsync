@@ -369,20 +369,13 @@ pub fn linkat_via_sandbox_or_fallback(
 ///   already exists and a genuine `EXDEV`.
 #[cfg(unix)]
 pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path) -> io::Result<()> {
-    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+    use super::rename::anchor_confined_endpoint;
 
     let proc_path = format!("/proc/self/fd/{}", staged.as_raw_fd());
     let c_old = CString::new(proc_path).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
     let endpoint = anchor_confined_endpoint(root, dest)?;
-    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
-    // `*at` syscall; it is never closed and outlives any borrow of it.
-    #[allow(unsafe_code)]
-    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
-    let (new_dirfd, new_name) = match &endpoint {
-        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
-        ConfinedEndpoint::Ambient(path) => (cwd, *path),
-    };
+    let (new_dirfd, new_name) = endpoint.resolved();
     let c_new = CString::new(new_name.as_bytes())
         .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
@@ -445,18 +438,11 @@ pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path)
 /// - `EEXIST` when `dest` already exists.
 /// - Otherwise the underlying `openat(2)` error verbatim.
 pub fn confined_create_new(root: &Path, dest: &Path) -> io::Result<std::fs::File> {
-    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+    use super::rename::anchor_confined_endpoint;
     use std::os::fd::FromRawFd;
 
     let endpoint = anchor_confined_endpoint(root, dest)?;
-    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
-    // `*at` syscall; it is never closed and outlives any borrow of it.
-    #[allow(unsafe_code)]
-    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
-    let (dirfd, name) = match &endpoint {
-        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
-        ConfinedEndpoint::Ambient(path) => (cwd, *path),
-    };
+    let (dirfd, name) = endpoint.resolved();
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
@@ -521,17 +507,10 @@ pub enum CloneAttempt {
 /// A filesystem that simply cannot reflink reports `Ok(CloneAttempt::Unsupported)`,
 /// never an error.
 pub fn confined_clone_file(root: &Path, src: &Path, dest: &Path) -> io::Result<CloneAttempt> {
-    use super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+    use super::rename::anchor_confined_endpoint;
 
     let endpoint = anchor_confined_endpoint(root, dest)?;
-    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
-    // `*at` syscall; it is never closed and outlives any borrow of it.
-    #[allow(unsafe_code)]
-    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
-    let (dirfd, name) = match &endpoint {
-        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
-        ConfinedEndpoint::Ambient(path) => (cwd, *path),
-    };
+    let (dirfd, name) = endpoint.resolved();
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
