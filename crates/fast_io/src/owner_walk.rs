@@ -51,6 +51,25 @@ fn trusted_uid() -> u32 {
     }
 }
 
+/// Is a symlink owned by `uid` the operator's own, and therefore followable?
+///
+/// Ownership - not location - is the trust signal for an operator-supplied
+/// path: uid 0 or our own euid is the operator's own layout (the
+/// `/backup -> /mnt/disk` admin pattern), any other uid is an attacker's
+/// plant. An operator path may legitimately point outside the tree, which is
+/// why the confined beneath-walk is the wrong resolver for it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:406` - `st_uid != 0 && st_uid != trusted_uid`
+///   refuses the symlink; otherwise the walk follows it.
+/// - `rsync-3.5.0/util1.c:1216` `change_dir()` - resolves the operator-named
+///   destination with `open_no_attacker_symlinks()` on exactly this rule.
+#[must_use]
+pub fn symlink_owner_is_trusted(uid: u32) -> bool {
+    uid == 0 || uid == trusted_uid()
+}
+
 /// Open a directory component beneath `dirfd`, refusing a symlink at the leaf.
 ///
 /// The caller has already `statat`'d the component and found it is not a
@@ -131,7 +150,6 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
     )
     .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
 
-    let trusted = trusted_uid();
     let mut hops = MAX_SYMLINK_HOPS;
 
     while !pending.is_empty() {
@@ -146,7 +164,7 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
 
         // upstream: syscall.c:406 - an other-uid symlink is the attacker's, and
         // is refused; uid 0 or our own euid is the operator's own layout.
-        if stat.st_uid != 0 && stat.st_uid != trusted {
+        if !symlink_owner_is_trusted(stat.st_uid) {
             return Err(io::Error::from_raw_os_error(libc::ELOOP));
         }
         if hops == 0 {

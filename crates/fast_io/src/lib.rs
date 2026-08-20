@@ -396,7 +396,9 @@ pub use kernel_version::{
 pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
-pub use owner_walk::{operator_link, operator_rename, owner_trusted_parent};
+pub use owner_walk::{
+    operator_link, operator_rename, owner_trusted_parent, symlink_owner_is_trusted,
+};
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::{open_trusted_dir, secure_open_dir};
