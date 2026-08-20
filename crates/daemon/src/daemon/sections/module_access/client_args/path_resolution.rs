@@ -77,7 +77,16 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// functions with two contracts, not one to be deduplicated.
 fn collapse_module_relative(tail: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
-    for segment in tail.split(['/', '\\']) {
+    // Splits on `/` ONLY. `tail` is a peer-supplied wire path, and the wire is
+    // `/`-separated on every host (upstream `pathjoin()`); upstream's own
+    // `sanitize_path` tests `== '/'` at every separator check and has no `\`
+    // arm at all, so a `\` is copied through as an ordinary byte of the
+    // component. On Unix `\` is a legal filename byte: treating it as a
+    // separator silently relocates a legitimately-named file - `a\b` becomes
+    // `a/b` - and strips a trailing one. Contrast the `module_path` checks
+    // below, which DO accept `\` because they inspect an operator-configured
+    // LOCAL path that may legitimately be Windows-style.
+    for segment in tail.split('/') {
         match segment {
             "" | "." => {}
             ".." => {
@@ -128,7 +137,7 @@ fn resolve_receiver_dest(
     // absolute client path is interpreted against the module root, not the
     // host root. Collapsing then folds away every `.` and `..`, so the joined
     // destination is under `module_path` by construction on any host.
-    let collapsed = collapse_module_relative(tail.trim_start_matches(['/', '\\']));
+    let collapsed = collapse_module_relative(tail.trim_start_matches('/'));
     if collapsed.is_empty() {
         return module_path.to_path_buf();
     }
@@ -184,7 +193,7 @@ fn resolve_sender_sources(
         // Collapse `.` and `..` exactly as upstream's `sanitize_path` does at
         // depth 0 - see [`collapse_module_relative`]. The result cannot escape
         // the module root, so there is nothing left to refuse.
-        let collapsed = collapse_module_relative(tail.trim_start_matches(['/', '\\']));
+        let collapsed = collapse_module_relative(tail.trim_start_matches('/'));
         let trimmed = collapsed.as_str();
         if trimmed.is_empty() {
             sources.push(module_root_dotdir(module_path));
@@ -197,7 +206,9 @@ fn resolve_sender_sources(
         // so build the result the same way instead of going through
         // PathBuf::join, which on Windows inserts `\` and on macOS leaves
         // a trailing `/` that doubles when we re-append.
-        let trailing = tail.ends_with('/') || tail.ends_with('\\');
+        // upstream flist.c tests `fbuf[len-1] == '/'` only - a trailing `\` is
+        // part of the NAME on Unix, not a dotdir marker.
+        let trailing = tail.ends_with('/');
         let mut buf = module_path.as_os_str().to_owned();
         let needs_leading_sep = !buf
             .as_encoded_bytes()

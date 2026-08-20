@@ -2122,6 +2122,54 @@ mod module_access_tests {
         assert_eq!(dest, std::path::Path::new("/srv/upload/realdir/"));
     }
 
+    // A `\` in a peer-requested path is an ordinary filename byte on Unix, not
+    // a separator. Upstream's `sanitize_path` (util1.c) tests `== '/'` at every
+    // separator check and has no `\` arm, so it copies the byte through as part
+    // of the component. oc used to split on it, which relocated the file: with
+    // `a` present the request landed at `a/b`, and without it the open failed
+    // ENOENT and the connection died. MEASURED against real upstream 3.5.0.
+    #[test]
+    fn resolve_receiver_dest_keeps_a_backslash_as_a_filename_byte() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/a\\b".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        // The whole `a\b` is ONE component. Splitting would give `/srv/upload/a/b`.
+        assert_eq!(dest, std::path::Path::new("/srv/upload/a\\b"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_keeps_a_trailing_backslash() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/sub\\".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        // Treating the trailing `\` as a separator silently stripped it,
+        // yielding `/srv/upload/sub` for a peer that asked for `sub\`.
+        assert_eq!(dest, std::path::Path::new("/srv/upload/sub\\"));
+    }
+
+    // Non-vacuity companion: `/` MUST still split, and `..` must still collapse
+    // per upstream's depth-0 sanitize_path. Without this a fix that stopped
+    // splitting on every separator would also pass the two tests above.
+    #[test]
+    fn resolve_receiver_dest_still_splits_and_collapses_on_slash() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/x/../y/z".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload/y/z"));
+    }
+
+    // A `\` must not smuggle a traversal past the `..` collapse either: the
+    // collapse sees ONE component named `..\..`, which is not `..`, so it is
+    // kept as a literal name rather than popping two levels.
+    #[test]
+    fn resolve_receiver_dest_backslash_does_not_form_a_dotdot_component() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/..\\..\\etc".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload/..\\..\\etc"));
+        assert!(dest.starts_with(module_path));
+    }
+
     #[test]
     fn resolve_receiver_dest_falls_back_to_module_root_for_bare_module() {
         let module_path = std::path::Path::new("/srv/upload");
