@@ -58,11 +58,12 @@ pub(in crate::local_copy) fn copy_special_as_regular_file(
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
     } else {
-        let (new_guard, _file) = DestinationWriteGuard::new(
+        let (new_guard, _file) = DestinationWriteGuard::new_confined(
             destination,
             partial_enabled,
             context.partial_directory_path(),
             context.temp_directory_path(),
+            Some(context.destination_root()),
         )?;
         guard = Some(new_guard);
     }

@@ -67,6 +67,42 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
     fast_io::hard_link(source, destination)
 }
 
+/// Hard-links a destination entry into the backup area.
+///
+/// Same test-override seam as [`create_hard_link`], but on Unix production
+/// resolves both endpoints through the ownership walk
+/// ([`fast_io::operator_link`]). A backup area is an operator path, and the link
+/// tier runs *before* the rename tier, so confining only [`backup_rename`]
+/// would leave upstream's `backup-dir-symlink-race` escape wide open: the
+/// attacker's flipped parent redirects the link and the rename is never
+/// reached.
+///
+/// This is deliberately NOT folded into [`create_hard_link`]: that one also
+/// serves `-H` hardlink materialisation, which is a *transfer* path and takes
+/// the confined resolver, not the ownership one.
+///
+/// upstream: `rsync-3.5.0/backup.c:200-207` `link_or_rename()`;
+/// `syscall.c:676` `do_link_at()` under `operator_path_resolve`.
+pub(super) fn create_backup_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(result) = HARD_LINK_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|override_fn| override_fn(source, destination))
+    }) {
+        return result;
+    }
+
+    #[cfg(unix)]
+    {
+        fast_io::operator_link(source, destination)
+    }
+    #[cfg(not(unix))]
+    {
+        fast_io::hard_link(source, destination)
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static DEVICE_ID_OVERRIDE: RefCell<Option<Box<DeviceIdOverrideFn>>> =
@@ -132,9 +168,26 @@ where
 
 /// Renames a destination entry to its backup location.
 ///
+/// On Unix both endpoints are resolved by the ownership walk
+/// ([`fast_io::operator_rename`]): every path component is inspected without
+/// following it, a symlink owned by uid 0 or our euid is followed as the
+/// operator's own layout, and one owned by anyone else is refused. A backup
+/// directory may legitimately sit outside the transfer tree, so location cannot
+/// be the trust signal here - authority is.
+///
+/// Without that, an attacker who can create entries inside the backup tree
+/// flips a parent component between a real directory and a symlink pointing
+/// outside, and the path-based rename lands the backup wherever the symlink
+/// pointed at the instant the kernel resolved it - upstream's
+/// `backup-dir-symlink-race`.
+///
+/// upstream: `rsync-3.5.0/backup.c:200-219` `make_backup()` sets
+/// `operator_path_resolve` around the rename; `syscall.c:1894` `do_rename_at()`
+/// then walks each side with `owner_walk_parent()`.
+///
 /// In tests a thread-local override can force a specific outcome (e.g. an
 /// `EXDEV` cross-device error) to exercise the copy-tree fallback without a
-/// real second filesystem; production always calls `std::fs::rename`.
+/// real second filesystem.
 pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(test)]
     if let Some(result) = BACKUP_RENAME_OVERRIDE.with(|cell| {
@@ -145,7 +198,14 @@ pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
         return result;
     }
 
-    fs::rename(from, to)
+    #[cfg(unix)]
+    {
+        fast_io::operator_rename(from, to, true)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::rename(from, to)
+    }
 }
 
 pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {

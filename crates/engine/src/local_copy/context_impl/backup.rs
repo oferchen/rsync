@@ -126,14 +126,14 @@ impl<'a> CopyContext<'a> {
         let hard_linked = if prefer_rename {
             None
         } else {
-            match create_hard_link(destination, &backup_path) {
+            match create_backup_hard_link(destination, &backup_path) {
                 Ok(()) => Some(BackupStrategy::HardLink),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 // upstream: backup.c:247-256 - a stale backup entry is
                 // removed and the hard link retried once.
                 Err(error) if is_stale_backup_conflict(&error) => {
                     remove_stale_backup_entry(&backup_path)?;
-                    match create_hard_link(destination, &backup_path) {
+                    match create_backup_hard_link(destination, &backup_path) {
                         Ok(()) => Some(BackupStrategy::HardLink),
                         Err(_) => None,
                     }

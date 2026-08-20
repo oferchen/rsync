@@ -198,6 +198,7 @@ fn apply_metadata_acls_and_xattrs(
             true,
             Some(basis_path),
             filter_ref,
+            None,
         ) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }

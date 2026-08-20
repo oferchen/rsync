@@ -151,7 +151,7 @@ fn non_root_receiver_skips_non_user_namespace_xattr_and_keeps_user_one() {
         XattrEntry::new(b"security.pin.dropped".to_vec(), b"v".to_vec()),
     ]);
 
-    apply_xattrs_from_list(&file, &list, true, None, None)
+    apply_xattrs_from_list(&file, &list, true, None, None, None)
         .expect("a non-user xattr must be skipped-and-continue, never a hard error");
 
     let names: Vec<String> = xattr::list(&file)
