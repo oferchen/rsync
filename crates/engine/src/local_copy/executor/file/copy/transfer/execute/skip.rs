@@ -140,6 +140,7 @@ pub(super) fn record_metadata_only_skip(
         destination,
         true,
         context.filter_program(),
+        Some(context.destination_root()),
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(

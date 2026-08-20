@@ -320,6 +320,7 @@ impl<'a> CopyContext<'a> {
                 destination,
                 true,
                 self.filter_program.as_ref(),
+                Some(self.destination_root()),
             )?;
 
             // Sync NFSv4 ACLs separately (stored in system.nfs4_acl xattr)
