@@ -22,7 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  upstream-testsuite-root:
+  # Reported as `upstream-testsuite-root-tcp / upstream testsuite (root)`.
+  upstream-testsuite-root-tcp:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       upstream_rsync_version: '3.5.0'

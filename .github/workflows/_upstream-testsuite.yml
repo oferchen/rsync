@@ -59,8 +59,16 @@ permissions:
 
 jobs:
   upstream-testsuite:
-    # The `pipe` name is the REQUIRED check context and must stay byte-exact.
-    name: ${{ inputs.transport == 'tcp' && 'upstream testsuite (tcp)' || 'upstream testsuite' }}
+    # DELIBERATELY A LITERAL, not an expression on `transport`. MEASURED on run
+    # 32390202763: GitHub evaluates a `name:` expression only for a job that
+    # RUNS - a job skipped by its `if:` reports the raw expression text as its
+    # name instead. This job's name is half of the REQUIRED context
+    # `upstream-testsuite / upstream testsuite`, so the moment any caller passes
+    # a `variant` that skips it, that context would report under a garbage name
+    # and the required check would never arrive. The transport is already
+    # visible in the context via the caller's job id (e.g.
+    # `upstream-testsuite-tcp / upstream testsuite`) and in the workflow name.
+    name: upstream testsuite
     if: ${{ inputs.variant == 'all' || inputs.variant == 'nonroot' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -232,8 +240,8 @@ jobs:
   # legs, so a single shared manifest would be wrong for 78 tests.
   # ===========================================================================
   upstream-testsuite-root:
-    # The `pipe` name is the REQUIRED check context and must stay byte-exact.
-    name: ${{ inputs.transport == 'tcp' && 'upstream testsuite (root, tcp)' || 'upstream testsuite (root)' }}
+    # A literal for the same reason as the non-root job above - see that comment.
+    name: upstream testsuite (root)
     if: ${{ inputs.variant == 'all' || inputs.variant == 'root' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45

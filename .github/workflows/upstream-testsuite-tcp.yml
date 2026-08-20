@@ -31,7 +31,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  upstream-testsuite:
+  # The job id prefixes the reported check context, so the transport is visible
+  # as `upstream-testsuite-tcp / upstream testsuite`. The reusable workflow's own
+  # job name is a literal on purpose - see the comment there.
+  upstream-testsuite-tcp:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       upstream_rsync_version: '3.5.0'
