@@ -14,6 +14,26 @@ use super::tokens::{
     PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
 };
 
+/// Size of the fixed scratch buffer upstream copies each escape's modifiers
+/// into before handing them to `snprintf`.
+///
+/// upstream: log.c:532 `LOG_FMT_SIZE`.
+const LOG_FMT_SIZE: usize = 32;
+
+/// Ceiling on how far an escape's modifier run may advance before the escape is
+/// abandoned and the remaining characters fall through as literal text.
+///
+/// upstream bounds its digit run at `LOG_FMT_SIZE - 8` in **both** scanners -
+/// `log_formatted()` via `c - fmt < (int)(sizeof fmt) - 8`, and
+/// `log_format_has()` via `width < LOG_FMT_SIZE - 8` (log.c:847). The two must
+/// stop at the same character or they disagree about which char is the escape
+/// letter, which for `%C` leaves the checksum unrequested while the renderer
+/// still expects one (upstream states this at log.c:840).
+///
+/// Both oc scanners consume this constant so the agreement is structural rather
+/// than a convention a future edit could silently break.
+const MAX_ESCAPE_MODIFIER_RUN: usize = LOG_FMT_SIZE - 8;
+
 /// Parses the optional modifiers preceding a placeholder letter: apostrophes
 /// (humanization), an optional `-` (left align), and a digit run (width).
 ///
@@ -30,24 +50,32 @@ fn parse_placeholder_format(
         raw.push(chars.next().expect("peeked apostrophe"));
     }
 
+    // Mirrors upstream's `c = fmt + 1`: the escape letter itself occupies the
+    // first slot, so the modifier budget starts at one.
+    let mut consumed = 1usize;
+
     let mut align = PlaceholderAlignment::Right;
     if matches!(chars.peek(), Some('-')) {
         align = PlaceholderAlignment::Left;
         raw.push(chars.next().expect("peeked '-'"));
+        consumed += 1;
     }
 
     let mut width_value: usize = 0;
     let mut saw_width = false;
-    while let Some(peeked) = chars.peek().copied() {
-        if let Some(digit) = peeked.to_digit(10) {
-            saw_width = true;
-            width_value = width_value
-                .saturating_mul(10)
-                .saturating_add(digit as usize);
-            raw.push(chars.next().expect("peeked digit"));
-        } else {
+    while consumed < MAX_ESCAPE_MODIFIER_RUN {
+        let Some(peeked) = chars.peek().copied() else {
             break;
-        }
+        };
+        let Some(digit) = peeked.to_digit(10) else {
+            break;
+        };
+        saw_width = true;
+        width_value = width_value
+            .saturating_mul(10)
+            .saturating_add(digit as usize);
+        raw.push(chars.next().expect("peeked digit"));
+        consumed += 1;
     }
 
     while matches!(chars.peek(), Some('\'')) {
@@ -166,15 +194,24 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
 ///
 /// upstream: log.c:828 `log_format_has()`; the `%%` skip is log.c:856.
 ///
-/// ONE DELIBERATE DEVIATION: upstream bounds its digit run at
-/// `LOG_FMT_SIZE - 8` (log.c:847) because `log_formatted()` copies each escape
-/// into a fixed 32-byte scratch buffer and its own scan stops there, so an
-/// unbounded scan here would make the two disagree about which char is the
-/// escape letter. oc has no such buffer - [`parse_out_format`] builds tokens -
-/// and BOTH oc scans are unbounded, so they already agree, which is the
-/// invariant that bound exists to preserve. Adding the limit here alone would
-/// manufacture the very disagreement upstream is guarding against; if it is
-/// ever wanted, it must land in both scanners at once or neither.
+/// The digit run is bounded at [`MAX_ESCAPE_MODIFIER_RUN`], matching
+/// upstream's `width < LOG_FMT_SIZE - 8` (log.c:847). oc has no fixed scratch
+/// buffer of its own - [`parse_out_format`] builds tokens - but the bound is
+/// still load-bearing for OUTPUT parity, not just for buffer safety: past the
+/// ceiling upstream abandons the escape and lets the remaining characters fall
+/// through as literal text, so a longer run changes what is rendered.
+///
+/// MEASURED against rsync 3.5.0, format `%<30 zeros>%C %f`:
+/// upstream emits the `%` and all thirty zeros literally and still renders the
+/// `%C` digest. An unbounded scan instead swallows the digits, lands on the
+/// `%` of `%C`, treats it as the `%%` literal case and skips it - so this
+/// function returns false, the checksum is never requested, and `%C` degrades
+/// to literal text.
+///
+/// The bound must hold in [`parse_placeholder_format`] too, and both read the
+/// same constant: if the two scanners stop at different characters they
+/// disagree about which char is the escape letter, which is exactly the
+/// failure upstream describes at log.c:840.
 pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
     let text = format.to_string_lossy();
     let bytes = text.as_bytes();
@@ -188,11 +225,16 @@ pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
         while i < bytes.len() && bytes[i] == b'\'' {
             i += 1;
         }
+        // Mirrors upstream's `width = 1`: the escape letter itself occupies the
+        // first slot of the modifier budget.
+        let mut consumed = 1usize;
         if i < bytes.len() && bytes[i] == b'-' {
             i += 1;
+            consumed += 1;
         }
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
+        while consumed < MAX_ESCAPE_MODIFIER_RUN && i < bytes.len() && bytes[i].is_ascii_digit() {
             i += 1;
+            consumed += 1;
         }
         while i < bytes.len() && bytes[i] == b'\'' {
             i += 1;
@@ -315,12 +357,46 @@ mod tests {
     }
 
     #[test]
-    fn log_format_has_tolerates_an_enormous_width_run() {
-        // oc scans the digit run UNBOUNDED in BOTH parsers, deliberately: see
-        // the note on `log_format_has`. The invariant that matters is that the
-        // two agree on where the escape letter falls, which they do.
+    fn log_format_has_tolerates_a_width_run_within_the_bound() {
+        // Nine digits sits under MAX_ESCAPE_MODIFIER_RUN, so the escape letter
+        // is still found where it is written.
         assert!(log_format_has(&os("%999999999o"), 'o'));
         assert!(!log_format_has(&os("%999999999n"), 'o'));
+    }
+
+    /// A digit run past [`MAX_ESCAPE_MODIFIER_RUN`] makes upstream abandon the
+    /// escape, so a LATER directive is still found - and the overlong run plus
+    /// its `%` render as literal text rather than swallowing the next `%`.
+    ///
+    /// MEASURED against rsync 3.5.0 for `%<30 zeros>%C %f`:
+    /// `%000000000000000000000000000000<40-hex-digest> <name>`, i.e. the digest
+    /// IS produced. Unbounded, oc consumed the digits, read the `%` of `%C` as
+    /// the `%%` literal case, skipped it, and returned false - so the checksum
+    /// was never requested and `%C` degraded to literal text.
+    #[test]
+    fn log_format_has_finds_a_directive_after_an_overlong_width_run() {
+        let zeros = "0".repeat(30);
+        assert!(log_format_has(&os(&format!("%{zeros}%C")), 'C'));
+        // Non-vacuity: the same overlong run must NOT manufacture a match for a
+        // letter that is genuinely absent.
+        assert!(!log_format_has(&os(&format!("%{zeros}%C")), 'o'));
+    }
+
+    /// The two scanners must stop at the same character. `parse_out_format` is
+    /// the other half of the invariant [`MAX_ESCAPE_MODIFIER_RUN`] exists to
+    /// hold: if it kept consuming past the ceiling it would place the escape
+    /// letter somewhere `log_format_has` does not, which upstream calls out at
+    /// log.c:840 as leaving the checksum unrequested while the renderer still
+    /// expects one.
+    #[test]
+    fn parse_out_format_agrees_with_log_format_has_past_the_bound() {
+        let zeros = "0".repeat(30);
+        let fmt = os(&format!("%{zeros}%C"));
+        assert!(log_format_has(&fmt, 'C'));
+        assert!(
+            parse_out_format(&fmt).is_ok(),
+            "an overlong width run must not be a parse error - upstream renders it literally"
+        );
     }
 
     #[test]
