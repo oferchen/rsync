@@ -2688,3 +2688,105 @@ fn no_capability_letter_leaks_into_operands() {
         }
     }
 }
+
+/// The end-of-options marker (`--`) on the server argument list.
+///
+/// upstream: options.c:1491 - the server runs the same popt parser as the
+/// client, and popt consumes a bare `--` and hands back everything after it as
+/// operands. `support/rrsync:655` builds `(RSYNC, *opts, '--', '.', *args)` and
+/// its comment at `:558` states the property it depends on: "an arg that starts
+/// with a '-' is safe due to our use of '--' in the cmd tuple".
+///
+/// oc walks the server argv from three places where upstream makes one popt
+/// pass, so each is covered here, and each assertion is paired with the same
+/// token placed BEFORE the marker as its non-vacuity companion - without those
+/// a build that simply discarded every post-marker argument would pass too.
+mod end_of_options {
+    use super::*;
+
+    fn argv(extra: &[&str]) -> Vec<OsString> {
+        let mut args = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-vlogDtpre.iLsfxC"),
+        ];
+        args.extend(extra.iter().map(OsString::from));
+        args
+    }
+
+    /// The rrsync command shape. The marker must not survive as a path: oc
+    /// reported `link_stat "--" failed` and exited 23 where upstream exits 0.
+    #[test]
+    fn the_marker_itself_is_never_a_path() {
+        let (flag_string, paths) =
+            parse_server_flag_string_and_args(&argv(&["--drop-D", "--", ".", "/srv/data"]));
+
+        assert_eq!(flag_string, "-vlogDtpre.iLsfxC");
+        assert_eq!(paths, vec![OsString::from("/srv/data")]);
+    }
+
+    /// The `.` placeholder is upstream's chdir slot, not an operand, and rrsync
+    /// emits it AFTER the marker where `server_options()` emits it before.
+    #[test]
+    fn the_cwd_placeholder_is_dropped_on_either_side_of_the_marker() {
+        let (_, after) = parse_server_flag_string_and_args(&argv(&["--", ".", "dest/"]));
+        let (_, before) = parse_server_flag_string_and_args(&argv(&[".", "dest/"]));
+
+        assert_eq!(after, vec![OsString::from("dest/")]);
+        assert_eq!(after, before);
+    }
+
+    /// A path that merely looks like an option must not be obeyed as one. This
+    /// is the whole reason rrsync passes the marker.
+    #[test]
+    fn a_path_after_the_marker_is_not_parsed_as_a_long_flag() {
+        let injected = argv(&["--", ".", "--trust-sender", "--write-devices"]);
+        let flags = parse_server_long_flags(&injected);
+        let (_, paths) = parse_server_flag_string_and_args(&injected);
+
+        assert!(!flags.trust_sender, "path operand set --trust-sender");
+        assert!(!flags.write_devices, "path operand set --write-devices");
+        assert_eq!(
+            paths,
+            vec![
+                OsString::from("--trust-sender"),
+                OsString::from("--write-devices"),
+            ],
+            "option-looking paths must still be transferred as paths"
+        );
+
+        // Non-vacuity: the same two tokens BEFORE the marker are real options.
+        let genuine = parse_server_long_flags(&argv(&[
+            "--trust-sender",
+            "--write-devices",
+            "--",
+            ".",
+            "dest/",
+        ]));
+        assert!(genuine.trust_sender && genuine.write_devices);
+    }
+
+    /// The secluded-args pre-scan reads the raw argv, so it needs the same rule:
+    /// a file named `-s` must not switch the server onto the stdin arg stream.
+    #[test]
+    fn a_path_after_the_marker_does_not_enable_secluded_args() {
+        assert!(!detect_secluded_args_flag(&argv(&["--", ".", "-s"])));
+
+        // Non-vacuity: `-s` before the marker still enables it.
+        assert!(detect_secluded_args_flag(&argv(&[
+            "-s", "--", ".", "dest/"
+        ])));
+    }
+
+    /// Regression guard: an argv with no marker must parse exactly as before,
+    /// so a peer that never sends one is unaffected.
+    #[test]
+    fn an_argv_without_the_marker_is_unchanged() {
+        let (flag_string, paths) =
+            parse_server_flag_string_and_args(&argv(&["--drop-D", ".", "src/", "dest/"]));
+
+        assert_eq!(flag_string, "-vlogDtpre.iLsfxC");
+        assert_eq!(paths, vec![OsString::from("src/"), OsString::from("dest/")]);
+    }
+}
