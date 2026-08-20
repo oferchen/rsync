@@ -4,8 +4,17 @@ use std::ffi::{OsStr, OsString};
 use std::time::SystemTime;
 
 use super::flags::{
-    compact_flag_string_expects_split_value, is_known_server_long_flag, is_two_arg_server_long_flag,
+    compact_flag_string_expects_split_value, is_known_server_long_flag,
+    is_two_arg_server_long_flag, split_at_end_of_options,
 };
+
+/// The lone `.` that stands for the remote working directory.
+///
+/// upstream: clientserver.c:303 - `server_options()` pushes it ahead of the
+/// paths, and `main.c` `do_server_sender()` / `do_server_recv()` take `argv[0]`
+/// as the directory to change into, so it is consumed there and never appears
+/// as a transferred operand.
+const CWD_PLACEHOLDER: &str = ".";
 
 /// Parses the flag string and positional arguments from server-mode argument list.
 ///
@@ -28,6 +37,12 @@ use super::flags::{
 ///   re-tokenizes the joined exec line - rebound by
 ///   [`compact_flag_string_expects_split_value`].
 pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString>) {
+    // popt consumes a bare `--` and returns everything after it as operands,
+    // never as flags (options.c:1491). Split first so the option scan below
+    // cannot claim a path, and so the marker itself never reaches the path
+    // list - upstream never delivers it to `link_stat()`, and neither may we.
+    let (args, operands) = split_at_end_of_options(args);
+
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();
     let mut found_flags = false;
@@ -81,7 +96,7 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
         }
 
         // upstream uses "." as a placeholder separator between flags and paths
-        if found_flags && arg_str == "." {
+        if found_flags && arg_str == CWD_PLACEHOLDER {
             idx += 1;
             continue;
         }
@@ -91,6 +106,18 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
         }
         idx += 1;
     }
+
+    // Everything after the marker is a path, whatever it looks like - that is
+    // the property `support/rrsync:558` relies on. The `.` placeholder is
+    // filtered by the same rule the loop above applies, because rrsync emits it
+    // AFTER the marker (`support/rrsync:655`) where upstream's own
+    // `server_options()` emits it before.
+    positional_args.extend(
+        operands
+            .iter()
+            .filter(|operand| operand.as_os_str() != OsStr::new(CWD_PLACEHOLDER))
+            .cloned(),
+    );
 
     (flag_string, positional_args)
 }

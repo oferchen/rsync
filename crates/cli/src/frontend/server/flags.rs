@@ -3,10 +3,45 @@
 //! Extracts `--flag` and `--flag=value` arguments from the server argument
 //! list into a structured representation.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
+
+/// The bare `--` that ends option processing.
+///
+/// upstream: options.c:1491 - the server runs the same popt parser as the
+/// client (`poptGetContext(RSYNC_NAME, argc, argv, long_options, 0)`), and popt
+/// consumes a bare `--` and hands back every following argv entry as a plain
+/// operand, whatever it looks like.
+///
+/// `support/rrsync:655` builds its command as
+/// `(RSYNC, *rsync_opts, '--', '.', *rsync_args)` and depends on precisely that
+/// property; its comment at `:558` states it outright: "an arg that starts with
+/// a '-' is safe due to our use of '--' in the cmd tuple".
+const END_OF_OPTIONS: &str = "--";
+
+/// Splits a server argument list at the end-of-options marker.
+///
+/// Returns `(options, operands)`. The marker itself is consumed, as popt
+/// consumes it. When no bare `--` is present the whole list is options and
+/// `operands` is empty, so a peer that never sends the marker is parsed exactly
+/// as before.
+///
+/// Every scanner over the server argv applies this for itself rather than
+/// trusting its caller. Upstream gets the property once, from a single popt
+/// pass; oc walks the same argv from three places
+/// ([`detect_secluded_args_flag`], [`parse_server_long_flags`], and
+/// `parse_server_flag_string_and_args`), and one of them forgetting is exactly
+/// the defect this closes - a path operand that looks like an option would be
+/// obeyed as one.
+pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsString]) {
+    let marker = OsStr::new(END_OF_OPTIONS);
+    match args.iter().position(|arg| arg.as_os_str() == marker) {
+        Some(at) => (&args[..at], &args[at + 1..]),
+        None => (args, &[]),
+    }
+}
 
 /// Detects whether secluded-args mode is requested in the server arguments.
 ///
@@ -20,7 +55,10 @@ use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 ///
 /// upstream: options.c:792 - `{"secluded-args", 's', ...}`
 pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
-    args.iter().skip(1).any(|a| {
+    // A path operand named `-s` must not enable secluded args: after the
+    // end-of-options marker popt yields operands, never flags.
+    let (options, _operands) = split_at_end_of_options(args);
+    options.iter().skip(1).any(|a| {
         let s = a.to_string_lossy();
         if s == "-s" {
             return true;
@@ -408,6 +446,10 @@ pub(super) struct ServerLongFlags {
 /// extracting their values into a structured result. Unknown long flags
 /// are ignored for forward compatibility.
 pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
+    // Operands after the marker are paths, not flags. Without this a source
+    // file literally named `--trust-sender` or `--write-devices` would be
+    // obeyed as the option it resembles.
+    let (args, _operands) = split_at_end_of_options(args);
     let mut flags = ServerLongFlags {
         drop_devices: None,
         is_sender: false,
