@@ -389,6 +389,55 @@ fn default_refuses_client_log_file_options() {
 }
 
 #[test]
+fn default_refuses_client_insecure_links() {
+    // upstream: options.c:1087 (new in 3.5.0) - a daemon always appends
+    // `insecure-links` to the refuse list. The flag is a LOCAL-ONLY opt-out, so
+    // a client must never be able to switch off the daemon's symlink
+    // confinement by sending it; the daemon's own opt-out is the `insecure
+    // links` module parameter.
+    let module = ModuleDefinition::default();
+    assert_eq!(
+        refused_option(&module, &["--insecure-links".to_owned()]),
+        Some("--insecure-links")
+    );
+}
+
+#[test]
+fn insecure_links_refusal_survives_negation() {
+    // upstream: options.c:1077-1088 - the unconditional daemon refusals are
+    // appended AFTER the module's own `refuse options` rules, so an operator
+    // cannot re-enable the client flag with `!insecure-links` even by mistake.
+    // Without this the confinement opt-out would be one config typo away from
+    // being client-controllable.
+    let module = module_with_refuse(vec!["!insecure-links".to_owned()]);
+    assert_eq!(
+        refused_option(&module, &["--insecure-links".to_owned()]),
+        Some("--insecure-links")
+    );
+}
+
+#[test]
+fn insecure_links_refusal_does_not_catch_unrelated_options() {
+    // Non-vacuity companion: the refusal is an EXACT name match, not a prefix
+    // sweep. Without this, a stray `starts_with` would pass both tests above
+    // while silently refusing every option beginning with "insecure".
+    //
+    // MEASURED: relaxing the match to `contains("insecure-links")` kills this
+    // test and nothing else; `starts_with` is an equivalent mutation here,
+    // since `--no-insecure-links` begins with `no-`.
+    let module = ModuleDefinition::default();
+    assert_eq!(refused_option(&module, &["--insecure".to_owned()]), None);
+    assert_eq!(
+        refused_option(&module, &["--insecure-links-extra".to_owned()]),
+        None
+    );
+    assert_eq!(
+        refused_option(&module, &["--no-insecure-links".to_owned()]),
+        None
+    );
+}
+
+#[test]
 fn default_log_file_refusal_survives_negation() {
     // upstream: options.c:1005-1011 - the `log-file*` refusal is applied AFTER
     // the module's `refuse options` rules, so a `!log-file` negation cannot
