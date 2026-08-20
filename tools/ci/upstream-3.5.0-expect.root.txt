@@ -327,8 +327,8 @@ symlink-exclude-meta pass
 symlink-exclude-xattr pass
 symlink-ignore pass
 symlink-mknod-fakesuper-symlink-race pass
-symlink-race-dest fail
-symlink-race-relative-dest fail
+symlink-race-dest pass
+symlink-race-relative-dest pass
 symlink-race-source pass
 temp-dir pass
 temp-dir-symlink-injection pass
