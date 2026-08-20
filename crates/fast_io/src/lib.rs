@@ -371,7 +371,7 @@ pub use traits::{FileReader, FileWriter};
 pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
-pub use confined_open::{LeafPolicy, open_source_confined};
+pub use confined_open::{DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined};
 pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
