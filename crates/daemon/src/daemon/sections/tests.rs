@@ -389,12 +389,12 @@ fn default_refuses_client_log_file_options() {
 }
 
 #[test]
-fn default_refuses_client_sent_insecure_links() {
-    // upstream: options.c:1084 - a client must never be able to switch off the
-    // daemon's symlink confinement. `--insecure-links` is a local-only opt-out
-    // that upstream never forwards (options.c:3068), so one that arrives anyway
-    // (injected with `-M`) is refused outright, dropping the connection. The
-    // daemon's own opt-out is the `insecure links` module parameter.
+fn default_refuses_client_insecure_links() {
+    // upstream: options.c:1087 (new in 3.5.0) - a daemon always appends
+    // `insecure-links` to the refuse list. The flag is a LOCAL-ONLY opt-out, so
+    // a client must never be able to switch off the daemon's symlink
+    // confinement by sending it; the daemon's own opt-out is the `insecure
+    // links` module parameter.
     let module = ModuleDefinition::default();
     assert_eq!(
         refused_option(&module, &["--insecure-links".to_owned()]),
@@ -404,9 +404,11 @@ fn default_refuses_client_sent_insecure_links() {
 
 #[test]
 fn insecure_links_refusal_survives_negation() {
-    // The refusal is appended AFTER the module's own `refuse options` rules
-    // (options.c:1077-1088), so a `!insecure-links` negation cannot re-enable
-    // it. Without this the module owner could hand the switch to the client.
+    // upstream: options.c:1077-1088 - the unconditional daemon refusals are
+    // appended AFTER the module's own `refuse options` rules, so an operator
+    // cannot re-enable the client flag with `!insecure-links` even by mistake.
+    // Without this the confinement opt-out would be one config typo away from
+    // being client-controllable.
     let module = module_with_refuse(vec!["!insecure-links".to_owned()]);
     assert_eq!(
         refused_option(&module, &["--insecure-links".to_owned()]),
@@ -415,13 +417,20 @@ fn insecure_links_refusal_survives_negation() {
 }
 
 #[test]
-fn insecure_links_refusal_does_not_catch_its_negated_spelling() {
-    // Non-vacuity companion: `--no-insecure-links` RESTORES the check, so
-    // refusing it would reject a request that only makes the daemon stricter.
-    // MEASURED: relaxing the match to `contains("insecure-links")` kills exactly
-    // this test and nothing else. (`starts_with` is an equivalent mutation here -
-    // the negated spelling begins with `no-`, so no test distinguishes it.)
+fn insecure_links_refusal_does_not_catch_unrelated_options() {
+    // Non-vacuity companion: the refusal is an EXACT name match, not a prefix
+    // sweep. Without this, a stray `starts_with` would pass both tests above
+    // while silently refusing every option beginning with "insecure".
+    //
+    // MEASURED: relaxing the match to `contains("insecure-links")` kills this
+    // test and nothing else; `starts_with` is an equivalent mutation here,
+    // since `--no-insecure-links` begins with `no-`.
     let module = ModuleDefinition::default();
+    assert_eq!(refused_option(&module, &["--insecure".to_owned()]), None);
+    assert_eq!(
+        refused_option(&module, &["--insecure-links-extra".to_owned()]),
+        None
+    );
     assert_eq!(
         refused_option(&module, &["--no-insecure-links".to_owned()]),
         None
