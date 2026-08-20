@@ -224,7 +224,7 @@ operator-path-log-file pass
 operator-path-partial-dir fail
 operator-path-partial-dir-daemon fail
 operator-path-partial-dir-exclude-daemon fail
-operator-path-temp-dir fail
+operator-path-temp-dir pass
 operator-path-traversal-backup-dir-daemon fail
 operator-path-traversal-dest-dir-daemon fail
 operator-path-traversal-partial-dir-daemon pass
