@@ -55,7 +55,7 @@ mod batch;
 mod filters;
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf, is_separator};
 use std::time::Duration;
 
 #[cfg(feature = "tracing")]
@@ -173,12 +173,40 @@ pub fn run_client_with_observer(
     run_client_internal(config, observer)
 }
 
+/// The directory the receiver resolves relative operator paths against.
+///
+/// upstream: main.c:768-860 `get_local_name()` chdirs the receiver before any
+/// transfer runs - into `dest_path` itself when the destination is (or is
+/// created as) a directory (`change_dir` at main.c:765/823), and into the
+/// destination's parent when a single file is being written (main.c:852). A
+/// destination with no path component leaves the cwd alone (main.c:838).
+///
+/// oc never chdirs, so anything upstream resolves *after* that chdir has to be
+/// joined onto this directory explicitly, or a relative value silently means
+/// something different than it does upstream.
+fn receiver_working_directory(dest: &Path) -> PathBuf {
+    // A trailing separator names a directory even when it does not exist yet -
+    // upstream creates it and chdirs in (main.c:804-823). Checking the lossy
+    // rendering is safe for this predicate specifically: the separators are
+    // ASCII, and lossy conversion never turns a non-UTF-8 byte into one, so a
+    // path whose final byte is a separator still ends with one afterwards.
+    if dest.is_dir() || dest.as_os_str().to_string_lossy().ends_with(is_separator) {
+        return dest.to_path_buf();
+    }
+    match dest.parent() {
+        // Upstream substitutes "/" when the destination is rooted (main.c:836).
+        Some(parent) if parent.as_os_str().is_empty() => PathBuf::from("."),
+        Some(parent) => parent.to_path_buf(),
+        None => PathBuf::from("."),
+    }
+}
+
 #[cfg_attr(
     feature = "tracing",
     instrument(skip(config, observer), name = "client_internal")
 )]
 fn run_client_internal(
-    config: ClientConfig,
+    mut config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
@@ -187,17 +215,32 @@ fn run_client_internal(
 
     apply_max_alloc(&config);
 
-    // upstream: main.c:1031-1046 do_recv() - the receiver validates --temp-dir
+    // upstream: main.c:1046-1061 do_recv() - the receiver validates --temp-dir
     // exists and is a directory before transferring. tmpdir is a receiver-only
     // option (options.c:2925 forwards it only when am_sender), so the check
     // fires only when the local process receives: a local copy or a pull (local
     // destination), never a push (remote destination).
-    if let Some(temp_dir) = config.temp_directory() {
-        let dest_is_local = config
-            .transfer_args()
-            .last()
-            .is_none_or(|dest| !remote::operand_is_remote(dest));
-        if dest_is_local {
+    //
+    // do_recv() runs AFTER get_local_name() has chdir'd the receiver into the
+    // destination (main.c:765/823/852), so upstream stats - and later creates
+    // its temp files under - a relative --temp-dir resolved against the
+    // DESTINATION, not the process cwd. oc never chdirs, so the value is
+    // anchored explicitly here, once, before the check: doing it later would
+    // let the validation and the temp-file placement disagree about which
+    // directory the operator named.
+    if let Some(dest) = config
+        .transfer_args()
+        .last()
+        .filter(|dest| !remote::operand_is_remote(dest))
+    {
+        let anchored = config
+            .temp_directory()
+            .filter(|temp_dir| temp_dir.is_relative())
+            .map(|temp_dir| receiver_working_directory(Path::new(dest)).join(temp_dir));
+        if let Some(anchored) = anchored {
+            config.set_temp_directory(anchored);
+        }
+        if let Some(temp_dir) = config.temp_directory() {
             validate_temp_dir(temp_dir)?;
         }
     }
@@ -1788,5 +1831,119 @@ mod local_copy_option_wiring_tests {
         assert_eq!(default.one_file_system_level(), 0);
         assert!(!default_options.one_file_system_enabled());
         assert_eq!(default_options.one_file_system_level(), 0);
+    }
+}
+
+#[cfg(test)]
+mod temp_dir_anchor_tests {
+    use super::{receiver_working_directory, run_client_with_observer};
+    use crate::client::config::ClientConfig;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    /// A staging name unlikely to exist in whatever directory the test runner
+    /// happens to be started from. The whole point of these cases is which
+    /// directory a relative `--temp-dir` resolves against, so a name that also
+    /// existed in the cwd would let the cwd-relative behaviour pass too.
+    const STAGE: &str = "oc-temp-dir-anchor-stage";
+
+    fn tree_with_stage_under(dest_stage: bool) -> TempDir {
+        let base = TempDir::new().expect("tempdir");
+        let src = base.path().join("src");
+        let dest = base.path().join("dest");
+        fs::create_dir(&src).expect("src");
+        fs::create_dir(&dest).expect("dest");
+        fs::write(src.join("f0"), b"PAYLOAD-DATA\n").expect("payload");
+        if dest_stage {
+            fs::create_dir(dest.join(STAGE)).expect("stage");
+        }
+        base
+    }
+
+    fn run_with_relative_temp_dir(base: &Path) -> Result<(), crate::client::ClientError> {
+        let config = ClientConfig::builder()
+            .transfer_args([
+                OsString::from(base.join("src").join("").as_os_str()),
+                OsString::from(base.join("dest").join("").as_os_str()),
+            ])
+            .temp_directory(Some(STAGE))
+            .build();
+        run_client_with_observer(config, None).map(|_| ())
+    }
+
+    /// upstream: `do_recv()` stats `tmpdir` (main.c:1046-1061) only after
+    /// `get_local_name()` has chdir'd the receiver into the destination
+    /// (main.c:765/823/852), so a relative `--temp-dir` names a directory
+    /// under the DESTINATION. oc has no chdir; before the anchoring fix it
+    /// resolved the value against the process cwd and died with
+    /// "The temp-dir does not exist".
+    #[test]
+    fn relative_temp_dir_resolves_against_the_destination() {
+        let base = tree_with_stage_under(true);
+        let result = run_with_relative_temp_dir(base.path());
+        assert!(
+            result.is_ok(),
+            "a relative --temp-dir naming a directory under the destination \
+             must be accepted, got: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            fs::read(base.path().join("dest").join("f0")).expect("copied file"),
+            b"PAYLOAD-DATA\n"
+        );
+    }
+
+    /// Non-vacuity companion for the case above: anchoring the value at the
+    /// destination must not be mistaken for dropping upstream's existence
+    /// check. With no `STAGE` directory anywhere, the run still fails.
+    #[test]
+    fn relative_temp_dir_absent_from_the_destination_is_still_rejected() {
+        let base = tree_with_stage_under(false);
+        let result = run_with_relative_temp_dir(base.path());
+        let error = result.expect_err("a missing temp-dir must still be refused");
+        assert!(
+            error.to_string().contains("temp-dir does not exist"),
+            "expected upstream's missing-temp-dir diagnostic, got: {error}"
+        );
+    }
+
+    #[test]
+    fn working_directory_is_the_destination_when_it_is_a_directory() {
+        let base = TempDir::new().expect("tempdir");
+        let dest = base.path().join("dest");
+        fs::create_dir(&dest).expect("dest");
+        assert_eq!(receiver_working_directory(&dest), dest);
+    }
+
+    /// upstream main.c:852 chdirs to the parent when a single file is written.
+    #[test]
+    fn working_directory_is_the_parent_for_a_file_destination() {
+        let base = TempDir::new().expect("tempdir");
+        let dest = base.path().join("dest");
+        fs::create_dir(&dest).expect("dest");
+        let file = dest.join("f0");
+        fs::write(&file, b"x").expect("file");
+        assert_eq!(receiver_working_directory(&file), dest);
+    }
+
+    /// A trailing separator names a directory even before it exists: upstream
+    /// creates it and chdirs in (main.c:804-823).
+    #[test]
+    fn working_directory_honours_a_trailing_separator_on_a_missing_directory() {
+        let base = TempDir::new().expect("tempdir");
+        let absent = base.path().join("not-yet").join("");
+        assert_eq!(receiver_working_directory(&absent), absent);
+    }
+
+    /// upstream main.c:838 returns without chdir'ing when the destination has
+    /// no path component, leaving relative values on the process cwd.
+    #[test]
+    fn working_directory_is_the_cwd_for_a_bare_destination_name() {
+        assert_eq!(
+            receiver_working_directory(Path::new("f0")),
+            PathBuf::from(".")
+        );
     }
 }
