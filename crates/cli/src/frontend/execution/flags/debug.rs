@@ -5,6 +5,8 @@ use core::{
     rsync_error,
 };
 
+use super::output_words::{self, OutputWord};
+
 /// Parsed `--debug` flag settings controlling diagnostic output levels.
 #[derive(Debug, Default)]
 pub(crate) struct DebugFlagSettings {
@@ -39,10 +41,6 @@ pub(crate) struct DebugFlagSettings {
     pub(crate) iocp: Option<u8>,
     pub(crate) help_requested: bool,
 }
-
-/// Maximum debug output level. Levels above this are clamped rather than rejected.
-/// upstream: options.c:245 - #define MAX_OUT_LEVEL 4
-const MAX_OUT_LEVEL: u8 = 4;
 
 impl DebugFlagSettings {
     /// Returns an iterator over all flag (name, level) pairs that are set.
@@ -114,64 +112,20 @@ impl DebugFlagSettings {
         self.iocp = Some(level);
     }
 
-    const fn disable_all(&mut self) {
-        self.acl = Some(0);
-        self.backup = Some(0);
-        self.bind = Some(0);
-        self.chdir = Some(0);
-        self.connect = Some(0);
-        self.cmd = Some(0);
-        self.del = Some(0);
-        self.deltasum = Some(0);
-        self.dup = Some(0);
-        self.exit = Some(0);
-        self.filter = Some(0);
-        self.flist = Some(0);
-        self.fuzzy = Some(0);
-        self.genr = Some(0);
-        self.hash = Some(0);
-        self.hlink = Some(0);
-        self.iconv = Some(0);
-        self.io = Some(0);
-        self.nstr = Some(0);
-        self.own = Some(0);
-        self.proto = Some(0);
-        self.recv = Some(0);
-        self.send = Some(0);
-        self.time = Some(0);
-        self.iouring = Some(0);
-        self.clone = Some(0);
-        self.sockopt = Some(0);
-        self.iocp = Some(0);
-    }
-
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
         let lower = token.to_ascii_lowercase();
 
-        // upstream: options.c:450-453 - "none" sets all to 0;
-        // "all" with optional numeric suffix sets all flags to min(suffix, MAX_OUT_LEVEL).
-        if lower == "0" || lower == "none" {
-            self.disable_all();
-            return Ok(());
-        }
-
-        if lower == "1"
-            || lower == "all"
-            || (lower.starts_with("all") && lower[3..].bytes().all(|b| b.is_ascii_digit()))
-        {
-            let level = if lower == "1" || lower == "all" {
-                1
-            } else {
-                lower[3..].parse::<u8>().unwrap_or(1).min(MAX_OUT_LEVEL)
-            };
-            self.set_all(level);
-            return Ok(());
-        }
-
-        let (normalized, level) = self.parse_flag_and_level(&lower);
-
-        // upstream: options.c:444-445 - clamp to MAX_OUT_LEVEL rather than reject
-        let level = level.min(MAX_OUT_LEVEL);
+        let (normalized, level) = match output_words::classify(&lower) {
+            OutputWord::Help => {
+                self.help_requested = true;
+                return Ok(());
+            }
+            OutputWord::Every(level) => {
+                self.set_all(level);
+                return Ok(());
+            }
+            OutputWord::Named { name, level } => (name, level),
+        };
 
         match normalized {
             "acl" => self.acl = Some(level),
@@ -207,39 +161,6 @@ impl DebugFlagSettings {
 
         Ok(())
     }
-
-    /// Known debug flag names for disambiguating `no-` prefix vs flag names
-    /// that might start with "no".
-    const KNOWN_FLAGS: &'static [&'static str] = &[
-        "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
-        "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
-        "recv", "send", "time", "iouring", "clone", "sockopt", "iocp",
-    ];
-
-    pub(super) fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
-        let base = input.trim_end_matches(|c: char| c.is_ascii_digit());
-        if base != input {
-            if Self::KNOWN_FLAGS.contains(&base) {
-                let suffix = &input[base.len()..];
-                let level = suffix.parse::<u8>().unwrap_or(1);
-                return (base, level);
-            }
-        } else if Self::KNOWN_FLAGS.contains(&input) {
-            return (input, 1);
-        }
-
-        let stripped = input.strip_prefix("no").or_else(|| input.strip_prefix('-'));
-
-        if let Some(stripped) = stripped {
-            return (stripped, 0);
-        }
-
-        (input, 1)
-    }
-}
-
-fn debug_flag_empty_error() -> Message {
-    rsync_error!(1, "--debug flag must not be empty").with_role(Role::Client)
 }
 
 fn debug_flag_error(display: &str) -> Message {
@@ -256,24 +177,7 @@ pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings
 
     for value in values {
         let text = value.to_string_lossy();
-        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
-
-        if trimmed.is_empty() {
-            return Err(debug_flag_empty_error());
-        }
-
-        for token in trimmed.split(',') {
-            let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
-            if token.is_empty() {
-                return Err(debug_flag_empty_error());
-            }
-
-            if token.eq_ignore_ascii_case("help") {
-                settings.help_requested = true;
-            } else {
-                settings.apply(token, token)?;
-            }
-        }
+        output_words::for_each_token(&text, |token| settings.apply(token, token))?;
     }
 
     Ok(settings)

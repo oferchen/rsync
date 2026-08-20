@@ -1,5 +1,6 @@
 mod debug;
 mod info;
+mod output_words;
 
 #[cfg(test)]
 mod tests;

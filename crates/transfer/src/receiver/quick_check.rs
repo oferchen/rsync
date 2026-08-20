@@ -968,7 +968,7 @@ mod info_copy_emission_tests {
         );
     }
 
-    /// Verifies that `--info=nocopy` (level 0) suppresses the emission,
+    /// Verifies that `--info=copy0` (level 0) suppresses the emission,
     /// mirroring upstream's `INFO_GTE(COPY, 1)` gate.
     #[test]
     fn nocopy_suppresses_info_copy_notice() {
