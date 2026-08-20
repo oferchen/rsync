@@ -116,6 +116,13 @@ impl Fixture {
             ])
             .status()
             .expect("run client");
+        // The client exiting does NOT mean the daemon has written its
+        // per-transfer `log format` line: that line is emitted by the daemon
+        // after the client disconnects, so killing it the instant `.status()`
+        // returns races the write. Wait for the line the callers actually
+        // assert on, the same way `spawn_daemon` waits for the listener rather
+        // than sleeping.
+        wait_for_probe_line(&self.log());
         let _ = daemon.kill();
         let _ = daemon.wait();
         assert!(status.success(), "pull failed against {daemon_bin:?}");
@@ -147,6 +154,23 @@ fn spawn_daemon(binary: &Path, conf: &Path) -> Child {
         std::thread::sleep(Duration::from_millis(20));
     }
     child
+}
+
+/// Blocks until the daemon has written its per-transfer `log format` line.
+///
+/// Every caller of `run()` asserts on that line, and the module config always
+/// sets `log format = PROBE_FORMAT`, so its absence is always a race rather
+/// than a legitimate outcome. Polling the condition keeps the common case fast
+/// and cannot wedge: on timeout we return and let `probe_line` report the empty
+/// log, which is a real failure worth seeing rather than a hang.
+fn wait_for_probe_line(log: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if fs::read_to_string(log).is_ok_and(|log| log.contains("PROBE ")) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Extracts the single `PROBE ...` line the module's `log format` produced.
