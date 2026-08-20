@@ -916,6 +916,46 @@ jobs:
       expect_result_root: tools/ci/upstream-3.5.0-expect.root.txt
 
   # ===========================================================================
+  # Upstream Testsuite over a real loopback TCP daemon
+  # ---------------------------------------------------------------------------
+  # The same 3.5.0 corpus as the job above, run with `transport: tcp`. The two
+  # transports are NOT redundant: the job above uses upstream's secure default,
+  # a stdio socketpair with no listening socket, so it never exercises accept(),
+  # the `hosts allow`/`hosts deny` decision, or the peer-address resolution that
+  # only a real bound socket can reach. Those are exactly the surfaces the 3.5.0
+  # daemon CVEs live on, so a pipe-only gate cannot see a regression in them.
+  #
+  # `tcp` also passes --daemon-tests-only, which is the pairing upstream ships
+  # the option for - the dropped tests never call start_test_daemon(), so they
+  # cannot observe --use-tcp and would only repeat the pipe leg. That is why
+  # this leg runs 155 tests, not 345, and why it carries its OWN manifests
+  # rather than reusing the pipe ones.
+  #
+  # Reported as `upstream-testsuite-tcp / upstream testsuite` and
+  # `... / upstream testsuite (root)` - the job id below supplies the prefix
+  # that distinguishes them from the pipe leg, which is why the reusable
+  # workflow's own job names are literals rather than expressions.
+  #
+  # Not yet a required status check: registering a context in branch protection
+  # is a repo-admin action. Until that happens these run and report on every PR
+  # but do not block, so a regression is visible rather than silently unmeasured
+  # - which is the state this replaces, where the TCP legs ran only on
+  # workflow_dispatch and cron and no pull request ever validated them.
+  # ===========================================================================
+  upstream-testsuite-tcp:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      transport: 'tcp'
+      # Separate from the pipe manifests by measurement, not by convention: the
+      # tcp legs select a different (smaller) test set, so a shared file would
+      # fail the driver's own coverage guard.
+      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.tcp.txt
+      expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
+
+  # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)
   # ---------------------------------------------------------------------------
   # Runs the 1000-thread x 10K-iter stress in
