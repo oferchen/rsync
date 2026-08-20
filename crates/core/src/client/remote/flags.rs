@@ -477,6 +477,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // server half needs the forwarded `-B%u` for a push. Both roles share this
     // function, so one assignment covers SSH, daemon and embedded-SSH.
     server_config.block_size = config.block_size_override();
+    // upstream: options.c:690 / syscall.c:128-143 - `--confine-root` is a
+    // LOCAL global consulted by `confinement_root()` on whichever side parsed
+    // it; it is never forwarded, so the client's own in-process sender/receiver
+    // half must carry it. Both roles share this function, so one assignment
+    // covers SSH, daemon and embedded-SSH. A daemon ignores the field by
+    // construction (`GeneratorContext::source_open` reads the module root
+    // instead), matching upstream's `am_daemon ? module_dir : confine_root`.
+    server_config.connection.confine_root = config.confine_root().map(std::path::Path::to_path_buf);
     // upstream: options.c:2190-2203 - `xfer_dirs` is resolved locally by each
     // side (`--files-from`, recursion and `--list-only` all imply level 1), and
     // the compact `d` letter is packed only for an EXPLICIT `-d`
@@ -854,6 +862,30 @@ mod tests {
         apply_common_server_flags(&config, &mut server_config);
         assert!(server_config.flags.copy_links);
         assert!(server_config.flags.copy_dirlinks);
+    }
+
+    #[test]
+    fn apply_common_server_flags_carries_confine_root() {
+        // `--confine-root` is never forwarded, so the client's own in-process
+        // half is the ONLY place the root can arrive. This function is shared by
+        // SSH, daemon and embedded-SSH and by both roles, so pinning it here
+        // covers every transport rather than one hand-copied builder.
+        let root = std::path::PathBuf::from("/srv/restricted");
+        let config = ClientConfig::builder()
+            .confine_root(Some(root.clone()))
+            .build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert_eq!(
+            server_config.connection.confine_root.as_deref(),
+            Some(root.as_path())
+        );
+
+        // Absent by default: an unset root must stay None rather than becoming
+        // some empty-path sentinel that a resolver would treat as a real anchor.
+        let mut plain = ServerConfig::default();
+        apply_common_server_flags(&ClientConfig::default(), &mut plain);
+        assert!(plain.connection.confine_root.is_none());
     }
 
     #[test]
