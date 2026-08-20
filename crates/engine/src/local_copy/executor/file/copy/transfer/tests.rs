@@ -5,6 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::Path;
+use std::time::Instant;
 
 use tempfile::TempDir;
 
@@ -49,6 +50,86 @@ fn append_bytes(path: &Path, len: usize) {
     let mut file = OpenOptions::new().append(true).open(path).expect("reopen");
     let block: Vec<u8> = (0..len).map(|i| (i % 253) as u8).collect();
     file.write_all(&block).expect("append");
+}
+
+/// A copy must move exactly the length it was sized from, even when the file
+/// on disk is longer.
+///
+/// The per-iteration loop guard (`total_bytes >= expected_remaining`) only
+/// stops the loop *between* chunks, so the final read has to be clamped too -
+/// otherwise a source that grew after it was sized contributes up to a whole
+/// buffer beyond the bound and the destination outruns what the transfer
+/// accounted for.
+///
+/// upstream: sender.c sizes `map_file` / `match_sums` from the `do_fstat`
+/// length and walks exactly that many bytes, so data appended after the stat is
+/// never sent. This drives the copy loop directly with a `total_size` smaller
+/// than the file, which is the same disagreement without a race.
+///
+/// The dense loop and `copy_file_contents_sparse` each own a separate copy of
+/// this loop, so each is asserted by its own `#[test]`. A single test looping
+/// over both would stop at the first panic and report nothing about the
+/// second - which silently halves the mutation kill set.
+fn assert_copy_stops_at_the_declared_length(sparse: bool) {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    write_bytes(&source, RECORDED_LEN + APPENDED_LEN);
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&destination).expect("create destination");
+    // Larger than the bound, so an unclamped read overshoots it.
+    let mut buffer = vec![0u8; 128 * 1024];
+
+    // A limiter keeps the dense case off the `copy_file_range` fast path (which
+    // takes `expected_remaining` as an explicit length and is already bounded);
+    // the sparse case skips that path by construction.
+    const NO_PACING: u64 = 1 << 30;
+    let options =
+        LocalCopyOptions::default().bandwidth_limit(Some(NonZeroU64::new(NO_PACING).unwrap()));
+    let mut context = CopyContext::new(
+        LocalCopyExecution::Apply,
+        options,
+        None,
+        temp.path().to_path_buf(),
+    );
+
+    context
+        .copy_file_contents(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            sparse,
+            false,
+            &source,
+            &destination,
+            Path::new("src.bin"),
+            None,
+            RECORDED_LEN as u64,
+            0,
+            0,
+            Instant::now(),
+            false,
+        )
+        .expect("copy");
+    drop(writer);
+
+    assert_eq!(
+        fs::metadata(&destination).expect("stat destination").len(),
+        RECORDED_LEN as u64,
+        "sparse={sparse}: copy overshot the length it was sized from"
+    );
+}
+
+#[test]
+fn dense_copy_moves_exactly_the_length_it_was_sized_from() {
+    assert_copy_stops_at_the_declared_length(false);
+}
+
+#[test]
+fn sparse_copy_moves_exactly_the_length_it_was_sized_from() {
+    assert_copy_stops_at_the_declared_length(true);
 }
 
 /// The copy must be bounded by the size of the file it actually opened, not by
