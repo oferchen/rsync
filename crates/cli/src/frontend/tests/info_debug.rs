@@ -136,9 +136,9 @@ fn info_backup_flag_parsing() {
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert_eq!(settings.backup, Some(0));
 
-    let flags = vec![OsString::from("nobackup")];
-    let settings = parse_info_flags(&flags).expect("flags parse");
-    assert_eq!(settings.backup, Some(0));
+    // `nobackup` is not an upstream word; `backup0` above is the silencer.
+    let _ = parse_info_flags(&[OsString::from("nobackup")])
+        .expect_err("a negation prefix is not an upstream info word");
 }
 
 #[test]
@@ -151,9 +151,10 @@ fn info_flist_levels() {
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert_eq!(settings.flist, Some(2));
 
+    // upstream clamps to MAX_OUT_LEVEL rather than rejecting an over-range level.
     let flags = vec![OsString::from("flist3")];
-    let error = parse_info_flags(&flags).expect_err("should reject level 3");
-    assert!(error.to_string().contains("invalid --info flag"));
+    let settings = parse_info_flags(&flags).expect("an over-range level is clamped, not rejected");
+    assert_eq!(settings.flist, Some(3));
 }
 
 #[test]
@@ -171,30 +172,36 @@ fn info_stats_levels() {
     assert_eq!(settings.stats, Some(3));
 
     let flags = vec![OsString::from("stats4")];
-    let error = parse_info_flags(&flags).expect_err("should reject level 4");
-    assert!(error.to_string().contains("invalid --info flag"));
+    let settings = parse_info_flags(&flags).expect("an over-range level is clamped, not rejected");
+    assert_eq!(settings.stats, Some(4));
+
+    // MAX_OUT_LEVEL is the ceiling: anything above it lands on 4.
+    let flags = vec![OsString::from("stats9")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(4));
 }
 
 #[test]
-fn info_negation_forms() {
-    let flags = vec![OsString::from("nodel")];
-    let settings = parse_info_flags(&flags).expect("flags parse");
-    assert_eq!(settings.del, Some(0));
+fn info_negation_prefixes_are_rejected() {
+    // upstream: options.c parse_output_words - `no<word>` / `-<word>` are
+    // unknown names and exit RERR_SYNTAX; `<word>0` is the portable silencer.
+    for token in ["nodel", "-skip"] {
+        let _ = parse_info_flags(&[OsString::from(token)])
+            .expect_err("a negation prefix is not an upstream info word");
+    }
 
-    let flags = vec![OsString::from("-skip")];
-    let settings = parse_info_flags(&flags).expect("flags parse");
-    assert_eq!(settings.skip, Some(0));
-
-    let flags = vec![OsString::from("copy0")];
-    let settings = parse_info_flags(&flags).expect("flags parse");
+    let settings = parse_info_flags(&[OsString::from("copy0")]).expect("flags parse");
     assert_eq!(settings.copy, Some(0));
 }
 
 #[test]
-fn info_rejects_empty_segments() {
+fn info_skips_empty_segments() {
+    // upstream: options.c parse_output_words does `if (!len) continue;`, so an
+    // empty item is skipped and the surrounding words still apply.
     let flags = vec![OsString::from("progress,,stats")];
-    let error = parse_info_flags(&flags).expect_err("parse should fail");
-    assert!(error.to_string().contains("--info flag must not be empty"));
+    let settings = parse_info_flags(&flags).expect("an empty item is skipped, not an error");
+    assert_eq!(settings.progress, ProgressSetting::PerFile);
+    assert_eq!(settings.stats, Some(1));
 }
 
 #[test]
@@ -273,17 +280,13 @@ fn debug_io_levels() {
 }
 
 #[test]
-fn debug_negation_forms() {
-    let flags = vec![OsString::from("nodel")];
-    let settings = parse_debug_flags(&flags).expect("flags parse");
-    assert_eq!(settings.del, Some(0));
+fn debug_negation_prefixes_are_rejected() {
+    for token in ["nodel", "-filter"] {
+        let _ = parse_debug_flags(&[OsString::from(token)])
+            .expect_err("a negation prefix is not an upstream debug word");
+    }
 
-    let flags = vec![OsString::from("-filter")];
-    let settings = parse_debug_flags(&flags).expect("flags parse");
-    assert_eq!(settings.filter, Some(0));
-
-    let flags = vec![OsString::from("recv0")];
-    let settings = parse_debug_flags(&flags).expect("flags parse");
+    let settings = parse_debug_flags(&[OsString::from("recv0")]).expect("flags parse");
     assert_eq!(settings.recv, Some(0));
 }
 
@@ -303,10 +306,11 @@ fn debug_all_and_none() {
 }
 
 #[test]
-fn debug_rejects_empty_segments() {
+fn debug_skips_empty_segments() {
     let flags = vec![OsString::from("deltasum,,io")];
-    let error = parse_debug_flags(&flags).expect_err("parse should fail");
-    assert!(error.to_string().contains("--debug flag must not be empty"));
+    let settings = parse_debug_flags(&flags).expect("an empty item is skipped, not an error");
+    assert_eq!(settings.deltasum, Some(1));
+    assert_eq!(settings.io, Some(1));
 }
 
 #[test]
@@ -677,56 +681,26 @@ fn info_all_upstream_keywords_with_level_0() {
 }
 
 #[test]
-fn info_all_upstream_keywords_with_negation() {
-    let keywords = [
-        "nobackup",
-        "nocopy",
-        "nodel",
-        "noflist",
-        "nomisc",
-        "nomount",
-        "noname",
-        "nononreg",
-        "noprogress",
-        "noremove",
-        "noskip",
-        "nostats",
-        "nosymsafe",
-    ];
-    for keyword in &keywords {
-        let flags = vec![OsString::from(*keyword)];
-        let result = parse_info_flags(&flags);
-        assert!(
-            result.is_ok(),
-            "info keyword '{keyword}' with no-prefix should be accepted"
-        );
+fn info_all_upstream_keywords_reject_a_no_prefix() {
+    for word in [
+        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress", "remove",
+        "skip", "stats", "symsafe",
+    ] {
+        let token = format!("no{word}");
+        let _ = parse_info_flags(&[OsString::from(token.clone())])
+            .expect_err(&format!("`{token}` is not an upstream info word"));
     }
 }
 
 #[test]
-fn info_all_upstream_keywords_with_dash_negation() {
-    let keywords = [
-        "-backup",
-        "-copy",
-        "-del",
-        "-flist",
-        "-misc",
-        "-mount",
-        "-name",
-        "-nonreg",
-        "-progress",
-        "-remove",
-        "-skip",
-        "-stats",
-        "-symsafe",
-    ];
-    for keyword in &keywords {
-        let flags = vec![OsString::from(*keyword)];
-        let result = parse_info_flags(&flags);
-        assert!(
-            result.is_ok(),
-            "info keyword '{keyword}' with dash-prefix should be accepted"
-        );
+fn info_all_upstream_keywords_reject_a_dash_prefix() {
+    for word in [
+        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress", "remove",
+        "skip", "stats", "symsafe",
+    ] {
+        let token = format!("-{word}");
+        let _ = parse_info_flags(&[OsString::from(token.clone())])
+            .expect_err(&format!("`{token}` is not an upstream info word"));
     }
 }
 
