@@ -53,13 +53,23 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     } else {
         // upstream: options.c:2608-3015 server_options() wraps every emitted
         // option-with-value through `safe_arg()` before it enters the wire
-        // path. Under non-protect_args the daemon (rsync 3.4.4) responds with
+        // path. Under non-protect_args the daemon responds with
         // `unbackslash_arg()` on its side. We mirror both halves here so a
         // value such as `--groupmap=*:1234;foo` round-trips through the
         // remote shell-like text protocol without losing its wildcards.
-        full_args
+        //
+        // The path operands are deliberately excluded. Upstream escapes them
+        // with `safe_arg(NULL, ...)` only under `if (!daemon_connection)`
+        // (main.c:619), and its daemon agrees: `read_args()` un-escapes just
+        // the args preceding the `.` and routes everything after it through
+        // `glob_expand()` untouched (io.c:1500-1506). Escaping an operand here
+        // would ship literal backslashes that no peer removes - upstream 3.5.0
+        // then splits the name on them, so `a b.txt` arrives as `/a/ b.txt`.
+        let (options, operands) = split_at_operands(&full_args);
+        options
             .iter()
             .map(|arg| safe_arg_for_daemon(arg))
+            .chain(operands.iter().cloned())
             .collect()
     };
 
@@ -797,7 +807,7 @@ pub(super) fn build_full_daemon_args(
     }
 
     // upstream: dummy argument representing CWD.
-    args.push(".".to_owned());
+    args.push(DAEMON_ARG_SEPARATOR.to_owned());
 
     let module_path = format!("{}/{}", request.module, request.path);
     args.push(module_path);
@@ -880,6 +890,26 @@ const WILD_CHARS: &str = "*?[]";
 /// Option flag args that contain neither `=` nor any escapable character
 /// (e.g., `--server`, `--sender`, `--numeric-ids`) are returned verbatim
 /// to avoid allocation.
+/// The lone `.` that upstream pushes after `server_options()`
+/// (`clientserver.c:303`) to stand for the remote CWD. It is also the marker
+/// that separates option args from path operands on the wire: the daemon's
+/// `read_args()` switches behaviour the moment it sees it (`io.c:1500-1506`).
+const DAEMON_ARG_SEPARATOR: &str = ".";
+
+/// Splits a daemon argument vector into `(option args, path operands)` at
+/// [`DAEMON_ARG_SEPARATOR`], which stays with the options because the daemon
+/// un-escapes it alongside them.
+///
+/// A vector with no separator is all options - that is the shape
+/// `build_minimal_daemon_args` produces, and it carries no operands to protect.
+fn split_at_operands(args: &[String]) -> (&[String], &[String]) {
+    let operands_start = args
+        .iter()
+        .position(|arg| arg == DAEMON_ARG_SEPARATOR)
+        .map_or(args.len(), |dot| dot + 1);
+    args.split_at(operands_start)
+}
+
 fn safe_arg_for_daemon(arg: &str) -> String {
     let (prefix, value, escapes, is_filename_arg) = match arg.find('=') {
         Some(eq_pos) if arg.starts_with("--") => {
