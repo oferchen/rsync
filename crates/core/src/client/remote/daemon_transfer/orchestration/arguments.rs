@@ -855,9 +855,10 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
 }
 
 /// Characters that the remote shell wrapper (or upstream `unbackslash_arg`)
-/// will interpret unless escaped. Mirrors upstream `options.c:2541`
-/// `SHELL_CHARS`. Backslash is included so a literal `\` round-trips intact.
-const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\\";
+/// will interpret unless escaped. Mirrors upstream `options.c:2695`
+/// `SHELL_CHARS`. Backslash is included so a literal `\` round-trips intact,
+/// and `\n`/`\r` so a newline cannot terminate the command and start a second.
+const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
 
 /// Wildcard characters that the remote shell would expand. Mirrors upstream
 /// `options.c:2542` `WILD_CHARS`.
