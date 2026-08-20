@@ -654,6 +654,132 @@ mod long_options {
         assert_eq!(parsed.munge_links, Some(true));
     }
 
+    /// `--insecure-links` / `--no-insecure-links` are a POPT_ARG_VAL pair
+    /// (upstream options.c:697-698) defaulting to 0 (`options.c:134`), so the
+    /// last occurrence wins and the default is off.
+    #[test]
+    fn insecure_links_is_a_last_wins_pair_defaulting_off() {
+        assert!(
+            !parse_test_args(["src/", "dst/"])
+                .expect("parse")
+                .insecure_links
+        );
+        assert!(
+            parse_test_args(["--insecure-links", "src/", "dst/"])
+                .expect("parse")
+                .insecure_links
+        );
+        assert!(
+            !parse_test_args(["--insecure-links", "--no-insecure-links", "src/", "dst/"])
+                .expect("parse")
+                .insecure_links
+        );
+        assert!(
+            parse_test_args(["--no-insecure-links", "--insecure-links", "src/", "dst/"])
+                .expect("parse")
+                .insecure_links
+        );
+    }
+
+    /// `--confine-root=DIR` must be CONSUMED as an option rather than left as a
+    /// positional operand, and its value must survive parsing verbatim.
+    /// upstream: options.c:690 - POPT_ARG_STRING.
+    #[test]
+    fn confine_root_is_parsed_as_an_option_not_an_operand() {
+        let parsed =
+            parse_test_args(["--confine-root=/srv/restricted", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.confine_root.as_deref(),
+            Some(std::path::Path::new("/srv/restricted"))
+        );
+        assert_eq!(
+            parsed.remainder.len(),
+            2,
+            "the root must not leak into the operands"
+        );
+        assert!(
+            parse_test_args(["src/", "dst/"])
+                .expect("parse")
+                .confine_root
+                .is_none()
+        );
+    }
+
+    /// A relative `--confine-root` is rejected with upstream's exact wording.
+    /// upstream: options.c:2386-2389.
+    #[test]
+    fn confine_root_must_be_absolute() {
+        let err = parse_test_args(["--confine-root=restricted", "src/", "dst/"])
+            .expect_err("a relative confinement root must be rejected");
+        assert!(
+            err.to_string()
+                .contains("--confine-root must be an absolute path"),
+            "unexpected message: {err}"
+        );
+    }
+
+    /// The opt-out short-circuits the very walk that enforces the root, so the
+    /// pair would silently mean no confinement at all. Upstream reports it
+    /// instead. upstream: options.c:2391-2396.
+    #[test]
+    fn insecure_links_conflicts_with_confine_root() {
+        let err = parse_test_args([
+            "--insecure-links",
+            "--confine-root=/srv/restricted",
+            "src/",
+            "dst/",
+        ])
+        .expect_err("the pair must be rejected");
+        assert!(
+            err.to_string()
+                .contains("--insecure-links cannot be combined with --confine-root"),
+            "unexpected message: {err}"
+        );
+    }
+
+    /// Order matters: upstream checks absoluteness FIRST (options.c:2386), so a
+    /// relative root plus the opt-out reports the absolute-path error, not the
+    /// conflict. Without this the two rules could be applied in either order and
+    /// still look correct on the single-fault cases above.
+    #[test]
+    fn relative_confine_root_reports_the_absolute_error_before_the_conflict() {
+        let err = parse_test_args([
+            "--insecure-links",
+            "--confine-root=restricted",
+            "src/",
+            "dst/",
+        ])
+        .expect_err("a relative root must still be rejected");
+        let text = err.to_string();
+        assert!(
+            text.contains("--confine-root must be an absolute path"),
+            "unexpected message: {text}"
+        );
+        assert!(
+            !text.contains("cannot be combined"),
+            "the absolute-path rule must win: {text}"
+        );
+    }
+
+    /// `--no-insecure-links` is the explicit restore, so it must NOT trip the
+    /// conflict - only an active opt-out does. Non-vacuity companion for
+    /// `insecure_links_conflicts_with_confine_root`.
+    #[test]
+    fn no_insecure_links_does_not_conflict_with_confine_root() {
+        let parsed = parse_test_args([
+            "--no-insecure-links",
+            "--confine-root=/srv/restricted",
+            "src/",
+            "dst/",
+        ])
+        .expect("the restore form must be accepted alongside a confinement root");
+        assert!(!parsed.insecure_links);
+        assert_eq!(
+            parsed.confine_root.as_deref(),
+            Some(std::path::Path::new("/srv/restricted"))
+        );
+    }
+
     #[test]
     fn whole_file_long_flag() {
         let parsed = parse_test_args(["--whole-file", "src/", "dst/"]).expect("parse");

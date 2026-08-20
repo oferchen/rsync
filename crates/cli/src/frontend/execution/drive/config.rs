@@ -117,6 +117,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) keep_dirlinks: bool,
     pub(crate) safe_links: bool,
     pub(crate) munge_links: bool,
+    pub(crate) insecure_links: bool,
+    pub(crate) confine_root: Option<PathBuf>,
     pub(crate) trust_sender: bool,
     pub(crate) fuzzy_level: u8,
     pub(crate) relative_paths: bool,
@@ -327,6 +329,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .keep_dirlinks(inputs.keep_dirlinks)
         .safe_links(inputs.safe_links)
         .munge_links(inputs.munge_links)
+        .insecure_links(inputs.insecure_links)
+        .confine_root(inputs.confine_root.clone())
         .trust_sender(inputs.trust_sender)
         .relative_paths(inputs.relative_paths)
         .one_file_system(inputs.one_file_system)
