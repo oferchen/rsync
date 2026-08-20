@@ -108,6 +108,56 @@ mod protect_args_daemon_tests {
         assert_eq!(args[1], "--sender");
     }
 
+    /// `-M` / `--remote-option` values must reach a DAEMON peer, not only a
+    /// remote-shell one: upstream builds both argvs with the same
+    /// `server_options()` (`options.c:3175-3182` appends `remote_options[]`;
+    /// called from `clientserver.c:340` for a daemon and `main.c:611` for a
+    /// remote shell). Before this, every `-M` was silently dropped on an
+    /// `rsync://` transfer - which also made the daemon's `--insecure-links`
+    /// refusal unreachable, since `-M` is the only way to inject it.
+    #[test]
+    fn build_full_args_forwards_remote_options() {
+        let config = ClientConfig::builder()
+            .remote_options(vec!["--insecure-links", "--fake-super"])
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.contains(&"--insecure-links".to_owned()),
+            "-M values must reach the daemon argv: {args:?}"
+        );
+        assert!(
+            args.contains(&"--fake-super".to_owned()),
+            "every -M value must be forwarded, not just the first: {args:?}"
+        );
+
+        // upstream appends them AFTER the options and BEFORE the caller's `.`
+        // and module path (clientserver.c:340-346), so a peer parsing the argv
+        // still sees them as options rather than operands.
+        let dot = args.iter().position(|a| a == ".").expect("cwd operand");
+        let last_remote_option = args
+            .iter()
+            .rposition(|a| a == "--fake-super")
+            .expect("forwarded option");
+        assert!(
+            last_remote_option < dot,
+            "-M values must precede the cwd operand: {args:?}"
+        );
+    }
+
+    /// Non-vacuity companion: with no `-M` given, nothing is appended, so the
+    /// test above cannot pass by the option arriving from some other source.
+    #[test]
+    fn build_full_args_appends_nothing_without_remote_options() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+        assert!(!args.iter().any(|a| a == "--insecure-links"));
+    }
+
     /// Finds the compact flag string in the daemon args (starts with `-`, not `--`).
     fn find_flag_string(args: &[String]) -> &str {
         args.iter()

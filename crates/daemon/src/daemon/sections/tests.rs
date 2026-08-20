@@ -389,6 +389,46 @@ fn default_refuses_client_log_file_options() {
 }
 
 #[test]
+fn default_refuses_client_sent_insecure_links() {
+    // upstream: options.c:1084 - a client must never be able to switch off the
+    // daemon's symlink confinement. `--insecure-links` is a local-only opt-out
+    // that upstream never forwards (options.c:3068), so one that arrives anyway
+    // (injected with `-M`) is refused outright, dropping the connection. The
+    // daemon's own opt-out is the `insecure links` module parameter.
+    let module = ModuleDefinition::default();
+    assert_eq!(
+        refused_option(&module, &["--insecure-links".to_owned()]),
+        Some("--insecure-links")
+    );
+}
+
+#[test]
+fn insecure_links_refusal_survives_negation() {
+    // The refusal is appended AFTER the module's own `refuse options` rules
+    // (options.c:1077-1088), so a `!insecure-links` negation cannot re-enable
+    // it. Without this the module owner could hand the switch to the client.
+    let module = module_with_refuse(vec!["!insecure-links".to_owned()]);
+    assert_eq!(
+        refused_option(&module, &["--insecure-links".to_owned()]),
+        Some("--insecure-links")
+    );
+}
+
+#[test]
+fn insecure_links_refusal_does_not_catch_its_negated_spelling() {
+    // Non-vacuity companion: `--no-insecure-links` RESTORES the check, so
+    // refusing it would reject a request that only makes the daemon stricter.
+    // MEASURED: relaxing the match to `contains("insecure-links")` kills exactly
+    // this test and nothing else. (`starts_with` is an equivalent mutation here -
+    // the negated spelling begins with `no-`, so no test distinguishes it.)
+    let module = ModuleDefinition::default();
+    assert_eq!(
+        refused_option(&module, &["--no-insecure-links".to_owned()]),
+        None
+    );
+}
+
+#[test]
 fn default_log_file_refusal_survives_negation() {
     // upstream: options.c:1005-1011 - the `log-file*` refusal is applied AFTER
     // the module's `refuse options` rules, so a `!log-file` negation cannot
