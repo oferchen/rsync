@@ -83,7 +83,7 @@ Info flags control informational messages. Use `--info=help` to see all availabl
 --info=stats3       # Maximum statistics detail
 
 # Disable specific flags
---info=nocopy       # or -copy or copy0
+--info=copy0        # Silence a single category
 --info=progress0
 
 # Special keywords
@@ -152,7 +152,7 @@ Debug flags provide detailed diagnostic output for development and troubleshooti
 --debug=io4         # Maximum I/O debugging
 
 # Disable specific flags
---debug=noproto     # or -proto or proto0
+--debug=proto0      # Silence a single category
 
 # Special keywords
 --debug=all         # Enable all debug flags at level 1
@@ -276,7 +276,7 @@ Reduce verbosity or disable specific flags:
 oc-rsync -vv src/ dest/
 
 # Disable noisy flags
-oc-rsync -v --info=nomisc,noskip src/ dest/
+oc-rsync -v --info=misc0,skip0 src/ dest/
 ```
 
 ### Debug specific issues

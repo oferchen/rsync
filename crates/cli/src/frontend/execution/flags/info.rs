@@ -6,12 +6,13 @@ use core::{
 };
 
 use super::super::super::progress::{NameOutputLevel, ProgressSetting};
+use super::output_words::{self, OutputWord};
 
 /// Per-flag descriptor for an `--info=` token.
 ///
 /// upstream: options.c `output_struct` (rsync-3.4.1:259-266) plus the
 /// `info_verbosity[]` grouping at options.c:239-243. `max_level` is the
-/// per-flag ceiling used when `--info=all<N>` or `--info=N` fans out
+/// per-flag ceiling used when `--info=all<N>` fans out
 /// across every flag (it caps each flag at its highest meaningful level,
 /// mirroring upstream's runtime `INFO_GTE(...)` checks). `priority`
 /// records the upstream verbosity group at which the flag is auto-enabled
@@ -19,9 +20,6 @@ use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 /// STATS/SYMSAFE=1, level-2 group covers BACKUP/MOUNT/REMOVE/SKIP=2). It
 /// is currently informational, exposed for the daemon-side limit handling
 /// tracked by audit I16 (`limit_output_verbosity()`, options.c:527-552).
-/// `strict_cap` controls whether a per-token level above `max_level` is
-/// rejected (`--info=flist3`) or silently capped (`--info=backup5`),
-/// preserving oc-rsync's historical usability split.
 #[derive(Clone, Copy)]
 pub(crate) struct InfoFlagSpec {
     pub(crate) name: &'static str,
@@ -31,30 +29,29 @@ pub(crate) struct InfoFlagSpec {
     // than priority, mirroring upstream's `parse_output_words` behavior.
     #[allow(dead_code)]
     pub(crate) priority: u8,
-    pub(crate) strict_cap: bool,
 }
 
 // upstream: options.c info_verbosity[] (rsync-3.4.1:239-243) - priority is
 // the verbosity-group index. NONREG sits in group 0 (always-on default),
 // the level-1 group covers COPY/DEL/FLIST/MISC/NAME/STATS/SYMSAFE, and the
 // level-2 group covers BACKUP/MOUNT/REMOVE/SKIP. PROGRESS has no upstream
-// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=1`
+// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=all1`
 // enables per-file progress, matching upstream `-v` parity for `--info`.
 #[rustfmt::skip]
 pub(crate) const INFO_FLAG_SPECS: &[InfoFlagSpec] = &[
-    InfoFlagSpec { name: "backup",   max_level: 1, priority: 2, strict_cap: false },
-    InfoFlagSpec { name: "copy",     max_level: 1, priority: 1, strict_cap: false },
-    InfoFlagSpec { name: "del",      max_level: 1, priority: 1, strict_cap: false },
-    InfoFlagSpec { name: "flist",    max_level: 2, priority: 1, strict_cap: true  },
-    InfoFlagSpec { name: "misc",     max_level: 2, priority: 1, strict_cap: true  },
-    InfoFlagSpec { name: "mount",    max_level: 1, priority: 2, strict_cap: false },
-    InfoFlagSpec { name: "name",     max_level: 2, priority: 1, strict_cap: false },
-    InfoFlagSpec { name: "nonreg",   max_level: 1, priority: 0, strict_cap: false },
-    InfoFlagSpec { name: "progress", max_level: 2, priority: 1, strict_cap: true  },
-    InfoFlagSpec { name: "remove",   max_level: 1, priority: 2, strict_cap: false },
-    InfoFlagSpec { name: "skip",     max_level: 2, priority: 2, strict_cap: true  },
-    InfoFlagSpec { name: "stats",    max_level: 3, priority: 1, strict_cap: true  },
-    InfoFlagSpec { name: "symsafe",  max_level: 1, priority: 1, strict_cap: false },
+    InfoFlagSpec { name: "backup",   max_level: 1, priority: 2 },
+    InfoFlagSpec { name: "copy",     max_level: 1, priority: 1 },
+    InfoFlagSpec { name: "del",      max_level: 1, priority: 1 },
+    InfoFlagSpec { name: "flist",    max_level: 2, priority: 1 },
+    InfoFlagSpec { name: "misc",     max_level: 2, priority: 1 },
+    InfoFlagSpec { name: "mount",    max_level: 1, priority: 2 },
+    InfoFlagSpec { name: "name",     max_level: 2, priority: 1 },
+    InfoFlagSpec { name: "nonreg",   max_level: 1, priority: 0 },
+    InfoFlagSpec { name: "progress", max_level: 2, priority: 1 },
+    InfoFlagSpec { name: "remove",   max_level: 1, priority: 2 },
+    InfoFlagSpec { name: "skip",     max_level: 2, priority: 2 },
+    InfoFlagSpec { name: "stats",    max_level: 3, priority: 1 },
+    InfoFlagSpec { name: "symsafe",  max_level: 1, priority: 1 },
 ];
 
 /// Parsed `--info` flag settings controlling informational output levels.
@@ -77,10 +74,6 @@ pub(crate) struct InfoFlagSettings {
 }
 
 impl InfoFlagSettings {
-    fn enable_all(&mut self) {
-        self.enable_all_at_level(1);
-    }
-
     // upstream: options.c parse_output_words - the "all<N>" token sets every
     // flag to level `min(N, spec.max_level)`. The `priority` field on each
     // spec records the upstream verbosity-group ordering (NONREG=0, level-1
@@ -90,12 +83,6 @@ impl InfoFlagSettings {
         for spec in INFO_FLAG_SPECS {
             let effective = level.min(spec.max_level);
             self.assign(spec.name, effective);
-        }
-    }
-
-    fn disable_all(&mut self) {
-        for spec in INFO_FLAG_SPECS {
-            self.assign(spec.name, 0);
         }
     }
 
@@ -252,82 +239,28 @@ impl InfoFlagSettings {
     ) -> Result<(), Message> {
         let lower = token.to_ascii_lowercase();
 
-        if lower == "help" {
-            self.help_requested = true;
-            return Ok(());
-        }
-
-        if lower == "all" {
-            self.enable_all();
-            return Ok(());
-        }
-
-        if lower == "none" {
-            self.disable_all();
-            return Ok(());
-        }
-
-        // upstream: options.c parse_output_words accepts "all<N>" (e.g. "all2")
-        // to set every flag to level N. As a usability extension, oc-rsync
-        // also accepts a bare integer token like "--info=2" with the same
-        // semantics. Per-flag caps are applied by `enable_all_at_level`.
-        if !lower.is_empty() && lower.bytes().all(|b| b.is_ascii_digit()) {
-            let level = lower.parse::<u8>().unwrap_or(u8::MAX);
-            self.enable_all_at_level(level);
-            return Ok(());
-        }
-
-        let (normalized, level) = self.parse_flag_and_level(&lower);
-
-        // upstream: options.c output_msg / parse_output_words clamps levels to
-        // MAX_OUT_LEVEL=4 but never rejects them. oc-rsync rejects only when the
-        // spec's `strict_cap` is set (progress/stats/flist/misc/skip) and the
-        // user-supplied level exceeds `max_level`; other flags accept any level
-        // verbatim for forward-compatibility with hypothetical future emit sites.
-        // The `!am_server` branch for missing specs mirrors upstream's
-        // parse_output_words server-mode tolerance: a newer client may forward
-        // info tokens this build does not know, and the server must not reject.
-        let Some(spec) = Self::spec_for(normalized) else {
-            return if am_server {
-                Ok(())
-            } else {
-                Err(info_flag_error(display))
-            };
-        };
-        if spec.strict_cap && level > spec.max_level {
-            return Err(info_flag_error(display));
-        }
-        self.assign(spec.name, level);
-        Ok(())
-    }
-
-    // Internal-only extension: `no<flag>` and `-<flag>` are accepted as a
-    // negation form mapping to level 0 (e.g. `noprogress` == `progress0`).
-    // Upstream rsync 3.4.1's `parse_output_words` (`options.c:427`) does NOT
-    // implement this prefix; it relies on the `flag0` suffix instead. The
-    // forms remain accepted for backwards compatibility and to tolerate
-    // server-mode token forwarding, but they are intentionally not advertised
-    // in `--info=help` (see `INFO_HELP_TEXT`) so users do not rely on a
-    // non-portable spelling. New code should prefer the suffix form.
-    pub(super) fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
-        let base = input.trim_end_matches(|c: char| c.is_ascii_digit());
-        if base != input {
-            if Self::spec_for(base).is_some() {
-                let suffix = &input[base.len()..];
-                let level = suffix.parse::<u8>().unwrap_or(1);
-                return (base, level);
+        match output_words::classify(&lower) {
+            OutputWord::Help => self.help_requested = true,
+            OutputWord::Every(level) => self.enable_all_at_level(level),
+            OutputWord::Named { name, level } => {
+                // The `am_server` branch mirrors upstream's
+                // `if (len && !words[j].name && !am_server)` guard: a newer
+                // client may forward info words this build does not know, and
+                // the server must accept them so the connection survives the
+                // version skew. The client still rejects, so a typo surfaces
+                // at the source.
+                let Some(spec) = Self::spec_for(name) else {
+                    return if am_server {
+                        Ok(())
+                    } else {
+                        Err(info_flag_error(display))
+                    };
+                };
+                self.assign(spec.name, level);
             }
-        } else if Self::spec_for(input).is_some() {
-            return (input, 1);
         }
 
-        let stripped = input.strip_prefix("no").or_else(|| input.strip_prefix('-'));
-
-        if let Some(stripped) = stripped {
-            return (stripped, 0);
-        }
-
-        (input, 1)
+        Ok(())
     }
 }
 
@@ -364,22 +297,9 @@ fn parse_info_flags_inner(
     let mut settings = InfoFlagSettings::default();
     for value in values {
         let text = value.to_string_lossy();
-        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
-
-        if trimmed.is_empty() {
-            return Err(rsync_error!(1, "--info flag must not be empty").with_role(Role::Client));
-        }
-
-        for token in trimmed.split(',') {
-            let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
-            if token.is_empty() {
-                return Err(
-                    rsync_error!(1, "--info flag must not be empty").with_role(Role::Client)
-                );
-            }
-
-            settings.apply_with_mode(token, token, am_server)?;
-        }
+        output_words::for_each_token(&text, |token| {
+            settings.apply_with_mode(token, token, am_server)
+        })?;
     }
 
     Ok(settings)

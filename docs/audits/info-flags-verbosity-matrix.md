@@ -78,7 +78,7 @@ unconditionally, which is why `NONREG` is on at level 1 by default.
   to 1; it also lifts `FLIST` to 2.
 
 These lifts run at `DEFAULT_PRIORITY`, so an explicit `--info=stats0` or
-`--info=noname` overrides them per the priority test at
+`--info=name0` overrides them per the priority test at
 `options.c:457-460`.
 
 ### 1.4 Token grammar

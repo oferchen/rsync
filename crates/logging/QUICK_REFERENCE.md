@@ -38,7 +38,7 @@ oc-rsync --info=help
 --info=copy          # Show file copies
 
 # Disable flags
---info=nocopy        # Don't show copies
+--info=copy0         # Don't show copies
 --info=name0         # Don't show names
 
 # Combine flags
@@ -299,7 +299,7 @@ total size is 1.23M  speedup is 6.49
 ### Too much output
 
 - Reduce verbosity level
-- Disable specific flags: `--info=nomisc,noskip`
+- Disable specific flags: `--info=misc0,skip0`
 - Use `--quiet --info=stats` for summary only
 
 ### Missing debug information
