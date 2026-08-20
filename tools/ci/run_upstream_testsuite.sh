@@ -192,16 +192,10 @@ ensure_upstream_src() {
 }
 
 build_upstream_helpers() {
-    if [[ -f "${upstream_src_dir}/shconfig" && \
-          -x "${upstream_src_dir}/tls" && \
-          -x "${upstream_src_dir}/getgroups" && \
-          -x "${upstream_src_dir}/getfsdev" && \
-          -x "${upstream_src_dir}/trimslash" && \
-          -x "${upstream_src_dir}/t_unsafe" && \
-          -x "${upstream_src_dir}/wildtest" && \
-          -x "${upstream_src_dir}/support/lsh.sh" ]]; then
-        return
-    fi
+    # Deliberately NOT guarded on a hand-listed set of built binaries: such a
+    # guard returns early on a tree that has the old helpers, so a newly
+    # required one is never built. `make check-progs` is idempotent and cheap
+    # when everything is current, so it is safe to run unconditionally.
     echo "==> Configuring and building upstream helper tools..." >&2
     (
         cd "$upstream_src_dir"
@@ -210,20 +204,24 @@ build_upstream_helpers() {
                 --disable-zstd --disable-lz4 >configure.log 2>&1 \
                 || { tail -50 configure.log; exit 1; }
         fi
-        # Build the upstream rsync binary (some tests reference
-        # $TOOLDIR/rsync) plus all CHECK_PROGS helper programs that the
-        # testsuite scripts require. These are not part of the `all`
-        # target so they must be named explicitly:
-        #   tls, getgroups    - used by rsync.fns (check_perms, rsync_getgroups)
-        #   getfsdev          - used by chmod-temp-dir.test (cross-filesystem detection)
-        #   trimslash         - used by trimslash.test
-        #   t_unsafe          - used by unsafe-byname.test
-        #   t_chmod_secure    - used by chmod-symlink-race.test
-        #   t_secure_relpath  - used by secure-relpath-validation.test
-        #   wildtest          - used by wildmatch.test
-        make all tls getgroups getfsdev trimslash t_unsafe t_chmod_secure \
-            t_secure_relpath wildtest \
-            >make.log 2>&1 || { tail -100 make.log; exit 1; }
+        # Build the upstream rsync binary (some tests reference $TOOLDIR/rsync)
+        # plus every helper program the testsuite requires, via upstream's OWN
+        # target rather than a hand-copied list. `check-progs` expands to
+        # `all $(CHECK_PROGS) $(CHECK_COMPILE_OBJS) $(CHECK_SYMLINKS)`, so the
+        # set stays correct as upstream adds helpers.
+        #
+        # A hand-maintained list is what this replaces, and it had already
+        # drifted: 3.5.0's CHECK_PROGS names 17 programs, the list named 8.
+        # Missing t_rename_secure and t_symlink_secure made
+        # rename-mixed-parent-symlink-race and
+        # symlink-mknod-fakesuper-symlink-race fail for want of a binary -
+        # neither test invokes oc-rsync at all - and t_acl, t_iwildmatch,
+        # t_clean_fname, t_safe_arg, t_hashtable_overflow, testrun and simdtest
+        # were absent too. A missing helper reads as an oc defect, so the copy
+        # must not exist.
+        #
+        # upstream: rsync-3.5.0/Makefile.in:60-62 CHECK_PROGS, :440 check-progs
+        make check-progs >make.log 2>&1 || { tail -100 make.log; exit 1; }
     )
 }
 

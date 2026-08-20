@@ -38,11 +38,19 @@ use tempfile::tempdir;
 #[derive(Debug, Default)]
 struct CountingPlatformCopy {
     calls: AtomicUsize,
+    reflink_queries: AtomicUsize,
 }
 
 impl CountingPlatformCopy {
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    /// Only the macOS dispatch test reads this; gate it with its consumer so a
+    /// Linux build does not trip `-D dead-code`.
+    #[cfg(target_os = "macos")]
+    fn reflink_queries(&self) -> usize {
+        self.reflink_queries.load(Ordering::SeqCst)
     }
 }
 
@@ -55,6 +63,7 @@ impl PlatformCopy for CountingPlatformCopy {
     }
 
     fn supports_reflink(&self) -> bool {
+        self.reflink_queries.fetch_add(1, Ordering::SeqCst);
         false
     }
 
@@ -94,9 +103,16 @@ fn builder_propagates_injected_platform_copy() {
     assert_eq!(counting.calls(), 1);
 }
 
-/// On macOS the executor dispatches new whole-file copies through
-/// `options.platform_copy()`. This test runs a single-file copy via
-/// `LocalCopyPlan` and asserts the injected fake is invoked at least once.
+/// The executor consults `options.platform_copy()` before taking the
+/// copy-on-write fast path. This test runs a single-file copy via
+/// `LocalCopyPlan` and asserts the injected fake is asked at least once.
+///
+/// It observes `supports_reflink()`, not `copy_file()`: the destination write
+/// deliberately no longer routes through the path-based
+/// `copy_file(src_path, dst_path)`. That signature cannot express an anchored
+/// destination, so it followed a parent symlink straight out of the transfer
+/// root - the escape `confined_clone_file` closes. The strategy's remaining
+/// job on this path is to veto the fast path, and that is what is pinned here.
 #[cfg(target_os = "macos")]
 #[test]
 fn executor_dispatches_whole_file_copy_through_platform_copy() {
@@ -124,10 +140,10 @@ fn executor_dispatches_whole_file_copy_through_platform_copy() {
         .expect("copy succeeds");
 
     assert!(
-        counting.calls() >= 1,
-        "executor should dispatch whole-file copy through the injected PlatformCopy \
-         (observed {} invocations)",
-        counting.calls()
+        counting.reflink_queries() >= 1,
+        "executor should consult the injected PlatformCopy before the CoW fast path \
+         (observed {} queries)",
+        counting.reflink_queries()
     );
 
     // The fake reports a non-zero-copy result, so the executor falls through
