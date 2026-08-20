@@ -1843,3 +1843,64 @@ fn single_component_symlinkat_unchanged_by_nested_path() {
         "single-component symlink must still be created"
     );
 }
+
+/// `anchor_confined_endpoint` must pick the resolver by the endpoint's
+/// provenance, mirroring upstream's three arms in `do_rename_at()`.
+///
+/// The absolute-outside-root arm is the one that was missing: it degraded to
+/// `Ambient` (`AT_FDCWD` + the whole path), which re-resolves an operator
+/// `--temp-dir` at commit time and lets a flipped foreign-owned parent
+/// substitute attacker content into the destination. Its refusal needs a
+/// second uid to observe, so the behavioural proof is the root leg of the
+/// upstream 3.5.0 suite (`temp-dir-symlink-injection`); what is pinned here is
+/// that the ownership walk is *selected* at all.
+///
+/// upstream: `rsync-3.5.0/syscall.c:1926` (absolute -> `owner_walk_parent`),
+/// `:1945` (relative-with-slash -> `secure_relative_open`), `:1949` (slashless
+/// -> `AT_FDCWD`).
+mod endpoint_provenance {
+    use super::super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
+    use super::canonical_tempdir;
+    use std::path::Path;
+
+    #[test]
+    fn an_endpoint_beneath_the_root_takes_the_confined_walk() {
+        let (_keep, root) = canonical_tempdir();
+        std::fs::create_dir(root.join("sub")).expect("mkdir");
+
+        let path = root.join("sub/f");
+        let endpoint = anchor_confined_endpoint(&root, &path).expect("anchor");
+
+        assert!(
+            matches!(endpoint, ConfinedEndpoint::Anchored { .. }),
+            "a transfer path must be confined beneath the root, not owner-walked"
+        );
+    }
+
+    #[test]
+    fn an_absolute_endpoint_outside_the_root_takes_the_ownership_walk() {
+        let (_keep, root) = canonical_tempdir();
+        let (_keep_out, outside) = canonical_tempdir();
+
+        let path = outside.join("f0.tmp");
+        let endpoint = anchor_confined_endpoint(&root, &path).expect("anchor");
+
+        assert!(
+            matches!(endpoint, ConfinedEndpoint::OwnerWalked { .. }),
+            "an absolute operator path must be resolved by the ownership walk, \
+             not left to ambient path resolution"
+        );
+    }
+
+    #[test]
+    fn a_bare_relative_endpoint_stays_ambient() {
+        let (_keep, root) = canonical_tempdir();
+
+        let endpoint = anchor_confined_endpoint(&root, Path::new("f0.tmp")).expect("anchor");
+
+        assert!(
+            matches!(endpoint, ConfinedEndpoint::Ambient(_)),
+            "a slashless name resolves against AT_FDCWD, as upstream does"
+        );
+    }
+}
