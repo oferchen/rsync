@@ -29,6 +29,19 @@ impl ClientConfig {
         self.temp_directory.as_deref()
     }
 
+    /// Replaces `--temp-dir` with the path the receiver will actually use.
+    ///
+    /// Upstream resolves a relative `--temp-dir` from inside the destination,
+    /// because `do_recv()` runs after `get_local_name()` has chdir'd there
+    /// (main.c:765/823/852, stat at main.c:1046). oc has no chdir, so the
+    /// caller anchors the value once and stores it back here - every consumer
+    /// (the existence check, the receiver's temp-file open, the local-copy
+    /// executor) then reads the same resolved path instead of each re-deriving
+    /// it against whatever its own working directory happens to be.
+    pub(crate) fn set_temp_directory(&mut self, directory: PathBuf) {
+        self.temp_directory = Some(directory);
+    }
+
     /// Reports whether destination updates should be performed in place.
     #[must_use]
     #[doc(alias = "--inplace")]
