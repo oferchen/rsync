@@ -724,6 +724,7 @@ pub(crate) fn copy_symlink(
         destination,
         false,
         context.filter_program(),
+        Some(context.destination_root()),
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(

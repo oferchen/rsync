@@ -9,12 +9,11 @@
 
 use std::ffi::{CString, OsStr};
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use super::lstat::single_component_leaf;
-use super::nested::{ParentAnchor, anchor_parent};
 
 /// `RENAME_NOREPLACE` from `renameat2(2)`.
 ///
@@ -179,33 +178,135 @@ pub fn renameat_via_sandbox_or_fallback(
         let dirfd = sandbox.current_dirfd();
         return renameat(dirfd, old_leaf, dirfd, new_leaf, replace);
     }
-    // Nested paths: anchor each endpoint's parent under RESOLVE_BENEATH.
-    // Both must anchor for the rename to be confined; if either endpoint
-    // is single-component or anchoring is unavailable we drop to the
-    // path-based fallback rather than mixing an anchored and an ambient
-    // endpoint (which would leave one side re-resolvable).
+    // Nested paths: confine each side independently beneath the root. An
+    // endpoint that lies under the root is anchored by the per-component
+    // confined walk; one that does not (an operator-supplied absolute
+    // `--temp-dir`/`--partial-dir`) keeps ambient resolution.
+    //
+    // Anchoring is deliberately NOT all-or-nothing. Requiring both sides to
+    // anchor let an absolute `--temp-dir` source - which can never anchor -
+    // disable confinement of the *destination*, so `finish_transfer`'s
+    // tmp->final rename followed a flipped `dest/sub` symlink and wrote
+    // outside the tree. That is the escape upstream's
+    // `rename-fullpath-symlink-race` test demonstrates.
+    //
+    // upstream: `rsync-3.5.0/syscall.c:1918-1923` `do_rename_at()` - "Confine
+    // each side independently. [...] Doing each side independently means an
+    // absolute source never disables confinement of a relative destination."
     if sandbox.is_some() {
-        let old_anchor = anchor_parent(sandbox, old_dest_dir, old_relative_path, old_link_path)?;
-        let new_anchor = anchor_parent(sandbox, new_dest_dir, new_relative_path, new_link_path)?;
-        if let (
-            ParentAnchor::Anchored {
-                dirfd: old_dirfd,
-                name: old_leaf,
-            },
-            ParentAnchor::Anchored {
-                dirfd: new_dirfd,
-                name: new_leaf,
-            },
-        ) = (old_anchor, new_anchor)
-        {
-            return renameat(
-                old_dirfd.as_fd(),
-                old_leaf,
-                new_dirfd.as_fd(),
-                new_leaf,
-                replace,
-            );
-        }
+        return confined_rename(old_dest_dir, old_link_path, new_link_path, replace);
     }
     std::fs::rename(old_link_path, new_link_path)
+}
+
+/// One endpoint of a confined commit, already reduced to a dirfd plus a name to
+/// pass to the `*at` syscall.
+///
+/// The [`Anchored`](Self::Anchored) arm owns the walked [`DirSandbox`], so the
+/// parent descriptor stays open for the duration of the syscall.
+///
+/// Shared by [`confined_rename`] and by the `O_TMPFILE` `linkat(2)` commit
+/// ([`super::create::confined_link_anonymous`]): both publish a staged file
+/// under its final name, so both must anchor that name the same way. Keeping
+/// one owner of the rule is what stops the two commit strategies drifting -
+/// the Linux `O_TMPFILE` path silently skipped confinement while the named-temp
+/// rename enforced it, so the same escape was open on one platform only.
+#[cfg(unix)]
+pub(super) enum ConfinedEndpoint<'a> {
+    /// The endpoint lives beneath the confinement root; `sandbox` holds the
+    /// walked parent and `leaf` is the final component.
+    Anchored {
+        sandbox: crate::dir_sandbox::DirSandbox,
+        leaf: &'a OsStr,
+    },
+    /// The endpoint is outside the root (an operator-supplied absolute
+    /// `--temp-dir`/`--partial-dir`, say). Resolved against `AT_FDCWD` from the
+    /// whole path, exactly as a plain `rename(2)` would.
+    Ambient(&'a OsStr),
+}
+
+/// Reduce one endpoint to `(dirfd, name)` for `renameat(2)`.
+///
+/// Anchoring applies only when `path` lexically lies beneath `root` and has a
+/// final component: the parent is then walked beneath `root` with
+/// [`DirSandbox::open_dest_anchor_confined`], which follows relative in-tree
+/// symlinks and refuses absolute targets and climbs above the anchor.
+///
+/// Anything else degrades to [`ConfinedEndpoint::Ambient`] - the pre-existing
+/// path-based behaviour for that side - rather than failing the rename.
+#[cfg(unix)]
+pub(super) fn anchor_confined_endpoint<'a>(
+    root: &Path,
+    path: &'a Path,
+) -> io::Result<ConfinedEndpoint<'a>> {
+    use crate::dir_sandbox::{ConfinePolicy, DirSandbox, NoExclude};
+
+    let Ok(relative) = path.strip_prefix(root) else {
+        return Ok(ConfinedEndpoint::Ambient(path.as_os_str()));
+    };
+    let Some(leaf) = relative.file_name() else {
+        return Ok(ConfinedEndpoint::Ambient(path.as_os_str()));
+    };
+    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
+    let sandbox =
+        DirSandbox::open_dest_anchor_confined(root, parent, ConfinePolicy::confined(NoExclude))?;
+    Ok(ConfinedEndpoint::Anchored { sandbox, leaf })
+}
+
+/// Rename `old_path` to `new_path`, confining **each side independently**
+/// beneath `root`.
+///
+/// A side that lies beneath `root` has its parent resolved by the confined
+/// per-component walk, so a directory component flipped to a symlink between
+/// the decision to commit and the syscall cannot redirect the rename out of the
+/// tree. A side that does not lie beneath `root` keeps the ambient path-based
+/// resolution.
+///
+/// Per-side independence is the whole point: an operator-supplied absolute
+/// `--temp-dir` puts the *source* outside the tree, and an all-or-nothing rule
+/// would let that disable confinement of the *destination* - which is the
+/// escape upstream's `rename-fullpath-symlink-race` test demonstrates.
+///
+/// `replace` mirrors the [`renameat`] knob: `true` overwrites the destination
+/// atomically, matching [`std::fs::rename`] and upstream `do_rename()`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - "Confine each side
+///   independently. [...] Doing each side independently means an absolute
+///   source never disables confinement of a relative destination."
+/// - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component of either confined side is a refused symlink (an
+///   absolute target, or one landing outside the anchor) or a climb above the
+///   anchor. Deliberately **not** `EXDEV`: callers treat `EXDEV` as
+///   cross-device and fall back to copy+remove, which would defeat the refusal.
+/// - Otherwise the `renameat(2)` error verbatim, including a genuine `EXDEV`.
+#[cfg(unix)]
+pub fn confined_rename(
+    root: &Path,
+    old_path: &Path,
+    new_path: &Path,
+    replace: bool,
+) -> io::Result<()> {
+    // SAFETY: `AT_FDCWD` is a well-known pseudo-descriptor accepted by every
+    // `*at` syscall; it is never closed and outlives any borrow of it.
+    #[allow(unsafe_code)]
+    let cwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+
+    let old = anchor_confined_endpoint(root, old_path)?;
+    let new = anchor_confined_endpoint(root, new_path)?;
+
+    let (old_dirfd, old_name) = match &old {
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
+    };
+    let (new_dirfd, new_name) = match &new {
+        ConfinedEndpoint::Anchored { sandbox, leaf } => (sandbox.root_dirfd(), *leaf),
+        ConfinedEndpoint::Ambient(path) => (cwd, *path),
+    };
+
+    renameat(old_dirfd, old_name, new_dirfd, new_name, replace)
 }

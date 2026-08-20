@@ -188,9 +188,13 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    let real_target = temp.path().join("real-target");
+    // Relative, in-tree target: the only shape upstream's confined walk
+    // follows. `ds_descend` refuses any absolute target with ELOOP
+    // (rsync-3.5.0/syscall.c:2953), so an absolute one exits 23 and writes
+    // nothing - the refusal is pinned separately below.
+    let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -369,10 +373,13 @@ fn keep_dirlinks_deeply_nested_parent_symlink_to_dir() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(dest_root.join("a")).expect("create dest/a");
 
-    // Make dest/a/b a symlink to a real directory
-    let real_b = temp.path().join("real-b");
+    // Make dest/a/b a symlink to a real directory. The target is relative and
+    // in-tree because that is the only shape upstream's confined walk follows;
+    // an absolute one exits 23 and transfers nothing (measured against rsync
+    // 3.5.0, refused at `ds_descend` rsync-3.5.0/syscall.c:2953).
+    let real_b = dest_root.join("a/real-b");
     fs::create_dir_all(real_b.join("c")).expect("create real-b/c");
-    symlink(&real_b, dest_root.join("a/b")).expect("create symlink a/b -> real-b");
+    symlink("real-b", dest_root.join("a/b")).expect("create symlink a/b -> real-b");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -451,15 +458,22 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
     fs::write(source_root.join("subdir/keep.txt"), b"keep").expect("write keep");
+    // The symlink target must exist in the source too, or --delete reaps it as
+    // extraneous and takes the symlink down with it - measured against rsync
+    // 3.5.0, which then leaves `subdir` a real directory.
+    fs::create_dir(source_root.join("real-target")).expect("create source real-target");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create a real directory as the symlink target, with extraneous content
-    let real_target = temp.path().join("real-target");
+    // A real directory as the symlink target, with extraneous content. Relative
+    // and in-tree: an absolute target is refused outright by upstream's confined
+    // walk (rsync-3.5.0/syscall.c:2953 `ds_descend`), so that shape exits 23 and
+    // deletes nothing - the refusal is pinned separately.
+    let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
     fs::write(real_target.join("extra.txt"), b"extraneous").expect("write extraneous file");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -512,10 +526,12 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
     // real-sub at destination is an actual directory
     fs::create_dir(dest_root.join("real-sub")).expect("create real dest subdir");
 
-    // link-sub at destination is a symlink to a real directory
-    let link_target = temp.path().join("link-target");
+    // link-sub at destination is a symlink to a real directory. The target is
+    // relative and in-tree because upstream's confined walk refuses an absolute
+    // one outright (rsync-3.5.0/syscall.c:2953 ds_descend).
+    let link_target = dest_root.join("link-target");
     fs::create_dir(&link_target).expect("create link target");
-    symlink(&link_target, dest_root.join("link-sub")).expect("create symlink link-sub");
+    symlink("link-target", dest_root.join("link-sub")).expect("create symlink link-sub");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -620,6 +636,16 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
 /// 4. The source file is modified slightly, triggering a delta (not whole-file) transfer.
 /// 5. The second sync with `-K` must succeed - the receiver sandbox (RESOLVE_BENEATH)
 ///    must resolve the path through the directory symlink correctly for verification.
+///
+/// The symlink target is **relative and in-tree**, which is the shape upstream
+/// serves: `ds_descend` follows a relative target and refuses an absolute one.
+/// An out-of-tree target is the refusal case, pinned by
+/// [`keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree`];
+/// the two together are the discriminating pair, since a fixture that merely
+/// failed to transfer anything would satisfy the refusal test alone.
+///
+/// upstream: `rsync-3.5.0/syscall.c:2961` `ds_descend()` - measured against the
+/// real 3.5.0 binary: this shape exits 0 and updates through the link.
 #[cfg(unix)]
 #[test]
 fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
@@ -632,9 +658,10 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    let real_target = temp.path().join("real-target");
+    // Relative, in-tree target: the shape upstream's confined walk follows.
+    let real_target = dest_root.join("real-target");
     fs::create_dir_all(&real_target).expect("create real target");
-    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+    symlink("real-target", dest_root.join("subdir")).expect("create symlink subdir");
 
     // Write a file large enough to exercise the delta algorithm (>= 2 blocks).
     // The file has a prefix that stays constant and a suffix that changes,
@@ -720,5 +747,107 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     assert!(
         subdir_meta.file_type().is_symlink(),
         "subdir should remain a symlink after delta transfer with -K"
+    );
+}
+
+/// `-K` must **not** publish through a destination directory symlink whose
+/// target is absolute and outside the transfer tree.
+///
+/// This is the sibling of
+/// [`keep_dirlinks_delta_transfer_through_symlink_succeeds`]: the two fixtures
+/// differ only in the symlink's target, and upstream 3.5.0 answers them
+/// differently. `ds_descend` follows a relative in-tree target and refuses an
+/// absolute one with `ELOOP`, so `-K` does not license an escape - it only
+/// licenses treating an in-tree symlinked directory as a directory.
+///
+/// Measured directly against the real `rsync 3.5.0` binary on both macOS and
+/// Linux: this shape exits 23 with "Too many levels of symbolic links" and
+/// leaves the out-of-tree target byte-for-byte untouched.
+///
+/// upstream: `rsync-3.5.0/syscall.c:2953` `ds_descend()` - "absolute target:
+/// refuse".
+#[cfg(unix)]
+#[test]
+fn keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // Absolute target OUTSIDE dest_root - the escape upstream refuses.
+    let outside = temp.path().join("outside-target");
+    fs::create_dir_all(&outside).expect("create outside target");
+    symlink(&outside, dest_root.join("subdir")).expect("create escaping symlink");
+
+    let source_file = source_root.join("subdir/file.bin");
+    fs::write(&source_file, b"payload-from-source").expect("write source file");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    );
+
+    assert!(
+        result.is_err(),
+        "-K must not publish through an out-of-tree destination symlink"
+    );
+    assert!(
+        !outside.join("file.bin").exists(),
+        "the payload escaped the destination tree into {}",
+        outside.display()
+    );
+}
+
+/// A refused `-K` commit must leave the out-of-tree target **intact**.
+///
+/// The refusal is a security decision, not a licence to destroy: upstream
+/// 3.5.0 refuses this shape without touching the file (measured - the target
+/// survives byte-for-byte at exit 23). An implementation that cleared the
+/// destination before discovering the escape would turn a refusal into data
+/// loss, which is strictly worse than the escape it prevents.
+#[cfg(unix)]
+#[test]
+fn a_refused_keep_dirlinks_commit_does_not_destroy_the_existing_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+    fs::write(source_root.join("subdir/file.bin"), b"incoming").expect("write source");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // The out-of-tree target already holds a file under the same name.
+    let outside = temp.path().join("outside-target");
+    fs::create_dir_all(&outside).expect("create outside target");
+    let victim = outside.join("file.bin");
+    fs::write(&victim, b"pre-existing payload").expect("write victim");
+    symlink(&outside, dest_root.join("subdir")).expect("create escaping symlink");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    );
+
+    assert!(result.is_err(), "the escaping commit must be refused");
+    assert_eq!(
+        fs::read(&victim).expect("the refused commit must not delete the existing target"),
+        b"pre-existing payload",
+        "a refused commit must leave the target byte-for-byte unchanged"
     );
 }

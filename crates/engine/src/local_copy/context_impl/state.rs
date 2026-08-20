@@ -58,6 +58,7 @@ impl<'a> CopyContext<'a> {
             stop_at: stop_at_wallclock,
             last_progress: Instant::now(),
             destination_root,
+            source_anchor: None,
             safety_depth_offset: 0,
             use_buffer_pool: true,
             buffer_pool,
@@ -196,8 +197,25 @@ impl<'a> CopyContext<'a> {
         self.limiter.is_some()
     }
 
+    /// Sets the source-tree confinement anchor for the operand about to be
+    /// walked.
+    ///
+    /// upstream: `rsync-3.5.0/sender.c` - the sender's content opens are
+    /// confined beneath the transfer root, which is per source argument.
+    pub(in crate::local_copy) fn set_source_anchor(&mut self, anchor: Option<PathBuf>) {
+        self.source_anchor = anchor;
+    }
+
+    /// Returns the source-tree confinement anchor for the current operand.
+    pub(in crate::local_copy) fn source_anchor(&self) -> Option<&Path> {
+        self.source_anchor.as_deref()
+    }
+
     /// Returns the root destination directory for the transfer.
-    pub(super) fn destination_root(&self) -> &Path {
+    ///
+    /// Also the confinement anchor for the temp -> final commit rename; see
+    /// `DestinationWriteGuard::new_confined`.
+    pub(in crate::local_copy) fn destination_root(&self) -> &Path {
         &self.destination_root
     }
 
@@ -302,6 +320,7 @@ impl<'a> CopyContext<'a> {
                 destination,
                 true,
                 self.filter_program.as_ref(),
+                Some(self.destination_root()),
             )?;
 
             // Sync NFSv4 ACLs separately (stored in system.nfs4_acl xattr)
@@ -393,13 +412,33 @@ impl<'a> CopyContext<'a> {
         self.destination_metadata_cache.remove(dest)
     }
 
-    /// Returns a mutable reference to the reusable readdir buffer.
+    /// Borrows the reusable readdir buffer and the anchor the directory scan
+    /// resolves beneath, if any.
     ///
     /// Callers should `clear()` the buffer before filling it. The Vec's heap
     /// capacity persists across calls, eliminating per-directory allocations
     /// during recursive traversal.
-    pub(super) fn readdir_buf(&mut self) -> &mut Vec<(OsString, PathBuf)> {
-        &mut self.readdir_buf
+    ///
+    /// The scan needs both at once, and taking them through separate accessors
+    /// would borrow `self` mutably and immutably in one call. Handing back
+    /// disjoint field borrows keeps the anchor allocation-free on the recursive
+    /// traversal path, where copying it would cost one `PathBuf` per directory
+    /// visited.
+    ///
+    /// The anchor is withheld under a symlink-following mode, on the same rule
+    /// [`follow_source_symlinks`] applies to the content open: `-k` exists to
+    /// follow a symlinked *parent*, and the scan resolves exactly those parents,
+    /// so confining it would refuse the traversal the operator asked for.
+    ///
+    /// [`follow_source_symlinks`]: Self::follow_source_symlinks
+    pub(super) fn readdir_buf_with_confined_anchor(
+        &mut self,
+    ) -> (&mut Vec<(OsString, PathBuf)>, Option<&Path>) {
+        let confine = !self.follow_source_symlinks();
+        (
+            &mut self.readdir_buf,
+            confine.then_some(self.source_anchor.as_deref()).flatten(),
+        )
     }
 
     /// Clears the checksum cache to free memory after directory processing.

@@ -95,6 +95,7 @@ pub(super) fn apply_final_directory_metadata(
         destination,
         true,
         context.filter_program(),
+        Some(context.destination_root()),
     )?;
 
     #[cfg(all(any(unix, windows), feature = "acl"))]

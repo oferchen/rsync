@@ -295,6 +295,7 @@ pub(crate) fn copy_device(
                 destination,
                 true,
                 context.filter_program(),
+                Some(context.destination_root()),
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
             sync_acls_if_requested(
@@ -396,6 +397,7 @@ pub(crate) fn copy_device(
             destination,
             true,
             context.filter_program(),
+            Some(context.destination_root()),
         )?;
         #[cfg(feature = "acl")]
         sync_acls_if_requested(

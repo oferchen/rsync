@@ -88,6 +88,7 @@ pub mod cached_sort;
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
 pub mod confined_open;
+pub mod confined_readdir;
 /// Path-confinement activation: who is confined, and against what root.
 ///
 /// Pure policy with no I/O, so it builds and is tested on every target.
@@ -122,6 +123,11 @@ pub mod net_reader;
 /// Receiver-side basis open with `O_NOFOLLOW` on the basename, matching
 /// upstream rsync's `do_open_at()` dirname/basename split.
 pub mod nofollow_open;
+/// Unix-only: ownership-trusted resolution for operator-supplied paths
+/// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
+/// `owner_walk_parent` (`syscall.c:558`).
+#[cfg(unix)]
+pub mod owner_walk;
 /// Page-aligned buffer pool for IOCP no-buffering mode.
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
@@ -365,11 +371,13 @@ pub use traits::{FileReader, FileWriter};
 pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
-pub use confined_open::{LeafPolicy, open_source_confined};
+pub use confined_open::{DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined};
+pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
-    AtMetadata, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
-    UnlinkResidue, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    AtMetadata, CloneAttempt, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome,
+    UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
+    confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback,
     lstat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, openat,
     openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
@@ -387,6 +395,10 @@ pub use kernel_version::{
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
+#[cfg(unix)]
+pub use owner_walk::{
+    operator_link, operator_rename, owner_trusted_parent, symlink_owner_is_trusted,
+};
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::{open_trusted_dir, secure_open_dir};

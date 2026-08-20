@@ -122,7 +122,7 @@ fn xattrs_supported(path: &Path) -> bool {
     let mut list = XattrList::new();
     list.push(XattrEntry::new(probe_name, b"1".to_vec()));
 
-    if apply_xattrs_from_list(path, &list, false, None, None).is_err() {
+    if apply_xattrs_from_list(path, &list, false, None, None, None).is_err() {
         return false;
     }
 
@@ -130,7 +130,7 @@ fn xattrs_supported(path: &Path) -> bool {
     // Cleanup failure is non-fatal; the test bodies push a fresh full
     // list whose apply step removes any stale entries left behind.
     let cleared = XattrList::new();
-    let _ = apply_xattrs_from_list(path, &cleared, false, None, None);
+    let _ = apply_xattrs_from_list(path, &cleared, false, None, None, None);
     true
 }
 
@@ -176,7 +176,7 @@ fn simulated_windows_xattr_dropped_on_linux() {
     list.push(XattrEntry::new(standard_a, b"alpha".to_vec()));
     list.push(XattrEntry::new(standard_b, b"beta".to_vec()));
 
-    apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+    apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
     let after = read_back(&file);
 
@@ -247,7 +247,7 @@ fn simulated_windows_xattr_applied_on_windows() {
     // The apply call must succeed regardless of whether the WAS-5
     // dispatch is wired yet; failure here would indicate a regression
     // in the cross-platform xattr backend.
-    apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs on Windows");
+    apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs on Windows");
 
     // Once WAS-5 lands, the DACL is applied via `write_dacl_sddl` and
     // the descriptor can be read back. The returned descriptor must
@@ -283,7 +283,7 @@ fn pure_posix_acl_roundtrip_unaffected_by_reserved_slot() {
         b"second".to_vec(),
     ));
 
-    apply_xattrs_from_list(&file, &list, false, None, None).expect("apply xattrs");
+    apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
 
     let after = read_back(&file);
 

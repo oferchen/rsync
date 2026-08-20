@@ -1045,9 +1045,16 @@ fn link_dest_skips_symlink_in_reference() {
 
     let link_dest_dir = temp.path().join("previous");
     fs::create_dir_all(&link_dest_dir).expect("create link-dest");
-    // Create a symlink in link-dest instead of a regular file
+    // The link-dest entry is a symlink, not a regular file. Its target is made
+    // to match the source in size AND mtime, so the entry would sail through
+    // the quick check and be hard-linked if the symlink were followed - that is
+    // what makes the assertions below discriminating rather than vacuous.
     let real_file = temp.path().join("real_target.txt");
     fs::write(&real_file, b"real content").expect("write real target");
+    let source_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&source_file).expect("source metadata"),
+    );
+    set_file_times(&real_file, source_mtime, source_mtime).expect("sync target mtime");
     let link_dest_file = link_dest_dir.join("file.txt");
     std::os::unix::fs::symlink(&real_file, &link_dest_file).expect("create symlink");
 
@@ -1067,11 +1074,26 @@ fn link_dest_skips_symlink_in_reference() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should not hard link because link-dest entry is a symlink
+    // Measured against rsync 3.5.0: exit 0 with a plain copy - the symlink
+    // basis is skipped, never linked and never read through.
     assert!(dest_file.exists());
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"real content");
-    // File should be copied, not linked - verify content is correct
-    // (files_copied counter may not increment for single-file operands)
+
+    // The discriminating assertions: a followed symlink basis would have
+    // hard-linked the destination onto real_target.txt, sharing its inode and
+    // raising its link count. A skipped basis leaves a fresh inode.
+    let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
+    let target_meta = fs::metadata(&real_file).expect("target metadata");
+    assert_ne!(
+        (dest_meta.dev(), dest_meta.ino()),
+        (target_meta.dev(), target_meta.ino()),
+        "destination must not be hard-linked to the symlink basis's target"
+    );
+    assert_eq!(
+        target_meta.nlink(),
+        1,
+        "the symlink basis's target must not gain a link"
+    );
 }
 
 #[cfg(unix)]

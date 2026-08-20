@@ -1939,13 +1939,19 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    let real_alpha = temp.path().join("real_alpha");
+    // Relative, in-tree targets. Upstream's confined walk follows these and
+    // refuses an absolute out-of-tree target, so only this shape exercises the
+    // "-K preserves the symlink and writes through it" behaviour the test is
+    // named for; the refusal is pinned separately in execute_dirlinks.rs.
+    // Measured against rsync 3.5.0: this fixture exits 0 with both links intact,
+    // while the absolute out-of-tree form exits 23 and transfers nothing.
+    let real_alpha = dest_root.join("real_alpha");
     fs::create_dir(&real_alpha).expect("create real alpha");
-    symlink(&real_alpha, dest_root.join("alpha")).expect("symlink alpha");
+    symlink("real_alpha", dest_root.join("alpha")).expect("symlink alpha");
 
-    let real_beta = temp.path().join("real_beta");
+    let real_beta = dest_root.join("real_beta");
     fs::create_dir(&real_beta).expect("create real beta");
-    symlink(&real_beta, dest_root.join("beta")).expect("symlink beta");
+    symlink("real_beta", dest_root.join("beta")).expect("symlink beta");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());

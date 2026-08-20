@@ -57,6 +57,24 @@ impl<'a> CopyContext<'a> {
             .filter(|path| !path.as_os_str().is_empty())
     }
 
+/// Is this symlink the operator's own, and therefore followable as a
+/// destination root?
+///
+/// Unix delegates to the single owner of the trust rule in `fast_io`. On other
+/// platforms there is no uid to consult, so the answer is `false` and the
+/// destination-root symlink keeps the pre-existing `--keep-dirlinks`-only
+/// behaviour rather than being followed on no evidence.
+#[cfg(unix)]
+fn operator_owns_symlink(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    fast_io::symlink_owner_is_trusted(metadata.uid())
+}
+
+#[cfg(not(unix))]
+fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
     /// Dry-run replacement policy: remove destination (logically) and either
     /// allow creation (Ok) or synthesize a "NotFound" error.
     fn replace_parent_entry_dry_run(
@@ -155,6 +173,17 @@ impl<'a> CopyContext<'a> {
         let allow_creation =
             self.mkpath_enabled() || (self.implied_dirs_enabled() && parent_within_root);
         let keep_dirlinks = self.keep_dirlinks_enabled();
+        // The destination ROOT is an operator-supplied path, so a symlink there
+        // is followed on the operator's own authority - `--keep-dirlinks`
+        // governs peer-supplied directories *inside* the tree, not the operand
+        // the operator typed. Trust is ownership, not location: uid 0 or our
+        // euid is the admin's own `/backup -> /mnt/disk` layout; any other uid
+        // is an attacker who raced the component, and stays refused.
+        //
+        // upstream: `rsync-3.5.0/util1.c:1216` `change_dir()` resolves an
+        // absolute destination with `open_no_attacker_symlinks()` and `fchdir`s
+        // to it, independent of `--keep-dirlinks`.
+        let follow_operator_dest_symlink = parent == self.destination_root();
 
         let result = if self.mode.is_dry_run() {
             match fs::symlink_metadata(parent) {
@@ -162,7 +191,11 @@ impl<'a> CopyContext<'a> {
                     let ty = existing.file_type();
                     if ty.is_dir() {
                         Ok(())
-                    } else if keep_dirlinks && ty.is_symlink() {
+                    } else if ty.is_symlink()
+                        && (keep_dirlinks
+                            || (follow_operator_dest_symlink
+                                && Self::operator_owns_symlink(&existing)))
+                    {
                         follow_symlink_metadata(parent).and_then(|metadata| {
                             if metadata.file_type().is_dir() {
                                 Ok(())
@@ -210,7 +243,11 @@ impl<'a> CopyContext<'a> {
                     let ty = existing.file_type();
                     if ty.is_dir() {
                         Ok(())
-                    } else if keep_dirlinks && ty.is_symlink() {
+                    } else if ty.is_symlink()
+                        && (keep_dirlinks
+                            || (follow_operator_dest_symlink
+                                && Self::operator_owns_symlink(&existing)))
+                    {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
                             Ok(())
@@ -240,7 +277,11 @@ impl<'a> CopyContext<'a> {
                     let ty = existing.file_type();
                     if ty.is_dir() {
                         Ok(())
-                    } else if keep_dirlinks && ty.is_symlink() {
+                    } else if ty.is_symlink()
+                        && (keep_dirlinks
+                            || (follow_operator_dest_symlink
+                                && Self::operator_owns_symlink(&existing)))
+                    {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
                             Ok(())

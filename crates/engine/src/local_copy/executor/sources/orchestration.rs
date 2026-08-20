@@ -499,6 +499,7 @@ pub(crate) fn copy_sources(
 
             let mut first_io_error: Option<LocalCopyError> = None;
             for source in &worklist {
+                context.set_source_anchor(source_confinement_anchor(source));
                 let result = process_single_source(
                     context,
                     plan,
@@ -636,6 +637,28 @@ pub(crate) fn copy_sources(
 }
 
 /// Processes a single source entry in the copy operation.
+/// The directory the sender would `chdir` into for `source`, used as the
+/// confinement anchor for that operand's content reads.
+///
+/// upstream: `rsync-3.5.0/main.c` chdirs to the transfer root before the
+/// sender runs, and `sender.c` opens file content confined beneath it. A
+/// trailing-slash operand (`src/`) transfers the directory's *contents*, so the
+/// operand itself is the root; otherwise the operand is the first entry and its
+/// parent is the root.
+///
+/// Returns `None` when the operand has no parent (a bare relative name, or
+/// `/`), leaving the open to the `O_NOFOLLOW` leaf rule alone rather than
+/// anchoring somewhere arbitrary.
+fn source_confinement_anchor(source: &SourceSpec) -> Option<PathBuf> {
+    let path = source.path();
+    if source.copy_contents() {
+        return Some(path.to_path_buf());
+    }
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+}
+
 fn process_single_source(
     context: &mut CopyContext,
     plan: &LocalCopyPlan,

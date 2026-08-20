@@ -566,6 +566,7 @@ impl ReceiverContext {
                     true,
                     Some(&file_path),
                     filter_ref,
+                    None,
                 ) {
                     metadata_errors.push((file_path.clone(), e.to_string()));
                 }

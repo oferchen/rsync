@@ -146,7 +146,24 @@ fn create_new_temp(path: &Path) -> io::Result<fs::File> {
 ///
 /// `replace_existing` is always `true`: upstream `do_rename` overwrites the
 /// destination, matching `std::fs::rename`'s replace semantics.
-fn hardened_rename(temp_path: &Path, final_path: &Path) -> io::Result<()> {
+///
+/// On Unix a known `dest_root` routes the rename through
+/// `fast_io::confined_rename`, which resolves each endpoint that lies beneath
+/// the root through the per-component confined walk. Without that, an
+/// attacker who flips a destination parent directory to a symlink between
+/// temp-create and commit redirects the transferred file outside the tree -
+/// the escape upstream's `rename-fullpath-symlink-race` test demonstrates, and
+/// which an absolute `--temp-dir` makes reachable because the source endpoint
+/// then lives outside the tree.
+///
+/// upstream: `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - "Confine each side
+/// independently. [...] Doing each side independently means an absolute source
+/// never disables confinement of a relative destination."
+fn hardened_rename(
+    temp_path: &Path,
+    final_path: &Path,
+    dest_root: Option<&Path>,
+) -> io::Result<()> {
     // Test-only fault injection: force the EXDEV boundary so the copy+remove
     // fallback runs deterministically on a single filesystem (and on Windows CI,
     // where a real second volume is unavailable).
@@ -156,10 +173,14 @@ fn hardened_rename(temp_path: &Path, final_path: &Path) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
+        let _ = dest_root;
         fast_io::rename_no_follow(temp_path, final_path, true)
     }
     #[cfg(not(windows))]
     {
+        if let Some(root) = dest_root {
+            return fast_io::confined_rename(root, temp_path, final_path, true);
+        }
         if let Some(result) = fast_io::try_rename_via_io_uring(temp_path, final_path) {
             result
         } else {
@@ -285,13 +306,19 @@ pub struct DestinationWriteGuard {
     final_path: PathBuf,
     strategy: GuardStrategy,
     committed: bool,
+    /// Root of the destination tree, when the caller knows one. Confines the
+    /// commit rename; see [`hardened_rename`].
+    dest_root: Option<PathBuf>,
 }
 
 impl DestinationWriteGuard {
-    /// Creates a new write guard with an associated temporary file.
+    /// Creates a new write guard whose commit rename is **not** confined.
     ///
-    /// The temporary file is created in the same directory as the
-    /// destination (or in `temp_dir` if provided) to ensure atomic rename.
+    /// Equivalent to [`new_confined`](Self::new_confined) with no destination
+    /// root. Callers that know the root - every production copy path does, via
+    /// the plan's destination root - must use `new_confined` instead, or a
+    /// destination parent flipped to a symlink mid-transfer can redirect the
+    /// commit outside the tree.
     ///
     /// # Errors
     ///
@@ -302,6 +329,26 @@ impl DestinationWriteGuard {
         partial: bool,
         partial_dir: Option<&Path>,
         temp_dir: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
+        Self::new_confined(destination, partial, partial_dir, temp_dir, None)
+    }
+
+    /// Creates a new write guard with an associated temporary file, confining
+    /// the commit rename beneath `dest_root`.
+    ///
+    /// The temporary file is created in the same directory as the
+    /// destination (or in `temp_dir` if provided) to ensure atomic rename.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the temporary file cannot be created, the
+    /// destination directory does not exist, or permission is denied.
+    pub fn new_confined(
+        destination: &Path,
+        partial: bool,
+        partial_dir: Option<&Path>,
+        temp_dir: Option<&Path>,
+        dest_root: Option<&Path>,
     ) -> Result<(Self, fs::File), LocalCopyError> {
         let partial_kind = if partial {
             match partial_dir {
@@ -351,6 +398,7 @@ impl DestinationWriteGuard {
                                 partial: partial_kind,
                             },
                             committed: false,
+                            dest_root: dest_root.map(Path::to_path_buf),
                         },
                         file,
                     ));
@@ -372,12 +420,22 @@ impl DestinationWriteGuard {
     /// directory listing. Calling [`commit`](Self::commit) materializes it at the
     /// destination using `linkat(2)`.
     ///
+    /// `dest_root` confines that `linkat` exactly as it confines the commit
+    /// rename: this strategy publishes the file under its final name with
+    /// `linkat` instead of `rename`, so it is the same commit decision and
+    /// needs the same anchoring. Leaving it unconfined made the escape
+    /// platform-split - `O_TMPFILE` exists only on Linux, so the destination
+    /// tree was protected on macOS and open on Linux.
+    ///
     /// # Errors
     ///
     /// Returns an error if `O_TMPFILE` is not supported or the directory is not
     /// writable. Callers should fall back to [`new`](Self::new) on failure.
     #[cfg(target_os = "linux")]
-    pub fn new_anonymous(destination: &Path) -> Result<(Self, fs::File), LocalCopyError> {
+    pub fn new_anonymous(
+        destination: &Path,
+        dest_root: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
         let dir = destination.parent().unwrap_or(Path::new("."));
         let file = fast_io::open_anonymous_tmpfile(dir, 0o644)
             .map_err(|error| LocalCopyError::io("open anonymous temp file", destination, error))?;
@@ -391,6 +449,7 @@ impl DestinationWriteGuard {
                 final_path: destination.to_path_buf(),
                 strategy: GuardStrategy::Anonymous { file: Some(file) },
                 committed: false,
+                dest_root: dest_root.map(Path::to_path_buf),
             },
             writer,
         ))
@@ -502,13 +561,18 @@ impl DestinationWriteGuard {
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
         loop {
-            match hardened_rename(&temp_path, &self.final_path) {
+            match hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref()) {
                 Ok(()) => return Ok(false),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
-                    hardened_rename(&temp_path, &self.final_path).map_err(|rename_error| {
-                        LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
-                    })?;
+                    hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref())
+                        .map_err(|rename_error| {
+                            LocalCopyError::io(
+                                self.finalise_action(),
+                                temp_path.clone(),
+                                rename_error,
+                            )
+                        })?;
                     return Ok(false);
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
@@ -556,11 +620,33 @@ impl DestinationWriteGuard {
                 io::Error::other("anonymous fd already consumed"),
             )
         })?;
-        // Remove existing destination so linkat does not fail with EEXIST.
-        remove_existing_destination(&self.final_path)?;
-        fast_io::link_anonymous_tmpfile(&file, &self.final_path).map_err(|error| {
-            LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
-        })
+        // Link first and only clear the destination on EEXIST, mirroring
+        // `hardened_rename`'s retry shape. Removing up front would make a
+        // *refused* commit destructive: the confined walk rejects an escaping
+        // destination after the unlink, leaving nothing behind. Upstream
+        // refuses without touching the file, and so must this.
+        let attempt = |guard: &Self| match guard.dest_root.as_deref() {
+            Some(root) => {
+                use std::os::fd::AsFd;
+                fast_io::confined_link_anonymous(file.as_fd(), root, &guard.final_path)
+            }
+            None => fast_io::link_anonymous_tmpfile(&file, &guard.final_path),
+        };
+
+        match attempt(self) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination(&self.final_path)?;
+                attempt(self).map_err(|error| {
+                    LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
+                })
+            }
+            Err(error) => Err(LocalCopyError::io(
+                "finalise anonymous temp file",
+                &self.final_path,
+                error,
+            )),
+        }
     }
 
     /// Returns the final destination path.
@@ -1015,7 +1101,7 @@ mod tests {
                 return;
             }
 
-            let (guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, _file) = DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             assert!(guard.is_anonymous());
             // Anonymous files have no visible staging path - staging_path returns final_path.
             assert_eq!(guard.staging_path(), guard.final_path());
@@ -1030,7 +1116,8 @@ mod tests {
                 return;
             }
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"anonymous content").expect("write");
             drop(file);
 
@@ -1052,7 +1139,8 @@ mod tests {
 
             fs::write(&dest, b"old").expect("create existing");
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"new").expect("write");
             drop(file);
 
@@ -1068,7 +1156,8 @@ mod tests {
                 return;
             }
 
-            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             file.write_all(b"discarded").expect("write");
             drop(file);
             guard.discard();
@@ -1088,7 +1177,8 @@ mod tests {
             }
 
             {
-                let (_guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+                let (_guard, _file) =
+                    DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
             }
 
             assert!(!dest.exists());
