@@ -3869,6 +3869,29 @@ fn shell_safe_simple_path_unchanged() {
     assert_eq!(shell_safe("/simple/path"), "/simple/path");
 }
 
+/// A newline in a filename argument must be backslash-escaped, so the remote
+/// shell's `eval "$@"` sees one literal token instead of a command terminator
+/// followed by a second command.
+///
+/// upstream: options.c:2695 `SHELL_CHARS` includes `\n` and `\r`. oc's set was
+/// a byte-exact port of 3.4.4's, which has neither, so `needs_escaping` was
+/// false and the raw newline reached the argv verbatim.
+#[test]
+fn shell_safe_escapes_newline_and_carriage_return() {
+    // The injection shape: everything after the newline would run as its own
+    // command if the newline survived unescaped.
+    assert_eq!(shell_safe("/tmp/a\ntouch pwned"), "/tmp/a\\\ntouch\\ pwned");
+    assert_eq!(shell_safe("/tmp/a\rb"), "/tmp/a\\\rb");
+}
+
+/// Non-vacuity companion for `shell_safe_escapes_newline_and_carriage_return`:
+/// a name carrying no metacharacter at all must still pass through untouched,
+/// so the test above cannot pass merely because escaping became unconditional.
+#[test]
+fn shell_safe_leaves_a_metacharacter_free_name_alone() {
+    assert_eq!(shell_safe("/tmp/plain-name.txt"), "/tmp/plain-name.txt");
+}
+
 /// A non-UTF-8 operand round-trips byte-identically through
 /// `determine_transfer_role` -> `shell_safe_filename_arg`: the raw path byte
 /// (`0xFF`, a legal Unix filename byte rsync carries as `char*`) survives, and
