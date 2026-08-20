@@ -244,3 +244,166 @@ pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
     let (new_dirfd, new_leaf) = owner_trusted_parent(new_path)?;
     crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
 }
+
+/// Open `path` with the parent resolved by the ownership walk and the leaf
+/// refused if it is a symlink.
+///
+/// The two halves are deliberately different policies, and both are load-bearing:
+///
+/// - **parent components** go through [`owner_trusted_parent`], which follows a
+///   symlink owned by uid 0 or our euid and refuses any other-uid one. This is
+///   what defends the `/tmp/somedir/rsync.log` shape, where the leaf does not
+///   exist yet so there is nothing for `O_NOFOLLOW` to reject.
+/// - **the leaf** gets an unconditional `O_NOFOLLOW`, so a symlink *at* the named
+///   path is refused whoever owns it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:469` - the last component is opened
+///   `openat(dfd, comp, flags | O_NOFOLLOW, mode)`: blanket `O_NOFOLLOW` on the
+///   leaf, in contrast to the ownership test the walk applies to every parent.
+/// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - the public
+///   entry point this mirrors, used for the opens that are not confined beneath
+///   a root (`--log-file`, `--*-from`, lock/motd - `syscall.c:232`).
+///
+/// # Errors
+///
+/// Propagates the walk's refusal (`ELOOP`) or the `openat(2)` errno - notably
+/// `ELOOP` when the leaf itself is a symlink.
+fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std::fs::File> {
+    let (dirfd, leaf) = owner_trusted_parent(path)?;
+    rustix::fs::openat(
+        dirfd.as_fd(),
+        leaf.as_os_str(),
+        flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        mode,
+    )
+    .map(std::fs::File::from)
+    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+}
+
+/// Open an operator-supplied path read-only through the ownership walk.
+///
+/// The read-side counterpart for the operator paths rsync only consumes -
+/// `--password-file`, `--exclude-from`/`--include-from`/`--files-from`, the
+/// daemon config and secrets files.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
+    operator_open_with(path, OFlags::RDONLY, Mode::empty())
+}
+
+/// Open an operator-supplied path for appending, creating it if absent.
+///
+/// This is the `--log-file` shape, and the reason the leaf `O_NOFOLLOW` matters
+/// as much as the walk: a privileged rsync appending through a planted symlink
+/// writes attacker-chosen bytes into an attacker-chosen file.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_with(
+        path,
+        OFlags::WRONLY | OFlags::APPEND | OFlags::CREATE,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{operator_open_append, operator_open_read};
+    use std::io::{Read, Write};
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    /// A plain path with no symlink anywhere resolves and opens normally - the
+    /// walk must not break the ordinary case it guards.
+    #[test]
+    fn reads_a_plain_path_through_a_real_directory() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = temp.path().join("logs");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::write(dir.join("f"), b"payload").expect("write");
+
+        let mut opened = operator_open_read(&dir.join("f")).expect("open");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "payload");
+    }
+
+    /// A symlink AT the named path is refused whoever owns it.
+    ///
+    /// upstream: `syscall.c:469` opens the last component with `flags |
+    /// O_NOFOLLOW` - the leaf is not subject to the ownership test the walk
+    /// applies to parents, it is refused outright. The plant here is owned by
+    /// the running uid, which the *parent* rule would happily follow; that is
+    /// what makes this cell discriminate leaf policy from parent policy.
+    #[test]
+    fn refuses_a_symlink_at_the_leaf_even_when_self_owned() {
+        let temp = TempDir::new().expect("tempdir");
+        let victim = temp.path().join("victim");
+        std::fs::write(&victim, b"SENTINEL").expect("write victim");
+        let plant = temp.path().join("log");
+        symlink(&victim, &plant).expect("symlink");
+
+        let refused = operator_open_read(&plant).expect_err("leaf symlink must be refused");
+        assert_eq!(
+            refused.raw_os_error(),
+            Some(rustix::io::Errno::LOOP.raw_os_error()),
+            "expected ELOOP, got {refused:?}"
+        );
+        assert_eq!(
+            std::fs::read(&victim).expect("victim"),
+            b"SENTINEL",
+            "the victim file was opened through the planted leaf"
+        );
+    }
+
+    /// A self-owned symlink in a PARENT component is followed.
+    ///
+    /// This is the `/backup -> /mnt/disk` admin layout: ownership, not location,
+    /// is the trust signal, so the walk must not refuse the operator's own
+    /// indirection. Pairs with the leaf cell above - together they show the two
+    /// halves are genuinely different policies rather than one blanket rule.
+    #[test]
+    fn follows_a_self_owned_parent_symlink() {
+        let temp = TempDir::new().expect("tempdir");
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).expect("mkdir");
+        let via = temp.path().join("via");
+        symlink(&real, &via).expect("symlink");
+
+        let mut created =
+            operator_open_append(&via.join("rsync.log"), 0o600).expect("append through parent");
+        created.write_all(b"line\n").expect("write");
+
+        assert_eq!(
+            std::fs::read(real.join("rsync.log")).expect("log"),
+            b"line\n",
+            "the log did not land in the directory the trusted parent pointed at"
+        );
+    }
+
+    /// Append creates the file when absent and does not truncate it when present.
+    #[test]
+    fn append_creates_then_appends() {
+        let temp = TempDir::new().expect("tempdir");
+        let log = temp.path().join("rsync.log");
+
+        operator_open_append(&log, 0o600)
+            .expect("create")
+            .write_all(b"one\n")
+            .expect("write");
+        operator_open_append(&log, 0o600)
+            .expect("reopen")
+            .write_all(b"two\n")
+            .expect("write");
+
+        assert_eq!(std::fs::read(&log).expect("log"), b"one\ntwo\n");
+    }
+}

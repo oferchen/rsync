@@ -26,13 +26,12 @@ use core::client::{BatchConfig, BatchMode, HumanReadableMode};
 use core::{message::Role, rsync_error};
 use logging::VerbosityConfig;
 use logging_sink::MessageSink;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
-
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 
 use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
 
@@ -1204,14 +1203,29 @@ fn derive_batch_seed() -> i32 {
 }
 
 /// Opens a log file for appending, creating it if it does not exist.
-fn open_log_file(path: &PathBuf) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
+///
+/// `--log-file` is an operator-supplied path, so on Unix it is resolved by the
+/// ownership walk rather than handed to the kernel as a string: every parent
+/// component is refused if it is a symlink owned by an untrusted uid, and the
+/// leaf is opened `O_NOFOLLOW`. A privileged rsync appending through a planted
+/// symlink writes attacker-chosen bytes into an attacker-chosen file, and the
+/// parent-component case (`--log-file=/tmp/somedir/rsync.log`, where the leaf
+/// does not exist yet) is not defended by `O_NOFOLLOW` alone.
+///
+/// upstream: `syscall.c:537` `open_no_attacker_symlinks()` - the entry point for
+/// the opens that are not confined beneath a root, `--log-file` among them
+/// (`syscall.c:232`).
+fn open_log_file(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
-        options.mode(0o666);
+        fast_io::operator_open_append(path, 0o666)
     }
-    options.open(path)
+    #[cfg(not(unix))]
+    {
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        options.open(path)
+    }
 }
 
 #[cfg(test)]
