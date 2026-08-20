@@ -154,7 +154,7 @@ filter-merge-symlink fail
 fuzzy pass
 fuzzy-basis pass
 git-set-file-times-python-compat-regression pass
-growing-file fail
+growing-file pass
 hands pass
 hardlinks pass
 hardlinks-deep pass

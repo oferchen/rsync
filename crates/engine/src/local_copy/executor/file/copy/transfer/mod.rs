@@ -21,6 +21,9 @@ mod verify_redo;
 mod write_strategy;
 
 #[cfg(test)]
+mod tests;
+
+#[cfg(test)]
 pub(crate) use open::take_fsync_call_count;
 pub(super) use verify_redo::execute_transfer;
 
