@@ -47,11 +47,21 @@
 # WHICH RUNNER: chosen from what the extracted tree ships, not from the version
 # string. rsync moved its testsuite from shell `*.test` scripts to Python
 # (runtests.py + testsuite/*_test.py) between 3.4.4 and 3.5.0, so one
-# release-tarball path has to serve both. A tree with runtests.py delegates to
-# upstream's own runner (keeping the oracle upstream's, and unlocking
-# --rsync-bin2 version mixing and --expect-result manifests); a tree with
-# `*.test` takes the shell loop below. Neither can select zero tests silently:
-# the shell loop refuses an empty match, and an empty manifest is refused too.
+# release-tarball path has to serve both. A tree shipping `testsuite/*_test.py`
+# delegates to upstream's own runner (keeping the oracle upstream's, and
+# unlocking --rsync-bin2 version mixing and --expect-result manifests); a tree
+# with `*.test` takes the shell loop below. Neither can select zero tests
+# silently: the shell loop refuses an empty match, and an empty manifest is
+# refused too.
+#
+# ⚠ The `*_test.py` half of `python_suite_available` is LOAD-BEARING, and the
+# `runtests.py` half alone would be WRONG. 3.4.4 ALSO ships a runtests.py - its
+# own docstring says "Invokes test scripts from testsuite/", i.e. it is the
+# older shell-script driver, same filename and a different contract. Measured:
+# 3.4.4 = runtests.py + 57 `*.test` + 0 `*_test.py`; 3.5.0 = runtests.py + 0
+# `*.test` + 345 `*_test.py`. So do NOT "simplify" the predicate to a bare
+# `[[ -f runtests.py ]]`: that routes 3.4.4 into the Python runner, which
+# cannot drive it.
 
 set -euo pipefail
 
