@@ -67,7 +67,11 @@ impl OutFormat {
 /// upstream: generator.c:582-583 - emit when `iflags & (SIGNIFICANT_ITEM_FLAGS
 /// | ITEM_REPORT_XATTR) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
 /// || (xname && *xname)`.
-fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> bool {
+fn should_suppress_event(
+    event: &ClientEvent,
+    context: &OutFormatContext,
+    format_itemizes: bool,
+) -> bool {
     if event.itemize_override().is_some() {
         // A remote transfer supplies a row only when the sender's own emit gate
         // fired (generator.c:582-583 on the remote side), and it has no local
@@ -85,6 +89,28 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
     if matches!(event.kind(), ClientEventKind::MetadataReused)
         && !event.was_created()
         && !event.change_set().has_any_change()
+    {
+        return true;
+    }
+
+    // upstream: log.c:875-890 `maybe_log_item()` - `see_item` is gated on
+    // `itemizing`, so a format without `%i` reports only entries that actually
+    // moved data. An attribute-only change (a chmod against an otherwise
+    // up-to-date file) is announced solely when the format itemizes.
+    //
+    // Measured against rsync 3.5.0 on a chmod-only second run:
+    //   --out-format='%n'      -> silent      (oc printed `a`)
+    //   --out-format='%%i %n'  -> silent      (oc printed `%i a`)
+    //   --out-format='%i %n'   -> `.f...p..... a`  (oc already matched)
+    // The new-file and content-change rows print under every one of those
+    // formats, which is why this narrows to `MetadataReused` rather than
+    // gating the whole emit on `format_itemizes`.
+    //
+    // Placed below the `-vv` / `-ii` arms above so their existing
+    // force-emission precedence is unchanged.
+    if !format_itemizes
+        && matches!(event.kind(), ClientEventKind::MetadataReused)
+        && !event.was_created()
     {
         return true;
     }
@@ -188,7 +214,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
             }
             continue;
         }
-        if should_suppress_event(event, context) {
+        if should_suppress_event(event, context, format.itemizes()) {
             continue;
         }
         format.render(event, context, writer)?;
