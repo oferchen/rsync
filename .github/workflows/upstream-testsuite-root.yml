@@ -1,4 +1,4 @@
-name: Upstream Testsuite root (rsync 3.5.0)
+name: Upstream Testsuite 3.5.0 (root, pipe)
 
 # Standalone entry point for the ROOT (sudo) upstream rsync testsuite so its
 # pass/fail status is visible as a README badge. This re-runs the same 3.5.0
@@ -29,4 +29,7 @@ jobs:
     with:
       upstream_rsync_version: '3.5.0'
       variant: 'root'
+      # Upstream's secure default: a stdio socketpair, no listening socket. The
+      # loopback-TCP half of this leg is upstream-testsuite-root-tcp.yml.
+      transport: 'pipe'
       expect_result_root: tools/ci/upstream-3.5.0-expect.root.txt
