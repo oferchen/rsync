@@ -701,7 +701,7 @@ mod tests {
     fn format_command_substitutes_host() {
         let config = ConnectProgramConfig::new("connect to %H".into(), None).unwrap();
         let result = config.format_command("example.com", 873).unwrap();
-        assert_eq!(result, "connect to example.com");
+        assert_eq!(result, "connect to 'example.com'");
     }
 
     #[test]
@@ -715,7 +715,7 @@ mod tests {
     fn format_command_substitutes_both() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("server.local", 22).unwrap();
-        assert_eq!(result, "nc server.local 22");
+        assert_eq!(result, "nc 'server.local' 22");
     }
 
     #[test]
@@ -743,7 +743,7 @@ mod tests {
     fn format_command_multiple_substitutions() {
         let config = ConnectProgramConfig::new("%H:%P and %H again".into(), None).unwrap();
         let result = config.format_command("myhost", 9999).unwrap();
-        assert_eq!(result, "myhost:9999 and myhost again");
+        assert_eq!(result, "'myhost':9999 and 'myhost' again");
     }
 
     #[test]
@@ -757,7 +757,7 @@ mod tests {
     fn format_command_adjacent_specifiers() {
         let config = ConnectProgramConfig::new("%H%P".into(), None).unwrap();
         let result = config.format_command("test", 123).unwrap();
-        assert_eq!(result, "test123");
+        assert_eq!(result, "'test'123");
     }
 
     #[test]
@@ -765,21 +765,28 @@ mod tests {
         let config =
             ConnectProgramConfig::new("ssh -p %P %H -o 'Port=%P' %% done".into(), None).unwrap();
         let result = config.format_command("server", 2222).unwrap();
-        assert_eq!(result, "ssh -p 2222 server -o 'Port=2222' % done");
+        assert_eq!(result, "ssh -p 2222 'server' -o 'Port=2222' % done");
     }
 
     #[test]
     fn format_command_ipv6_host() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("::1", 873).unwrap();
-        assert_eq!(result, "nc ::1 873");
+        assert_eq!(result, "nc '::1' 873");
     }
 
+    /// An empty host is refused, not substituted.
+    ///
+    /// upstream: socket.c:208 - `if (!*host || ...) return 1`. It survives a
+    /// direct exec as an empty argument but vanishes when a nested shell
+    /// re-splits the command, shifting every later argument left.
     #[test]
-    fn format_command_empty_host() {
-        let config = ConnectProgramConfig::new("nc '%H' %P".into(), None).unwrap();
-        let result = config.format_command("", 873).unwrap();
-        assert_eq!(result, "nc '' 873");
+    fn format_command_empty_host_is_refused() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        assert_eq!(
+            config.format_command("", 873),
+            Err(UNSAFE_CONNECT_HOST.to_owned())
+        );
     }
 
     #[test]
@@ -796,11 +803,91 @@ mod tests {
         assert_eq!(result, "nc host 65535");
     }
 
+    /// `@` is outside upstream's allowed byte set, so a `user@host` form is
+    /// refused rather than quoted.
+    ///
+    /// upstream: socket.c:211 - the set is alphanumerics plus `._:-%+~`.
     #[test]
-    fn format_command_special_chars_in_host() {
+    fn format_command_refuses_a_byte_outside_the_allowed_set() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
-        let result = config.format_command("user@host.example.com", 22).unwrap();
-        assert_eq!(result, "nc user@host.example.com 22");
+        assert_eq!(
+            config.format_command("user@host.example.com", 22),
+            Err(UNSAFE_CONNECT_HOST.to_owned())
+        );
+    }
+
+    /// Every host the upstream cell expects to be refused.
+    ///
+    /// upstream: `testsuite/connect-prog-host-quoting_test.py`. The first four
+    /// are refused by the leading-byte rule (they change an argument's meaning,
+    /// which quoting cannot undo); the injection string is refused because `;`,
+    /// space, `$`, `{` and `#` are all outside the allowed set.
+    #[test]
+    fn format_command_refuses_every_unsafe_host_from_the_upstream_cell() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        for host in [
+            "localhost;touch${IFS}pwned;#",
+            "-c",
+            "+x",
+            "~root",
+            "%self",
+            "",
+        ] {
+            assert_eq!(
+                config.format_command(host, 873),
+                Err(UNSAFE_CONNECT_HOST.to_owned()),
+                "host {host:?} must be refused"
+            );
+        }
+    }
+
+    /// Every host the upstream cell expects to survive, quoted.
+    ///
+    /// upstream: `testsuite/connect-prog-host-quoting_test.py`. `+`, `~` and
+    /// `%` are legal mid-word - `%` in particular is required for an IPv6 zone
+    /// id, which the cell passes as `[fe80::1%eth0]` and rsync unwraps to
+    /// `fe80::1%eth0` before this point.
+    #[test]
+    fn format_command_accepts_every_safe_host_from_the_upstream_cell() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        for host in [
+            "example.com",
+            "example.com.",
+            "host_name",
+            "host+alias",
+            "host~alias",
+            "fe80::1%eth0",
+        ] {
+            assert_eq!(
+                config.format_command(host, 873),
+                Ok(format!("nc '{host}' 873").into()),
+                "host {host:?} must pass through quoted"
+            );
+        }
+    }
+
+    /// A template with no specifier never inspects the host at all.
+    ///
+    /// upstream: socket.c:488 - the refusal, the quoting and the substitution
+    /// all sit inside `if (prog && strchr(prog, '%'))`. Without this gate a
+    /// fixed command such as `nc localhost 873` would start failing for hosts
+    /// it never interpolates.
+    #[test]
+    fn format_command_skips_host_validation_without_a_specifier() {
+        let config = ConnectProgramConfig::new("nc localhost 873".into(), None).unwrap();
+        let result = config.format_command("localhost;touch pwned", 873).unwrap();
+        assert_eq!(result, "nc localhost 873");
+    }
+
+    /// The `'\''` escape is upstream's backstop, unreachable through
+    /// `format_command` because `'` is outside the allowed byte set. Pinned
+    /// directly so the two halves cannot drift apart.
+    ///
+    /// upstream: socket.c:152 `shell_quote_connect_host()`.
+    #[test]
+    fn shell_quote_renders_an_embedded_quote_as_the_escape_sequence() {
+        assert_eq!(shell_quote_connect_host("a'b"), r"'a'\''b'");
+        assert!(shell_unsafe_connect_host("a'b"));
     }
 
     /// Verifies that a child process spawned via `connect_via_program` receives
