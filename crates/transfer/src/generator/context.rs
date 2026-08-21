@@ -715,7 +715,15 @@ impl GeneratorContext {
     ///   produces `scan_dirfd` for a daemon.
     /// - `util1.c:1216` `change_dir()` - the per-argument descent, confined
     ///   with `secure_relative_open()` for a non-chrooted daemon.
+    ///
+    /// The confined branch is Unix-only, matching
+    /// [`SourceOpen::open`](crate::generator::open_source::SourceOpen::open):
+    /// `fast_io` re-exports the confined helpers under `#[cfg(unix)]` because
+    /// the walk is built on `openat`/`readlinkat`, and the oc daemon - the only
+    /// producer of a module confinement root - is itself Unix-only. On non-Unix
+    /// this is the plain `read_link` it has always been.
     pub(in crate::generator) fn read_source_link(&self, full_path: &Path) -> io::Result<PathBuf> {
+        #[cfg(unix)]
         if let Some(root) = self.confine_root() {
             // oc keeps absolute source paths, so the confinement-relative
             // component is the source path with the root stripped - the same
