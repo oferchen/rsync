@@ -192,3 +192,41 @@ pub fn fstatat_nofollow(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<AtMet
         Err(io::Error::last_os_error())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::fstatat_nofollow;
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+
+    /// [`AtMetadata`](super::AtMetadata) and [`std::fs::Metadata`] must agree on
+    /// the identity and comparison fields for the same file.
+    ///
+    /// This is not a tautology across platforms. `fstatat_nofollow` calls
+    /// `libc::fstatat`, while `std::fs::symlink_metadata` on Linux goes through
+    /// `statx` and reconstructs `st_dev` from the returned major/minor pair. Any
+    /// caller that stats a file both ways and then compares the two results -
+    /// which is how the receiver's alt-dest basis lookup verifies that a
+    /// path-based stat landed on the inode the confined stat saw - is silently
+    /// broken if those reconstructions differ on any target.
+    ///
+    /// Kept as a standing invariant rather than a one-off probe: it costs two
+    /// syscalls and it fails loudly on the platform where it stops holding.
+    #[test]
+    fn at_metadata_agrees_with_std_metadata_on_the_same_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("probe.bin");
+        std::fs::write(&path, b"probe payload").expect("write probe file");
+
+        let dir = std::fs::File::open(temp.path()).expect("open temp dir");
+        let at = fstatat_nofollow(dir.as_fd(), std::ffi::OsStr::new("probe.bin"))
+            .expect("fstatat the probe file");
+        let std_meta = std::fs::symlink_metadata(&path).expect("symlink_metadata");
+
+        assert_eq!(at.dev(), std_meta.dev(), "st_dev disagrees");
+        assert_eq!(at.ino(), std_meta.ino(), "st_ino disagrees");
+        assert_eq!(at.size(), std_meta.len(), "size disagrees");
+        assert_eq!(at.mode(), std_meta.mode(), "st_mode disagrees");
+        assert_eq!(at.uid(), std_meta.uid(), "st_uid disagrees");
+    }
+}
