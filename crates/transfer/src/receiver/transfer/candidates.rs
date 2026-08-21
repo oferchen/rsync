@@ -21,8 +21,8 @@ use protocol::flist::FileEntry;
 
 use crate::receiver::directory::FailedDirectories;
 use crate::receiver::quick_check::{
-    dest_mtime_newer, dest_type_matches_source, is_hardlink_follower, quick_check_matches,
-    try_reference_dest,
+    BasisTrust, dest_mtime_newer, dest_type_matches_source, is_hardlink_follower,
+    quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
@@ -467,6 +467,7 @@ impl ReceiverContext {
                         metadata_errors,
                         acl_cache,
                         acl_id_map,
+                        BasisTrust::for_receiver(self.config.connection.is_daemon_connection),
                     )
                 {
                     continue;
