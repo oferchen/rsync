@@ -90,7 +90,11 @@ fn apply_global_directive(
             }
 
             let motd_path = resolve_config_relative_path(path, trimmed);
-            let contents = fs::read_to_string(&motd_path).map_err(|error| {
+            // upstream: clientserver.c:188 reads the motd through
+            // `open_no_attacker_symlinks()`. The daemon is typically root here,
+            // so a symlink planted at any component of an operator-named motd
+            // path would otherwise splice an arbitrary file into the greeting.
+            let contents = crate::daemon::operator_file::read_to_string(&motd_path).map_err(|error| {
                 let motd_display = motd_path.display();
                 config_parse_error(
                     path,
