@@ -793,14 +793,14 @@ mod tests {
     fn format_command_port_zero() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("host", 0).unwrap();
-        assert_eq!(result, "nc host 0");
+        assert_eq!(result, "nc 'host' 0");
     }
 
     #[test]
     fn format_command_port_max() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("host", 65535).unwrap();
-        assert_eq!(result, "nc host 65535");
+        assert_eq!(result, "nc 'host' 65535");
     }
 
     /// `@` is outside upstream's allowed byte set, so a `user@host` form is
