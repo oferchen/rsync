@@ -50,7 +50,7 @@ pub(crate) fn is_refusal(error: &io::Error) -> bool {
     fast_io::is_symlink_refusal(error)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -60,7 +60,6 @@ mod tests {
     /// silently ignored instead of reported; if it narrowed to nothing, a
     /// refused symlink would abort a transfer upstream completes.
     #[test]
-    #[cfg(unix)]
     fn only_the_symlink_refusal_counts_as_a_refusal() {
         let refusal = io::Error::from_raw_os_error(libc::ELOOP);
         assert!(is_refusal(&refusal), "ELOOP is the walk's security refusal");
@@ -80,7 +79,6 @@ mod tests {
     /// keeps `.rsync-filter` behind a symlinked directory would lose their
     /// rules silently.
     #[test]
-    #[cfg(unix)]
     fn a_self_owned_symlink_is_still_followed() {
         use std::os::unix::fs::symlink;
 
