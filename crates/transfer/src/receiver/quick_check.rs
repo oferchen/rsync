@@ -264,10 +264,14 @@ struct ReferenceMatch<'a> {
 /// Directories whose basis file is missing, non-regular, or fails
 /// `quick_check_ok` contribute at most match_level 1 and are ignored here.
 ///
-/// The basis-dir entry is stat'd with `lstat` by default to mirror upstream
-/// `link_stat(cmpbuf, &sxp->st, 0)`. When `copy_links` is set (`-L`), it is
-/// stat'd with `stat` so a basis-dir symlink to a regular file is accepted,
-/// matching `link_stat()`'s dispatch to `x_stat` (flist.c:246).
+/// The basis-dir entry is always stat'd with `lstat`, so a symlink there is
+/// never followed - not even under `--copy-links`. `basis_link_stat()` does
+/// call `link_stat_at()`, which dispatches to `stat` when `copy_links` is set,
+/// but it only ever runs on the receiving side, and `do_recv()` clears
+/// `copy_links` before forking the generator (main.c:1009-1011). The flag is
+/// therefore unobservable here: a basis symlink makes the basis look absent and
+/// the file transfers normally, which is also what keeps a peer-named entry
+/// from turning an operator's basis dir into a read oracle.
 ///
 /// # Upstream Reference
 ///
@@ -275,6 +279,7 @@ struct ReferenceMatch<'a> {
 /// - `generator.c:965` - `link_stat` + `!S_ISREG` filter
 /// - `generator.c:971` - `quick_check_ok` gate (below it stays match_level 1)
 /// - `generator.c:977` - `unchanged_attrs()` promotes to match_level 3
+/// - `main.c:1009-1011` - `do_recv()` zeroes `copy_links` for the receiving side
 #[allow(clippy::too_many_arguments)]
 fn best_reference_match<'a>(
     entry: &FileEntry,
@@ -284,18 +289,12 @@ fn best_reference_match<'a>(
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
-    copy_links: bool,
     metadata_opts: &MetadataOptions,
 ) -> Option<ReferenceMatch<'a>> {
     let mut best: Option<ReferenceMatch<'a>> = None;
     for ref_dir in reference_directories {
         let ref_path = ref_dir.path.join(relative_path);
-        let stat_result = if copy_links {
-            fs::metadata(&ref_path)
-        } else {
-            fs::symlink_metadata(&ref_path)
-        };
-        let ref_meta = match stat_result {
+        let ref_meta = match fs::symlink_metadata(&ref_path) {
             Ok(m) if m.file_type().is_file() => m,
             _ => continue,
         };
@@ -377,7 +376,6 @@ pub(super) fn try_reference_dest(
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
-    copy_links: bool,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&AclCache>,
@@ -396,7 +394,6 @@ pub(super) fn try_reference_dest(
         size_only,
         always_checksum,
         modify_window,
-        copy_links,
         metadata_opts,
     ) else {
         return false;
@@ -942,7 +939,6 @@ mod info_copy_emission_tests {
             true,
             None,
             ModifyWindow::from_secs(0),
-            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -1003,7 +999,6 @@ mod info_copy_emission_tests {
             true,
             None,
             ModifyWindow::from_secs(0),
-            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -1030,11 +1025,13 @@ mod info_copy_emission_tests {
 ///
 /// upstream: `generator.c:965` — `link_stat(cmpbuf, &sxp->st, 0)` followed by
 /// `!S_ISREG(sxp->st.st_mode)` filters out a basis-dir entry that is itself a
-/// symlink (unless `copy_links` is set, in which case `link_stat()` falls
-/// through to `x_stat()` per `flist.c:246`). Without this gate the receiver
-/// would silently copy or hard-link from a symlink target it should not have
-/// consumed, diverging from upstream over remote-shell transports where the
-/// upstream `alt-dest.test` exercises the same scenario via `lsh.sh`.
+/// symlink. `--copy-links` does not lift the filter: `link_stat_at()` honours
+/// `copy_links`, but `do_recv()` zeroes that flag before the generator runs
+/// (main.c:1009-1011), so on the receiving side it is always clear. Without
+/// this gate the receiver would silently copy or hard-link from a symlink
+/// target it should not have consumed, diverging from upstream over
+/// remote-shell transports where the upstream `alt-dest.test` exercises the
+/// same scenario via `lsh.sh`.
 #[cfg(unix)]
 #[cfg(test)]
 mod symlink_basis_tests {
@@ -1073,7 +1070,6 @@ mod symlink_basis_tests {
         kind: ReferenceDirectoryKind,
         ref_dir: &std::path::Path,
         dest_dir: &std::path::Path,
-        copy_links: bool,
     ) -> bool {
         let entry = FileEntry::new_file(
             PathBuf::from("payload.bin"),
@@ -1097,7 +1093,6 @@ mod symlink_basis_tests {
             true,
             None,
             ModifyWindow::from_secs(0),
-            copy_links,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -1105,20 +1100,17 @@ mod symlink_basis_tests {
         )
     }
 
-    /// Without `--copy-links`, a basis-dir symlink must NOT match. Upstream
-    /// returns `-1` from `try_dests_reg` so the receiver requests a transfer
-    /// from the sender. oc-rsync must mirror this to keep wire-byte parity
-    /// over remote-shell transports (upstream `alt-dest.test`).
+    /// A basis-dir symlink must NOT match. Upstream returns `-1` from
+    /// `try_dests_reg` so the receiver requests a transfer from the sender.
+    /// oc-rsync must mirror this to keep wire-byte parity over remote-shell
+    /// transports (upstream `alt-dest.test`).
     #[test]
-    fn copy_dest_skips_symlink_basis_entry_without_copy_links() {
+    fn copy_dest_skips_symlink_basis_entry() {
         let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
 
-        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, false);
+        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir);
 
-        assert!(
-            !handled,
-            "basis-dir symlink must be skipped without --copy-links"
-        );
+        assert!(!handled, "basis-dir symlink must be skipped");
         assert!(
             !dest_dir.join("payload.bin").exists(),
             "destination must not be populated from a symlink basis"
@@ -1128,15 +1120,12 @@ mod symlink_basis_tests {
     /// `--link-dest` with a symlink basis must also be skipped: upstream's
     /// `try_dests_reg` filters before reaching `hard_link_one()`.
     #[test]
-    fn link_dest_skips_symlink_basis_entry_without_copy_links() {
+    fn link_dest_skips_symlink_basis_entry() {
         let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
 
-        let handled = run(ReferenceDirectoryKind::Link, &ref_dir, &dest_dir, false);
+        let handled = run(ReferenceDirectoryKind::Link, &ref_dir, &dest_dir);
 
-        assert!(
-            !handled,
-            "basis-dir symlink must be skipped without --copy-links"
-        );
+        assert!(!handled, "basis-dir symlink must be skipped");
         assert!(
             !dest_dir.join("payload.bin").exists(),
             "destination must not be hard-linked from a symlink basis"
@@ -1146,10 +1135,10 @@ mod symlink_basis_tests {
     /// `--compare-dest` mirrors the same filter: a symlink basis cannot mark
     /// the source entry as up-to-date.
     #[test]
-    fn compare_dest_skips_symlink_basis_entry_without_copy_links() {
+    fn compare_dest_skips_symlink_basis_entry() {
         let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
 
-        let handled = run(ReferenceDirectoryKind::Compare, &ref_dir, &dest_dir, false);
+        let handled = run(ReferenceDirectoryKind::Compare, &ref_dir, &dest_dir);
 
         assert!(
             !handled,
@@ -1157,30 +1146,11 @@ mod symlink_basis_tests {
         );
     }
 
-    /// With `--copy-links` (`-L`), upstream's `link_stat()` dispatches to
-    /// `x_stat()` which follows the symlink. A basis-dir symlink pointing at
-    /// a matching regular file is accepted as a regular-file basis.
+    /// Sanity check: a regular-file basis-dir entry still matches. This guards
+    /// against an over-eager fix that lstats the entry but then fails to
+    /// recognise a regular file.
     #[test]
-    fn copy_dest_follows_symlink_basis_entry_with_copy_links() {
-        let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
-
-        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, true);
-
-        assert!(
-            handled,
-            "with --copy-links, the symlink basis must resolve to a regular file"
-        );
-        assert_eq!(
-            fs::read(dest_dir.join("payload.bin")).expect("dest file"),
-            b"basis payload"
-        );
-    }
-
-    /// Sanity check: a regular-file basis-dir entry still matches in the
-    /// default `copy_links=false` path. This guards against an over-eager fix
-    /// that lstats the entry but then fails to recognise a regular file.
-    #[test]
-    fn copy_dest_matches_regular_basis_entry_without_copy_links() {
+    fn copy_dest_matches_regular_basis_entry() {
         let temp = tempfile::tempdir().expect("tempdir");
         let ref_dir = temp.path().join("basis");
         fs::create_dir_all(&ref_dir).expect("create basis dir");
@@ -1189,7 +1159,7 @@ mod symlink_basis_tests {
         let dest_dir = temp.path().join("dest");
         fs::create_dir_all(&dest_dir).expect("create dest dir");
 
-        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, false);
+        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir);
 
         assert!(handled, "regular-file basis must still be accepted");
         assert_eq!(
@@ -1585,7 +1555,6 @@ mod alt_dest_match_level_tests {
             size_only,
             None,
             ModifyWindow::from_secs(0),
-            false,
             &opts,
             &mut errs,
             None,
