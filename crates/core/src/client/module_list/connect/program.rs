@@ -625,7 +625,7 @@ const fn connect_host_byte_is_safe(byte: u8) -> bool {
 fn shell_unsafe_connect_host(host: &str) -> bool {
     match host.as_bytes() {
         [] => true,
-        [first, ..] if matches!(first, b'-' | b'+' | b'~' | b'%') => true,
+        [b'-' | b'+' | b'~' | b'%', ..] => true,
         bytes => !bytes.iter().copied().all(connect_host_byte_is_safe),
     }
 }
