@@ -176,3 +176,91 @@ fn refused_directory_swallows_its_contents_without_a_second_report() {
         "an allowed tree must not be swallowed"
     );
 }
+
+/// Builds a receiver whose daemon module excludes `secret`, the shape the
+/// `operator-path-traversal-*-daemon` conformance cells use.
+fn ctx_excluding(pattern: &str) -> ReceiverContext {
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.daemon_filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: pattern.into(),
+        ..FilterRuleWireFormat::default()
+    }];
+    ReceiverContext::new_for_test(&handshake, config)
+}
+
+fn refusal(ctx: &ReceiverContext, dest: &str) -> Option<String> {
+    ctx.reject_daemon_excluded_destination(std::path::Path::new(dest))
+        .err()
+        .map(|e| e.to_string())
+}
+
+/// THE ESCAPE (task 819): on a `path = /` module the daemon `exclude` is the
+/// only thing stopping a peer-supplied `..` traversal, because upstream's
+/// `abspath_outside_confinement` short-circuits at `rootlen <= 1`
+/// (`syscall.c:206-207`). The name check must therefore run on the collapsed
+/// path, so `pub/../secret` is refused exactly as a bare `secret` is.
+///
+/// upstream: `main.c:718-737` `get_local_name()`.
+#[test]
+fn daemon_excluded_destination_is_refused_after_dot_dot_collapse() {
+    let ctx = ctx_excluding("secret");
+
+    let direct = refusal(&ctx, "secret").expect("a directly excluded dest must be refused");
+    assert!(
+        direct.contains("daemon has excluded destination"),
+        "upstream wording expected, got: {direct}"
+    );
+
+    let traversed =
+        refusal(&ctx, "pub/../secret").expect("a '..' traversal into the excluded subtree escapes");
+    assert!(
+        traversed.contains("daemon has excluded destination"),
+        "upstream wording expected, got: {traversed}"
+    );
+    // upstream quotes the ORIGINAL argument, not the collapsed copy.
+    assert!(
+        traversed.contains("\"pub/../secret\""),
+        "the original operand must be quoted, got: {traversed}"
+    );
+}
+
+/// Non-vacuity companion: without this the refusal test would still pass if
+/// the check simply refused everything.
+#[test]
+fn daemon_allows_a_destination_no_rule_excludes() {
+    let ctx = ctx_excluding("secret");
+    assert!(
+        refusal(&ctx, "public/data").is_none(),
+        "an unexcluded destination must be accepted"
+    );
+    assert!(
+        refusal(&ctx, ".").is_none(),
+        "upstream skips the check entirely for a bare '.'"
+    );
+}
+
+/// A receiver with no daemon filter must not gain a new refusal path.
+#[test]
+fn destination_check_is_inert_without_a_daemon_filter() {
+    let handshake = test_handshake();
+    let ctx = ReceiverContext::new_for_test(&handshake, test_config());
+    assert!(refusal(&ctx, "anything/at/all").is_none());
+}
+
+/// The trailing-slash rule form must keep its `XFLG_DIR2WILD3` meaning
+/// (`exclude.c:308-313`): `/excluded/` becomes `<pat>/***`, matching the
+/// directory and its contents. Testing BOTH `is_dir` values is why upstream
+/// ORs its two `check_filter()` calls - a dir-only rule is invisible to a
+/// file-only probe.
+#[test]
+fn daemon_excluded_destination_honours_dir_only_rules() {
+    let ctx = ctx_excluding("excluded/");
+    assert!(
+        refusal(&ctx, "excluded").is_some(),
+        "a dir-only rule must still refuse the directory itself"
+    );
+}
