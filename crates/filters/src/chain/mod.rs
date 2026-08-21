@@ -35,7 +35,6 @@ mod scope;
 #[cfg(test)]
 mod tests;
 
-use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -387,10 +386,14 @@ impl FilterChain {
 
             // upstream: exclude.c:push_local_filters() - parse_filter_file()
             // silently skips missing files
-            let content = match fs::read_to_string(&merge_path) {
+            let content = match crate::merge_open::read_to_string(&merge_path) {
                 Ok(content) => content,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) if e.kind() == io::ErrorKind::PermissionDenied => continue,
+                // upstream: parse_filter_file() runs without XFLG_FATAL_ERRORS,
+                // so a merge file it cannot open is skipped, not fatal. A
+                // refused symlink joins that set.
+                Err(e) if crate::merge_open::is_refusal(&e) => continue,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
@@ -623,13 +626,15 @@ impl FilterChain {
         descriptor: &InlineDirMerge,
     ) -> Result<usize, FilterChainError> {
         let merge_path = directory.join(&descriptor.filename);
-        let content = match fs::read_to_string(&merge_path) {
+        let content = match crate::merge_open::read_to_string(&merge_path) {
             Ok(content) => content,
             // upstream: exclude.c:push_local_filters() - parse_filter_file()
             // silently skips missing files. Mirror that here so a `:C`
             // without an accompanying `.cvsignore` is a no-op.
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Ok(0),
+            // upstream: same non-fatal skip as the per-directory merge above.
+            Err(e) if crate::merge_open::is_refusal(&e) => return Ok(0),
             Err(e) => {
                 self.pop_scopes_at_depth(depth);
                 self.current_depth -= 1;

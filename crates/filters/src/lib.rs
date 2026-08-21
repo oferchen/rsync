@@ -118,6 +118,7 @@ mod error;
 pub mod implied;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;
+mod merge_open;
 mod rule;
 pub mod rule_source;
 mod set;

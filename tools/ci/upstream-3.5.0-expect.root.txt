@@ -150,7 +150,7 @@ filter-depth pass
 filter-leak fail
 filter-merge-content-echo fail
 filter-merge-recursion fail
-filter-merge-symlink fail
+filter-merge-symlink pass
 fuzzy pass
 fuzzy-basis pass
 git-set-file-times-python-compat-regression pass

@@ -245,8 +245,23 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
     visited.push(canonical);
 
-    let file = fs::File::open(path)
-        .map_err(|error| LocalCopyError::io("read filter file", path, error))?;
+    // The merge file is opened from a scanned source directory, so every
+    // component may be attacker-controlled. Refuse a symlink owned by neither
+    // uid 0 nor our euid, exactly as upstream does for the same open.
+    //
+    // upstream: exclude.c:1464 parse_filter_file() -> syscall.c:538
+    // open_no_attacker_symlinks(); trust rule at syscall.c:406.
+    let file = match open_merge_file(path) {
+        Ok(file) => file,
+        // The refusal is NOT fatal. Upstream calls parse_filter_file() with
+        // XFLG_ANCHORED2ABS and *not* XFLG_FATAL_ERRORS, so a merge file it
+        // cannot open is silently skipped: no rule is added and the transfer
+        // proceeds. Aborting here would fail a transfer upstream completes.
+        Err(error) if fast_io::is_symlink_refusal(&error) => {
+            return Ok(DirMergeEntries::default());
+        }
+        Err(error) => return Err(LocalCopyError::io("read filter file", path, error)),
+    };
     let mut entries = DirMergeEntries::default();
 
     // upstream: exclude.c:1212 - unrecognised filter rules exit with
@@ -492,6 +507,22 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
     visited.pop();
     Ok(entries)
+}
+
+/// Open a per-directory merge file, refusing an attacker-owned symlink.
+///
+/// The platform seam lives here rather than at the call site. On non-Unix
+/// targets the ownership walk has no `st_uid` to trust and this degrades to a
+/// plain open.
+fn open_merge_file(path: &std::path::Path) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_read(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::File::open(path)
+    }
 }
 
 #[cfg(test)]
