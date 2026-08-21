@@ -114,6 +114,35 @@ fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
     ))
 }
 
+/// Rejects a `-M` / `--remote-option` value that does not begin with a dash.
+///
+/// upstream: options.c `case 'M'` - `if (*arg != '-') { ... "Remote option
+/// must start with a dash: %s" ... goto cleanup; }`. The guard is
+/// unconditional and sits in the argument parser, so it fires before rsync
+/// knows whether the transfer is local or remote and, in particular, before
+/// any connection is attempted. Without it a bad value survives parsing and
+/// the first sign of trouble is whatever the transport reports - oc used to
+/// dial the daemon and surface a connection error instead of the real cause.
+///
+/// The dash is tested on the raw bytes rather than a lossy string so a
+/// non-UTF-8 value is judged by what the user actually passed. An empty value
+/// has no first byte and is rejected, matching upstream, where `*arg` reads
+/// the NUL terminator.
+fn check_remote_option_dashes(remote_options: &[OsString]) -> Result<(), clap::Error> {
+    for option in remote_options {
+        if option.as_encoded_bytes().first() != Some(&b'-') {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ValueValidation,
+                format!(
+                    "Remote option must start with a dash: {}\n",
+                    option.to_string_lossy()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Parses command-line arguments into a structured [`ParsedArgs`] representation.
 ///
 /// This function accepts an iterator of arguments (typically from `std::env::args_os()`)
@@ -198,10 +227,11 @@ where
         .remove_one::<OsString>("quic-ca")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from);
-    let remote_options = matches
+    let remote_options: Vec<OsString> = matches
         .remove_many::<OsString>("remote-option")
         .map(Iterator::collect)
         .unwrap_or_default();
+    check_remote_option_dashes(&remote_options)?;
     let protect_args = if matches.get_flag("no-protect-args") {
         Some(false)
     } else if matches.get_flag("protect-args") {
