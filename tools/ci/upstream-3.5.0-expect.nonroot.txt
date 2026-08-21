@@ -169,7 +169,7 @@ io-nosend-flood-recursion skip
 io-readargs-argv-nullwrite skip
 itemize pass
 iwildmatch-fold pass
-keep-dirlinks-rule fail
+keep-dirlinks-rule pass
 keep-dirlinks-symlinked-dest pass
 ki58-log-format-percent pass
 ki62-io-error-mask skip
