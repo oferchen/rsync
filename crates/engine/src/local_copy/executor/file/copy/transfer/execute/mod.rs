@@ -551,8 +551,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
             .preallocate_enabled()
             .then(|| Reservation::for_sparse(use_sparse_writes)),
     )?;
-    // upstream: receiver.c:482-492 - the inplace branch (`preallocated_len = size_r`)
-    // is an `else if` reached only when the preallocate branch (receiver.c:475) did
+    // upstream: receiver.c:490 - the inplace branch (`preallocated_len = size_r`)
+    // is an `else if` reached only when the preallocate branch (receiver.c:476) did
     // NOT run. A non-zero reservation above IS that branch having run, so leave it
     // alone. Otherwise the existing destination extent is already allocated and an
     // interior zero run must be punched.
@@ -565,7 +565,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // the inplace destination with `O_TRUNC` whenever there is no delta basis
     // (`should_truncate = delta_signature.is_none()`, which is exactly the
     // whole-file case), so preallocated_len must stay 0 here.
-    // upstream: receiver.c:485-486 - `if (sparse_files > 0 && whole_file &&
+    // upstream: receiver.c:486-487 - `if (sparse_files > 0 && whole_file &&
     // fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
     if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
         if let Some(existing) = existing_metadata {

@@ -55,7 +55,7 @@ fn batch_sum_head(
 /// otherwise-matching block is punched into a hole instead of being seeked over
 /// with the rest of the block - that is precisely what `--inplace --sparse`
 /// relies on to keep a hole-y basis file sparse.
-// upstream: fileio.c:251-267 skip_matched() - `if (sparse_files > 0)
+// upstream: fileio.c:252-266 skip_matched() - `if (sparse_files > 0)
 // write_file(fd, 1 /*use_seek*/, offset, buf, len)`, else flush + lseek.
 fn consume_matched_in_place(
     writer: &mut fs::File,
@@ -256,7 +256,7 @@ impl<'a> CopyContext<'a> {
                 let matched = MatchedBlock::new(block, index.block_length());
                 let basis_offset = matched.offset();
 
-                // upstream: receiver.c:468-477. The skip-fast-path only fires
+                // upstream: receiver.c:624-629. The skip-fast-path only fires
                 // when basis offset == output position. For any other matched
                 // block (re-ordered content, inserted prefix, ...) copy the
                 // basis bytes to the current write offset just like upstream

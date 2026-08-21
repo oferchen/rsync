@@ -150,7 +150,7 @@ fn preallocate_destination_file(
         let flags = FallocateFlags::empty();
         match fallocate(fd, flags, 0, length) {
             Ok(()) => Ok(match reservation {
-                // upstream: syscall.c:2620-2628 - with KEEP_SIZE the blocks for
+                // upstream: syscall.c:2622-2629 - with KEEP_SIZE the blocks for
                 // [0, length) are reserved even though the file size stays put,
                 // so report that reserved length. Reporting 0 here is upstream's
                 // pre-3.5.0 behaviour and is precisely why `--preallocate
@@ -158,7 +158,7 @@ fn preallocate_destination_file(
                 // compares `>= 0` and is seeked over rather than punched,
                 // leaving the whole reserved extent allocated.
                 Reservation::KeepSize => length,
-                // upstream: syscall.c:2615-2619 - opts == 0 reports the
+                // upstream: syscall.c:2616-2620 - opts == 0 reports the
                 // resulting allocation, falling back to `length` if fstat fails.
                 Reservation::FullSize => allocated_bytes(file).unwrap_or(length),
             }),
@@ -598,7 +598,7 @@ mod tests {
     /// writing - it grows only as data lands. Before the fix, a plain fallocate
     /// (or the set_len fallback) extended st_size to total_len immediately,
     /// observable via stat / du --apparent-size mid-transfer.
-    // upstream: syscall.c:1523 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE
+    // upstream: syscall.c:2584 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE
     #[cfg(target_os = "linux")]
     #[test]
     fn preallocate_keep_size_does_not_extend_apparent_size() {
