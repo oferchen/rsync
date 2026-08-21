@@ -1756,6 +1756,53 @@ mod option_values {
         assert_eq!(parsed.remote_options, vec![OsString::from("--bwlimit=100")]);
     }
 
+    // upstream: options.c `case 'M'` rejects a value that does not start with a
+    // dash, with this exact wording, during argument parsing. The tests below
+    // pin both halves of "during parsing": that the value is refused at all,
+    // and that it is refused for a remote target too - where the refusal has to
+    // beat the transport, or the user sees a connection error instead of the
+    // real cause.
+    #[test]
+    fn remote_option_without_leading_dash_is_rejected() {
+        let error =
+            parse_test_args(["-M", "nodash", "src/", "dst/"]).expect_err("parse should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("Remote option must start with a dash: nodash"),
+            "error should carry upstream's wording, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn remote_option_without_leading_dash_is_rejected_for_a_remote_target() {
+        let error = parse_test_args(["-M", "nodash", "src/", "host::module/"])
+            .expect_err("parse should fail before any transport is chosen");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("Remote option must start with a dash: nodash"),
+            "error should carry upstream's wording, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn empty_remote_option_is_rejected() {
+        let error = parse_test_args(["-M", "", "src/", "dst/"]).expect_err("parse should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("Remote option must start with a dash:"),
+            "an empty value has no leading dash either, got: {rendered}"
+        );
+    }
+
+    // Non-vacuity companion: without this, the two tests above would still pass
+    // if the dash check rejected every `-M` value.
+    #[test]
+    fn remote_option_with_a_leading_dash_is_accepted_for_a_remote_target() {
+        let parsed = parse_test_args(["-M", "--fake-super", "src/", "host::module/"])
+            .expect("a dashed remote option must parse");
+        assert_eq!(parsed.remote_options, vec![OsString::from("--fake-super")]);
+    }
+
     #[test]
     fn multiple_remote_options() {
         let parsed = parse_test_args(["-M", "--bwlimit=100", "-M", "--compress", "src/", "dst/"])
