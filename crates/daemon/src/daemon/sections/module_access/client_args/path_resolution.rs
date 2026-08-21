@@ -141,6 +141,33 @@ fn resolve_receiver_dest(
     if collapsed.is_empty() {
         return module_path.to_path_buf();
     }
+    // Preserve a trailing `/`. upstream main.c:741 `get_local_name()` computes
+    // `trailing_slash = cp && !cp[1]` from the dest arg and takes the
+    // make-a-directory branch on `file_total > 1 || trailing_slash`: it mkdirs
+    // the dest, chdirs into it and returns a NULL local_name, so a single
+    // source file lands INSIDE. Without the slash the dest names the file
+    // itself. `collapse_module_relative` splits on `/` and drops the empty
+    // trailing segment, so the signal dies here unless it is re-appended -
+    // and the receiver then silently writes a FILE where the peer asked for a
+    // directory. oc's local path already implements the upstream rule
+    // correctly (measured); only the daemon was losing the input to it.
+    //
+    // Built by pushing onto the OsString rather than `PathBuf::join`, which
+    // normalises a trailing separator away, for the same reason
+    // `resolve_sender_sources` below does it by hand.
+    if tail.ends_with('/') {
+        let mut buf = module_path.as_os_str().to_owned();
+        if !buf
+            .as_encoded_bytes()
+            .last()
+            .is_some_and(|b| *b == b'/' || *b == b'\\')
+        {
+            buf.push("/");
+        }
+        buf.push(&collapsed);
+        buf.push("/");
+        return std::path::PathBuf::from(buf);
+    }
     module_path.join(collapsed)
 }
 
