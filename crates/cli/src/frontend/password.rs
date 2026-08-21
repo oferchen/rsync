@@ -152,6 +152,38 @@ fn first_line(bytes: &[u8]) -> Vec<u8> {
     }
 }
 
+/// Open an operator-named file, refusing an attacker-owned symlink component.
+///
+/// `--password-file` is named by the operator, never by a peer, and is read
+/// while the process may still hold elevated privilege. A plain [`File::open`]
+/// follows a symlink at every component, so a link planted on the path
+/// redirects a privileged read to a file the operator never named. Upstream
+/// opens it through the same component walk it uses for the daemon's secrets
+/// file: each component is opened without following it, and a symlink is
+/// followed only when owned by uid 0 or our euid.
+///
+/// The platform seam lives here rather than at the call site. On non-Unix
+/// targets the ownership walk has no meaning (there is no `st_uid` to trust)
+/// and this degrades to a plain open, matching how the rest of the tree gates
+/// `fast_io`'s operator-path helpers.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/authenticate.c:245` - `getpassf()` opens `--password-file`
+///   with `open_no_attacker_symlinks(filename, O_RDONLY, 0)`.
+/// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the
+///   trust rule is at `syscall.c:406`.
+fn open_operator_named(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_read(path)
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path)
+    }
+}
+
 /// Reads a password from `path` while enforcing upstream rsync's permission rules.
 ///
 /// The function accepts either an on-disk file or `-` to read from standard
@@ -174,7 +206,7 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     // handle. This mirrors upstream rsync's approach and avoids time-of-check
     // to time-of-use races where an attacker swaps the path after the
     // metadata check but before the read.
-    let mut file = File::open(path).map_err(|error| {
+    let mut file = open_operator_named(path).map_err(|error| {
         rsync_error!(
             1,
             format!("failed to access password file '{}': {}", display, error)
@@ -305,6 +337,35 @@ mod tests {
         let loaded = load_optional_password(Some(path.as_ref())).expect("load password");
 
         assert_eq!(loaded, Some(b"from-file".to_vec()));
+    }
+
+    /// The ownership walk must still FOLLOW a symlink the caller owns.
+    ///
+    /// The refusal direction needs a symlink owned by a third uid, which needs
+    /// root to plant; the upstream suite covers it in its root leg
+    /// (`password-file-symlink_test.py`, which skips without root). What is
+    /// checkable here is the other direction, and it is the one a regression
+    /// would break: swapping the walk for a refuse-all resolver would reject
+    /// this legitimate self-owned parent symlink and break every operator who
+    /// keeps a password file behind one.
+    #[cfg(unix)]
+    #[test]
+    fn load_password_file_follows_a_self_owned_parent_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().expect("create temp dir");
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).expect("create real dir");
+        let secret = real.join("pw");
+        std::fs::write(&secret, b"through-the-link\n").expect("write secret");
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600))
+            .expect("tighten secret permissions");
+        symlink(&real, dir.path().join("link")).expect("plant self-owned symlink");
+
+        let loaded =
+            load_password_file(&dir.path().join("link").join("pw")).expect("read through symlink");
+
+        assert_eq!(loaded, b"through-the-link".to_vec());
     }
 
     #[test]

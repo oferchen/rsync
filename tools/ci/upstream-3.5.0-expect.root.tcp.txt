@@ -119,7 +119,7 @@ operator-path-partial-dir-exclude-daemon fail
 operator-path-traversal-backup-dir-daemon fail
 operator-path-traversal-dest-dir-daemon fail
 operator-path-traversal-partial-dir-daemon pass
-password-file-symlink fail
+password-file-symlink pass
 peer-legacy-implied-delete-scope pass
 proto-cleared-dirflist fail
 proto-cleared-ndx fail
