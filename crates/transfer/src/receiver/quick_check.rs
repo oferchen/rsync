@@ -255,6 +255,73 @@ struct ReferenceMatch<'a> {
     level: MatchLevel,
 }
 
+/// Which of upstream's `basis_link_stat()` arms resolves an alt-dest basis entry.
+///
+/// Upstream selects between an ownership-walked stat and a plain `link_stat()`
+/// from `am_daemon`; a daemon receiver deliberately keeps the plain stat because
+/// its confinement comes from elsewhere (chroot, the module-root resolver, and
+/// the `../` clamp `sanitize_path` already applied to a dest-relative basis).
+/// The distinction is spelled as a type rather than a `bool` so neither arm can
+/// be selected by accident at a call site.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - the arm selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BasisTrust {
+    /// Non-daemon receiver: resolve the parent through the ownership walk.
+    ///
+    /// upstream: `generator.c:978` - the `!am_daemon && am_root >= 0 &&
+    /// !symlink_optout_allowed()` arm.
+    OwnerWalk,
+    /// Daemon receiver: stat the basis by path, as upstream's fall-through does.
+    ///
+    /// upstream: `generator.c:1010` - the trailing plain `link_stat()`.
+    PlainStat,
+}
+
+impl BasisTrust {
+    /// Picks the arm for a receiver, from the one fact upstream branches on.
+    ///
+    /// upstream: `generator.c:978` - `!am_daemon` selects the ownership walk.
+    #[must_use]
+    pub(super) const fn for_receiver(is_daemon_connection: bool) -> Self {
+        if is_daemon_connection {
+            Self::PlainStat
+        } else {
+            Self::OwnerWalk
+        }
+    }
+}
+
+#[cfg(test)]
+mod basis_trust_tests {
+    use super::BasisTrust;
+
+    /// A daemon receiver must NOT take the ownership walk.
+    ///
+    /// This is the arm upstream selects, and taking the other one is not merely
+    /// stricter - the walk opens every component from `/` downward, which a
+    /// confined daemon worker cannot do, so the basis vanishes and every file
+    /// is re-transferred. That is the `link-dest-relative-basis` cell
+    /// (upstream #915/#930), whose manifest row is `pass` on both pipe legs.
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:978` - the ownership-walk arm is
+    /// guarded by `!am_daemon`; `generator.c:1010` is the plain `link_stat()`
+    /// a daemon receiver falls through to.
+    #[test]
+    fn a_daemon_receiver_stats_the_basis_by_path() {
+        assert_eq!(BasisTrust::for_receiver(true), BasisTrust::PlainStat);
+    }
+
+    /// Non-vacuity companion: the walk is still selected off the daemon path,
+    /// so the mapping is a real branch and not a constant.
+    #[test]
+    fn a_non_daemon_receiver_walks_the_basis_parent() {
+        assert_eq!(BasisTrust::for_receiver(false), BasisTrust::OwnerWalk);
+    }
+}
+
 /// Stats an alt-dest basis entry without traversing an attacker-owned symlink.
 ///
 /// The tail of `path` comes from the peer's file list, so on a pull the peer
@@ -283,16 +350,31 @@ struct ReferenceMatch<'a> {
 /// Any failure is reported as "no basis here", the same outcome upstream
 /// produces when `link_stat` fails: the file transfers normally.
 ///
+/// [`BasisTrust::PlainStat`] takes the path-based stat instead. That is not a
+/// weakening: it is the arm upstream itself takes for a daemon receiver, whose
+/// basis is confined by the module resolver rather than by ownership. Walking
+/// there would also be actively wrong - the walk opens every component starting
+/// at `/`, and a daemon worker is confined (chroot, or a Landlock ruleset rooted
+/// at the module) precisely so that the ancestors of the module are *not*
+/// openable, so the walk fails with `EACCES` and the basis silently disappears.
+///
 /// # Upstream Reference
 ///
 /// - `rsync-3.5.0/generator.c:979-990` `basis_link_stat()` - the non-daemon
 ///   receiver arm: `owner_walk_parent()` for the parent components, then
 ///   `link_stat_at()` on the leaf through the returned descriptor.
+/// - `rsync-3.5.0/generator.c:1010` - the plain `link_stat()` fall-through a
+///   daemon receiver reaches for a dest-relative basis (`--link-dest=../01`),
+///   whose `../` `sanitize_path` has already clamped to the module root.
 /// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk itself.
 #[cfg(unix)]
-fn basis_stat(path: &Path) -> Option<fs::Metadata> {
+fn basis_stat(path: &Path, trust: BasisTrust) -> Option<fs::Metadata> {
     use std::os::fd::AsFd;
     use std::os::unix::fs::MetadataExt;
+
+    if trust == BasisTrust::PlainStat {
+        return fs::symlink_metadata(path).ok();
+    }
 
     let (parent, leaf) = fast_io::owner_walk::owner_trusted_parent(path).ok()?;
     let confined = fast_io::fstatat_nofollow(parent.as_fd(), &leaf).ok()?;
@@ -301,11 +383,12 @@ fn basis_stat(path: &Path) -> Option<fs::Metadata> {
 }
 
 /// Non-Unix fallback: the ownership walk is a dirfd construction with no
-/// Windows analogue, so the basis is stat'd by path. `symlink_metadata` still
-/// refuses to follow a symlink at the leaf, which is what keeps a symlinked
-/// basis entry from being consumed; only the parent components are unguarded.
+/// Windows analogue, so the basis is stat'd by path regardless of `trust`.
+/// `symlink_metadata` still refuses to follow a symlink at the leaf, which is
+/// what keeps a symlinked basis entry from being consumed; only the parent
+/// components are unguarded.
 #[cfg(not(unix))]
-fn basis_stat(path: &Path) -> Option<fs::Metadata> {
+fn basis_stat(path: &Path, _trust: BasisTrust) -> Option<fs::Metadata> {
     fs::symlink_metadata(path).ok()
 }
 
@@ -344,11 +427,12 @@ fn best_reference_match<'a>(
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
     metadata_opts: &MetadataOptions,
+    trust: BasisTrust,
 ) -> Option<ReferenceMatch<'a>> {
     let mut best: Option<ReferenceMatch<'a>> = None;
     for ref_dir in reference_directories {
         let ref_path = ref_dir.path.join(relative_path);
-        let ref_meta = match basis_stat(&ref_path) {
+        let ref_meta = match basis_stat(&ref_path, trust) {
             Some(m) if m.file_type().is_file() => m,
             _ => continue,
         };
@@ -434,6 +518,7 @@ pub(super) fn try_reference_dest(
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&AclCache>,
     acl_id_map: Option<&AclIdMapper>,
+    trust: BasisTrust,
 ) -> bool {
     if reference_directories.is_empty() {
         return false;
@@ -449,6 +534,7 @@ pub(super) fn try_reference_dest(
         always_checksum,
         modify_window,
         metadata_opts,
+        trust,
     ) else {
         return false;
     };
@@ -930,7 +1016,7 @@ mod info_copy_emission_tests {
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
 
-    use super::{ModifyWindow, try_reference_dest};
+    use super::{BasisTrust, ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     fn copy_messages() -> Vec<String> {
@@ -997,6 +1083,7 @@ mod info_copy_emission_tests {
             &mut metadata_errors,
             None,
             None,
+            BasisTrust::OwnerWalk,
         );
 
         // Restore writable permissions so tempdir cleanup succeeds.
@@ -1057,6 +1144,7 @@ mod info_copy_emission_tests {
             &mut metadata_errors,
             None,
             None,
+            BasisTrust::OwnerWalk,
         );
 
         let mut restore = fs::metadata(&dest_dir).expect("dest meta").permissions();
@@ -1096,7 +1184,7 @@ mod symlink_basis_tests {
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
 
-    use super::{ModifyWindow, try_reference_dest};
+    use super::{BasisTrust, ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     fn setup_symlink_basis() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -1165,6 +1253,7 @@ mod symlink_basis_tests {
             &mut metadata_errors,
             None,
             None,
+            BasisTrust::OwnerWalk,
         )
     }
 
@@ -1659,7 +1748,7 @@ mod alt_dest_match_level_tests {
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
 
-    use super::{ModifyWindow, try_reference_dest};
+    use super::{BasisTrust, ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     /// A fixed mtime shared by basis files and source entries so the quick-check
@@ -1705,6 +1794,7 @@ mod alt_dest_match_level_tests {
             &mut errs,
             None,
             None,
+            BasisTrust::OwnerWalk,
         )
     }
 
