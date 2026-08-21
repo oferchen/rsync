@@ -137,7 +137,7 @@ early-input-symlink fail
 exclude pass
 exclude-implied-trailing-backslash skip
 exclude-lsh pass
-excludefrom-symlink fail
+excludefrom-symlink pass
 executability pass
 fake-super-acl-xattr fail
 fake-super-backup-fifo-regression pass
