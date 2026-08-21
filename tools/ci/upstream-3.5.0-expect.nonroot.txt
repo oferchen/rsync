@@ -304,7 +304,7 @@ scanner-daemon-log-checksum pass
 scanner-delete-delay-overread pass
 secure-relpath-validation pass
 sender-flist-symlink-leak pass
-sender-readlink-atfd fail
+sender-readlink-atfd pass
 sender-remove-source-relative-anchor pass
 sender-remove-source-root-anchor skip
 sender-remove-source-secure pass

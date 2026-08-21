@@ -264,7 +264,7 @@ impl GeneratorContext {
         // Sender-side filtering ensures unsafe symlinks never reach the receiver,
         // matching the belt-and-suspenders approach for daemon push interop.
         if self.config.flags.safe_links && metadata.file_type().is_symlink() {
-            if let Ok(target) = std::fs::read_link(&path) {
+            if let Ok(target) = self.read_source_link(&path) {
                 if super::super::super::symlink_safety::is_unsafe_symlink(
                     target.as_os_str(),
                     &relative,
@@ -483,7 +483,7 @@ impl GeneratorContext {
                         && self.config.flags.copy_unsafe_links
                         && meta.file_type().is_symlink()
                     {
-                        if let Ok(target) = std::fs::read_link(&path) {
+                        if let Ok(target) = self.read_source_link(&path) {
                             let relative = path.strip_prefix(base).unwrap_or(&path);
                             if super::super::super::symlink_safety::is_unsafe_symlink(
                                 target.as_os_str(),
@@ -606,7 +606,7 @@ impl GeneratorContext {
 
         // upstream: flist.c:215 - follow unsafe symlinks when --copy-unsafe-links
         if self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {
-            let target = std::fs::read_link(path)?;
+            let target = self.read_source_link(path)?;
             let relative = path.strip_prefix(base).unwrap_or(path);
             if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
             {
