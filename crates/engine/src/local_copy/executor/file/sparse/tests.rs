@@ -367,7 +367,7 @@ fn write_zeros_fallback_handles_large_length() {
 /// hole. With `preallocated_len` covering the whole file, `write_sparse_chunk`
 /// mirrors upstream `write_sparse()`'s `do_punch_hole` branch so the reserved
 /// blocks under the zero run are deallocated rather than left allocated.
-// upstream: fileio.c:95 - do_punch_hole(f, sparse_past_write, sparse_seek)
+// upstream: fileio.c:89 - do_punch_hole(f, sparse_past_write, sparse_seek)
 #[cfg(target_os = "linux")]
 #[test]
 fn sparse_chunk_punches_hole_within_preallocated_extent() {
@@ -422,7 +422,7 @@ fn sparse_chunk_punches_hole_within_preallocated_extent() {
 /// Outside a preallocated extent (`preallocated_len == 0`) the writer seeks
 /// over zero runs to form a natural hole, matching upstream's
 /// `sparse_past_write >= preallocated_len` lseek branch.
-// upstream: fileio.c:93 - do_lseek(f, sparse_seek, SEEK_CUR)
+// upstream: fileio.c:85 - do_lseek(f, sparse_seek, SEEK_CUR)
 #[test]
 fn sparse_chunk_seeks_over_run_without_preallocation() {
     let mut file = NamedTempFile::new().expect("temp file");
