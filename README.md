@@ -19,7 +19,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, and 3.4.4, with 2.6.9 and 3.5.0 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`; against the 3.4.4 corpus all tests pass and the known-failures roster is empty.
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, 3.4.4 and 3.5.0, with 2.6.9 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`: against the 3.4.4 corpus all tests pass and the known-failures roster is empty, and against the newer 3.5.0 corpus **64 of 345 tests currently diverge** (see below).
 
 **Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
 
@@ -30,7 +30,18 @@ The 3.5.0 **release** testsuite runs as four flows, one per cell of privilege x 
 | non-root | [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
 | root     | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
 
-The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. Every leg carries its own expected-outcome manifest, generated from a real run, so only a *change* in outcome (a regression, or an unexpected pass) turns a badge red. The `upstream testsuite` and `upstream testsuite (root)` checks that gate every PR run this same 3.5.0 corpus.
+The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. The `upstream testsuite` and `upstream testsuite (root)` checks that gate every PR run this same 3.5.0 corpus.
+
+Current outcomes, as recorded in each leg's committed manifest:
+
+| leg | pass | fail | skip | corpus |
+|---|---:|---:|---:|---:|
+| non-root, pipe | 217 | 43 | 85 | 345 |
+| root, pipe | 229 | 62 | 54 | 345 |
+| non-root, tcp | 80 | 42 | 33 | 155 |
+| root, tcp | 87 | 55 | 13 | 155 |
+
+**64 distinct tests** diverge across the two full-corpus legs, and 89 across all four. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts.
 
 Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml) is a **development** tracker, not a gate and not the 3.5.0 release: it builds RsyncProject git master (`version.h` == `3.5.0dev`), a moving target, and is deliberately non-blocking so an upstream-side break can never fail a PR here.
 
@@ -49,6 +60,7 @@ Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/acti
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
+| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, daemon `auth digest` |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
 | **Memory** | Flat file list (contiguous `Vec<FileEntry>`) for efficient scaling at high file counts |
 | **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP file + socket I/O, symlinks with junction fallback; no POSIX device nodes) |
@@ -88,7 +100,7 @@ See the [CHANGELOG](./CHANGELOG.md) for the full, per-release change history.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, and **3.4.4** in CI across protocols 28-32, with **3.5.0** built and cached as an oracle binary ahead of joining the gating matrix. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.4** and **3.5.0** in CI across protocols 28-32. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -103,7 +115,7 @@ oc-rsync negotiates `protocol_version` per upstream, defaults to 32, and support
 | 28       | 2.6.0 - 2.6.8          | Wire-level support  | Validated via wire-byte regression tests (RP28.g, RP28.h) |
 | <= 27    | <= 2.5.x               | Not supported       | Pre-dates protocol cleanup; not tested |
 
-Per-version dispatch is implemented as `protocol_version` gates in the wire codecs. See [`crates/protocol/src/wire/compressed_token/zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs) and the sibling [`zstd_codec.rs`](./crates/protocol/src/wire/compressed_token/zstd_codec.rs) / [`lz4_codec.rs`](./crates/protocol/src/wire/compressed_token/lz4_codec.rs) for representative examples of the gates that switch on `protocol_version`.
+Per-version dispatch is implemented as `protocol_version` gates in the wire codecs. See [`crates/protocol/src/wire/compressed_token/zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs) and the sibling [`zstd_codec/`](./crates/protocol/src/wire/compressed_token/zstd_codec) / [`lz4_codec.rs`](./crates/protocol/src/wire/compressed_token/lz4_codec.rs) for representative examples of the gates that switch on `protocol_version`.
 
 ### Supported rsync wire protocol versions
 
@@ -114,7 +126,7 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 3.0.9                  | 30       | push, pull, daemon       | gating |
 | 3.1.3                  | 31       | push, pull, daemon       | gating |
 | 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
-| 3.5.0                  | 32       | push, pull, daemon, SSH  | built + cached (not yet gating) |
+| 3.5.0                  | 32       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
 
@@ -208,8 +220,8 @@ Three one-shot warnings may appear on stderr (sync path) or via `tracing` target
 oc-rsync is wire-compatible with upstream rsync 3.5.0, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
 
 - **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
-- **io_uring buffer pool.** The registered buffer pool defaults to 1024 × 4 KiB = 4 MiB and does not auto-adapt under sustained I/O pressure, though its slot count, memory cap, and block size are tunable at runtime via the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP`, and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables. Workloads with very high concurrent file fan-out may still see throughput plateau before saturating the device.
-- **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace; the buffer ring helpers cap at this bound. Long-running daemons that recycle thousands of distinct ring groups should monitor for exhaustion.
+- **Two distinct buffer pools.** The **engine** `BufferPool` is the one the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables tune (`crates/engine/src/local_copy/buffer_pool/`). The **io_uring registered buffer pool** is separate, is sized statically, does not auto-adapt under sustained I/O pressure, and is *not* affected by those variables. Workloads with very high concurrent file fan-out may see throughput plateau before saturating the device.
+- **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace and the buffer-ring helpers cap at that bound, returning a typed error rather than wrapping. In practice IDs are recycled rather than accumulated - a measured run of 100,000 sessions consumed a single bgid - so exhaustion is not an expected operational condition.
 - **Delta computation is single-threaded per file by default.** The delta sender is sequential per file. Large-file delta scanning can be parallelised opt-in with `--parallel-delta-scan`, and basis-signature hashing with `--checksum-threads=N`; without those flags a large-file transfer uses one CPU for delta work.
 - **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync warns when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, and - with the default `ssh-config-parse` feature - when a `Compression yes` directive applies via `~/.ssh/config` / `-F` / `/etc/ssh/ssh_config`; it does not auto-disable either layer, so operators should pick one.
 - **Daemon encryption.** The daemon protocol is plaintext, matching upstream rsync (authentication only, no encryption). oc-rsync has no built-in TLS client - the former `--ssl` / `client-tls` path was removed to match upstream. Encrypt with the SSH transport, or place the daemon behind a TLS-terminating proxy (`stunnel`, HAProxy, nginx) and reach it through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
@@ -297,9 +309,9 @@ The concurrent-delta receiver bounds its in-memory `ReorderBuffer` through a
 process-wide `SpillPolicy` knob. The default policy keeps everything in memory
 (byte-equivalent to prior releases). Opt in to disk-backed spill by setting
 `OC_RSYNC_SPILL_THRESHOLD_BYTES` (e.g. `64M`) and, optionally,
-`OC_RSYNC_SPILL_DIR` to point at a fast scratch directory. CLI flags
-`--spill-dir` and `--spill-threshold-bytes` are planned for STN-11 and will
-shadow the env vars when present. Full surface (env vars, reclaim mode,
+`OC_RSYNC_SPILL_DIR` to point at a fast scratch directory. The CLI flags
+`--spill-dir` and `--spill-threshold-bytes` shadow the env vars when present.
+Full surface (env vars, reclaim mode,
 granularity, compression, validation rules, defaults table) is in
 [`docs/design/spill-policy-public-api.md`](./docs/design/spill-policy-public-api.md);
 the underlying buffer is documented in
@@ -442,7 +454,7 @@ All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is 
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
-Not vulnerable to (or mitigated against) known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747) - see `SECURITY.md` for the per-CVE status. All CVE mitigations complete (SEC-1, SEC-2, SEC-3, SEC-MK series). TOCTOU path-based syscalls replaced with `*at` variants throughout.
+Not vulnerable to (or mitigated against) the 2024 upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747), and the rsync 3.4.3 batch (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232) is closed - SEC-1, SEC-2, SEC-3 and SEC-MK series complete, TOCTOU path-based syscalls replaced with `*at` variants throughout. The rsync **3.5.0** batch of 33 CVEs is **partially closed and openly tracked**: it is a behavioural release, not a protocol one, so each item needs its own evidence rather than a blanket claim. See [`SECURITY.md`](./SECURITY.md) for per-CVE status, including which items are fixed and which remain under audit.
 
 ### Upstream rsync 3.4.3 hardening
 
