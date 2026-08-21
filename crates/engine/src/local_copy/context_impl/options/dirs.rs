@@ -75,7 +75,25 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
     false
 }
 
-    /// Dry-run replacement policy: remove destination (logically) and either
+    /// Removes a non-directory occupying a level where a directory must exist.
+    ///
+    /// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
+    /// that finds a non-directory in its place runs `delete_item(fname, ..,
+    /// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
+    /// `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
+    /// non-empty *directory*, so clearing a non-directory is unconditional.
+    /// Callers reach this only after establishing that `existing` is not a
+    /// directory.
+    fn clear_obstructing_non_directory(
+        &mut self,
+        parent: &Path,
+        existing: &fs::Metadata,
+    ) -> Result<(), LocalCopyError> {
+        let relative = self.parent_relative_to_destination(parent);
+        self.force_remove_destination(parent, relative, existing)
+    }
+
+    /// Dry-run replacement policy: clear the obstruction (logically) and either
     /// allow creation (Ok) or synthesize a "NotFound" error.
     fn replace_parent_entry_dry_run(
         &mut self,
@@ -83,45 +101,25 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
         existing: &fs::Metadata,
         allow_creation: bool,
     ) -> Result<(), LocalCopyError> {
-        if self.force_replacements_enabled() {
-            let relative = self.parent_relative_to_destination(parent);
-            self.force_remove_destination(parent, relative, existing)?;
-            if allow_creation {
-                Ok(())
-            } else {
-                Err(LocalCopyError::io(
-                    "create parent directory",
-                    parent.to_path_buf(),
-                    io::Error::from(io::ErrorKind::NotFound),
-                ))
-            }
-        } else {
-            Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-            ))
+        if allow_creation {
+            return self.clear_obstructing_non_directory(parent, existing);
         }
+        self.replace_parent_entry_forbidden(parent, existing)
     }
 
     /// Creation policy when creation is allowed and side effects are real
-    /// (non-dry-run): replace destination, create directory, and register progress.
+    /// (non-dry-run): clear the obstruction, create the directory, and register
+    /// progress.
     fn replace_parent_entry_create(
         &mut self,
         parent: &Path,
         existing: &fs::Metadata,
     ) -> Result<(), LocalCopyError> {
-        if self.force_replacements_enabled() {
-            let relative = self.parent_relative_to_destination(parent);
-            self.force_remove_destination(parent, relative, existing)?;
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent, error)
-            })?;
-            self.register_progress();
-            Ok(())
-        } else {
-            Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-            ))
-        }
+        self.clear_obstructing_non_directory(parent, existing)?;
+        fs::create_dir_all(parent)
+            .map_err(|error| LocalCopyError::io("create parent directory", parent, error))?;
+        self.register_progress();
+        Ok(())
     }
 
     /// Policy when creation is forbidden: replace destination and always return
