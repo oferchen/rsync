@@ -696,9 +696,7 @@ mod quic_connect_tests {
     /// passes, with `Ipv4` mode so it resolves to the `127.0.0.1` the acceptor
     /// bound.
     fn quic_addr(port: u16) -> DaemonAddress {
-        DaemonAddress::new("localhost".to_owned(), port)
-            .expect("addr")
-            .with_transport(Transport::Quic)
+        DaemonAddress::new("localhost".to_owned(), port).with_transport(Transport::Quic)
     }
 
     fn dial(addr: &DaemonAddress, ca: Option<PathBuf>) -> Result<DaemonStream, ClientError> {
@@ -955,8 +953,7 @@ mod connect_timeout_tests {
     fn connect_direct_applies_io_timeout() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let addr = listener.local_addr().expect("listener addr");
-        let daemon_addr =
-            DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("daemon addr");
+        let daemon_addr = DaemonAddress::new(addr.ip().to_string(), addr.port());
 
         let handle = thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
@@ -994,7 +991,7 @@ mod connect_timeout_tests {
             credentials: None,
         };
 
-        let target = DaemonAddress::new(String::from("daemon.example"), 873).expect("daemon addr");
+        let target = DaemonAddress::new(String::from("daemon.example"), 873);
 
         let handle = thread::spawn(move || {
             if let Ok((stream, _)) = proxy_listener.accept() {
