@@ -81,23 +81,33 @@ rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in pat
 
 **What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, which means neither "inherited" nor "not applicable" can be assumed for any of them - each needs its own evidence.
 
-**What is measured.** Running upstream's 3.5.0 test suite against oc-rsync reports 133 divergent tests. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence.
+**What is measured.** Upstream's 3.5.0 test suite runs against oc-rsync as a gate on every pull request, in four legs - privilege {non-root, root} x daemon transport {stdio pipe, loopback TCP}. Each leg carries an expected-outcome manifest generated from a real run, so the divergence set is a committed, per-test ledger rather than an estimate:
+
+| leg | pass | fail | skip | corpus |
+|---|---:|---:|---:|---:|
+| non-root, pipe | 217 | 43 | 85 | 345 |
+| root, pipe | 229 | 62 | 54 | 345 |
+| non-root, tcp | 80 | 42 | 33 | 155 |
+| root, tcp | 87 | 55 | 13 | 155 |
+
+The two pipe legs run the whole corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 155 tests that can observe the transport. **64 distinct tests** diverge across the two full-corpus legs, and **89** across all four. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
 
 **Highest-severity items and their oc-rsync bearing:**
 
 | CVE | Severity | Upstream issue | oc-rsync bearing |
 |-----|----------|----------------|------------------|
-| CVE-2026-53791 | CRITICAL | `proxy protocol = true` let a directly-connecting client forge a PROXY header and spoof its source address, defeating `hosts allow`/`hosts deny`. Fixed by a new `proxy protocol hosts` allow-list that fails **closed** when unset. | Related and independently tracked: oc-rsync's daemon currently derives a placeholder peer address on its stdio paths, which weakens `hosts allow`/`hosts deny` in the same direction. Being fixed as a prerequisite. |
-| CVE-2026-70452 | HIGH | `hosts deny` failed **open** when a configured hostname would not resolve. | Under audit. Same fail-open class as the above. |
-| CVE-2026-70464 | HIGH | An unauthenticated peer could complete the `@RSYNCD` handshake. | Under audit; 3.5.0 also adds an `auth digest` floor directive. |
-| CVE-2026-53784 / 53793 | HIGH | Daemon module-root chdir escape under `use chroot`, and a `/./` inner-module escape via a symlinked path. | Under audit. |
-| CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` **disabled path confinement entirely**. | Directly applicable: oc-rsync's confinement is narrower than 3.5.0's and is being widened to the new model. |
-| CVE-2026-53783 | HIGH | `rrsync` restricted-directory escape - each path was validated, but the validation could be walked out of. | oc-rsync ships no restricted-shell wrapper today; one is being added, enforcing through the same path resolver rather than a separate validator. |
-| CVE-2026-53790 | HIGH | Command / argument injection via unquoted peer- or config-supplied values. | Under audit. |
-| CVE-2026-70453 | HIGH | Quadratic CPU exhaustion in `hash_search()` from a long equal-weak-checksum chain. | Under audit; oc-rsync's block matcher differs from upstream's, so the bound must be reasoned about independently. |
-| CVE-2026-70455 / 70463 / 70461 / 70458 / 70456 | HIGH | Peer-controlled Zstandard thread count; `auth users` separator handling; three out-of-bounds heap writes. | The memory-safety trio has no direct Rust analogue, but each also has an observable half - whether malformed input is **rejected** rather than accepted with wrong state - which is being checked rather than assumed. |
+| CVE-2026-53791 | CRITICAL | `proxy protocol = true` let a directly-connecting client forge a PROXY header and spoof its source address, defeating `hosts allow`/`hosts deny`. Fixed by a new `proxy protocol hosts` allow-list that fails **closed** when unset. | The `proxy protocol hosts` directive itself is still **under audit**. The related prerequisite is **fixed**: the daemon's two stdio entry points fabricated `127.0.0.1` as the peer address, which made every `hosts allow` / `hosts deny` rule evaluate against a synthetic localhost. Both now mirror upstream `client_addr()` - `getpeername` under inetd, the `REMOTE_HOST` / `SSH_CONNECTION` / `SSH_CLIENT` / `SSH2_CLIENT` environment chain under a remote shell - and abort with `RERR_SOCKETIO` rather than inventing a value (PR #7303). |
+| CVE-2026-70452 | HIGH | `hosts deny` failed **open** when a configured hostname would not resolve. | **Fixed.** The root cause was a missing distinction, not a missing check: `forward_resolve` collapsed "lookup failed" and "resolved but did not match" into one empty result, which is what made the deny side fail open. The resolver now returns `Option<Vec<IpAddr>>` so the two are separable, and hostname matching is case-insensitive against a lowercased list per upstream `iwildmatch` (access.c:46) (PR #7314). |
+| CVE-2026-70464 | HIGH | An unauthenticated peer could complete the `@RSYNCD` handshake. | Under audit. The related `auth digest` minimum-digest floor has **shipped** (PR #7350); `Md4Old` must rank as md4 or the floor locks out the very clients it exists to reason about. |
+| CVE-2026-53784 / 53793 | HIGH | Daemon module-root chdir escape under `use chroot`, and a `/./` inner-module escape via a symlinked path. | Under audit. Related and fixed: the daemon fused the operator module root and the peer-supplied tail into one absolute string and applied `RESOLVE_NO_SYMLINKS` to the whole thing. Upstream keeps the two in different mechanisms - plain `chdir`/`openat` for the root, a confined `RESOLVE_BENEATH` walk for the tail - and oc-rsync now does the same (PR #7304). |
+| CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` **disabled path confinement entirely**. | Directly applicable, and **largely closed**. oc-rsync's confinement was narrower than 3.5.0's and has been widened onto one shared per-component resolver: the staging family (`--temp-dir`, `--partial-dir`, `--backup-dir`), `--log-file`, the alt-dest basis leaf, `--relative` implied parents, and absolute rename endpoints all now resolve through the ownership walk (PRs #7398, #7404, #7415, #7419, #7393). The remaining operator-path families are tracked as open work. |
+| CVE-2026-53783 | HIGH | `rrsync` restricted-directory escape - each path was validated, but the validation could be walked out of. | oc-rsync ships no restricted-shell wrapper today; one is being added, enforcing through the same path resolver rather than a separate validator. The upstream rule set is extracted as a spec (PR #7283) - note it forces `--drop-D`, not `--no-D`. |
+| CVE-2026-53790 | HIGH | Command / argument injection via unquoted peer- or config-supplied values. | Under audit. Upstream has four sinks and three remedies; oc-rsync has two of the same shape, one structurally different, and one that does not apply. The live sink in oc-rsync is its own single-character config expansion, which upstream does not have - so an upstream-shaped port alone would be inert here. |
+| CVE-2026-70453 | HIGH | Quadratic CPU exhaustion in `hash_search()` from a long equal-weak-checksum chain. | **Fixed** (PR #7293). oc-rsync's block matcher differs from upstream's, so the bound was derived independently rather than copied. |
+| CVE-2026-70463 | HIGH | `auth users` separator handling. | **Fixed** (PR #7345). Upstream's leading-comma separator form is honoured at both affected sites - `auth users` and `gid`, not just the one named in the advisory. |
+| CVE-2026-70455 / 70461 / 70458 / 70456 | HIGH | Peer-controlled Zstandard thread count; three out-of-bounds heap writes. | The memory-safety trio has no direct Rust analogue, but each also has an observable half - whether malformed input is **rejected** rather than accepted with wrong state - which is being checked rather than assumed. |
 
-**New defensive surfaces in 3.5.0** that oc-rsync is adopting: `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, and the `insecure links`, `proxy protocol hosts` and `auth digest` daemon directives.
+**New defensive surfaces in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links` and the `auth digest` daemon directive have **shipped** (PRs #7396, #7299, #7350). Like upstream, `--confine-root` and `--drop-D` are deliberately **not forwarded** to the remote side: both are meant to be applied to one end of a connection by itself. The `insecure links` and `proxy protocol hosts` daemon directives are **not yet implemented**.
 
 `--drop-D` tells a receiver to refuse to create device and special files whatever the transfer requested. It exists because the obvious alternative does not work: `--no-D` also frames the file list's rdev fields, and only one end of a connection receives the option, so a `-D` sender writes rdev that a `--no-D` receiver never reads. That desynchronises the list - a FIFO hangs the transfer at protocol 29 and corrupts it at 30, and a device node breaks every protocol. `--drop-D` refuses the creation while leaving the wire format untouched. Like `--confine-root`, it is deliberately **not forwarded** to the remote side: both are meant to be applied to one end of a connection by itself.
 
@@ -146,7 +156,7 @@ Additionally shipped since the last update:
 
 **Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
 
-CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own testsuite corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.4 by default. A separate nightly job runs the rewritten 3.5.0 Python suite so the divergence set above stays measured rather than estimated. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
+CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. As of 2026-08-21 the gating corpus is the rewritten **3.5.0 Python suite**, run as the four legs tabulated above; the required checks are the two stdio-pipe legs, and the two loopback-TCP legs run alongside them. Each leg is gated by its committed expected-outcome manifest (`tools/ci/upstream-3.5.0-expect.{nonroot,root}{,.tcp}.txt`), generated from a real run and never hand-typed. The older 3.4.4 shell corpus still runs in the interop job with the roster at `tools/ci/upstream_testsuite_known_failures.conf`, which is currently empty - against 3.4.4 all tests pass.
 
 ### Upstream rsync 3.4.2 audits
 
@@ -185,7 +195,7 @@ For each new upstream rsync CVE:
 
 ## Fuzzing
 
-The repo ships 24 cargo-fuzz targets covering security-critical parsing, SIMD parity, and differential fuzzing against upstream rsync:
+The repo ships 26 cargo-fuzz targets covering security-critical parsing, SIMD parity, concurrency, and differential fuzzing against upstream rsync:
 
 **Core protocol parsing:**
 - `varint_decode` - variable-length integer codec
@@ -201,20 +211,24 @@ The repo ships 24 cargo-fuzz targets covering security-critical parsing, SIMD pa
 
 **Daemon and configuration:**
 - `daemon_greeting` - daemon greeting generation
-- `rsyncd_conf` (FCV-16) - `rsyncd.conf` line parser
 - `batch_reader` (FCV-12) - rsync batch file header
 - `bwlimit` (FCV-15) - bwlimit CLI string parser
 
 **Metadata and extensions:**
 - `acl_xattr_wire` (FCV-11) - ACL/xattr wire format
 - `filter_list_wire` - filter list wire format
+- `buffered_map` - buffered map decoder
 
 **Compression:**
 - `decompressor_zlib` - zlib decompression
 - `decompressor_zstd` - zstd decompression
+- `zlib_token_decode` - zlib compressed-token decoder
 
 **SIMD parity:**
 - `simd_checksum_parity` - cross-validates AVX2, SSE2, NEON, and scalar rolling/strong checksum paths against random inputs (see #2103)
+
+**Concurrency:**
+- `parallel_receive_delta_adversarial` - adversarial scheduling against the parallel receive-delta pipeline
 
 **Filter rules:**
 - `filter_rules_vs_upstream` - filter rule evaluation vs upstream behavior
@@ -233,11 +247,11 @@ These cover operationally relevant trade-offs in the current code base and how t
 
 ### Buffer pool bounds checks
 
-`recycle_buffer(buf_id)` in the io_uring path validates that `buf_id` falls within the registered buffer pool using `debug_assert!`. In release builds the assertion compiles out, so a corrupted or attacker-influenced `buf_id` reaching this code path would index out of range and either produce undefined behaviour inside the io_uring crate or — more likely — be caught by the kernel as an invalid SQE. A defense-in-depth fix to upgrade the check to a release-mode bound is tracked; until it lands, do not expose the io_uring path to untrusted protocol input.
+`recycle_buffer(buf_id)` in the io_uring path (`crates/fast_io/src/io_uring/buffer_ring/mod.rs`) validates that `buf_id` falls within the registered buffer pool and returns `BufferRingError::BufferIdOutOfRange` when it does not. The check runs in **both debug and release builds**, and the recycle is refused before any state is mutated, so a corrupted or attacker-influenced `buf_id` cannot advance the ring tail or write into kernel-shared memory. Callers may log and ignore the error or surface it through the `From<BufferRingError> for io::Error` conversion.
 
 ### io_uring buffer-group ID namespace
 
-io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns an error rather than wrapping. Long-running daemons that churn ring groups should monitor for the bounded error and recycle.
+io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns a typed error rather than wrapping - it is never silent. IDs are recycled rather than accumulated: a measured run of 100,000 sessions consumed a single bgid, so exhaustion is not an expected operational condition and no monitoring is required for it.
 
 ### SSH double compression
 
