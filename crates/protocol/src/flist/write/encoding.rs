@@ -383,21 +383,32 @@ impl FileListWriter {
     /// - Safe file list with error: two-byte sentinel + varint error code
     /// - Normal: single zero byte
     ///
-    /// upstream: flist.c:send_file_list() end-of-list write
+    /// upstream: flist.c `write_end_of_flist(int f, int send_io_error)`. There
+    /// the two encodings are governed by ONE `send_io_error` flag - the varint
+    /// arm writes `send_io_error ? io_error : 0` and the legacy arm is guarded
+    /// by `else if (send_io_error)` - and every caller computes that flag with
+    /// the same rule, whose peer-facing half is `use_safe_inc_flist`.
+    ///
+    /// A peer that never negotiated a safe file list cannot carry the error, so
+    /// upstream sends 0 rather than a value that peer would misread. That
+    /// clause therefore binds BOTH arms. It used to sit inside the legacy arm
+    /// here, which left the varint arm leaking a scan error to a protocol-30
+    /// peer without CF_SAFE_FLIST; hoisting it to the top makes it impossible
+    /// for one encoding to be updated without the other.
     pub fn write_end<W: Write + ?Sized>(
         &self,
         writer: &mut W,
         io_error: Option<i32>,
     ) -> io::Result<()> {
+        let send_io_error = io_error.filter(|_| self.use_safe_file_list());
+
         if self.use_varint_flags() {
             write_varint(writer, 0)?;
-            write_varint(writer, io_error.unwrap_or(0))?;
+            write_varint(writer, send_io_error.unwrap_or(0))?;
             return Ok(());
         }
 
-        if let Some(error) = io_error
-            && self.use_safe_file_list()
-        {
+        if let Some(error) = send_io_error {
             let marker_lo = XMIT_EXTENDED_FLAGS;
             let marker_hi = XMIT_IO_ERROR_ENDLIST;
             writer.write_all(&[marker_lo, marker_hi])?;
