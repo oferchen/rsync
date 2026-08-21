@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use logging::Sequence;
+
 use super::{LocalCopyAction, LocalCopyChangeSet, LocalCopyMetadata, LocalCopyProgress};
 
 /// Record describing a single filesystem action performed during local copy execution.
@@ -16,6 +18,13 @@ pub struct LocalCopyRecord {
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
     is_directory: bool,
+    /// When this action was recorded, relative to every other message.
+    ///
+    /// `None` until the record reaches the one site that logs it. The key is
+    /// deliberately not taken in the constructor: a record is *built* over
+    /// several `with_*` steps and only later handed to the context, and it is
+    /// the hand-off that fixes its place in the output, not the allocation.
+    sequence: Option<Sequence>,
 }
 
 impl LocalCopyRecord {
@@ -39,7 +48,35 @@ impl LocalCopyRecord {
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
             is_directory: false,
+            sequence: None,
         }
+    }
+
+    /// Fixes this record's place in the output stream.
+    ///
+    /// Called once, by the context method that logs the record, so the key
+    /// reflects when the action was *recorded* rather than when the struct was
+    /// built - those differ, because a record is assembled across several
+    /// `with_*` steps.
+    ///
+    /// Assign-once: a second call would hand the record a later key than the
+    /// messages it was already ordered against, silently moving it in the
+    /// output. The debug assertion is the guard.
+    pub(in crate::local_copy) fn stamp(&mut self) {
+        debug_assert!(
+            self.sequence.is_none(),
+            "a record's production order must be fixed exactly once"
+        );
+        self.sequence = Some(Sequence::stamp());
+    }
+
+    /// Returns when this action was recorded, if it has been logged.
+    ///
+    /// `None` means the record never reached the logging site, so it has no
+    /// place in the output stream to report.
+    #[must_use]
+    pub const fn sequence(&self) -> Option<Sequence> {
+        self.sequence
     }
 
     /// Marks whether this record describes a directory entry.

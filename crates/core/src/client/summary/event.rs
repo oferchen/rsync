@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine::local_copy::{LocalCopyAction, LocalCopyChangeSet, LocalCopyRecord};
+use logging::Sequence;
 
 use super::metadata::{ClientEntryKind, ClientEntryMetadata, RemoteItemizeFields};
 
@@ -116,6 +117,18 @@ pub struct ClientEvent {
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
     is_directory: bool,
+    /// When the underlying action was recorded, relative to every other
+    /// message, carried so the renderer can interleave these events with the
+    /// diagnostic channel in production order.
+    ///
+    /// Taken from the source [`LocalCopyRecord`], never minted here: two of
+    /// the three conversion sites convert a whole batch at once, so a key
+    /// minted during conversion would order every event by conversion time and
+    /// place them all after the diagnostics regardless of when they happened.
+    ///
+    /// `None` for an event with no local record behind it - a remote transfer
+    /// builds its events from the wire, not from a recorded local action.
+    sequence: Option<Sequence>,
     /// Pre-rendered `%i` itemize string supplied by a remote transfer.
     ///
     /// Local events derive `%i` from [`Self::change_set`]; a remote transfer has
@@ -141,6 +154,11 @@ impl ClientEvent {
     /// Creates an event by consuming a [`LocalCopyRecord`], moving heap-allocated
     /// fields instead of cloning them.
     pub(crate) fn from_record_owned(record: LocalCopyRecord, destination_root: Arc<Path>) -> Self {
+        // Read the key before `into_parts` consumes the record. Carrying it
+        // across rather than minting one here is what keeps batch conversion
+        // honest: `into_parts` is called in a `.map()` over a whole Vec at two
+        // of the three call sites.
+        let sequence = record.sequence();
         let (
             relative_path,
             action,
@@ -217,6 +235,7 @@ impl ClientEvent {
         };
         let destination_path = Self::resolve_destination_path(&destination_root, &relative_path);
         Self {
+            sequence,
             relative_path,
             kind,
             bytes_transferred,
@@ -244,6 +263,7 @@ impl ClientEvent {
     ) -> Self {
         let destination_path = Self::resolve_destination_path(&destination_root, relative);
         Self {
+            sequence: None,
             relative_path: relative.to_path_buf(),
             kind: ClientEventKind::DataCopied,
             bytes_transferred,
@@ -285,6 +305,7 @@ impl ClientEvent {
         let total_bytes = Some(metadata.length());
         let destination_root: Arc<Path> = Arc::from(Path::new(""));
         Self {
+            sequence: None,
             relative_path,
             kind,
             bytes_transferred: 0,
@@ -324,6 +345,7 @@ impl ClientEvent {
             ClientEventKind::DataCopied
         };
         Self {
+            sequence: None,
             relative_path: fields.relative_path,
             kind,
             bytes_transferred: 0,
@@ -492,6 +514,7 @@ impl ClientEvent {
         let destination_root: Arc<Path> = Arc::from(Path::new("/tmp"));
         let destination_path = destination_root.join(&relative_path);
         Self {
+            sequence: None,
             relative_path,
             kind,
             bytes_transferred: 0,
