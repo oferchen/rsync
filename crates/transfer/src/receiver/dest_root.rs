@@ -85,9 +85,16 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///   once here, then the sandbox locks every subsequent open below that
 ///   resolved fd.
 /// - The daemon module-containment check is performed by the daemon module
-///   loader, not by this helper. A symlinked dest cannot escape the module
-///   root because the daemon already chroots / restricts `module.path` at
-///   the module-config layer.
+///   loader, not by this helper.
+///
+/// ⚠ Containment alone is *not* sufficient on a `path = /` module: upstream's
+/// `abspath_outside_confinement` short-circuits when the confinement root is
+/// `/` (`rootlen <= 1`, `syscall.c:206-207`), so nothing about `module.path`
+/// constrains a peer-supplied `..` traversal there. What upstream relies on in
+/// that configuration is the module's NAME-based `exclude`, applied to the
+/// destination argument in `get_local_name()` (`main.c:718-737`). oc mirrors
+/// that in `ReceiverContext::reject_daemon_excluded_destination`, which runs
+/// before this helper.
 ///
 /// [`DirSandbox`]: fast_io::DirSandbox
 ///
