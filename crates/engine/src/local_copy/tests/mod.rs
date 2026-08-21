@@ -1019,6 +1019,7 @@ include!("execute_delay_updates_delete.rs");
 include!("execute_ignore_times.rs");
 include!("execute_inplace.rs");
 include!("execute_no_implied_dirs.rs");
+include!("execute_relative_implied_parents.rs");
 include!("execute_permissions.rs");
 include!("execute_remove_source.rs");
 include!("execute_temp_dir.rs");

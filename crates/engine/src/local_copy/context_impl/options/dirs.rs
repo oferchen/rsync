@@ -75,7 +75,25 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
     false
 }
 
-    /// Dry-run replacement policy: remove destination (logically) and either
+    /// Removes a non-directory occupying a level where a directory must exist.
+    ///
+    /// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
+    /// that finds a non-directory in its place runs `delete_item(fname, ..,
+    /// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
+    /// `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
+    /// non-empty *directory*, so clearing a non-directory is unconditional.
+    /// Callers reach this only after establishing that `existing` is not a
+    /// directory.
+    fn clear_obstructing_non_directory(
+        &mut self,
+        parent: &Path,
+        existing: &fs::Metadata,
+    ) -> Result<(), LocalCopyError> {
+        let relative = self.parent_relative_to_destination(parent);
+        self.force_remove_destination(parent, relative, existing)
+    }
+
+    /// Dry-run replacement policy: clear the obstruction (logically) and either
     /// allow creation (Ok) or synthesize a "NotFound" error.
     fn replace_parent_entry_dry_run(
         &mut self,
@@ -83,45 +101,25 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
         existing: &fs::Metadata,
         allow_creation: bool,
     ) -> Result<(), LocalCopyError> {
-        if self.force_replacements_enabled() {
-            let relative = self.parent_relative_to_destination(parent);
-            self.force_remove_destination(parent, relative, existing)?;
-            if allow_creation {
-                Ok(())
-            } else {
-                Err(LocalCopyError::io(
-                    "create parent directory",
-                    parent.to_path_buf(),
-                    io::Error::from(io::ErrorKind::NotFound),
-                ))
-            }
-        } else {
-            Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-            ))
+        if allow_creation {
+            return self.clear_obstructing_non_directory(parent, existing);
         }
+        self.replace_parent_entry_forbidden(parent, existing)
     }
 
     /// Creation policy when creation is allowed and side effects are real
-    /// (non-dry-run): replace destination, create directory, and register progress.
+    /// (non-dry-run): clear the obstruction, create the directory, and register
+    /// progress.
     fn replace_parent_entry_create(
         &mut self,
         parent: &Path,
         existing: &fs::Metadata,
     ) -> Result<(), LocalCopyError> {
-        if self.force_replacements_enabled() {
-            let relative = self.parent_relative_to_destination(parent);
-            self.force_remove_destination(parent, relative, existing)?;
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent, error)
-            })?;
-            self.register_progress();
-            Ok(())
-        } else {
-            Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-            ))
-        }
+        self.clear_obstructing_non_directory(parent, existing)?;
+        fs::create_dir_all(parent)
+            .map_err(|error| LocalCopyError::io("create parent directory", parent, error))?;
+        self.register_progress();
+        Ok(())
     }
 
     /// Policy when creation is forbidden: replace destination and always return
@@ -146,14 +144,58 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
         }
     }
 
+    /// Lists the destination-tree directories that must exist before `parent`
+    /// can, ordered outermost first and excluding `parent` itself.
+    ///
+    /// Empty when `parent` lies outside the destination root: that prefix is
+    /// the operator's own `--mkpath` argument rather than a path derived from
+    /// the transferred names, and keeps its single-step handling.
+    fn destination_ancestors(&self, parent: &Path) -> Vec<PathBuf> {
+        let root = self.destination_root();
+        let Ok(relative) = parent.strip_prefix(root) else {
+            return Vec::new();
+        };
+
+        let mut ancestors = Vec::new();
+        let mut current = root.to_path_buf();
+        if current != parent {
+            ancestors.push(current.clone());
+        }
+        for component in relative.components() {
+            current.push(component);
+            if current == parent {
+                break;
+            }
+            ancestors.push(current.clone());
+        }
+        ancestors
+    }
+
     /// Ensures the parent directory exists, creating it if `--implied-dirs` or
     /// `--mkpath` is enabled, or replacing a non-directory obstacle when
     /// `--force` is set.
+    ///
+    /// Each destination-tree level is decided on its own, outermost first.
+    /// upstream: `generator.c:1839-1842` `recv_generator()` receives every
+    /// implied parent as its own file-list entry, so an in-the-way
+    /// non-directory is found at the level that holds it. Resolving the whole
+    /// path in one step would instead traverse such a level, and a symlink
+    /// there would place the new directories wherever it points - outside the
+    /// destination tree.
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
         }
 
+        for ancestor in self.destination_ancestors(parent) {
+            self.prepare_directory_component(&ancestor)?;
+        }
+        self.prepare_directory_component(parent)
+    }
+
+    /// Ensures one directory level exists, applying the replacement policy to
+    /// whatever currently occupies it.
+    fn prepare_directory_component(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         // Fast path: skip stat if this parent was already verified as a directory.
         // With 10K files in one directory, this avoids 9,999 redundant statx calls.
         if self.verified_parents.contains_key(parent) {
