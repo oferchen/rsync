@@ -17,7 +17,7 @@ chroot-receiver-write-inner-module pass
 chroot-special-inner-module pass
 compress-zlib-insert fail
 connect-prog-host-quoting pass
-connect-prog-nested-singlequote-host-injection fail
+connect-prog-nested-singlequote-host-injection pass
 copy-dest-source-symlink pass
 daemon pass
 daemon-access pass

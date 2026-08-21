@@ -16,7 +16,7 @@ mod protect_args_daemon_tests {
 
     fn test_daemon_request() -> DaemonTransferRequest {
         DaemonTransferRequest {
-            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
             path: String::new(),
             username: None,
@@ -1762,7 +1762,7 @@ mod files_from_daemon_args_tests {
 
     fn test_daemon_request() -> DaemonTransferRequest {
         DaemonTransferRequest {
-            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
             path: String::new(),
             username: None,

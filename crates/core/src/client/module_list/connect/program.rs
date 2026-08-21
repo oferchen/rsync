@@ -915,7 +915,7 @@ mod tests {
             ConnectProgramConfig::new(format!("python3 -c \"{probe_script}\"").into(), None)
                 .unwrap();
 
-        let addr = DaemonAddress::new("localhost".to_owned(), 873).unwrap();
+        let addr = DaemonAddress::new("localhost".to_owned(), 873);
         let result = connect_via_program(&addr, &config);
 
         // If python3 is not available, skip rather than fail.
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     fn connect_program_socketpair_bidirectional() {
         let config = ConnectProgramConfig::new("cat".into(), None).unwrap();
-        let addr = DaemonAddress::new("localhost".to_owned(), 873).unwrap();
+        let addr = DaemonAddress::new("localhost".to_owned(), 873);
         let mut stream = connect_via_program(&addr, &config).unwrap();
 
         let message = b"hello socketpair\n";

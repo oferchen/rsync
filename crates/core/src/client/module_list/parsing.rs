@@ -25,7 +25,7 @@ pub(crate) fn parse_bracketed_host(
         )
     })?;
 
-    let decoded = decode_host_component(addr)?;
+    let decoded = addr.to_owned();
 
     if remainder.is_empty() {
         return Ok((decoded, default_port));
@@ -45,115 +45,20 @@ pub(crate) fn parse_bracketed_host(
     Ok((decoded, port))
 }
 
-pub(crate) fn decode_host_component(input: &str) -> Result<String, ClientError> {
-    decode_percent_component(
-        input,
-        invalid_percent_encoding_error,
-        invalid_host_utf8_error,
-    )
-}
-
-pub(crate) fn decode_daemon_username(input: &str) -> Result<String, ClientError> {
-    decode_percent_component(
-        input,
-        invalid_username_percent_encoding_error,
-        invalid_username_utf8_error,
-    )
-}
-
-pub(crate) fn decode_percent_component(
-    input: &str,
-    invalid_percent: fn() -> ClientError,
-    invalid_utf8: fn() -> ClientError,
-) -> Result<String, ClientError> {
-    if !input.contains('%') {
-        return Ok(input.to_owned());
-    }
-
-    let mut decoded = Vec::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let zone_fallback = input[..index].contains(':');
-
-            if index + 2 >= bytes.len() {
-                if zone_fallback {
-                    decoded.push(bytes[index]);
-                    index += 1;
-                    continue;
-                }
-                return Err(invalid_percent());
-            }
-
-            let hi = hex_value(bytes[index + 1]);
-            let lo = hex_value(bytes[index + 2]);
-
-            match (hi, lo) {
-                (Some(hi), Some(lo)) => {
-                    decoded.push((hi << 4) | lo);
-                    index += 3;
-                    continue;
-                }
-                _ if zone_fallback => {
-                    decoded.push(bytes[index]);
-                    index += 1;
-                    continue;
-                }
-                _ => {
-                    return Err(invalid_percent());
-                }
-            }
-        }
-
-        decoded.push(bytes[index]);
-        index += 1;
-    }
-
-    String::from_utf8(decoded).map_err(|_| invalid_utf8())
-}
-
-pub(crate) const fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-#[cold]
-pub(crate) fn invalid_percent_encoding_error() -> ClientError {
-    daemon_error(
-        "invalid percent-encoding in daemon host",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-    )
-}
-
-#[cold]
-pub(crate) fn invalid_host_utf8_error() -> ClientError {
-    daemon_error(
-        "daemon host contains invalid UTF-8",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-    )
-}
-
-#[cold]
-pub(crate) fn invalid_username_percent_encoding_error() -> ClientError {
-    daemon_error(
-        "invalid percent-encoding in daemon username",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-    )
-}
-
-#[cold]
-pub(crate) fn invalid_username_utf8_error() -> ClientError {
-    daemon_error(
-        "daemon username contains invalid UTF-8",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-    )
-}
+// The daemon host and username are taken from the URL VERBATIM.
+//
+// upstream: options.c:3295 `check_for_hostspec()` parses `rsync://HOST:PORT/PATH`
+// and never decodes anything - rsync 3.5.0 contains no percent-decoder at all,
+// so `%` is an ordinary hostname byte. That is load-bearing rather than an
+// omission: `socket.c:204-215 shell_unsafe_connect_host()` refuses a host
+// beginning with `%` precisely because a nested fish would expand `%self`, and
+// it can only refuse what reaches it. An IPv6 zone id (`fe80::1%eth0`) relies on
+// the same literal treatment.
+//
+// oc previously decoded both components and rejected a lone `%` as a malformed
+// escape unless the text before it contained `:`. That rejected `%self` before
+// `RSYNC_CONNECT_PROG` validation could refuse it, and it silently rewrote any
+// host or username containing a `%XX` sequence.
 
 pub(crate) fn split_host_port(input: &str) -> Option<(&str, &str)> {
     let idx = input.rfind(':')?;
@@ -233,19 +138,23 @@ pub(crate) fn parse_host_port(
     input: &str,
     default_port: u16,
 ) -> Result<ParsedDaemonTarget, ClientError> {
-    const DEFAULT_HOST: &str = "localhost";
-
     let (username, input) = split_daemon_username(input)?;
-    let username = username.map(decode_daemon_username).transpose()?;
+    let username = username.map(str::to_owned);
 
     if input.is_empty() {
-        let address = DaemonAddress::new(DEFAULT_HOST.to_owned(), default_port)?;
+        // An empty authority stays empty. Upstream substitutes no default:
+        // `rsync:///mod/` reaches getaddrinfo with an empty node and fails
+        // there, and under RSYNC_CONNECT_PROG it reaches
+        // shell_unsafe_connect_host (socket.c:204-215), which refuses it -
+        // an empty argument survives a direct exec but vanishes when a
+        // nested shell re-splits, shifting every later argument left.
+        let address = DaemonAddress::new(String::new(), default_port);
         return Ok(ParsedDaemonTarget { address, username });
     }
 
     if let Some(host) = input.strip_prefix('[') {
         let (address, port) = parse_bracketed_host(host, default_port)?;
-        let address = DaemonAddress::new(address, port)?;
+        let address = DaemonAddress::new(address, port);
         return Ok(ParsedDaemonTarget { address, username });
     }
 
@@ -264,8 +173,8 @@ pub(crate) fn parse_host_port(
             let port = port
                 .parse::<u16>()
                 .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
-            let host = decode_host_component(host)?;
-            let address = DaemonAddress::new(host, port)?;
+            let host = host.to_owned();
+            let address = DaemonAddress::new(host, port);
             return Ok(ParsedDaemonTarget { address, username });
         }
 
@@ -277,8 +186,8 @@ pub(crate) fn parse_host_port(
         }
     }
 
-    let host = decode_host_component(input)?;
-    let address = DaemonAddress::new(host, default_port)?;
+    let host = input.to_owned();
+    let address = DaemonAddress::new(host, default_port);
     Ok(ParsedDaemonTarget { address, username })
 }
 
@@ -317,36 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn hex_value_parses_digits() {
-        assert_eq!(hex_value(b'0'), Some(0));
-        assert_eq!(hex_value(b'5'), Some(5));
-        assert_eq!(hex_value(b'9'), Some(9));
-    }
-
-    #[test]
-    fn hex_value_parses_lowercase_hex() {
-        assert_eq!(hex_value(b'a'), Some(10));
-        assert_eq!(hex_value(b'c'), Some(12));
-        assert_eq!(hex_value(b'f'), Some(15));
-    }
-
-    #[test]
-    fn hex_value_parses_uppercase_hex() {
-        assert_eq!(hex_value(b'A'), Some(10));
-        assert_eq!(hex_value(b'C'), Some(12));
-        assert_eq!(hex_value(b'F'), Some(15));
-    }
-
-    #[test]
-    fn hex_value_returns_none_for_invalid() {
-        assert!(hex_value(b'g').is_none());
-        assert!(hex_value(b'G').is_none());
-        assert!(hex_value(b'z').is_none());
-        assert!(hex_value(b' ').is_none());
-        assert!(hex_value(b'%').is_none());
-    }
-
-    #[test]
     fn split_host_port_splits_on_last_colon() {
         let result = split_host_port("localhost:8873");
         assert_eq!(result, Some(("localhost", "8873")));
@@ -382,34 +261,73 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// A `%XX` sequence in the host reaches the connector as typed.
+    ///
+    /// upstream: rsync 3.5.0 has no percent-decoder; `%` is an ordinary
+    /// hostname byte. These assertions are the INVERSE of what oc recorded
+    /// while it decoded - `hello%20world` used to become `hello world`.
     #[test]
-    fn decode_host_component_passes_through_plain_text() {
-        let result = decode_host_component("localhost").expect("decode");
-        assert_eq!(result, "localhost");
+    fn parse_host_port_keeps_percent_sequences_in_the_host_verbatim() {
+        for host in ["hello%20world", "%41%42%43", "%self"] {
+            let parsed = parse_host_port(host, 873).expect("parse");
+            assert_eq!(
+                parsed.address.host(),
+                host,
+                "host {host:?} must be verbatim"
+            );
+        }
     }
 
+    /// `rsync:///mod/` names an empty host, and upstream substitutes nothing
+    /// for it - it reaches getaddrinfo (which fails) or, under
+    /// RSYNC_CONNECT_PROG, shell_unsafe_connect_host (which refuses it).
+    /// oc used to swap in `localhost`, which both invented a target the
+    /// operator never named and hid the empty host from the validator.
     #[test]
-    fn decode_host_component_decodes_percent_encoding() {
-        let result = decode_host_component("hello%20world").expect("decode");
-        assert_eq!(result, "hello world");
+    fn parse_host_port_keeps_an_empty_host_empty() {
+        let parsed = parse_host_port("", 873).expect("parse");
+        assert_eq!(parsed.address.host(), "");
+        assert_eq!(parsed.address.port(), 873);
     }
 
+    /// Non-vacuity companion: the empty case above must not be passing
+    /// because every host now comes back empty.
     #[test]
-    fn decode_host_component_decodes_multiple_percent_encodings() {
-        let result = decode_host_component("%41%42%43").expect("decode");
-        assert_eq!(result, "ABC");
+    fn parse_host_port_still_returns_a_named_host() {
+        let parsed = parse_host_port("example.com", 873).expect("parse");
+        assert_eq!(parsed.address.host(), "example.com");
     }
 
+    /// The username is taken verbatim for the same reason, and from the same
+    /// absence of a decoder upstream. `user%40domain` is NOT `user@domain`:
+    /// the split already happened at the last `@`, so decoding one here would
+    /// invent a second, later separator that upstream never sees.
     #[test]
-    fn decode_daemon_username_passes_through_plain_text() {
-        let result = decode_daemon_username("testuser").expect("decode");
-        assert_eq!(result, "testuser");
+    fn parse_host_port_keeps_percent_sequences_in_the_username_verbatim() {
+        let parsed = parse_host_port("user%40domain@localhost", 873).expect("parse");
+        assert_eq!(parsed.username.as_deref(), Some("user%40domain"));
+        assert_eq!(parsed.address.host(), "localhost");
     }
 
+    /// An IPv6 zone id keeps working, and now does so WITHOUT a special case.
+    /// oc previously needed a `zone_fallback` that kept a bare `%` literal only
+    /// when the text before it contained `:` - that branch existed solely to
+    /// stop the decoder mangling this shape, and it is gone with the decoder.
     #[test]
-    fn decode_daemon_username_decodes_percent_encoding() {
-        let result = decode_daemon_username("user%40domain").expect("decode");
-        assert_eq!(result, "user@domain");
+    fn parse_host_port_keeps_an_ipv6_zone_id() {
+        let parsed = parse_host_port("[fe80::1%eth0]", 873).expect("parse");
+        assert_eq!(parsed.address.host(), "fe80::1%eth0");
+    }
+
+    /// The non-vacuity companion: a plain host is unaffected, so the three
+    /// tests above are pinning the percent behaviour rather than a parser that
+    /// stopped working.
+    #[test]
+    fn parse_host_port_still_parses_a_plain_host_and_port() {
+        let parsed = parse_host_port("localhost:8873", 873).expect("parse");
+        assert_eq!(parsed.address.host(), "localhost");
+        assert_eq!(parsed.address.port(), 8873);
+        assert!(parsed.username.is_none());
     }
 
     #[test]

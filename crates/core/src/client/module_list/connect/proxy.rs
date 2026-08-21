@@ -700,8 +700,11 @@ mod tests {
 
     /// A control byte in the CONNECT host must be refused before any write.
     ///
-    /// WHY: `DaemonAddress::new` only trims the ends, so an interior CRLF
-    /// survives into `format!("CONNECT {host}:{port} HTTP/1.0\r\n")`. Without
+    /// WHY: `DaemonAddress::new` stores the host verbatim, so a CRLF anywhere
+    /// in it survives into `format!("CONNECT {host}:{port} HTTP/1.0\r\n")`.
+    /// This guard is the only thing that stops it - do not reintroduce
+    /// trimming as a substitute, which would silently accept some hosts
+    /// upstream refuses while still passing an interior CRLF through. Without
     /// the guard the request line terminates at the injected newline and the
     /// remainder of the host is read by the proxy as attacker-chosen headers.
     /// Asserting that the socket saw ZERO bytes is what makes this a real
@@ -723,8 +726,7 @@ mod tests {
         });
 
         let mut stream = TcpStream::connect(listen_addr).expect("connect to listener");
-        let addr = DaemonAddress::new("evil\r\nX-Injected: 1".to_owned(), 873)
-            .expect("interior control bytes survive the constructor's trim");
+        let addr = DaemonAddress::new("evil\r\nX-Injected: 1".to_owned(), 873);
         let proxy = ProxyConfig {
             host: listen_addr.ip().to_string(),
             port: listen_addr.port(),
@@ -756,7 +758,7 @@ mod tests {
     #[test]
     fn connect_host_allows_ipv6_zone_id_and_ordinary_names() {
         for host in ["fe80::1%eth0", "proxy.example.com", "192.0.2.10"] {
-            let addr = DaemonAddress::new(host.to_owned(), 873).expect("valid host");
+            let addr = DaemonAddress::new(host.to_owned(), 873);
             assert!(
                 !addr
                     .host()
