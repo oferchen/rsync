@@ -21,15 +21,26 @@
 //!
 //! # Security Model
 //!
-//! The `%H` (host) and `%P` (port) substitutions are performed without shell
-//! escaping, matching upstream rsync behavior. This is safe because:
+//! The rendered command is run as `sh -c <command>`, so `%H` is substituted
+//! into a word a shell parses. The template is operator-supplied, but the host
+//! is not: it comes from the `rsync://host/module` operand. Upstream therefore
+//! applies two defences before substituting, and so does this module
+//! (upstream: socket.c:488-495):
 //!
-//! - `RSYNC_CONNECT_PROG` is set by the administrator, not end users
-//! - The template controls whether `%H`/`%P` are used at all
-//! - Hostnames with shell metacharacters are extremely rare
+//! - the host is refused outright unless every byte stays data through a shell
+//!   pass, and its first byte is additionally restricted
+//!   ([`shell_unsafe_connect_host`]);
+//! - what remains is single-quoted so the outer shell sees one literal word
+//!   ([`shell_quote_connect_host`]).
 //!
-//! If untrusted input could reach the host parameter, callers should validate
-//! the hostname format before invoking connection programs.
+//! Both are needed. Quoting alone cannot help when a hook of the form
+//! `sh -c '... %H ...'` re-parses the word in a nested shell, where the quotes
+//! have already been consumed by the outer one.
+//!
+//! This bounds what a *shell* can do with the value. It cannot bound what the
+//! named program does with it - `host:-rf` arrives intact, and a program that
+//! splits on `:` may reinterpret the tail. That boundary belongs to whoever
+//! writes `RSYNC_CONNECT_PROG`.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -253,7 +264,32 @@ impl ConnectProgramConfig {
         self.shell.as_ref()
     }
 
+    /// Whether the template contains a substitution specifier at all.
+    ///
+    /// upstream: socket.c:488 - `strchr(prog, '%')`. A `%` byte is ASCII, so a
+    /// lossy view answers this question identically for a non-UTF-8 template.
+    fn template_has_specifier(&self) -> bool {
+        self.template.to_string_lossy().contains('%')
+    }
+
+    /// Renders the template, substituting `%H` and `%P`.
+    ///
+    /// Returns [`UNSAFE_CONNECT_HOST`] when the host cannot be safely
+    /// substituted; the rendered command is run through `sh -c`, so an
+    /// unchecked host would be shell syntax rather than data.
     pub(crate) fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
+        // upstream: socket.c:488-495 - the refusal, the quoting and the
+        // substitution all sit inside `if (prog && strchr(prog, '%'))`, so a
+        // template with no specifier never inspects the host at all.
+        if !self.template_has_specifier() {
+            return Ok(self.template.clone());
+        }
+        if shell_unsafe_connect_host(host) {
+            return Err(UNSAFE_CONNECT_HOST.to_owned());
+        }
+        let quoted = shell_quote_connect_host(host);
+        let host = quoted.as_str();
+
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -549,6 +585,67 @@ impl Drop for ConnectProgramStream {
             let _ = child.wait();
         }
     }
+}
+
+/// The refusal text upstream prints when a host cannot be substituted.
+///
+/// upstream: socket.c:492 - `rprintf(FERROR, "unsafe host characters for
+/// RSYNC_CONNECT_PROG\n")`.
+const UNSAFE_CONNECT_HOST: &str = "unsafe host characters for RSYNC_CONNECT_PROG";
+
+/// Whether `byte` stays data when a shell re-parses the word containing it.
+///
+/// upstream: socket.c:209-212. The set is deliberately wider than a DNS name:
+/// `RSYNC_CONNECT_PROG` exists for custom transports, where `%H` may be an
+/// alias the program resolves itself rather than a name the resolver ever sees,
+/// so `+` and `~` are allowed inside the string. `%` is required for an IPv6
+/// zone id (`fe80::1%eth0`) and is not special to a POSIX shell.
+const fn connect_host_byte_is_safe(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(byte, b'.' | b'_' | b':' | b'-' | b'%' | b'+' | b'~')
+}
+
+/// Whether `host` must be refused rather than substituted into the template.
+///
+/// upstream: socket.c:204-215 `shell_unsafe_connect_host()`.
+///
+/// The first byte is checked separately because several of the otherwise
+/// allowed ones change an argument's MEANING rather than its text, which no
+/// amount of quoting prevents. Mid-word each is literal, which is why the set
+/// still allows them:
+/// - `-` and `+` both introduce options to plenty of programs - `sh +x` is as
+///   real as `sh -x`;
+/// - `~` is tilde-expanded by a nested shell, turning `~root` into `/root`;
+/// - `%` is expanded by a nested fish, where `%self` becomes its pid (an IPv6
+///   zone id has its `%` mid-word, so nothing legitimate is lost).
+///
+/// An empty host is refused too: it survives a direct exec as an empty
+/// argument but vanishes entirely when a nested shell re-splits the command,
+/// shifting every argument after it.
+fn shell_unsafe_connect_host(host: &str) -> bool {
+    match host.as_bytes() {
+        [] => true,
+        [first, ..] if matches!(first, b'-' | b'+' | b'~' | b'%') => true,
+        bytes => !bytes.iter().copied().all(connect_host_byte_is_safe),
+    }
+}
+
+/// Wraps `host` in single quotes so the outer shell sees exactly one literal
+/// word, rendering an embedded quote as `'\''`.
+///
+/// upstream: socket.c `shell_quote_connect_host()`.
+fn shell_quote_connect_host(host: &str) -> String {
+    let mut quoted = String::with_capacity(host.len() + 2);
+    quoted.push('\'');
+    for ch in host.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
