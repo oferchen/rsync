@@ -6,6 +6,7 @@
 //! Construction-time setup happens in [`GeneratorContext::new`]; the full send
 //! workflow is driven by the `transfer` submodule via `GeneratorContext::run`.
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -663,23 +664,71 @@ impl GeneratorContext {
     /// - `clientserver.c:1345-1357` - why the daemon chroot does not set it
     /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
     pub(crate) fn source_open(&self) -> open_source::SourceOpen {
-        // upstream: syscall.c:136 `confinement_root()` -
-        // `am_daemon ? module_dir : confine_root`. The daemon arm wins
-        // unconditionally: its module directory is already the boundary, and
-        // `--confine-root` arrives in a peer-supplied argv where honouring it
-        // could only WIDEN the module (options.c:2382-2386 nulls it out for a
-        // daemon before it is ever read).
-        let confine_root = if self.config.connection.is_daemon_connection {
-            self.config.connection.daemon_module_root.clone()
-        } else {
-            self.config.connection.confine_root.clone()
-        };
         let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
         open_source::SourceOpen::new(
-            confine_root,
+            self.confine_root(),
             follow_symlinks,
             self.config.write.open_noatime,
         )
+    }
+
+    /// The absolute directory every source-side path resolution is confined
+    /// beneath, or `None` when this transfer applies no confinement.
+    ///
+    /// Sole owner of the confinement-root decision for the sender: the source
+    /// open ([`Self::source_open`]) and the file-list symlink read
+    /// ([`Self::read_source_link`]) must agree on the boundary, and one
+    /// function answering for both is what makes that structural rather than
+    /// coincidental.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:136` `confinement_root()` - `am_daemon ? module_dir :
+    ///   confine_root`. The daemon arm wins unconditionally: its module
+    ///   directory is already the boundary, and `--confine-root` arrives in a
+    ///   peer-supplied argv where honouring it could only WIDEN the module
+    ///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
+    pub(crate) fn confine_root(&self) -> Option<PathBuf> {
+        if self.config.connection.is_daemon_connection {
+            self.config.connection.daemon_module_root.clone()
+        } else {
+            self.config.connection.confine_root.clone()
+        }
+    }
+
+    /// Reads a source symlink's target with the parent components resolved
+    /// beneath [`Self::confine_root`].
+    ///
+    /// A plain `read_link` re-walks every parent component at call time, so a
+    /// parent raced into a symlink pointing out of the module redirects the
+    /// read and the *outside* link's target is what the sender records in the
+    /// file list. Upstream closes that window by resolving the parent once -
+    /// through `secure_relative_open()` in `change_dir()` for a named
+    /// `dir/link` operand, or `secure_opendir()` for a directory scan - and
+    /// then reading the leaf against the held fd. This is the same shape.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:247-255` `scan_readlink()` - `do_readlink_atfd(scan_dirfd,
+    ///   basename)` when the leaf sits directly inside the scanned directory.
+    /// - `flist.c:2028-2059` `secure_opendir()` - the confined open that
+    ///   produces `scan_dirfd` for a daemon.
+    /// - `util1.c:1216` `change_dir()` - the per-argument descent, confined
+    ///   with `secure_relative_open()` for a non-chrooted daemon.
+    pub(in crate::generator) fn read_source_link(&self, full_path: &Path) -> io::Result<PathBuf> {
+        if let Some(root) = self.confine_root() {
+            // oc keeps absolute source paths, so the confinement-relative
+            // component is the source path with the root stripped - the same
+            // reconstruction `SourceOpen::open` performs.
+            if let Ok(relative) = full_path.strip_prefix(&root) {
+                return fast_io::read_link_confined(&root, relative);
+            }
+            // A source path outside the confinement root is not something a
+            // legitimate daemon transfer produces. There is no hardened
+            // readlink to fall back to, so this preserves the previous
+            // behaviour rather than adding a defence - it is not one.
+        }
+        std::fs::read_link(full_path)
     }
 
     /// Whether the source open must apply confinement or `O_NOFOLLOW`, which

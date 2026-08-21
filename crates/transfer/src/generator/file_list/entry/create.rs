@@ -194,13 +194,17 @@ impl GeneratorContext {
                 Some(metadata::windows::ReparseKind::Symlink)
                 | Some(metadata::windows::ReparseKind::Junction)
                 | Some(metadata::windows::ReparseKind::MountPoint)
-                | None => std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from("")),
+                | None => self
+                    .read_source_link(full_path)
+                    .unwrap_or_else(|_| PathBuf::from("")),
                 Some(metadata::windows::ReparseKind::OneDrive)
                 | Some(metadata::windows::ReparseKind::AfUnix)
                 | Some(metadata::windows::ReparseKind::Other(_)) => PathBuf::from(""),
             };
             #[cfg(not(windows))]
-            let raw_target = std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from(""));
+            let raw_target = self
+                .read_source_link(full_path)
+                .unwrap_or_else(|_| PathBuf::from(""));
 
             // upstream: flist.c:222-226 - sender strips the `/rsyncd-munged/`
             // prefix from the readlink result when the daemon module has

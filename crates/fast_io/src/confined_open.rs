@@ -181,6 +181,45 @@ pub fn pin_dest_leaf_confined(
     imp::pin_dest_leaf_confined(root, relative, kind)
 }
 
+/// Reads the symlink target of `root`/`relative` with the parent components
+/// resolved confined beneath `root`.
+///
+/// This is the file-list counterpart to [`open_source_confined`]: the sender
+/// records a symlink's target in the flist, and a path-based `readlink` re-walks
+/// every parent component at call time, so a parent raced into a symlink
+/// pointing out of the module redirects the read and the *outside* link's target
+/// is what goes on the wire. Resolving the parent once through the confined walk
+/// and reading the leaf with `readlinkat` against the held fd closes that window:
+/// the fd cannot be redirected after the fact.
+///
+/// The leaf is never followed - a `readlink` reads the link itself - so unlike
+/// the source open there is no leaf policy to choose.
+///
+/// # Errors
+///
+/// - `EINVAL` when `relative` is absolute, contains a `..` component, or names
+///   something that is not a symlink (the `readlink` contract).
+/// - `EISDIR` when `relative` has no leaf: it is empty, all slashes, or its
+///   final component is `.` or `..`.
+/// - `ELOOP` when the parent walk refuses a symlink - an absolute or escaping
+///   target, or an exhausted hop budget.
+/// - `ENOENT` when the leaf does not exist beneath `root`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:247-255` `scan_readlink()` - reads the leaf with
+///   `do_readlink_atfd(scan_dirfd, ...)` against the already-open scan dir.
+/// - `rsync-3.5.0/flist.c:2028-2059` `secure_opendir()` - the daemon arm that
+///   obtains that dirfd through `secure_relative_open_at()`, which is what makes
+///   the subsequent `readlinkat` race-free.
+/// - `rsync-3.5.0/util1.c:1216` `change_dir()` - the same confinement applied to
+///   the per-argument directory descent, so a named `dir/link` operand is
+///   covered even when no directory scan is running.
+pub fn read_link_confined(root: &Path, relative: &Path) -> io::Result<std::path::PathBuf> {
+    validate_relative(relative)?;
+    imp::read_link_confined(root, relative)
+}
+
 /// Rejects an absolute `relative` or any `..` component up front with
 /// `EINVAL`, matching upstream `secure_relative_open`'s portable front-door
 /// check (`path_has_dotdot_component`). `.` and normal components are
@@ -283,6 +322,15 @@ mod imp {
             flags |= libc::O_DIRECTORY;
         }
         openat(parent.root_dirfd(), leaf, flags, 0)
+    }
+
+    pub(super) fn read_link_confined(
+        root: &Path,
+        relative: &Path,
+    ) -> io::Result<std::path::PathBuf> {
+        let (_, dir, leaf) = split_leaf(relative)?;
+        let parent = resolve_parent(root, dir)?;
+        readlinkat(parent.root_dirfd(), leaf)
     }
 
     /// Resolve `relative`'s parent through the shared confined resolver, then
@@ -571,6 +619,16 @@ mod imp {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "confined destination leaf pin is Unix-only (it exists for fd-based xattr/ACL writes)",
+        ))
+    }
+
+    pub(super) fn read_link_confined(
+        _root: &Path,
+        _relative: &Path,
+    ) -> io::Result<std::path::PathBuf> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "confined readlink is Unix-only (the daemon sender is Unix-only)",
         ))
     }
 }
@@ -1056,6 +1114,84 @@ mod tests {
             DestLeafKind::NonDirectory,
         )
         .expect_err("`..` must be rejected");
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "got {error:?}");
+    }
+
+    /// A symlink read through the confined helper must return the in-module
+    /// target, so the escape tests below discriminate rather than pass because
+    /// the helper refuses everything.
+    #[test]
+    fn read_link_confined_reads_an_in_module_link() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        std::fs::create_dir(root.join("real")).expect("mkdir real");
+        symlink("inside-target", root.join("real/link")).expect("symlink");
+
+        let target = read_link_confined(&root, Path::new("real/link")).expect("read the link");
+        assert_eq!(target, PathBuf::from("inside-target"));
+    }
+
+    /// THE DEFECT: a parent component raced into a symlink pointing out of the
+    /// module must not redirect the read.
+    ///
+    /// WHY: the sender records this target in the file list, so following the
+    /// raced parent puts the *outside* link's target on the wire - an
+    /// information leak from a tree the module does not contain. Upstream
+    /// resolves the parent once through `secure_relative_open()` and reads the
+    /// leaf against the held fd (`flist.c:247-255`, `util1.c:1216`); a
+    /// path-based `readlink` re-walks the parent on every call and has no such
+    /// window closed.
+    #[test]
+    fn read_link_confined_refuses_a_parent_symlink_escaping_the_root() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(base.path()).expect("canonicalize");
+        let root = base.join("module");
+        std::fs::create_dir(&root).expect("mkdir module");
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        symlink("OUTSIDE-LINK-TARGET", outside.join("link")).expect("outside link");
+        // The raced flip: the module's `real` directory becomes a symlink out.
+        symlink(&outside, root.join("real")).expect("plant the escape");
+
+        let error = read_link_confined(&root, Path::new("real/link"))
+            .expect_err("the confined read must refuse the escaping parent");
+        let code = error.raw_os_error();
+        assert!(
+            code == Some(libc::EXDEV) || code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
+            "expected a confinement refusal, got: {error:?}"
+        );
+    }
+
+    /// An in-tree directory symlink is still followed, so a legitimate module
+    /// layout keeps working.
+    ///
+    /// WHY: upstream's walk refuses escapes, not symlinks (`ds_descend`,
+    /// `syscall.c:2961`). A helper that refused every symlinked parent would
+    /// break ordinary modules while passing the escape test above - which is
+    /// exactly the over-refusal this pins against.
+    #[test]
+    fn read_link_confined_follows_an_in_tree_directory_symlink() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        std::fs::create_dir(root.join("real")).expect("mkdir real");
+        symlink("in-module-target", root.join("real/link")).expect("symlink");
+        symlink("real", root.join("alias")).expect("in-tree dir symlink");
+
+        let target = read_link_confined(&root, Path::new("alias/link"))
+            .expect("an in-tree directory symlink must still be followed");
+        assert_eq!(target, PathBuf::from("in-module-target"));
+    }
+
+    /// A non-symlink leaf reports `EINVAL`, the `readlink(2)` contract the
+    /// callers' error handling is written against.
+    #[test]
+    fn read_link_confined_reports_einval_for_a_non_symlink() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        std::fs::write(root.join("plain"), b"not a link").expect("write");
+
+        let error = read_link_confined(&root, Path::new("plain"))
+            .expect_err("a regular file is not a symlink");
         assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "got {error:?}");
     }
 }
