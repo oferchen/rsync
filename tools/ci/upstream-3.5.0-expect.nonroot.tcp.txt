@@ -144,7 +144,7 @@ rsync-ssl-stunnel-ca-required pass
 rsync-ssl-stunnel-hostname-check pass
 scanner-daemon-log-checksum pass
 sender-flist-symlink-leak pass
-sender-readlink-atfd fail
+sender-readlink-atfd pass
 sender-remove-source-secure pass
 symlink-exclude pass
 symlink-exclude-chdir-alias pass
