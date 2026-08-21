@@ -371,7 +371,13 @@ fn verify_secret_response(
         return Ok(false);
     }
 
-    let contents = match fs::read_to_string(secrets_path) {
+    // upstream: authenticate.c:159 opens the secrets file through
+    // `open_no_attacker_symlinks()`. Without the walk, a symlink planted at any
+    // component redirects the daemon's privileged read - and because the
+    // strict-modes `fstat` above inspects the *target* inode, a link to a
+    // root-owned 0600 file passes the mode check while feeding an
+    // attacker-chosen file to the password comparison.
+    let contents = match crate::daemon::operator_file::read_to_string(secrets_path) {
         Ok(contents) => contents,
         Err(_) => return Ok(false),
     };

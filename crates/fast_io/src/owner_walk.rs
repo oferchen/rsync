@@ -393,9 +393,86 @@ pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File>
     )
 }
 
+/// Read an operator-supplied file to a `String` through the ownership walk.
+///
+/// The `read_to_string` counterpart to [`operator_open_read`], for the auxiliary
+/// files rsync consumes whole as text rather than streaming: the daemon config
+/// and `secrets file`, `motd`, `--password-file`, and the filter/`--files-from`
+/// lists. Reading these with a plain path-based `std::fs::read_to_string` lets a
+/// symlink planted at *any* component redirect a privileged read to a file the
+/// operator never named.
+///
+/// Opening and reading is one operation here on purpose: a caller that resolved
+/// the path first and read it second would reintroduce exactly the window the
+/// walk exists to close.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/params.c:586` - the daemon config file.
+/// - `rsync-3.5.0/authenticate.c:159` / `:245` - `secrets file` and
+///   `--password-file`.
+/// - `rsync-3.5.0/clientserver.c:188` - `motd`.
+///
+///   Each opens with `open_no_attacker_symlinks()` and reads from the returned
+///   descriptor; none of them resolves the path independently first.
+///
+/// # Errors
+///
+/// See [`operator_open_with`]. Additionally surfaces any read error, including
+/// `InvalidData` when the file is not valid UTF-8.
+pub fn operator_read_to_string(path: &Path) -> io::Result<String> {
+    use std::io::Read as _;
+
+    let mut file = operator_open_read(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{operator_open_append, operator_open_read, symlink_owner_is_trusted, trusted_uid};
+    use super::{
+        operator_open_append, operator_open_read, operator_read_to_string,
+        symlink_owner_is_trusted, trusted_uid,
+    };
+
+    /// The whole point of the helper: content comes back, and it comes back
+    /// through the walk rather than a path-based read.
+    #[test]
+    fn operator_read_to_string_returns_the_file_contents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("rsyncd.conf");
+        std::fs::write(&path, "[mod]\n    path = /srv\n").expect("write");
+
+        assert_eq!(
+            operator_read_to_string(&path).expect("read the operator file"),
+            "[mod]\n    path = /srv\n"
+        );
+    }
+
+    /// A symlink the caller itself owns is the operator's own layout
+    /// (`/etc/rsyncd.conf -> /srv/conf/rsyncd.conf`) and must still be
+    /// followed - refusing every leaf symlink would break the ordinary
+    /// administrative arrangement this resolver exists to preserve.
+    ///
+    /// The refusing half needs a foreign-owned symlink and therefore root, so
+    /// it is pinned at the predicate by
+    /// `refuses_an_owner_that_is_neither_root_nor_the_euid`; this cell pins the
+    /// half a careless "confine it" change would silently break.
+    #[test]
+    fn operator_read_to_string_follows_a_self_owned_symlink() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("real.conf");
+        std::fs::write(&target, "motd line\n").expect("write");
+
+        let link = temp.path().join("link.conf");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        assert_eq!(
+            operator_read_to_string(&link).expect("follow a euid-owned symlink"),
+            "motd line\n"
+        );
+    }
     use std::io::{Read, Write};
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;

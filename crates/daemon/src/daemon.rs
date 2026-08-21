@@ -72,6 +72,7 @@ use crate::{
 
 mod at_error;
 mod help;
+pub(crate) mod operator_file;
 pub(crate) mod peer_address;
 pub(crate) mod tracing_stream;
 
