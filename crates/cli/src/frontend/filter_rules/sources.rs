@@ -134,6 +134,38 @@ fn filter_file_open_error(
     rsync_error!(FILE_IO_EXIT_CODE, text).with_role(Role::Client)
 }
 
+/// Opens an operator-named filter file, refusing a component symlink owned by
+/// a uid that is neither root nor our own.
+///
+/// A refusal is reported through the caller's existing open-failure arm: to
+/// upstream a refused open is indistinguishable from any other `fp == NULL`,
+/// and both `--*clude-from` and a `merge` rule run with `XFLG_FATAL_ERRORS`,
+/// so the failure is fatal either way.
+///
+/// The walk is Unix-only. The `cfg` is deliberately spelled at the call site
+/// rather than hidden behind a cross-platform `fast_io` export: this is a
+/// security control, and a silent fallback would make its absence on non-Unix
+/// invisible to a reader of this function.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/exclude.c:1683` - `parse_filter_file()` opens the file with
+///   `open_no_attacker_symlinks(open_path, O_RDONLY, 0)`.
+/// - `rsync-3.5.0/exclude.c:1587` - the `--*clude-from` / `merge` call site
+///   passes `XFLG_FATAL_ERRORS`.
+/// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the trust
+///   rule is at `syscall.c:406`.
+fn open_operator_named(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_read(path)
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path)
+    }
+}
+
 /// Reads the raw pattern lines from a filter file, or from standard input when
 /// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
 /// `include` selects upstream's include/exclude wording if the open fails.
@@ -149,7 +181,7 @@ pub(crate) fn load_filter_file_patterns(
     // `--include-from` / `--exclude-from` name the file on the command line, so
     // this is always upstream's non-file arm: the operator already knows the
     // path they typed, and errno is theirs to see.
-    let file = File::open(path)
+    let file = open_operator_named(path)
         .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
 
     let mut reader = BufReader::new(file);
@@ -174,8 +206,8 @@ pub(super) fn read_merge_file(
     // Opened separately from the read so that only a genuine open failure takes
     // upstream's wording and exit code; a mid-file read error (or non-UTF-8
     // contents) is a different condition and keeps its own report.
-    let mut file =
-        File::open(path).map_err(|error| filter_file_open_error(path, include, &error, source))?;
+    let mut file = open_operator_named(path)
+        .map_err(|error| filter_file_open_error(path, include, &error, source))?;
     let mut contents = String::new();
     file.read_to_string(&mut contents).map_err(|error| {
         let text = format!("failed to read filter file '{}': {error}", path.display());
@@ -604,5 +636,27 @@ mod tests {
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].pattern(), "a\nb");
         assert_eq!(rules[1].pattern(), "*.bak");
+    }
+
+    /// The ownership walk must still FOLLOW a symlink whose components we own.
+    ///
+    /// Upstream refuses only a component owned by a uid that is neither root
+    /// nor our euid (`syscall.c:406`), so a filter file reached through a
+    /// symlink the operator created is read normally. This is the
+    /// over-refusal direction: it is what a walk that simply refused every
+    /// symlink would break, and unlike the cross-uid refusal it needs no root
+    /// to observe, so it runs on every platform the suite covers.
+    #[cfg(unix)]
+    #[test]
+    fn a_self_owned_symlink_to_a_filter_file_is_still_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real.rules");
+        std::fs::write(&target, "*.bak\n").expect("write");
+        let link = dir.path().join("link.rules");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let patterns = load_filter_file_patterns(&link, false, false)
+            .expect("a self-owned symlink must be followed, not refused");
+        assert_eq!(patterns, vec!["*.bak"]);
     }
 }
