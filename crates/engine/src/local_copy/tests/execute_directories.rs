@@ -1034,8 +1034,12 @@ fn execute_directory_nested_already_exists_merges_content() {
     assert_eq!(fs::read(dest_nested.join("existing.txt")).expect("read existing"), b"existing content");
 }
 
+/// upstream: `generator.c:1839-1842` `recv_generator()` clears a non-directory
+/// standing where a directory belongs and carries on. `--force` contributes
+/// only `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
+/// non-empty *directory*, so this replacement needs no flag.
 #[test]
-fn execute_directory_errors_when_destination_is_file_without_force() {
+fn execute_directory_replaces_destination_file_without_force() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source dir");
@@ -1050,14 +1054,13 @@ fn execute_directory_errors_when_destination_is_file_without_force() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan.execute().expect_err("should fail to replace file with directory");
+    plan.execute().expect("obstructing file is cleared, not refused");
 
-    match error.kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(*reason, LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    assert!(destination.is_dir(), "destination file replaced by a directory");
+    assert_eq!(
+        fs::read(destination.join("source").join("child.txt")).expect("read copied child"),
+        b"content"
+    );
 }
 
 #[test]

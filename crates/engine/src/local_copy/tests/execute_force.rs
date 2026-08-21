@@ -126,8 +126,13 @@ fn force_directory_replaces_file() {
     );
 }
 
+/// Companion to `force_replaces_file_with_directory_during_recursive_copy`:
+/// clearing a non-directory that obstructs a directory is not `--force`'s job.
+/// upstream: `generator.c:1839-1842` runs `delete_item(.., DEL_FOR_DIR)`
+/// unconditionally; `--force` only adds `DEL_RECURSE` (`generator.c:1629`),
+/// which governs recursing into a non-empty *directory*.
 #[test]
-fn force_disabled_directory_cannot_replace_file() {
+fn force_disabled_directory_still_replaces_file() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("srcdir");
     fs::create_dir_all(&source_root).expect("create source dir");
@@ -142,23 +147,17 @@ fn force_disabled_directory_cannot_replace_file() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().force_replacements(false),
-        )
-        .expect_err("should fail without force");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().force_replacements(false),
+    )
+    .expect("obstruction cleared without --force");
 
-    match error.kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(
-                *reason,
-                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
-            );
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
-    assert!(destination.is_file(), "file should remain");
+    assert!(destination.is_dir(), "file replaced by a directory");
+    assert_eq!(
+        fs::read(destination.join("srcdir").join("file.txt")).expect("read copied file"),
+        b"content"
+    );
 }
 
 #[test]

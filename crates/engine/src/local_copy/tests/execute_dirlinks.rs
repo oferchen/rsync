@@ -136,9 +136,13 @@ fn execute_with_keep_dirlinks_allows_destination_directory_symlink() {
     assert!(summary.directories_created() >= 1);
 }
 
+/// Without `--keep-dirlinks` a destination symlink is an obstruction, so it is
+/// removed and a real directory takes its place - the link is never followed.
+/// upstream: `generator.c:1839-1842` `delete_item(.., DEL_FOR_DIR)`; only
+/// `--keep-dirlinks` makes a symlink-to-directory count as a directory.
 #[cfg(unix)]
 #[test]
-fn execute_without_keep_dirlinks_rejects_destination_directory_symlink() {
+fn execute_without_keep_dirlinks_replaces_destination_symlink_in_place() {
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
@@ -157,22 +161,24 @@ fn execute_without_keep_dirlinks_rejects_destination_directory_symlink() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let result = plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default());
+    plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("obstructing symlink is cleared, not refused");
 
-    let error = result.expect_err("keep-dirlinks disabled should reject destination symlink");
-    assert!(matches!(
-        error.kind(),
-        LocalCopyErrorKind::InvalidArgument(
-            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
-        )
-    ));
     assert!(
-        fs::symlink_metadata(&destination_link)
-            .expect("destination link metadata")
+        !fs::symlink_metadata(&destination_link)
+            .expect("destination metadata")
             .file_type()
-            .is_symlink()
+            .is_symlink(),
+        "symlink replaced by a real directory"
     );
-    assert!(!actual_destination.join("src-dir").join("file.txt").exists());
+    assert_eq!(
+        fs::read(destination_link.join("src-dir").join("file.txt")).expect("read copied file"),
+        b"payload"
+    );
+    assert!(
+        !actual_destination.join("src-dir").exists(),
+        "the link target must not be written through"
+    );
 }
 
 #[cfg(unix)]
@@ -272,9 +278,13 @@ fn without_keep_dirlinks_force_replaces_symlink_subdir_with_real_directory() {
     );
 }
 
+/// `--keep-dirlinks` only spares a symlink whose target is a *directory*. A
+/// symlink to a regular file is an ordinary obstruction: it is removed and a
+/// real directory replaces it, leaving the link target untouched.
+/// upstream: `generator.c:1839-1842` `delete_item(.., DEL_FOR_DIR)`.
 #[cfg(unix)]
 #[test]
-fn keep_dirlinks_with_symlink_to_file_errors() {
+fn keep_dirlinks_replaces_symlink_to_file_without_force() {
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
@@ -295,22 +305,23 @@ fn keep_dirlinks_with_symlink_to_file_errors() {
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().keep_dirlinks(true),
-        )
-        .expect_err("should fail when symlink target is a file, not a directory");
-
-    assert!(matches!(
-        error.kind(),
-        LocalCopyErrorKind::InvalidArgument(
-            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
-        )
-    ));
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    )
+    .expect("symlink-to-file is an obstruction, not a dirlink");
 
     let meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
-    assert!(meta.file_type().is_symlink(), "symlink should remain");
+    assert!(meta.file_type().is_dir(), "symlink replaced by a real directory");
+    assert_eq!(
+        fs::read(dest_root.join("subdir").join("child.txt")).expect("read copied child"),
+        b"data"
+    );
+    assert_eq!(
+        fs::read(&file_target).expect("read link target"),
+        b"not-a-dir",
+        "the link target must not be written through"
+    );
 }
 
 #[cfg(unix)]

@@ -419,21 +419,18 @@ pub(crate) fn copy_sources(
                 && fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir())
                 && fs::read_dir(source.path()).is_ok_and(|mut entries| entries.next().is_some())
             {
-                // A pre-existing non-directory destination blocks the mkdir.
-                // When force replacements are enabled, remove it first (mirrors
-                // the per-entry force-replace path in handlers.rs) so the
-                // source name is preserved as `dest/<source>/`. Without force,
-                // refuse to replace the existing file with a directory, mirroring
-                // the recursive executor's error for the same conflict.
+                // A pre-existing non-directory destination blocks the mkdir, so
+                // clear it first and let the source name land as
+                // `dest/<source>/`. upstream: generator.c:1839-1842
+                // recv_generator() removes it with `delete_item(fname, ..,
+                // del_opts | DEL_FOR_DIR)` regardless of `--force`, which
+                // contributes only DEL_RECURSE (generator.c:1629) and so
+                // governs recursing into a non-empty *directory*, not this.
                 if destination_state.exists && !destination_state.is_dir {
-                    if context.force_replacements_enabled() && !context.mode().is_dry_run() {
+                    if !context.mode().is_dry_run() {
                         remove_existing_destination(destination_path)?;
-                        destination_state.exists = false;
-                    } else {
-                        return Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
                     }
+                    destination_state.exists = false;
                 }
                 destination_root_created |= ensure_destination_directory(
                     destination_path,
