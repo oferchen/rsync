@@ -9,8 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::local_copy::{
-    CopyContext, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
-    LocalCopyRecord, follow_symlink_metadata,
+    CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
+    follow_symlink_metadata,
 };
 
 /// Result of checking destination directory state.
@@ -47,8 +47,15 @@ impl DestinationState {
 /// Handles various cases:
 /// - Destination is already a directory: returns `Ready`
 /// - Destination is a symlink to a directory with `--keep-dirlinks`: returns `Ready`
-/// - Destination exists but is not a directory: removes it if force is enabled
+/// - Destination exists but is not a directory: removes it and returns `Missing`
 /// - Destination doesn't exist: returns `Missing`
+///
+/// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
+/// that finds a non-directory in its place runs `delete_item(fname, ..,
+/// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
+/// `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
+/// non-empty *directory*, so clearing a non-directory is unconditional.
+/// `force_remove_destination` elides the removal under `--dry-run`.
 #[inline]
 pub(super) fn check_destination_state(
     context: &mut CopyContext,
@@ -60,27 +67,16 @@ pub(super) fn check_destination_state(
             let file_type = existing.file_type();
             if file_type.is_dir() {
                 // Directory already present; nothing to do.
-                Ok(DestinationState::Ready(Some(existing)))
-            } else if file_type.is_symlink() && context.keep_dirlinks_enabled() {
+                return Ok(DestinationState::Ready(Some(existing)));
+            }
+            if file_type.is_symlink() && context.keep_dirlinks_enabled() {
                 let target_metadata = follow_symlink_metadata(destination)?;
                 if target_metadata.file_type().is_dir() {
-                    Ok(DestinationState::Ready(Some(target_metadata)))
-                } else if context.force_replacements_enabled() {
-                    context.force_remove_destination(destination, relative, &existing)?;
-                    Ok(DestinationState::Missing)
-                } else {
-                    Err(LocalCopyError::invalid_argument(
-                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                    ))
+                    return Ok(DestinationState::Ready(Some(target_metadata)));
                 }
-            } else if context.force_replacements_enabled() {
-                context.force_remove_destination(destination, relative, &existing)?;
-                Ok(DestinationState::Missing)
-            } else {
-                Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                ))
             }
+            context.force_remove_destination(destination, relative, &existing)?;
+            Ok(DestinationState::Missing)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DestinationState::Missing),
         Err(error) => Err(LocalCopyError::io(
