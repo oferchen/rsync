@@ -91,6 +91,56 @@ fn write_end_without_safe_file_list_writes_normal_marker_even_with_error() {
     assert_eq!(buf, vec![0u8]);
 }
 
+// The `use_safe_inc_flist` clause binds BOTH end-of-list encodings, not just
+// the legacy one. Upstream passes a single `send_io_error` flag into
+// `write_end_of_flist` and the varint arm reads it too
+// (`write_varint(f, send_io_error ? io_error : 0)`), so a protocol-30 peer that
+// negotiated VARINT_FLIST_FLAGS but not SAFE_FILE_LIST must still see a zero.
+//
+// This is the arm that used to leak: the gate lived inside the legacy branch,
+// so the varint branch wrote the scan error to a peer that never agreed to
+// carry it. The sibling above pins the legacy arm on the same rule.
+#[test]
+fn write_end_varint_without_safe_file_list_sends_zero_even_with_error() {
+    let protocol = ProtocolVersion::try_from(30u8).unwrap();
+    let writer =
+        FileListWriter::with_compat_flags(protocol, CompatibilityFlags::VARINT_FLIST_FLAGS);
+    assert!(
+        writer.use_varint_flags(),
+        "fixture must reach the varint arm"
+    );
+    assert!(
+        !writer.use_safe_file_list(),
+        "fixture must be the un-negotiated peer this test is about"
+    );
+
+    let mut buf = Vec::new();
+    writer.write_end(&mut buf, Some(23)).unwrap();
+
+    // Zero varint (end of list) followed by a zero varint error code.
+    assert_eq!(buf, vec![0u8, 0u8]);
+}
+
+// Non-vacuity companion: without this, the test above would also pass if the
+// varint arm had stopped emitting the error to ANY peer.
+#[test]
+fn write_end_varint_with_safe_file_list_sends_the_error() {
+    let protocol = ProtocolVersion::try_from(30u8).unwrap();
+    let writer = FileListWriter::with_compat_flags(
+        protocol,
+        CompatibilityFlags::VARINT_FLIST_FLAGS | CompatibilityFlags::SAFE_FILE_LIST,
+    );
+    assert!(
+        writer.use_varint_flags(),
+        "fixture must reach the varint arm"
+    );
+
+    let mut buf = Vec::new();
+    writer.write_end(&mut buf, Some(23)).unwrap();
+
+    assert_eq!(buf, vec![0u8, 23u8]);
+}
+
 #[test]
 fn write_end_with_protocol_31_enables_safe_mode_automatically() {
     let protocol = ProtocolVersion::try_from(31u8).unwrap();
