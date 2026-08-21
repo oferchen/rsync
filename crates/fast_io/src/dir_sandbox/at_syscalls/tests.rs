@@ -461,48 +461,42 @@ fn secure_chmod_at_changes_mode_on_clean_path() {
 }
 
 #[test]
-fn secure_chmod_at_refuses_symlinked_parent_leaf() {
-    // chdir-symlink-race regression: a symlink swapped into the
-    // immediate parent component of `path` must reject the chmod
-    // rather than chase the link to an outside target. `O_NOFOLLOW`
-    // on the parent `secure_open_dir` is enough to surface ELOOP on
-    // every Unix target (Linux 5.6+ additionally rejects any
-    // symlink anywhere in the parent path via openat2).
+fn secure_chmod_at_follows_an_operator_owned_parent_symlink() {
+    // upstream: `syscall.c:558` `owner_walk_parent()` resolves the parent of
+    // `do_chmod_at()`'s target, and `syscall.c:406` follows a symlink whose
+    // `st_uid` is 0 or our euid. The admin `/backup -> /mnt/disk` layout is
+    // exactly that shape, so the chmod must land on the real file through the
+    // link rather than being refused.
+    //
+    // The attacker half of the same rule - a symlink owned by neither root nor
+    // us - is refused with `ELOOP` by the shared walk. That predicate is pinned
+    // by `owner_walk::tests::refuses_an_owner_that_is_neither_root_nor_the_euid`.
+    // Planting a foreign-owned symlink requires root, so a behavioural cell for
+    // it can only run on the root testsuite leg; this test deliberately does
+    // not claim to cover it.
     let (_keep, root) = canonical_tempdir();
     let outside = root.join("outside");
     let module = root.join("module");
     std::fs::create_dir(&outside).expect("mkdir outside");
     std::fs::create_dir(&module).expect("mkdir module");
-    let outside_target = outside.join("target");
-    std::fs::write(&outside_target, b"OUTSIDE").expect("write outside");
-    std::fs::set_permissions(&outside_target, std::fs::Permissions::from_mode(0o600))
-        .expect("seed outside");
-    // module/subdir -> outside (parent-component symlink trap).
+    let target = outside.join("target");
+    std::fs::write(&target, b"OUTSIDE").expect("write target");
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).expect("seed target");
+    // module/subdir -> outside, planted by this process, so the symlink is
+    // euid-owned and therefore operator-trusted.
     symlink(&outside, module.join("subdir")).expect("plant symlink");
 
-    let dest = module.join("subdir").join("target");
-    let err = super::secure_chmod_at(&dest, 0o666, true)
-        .expect_err("chmod through symlinked parent must error");
-    // Platform-dependent: Linux + openat2 surfaces ELOOP or EXDEV;
-    // O_NOFOLLOW | O_DIRECTORY on a symlinked leaf surfaces ELOOP on
-    // Linux without openat2 and ENOTDIR on macOS. All three confirm
-    // the parent open was refused before any chmod issued.
-    let raw = err.raw_os_error();
-    assert!(
-        matches!(
-            raw,
-            Some(libc::ELOOP) | Some(libc::EXDEV) | Some(libc::ENOTDIR)
-        ),
-        "expected ELOOP/EXDEV/ENOTDIR, got {raw:?}"
-    );
-    let outside_mode = std::fs::metadata(&outside_target)
+    super::secure_chmod_at(&module.join("subdir").join("target"), 0o666, true)
+        .expect("chmod through an operator-owned parent symlink must succeed");
+
+    let mode = std::fs::metadata(&target)
         .expect("stat")
         .permissions()
         .mode()
         & 0o777;
     assert_eq!(
-        outside_mode, 0o600,
-        "outside file must keep 0o600 after refused chmod escape"
+        mode, 0o666,
+        "the chmod must land on the file the trusted parent symlink points at"
     );
 }
 

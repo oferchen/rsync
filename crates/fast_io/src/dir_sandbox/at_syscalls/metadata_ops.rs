@@ -4,7 +4,7 @@
 //! `fchownat`, `utimensat`) on a parent dirfd and exposes the
 //! `*_via_sandbox_or_fallback` adaptors plus the symlink-race-safe
 //! [`secure_chmod_at`] that walks the parent through
-//! [`crate::secure_open_dir`].
+//! [`crate::owner_trusted_parent`].
 
 use std::ffi::{CStr, CString, OsStr};
 use std::io;
@@ -238,17 +238,21 @@ pub fn fchmodat_via_sandbox_or_fallback(
     std::fs::set_permissions(link_path, std::fs::Permissions::from_mode(mode))
 }
 
-/// Chmod `path` after walking its parent through [`secure_open_dir`].
+/// Chmod `path` after walking its parent through the ownership walk.
 ///
-/// Symlink-race-safe variant of [`std::fs::set_permissions`] that
-/// mirrors upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+). The parent
-/// directory of `path` is opened with `openat2(RESOLVE_BENEATH |
-/// RESOLVE_NO_SYMLINKS)` on Linux 5.6+ or `open(O_NOFOLLOW | O_DIRECTORY
-/// | O_CLOEXEC)` elsewhere, then `fchmodat` is anchored on that dirfd
-/// against the leaf basename. A symlink inserted into any parent
-/// component of `path` causes the open to fail with `ELOOP` (or `EXDEV`
-/// for `..` escapes under `openat2`), so a TOCTOU swap cannot redirect
-/// the chmod to an attacker-chosen inode outside the carrier directory.
+/// Symlink-race-safe variant of [`std::fs::set_permissions`] that mirrors
+/// upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+), whose parent resolution
+/// is [`owner_trusted_parent`](crate::owner_trusted_parent) - upstream
+/// `syscall.c:558` `owner_walk_parent()`. Every component is opened
+/// `O_NOFOLLOW`; a symlink is followed only when its `st_uid` is 0 or our euid
+/// (`syscall.c:406`), and any other-uid symlink is refused with `ELOOP`. A
+/// TOCTOU swap by another user therefore cannot redirect the chmod, while the
+/// operator's own layout - the `/backup -> /mnt/disk` admin pattern - is still
+/// traversed.
+///
+/// The walk is deliberately ownership-based rather than a blanket
+/// `RESOLVE_NO_SYMLINKS`: refusing every ancestor symlink also refuses the
+/// operator's own, which upstream follows.
 ///
 /// `follow_symlinks` controls only the leaf: when `false` the helper
 /// passes `AT_SYMLINK_NOFOLLOW` so a swap-to-symlink at the leaf is not
@@ -258,27 +262,22 @@ pub fn fchmodat_via_sandbox_or_fallback(
 /// component (root, single-component) - there is nothing to walk in that
 /// case.
 ///
-/// [`secure_open_dir`]: crate::secure_open_dir
-///
 /// # Errors
 ///
-/// Surfaces either the [`secure_open_dir`](crate::secure_open_dir) error
-/// or the [`fchmodat`] error verbatim. The notable security cases are
-/// `ELOOP` (parent symlink), `EXDEV` (parent `..` escape under
-/// `openat2`), and `ENOTDIR` (parent component is not a directory).
+/// Surfaces either the
+/// [`owner_trusted_parent`](crate::owner_trusted_parent) error or the
+/// [`fchmodat`] error verbatim. The notable security case is `ELOOP`, an
+/// ancestor symlink owned by neither root nor us.
 pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Result<()> {
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => {
-            use std::os::unix::fs::PermissionsExt;
-            return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
-        }
-    };
-    let leaf = path
-        .file_name()
-        .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
-    let dirfd = crate::secure_open_dir(parent)?;
-    fchmodat(dirfd.as_fd(), leaf, mode, follow_symlinks)
+    if path
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    let (dirfd, leaf) = crate::owner_trusted_parent(path)?;
+    fchmodat(dirfd.as_fd(), &leaf, mode, follow_symlinks)
 }
 
 /// Path-based `chown(2)` / `lchown(2)` on `link_path` through the libc
@@ -318,21 +317,19 @@ fn chown_path_libc(link_path: &Path, uid: u32, gid: u32, follow_symlinks: bool) 
     }
 }
 
-/// Chown `path` after walking its parent through
-/// [`secure_open_dir`](crate::secure_open_dir).
+/// Chown `path` after walking its parent through the ownership walk.
 ///
 /// Symlink-race-safe counterpart to a path-based `fchownat(AT_FDCWD,
 /// path, ..., AT_SYMLINK_NOFOLLOW)`. `AT_SYMLINK_NOFOLLOW` only guards the
 /// leaf component; a symlink swapped into any *ancestor* directory is
 /// still followed, redirecting the chown to an attacker-chosen inode
 /// outside the receiver's confinement. This helper mirrors
-/// [`secure_chmod_at`]: the parent directory of `path` is opened with
-/// `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` on Linux 5.6+ or
-/// `open(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` elsewhere, then `fchownat`
-/// is anchored on that dirfd against the leaf basename. A symlink inserted
-/// into any parent component causes the open to fail with `ELOOP` (or
-/// `EXDEV` for `..` escapes under `openat2`), so a TOCTOU swap cannot
-/// redirect the chown.
+/// [`secure_chmod_at`]: the parent is resolved by
+/// [`owner_trusted_parent`](crate::owner_trusted_parent), then `fchownat`
+/// is anchored on that dirfd against the leaf basename. An ancestor
+/// symlink owned by neither root nor us is refused with `ELOOP`, so a
+/// TOCTOU swap cannot redirect the chown, while the operator's own
+/// symlinked layout is still traversed.
 ///
 /// `follow_symlinks` controls only the leaf: `false` passes
 /// `AT_SYMLINK_NOFOLLOW` so a swap-to-symlink at the leaf is reowned
@@ -346,24 +343,24 @@ fn chown_path_libc(link_path: &Path, uid: u32, gid: u32, follow_symlinks: bool) 
 /// ancestor to walk in that case.
 ///
 /// upstream: syscall.c `do_lchown()` moved under the module dirfd
-/// (rsync 3.4.3+, CVE-2026-29518 fd-relative resolution).
+/// (rsync 3.4.3+, CVE-2026-29518 fd-relative resolution), with the parent
+/// resolved by `syscall.c:558` `owner_walk_parent()`.
 ///
 /// # Errors
 ///
-/// Surfaces either the [`secure_open_dir`](crate::secure_open_dir) error
-/// or the [`fchownat`] error verbatim. The notable security cases are
-/// `ELOOP` (parent symlink), `EXDEV` (parent `..` escape under
-/// `openat2`), and `ENOTDIR` (parent component is not a directory).
+/// Surfaces either the
+/// [`owner_trusted_parent`](crate::owner_trusted_parent) error or the
+/// [`fchownat`] error verbatim. The notable security case is `ELOOP`, an
+/// ancestor symlink owned by neither root nor us.
 pub fn secure_chown_at(path: &Path, uid: u32, gid: u32, follow_symlinks: bool) -> io::Result<()> {
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => return chown_path_libc(path, uid, gid, follow_symlinks),
-    };
-    let leaf = path
-        .file_name()
-        .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
-    let dirfd = crate::secure_open_dir(parent)?;
-    fchownat(dirfd.as_fd(), leaf, uid, gid, follow_symlinks)
+    if path
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
+        return chown_path_libc(path, uid, gid, follow_symlinks);
+    }
+    let (dirfd, leaf) = crate::owner_trusted_parent(path)?;
+    fchownat(dirfd.as_fd(), &leaf, uid, gid, follow_symlinks)
 }
 
 /// Build a `timespec` for a `utimensat` slot, mapping `None` to
@@ -414,16 +411,16 @@ fn utimensat_omit_raw(
 }
 
 /// Set atime/mtime on `path` after walking its parent through
-/// [`secure_open_dir`](crate::secure_open_dir), with `None` slots left
-/// unchanged (`UTIME_OMIT`).
+/// [`owner_trusted_parent`](crate::owner_trusted_parent), with `None` slots
+/// left unchanged (`UTIME_OMIT`).
 ///
 /// Symlink-race-safe counterpart to a path-based `utimensat(AT_FDCWD,
 /// path, ...)`. Like [`secure_chown_at`] and [`secure_chmod_at`] the
-/// parent directory is opened with strict resolution and the `utimensat`
-/// is anchored on that dirfd, so a symlink swapped into any ancestor
-/// component is rejected (`ELOOP` / `EXDEV`) before the timestamps are
-/// written. The syscall never opens the target inode, so a peerless FIFO
-/// cannot block the call.
+/// parent is resolved by the ownership walk and the `utimensat` is
+/// anchored on that dirfd, so an ancestor symlink owned by neither root nor
+/// us is rejected (`ELOOP`) before the timestamps are written, while the
+/// operator's own symlinked layout is still traversed. The syscall never
+/// opens the target inode, so a peerless FIFO cannot block the call.
 ///
 /// `follow_symlinks = false` passes `AT_SYMLINK_NOFOLLOW`, matching
 /// [`filetime::set_symlink_file_times`]; `true` follows a symlink leaf,
@@ -433,34 +430,32 @@ fn utimensat_omit_raw(
 /// no parent component (single-component name in the cwd).
 ///
 /// upstream: syscall.c `do_utime()`/`set_times()` under the module dirfd
-/// (rsync 3.4.3+, CVE-2026-29518 fd-relative resolution).
+/// (rsync 3.4.3+, CVE-2026-29518 fd-relative resolution), with the parent
+/// resolved by `syscall.c:558` `owner_walk_parent()`.
 ///
 /// # Errors
 ///
-/// Surfaces either the [`secure_open_dir`](crate::secure_open_dir) error
-/// or the underlying `utimensat(2)` error verbatim.
+/// Surfaces either the
+/// [`owner_trusted_parent`](crate::owner_trusted_parent) error or the
+/// underlying `utimensat(2)` error verbatim.
 pub fn secure_utimes_at(
     path: &Path,
     atime: Option<FileTime>,
     mtime: Option<FileTime>,
     follow_symlinks: bool,
 ) -> io::Result<()> {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            let leaf = path
-                .file_name()
-                .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
-            let c_leaf = CString::new(leaf.as_bytes())
-                .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-            let dirfd = crate::secure_open_dir(parent)?;
-            utimensat_omit_raw(dirfd.as_raw_fd(), &c_leaf, atime, mtime, follow_symlinks)
-        }
-        _ => {
-            let c_path = CString::new(path.as_os_str().as_bytes())
-                .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-            utimensat_omit_raw(libc::AT_FDCWD, &c_path, atime, mtime, follow_symlinks)
-        }
+    if path
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
+        let c_path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        return utimensat_omit_raw(libc::AT_FDCWD, &c_path, atime, mtime, follow_symlinks);
     }
+    let (dirfd, leaf) = crate::owner_trusted_parent(path)?;
+    let c_leaf =
+        CString::new(leaf.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    utimensat_omit_raw(dirfd.as_raw_fd(), &c_leaf, atime, mtime, follow_symlinks)
 }
 
 /// Issue `fchownat` against `link_path` when the `sandbox` root is the
