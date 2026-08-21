@@ -261,8 +261,8 @@ relative pass
 relative-content pass
 relative-implied pass
 relative-implied-symlink pass
-relative-mkpath-dir-symlink fail
-relative-mkpath-symlink fail
+relative-mkpath-dir-symlink pass
+relative-mkpath-symlink pass
 relative-symlinked-parent pass
 relative-symlinked-parent-dotdot pass
 remote-shell-newline-escaping pass
