@@ -601,8 +601,7 @@ const UNSAFE_CONNECT_HOST: &str = "unsafe host characters for RSYNC_CONNECT_PROG
 /// so `+` and `~` are allowed inside the string. `%` is required for an IPv6
 /// zone id (`fe80::1%eth0`) and is not special to a POSIX shell.
 const fn connect_host_byte_is_safe(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(byte, b'.' | b'_' | b':' | b'-' | b'%' | b'+' | b'~')
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-' | b'%' | b'+' | b'~')
 }
 
 /// Whether `host` must be refused rather than substituted into the template.
