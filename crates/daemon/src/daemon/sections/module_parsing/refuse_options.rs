@@ -328,6 +328,86 @@ fn enables_delete_mode(arg: &str) -> bool {
     )
 }
 
+/// Long-option spellings that name the same capability, so refusing any one of
+/// them refuses all of them.
+///
+/// upstream: options.c `parse_one_refuse_match` - after an exact (non-wild)
+/// rule matches a row it walks the whole table again and marks every other row
+/// where `same_refuse_action(op, matched_op)` holds. That predicate folds two
+/// rows together when both are constant assignments to the same destination
+/// with the same resulting value (`refuse_const_assign`), or otherwise when
+/// argInfo, val and destination all agree.
+///
+/// Upstream derives this from `long_options[]`, which oc does not have; the
+/// groups below are the equivalence classes of that predicate, read off the
+/// 3.5.0 table. Note that the folding is NOT "same argInfo": `--del` is
+/// `POPT_ARG_NONE, &delete_during, 0` (assigning 1) while `--delete-during` is
+/// `POPT_ARG_VAL, &delete_during, 1`, and `refuse_const_assign` normalises both
+/// to (same destination, value 1). `--delete-delay` shares the destination but
+/// stores 2, so it is deliberately a separate capability.
+///
+/// Like `VITAL_OPTIONS` and `DEFAULT_REFUSED_OPTIONS` above, this mirrors an
+/// upstream table by hand and carries the same drift exposure they do.
+const OPTION_ALIAS_GROUPS: &[&[&str]] = &[
+    &["checksum-choice", "cc"],
+    &["compress-choice", "zc"],
+    &["compress-level", "zl"],
+    &["compress-threads", "zt"],
+    &["config", "dparam"],
+    &["daemon", "detach", "no-detach"],
+    &["del", "delete-during"],
+    &["existing", "ignore-non-existing"],
+    &["implied-dirs", "i-d"],
+    &["inc-recursive", "i-r"],
+    &["no-8-bit-output", "no-8"],
+    &["no-acls", "no-A"],
+    &["no-atimes", "no-U"],
+    &["no-checksum", "no-c"],
+    &["no-compress", "no-z"],
+    &["no-crtimes", "no-N"],
+    &["no-dirs", "no-d"],
+    &["no-fuzzy", "no-y"],
+    &["no-group", "no-g"],
+    &["no-hard-links", "no-H"],
+    &["no-human-readable", "no-h"],
+    &["no-implied-dirs", "no-i-d"],
+    &["no-inc-recursive", "no-i-r"],
+    &["no-itemize-changes", "no-i"],
+    &["no-links", "no-l"],
+    &["no-omit-dir-times", "no-O"],
+    &["no-omit-link-times", "no-J"],
+    &["no-one-file-system", "no-x"],
+    &["no-owner", "no-o"],
+    &["no-perms", "no-p"],
+    &["no-prune-empty-dirs", "no-m"],
+    &["no-recursive", "no-r"],
+    &["no-relative", "no-R"],
+    &["no-secluded-args", "no-protect-args", "no-s"],
+    &["no-sparse", "no-S"],
+    &["no-times", "no-t"],
+    &["no-verbose", "no-v"],
+    &["no-whole-file", "no-W"],
+    &["no-xattrs", "no-X"],
+    &["old-dirs", "old-d"],
+    &["out-format", "log-format"],
+    &["secluded-args", "protect-args"],
+    &["stop-after", "time-limit"],
+];
+
+/// Reports whether a non-wild refuse rule spelled `pattern` names the same
+/// capability as the option spelled `long_name`.
+///
+/// Exact name first, then the alias groups, so an option outside every group
+/// costs one comparison.
+fn names_same_capability(pattern: &str, long_name: &str) -> bool {
+    if pattern == long_name {
+        return true;
+    }
+    OPTION_ALIAS_GROUPS.iter().any(|group| {
+        group.contains(&pattern) && group.contains(&long_name)
+    })
+}
+
 /// Evaluates a canonical option (long name + optional short letter) against an
 /// ordered refuse list.
 ///
@@ -393,13 +473,20 @@ fn is_option_refused(
         // `op->longName` and `op->shortName`, so `!verbose` and `!v` name the
         // same option. Both comparisons are case-SENSITIVE; that is what keeps
         // `[ardlptgoD]` matching `-D` while leaving `-d` alone.
+        //
+        // A non-wild rule names a CAPABILITY, not one spelling of it, so it
+        // also covers every other spelling that sets the same thing - see
+        // `names_same_capability`. Upstream applies that second pass only when
+        // the match was exact (`if (!is_wild)`, options.c parse_one_refuse_match),
+        // so the glob arm below deliberately does not consult the aliases.
         let matches = if is_glob {
             refuse_glob_match(&pattern, long_name)
                 || short_str
                     .as_deref()
                     .is_some_and(|s| refuse_glob_match(&pattern, s))
         } else {
-            pattern == long_name || short_str.as_deref() == Some(pattern.as_str())
+            names_same_capability(&pattern, long_name)
+                || short_str.as_deref() == Some(pattern.as_str())
         };
 
         if matches {
@@ -510,4 +597,81 @@ fn canonical_option(text: &str) -> String {
     // `-o`, so a rule aimed at `--omit-dir-times` silently blocked `--owner`
     // and broke every `-a` transfer.
     token.to_owned()
+}
+
+#[cfg(test)]
+mod capability_alias_tests {
+    use super::*;
+
+    fn module_refusing(rules: &[&str]) -> ModuleDefinition {
+        ModuleDefinition {
+            refuse_options: rules.iter().map(|rule| (*rule).to_owned()).collect(),
+            ..ModuleDefinition::default()
+        }
+    }
+
+    /// upstream: options.c `parse_one_refuse_match` - an exact match records
+    /// `matched_op` and then marks every row `same_refuse_action` agrees with.
+    /// `--del` (`POPT_ARG_NONE, &delete_during, 0`) and `--delete-during`
+    /// (`POPT_ARG_VAL, &delete_during, 1`) both constant-assign 1 to the same
+    /// destination, so they are one capability and a rule naming either refuses
+    /// both. Both directions are asserted because the two table rows have
+    /// different `argInfo`, so a fix that keyed on `argInfo` would pass one way
+    /// and fail the other.
+    #[test]
+    fn an_exact_refuse_rule_covers_every_spelling_of_that_capability() {
+        let canonical = module_refusing(&["delete-during"]);
+        assert!(
+            is_option_refused(&canonical, "del", None),
+            "`refuse options = delete-during` must refuse --del: same destination, same stored value"
+        );
+        assert!(
+            is_option_refused(&canonical, "delete-during", None),
+            "a rule must still refuse the spelling it names"
+        );
+
+        let alias = module_refusing(&["del"]);
+        assert!(
+            is_option_refused(&alias, "delete-during", None),
+            "`refuse options = del` must refuse --delete-during"
+        );
+        assert!(
+            is_option_refused(&alias, "del", None),
+            "a rule must still refuse the spelling it names"
+        );
+    }
+
+    /// Non-vacuity companion: without it, an equivalence that simply grouped
+    /// every `delete*` row together would satisfy the test above.
+    ///
+    /// `--delete-delay` shares the `&delete_during` destination but stores 2,
+    /// and `--delete` writes a different variable entirely, so
+    /// `same_refuse_action` separates both from `--del`.
+    #[test]
+    fn a_capability_rule_does_not_reach_a_row_that_stores_something_else() {
+        let alias = module_refusing(&["del"]);
+        assert!(
+            !is_option_refused(&alias, "delete-delay", None),
+            "--delete-delay assigns 2, not 1: a different capability"
+        );
+        assert!(
+            !is_option_refused(&alias, "delete", None),
+            "--delete assigns a different variable: a different capability"
+        );
+    }
+
+    /// upstream gates the second pass on `if (!is_wild)`, so a glob marks only
+    /// what it literally matches and never pulls in siblings.
+    #[test]
+    fn a_wildcard_rule_does_not_expand_to_aliases() {
+        let wild = module_refusing(&["delete-d*"]);
+        assert!(
+            is_option_refused(&wild, "delete-during", None),
+            "the glob still matches the name it spells"
+        );
+        assert!(
+            !is_option_refused(&wild, "del", None),
+            "a wildcard rule must not reach --del, which the glob does not match"
+        );
+    }
 }
