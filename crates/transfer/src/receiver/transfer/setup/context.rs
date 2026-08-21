@@ -7,7 +7,7 @@
 //! forwarding helpers live alongside it.
 
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use logging::debug_log;
@@ -335,6 +335,66 @@ impl ReceiverContext {
             .with_group_mapping(self.config.group_mapping.clone())
     }
 
+    /// Refuses a destination argument that the daemon module's own filter list
+    /// excludes.
+    ///
+    /// upstream: `main.c:718-737` `get_local_name()` - when
+    /// `daemon_filter_list.head` is set, the destination argument is checked by
+    /// NAME against the daemon filter and the transfer is aborted with
+    /// `RERR_FILESELECT` if it matches. The check runs before the destination
+    /// is stat'ed or rewritten, which is why it sits here rather than beside
+    /// the pre-flight mkdir.
+    ///
+    /// The match is performed on a `..`-collapsed *copy* so a `../excluded`
+    /// destination is caught by name; upstream leaves the real path alone for
+    /// the resolver. This is deliberately a name-based filter decision and not
+    /// a confinement one: on a `path = /` module upstream's
+    /// `abspath_outside_confinement` short-circuits (`rootlen <= 1`,
+    /// `syscall.c:206-207`), so the module `exclude` is the *only* thing
+    /// standing between a peer-supplied `..` traversal and the excluded
+    /// subtree.
+    ///
+    /// Both `is_dir` values are tested because upstream ORs the two
+    /// `check_filter()` calls: a rule written `/excluded/` only matches as a
+    /// directory (`XFLG_DIR2WILD3`, `exclude.c:308-313`), while a bare
+    /// `/excluded` only matches as a file.
+    ///
+    /// `crates/transfer` sits below `crates/core`, so `ExitCode::FileSelect`
+    /// is not nameable here; `ErrorKind::PermissionDenied` is what
+    /// `ExitCode::from_io_error` maps to that code.
+    pub(in crate::receiver) fn reject_daemon_excluded_destination(
+        &self,
+        dest: &Path,
+    ) -> io::Result<()> {
+        let Some(filters) = self.daemon_filter_set() else {
+            return Ok(());
+        };
+        let cleaned = filters::collapse_dot_dot_dirs(dest);
+        // upstream: main.c:729-730 - a trailing `/` or `/.` component is
+        // lopped off before matching, and a bare `.` is not checked at all.
+        let cleaned = match cleaned.file_name() {
+            Some(name) if name == "." => {
+                cleaned.parent().map_or(cleaned.clone(), Path::to_path_buf)
+            }
+            _ => cleaned,
+        };
+        if cleaned.as_os_str().is_empty() || cleaned == Path::new(".") {
+            return Ok(());
+        }
+        if filters.allows(&cleaned, false) && filters.allows(&cleaned, true) {
+            return Ok(());
+        }
+        // upstream: main.c:734-735 quotes the ORIGINAL argument, not the
+        // collapsed copy used for matching.
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "ERROR: daemon has excluded destination \"{}\"",
+                dest.display()
+            ),
+        ))
+    }
+
     fn build_pipeline_setup(&mut self, file_count: usize) -> io::Result<(usize, PipelineSetup)> {
         let removed = self.sanitize_file_list();
         let file_count = file_count - removed;
@@ -366,6 +426,8 @@ impl ReceiverContext {
         let dest_arg = self.config.args.first();
         let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
         let dest_dir = dest_arg.map_or_else(|| PathBuf::from("."), PathBuf::from);
+
+        self.reject_daemon_excluded_destination(&dest_dir)?;
 
         // upstream: main.c:805-832 get_local_name() - single-file rename
         // semantics. When the transfer is exactly one non-directory entry,
