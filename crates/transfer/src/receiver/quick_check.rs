@@ -255,6 +255,60 @@ struct ReferenceMatch<'a> {
     level: MatchLevel,
 }
 
+/// Stats an alt-dest basis entry without traversing an attacker-owned symlink.
+///
+/// The tail of `path` comes from the peer's file list, so on a pull the peer
+/// chooses which name is looked up inside the operator's basis directory. A
+/// plain path stat walks every component at call time, so a symlink anywhere
+/// along that tail - one the peer itself could have planted during an earlier
+/// run into the same tree, which is exactly what `--link-dest=../prev` points
+/// at - redirects the stat outside the basis and turns the basis directory into
+/// a read oracle. The ownership walk resolves each component itself, following
+/// only symlinks owned by root or our euid and refusing the rest with `ELOOP`.
+///
+/// Only the parent is walked. The leaf is `fstatat`'d with
+/// `AT_SYMLINK_NOFOLLOW`, never opened and never resolved, because upstream
+/// reaches it through `link_stat_at()` - a symlink sitting at the basis name
+/// must report *as a symlink* so the `!S_ISREG` filter drops it, even when the
+/// link is trusted-owned. Opening the leaf instead would both follow that
+/// symlink and require read permission the `--link-dest` hard-link path does
+/// not need.
+///
+/// The returned [`fs::Metadata`] comes from a second, path-based stat so the
+/// attribute comparisons downstream keep their `std` type; it is accepted only
+/// when it names the same `(dev, ino)` the confined stat saw. A parent flipped
+/// between the two calls therefore lands on a different inode and is refused,
+/// which is what makes the path stat safe to use as the carrier.
+///
+/// Any failure is reported as "no basis here", the same outcome upstream
+/// produces when `link_stat` fails: the file transfers normally.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:979-990` `basis_link_stat()` - the non-daemon
+///   receiver arm: `owner_walk_parent()` for the parent components, then
+///   `link_stat_at()` on the leaf through the returned descriptor.
+/// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk itself.
+#[cfg(unix)]
+fn basis_stat(path: &Path) -> Option<fs::Metadata> {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+
+    let (parent, leaf) = fast_io::owner_walk::owner_trusted_parent(path).ok()?;
+    let confined = fast_io::fstatat_nofollow(parent.as_fd(), &leaf).ok()?;
+    let meta = fs::symlink_metadata(path).ok()?;
+    (meta.dev() == confined.dev() && meta.ino() == confined.ino()).then_some(meta)
+}
+
+/// Non-Unix fallback: the ownership walk is a dirfd construction with no
+/// Windows analogue, so the basis is stat'd by path. `symlink_metadata` still
+/// refuses to follow a symlink at the leaf, which is what keeps a symlinked
+/// basis entry from being consumed; only the parent components are unguarded.
+#[cfg(not(unix))]
+fn basis_stat(path: &Path) -> Option<fs::Metadata> {
+    fs::symlink_metadata(path).ok()
+}
+
 /// Scans every reference directory and returns the strongest basis match,
 /// mirroring upstream's `best_match` selection in `try_dests_reg`.
 ///
@@ -294,8 +348,8 @@ fn best_reference_match<'a>(
     let mut best: Option<ReferenceMatch<'a>> = None;
     for ref_dir in reference_directories {
         let ref_path = ref_dir.path.join(relative_path);
-        let ref_meta = match fs::symlink_metadata(&ref_path) {
-            Ok(m) if m.file_type().is_file() => m,
+        let ref_meta = match basis_stat(&ref_path) {
+            Some(m) if m.file_type().is_file() => m,
             _ => continue,
         };
 
@@ -1071,11 +1125,25 @@ mod symlink_basis_tests {
         ref_dir: &std::path::Path,
         dest_dir: &std::path::Path,
     ) -> bool {
-        let entry = FileEntry::new_file(
-            PathBuf::from("payload.bin"),
+        run_named(
+            kind,
+            ref_dir,
+            dest_dir,
+            "payload.bin",
             b"basis payload".len() as u64,
-            0o644,
-        );
+        )
+    }
+
+    /// `run` with the peer-supplied entry name spelled out, so a test can probe
+    /// a multi-component name whose leading component the basis resolves.
+    fn run_named(
+        kind: ReferenceDirectoryKind,
+        ref_dir: &std::path::Path,
+        dest_dir: &std::path::Path,
+        entry_name: &str,
+        entry_size: u64,
+    ) -> bool {
+        let entry = FileEntry::new_file(PathBuf::from(entry_name), entry_size, 0o644);
         let reference = ReferenceDirectory {
             kind,
             path: ref_dir.to_path_buf(),
@@ -1143,6 +1211,84 @@ mod symlink_basis_tests {
         assert!(
             !handled,
             "compare-dest must not treat symlink basis as up-to-date"
+        );
+    }
+
+    /// A symlinked parent component the invoking user OWNS is still traversed.
+    ///
+    /// The basis stat runs through the ownership walk, whose rule is ownership
+    /// and not location: uid 0 or our euid is the operator's own layout (the
+    /// `--link-dest=/backup` where `backup -> /mnt/disk` pattern) and is
+    /// followed; any other uid is refused with `ELOOP`. Routing the basis onto
+    /// that walk must not break the followed half, which is the half real
+    /// deployments depend on.
+    ///
+    /// MEASURED against real rsync 3.5.0: with `basis/sub -> ../outside` owned
+    /// by the invoking user, upstream consumes the basis and does not transfer
+    /// `sub/payload.bin`. The refusing half needs a foreign-owned symlink and so
+    /// needs root to construct; it is pinned at the predicate instead, by
+    /// `fast_io::owner_walk`'s `refuses_an_owner_that_is_neither_root_nor_the_euid`.
+    ///
+    /// upstream: `generator.c:979-990` `basis_link_stat()` ARM 1 resolves the
+    /// basis parent with `owner_walk_parent()`; `syscall.c:406` is the
+    /// `st_uid != 0 && st_uid != trusted_uid` refusal this cell stays clear of.
+    #[test]
+    fn copy_dest_traverses_a_self_owned_symlinked_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        fs::write(outside.join("payload.bin"), b"basis payload").expect("write outside file");
+
+        // The basis dir reaches its content through a symlink the test - and so
+        // the invoking euid - owns, which is the trusted case.
+        let ref_dir = temp.path().join("basis");
+        fs::create_dir_all(&ref_dir).expect("create basis dir");
+        unix::fs::symlink("../outside", ref_dir.join("sub")).expect("create parent symlink");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let handled = run_named(
+            ReferenceDirectoryKind::Copy,
+            &ref_dir,
+            &dest_dir,
+            "sub/payload.bin",
+            b"basis payload".len() as u64,
+        );
+
+        assert!(
+            handled,
+            "a self-owned symlinked parent is trusted and must still be walked"
+        );
+    }
+
+    /// Non-vacuity companion for the parent-walk cases: with `sub` a real
+    /// directory the very same entry name matches, proving the fixture can
+    /// reach the basis without any symlink in play.
+    #[test]
+    fn copy_dest_matches_through_a_real_parent_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let ref_dir = temp.path().join("basis");
+        fs::create_dir_all(ref_dir.join("sub")).expect("create basis subdir");
+        fs::write(ref_dir.join("sub/payload.bin"), b"escaped payload").expect("write basis file");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let handled = run_named(
+            ReferenceDirectoryKind::Copy,
+            &ref_dir,
+            &dest_dir,
+            "sub/payload.bin",
+            b"escaped payload".len() as u64,
+        );
+
+        assert!(handled, "a real parent directory must still be walked");
+        assert_eq!(
+            fs::read(dest_dir.join("sub/payload.bin")).expect("dest file"),
+            b"escaped payload"
         );
     }
 
