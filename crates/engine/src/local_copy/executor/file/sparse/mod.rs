@@ -91,7 +91,7 @@ impl std::fmt::Display for SparseDetectStrategy {
     }
 }
 
-pub(crate) use state::{SparseWriteState, write_sparse_chunk};
+pub(crate) use state::{SparseWriteState, skip_matched_sparse, write_sparse_chunk};
 
 use detect::{leading_zero_run, trailing_zero_run};
 
