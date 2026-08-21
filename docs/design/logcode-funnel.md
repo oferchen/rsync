@@ -95,10 +95,15 @@ that upstream gets from writing immediately, which is the property under test.
 
 ## Known adjacent defect
 
-`logging::set_quiet` and the `QUIET` cell are thread-local while the emitter may
-run on a worker thread, so the suppression can be consulted on a thread that
-never had it set. The sequence counter must not repeat that mistake. Fixing
-`QUIET` is in scope for the step that introduces the shared counter.
+`logging::set_quiet`, the `QUIET` cell and `finfo_suppressed` are **not on
+master** - they are added by the `skipping directory` branch. There, they are
+thread-local while the emitter may run on a worker thread, so the suppression
+can be consulted on a thread that never had it set.
+
+The sequence counter must not repeat that mistake, which is why it is an
+`AtomicU64` rather than a thread-local. Fixing `QUIET` itself belongs to the
+step that rebases that branch onto the funnel, not to the step that introduces
+the counter - on master there is nothing to fix yet.
 
 ## Gates
 

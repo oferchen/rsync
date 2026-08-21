@@ -81,6 +81,7 @@ mod levels;
 mod log_code;
 mod macros;
 mod phase_timer;
+mod sequence;
 mod stream;
 mod thread_local;
 mod verify_failure;
@@ -98,6 +99,7 @@ pub use error_format::{
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
+pub use sequence::Sequence;
 pub use stream::{BadLogCode, MessageStream, Msgs2Stderr, StreamContext, message_stream};
 pub use thread_local::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events,
