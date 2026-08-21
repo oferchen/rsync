@@ -21,15 +21,26 @@
 //!
 //! # Security Model
 //!
-//! The `%H` (host) and `%P` (port) substitutions are performed without shell
-//! escaping, matching upstream rsync behavior. This is safe because:
+//! The rendered command is run as `sh -c <command>`, so `%H` is substituted
+//! into a word a shell parses. The template is operator-supplied, but the host
+//! is not: it comes from the `rsync://host/module` operand. Upstream therefore
+//! applies two defences before substituting, and so does this module
+//! (upstream: socket.c:488-495):
 //!
-//! - `RSYNC_CONNECT_PROG` is set by the administrator, not end users
-//! - The template controls whether `%H`/`%P` are used at all
-//! - Hostnames with shell metacharacters are extremely rare
+//! - the host is refused outright unless every byte stays data through a shell
+//!   pass, and its first byte is additionally restricted
+//!   ([`shell_unsafe_connect_host`]);
+//! - what remains is single-quoted so the outer shell sees one literal word
+//!   ([`shell_quote_connect_host`]).
 //!
-//! If untrusted input could reach the host parameter, callers should validate
-//! the hostname format before invoking connection programs.
+//! Both are needed. Quoting alone cannot help when a hook of the form
+//! `sh -c '... %H ...'` re-parses the word in a nested shell, where the quotes
+//! have already been consumed by the outer one.
+//!
+//! This bounds what a *shell* can do with the value. It cannot bound what the
+//! named program does with it - `host:-rf` arrives intact, and a program that
+//! splits on `:` may reinterpret the tail. That boundary belongs to whoever
+//! writes `RSYNC_CONNECT_PROG`.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -253,7 +264,32 @@ impl ConnectProgramConfig {
         self.shell.as_ref()
     }
 
+    /// Whether the template contains a substitution specifier at all.
+    ///
+    /// upstream: socket.c:488 - `strchr(prog, '%')`. A `%` byte is ASCII, so a
+    /// lossy view answers this question identically for a non-UTF-8 template.
+    fn template_has_specifier(&self) -> bool {
+        self.template.to_string_lossy().contains('%')
+    }
+
+    /// Renders the template, substituting `%H` and `%P`.
+    ///
+    /// Returns [`UNSAFE_CONNECT_HOST`] when the host cannot be safely
+    /// substituted; the rendered command is run through `sh -c`, so an
+    /// unchecked host would be shell syntax rather than data.
     pub(crate) fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
+        // upstream: socket.c:488-495 - the refusal, the quoting and the
+        // substitution all sit inside `if (prog && strchr(prog, '%'))`, so a
+        // template with no specifier never inspects the host at all.
+        if !self.template_has_specifier() {
+            return Ok(self.template.clone());
+        }
+        if shell_unsafe_connect_host(host) {
+            return Err(UNSAFE_CONNECT_HOST.to_owned());
+        }
+        let quoted = shell_quote_connect_host(host);
+        let host = quoted.as_str();
+
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -551,6 +587,66 @@ impl Drop for ConnectProgramStream {
     }
 }
 
+/// The refusal text upstream prints when a host cannot be substituted.
+///
+/// upstream: socket.c:492 - `rprintf(FERROR, "unsafe host characters for
+/// RSYNC_CONNECT_PROG\n")`.
+const UNSAFE_CONNECT_HOST: &str = "unsafe host characters for RSYNC_CONNECT_PROG";
+
+/// Whether `byte` stays data when a shell re-parses the word containing it.
+///
+/// upstream: socket.c:209-212. The set is deliberately wider than a DNS name:
+/// `RSYNC_CONNECT_PROG` exists for custom transports, where `%H` may be an
+/// alias the program resolves itself rather than a name the resolver ever sees,
+/// so `+` and `~` are allowed inside the string. `%` is required for an IPv6
+/// zone id (`fe80::1%eth0`) and is not special to a POSIX shell.
+const fn connect_host_byte_is_safe(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-' | b'%' | b'+' | b'~')
+}
+
+/// Whether `host` must be refused rather than substituted into the template.
+///
+/// upstream: socket.c:204-215 `shell_unsafe_connect_host()`.
+///
+/// The first byte is checked separately because several of the otherwise
+/// allowed ones change an argument's MEANING rather than its text, which no
+/// amount of quoting prevents. Mid-word each is literal, which is why the set
+/// still allows them:
+/// - `-` and `+` both introduce options to plenty of programs - `sh +x` is as
+///   real as `sh -x`;
+/// - `~` is tilde-expanded by a nested shell, turning `~root` into `/root`;
+/// - `%` is expanded by a nested fish, where `%self` becomes its pid (an IPv6
+///   zone id has its `%` mid-word, so nothing legitimate is lost).
+///
+/// An empty host is refused too: it survives a direct exec as an empty
+/// argument but vanishes entirely when a nested shell re-splits the command,
+/// shifting every argument after it.
+fn shell_unsafe_connect_host(host: &str) -> bool {
+    match host.as_bytes() {
+        [] => true,
+        [b'-' | b'+' | b'~' | b'%', ..] => true,
+        bytes => !bytes.iter().copied().all(connect_host_byte_is_safe),
+    }
+}
+
+/// Wraps `host` in single quotes so the outer shell sees exactly one literal
+/// word, rendering an embedded quote as `'\''`.
+///
+/// upstream: socket.c `shell_quote_connect_host()`.
+fn shell_quote_connect_host(host: &str) -> String {
+    let mut quoted = String::with_capacity(host.len() + 2);
+    quoted.push('\'');
+    for ch in host.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
 fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
     let message = crate::rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", text.into())
         .with_role(crate::message::Role::Client);
@@ -604,7 +700,7 @@ mod tests {
     fn format_command_substitutes_host() {
         let config = ConnectProgramConfig::new("connect to %H".into(), None).unwrap();
         let result = config.format_command("example.com", 873).unwrap();
-        assert_eq!(result, "connect to example.com");
+        assert_eq!(result, "connect to 'example.com'");
     }
 
     #[test]
@@ -618,7 +714,7 @@ mod tests {
     fn format_command_substitutes_both() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("server.local", 22).unwrap();
-        assert_eq!(result, "nc server.local 22");
+        assert_eq!(result, "nc 'server.local' 22");
     }
 
     #[test]
@@ -646,7 +742,7 @@ mod tests {
     fn format_command_multiple_substitutions() {
         let config = ConnectProgramConfig::new("%H:%P and %H again".into(), None).unwrap();
         let result = config.format_command("myhost", 9999).unwrap();
-        assert_eq!(result, "myhost:9999 and myhost again");
+        assert_eq!(result, "'myhost':9999 and 'myhost' again");
     }
 
     #[test]
@@ -660,7 +756,7 @@ mod tests {
     fn format_command_adjacent_specifiers() {
         let config = ConnectProgramConfig::new("%H%P".into(), None).unwrap();
         let result = config.format_command("test", 123).unwrap();
-        assert_eq!(result, "test123");
+        assert_eq!(result, "'test'123");
     }
 
     #[test]
@@ -668,42 +764,129 @@ mod tests {
         let config =
             ConnectProgramConfig::new("ssh -p %P %H -o 'Port=%P' %% done".into(), None).unwrap();
         let result = config.format_command("server", 2222).unwrap();
-        assert_eq!(result, "ssh -p 2222 server -o 'Port=2222' % done");
+        assert_eq!(result, "ssh -p 2222 'server' -o 'Port=2222' % done");
     }
 
     #[test]
     fn format_command_ipv6_host() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("::1", 873).unwrap();
-        assert_eq!(result, "nc ::1 873");
+        assert_eq!(result, "nc '::1' 873");
     }
 
+    /// An empty host is refused, not substituted.
+    ///
+    /// upstream: socket.c:208 - `if (!*host || ...) return 1`. It survives a
+    /// direct exec as an empty argument but vanishes when a nested shell
+    /// re-splits the command, shifting every later argument left.
     #[test]
-    fn format_command_empty_host() {
-        let config = ConnectProgramConfig::new("nc '%H' %P".into(), None).unwrap();
-        let result = config.format_command("", 873).unwrap();
-        assert_eq!(result, "nc '' 873");
+    fn format_command_empty_host_is_refused() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        assert_eq!(
+            config.format_command("", 873),
+            Err(UNSAFE_CONNECT_HOST.to_owned())
+        );
     }
 
     #[test]
     fn format_command_port_zero() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("host", 0).unwrap();
-        assert_eq!(result, "nc host 0");
+        assert_eq!(result, "nc 'host' 0");
     }
 
     #[test]
     fn format_command_port_max() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("host", 65535).unwrap();
-        assert_eq!(result, "nc host 65535");
+        assert_eq!(result, "nc 'host' 65535");
     }
 
+    /// `@` is outside upstream's allowed byte set, so a `user@host` form is
+    /// refused rather than quoted.
+    ///
+    /// upstream: socket.c:211 - the set is alphanumerics plus `._:-%+~`.
     #[test]
-    fn format_command_special_chars_in_host() {
+    fn format_command_refuses_a_byte_outside_the_allowed_set() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
-        let result = config.format_command("user@host.example.com", 22).unwrap();
-        assert_eq!(result, "nc user@host.example.com 22");
+        assert_eq!(
+            config.format_command("user@host.example.com", 22),
+            Err(UNSAFE_CONNECT_HOST.to_owned())
+        );
+    }
+
+    /// Every host the upstream cell expects to be refused.
+    ///
+    /// upstream: `testsuite/connect-prog-host-quoting_test.py`. The first four
+    /// are refused by the leading-byte rule (they change an argument's meaning,
+    /// which quoting cannot undo); the injection string is refused because `;`,
+    /// space, `$`, `{` and `#` are all outside the allowed set.
+    #[test]
+    fn format_command_refuses_every_unsafe_host_from_the_upstream_cell() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        for host in [
+            "localhost;touch${IFS}pwned;#",
+            "-c",
+            "+x",
+            "~root",
+            "%self",
+            "",
+        ] {
+            assert_eq!(
+                config.format_command(host, 873),
+                Err(UNSAFE_CONNECT_HOST.to_owned()),
+                "host {host:?} must be refused"
+            );
+        }
+    }
+
+    /// Every host the upstream cell expects to survive, quoted.
+    ///
+    /// upstream: `testsuite/connect-prog-host-quoting_test.py`. `+`, `~` and
+    /// `%` are legal mid-word - `%` in particular is required for an IPv6 zone
+    /// id, which the cell passes as `[fe80::1%eth0]` and rsync unwraps to
+    /// `fe80::1%eth0` before this point.
+    #[test]
+    fn format_command_accepts_every_safe_host_from_the_upstream_cell() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        for host in [
+            "example.com",
+            "example.com.",
+            "host_name",
+            "host+alias",
+            "host~alias",
+            "fe80::1%eth0",
+        ] {
+            assert_eq!(
+                config.format_command(host, 873),
+                Ok(format!("nc '{host}' 873").into()),
+                "host {host:?} must pass through quoted"
+            );
+        }
+    }
+
+    /// A template with no specifier never inspects the host at all.
+    ///
+    /// upstream: socket.c:488 - the refusal, the quoting and the substitution
+    /// all sit inside `if (prog && strchr(prog, '%'))`. Without this gate a
+    /// fixed command such as `nc localhost 873` would start failing for hosts
+    /// it never interpolates.
+    #[test]
+    fn format_command_skips_host_validation_without_a_specifier() {
+        let config = ConnectProgramConfig::new("nc localhost 873".into(), None).unwrap();
+        let result = config.format_command("localhost;touch pwned", 873).unwrap();
+        assert_eq!(result, "nc localhost 873");
+    }
+
+    /// The `'\''` escape is upstream's backstop, unreachable through
+    /// `format_command` because `'` is outside the allowed byte set. Pinned
+    /// directly so the two halves cannot drift apart.
+    ///
+    /// upstream: socket.c:152 `shell_quote_connect_host()`.
+    #[test]
+    fn shell_quote_renders_an_embedded_quote_as_the_escape_sequence() {
+        assert_eq!(shell_quote_connect_host("a'b"), r"'a'\''b'");
+        assert!(shell_unsafe_connect_host("a'b"));
     }
 
     /// Verifies that a child process spawned via `connect_via_program` receives
