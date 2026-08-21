@@ -2128,6 +2128,51 @@ mod module_access_tests {
     // of the component. oc used to split on it, which relocated the file: with
     // `a` present the request landed at `a/b`, and without it the open failed
     // ENOENT and the connection died. MEASURED against real upstream 3.5.0.
+    // upstream main.c:741 `get_local_name()`: `trailing_slash = cp && !cp[1]`,
+    // and `file_total > 1 || trailing_slash` takes the make-a-directory branch
+    // (mkdir + chdir + NULL local_name), so a single source file lands INSIDE.
+    // Without the slash the dest names the file itself. oc's local path already
+    // honours that rule; the daemon was dropping the slash before the receiver
+    // could see it, so a peer asking for a DIRECTORY silently got a FILE.
+    //
+    // ⚠ Asserts on the raw OsStr, NOT on Path equality: `Path::new("a/") ==
+    // Path::new("a")` is TRUE because Path compares components and discards a
+    // trailing separator. A Path-equality assertion here would pass both before
+    // and after the fix - it cannot see the thing under test.
+    #[test]
+    fn resolve_receiver_dest_preserves_a_trailing_slash() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/realdir/"));
+    }
+
+    // Non-vacuity companion: the SAME tail without the slash must NOT gain one,
+    // or the fix would just be appending a slash unconditionally.
+    //
+    // The expectation is built with `join` rather than spelled out, because this
+    // arm returns `module_path.join(collapsed)` and `join` inserts the PLATFORM
+    // separator - a literal "/srv/upload/realdir" would be right on Unix and
+    // wrong on Windows, where `join` yields a backslash. Comparing against the
+    // same construction keeps the assertion about the trailing separator, which
+    // is what the test is for.
+    #[test]
+    fn resolve_receiver_dest_does_not_invent_a_trailing_slash() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/realdir".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest.as_os_str(), module_path.join("realdir").as_os_str());
+    }
+
+    // The slash must survive `..` collapsing, which is what strips it.
+    #[test]
+    fn resolve_receiver_dest_keeps_the_slash_through_a_dotdot_collapse() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/x/../y/".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/y/"));
+    }
+
     #[test]
     fn resolve_receiver_dest_keeps_a_backslash_as_a_filename_byte() {
         let module_path = std::path::Path::new("/srv/upload");
