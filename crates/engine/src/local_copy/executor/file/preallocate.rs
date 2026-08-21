@@ -271,8 +271,16 @@ mod tests {
         // size untouched; other platforms extend the file to the requested size.
         #[cfg(target_os = "linux")]
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 999);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 1000);
     }
 
     #[test]
@@ -288,8 +296,16 @@ mod tests {
         // KEEP_SIZE (Linux) reserves blocks without extending the apparent size.
         #[cfg(target_os = "linux")]
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 2047);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 2048);
     }
 
     #[test]
@@ -526,8 +542,16 @@ mod tests {
         // data lands, exactly as upstream's receiver observes it mid-transfer.
         #[cfg(target_os = "linux")]
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 4096);
 
         // Write some content to the preallocated space
         file.write_all(b"hello preallocated world").expect("write");
@@ -538,8 +562,16 @@ mod tests {
         // earlier size-extending reservation still governs the length.
         #[cfg(target_os = "linux")]
         assert_eq!(metadata.len(), 24, "size grows only as data is written");
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 4096);
     }
 
     /// Verify that preallocating a file that already has some content reserves
@@ -567,8 +599,16 @@ mod tests {
             100,
             "KEEP_SIZE preserves the written length"
         );
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 4096);
     }
 
     /// Verify preallocation with a variety of sizes including small files
@@ -588,8 +628,16 @@ mod tests {
         let metadata = fs::metadata(&path).expect("metadata");
         #[cfg(target_os = "linux")]
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-        #[cfg(not(target_os = "linux"))]
+        // Other Unix: fallocate is unavailable, so the fallback extends the
+        // file to upstream's deliberately-perturbed `length`
+        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 2);
+        // Windows has no fallocate at all: the file is extended to exactly
+        // total_len, so there is no over-preallocation and the perturbation
+        // upstream applies to a reservation does not apply here.
+        #[cfg(not(unix))]
+        assert_eq!(metadata.len(), 1);
     }
 
     /// Regression guard for the KEEP_SIZE behavior-fidelity fix. Upstream's
