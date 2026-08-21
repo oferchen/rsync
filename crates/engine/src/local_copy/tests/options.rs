@@ -419,10 +419,16 @@ fn preallocate_destination_reserves_space() {
     // unchanged; other unix platforms extend the file to the requested length.
     #[cfg(target_os = "linux")]
     assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-    // upstream: syscall.c:2601-2604 - the reservation is deliberately one byte
-    // short of the requested length.
-    #[cfg(not(target_os = "linux"))]
+    // Other Unix: fallocate is unavailable, so the fallback extends the file to
+    // upstream's deliberately-perturbed `length`
+    // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+    #[cfg(all(unix, not(target_os = "linux")))]
     assert_eq!(metadata.len(), 4095);
+    // Windows has no fallocate at all: the file is extended to exactly
+    // total_len, so there is no over-preallocation and the perturbation
+    // upstream applies to a reservation does not apply here.
+    #[cfg(not(unix))]
+    assert_eq!(metadata.len(), 4096);
 }
 
 #[test]
