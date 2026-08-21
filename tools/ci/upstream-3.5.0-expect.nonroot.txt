@@ -52,7 +52,7 @@ compare pass
 compress-options pass
 compress-zlib-insert fail
 connect-prog-host-quoting pass
-connect-prog-nested-singlequote-host-injection fail
+connect-prog-nested-singlequote-host-injection pass
 copy-dest-source-symlink pass
 copy-dest-symlink-readleak skip
 copy-xattrs-symlink-race pass

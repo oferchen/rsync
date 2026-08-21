@@ -5,8 +5,6 @@
 
 use std::fmt;
 
-use super::super::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
-
 /// Transport carrying the (unmodified) rsync daemon wire protocol.
 ///
 /// The variant rides on [`DaemonAddress`] alongside the host and port, so the
@@ -43,19 +41,21 @@ impl DaemonAddress {
     ///
     /// The transport defaults to [`Transport::Tcp`]; use
     /// [`DaemonAddress::with_transport`] to select another.
-    pub fn new(host: String, port: u16) -> Result<Self, ClientError> {
-        let trimmed = host.trim();
-        if trimmed.is_empty() {
-            return Err(daemon_error(
-                "daemon host must be non-empty",
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-            ));
-        }
-        Ok(Self {
-            host: trimmed.to_owned(),
+    ///
+    /// The host is stored verbatim, so construction cannot fail. Upstream
+    /// never rewrites it: an empty or whitespace-padded host reaches
+    /// `getaddrinfo` unchanged and fails there (`socket.c:150`
+    /// open_socket_out), and reaches `shell_unsafe_connect_host` unchanged
+    /// under `RSYNC_CONNECT_PROG` (`socket.c:204-215`), which refuses both.
+    /// Trimming or defaulting here would convert a host upstream refuses into
+    /// one it accepts, so neither happens.
+    #[must_use]
+    pub fn new(host: String, port: u16) -> Self {
+        Self {
+            host,
             port,
             transport: Transport::default(),
-        })
+        }
     }
 
     /// Returns this address with the given [`Transport`] selected.
@@ -112,34 +112,37 @@ mod tests {
 
     #[test]
     fn daemon_address_new_creates_address() {
-        let addr = DaemonAddress::new("localhost".to_owned(), 873).expect("address");
+        let addr = DaemonAddress::new("localhost".to_owned(), 873);
         assert_eq!(addr.host(), "localhost");
         assert_eq!(addr.port(), 873);
     }
 
     #[test]
-    fn daemon_address_new_trims_whitespace() {
-        let addr = DaemonAddress::new("  example.com  ".to_owned(), 8873).expect("address");
-        assert_eq!(addr.host(), "example.com");
+    fn daemon_address_new_keeps_surrounding_whitespace() {
+        // Trimming would convert a host upstream refuses as shell-unsafe
+        // (socket.c:204-215 - space is outside the allowed byte set) into one
+        // it accepts, so the padding has to survive to the validator.
+        let addr = DaemonAddress::new("  example.com  ".to_owned(), 8873);
+        assert_eq!(addr.host(), "  example.com  ");
     }
 
     #[test]
-    fn daemon_address_new_rejects_empty_host() {
-        let result = DaemonAddress::new("".to_owned(), 873);
-        assert!(result.is_err());
+    fn daemon_address_new_accepts_an_empty_host() {
+        let addr = DaemonAddress::new(String::new(), 873);
+        assert_eq!(addr.host(), "");
     }
 
     #[test]
-    fn daemon_address_new_rejects_whitespace_only_host() {
-        let result = DaemonAddress::new("   ".to_owned(), 873);
-        assert!(result.is_err());
+    fn daemon_address_new_accepts_a_whitespace_only_host() {
+        let addr = DaemonAddress::new("   ".to_owned(), 873);
+        assert_eq!(addr.host(), "   ");
     }
 
     #[test]
     fn daemon_address_eq_works() {
-        let a = DaemonAddress::new("localhost".to_owned(), 873).expect("a");
-        let b = DaemonAddress::new("localhost".to_owned(), 873).expect("b");
-        let c = DaemonAddress::new("localhost".to_owned(), 8873).expect("c");
+        let a = DaemonAddress::new("localhost".to_owned(), 873);
+        let b = DaemonAddress::new("localhost".to_owned(), 873);
+        let c = DaemonAddress::new("localhost".to_owned(), 8873);
 
         assert_eq!(a, b);
         assert_ne!(a, c);
@@ -151,7 +154,7 @@ mod tests {
         // must stay TCP so a default build behaves exactly like upstream. Every
         // existing construction path (rsync://, host::module) flows through
         // `new`, so this default is what reaches the connect-selection point.
-        let addr = DaemonAddress::new("localhost".to_owned(), 873).expect("address");
+        let addr = DaemonAddress::new("localhost".to_owned(), 873);
         assert_eq!(addr.transport(), Transport::Tcp);
     }
 
@@ -160,9 +163,7 @@ mod tests {
         // WHY: the selection made at parse time must reach `open_daemon_stream`
         // (which reads `transport()`) unchanged - the value rides on the same
         // struct as host and port.
-        let addr = DaemonAddress::new("localhost".to_owned(), 873)
-            .expect("address")
-            .with_transport(Transport::Tcp);
+        let addr = DaemonAddress::new("localhost".to_owned(), 873).with_transport(Transport::Tcp);
         assert_eq!(addr.transport(), Transport::Tcp);
         assert_eq!(addr.host(), "localhost");
         assert_eq!(addr.port(), 873);
@@ -174,15 +175,14 @@ mod tests {
         // WHY: under the opt-in `quic` feature a QUIC selection must be
         // representable and carried unchanged, ready for the follow-up that
         // dials it; it never appears in a default build.
-        let addr = DaemonAddress::new("example.com".to_owned(), 873)
-            .expect("address")
-            .with_transport(Transport::Quic);
+        let addr =
+            DaemonAddress::new("example.com".to_owned(), 873).with_transport(Transport::Quic);
         assert_eq!(addr.transport(), Transport::Quic);
     }
 
     #[test]
     fn daemon_address_clone_works() {
-        let addr = DaemonAddress::new("example.com".to_owned(), 873).expect("address");
+        let addr = DaemonAddress::new("example.com".to_owned(), 873);
         let cloned = addr.clone();
         assert_eq!(addr, cloned);
     }
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn daemon_address_socket_addr_display_formats_correctly() {
-        let addr = DaemonAddress::new("192.168.1.1".to_owned(), 873).expect("address");
+        let addr = DaemonAddress::new("192.168.1.1".to_owned(), 873);
         let display = addr.socket_addr_display();
         assert_eq!(format!("{display}"), "192.168.1.1:873");
     }
