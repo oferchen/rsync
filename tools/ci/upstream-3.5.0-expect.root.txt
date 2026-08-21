@@ -236,7 +236,7 @@ partial-dir-abs-delta pass
 partial-protected-regular-retry-linux fail
 partial-protected-regular-retry-policy skip
 partial_nowrite pass
-password-file-symlink fail
+password-file-symlink pass
 peer-legacy-implied-delete-scope skip
 preallocate fail
 protected-regular pass
