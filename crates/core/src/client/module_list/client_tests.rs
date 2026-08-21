@@ -265,7 +265,7 @@ fn run_module_list_reports_authentication_failure() {
     });
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         Some(String::from("user")),
         ProtocolVersion::NEWEST,
     );
@@ -294,7 +294,7 @@ fn run_module_list_reports_access_denied() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -322,7 +322,7 @@ fn run_module_list_accepts_plaintext_motd_before_acknowledgment() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -353,7 +353,7 @@ fn run_module_list_suppresses_plaintext_motd_when_requested() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -393,7 +393,7 @@ fn establish_proxy_tunnel_formats_ipv6_authority_without_brackets() {
         stream.flush().expect("flush proxy response");
     });
 
-    let daemon_addr = DaemonAddress::new(String::from("fe80::1%eth0"), 873).expect("daemon addr");
+    let daemon_addr = DaemonAddress::new(String::from("fe80::1%eth0"), 873);
     let proxy = ProxyConfig {
         host: String::from("proxy.example"),
         port: addr.port(),
@@ -420,7 +420,7 @@ fn run_module_list_accepts_lowercase_proxy_status_line() {
     );
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -439,7 +439,7 @@ fn run_module_list_reports_invalid_proxy_configuration() {
     let _guard = EnvGuard::set("RSYNC_PROXY", "invalid-proxy");
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(String::from("localhost"), 873).expect("address"),
+        DaemonAddress::new(String::from("localhost"), 873),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -456,7 +456,7 @@ fn run_module_list_reports_invalid_proxy_configuration() {
 
 #[test]
 fn map_daemon_handshake_error_converts_error_payload() {
-    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873);
     let error = io::Error::new(
         io::ErrorKind::InvalidData,
         NegotiationError::MalformedLegacyGreeting {
@@ -471,7 +471,7 @@ fn map_daemon_handshake_error_converts_error_payload() {
 
 #[test]
 fn map_daemon_handshake_error_converts_plain_invalid_data_error() {
-    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873);
     let error = io::Error::new(io::ErrorKind::InvalidData, "@ERROR daemon unavailable");
 
     let mapped = map_daemon_handshake_error(error, &addr);
@@ -481,7 +481,7 @@ fn map_daemon_handshake_error_converts_plain_invalid_data_error() {
 
 #[test]
 fn map_daemon_handshake_error_converts_other_malformed_greetings() {
-    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873);
     let error = io::Error::new(
         io::ErrorKind::InvalidData,
         NegotiationError::MalformedLegacyGreeting {
@@ -496,7 +496,7 @@ fn map_daemon_handshake_error_converts_other_malformed_greetings() {
 
 #[test]
 fn map_daemon_handshake_error_propagates_other_failures() {
-    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+    let addr = DaemonAddress::new("127.0.0.1".to_string(), 873);
     let error = io::Error::new(io::ErrorKind::TimedOut, "timed out");
 
     let mapped = map_daemon_handshake_error(error, &addr);
@@ -514,7 +514,7 @@ fn run_module_list_reports_authentication_required() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -534,7 +534,7 @@ fn run_module_list_requires_password_for_authentication() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         Some(String::from("user")),
         ProtocolVersion::NEWEST,
     );
@@ -601,7 +601,7 @@ fn run_module_list_authenticates_with_credentials() {
     });
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         Some(String::from("user")),
         ProtocolVersion::NEWEST,
     );
@@ -670,7 +670,7 @@ fn run_module_list_authenticates_with_password_override() {
     });
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         Some(String::from("user")),
         ProtocolVersion::NEWEST,
     );
@@ -749,7 +749,7 @@ fn run_module_list_authenticates_with_split_challenge() {
     });
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         Some(String::from("user")),
         ProtocolVersion::NEWEST,
     );
@@ -765,13 +765,19 @@ fn run_module_list_authenticates_with_split_challenge() {
     handle.join().expect("server thread");
 }
 
+/// The RFC 6874 `%25` spelling of a zone id is passed through, not decoded.
+///
+/// upstream has no percent-decoder, so this reaches the resolver as typed.
+/// The spelling that actually works on both implementations is the bare one,
+/// covered by `module_list_request_supports_raw_ipv6_zone_identifier` below -
+/// which is also the form the upstream testsuite uses.
 #[test]
-fn module_list_request_supports_ipv6_zone_identifier() {
+fn module_list_request_keeps_an_encoded_ipv6_zone_identifier_verbatim() {
     let operands = vec![OsString::from("rsync://[fe80::1%25eth0]/")];
     let request = ModuleListRequest::from_operands(&operands)
         .expect("parse succeeds")
         .expect("request detected");
-    assert_eq!(request.address().host(), "fe80::1%eth0");
+    assert_eq!(request.address().host(), "fe80::1%25eth0");
     assert_eq!(request.address().port(), 873);
 }
 
@@ -786,22 +792,18 @@ fn module_list_request_supports_raw_ipv6_zone_identifier() {
 }
 
 #[test]
-fn module_list_request_rejects_truncated_percent_encoding_in_username() {
+fn module_list_request_keeps_a_truncated_percent_sequence_in_the_username() {
     let operands = vec![OsString::from("user%2@localhost::")];
-    let error =
-        ModuleListRequest::from_operands(&operands).expect_err("invalid encoding should fail");
-    assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("invalid percent-encoding in daemon username")
-    );
+    let request = ModuleListRequest::from_operands(&operands)
+        .expect("parse succeeds")
+        .expect("request present");
+    assert_eq!(request.username(), Some("user%2"));
+    assert_eq!(request.address().host(), "localhost");
 }
 
 #[test]
 fn resolve_daemon_addresses_filters_ipv4_mode() {
-    let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
+    let address = DaemonAddress::new(String::from("127.0.0.1"), 873);
     let addresses =
         resolve_daemon_addresses(&address, AddressMode::Ipv4).expect("ipv4 resolution succeeds");
 
@@ -811,7 +813,7 @@ fn resolve_daemon_addresses_filters_ipv4_mode() {
 
 #[test]
 fn resolve_daemon_addresses_rejects_missing_ipv6_addresses() {
-    let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
+    let address = DaemonAddress::new(String::from("127.0.0.1"), 873);
     let error = resolve_daemon_addresses(&address, AddressMode::Ipv6)
         .expect_err("IPv6 filtering should fail for IPv4-only host");
 
@@ -822,7 +824,7 @@ fn resolve_daemon_addresses_rejects_missing_ipv6_addresses() {
 
 #[test]
 fn resolve_daemon_addresses_filters_ipv6_mode() {
-    let address = DaemonAddress::new(String::from("::1"), 873).expect("address");
+    let address = DaemonAddress::new(String::from("::1"), 873);
     let addresses =
         resolve_daemon_addresses(&address, AddressMode::Ipv6).expect("ipv6 resolution succeeds");
 
@@ -832,8 +834,7 @@ fn resolve_daemon_addresses_filters_ipv6_mode() {
 
 #[test]
 fn daemon_address_accepts_ipv6_zone_identifier() {
-    let address =
-        DaemonAddress::new(String::from("fe80::1%eth0"), 873).expect("zone identifier accepted");
+    let address = DaemonAddress::new(String::from("fe80::1%eth0"), 873);
     assert_eq!(address.host(), "fe80::1%eth0");
     assert_eq!(address.port(), 873);
 
@@ -850,26 +851,30 @@ fn module_list_request_parses_ipv6_zone_identifier() {
     assert_eq!(request.address().host(), "fe80::1%eth0");
     assert_eq!(request.address().port(), 873);
 
+    // `%25` is NOT decoded back to `%`. The RFC 6874 spelling of a zone id is
+    // not something rsync implements: upstream has no percent-decoder, so the
+    // bytes reach the resolver as typed. Previously oc decoded this to
+    // `fe80::1%eth0`, which is a URI oc invented support for.
     let bracketed = vec![OsString::from("rsync://[fe80::1%25eth0]/")];
     let request = ModuleListRequest::from_operands(&bracketed)
         .expect("parse succeeds")
         .expect("request present");
-    assert_eq!(request.address().host(), "fe80::1%eth0");
+    assert_eq!(request.address().host(), "fe80::1%25eth0");
     assert_eq!(request.address().port(), 873);
 }
 
+/// A truncated `%XX` is not an error, because it is not an escape.
+///
+/// upstream: no percent-decoder exists, so `example%2` is simply a host whose
+/// name contains `%2`. oc used to reject it with "invalid percent-encoding in
+/// daemon host" - a diagnostic for a syntax upstream does not define.
 #[test]
-fn module_list_request_rejects_truncated_percent_encoding() {
+fn module_list_request_keeps_a_truncated_percent_sequence_verbatim() {
     let operands = vec![OsString::from("rsync://example%2/")];
-    let error = ModuleListRequest::from_operands(&operands)
-        .expect_err("truncated percent encoding should fail");
-    assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("invalid percent-encoding in daemon host")
-    );
+    let request = ModuleListRequest::from_operands(&operands)
+        .expect("parse succeeds")
+        .expect("request present");
+    assert_eq!(request.address().host(), "example%2");
 }
 
 #[test]
@@ -894,7 +899,7 @@ fn run_module_list_collects_entries() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -940,7 +945,7 @@ fn run_module_list_uses_connect_program_command() {
     let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new("example.com".to_string(), 873).expect("address"),
+        DaemonAddress::new("example.com".to_string(), 873),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -966,7 +971,7 @@ fn run_module_list_collects_motd_after_acknowledgement() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -997,7 +1002,7 @@ fn run_module_list_suppresses_motd_when_requested() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -1027,7 +1032,7 @@ fn run_module_list_collects_warnings() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -1061,7 +1066,7 @@ fn run_module_list_collects_capabilities() {
     let (addr, handle) = spawn_stub_daemon(responses);
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -1091,7 +1096,7 @@ fn run_module_list_via_proxy_connects_through_tunnel() {
     );
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );
@@ -1130,7 +1135,7 @@ fn run_module_list_via_proxy_includes_auth_header() {
     );
 
     let request = ModuleListRequest::from_components(
-        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()),
         None,
         ProtocolVersion::NEWEST,
     );

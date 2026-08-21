@@ -241,7 +241,7 @@ mod early_input_roundtrip_tests {
 
     fn test_request() -> DaemonTransferRequest {
         DaemonTransferRequest {
-            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
             path: String::new(),
             username: None,
@@ -531,7 +531,7 @@ mod handle_at_error_tests {
         use std::io::{BufReader, Cursor};
 
         let request = DaemonTransferRequest {
-            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "mod".to_owned(),
             path: String::new(),
             username: None,
@@ -568,7 +568,7 @@ mod handle_at_error_tests {
         use std::io::{BufReader, Cursor};
 
         let request = DaemonTransferRequest {
-            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "mod".to_owned(),
             path: String::new(),
             username: None,
