@@ -74,7 +74,7 @@ daemon-refuse-compress-threads-alias fail
 daemon-refuse-delete-alias fail
 daemon-scan-cwd-desync pass
 daemon-scan-dir-escape pass
-daemon-secrets-file-symlink fail
+daemon-secrets-file-symlink pass
 daemon-size-arg-overflow fail
 daemon-standalone-detach fail
 daemon-strict-modes-matrix pass

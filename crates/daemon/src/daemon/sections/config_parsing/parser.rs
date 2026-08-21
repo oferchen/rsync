@@ -75,7 +75,12 @@ fn parse_config_modules_inner(
         ));
     }
 
-    let contents = fs::read_to_string(&canonical)
+    // upstream: params.c:586 opens the config file with
+    // `open_no_attacker_symlinks()` - the path as *given*, walked component by
+    // component. Read `path`, not `canonical`: `canonicalize()` follows every
+    // symlink, so reading the resolved path is precisely the redirect this
+    // guards against. `canonical` stays the cycle-detection key only.
+    let contents = crate::daemon::operator_file::read_to_string(path)
         .map_err(|error| config_io_error("read", &canonical, error))?;
     stack.push(canonical.clone());
 
