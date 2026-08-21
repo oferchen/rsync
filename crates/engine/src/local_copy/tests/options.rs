@@ -411,14 +411,23 @@ fn preallocate_destination_reserves_space() {
         .open(&path)
         .expect("create file");
 
-    maybe_preallocate_destination(&mut file, &path, 4096, 0, true).expect("preallocate file");
+    maybe_preallocate_destination(&mut file, &path, 4096, 0, Some(Reservation::KeepSize))
+        .expect("preallocate file");
 
     let metadata = fs::metadata(&path).expect("metadata");
     // Linux reserves blocks with FALLOC_FL_KEEP_SIZE, leaving the apparent size
     // unchanged; other unix platforms extend the file to the requested length.
     #[cfg(target_os = "linux")]
     assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
-    #[cfg(not(target_os = "linux"))]
+    // Other Unix: fallocate is unavailable, so the fallback extends the file to
+    // upstream's deliberately-perturbed `length`
+    // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+    #[cfg(all(unix, not(target_os = "linux")))]
+    assert_eq!(metadata.len(), 4095);
+    // Windows has no fallocate at all: the file is extended to exactly
+    // total_len, so there is no over-preallocation and the perturbation
+    // upstream applies to a reservation does not apply here.
+    #[cfg(not(unix))]
     assert_eq!(metadata.len(), 4096);
 }
 
@@ -433,7 +442,7 @@ fn preallocate_destination_skips_when_disabled() {
         .open(&path)
         .expect("create file");
 
-    maybe_preallocate_destination(&mut file, &path, 4096, 0, false).expect("should succeed");
+    maybe_preallocate_destination(&mut file, &path, 4096, 0, None).expect("should succeed");
 
     let metadata = fs::metadata(&path).expect("metadata");
     assert_eq!(metadata.len(), 0, "disabled preallocate should not change file size");
@@ -450,7 +459,8 @@ fn preallocate_destination_skips_zero_length() {
         .open(&path)
         .expect("create file");
 
-    maybe_preallocate_destination(&mut file, &path, 0, 0, true).expect("should succeed");
+    maybe_preallocate_destination(&mut file, &path, 0, 0, Some(Reservation::KeepSize))
+        .expect("should succeed");
 
     let metadata = fs::metadata(&path).expect("metadata");
     assert_eq!(metadata.len(), 0, "zero-length preallocate should not change file");
@@ -468,7 +478,8 @@ fn preallocate_destination_skips_when_already_large() {
         .expect("create file");
 
     // existing_bytes (1024) > total_len (512) means skip
-    maybe_preallocate_destination(&mut file, &path, 512, 1024, true).expect("should succeed");
+    maybe_preallocate_destination(&mut file, &path, 512, 1024, Some(Reservation::KeepSize))
+        .expect("should succeed");
 
     let metadata = fs::metadata(&path).expect("metadata");
     assert_eq!(metadata.len(), 0, "should skip when existing >= total");

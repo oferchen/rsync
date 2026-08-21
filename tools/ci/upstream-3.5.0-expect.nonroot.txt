@@ -238,7 +238,7 @@ partial-protected-regular-retry-policy skip
 partial_nowrite pass
 password-file-symlink skip
 peer-legacy-implied-delete-scope skip
-preallocate fail
+preallocate pass
 protected-regular skip
 proto-cleared-dirflist skip
 proto-cleared-ndx skip

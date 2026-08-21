@@ -41,7 +41,7 @@ impl SparseWriteState {
     /// Records the preallocated length so zero runs inside the reserved extent
     /// are punched out rather than merely seeked over (which would leave the
     /// preallocated blocks allocated).
-    // upstream: fileio.c:92 - if (sparse_past_write >= preallocated_len)
+    // upstream: fileio.c:84 - if (sparse_past_write >= preallocated_len)
     pub(crate) const fn set_preallocated_len(&mut self, len: u64) {
         self.preallocated_len = len;
     }
@@ -57,7 +57,7 @@ impl SparseWriteState {
     /// forward when that position is at or beyond the preallocated extent (the
     /// natural-hole case for a fresh file), otherwise punches a hole to
     /// deallocate the blocks that preallocation reserved.
-    // upstream: fileio.c:90-99 write_sparse()
+    // upstream: fileio.c:80-95 flush_sparse_hole()
     fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
         if self.pending_zero_run == 0 {
             return Ok(());
@@ -127,6 +127,22 @@ impl SparseWriteState {
     }
 }
 
+/// How a run of non-zero data inside a sparse chunk reaches the destination.
+///
+/// upstream: fileio.c:117-124 `emit_sparse_span()` - the `use_seek` flag is set
+/// when the bytes are already present at this offset (an in-place matched
+/// block), so the span is seeked over instead of rewritten. The zero-run scan
+/// is identical in both modes, and that is exactly what lets `--inplace
+/// --sparse` punch an interior hole out of an otherwise-matching block.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SpanWrite {
+    /// `use_seek == 0`: write the bytes (`full_sparse_write`).
+    Data,
+    /// `use_seek == 1`: the bytes already sit at this offset, so advance past
+    /// them (`do_lseek`).
+    Seek,
+}
+
 /// Writes a chunk of data with sparse hole detection.
 ///
 /// Zero runs within the chunk are accumulated rather than written, and flushed
@@ -139,6 +155,34 @@ pub(crate) fn write_sparse_chunk(
     state: &mut SparseWriteState,
     chunk: &[u8],
     destination: &Path,
+) -> Result<usize, LocalCopyError> {
+    write_sparse_spans(writer, state, chunk, destination, SpanWrite::Data)
+}
+
+/// Consumes an in-place matched block through the sparse processor.
+///
+/// The block's bytes already sit at the writer's current offset, so its data
+/// spans are seeked over rather than rewritten - but its interior zero runs are
+/// still scanned and punched. Skipping that scan is what leaves a hole-y basis
+/// file fully allocated under `--inplace --sparse`.
+// upstream: fileio.c:256-259 skip_matched() - `if (sparse_files > 0)
+// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, only the non-sparse arm
+// lseeks straight past the block.
+pub(crate) fn skip_matched_sparse(
+    writer: &mut fs::File,
+    state: &mut SparseWriteState,
+    chunk: &[u8],
+    destination: &Path,
+) -> Result<usize, LocalCopyError> {
+    write_sparse_spans(writer, state, chunk, destination, SpanWrite::Seek)
+}
+
+fn write_sparse_spans(
+    writer: &mut fs::File,
+    state: &mut SparseWriteState,
+    chunk: &[u8],
+    destination: &Path,
+    mode: SpanWrite,
 ) -> Result<usize, LocalCopyError> {
     // Mirror rsync's write_sparse: always report the full chunk length as
     // consumed even when large sections become holes. Callers that track
@@ -166,13 +210,25 @@ pub(crate) fn write_sparse_chunk(
         let data_end = segment_end - trailing;
 
         if data_end > data_start {
-            // upstream: flush the pending zero run (seek or punch) before the
-            // data write. The flush reads the writer's current position as the
-            // run start, so an interleaved external seek stays correct.
+            // upstream: fileio.c:119 emit_sparse_span() flushes the pending
+            // zero run (seek or punch) before emitting the data span. The
+            // flush reads the writer's current position as the run start, so
+            // an interleaved external seek stays correct.
             state.flush(writer, destination)?;
-            writer
-                .write_all(&chunk[data_start..data_end])
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            match mode {
+                SpanWrite::Data => writer
+                    .write_all(&chunk[data_start..data_end])
+                    .map_err(|error| LocalCopyError::io("copy file", destination, error))?,
+                // upstream: fileio.c:121-122 - the bytes are already at this
+                // offset, so advance past them instead of rewriting them.
+                SpanWrite::Seek => {
+                    writer
+                        .seek(SeekFrom::Current((data_end - data_start) as i64))
+                        .map_err(|error| {
+                            LocalCopyError::io("seek in destination file", destination, error)
+                        })?;
+                }
+            }
         }
 
         state.replace(trailing);
