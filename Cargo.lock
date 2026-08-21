@@ -1452,7 +1452,9 @@ dependencies = [
 name = "filters"
 version = "0.6.4"
 dependencies = [
+ "fast_io",
  "globset",
+ "libc",
  "logging",
  "proptest",
  "tempfile",
