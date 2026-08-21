@@ -84,6 +84,42 @@ needing a process-wide write-through sink.
 4. **Remove the workaround.** The relocated delta-transmission notice returns to
    its production site once ordering is intrinsic.
 
+### The merge seam
+
+Two properties of the render path were measured before choosing where step 3
+attaches; both rule out the obvious placements.
+
+**`emit_transfer_summary` has no stderr.** Its signature ends
+`writer: &mut dyn Write` (`render.rs:124`) - one stream. So it cannot route
+diagnostics itself: `message_stream` returns `Stderr` for the error and warning
+codes, and there is nowhere to put them. The stream split therefore has to
+happen in the caller, which holds both `out` and `err`; only the stdout-bound
+diagnostics travel into the summary renderer.
+
+That is not a compromise, it is upstream's own rule: `rwrite()` picks a stream
+per log code, so relative order is only observable *within* a stream. Ordering
+stdout-bound diagnostics against the stdout listing is the whole requirement.
+
+**The per-event emitters are generic over the writer, not over a sink.**
+`emit_list_only` (:370), `emit_progress` (:462) and `emit_verbose` (:954) are
+each `<W: Write + ?Sized>`. A plain `Write` cannot express "a new event is about
+to be rendered, with this key", which is exactly the hook the merge needs - so
+decorating the writer is not enough.
+
+The seam is therefore a collaborator passed alongside the writer, not a wrapper
+around it. A `Write` subtrait would need a blanket impl for plain writers to
+keep existing callers compiling, and that blanket impl would also cover the
+merging type - the two impls overlap and coherence rejects them. Passing the
+pending diagnostics as their own parameter sidesteps that entirely: the three
+emitters gain one argument and one call at the top of their per-entry loop, and
+callers with nothing to interleave pass the empty value.
+
+Client events carry `Option<Sequence>`: `None` on a remote transfer, which builds
+its events from the wire and never populates the diagnostic buffer from the same
+production run. `begin_event(None)` must therefore flush nothing rather than
+flush everything - an unkeyed event has no position to order against, and
+draining on it would hoist unrelated diagnostics to an arbitrary point.
+
 ### Why not write-through
 
 Mirroring `rwrite()` literally - resolve and write at the emit site - would
