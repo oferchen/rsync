@@ -598,3 +598,36 @@ pub use status::{
     io_uring_capability_matrix, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,
     platform_io_capabilities,
 };
+
+/// Whether `error` is the ownership walk's security refusal.
+///
+/// The walk refuses a path component that is a symlink owned by neither uid 0
+/// nor our effective uid, and reports it as `ELOOP`. Callers that mirror
+/// upstream's non-fatal handling of a failed auxiliary-file open need to
+/// recognise that refusal without duplicating the errno, so the crate that
+/// produces it also owns the predicate that names it.
+///
+/// `ELOOP` is deliberate rather than `EXDEV`: callers treat `EXDEV` as
+/// cross-device and fall back to copy+remove, which would defeat the refusal.
+/// `std::io::ErrorKind::FilesystemLoop` is still unstable, so the comparison is
+/// on the raw errno.
+///
+/// Always `false` on non-Unix targets, where the walk has no `st_uid` to trust
+/// and is not used.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:406` - `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`
+///   refuses with `ELOOP`.
+#[must_use]
+pub fn is_symlink_refusal(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::ELOOP)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
+}
