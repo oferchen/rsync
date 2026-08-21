@@ -463,7 +463,6 @@ impl ReceiverContext {
                         size_only,
                         always_checksum,
                         modify_window,
-                        self.config.flags.copy_links,
                         metadata_opts,
                         metadata_errors,
                         acl_cache,
