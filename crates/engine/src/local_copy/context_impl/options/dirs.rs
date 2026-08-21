@@ -146,14 +146,58 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
         }
     }
 
+    /// Lists the destination-tree directories that must exist before `parent`
+    /// can, ordered outermost first and excluding `parent` itself.
+    ///
+    /// Empty when `parent` lies outside the destination root: that prefix is
+    /// the operator's own `--mkpath` argument rather than a path derived from
+    /// the transferred names, and keeps its single-step handling.
+    fn destination_ancestors(&self, parent: &Path) -> Vec<PathBuf> {
+        let root = self.destination_root();
+        let Ok(relative) = parent.strip_prefix(root) else {
+            return Vec::new();
+        };
+
+        let mut ancestors = Vec::new();
+        let mut current = root.to_path_buf();
+        if current != parent {
+            ancestors.push(current.clone());
+        }
+        for component in relative.components() {
+            current.push(component);
+            if current == parent {
+                break;
+            }
+            ancestors.push(current.clone());
+        }
+        ancestors
+    }
+
     /// Ensures the parent directory exists, creating it if `--implied-dirs` or
     /// `--mkpath` is enabled, or replacing a non-directory obstacle when
     /// `--force` is set.
+    ///
+    /// Each destination-tree level is decided on its own, outermost first.
+    /// upstream: `generator.c:1839-1842` `recv_generator()` receives every
+    /// implied parent as its own file-list entry, so an in-the-way
+    /// non-directory is found at the level that holds it. Resolving the whole
+    /// path in one step would instead traverse such a level, and a symlink
+    /// there would place the new directories wherever it points - outside the
+    /// destination tree.
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
         }
 
+        for ancestor in self.destination_ancestors(parent) {
+            self.prepare_directory_component(&ancestor)?;
+        }
+        self.prepare_directory_component(parent)
+    }
+
+    /// Ensures one directory level exists, applying the replacement policy to
+    /// whatever currently occupies it.
+    fn prepare_directory_component(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         // Fast path: skip stat if this parent was already verified as a directory.
         // With 10K files in one directory, this avoids 9,999 redundant statx calls.
         if self.verified_parents.contains_key(parent) {
