@@ -245,26 +245,27 @@ fn test_get_or_fetch_error_not_cached() {
     assert_eq!(cache.len(), 0);
 }
 
+// Gated on the test rather than its body: with the gate inside, `cache` and
+// `temp` are bound but unused on Windows, which is a hard error under the
+// cross-check's `-D warnings`. Matches the three sibling unix-only tests.
+#[cfg(unix)]
 #[test]
 fn test_follow_symlinks_option() {
     let cache = BatchedStatCache::new();
     let temp = create_test_tree();
 
-    #[cfg(unix)]
-    {
-        let target = temp.path().join("file1.txt");
-        let link = temp.path().join("link.txt");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
+    let target = temp.path().join("file1.txt");
+    let link = temp.path().join("link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        let result_nofollow = cache.get_or_fetch(&link, false);
-        assert!(result_nofollow.is_ok());
+    let result_nofollow = cache.get_or_fetch(&link, false);
+    assert!(result_nofollow.is_ok());
 
-        cache.clear();
-        let result_follow = cache.get_or_fetch(&link, true);
-        assert!(result_follow.is_ok());
+    cache.clear();
+    let result_follow = cache.get_or_fetch(&link, true);
+    assert!(result_follow.is_ok());
 
-        assert!(cache.get(&link).is_some());
-    }
+    assert!(cache.get(&link).is_some());
 }
 
 #[cfg(feature = "parallel")]
