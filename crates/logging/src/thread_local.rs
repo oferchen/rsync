@@ -18,12 +18,17 @@
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::log_code::LogCode;
+use super::sequence::Stamped;
 use std::cell::RefCell;
 
 thread_local! {
     static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
+    /// Events are held stamped with their production order so a consumer that
+    /// interleaves them with another output channel can recover that order.
+    /// The buffer itself stays thread-local; only the ordering key is shared
+    /// process-wide, which is what makes keys from two threads comparable.
     #[allow(clippy::missing_const_for_thread_local)]
-    static EVENTS: RefCell<Vec<DiagnosticEvent>> = RefCell::new(Vec::new());
+    static EVENTS: RefCell<Vec<Stamped<DiagnosticEvent>>> = RefCell::new(Vec::new());
 }
 
 /// A diagnostic event collected during execution.
@@ -113,12 +118,12 @@ pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
 /// code to pick the client stream versus the log file).
 pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Info {
+        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Info {
             flag,
             level,
             code,
             message,
-        });
+        }));
     });
 }
 
@@ -161,21 +166,38 @@ pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
 /// code to pick the client stream versus the log file).
 pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Debug {
+        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Debug {
             flag,
             level,
             code,
             message,
-        });
+        }));
     });
+}
+
+/// Drain all collected events with their production order, clearing the buffer.
+///
+/// This is the drain for a consumer that has to interleave these events with
+/// another output channel: the key says which of two messages was produced
+/// first, which the buffers alone cannot say once they are drained at
+/// different times.
+pub fn drain_stamped_events() -> Vec<Stamped<DiagnosticEvent>> {
+    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
 /// Drain all collected events, clearing the internal buffer.
 ///
 /// Returns events in emission order. After draining, the buffer is empty
 /// and ready to accumulate new events.
+///
+/// A projection of [`drain_stamped_events`] for the consumers that render this
+/// buffer on its own: with nothing to interleave against, the vector's own
+/// order already is the production order, and the key would be noise.
 pub fn drain_events() -> Vec<DiagnosticEvent> {
-    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+    drain_stamped_events()
+        .into_iter()
+        .map(Stamped::into_value)
+        .collect()
 }
 
 /// Drain the events whose code `accept` selects, leaving the rest queued.
@@ -189,9 +211,9 @@ fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> 
     EVENTS.with(|e| {
         let mut events = e.borrow_mut();
         let mut matched = Vec::new();
-        events.retain(|event| {
-            if accept(event.code()) {
-                matched.push(event.clone());
+        events.retain(|stamped| {
+            if accept(stamped.value().code()) {
+                matched.push(stamped.value().clone());
                 false
             } else {
                 true

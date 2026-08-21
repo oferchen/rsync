@@ -51,9 +51,59 @@ impl Sequence {
     }
 }
 
+/// A value carrying the point in the output stream where it was produced.
+///
+/// The key is kept *beside* the value rather than inside it: when it was
+/// produced is not part of what a message is, and threading it through every
+/// variant of every event enum would couple the producers to the funnel. This
+/// also keeps the existing drains able to hand out bare values to the many
+/// consumers that only care about the message.
+///
+/// Deliberately not `Ord`. Ordering would have to key on the sequence alone,
+/// which forces an `Eq` that ignores the value - true here, since sequences
+/// are unique, but surprising to read at a call site. Merging sorts explicitly
+/// on [`Stamped::sequence`] instead, where the intent is visible.
+#[derive(Clone, Copy, Debug)]
+pub struct Stamped<T> {
+    sequence: Sequence,
+    value: T,
+}
+
+impl<T> Stamped<T> {
+    /// Stamps `value` with the next key, recording it as produced now.
+    #[must_use]
+    pub fn stamp(value: T) -> Self {
+        Self {
+            sequence: Sequence::stamp(),
+            value,
+        }
+    }
+
+    /// Returns the production-order key.
+    #[must_use]
+    pub const fn sequence(&self) -> Sequence {
+        self.sequence
+    }
+
+    /// Borrows the stamped value.
+    #[must_use]
+    pub const fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Discards the key and returns the value.
+    ///
+    /// This is what the drains that predate the funnel project through, so
+    /// their consumers keep seeing bare events.
+    #[must_use]
+    pub fn into_value(self) -> T {
+        self.value
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Sequence;
+    use super::{Sequence, Stamped};
     use std::collections::BTreeSet;
     use std::thread;
 
@@ -97,5 +147,27 @@ mod tests {
             distinct.len(),
             THREADS * PER_THREAD
         );
+    }
+
+    /// Sorting by the key must recover production order even when the values
+    /// were collected out of order - the property the funnel merge relies on.
+    #[test]
+    fn sorting_by_the_key_recovers_production_order() {
+        let first = Stamped::stamp("first");
+        let second = Stamped::stamp("second");
+        let third = Stamped::stamp("third");
+
+        let mut shuffled = vec![third, first, second];
+        shuffled.sort_by_key(Stamped::sequence);
+
+        let order: Vec<&str> = shuffled.into_iter().map(Stamped::into_value).collect();
+        assert_eq!(order, ["first", "second", "third"]);
+    }
+
+    #[test]
+    fn a_stamp_preserves_the_value_it_carries() {
+        let stamped = Stamped::stamp(42_u8);
+        assert_eq!(*stamped.value(), 42);
+        assert_eq!(stamped.into_value(), 42);
     }
 }
