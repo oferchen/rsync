@@ -912,6 +912,62 @@ fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
 }
 
 #[test]
+fn refused_client_arg_delete_rule_refuses_remove_source_files_on_a_pull() {
+    // upstream: options.c:2359-2367 - `--remove-source-files` inherits the
+    // refusal of `delete` when `am_sender`, because on a pull the daemon would
+    // be deleting its own module contents. Reported as `--delete`, from the
+    // same `create_refuse_error(refused_delete)`.
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let args = vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "-vlogDtpr".to_owned(),
+        "--remove-source-files".to_owned(),
+    ];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--delete".to_owned()),
+    );
+}
+
+#[test]
+fn refused_client_arg_delete_rule_allows_remove_source_files_on_a_push() {
+    // Non-vacuity companion for the pull case above, and the pin on upstream's
+    // `am_sender` half of `if (refused_delete && am_sender)`. Without
+    // `--sender` the daemon is the RECEIVER: the client is pushing and deletes
+    // its own local sources, which upstream does not refuse. Without this test a
+    // blanket "refuse remove-source-files whenever delete is refused" would
+    // still satisfy the pull case while over-refusing every push.
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let args = vec![
+        "--server".to_owned(),
+        "-vlogDtpr".to_owned(),
+        "--remove-source-files".to_owned(),
+    ];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_remove_source_files_allowed_without_a_delete_rule() {
+    // The inference is gated on the `delete` rule, not on the option itself: a
+    // module with no refuse list must still accept a pull that removes source
+    // files. Guards against the inference firing unconditionally.
+    let module = ModuleDefinition::default();
+    let args = vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "--remove-source-files".to_owned(),
+    ];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
 fn refused_client_arg_delete_negation_clears_semantic_refusal() {
     // `refuse options = !delete` un-refuses the `delete` entry, so the
     // semantic delete-mode pass must not fire. With no other refuse rule a
