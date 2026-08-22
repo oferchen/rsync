@@ -175,8 +175,17 @@ fn transfer_request_with_filter_protect_preserves_destination_entry() {
     assert!(copied_root.join("keep.txt").exists());
 }
 
+/// upstream: exclude.c:1619-1627 `parse_filter_file()` bounds the merge nesting
+/// DEPTH at `MAX_MERGE_DEPTH` (exclude.c:168) rather than detecting a cycle, and
+/// exits `RERR_FILEIO` under `XFLG_FATAL_ERRORS`.
+///
+/// WHY the depth cap and not a cycle test: a self-including file is only the
+/// easiest way to exceed the bound. A chain of 40 distinct files that never
+/// repeats is equally unbounded, and no "have I seen this file?" test refuses
+/// it. Pinning the wording as well as the exit code keeps oc's diagnostic
+/// comparable with rsync's for an operator debugging a filter set.
 #[test]
-fn transfer_request_with_filter_merge_detects_recursion() {
+fn transfer_request_with_filter_merge_bounds_include_depth() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -199,10 +208,94 @@ fn transfer_request_with_filter_merge_detects_recursion() {
         dest_root.into_os_string(),
     ]);
 
-    assert_eq!(code, 1);
+    assert_eq!(
+        code, 11,
+        "upstream: exclude.c:1626 exit_cleanup(RERR_FILEIO)"
+    );
     assert!(stdout.is_empty());
     let rendered = String::from_utf8_lossy(&stderr);
-    assert!(rendered.contains("recursive filter merge"));
+    assert!(
+        rendered.contains("merge-file include depth limit (32) exceeded"),
+        "expected upstream's depth-limit diagnostic, got: {rendered}"
+    );
+}
+
+/// The class-level companion: no file is merged twice, so a cycle test cannot
+/// refuse this chain at any length. Only the depth bound can. This is the case
+/// that distinguishes upstream's rule from the one oc used to implement, and
+/// without it the fix could regress to a cycle set and still look correct.
+#[test]
+fn transfer_request_with_filter_merge_bounds_an_acyclic_chain() {
+    use tempfile::tempdir;
+
+    const CHAIN: usize = filters::MAX_MERGE_DEPTH + 4;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_root = tmp.path().join("source");
+    let dest_root = tmp.path().join("dest");
+    std::fs::create_dir_all(&source_root).expect("create source root");
+    std::fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // link[i] merges link[i + 1]; the last link is an inert comment. Every file
+    // is distinct, so `visited` never sees a repeat.
+    let link = |i: usize| tmp.path().join(format!("link{i}.txt"));
+    for i in 0..CHAIN {
+        std::fs::write(link(i), format!("merge {}\n", link(i + 1).display()))
+            .expect("write chain link");
+    }
+    std::fs::write(link(CHAIN), "# end of chain\n").expect("write chain tail");
+
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--filter"),
+        OsString::from(format!("merge {}", link(0).display())),
+        source_root.into_os_string(),
+        dest_root.into_os_string(),
+    ]);
+
+    assert_eq!(code, 11, "an acyclic chain must still hit the depth cap");
+    let rendered = String::from_utf8_lossy(&stderr);
+    assert!(
+        rendered.contains("merge-file include depth limit (32) exceeded"),
+        "expected upstream's depth-limit diagnostic, got: {rendered}"
+    );
+}
+
+/// Non-vacuity companion: a chain shorter than the cap must parse cleanly, so
+/// the two tests above cannot pass merely because merge chains are broken.
+#[test]
+fn transfer_request_with_filter_merge_allows_a_chain_within_the_cap() {
+    use tempfile::tempdir;
+
+    const CHAIN: usize = filters::MAX_MERGE_DEPTH - 2;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_root = tmp.path().join("source");
+    let dest_root = tmp.path().join("dest");
+    std::fs::create_dir_all(&source_root).expect("create source root");
+    std::fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let link = |i: usize| tmp.path().join(format!("link{i}.txt"));
+    for i in 0..CHAIN {
+        std::fs::write(link(i), format!("merge {}\n", link(i + 1).display()))
+            .expect("write chain link");
+    }
+    std::fs::write(link(CHAIN), "- *.tmp\n").expect("write chain tail");
+
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--filter"),
+        OsString::from(format!("merge {}", link(0).display())),
+        source_root.into_os_string(),
+        dest_root.into_os_string(),
+    ]);
+
+    let rendered = String::from_utf8_lossy(&stderr);
+    assert_eq!(code, 0, "chain within the cap must parse: {rendered}");
+    assert!(
+        !rendered.contains("merge-file include depth limit"),
+        "unexpected depth diagnostic: {rendered}"
+    );
 }
 
 /// upstream: exclude.c:1393-1402 resolves `FILTRULE_CLEAR_LIST` via

@@ -16,7 +16,7 @@ fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
         .allow_list_clearing(false);
 
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     super::process_merge_directive(
         "merge nested.rules",
         &options,

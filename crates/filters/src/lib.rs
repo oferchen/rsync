@@ -135,7 +135,10 @@ pub use compiled::XattrSide;
 pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
-pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
+pub use merge::{
+    MAX_MERGE_DEPTH, MergeFileError, depth_limit_exceeded, parse_rules, read_rules,
+    read_rules_recursive,
+};
 pub use rule::FilterRule;
 pub use rule_source::RuleSource;
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
