@@ -79,6 +79,7 @@ fn render_stats_at_level(
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut rendered,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render stats");
     String::from_utf8(rendered).expect("utf8")
@@ -108,6 +109,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut rendered,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render verbose");
     String::from_utf8(rendered).expect("utf8")
@@ -153,6 +155,7 @@ fn info_name_only_suppresses_stats_footer() {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut rendered,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render");
     let out = String::from_utf8(rendered).expect("utf8");
@@ -551,6 +554,7 @@ fn parity_totals_only_without_stats_flag() {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut rendered,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render");
     let output = String::from_utf8(rendered).expect("utf8");
@@ -823,6 +827,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut rendered,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render");
     let output = String::from_utf8(rendered).expect("utf8");
