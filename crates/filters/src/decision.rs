@@ -71,6 +71,36 @@ impl FilterSetInner {
         self.decision_with_traversal(path, is_dir, context, false)
     }
 
+    /// First rule matching `path` treated as a bare NAME, or `None`.
+    ///
+    /// This is upstream's `check_filter()` loop applied to a single name that
+    /// no traversal will ever revisit - the shape the daemon uses to vet the
+    /// client's destination argument (main.c:700-737 `get_local_name()`).
+    /// Upstream's loop consults neither side modifiers nor perishability, so
+    /// neither is consulted here.
+    ///
+    /// Descendants are gated per-rule on `directory_only`, which is the whole
+    /// point of this predicate. Upstream's daemon parser rewrites a
+    /// directory-form rule to the `pattern/***` wildcard via `XFLG_DIR2WILD3`
+    /// (exclude.c:307-313), so `- /excluded/` matches both the directory and
+    /// everything beneath it, while a bare `- /excluded` stays an exact
+    /// `strcmp` (exclude.c:1002 `rule_matches()`) that matches the directory
+    /// alone. oc collapses `pattern/***` back to a `directory_only` stem plus
+    /// synthetic `pattern/**` descendant matchers, so `directory_only` is
+    /// precisely the record of "this rule was written in directory form" - and
+    /// therefore precisely the gate that reproduces upstream's two behaviours.
+    /// A blanket `true` over-matches the bare form; a blanket `false`
+    /// under-matches the directory form.
+    pub(crate) fn first_rule_matching_name(
+        &self,
+        path: &Path,
+        is_dir: bool,
+    ) -> Option<&CompiledRule> {
+        self.include_exclude
+            .iter()
+            .find(|rule| rule.matches_name(path, is_dir))
+    }
+
     /// Like [`Self::decision`] but lets callers signal that the query comes
     /// from a tree traversal that already prunes excluded subtrees.
     ///

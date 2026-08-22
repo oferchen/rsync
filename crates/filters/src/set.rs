@@ -200,6 +200,28 @@ impl FilterSet {
             .allows_transfer()
     }
 
+    /// Returns `true` if `path`, treated as a bare NAME, is not excluded.
+    ///
+    /// This is the predicate for a one-shot check against a name no traversal
+    /// will revisit - upstream's `check_filter()` over the daemon filter list,
+    /// as `get_local_name()` applies it to the client's destination argument
+    /// (main.c:700-737). A name matching no rule is allowed, matching
+    /// upstream's `return 0`.
+    ///
+    /// Unlike [`Self::allows`] (which assumes a single-path API caller with no
+    /// traversal and so keeps every synthetic descendant matcher live) and
+    /// [`Self::allows_during_traversal`] (which drops them all because the walk
+    /// prunes subtrees itself), this honours the descendant matchers only for
+    /// rules written in directory form. That is what upstream's `XFLG_DIR2WILD3`
+    /// rewrite encodes: `- /excluded/` becomes the wildcard `/excluded/***` and
+    /// covers the subtree, while `- /excluded` stays an exact compare.
+    #[must_use]
+    pub fn allows_name(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .first_rule_matching_name(path, is_dir)
+            .is_none_or(|rule| matches!(rule.action, FilterAction::Include))
+    }
+
     /// Like [`Self::allows`] but tailored for a tree traversal that already
     /// prunes excluded subtrees.
     ///
@@ -616,6 +638,77 @@ pub fn apple_double_exclusion_rules(perishable: bool) -> impl Iterator<Item = Fi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The three spellings a daemon operator can write for the same directory,
+    /// and what upstream's `check_filter()` does with each, measured against
+    /// real rsync 3.5.0 (`exclude = ...` on a module, pushing to
+    /// `excluded/x2.tx`):
+    ///
+    /// | rule           | `excluded` | `excluded/x2.tx` |
+    /// |----------------|------------|------------------|
+    /// | `/excluded`    | excluded   | **allowed**      |
+    /// | `/excluded/`   | excluded   | excluded         |
+    /// | `/excluded/***`| excluded   | excluded         |
+    ///
+    /// The bare form is an exact `strcmp` (exclude.c:1002); the other two are
+    /// the same `pattern/***` wildcard after `XFLG_DIR2WILD3`
+    /// (exclude.c:307-313). A predicate that answers the same for all three
+    /// rows is wrong in one direction or the other, which is why neither
+    /// `allows` nor `allows_during_traversal` can serve here.
+    fn name_set(pattern: &str) -> FilterSet {
+        FilterSet::from_rules(vec![FilterRule::exclude(pattern.to_owned())]).unwrap()
+    }
+
+    #[test]
+    fn allows_name_bare_rule_does_not_reach_into_the_directory() {
+        let set = name_set("/excluded");
+        assert!(
+            !set.allows_name(Path::new("excluded"), true),
+            "the exact name must still be excluded"
+        );
+        assert!(
+            set.allows_name(Path::new("excluded/x2.tx"), false),
+            "a bare rule is an exact strcmp upstream - it must NOT cover descendants"
+        );
+    }
+
+    #[test]
+    fn allows_name_directory_forms_cover_the_subtree() {
+        for pattern in ["/excluded/", "/excluded/***"] {
+            let set = name_set(pattern);
+            assert!(
+                !set.allows_name(Path::new("excluded"), true),
+                "{pattern}: the directory itself must be excluded"
+            );
+            assert!(
+                !set.allows_name(Path::new("excluded/x2.tx"), false),
+                "{pattern}: DIR2WILD3 makes this the subtree wildcard"
+            );
+        }
+    }
+
+    #[test]
+    fn allows_name_permits_a_name_no_rule_matches() {
+        let set = name_set("/excluded/***");
+        assert!(
+            set.allows_name(Path::new("allowed.txt"), false),
+            "upstream check_filter() returns 0 for an unmatched name"
+        );
+    }
+
+    #[test]
+    fn allows_name_honours_an_earlier_include() {
+        let set = FilterSet::from_rules(vec![
+            FilterRule::include("excluded/keep.txt".to_owned()),
+            FilterRule::exclude("/excluded/***".to_owned()),
+        ])
+        .unwrap();
+        assert!(
+            set.allows_name(Path::new("excluded/keep.txt"), false),
+            "first match wins - the include precedes the exclude"
+        );
+        assert!(!set.allows_name(Path::new("excluded/other.txt"), false));
+    }
 
     #[test]
     fn filter_set_default_is_empty() {
