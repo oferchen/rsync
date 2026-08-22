@@ -393,6 +393,35 @@ pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File>
     )
 }
 
+/// Open an operator-supplied path read/write, creating it if absent.
+///
+/// The daemon `lock file` shape: the file is both read and written in place
+/// (upstream locks byte ranges in it, oc's Windows arm rewrites a count map),
+/// and the daemon creates it on first use as root, before the privilege drop.
+/// That makes the `O_CREAT` the dangerous part - a symlink planted at any
+/// component redirects a privileged create-and-write to a file the operator
+/// never named, and the leaf does not exist yet for an `O_NOFOLLOW` to reject.
+///
+/// `mode` applies only when the file is created, as with `open(2)`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/connection.c:35` `claim_connection()` -
+///   `open_no_attacker_symlinks(fname, O_RDWR|O_CREAT, 0600)`.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_rw_create(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_with(
+        path,
+        OFlags::RDWR | OFlags::CREATE,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
+
 /// Read an operator-supplied file to a `String` through the ownership walk.
 ///
 /// The `read_to_string` counterpart to [`operator_open_read`], for the auxiliary
