@@ -83,6 +83,19 @@ impl CompiledRule {
         }
     }
 
+    /// Like [`Self::matches`] but for a bare NAME that no traversal will
+    /// revisit, gating descendants on this rule's own directory form.
+    ///
+    /// The synthetic `pattern/**` matchers stand in for upstream's
+    /// `XFLG_DIR2WILD3` rewrite, which appends `/***` to a *directory-form*
+    /// rule only (exclude.c:307-313). A rule written without the trailing
+    /// slash keeps upstream's exact `strcmp` semantics (exclude.c:1002), so its
+    /// descendants must stay dormant here. `directory_only` is exactly the
+    /// record of which form the rule was written in.
+    pub(crate) fn matches_name(&self, path: &Path, is_dir: bool) -> bool {
+        self.matches(path, is_dir, self.directory_only)
+    }
+
     /// Like [`Self::matches`] but for the receiver's deletion scan.
     ///
     /// Adds the `deletion_descendant_matchers` set on top of the regular

@@ -80,7 +80,7 @@ daemon-deny-dns-failopen skip
 daemon-dot-file-force-wipe skip
 daemon-early-exec-nameconv fail
 daemon-exclude-from-outside-module pass
-daemon-exclude-namebased fail
+daemon-exclude-namebased pass
 daemon-exec pass
 daemon-exec-metachar-documented-limit fail
 daemon-exec-metachar-refused fail
@@ -226,7 +226,7 @@ operator-path-partial-dir-daemon fail
 operator-path-partial-dir-exclude-daemon fail
 operator-path-temp-dir fail
 operator-path-traversal-backup-dir-daemon fail
-operator-path-traversal-dest-dir-daemon fail
+operator-path-traversal-dest-dir-daemon pass
 operator-path-traversal-partial-dir-daemon pass
 operator-path-write-batch fail
 output-options pass
