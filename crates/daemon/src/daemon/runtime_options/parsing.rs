@@ -5,6 +5,22 @@ impl RuntimeOptions {
         Self::parse_with_brand(arguments, Brand::Oc, true)
     }
 
+    /// Reports whether this parser recognises the option spelling `option`.
+    ///
+    /// The answer comes from the parser itself rather than a second list, so it
+    /// cannot drift from the chain below. A value-taking option named without
+    /// its value still fails, but with a missing-argument error; only
+    /// `unsupported_option` means the spelling is unknown. Host configuration is
+    /// excluded so the answer depends on the parser alone.
+    #[cfg(test)]
+    pub(crate) fn option_is_recognised(option: &str) -> bool {
+        let arguments = [OsString::from(option)];
+        match Self::parse_with_brand(&arguments, Brand::Oc, false) {
+            Ok(_) => true,
+            Err(error) => !error.to_string().contains("unknown option"),
+        }
+    }
+
     fn parse_with_brand(
         arguments: &[OsString],
         brand: Brand,
@@ -81,9 +97,11 @@ impl RuntimeOptions {
             {
                 let max = parse_max_connections(&value)?;
                 options.set_max_connections(max)?;
-            } else if argument == "--ipv4" {
+            } else if argument == "--ipv4" || argument == "-4" {
+                // upstream: help-rsyncd.h lists `--ipv4, -4` / `--ipv6, -6`, so
+                // both spellings must reach the same address-family decision.
                 options.force_address_family(AddressFamily::Ipv4)?;
-            } else if argument == "--ipv6" {
+            } else if argument == "--ipv6" || argument == "-6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
             } else if let Some(value) =
                 take_option_value(argument, &mut iter, "--tcp-fastopen")?
