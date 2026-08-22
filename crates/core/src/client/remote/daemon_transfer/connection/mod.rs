@@ -483,12 +483,14 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
 /// Returns an empty `Vec` for empty files.
 ///
 /// upstream: clientserver.c:266-294 - `start_inband_exchange()` reads the file
-/// specified by `--early-input` before sending it to the daemon.
+/// specified by `--early-input` before sending it to the daemon, and opens it
+/// at clientserver.c:303 through `open_no_attacker_symlinks()`: the path is
+/// operator-supplied and may transit attacker-writable parents, so a planted
+/// symlink would redirect the read to a file the operator never named.
 pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError> {
-    use std::fs::File;
     use std::io::Read;
 
-    let mut file = File::open(path).map_err(|e| {
+    let mut file = crate::client::remote::operator_file::open_read(path).map_err(|e| {
         daemon_error(
             format!("failed to open {}: {e}", path.display()),
             CLIENT_SERVER_PROTOCOL_EXIT_CODE,
