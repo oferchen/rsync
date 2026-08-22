@@ -79,6 +79,17 @@ impl<T> Stamped<T> {
         }
     }
 
+    /// Rebinds an existing key onto a value derived from the stamped one.
+    ///
+    /// A funnel consumer routes an event and keeps only its rendered text; the
+    /// key must be *carried* across that transform, never re-minted, or the
+    /// text would sort at the position of the routing rather than of the
+    /// production it describes.
+    #[must_use]
+    pub const fn with_sequence(sequence: Sequence, value: T) -> Self {
+        Self { sequence, value }
+    }
+
     /// Returns the production-order key.
     #[must_use]
     pub const fn sequence(&self) -> Sequence {

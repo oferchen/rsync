@@ -2,12 +2,15 @@
 
 pub mod diagnostic;
 mod format;
+mod interleave;
 mod live;
 mod mode;
 mod render;
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
-pub use self::diagnostic::{DiagnosticEvent, flush_diagnostics, render_diagnostic_events};
+pub use self::diagnostic::{
+    DiagnosticEvent, flush_diagnostics, partition_by_summary_stream, render_diagnostic_events,
+};
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use self::format::{
     event_matches_name_level, format_count, format_decimal_bytes, format_human_bytes,
@@ -16,6 +19,7 @@ pub(crate) use self::format::{
     format_progress_rate_decimal, format_progress_rate_from_value, format_size,
     format_stat_categories, format_summary_rate, is_progress_event, list_only_event,
 };
+pub(crate) use self::interleave::PendingDiagnostics;
 pub(crate) use self::live::{LiveProgress, ProgressOutputConfig};
 pub(crate) use self::mode::ProgressMode;
 pub use self::mode::{NameOutputLevel, ProgressSetting, StderrMode}; // Changed to pub for test_utils
