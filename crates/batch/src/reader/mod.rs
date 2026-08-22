@@ -131,7 +131,11 @@ impl BatchReader {
             })?;
             Ok(BatchSource::Stdin(Cursor::new(buf)))
         } else {
-            let file = File::open(path).map_err(|e| {
+            // upstream: batch.c:267 opens the read-batch file through
+            // `open_no_attacker_symlinks()`. The path is operator-supplied and
+            // may transit attacker-writable parents, so a planted symlink would
+            // feed the replay a batch stream the operator never named.
+            let file = crate::operator_file::open_read(path).map_err(|e| {
                 BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to open batch file '{}': {}", path.display(), e),
