@@ -370,6 +370,27 @@ impl ReceiverContext {
             return Ok(());
         };
         let cleaned = filters::collapse_dot_dot_dirs(dest);
+        // The daemon filter is NAME-based and anchored at the module root, so it
+        // must see the module-relative name. Upstream gets that for free:
+        // `rsync_module()` chdir's into the module (clientserver.c:864
+        // `module_chdir = normalize_path(module_dir, ..)`) long before
+        // `get_local_name()` runs, so its `dest_path` is already relative - which
+        // is why upstream's own diagnostic quotes `"excluded/x2.tx"`, not an
+        // absolute path. oc instead carries the dest as
+        // `<module root>/<peer tail>` joined absolute, so an anchored rule like
+        // `/excluded/***` could never match and every rule silently passed.
+        // Stripping the module root is upstream's `p1 = curr_dir + module_dirlen`
+        // (util1.c:1285) expressed against an owned path.
+        //
+        // A dest that does not lie under the module root is left as-is rather
+        // than guessed at: the confinement resolver refuses that shape before any
+        // data lands, so there is no path here that needs a fabricated name.
+        let cleaned = match self.config.connection.daemon_module_root.as_deref() {
+            Some(root) => cleaned
+                .strip_prefix(root)
+                .map_or(cleaned.clone(), Path::to_path_buf),
+            None => cleaned,
+        };
         // upstream: main.c:729-730 - a trailing `/` or `/.` component is
         // lopped off before matching, and a bare `.` is not checked at all.
         let cleaned = match cleaned.file_name() {
@@ -381,7 +402,20 @@ impl ReceiverContext {
         if cleaned.as_os_str().is_empty() || cleaned == Path::new(".") {
             return Ok(());
         }
-        if filters.allows(&cleaned, false) && filters.allows(&cleaned, true) {
+        // upstream: main.c:723-731 calls check_filter() TWICE, once per
+        // name_flags value, and refuses if either says excluded - the daemon
+        // does not yet know whether the dest names a directory.
+        //
+        // `allows_name` is the predicate that mirrors check_filter() on a name
+        // no traversal will revisit: `exclude = /excluded` does NOT protect
+        // `excluded/x2.tx` (an anchored non-wild rule is a bare
+        // `strcmp(name, pattern)`, exclude.c:1002), while `/excluded/` and
+        // `/excluded/***` do, because XFLG_DIR2WILD3 (exclude.c:307-313) makes
+        // both of those the subtree wildcard. Neither `allows` (all synthetic
+        // descendants live, over-matching the bare form) nor
+        // `allows_during_traversal` (none live, under-matching the directory
+        // form) can express that split.
+        if filters.allows_name(&cleaned, false) && filters.allows_name(&cleaned, true) {
             return Ok(());
         }
         // upstream: main.c:734-735 quotes the ORIGINAL argument, not the
