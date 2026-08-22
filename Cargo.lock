@@ -274,6 +274,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 name = "batch"
 version = "0.6.4"
 dependencies = [
+ "fast_io",
  "filetime",
  "metadata",
  "protocol",

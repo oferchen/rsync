@@ -158,6 +158,8 @@
 
 mod error;
 
+mod operator_file;
+
 /// Binary format definitions for batch files.
 ///
 /// This module contains the low-level structures for reading and writing

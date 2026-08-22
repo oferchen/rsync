@@ -8,9 +8,6 @@ use crate::error::{BatchError, BatchResult};
 use std::fs::File;
 use std::io::{self, Write};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 /// Generate a minimal shell script for replaying a batch file.
 ///
 /// Creates a script matching upstream rsync's format: a single command line
@@ -53,7 +50,15 @@ pub fn generate_script_with_filters(
 ) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();
-    let mut file = File::create(&script_path).map_err(|e| {
+    // upstream: batch.c:254 creates the `.sh` companion through
+    // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR|S_IXUSR`. Passing the
+    // mode to the create is what makes the script executable; upstream never
+    // chmods afterwards, so an existing file keeps whatever mode it had.
+    let mut file = crate::operator_file::create_write(
+        std::path::Path::new(&script_path),
+        crate::operator_file::BATCH_SCRIPT_MODE,
+    )
+    .map_err(|e| {
         BatchError::Io(io::Error::new(
             e.kind(),
             format!("Failed to create script file '{script_path}': {e}"),
@@ -108,9 +113,6 @@ pub fn generate_script_with_filters(
     writeln!(file)?;
 
     file.flush()?;
-
-    // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
-    set_script_permissions(&script_path)?;
 
     Ok(())
 }
@@ -169,7 +171,15 @@ pub fn generate_script_with_args(
     filter_rules: Option<&str>,
 ) -> BatchResult<()> {
     let script_path = config.script_file_path();
-    let mut file = File::create(&script_path).map_err(|e| {
+    // upstream: batch.c:254 creates the `.sh` companion through
+    // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR|S_IXUSR`. Passing the
+    // mode to the create is what makes the script executable; upstream never
+    // chmods afterwards, so an existing file keeps whatever mode it had.
+    let mut file = crate::operator_file::create_write(
+        std::path::Path::new(&script_path),
+        crate::operator_file::BATCH_SCRIPT_MODE,
+    )
+    .map_err(|e| {
         BatchError::Io(io::Error::new(
             e.kind(),
             format!("Failed to create script file '{script_path}': {e}"),
@@ -247,9 +257,6 @@ pub fn generate_script_with_args(
     writeln!(file)?;
 
     file.flush()?;
-
-    // upstream: batch.c:232 batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
-    set_script_permissions(&script_path)?;
 
     Ok(())
 }
@@ -484,23 +491,6 @@ fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {
         }
         i += 1;
     }
-}
-
-/// Set script file permissions to match upstream rsync.
-///
-/// Upstream rsync opens the `.sh` file with `S_IRUSR | S_IWUSR | S_IXUSR`
-/// (0o700), granting read/write/execute only to the owner.
-#[cfg(unix)]
-fn set_script_permissions(path: &str) -> BatchResult<()> {
-    use std::fs;
-    let permissions = fs::Permissions::from_mode(0o700);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_script_permissions(_path: &str) -> BatchResult<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1220,7 +1210,9 @@ mod tests {
         let script_path = config.script_file_path();
         let metadata = fs::metadata(&script_path).unwrap();
         let permissions = metadata.permissions();
-        // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
+        use std::os::unix::fs::PermissionsExt as _;
+        // upstream: batch.c:254 batch_sh_fd opened with
+        // S_IRUSR | S_IWUSR | S_IXUSR (0o700)
         assert_eq!(
             permissions.mode() & 0o777,
             0o700,
