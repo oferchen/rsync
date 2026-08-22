@@ -1892,3 +1892,100 @@ fn zlib_streams_large_literal_exceeding_old_64mib_cap() {
     }
     assert_eq!(offset, data.len(), "decoded length must match the source");
 }
+
+/// Pseudo-random bytes that deflate/LZ4 cannot shrink, so a literal of length
+/// `len` really does cross the encoder's chunk boundary. A run of identical
+/// bytes compresses to almost nothing and would never exercise the boundary.
+#[cfg(feature = "lz4")]
+fn lz4_incompressible(len: usize) -> Vec<u8> {
+    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0xFF) as u8
+        })
+        .collect()
+}
+
+/// Encodes `match(block) -> literal -> match(block + 4) -> finish` and returns
+/// the raw wire bytes.
+#[cfg(feature = "lz4")]
+fn lz4_encode_match_then_literal(literal_len: usize) -> Vec<u8> {
+    let mut encoder = CompressedTokenEncoder::new_lz4();
+    let mut wire = Vec::new();
+    encoder.send_block_match(&mut wire, 0).expect("first match");
+    encoder
+        .send_literal(&mut wire, &lz4_incompressible(literal_len))
+        .expect("literal");
+    encoder
+        .send_block_match(&mut wire, 4)
+        .expect("second match");
+    encoder.finish(&mut wire).expect("finish");
+    wire
+}
+
+/// An open token run must reach the wire before the literal data that follows
+/// it, however long that literal is.
+///
+/// upstream `send_compressed_token()` never faces this ordering choice: one
+/// call writes the previous run (token.c:945-961) and then the literal's
+/// DEFLATED_DATA blocks (token.c:965-993), so the run is always first. oc
+/// splits the two across `send_block_match` and `send_literal`, and
+/// `send_literal` flushes eagerly once `MAX_DATA_COUNT` accumulates - which is
+/// where the run could be overtaken.
+///
+/// This asserts on the FIRST WIRE BYTE rather than on a decode round-trip:
+/// each LZ4 DEFLATED_DATA block decompresses independently, so a stream whose
+/// blocks precede their token run still yields the right literal bytes while
+/// reconstructing the file in the wrong order. Only the framing can tell.
+#[test]
+#[cfg(feature = "lz4")]
+fn lz4_open_token_run_precedes_the_literal_it_encloses() {
+    for literal_len in [
+        MAX_DATA_COUNT - 1,
+        MAX_DATA_COUNT,
+        MAX_DATA_COUNT + 1,
+        MAX_DATA_COUNT * 2 + 7,
+        CHUNK_SIZE * 2,
+    ] {
+        let wire = lz4_encode_match_then_literal(literal_len);
+        let first = *wire.first().expect("non-empty stream");
+        assert_eq!(
+            first & 0xC0,
+            TOKEN_REL & 0xC0,
+            "literal_len {literal_len}: stream must open with the token run for \
+             block 0, got flag {first:#04x}"
+        );
+        let first_data = wire
+            .iter()
+            .position(|b| b & 0xC0 == DEFLATED_DATA)
+            .expect("literal must produce DEFLATED_DATA");
+        assert!(
+            first_data > 0,
+            "literal_len {literal_len}: DEFLATED_DATA must not precede the run"
+        );
+    }
+}
+
+/// Non-vacuity companion: the assertion above CAN fail. A literal with no
+/// preceding block match legitimately opens the stream with DEFLATED_DATA, so
+/// "first byte is a token run" is a real discriminator, not a tautology.
+#[test]
+#[cfg(feature = "lz4")]
+fn lz4_literal_without_a_preceding_match_opens_with_deflated_data() {
+    let mut encoder = CompressedTokenEncoder::new_lz4();
+    let mut wire = Vec::new();
+    encoder
+        .send_literal(&mut wire, &lz4_incompressible(MAX_DATA_COUNT * 2))
+        .expect("literal");
+    encoder.finish(&mut wire).expect("finish");
+
+    let first = *wire.first().expect("non-empty stream");
+    assert_eq!(
+        first & 0xC0,
+        DEFLATED_DATA,
+        "a leading literal must open with DEFLATED_DATA, got {first:#04x}"
+    );
+}
