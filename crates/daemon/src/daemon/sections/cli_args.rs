@@ -68,8 +68,13 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
         .disable_version_flag(true)
         .arg_required_else_help(false)
         .arg(
+            // upstream: help-rsyncd.h - `--help, -h  show this help (when used
+            // with --daemon)`. In daemon mode `-h` is help; the client parser
+            // keeps its own `-h` (`--human-readable`), which is why the short
+            // alias lives here rather than on the shared option table.
             Arg::new("help")
                 .long("help")
+                .short('h')
                 .help("Show this help message and exit.")
                 .action(ArgAction::SetTrue),
         )
