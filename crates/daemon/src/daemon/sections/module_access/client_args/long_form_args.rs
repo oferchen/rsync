@@ -7,12 +7,11 @@
 /// as long-form arguments that are not encoded in the compact flag string.
 /// The daemon must parse these to correctly configure the transfer.
 ///
-/// Returns `Some(offender)` when a client-only flag (write/read-batch family)
-/// reaches the daemon. The caller surfaces that as an `@ERROR` and exits
-/// instead of letting the unrecognised option drive a silent connection
-/// close mid file-list framing. Upstream mirrors this at
-/// `options.c:1460-1465` with `rsync: <BAD>: <err> (in daemon mode)` then
-/// `daemon_error:` (`options.c:1480-1482`) exiting `RERR_SYNTAX`.
+/// Returns `Some(rejection)` when an argument must abort the session rather
+/// than be applied. The caller surfaces that as an `@ERROR` and exits instead
+/// of letting the argument drive a silent connection close mid file-list
+/// framing, or - worse for a bad value - be silently ignored. See
+/// [`ClientArgRejection`] for the two upstream rules involved.
 ///
 /// # Upstream Reference
 ///
@@ -23,13 +22,16 @@
 /// - `options.c:2906` - `--numeric-ids`
 /// - `options.c:2909` - `--use-qsort`
 /// - `options.c:2755-2758` - `--compress-level=N`
-fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Option<String> {
+fn apply_long_form_args(
+    client_args: &[String],
+    config: &mut ServerConfig,
+) -> Option<ClientArgRejection> {
     // Positional path args follow the standalone `.` separator. Upstream
     // `glob_expand_module()` consumes them through a different code path, so
     // the daemon's option parser only validates the option region.
     let dot_position = client_args.iter().position(|a| a == ".");
 
-    let mut unknown: Option<String> = None;
+    let mut rejection: Option<ClientArgRejection> = None;
     let mut i = 0;
     while i < client_args.len() {
         let arg = &client_args[i];
@@ -262,6 +264,29 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                             config.deletion.max_delete = Some(n as u64);
                         }
                     }
+                // upstream: options.c:2998-3001 - `server_options()` forwards
+                // `--min-size`/`--max-size` (as one `--opt=VALUE` token, see
+                // safe_arg at options.c:2716-2720) only when the local end is
+                // the sender, i.e. only to a daemon that is RECEIVING a push.
+                // That is the one direction where the filter runs on the
+                // daemon: enforcement lives in the generator
+                // (generator.c:2118-2133), which is the receiving side. A
+                // dropped value therefore lets a push deposit exactly the
+                // files the client asked to exclude.
+                } else if let Some(val) = arg.strip_prefix("--max-size=") {
+                    match parse_transfer_size_limit("max-size", val) {
+                        Ok(limit) => config.file_selection.max_file_size = Some(limit),
+                        Err(message) => {
+                            rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
+                        }
+                    }
+                } else if let Some(val) = arg.strip_prefix("--min-size=") {
+                    match parse_transfer_size_limit("min-size", val) {
+                        Ok(limit) => config.file_selection.min_file_size = Some(limit),
+                        Err(message) => {
+                            rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
+                        }
+                    }
                 // upstream: options.c - server_options() forwards `--modify-window=NUM`.
                 // The daemon receiver's quick-check honours it via same_time() so
                 // files within the window are not needlessly re-transferred.
@@ -359,7 +384,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     if fmt.contains("%I") {
                         config.flags.info_flags.itemize_unchanged = true;
                     }
-                } else if unknown.is_none() && is_client_only_flag_reaching_daemon(arg) {
+                } else if rejection.is_none() && is_client_only_flag_reaching_daemon(arg) {
                     // upstream: options.c:1460-1465 - the daemon's popt loop
                     // emits `rsync: <BAD>: <err> (in daemon mode)` on the
                     // first unrecognised option and jumps to `daemon_error:`
@@ -369,14 +394,87 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     // them here converts the previously silent connection
                     // close at protocol byte ~2241725 into an explicit
                     // `@ERROR` frame plus non-zero exit.
-                    unknown = Some(arg.clone());
+                    rejection = Some(ClientArgRejection::Unrecognized(arg.clone()));
                 }
             }
         }
         i += 1;
     }
 
-    unknown
+    rejection
+}
+
+/// Why a client argument aborts the session instead of being applied.
+///
+/// Upstream reaches these two outcomes through the same `parse_arguments()`
+/// failure return, but by different routes and with different text, so the
+/// daemon needs to tell them apart to report either one faithfully.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ClientArgRejection {
+    /// A client-only flag (the write/read-batch family) reached the daemon.
+    ///
+    /// upstream: `options.c:1460-1465` - the daemon-mode popt loop emits
+    /// `rsync: <BAD>: <err> (in daemon mode)` and jumps to `daemon_error:`
+    /// (`options.c:1480-1482`), exiting `RERR_SYNTAX`.
+    Unrecognized(String),
+    /// A recognised option carried a value upstream's own parser rejects.
+    ///
+    /// The payload is the message verbatim, already in upstream's
+    /// `--%s=%s is %s` shape (`options.c:1253`).
+    InvalidValue(String),
+}
+
+/// Parses a `--max-size`/`--min-size` value the way upstream's popt case does.
+///
+/// upstream: `options.c:1808-1817` - both options call
+/// `parse_size_arg(arg, 'b', "<name>", 0, -1, False)`, and a failure aborts
+/// option parsing rather than falling back to a default. Ignoring a bad value
+/// here would re-open the very hole this arm closes: the option would be
+/// dropped, silently, on a peer-supplied argument.
+fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String> {
+    // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
+    // terminator, so the suffix switch takes `def_suf` and `strtod("")` gives
+    // 0. An empty value is exactly `=0`, not "no limit"; the shared parser
+    // rejects the empty string, so the rule is applied per option (the same
+    // placement the CLI uses, since `--max-alloc` must keep rejecting it).
+    let text = if value.is_empty() { "0" } else { value };
+
+    // upstream: options.c:1169 + :1216-1221 - with max_value = -1 (what :1809
+    // and :1815 pass) the ceiling is `(ssize_t)(SIZE_MAX / 2)`, and the range
+    // check runs against the `double` returned by strtod with a STRICT
+    // `dsize >= size_max` clause. `(double)(SIZE_MAX / 2)` rounds to 2^63, so
+    // the boundary is 2^63 in DOUBLE space, not in integer space.
+    //
+    // Measured against real rsync 3.5.0: the largest accepted value is
+    // 9223372036854774784 (2^63 - 1024, the greatest double below 2^63), while
+    // 9223372036854775807 (`i64::MAX`) is already reported "too large".
+    // Comparing as integers would accept a band of values upstream refuses,
+    // so the comparison is kept in `f64` deliberately.
+    const SIZE_MAX_AS_DOUBLE: f64 = (i64::MAX as u64 + 1) as f64;
+
+    match ::core::bandwidth::parse_size_arg(text, b'b') {
+        Ok(parsed) if parsed.bytes as f64 >= SIZE_MAX_AS_DOUBLE => {
+            Err(size_arg_error(opt_name, value, "too large"))
+        }
+        Ok(parsed) => u64::try_from(parsed.bytes)
+            .map_err(|_| size_arg_error(opt_name, value, "too large")),
+        Err(::core::bandwidth::SizeArgError::Invalid) => {
+            Err(size_arg_error(opt_name, value, "invalid"))
+        }
+        Err(::core::bandwidth::SizeArgError::TooLarge) => {
+            Err(size_arg_error(opt_name, value, "too large"))
+        }
+    }
+}
+
+/// Renders upstream's size-argument failure text.
+///
+/// upstream: `options.c:1253` - `snprintf(err_buf, .., "--%s=%s is %s",
+/// opt_name, size_arg, err)`. The `(max: N)` suffix upstream appends at
+/// `:1254-1258` applies only when the option declares a bound; `--max-size`
+/// and `--min-size` pass `max_value = -1`, so no suffix is emitted.
+fn size_arg_error(opt_name: &str, value: &str, reason: &str) -> String {
+    format!("--{opt_name}={value} is {reason}")
 }
 
 /// Reports whether `arg` is a client-only flag that should never reach the
