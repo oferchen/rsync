@@ -108,14 +108,8 @@ fn serve_connections(
     #[cfg(not(unix))]
     let _ = (&syslog_facility, &syslog_tag);
 
-    let connection_limiter = if let Some(path) = lock_file {
-        Some(Arc::new(ConnectionLimiter::open(path)?))
-    } else {
-        None
-    };
-
-    let modules: Arc<Vec<ModuleRuntime>> =
-        Arc::new(build_module_runtimes(modules, &connection_limiter)?);
+    let (modules, connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
+    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(modules);
     let motd_lines = Arc::new(motd_lines);
 
     // LSM-CAP.5: verify required Linux capabilities are present before binding

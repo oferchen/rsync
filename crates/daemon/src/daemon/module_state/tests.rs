@@ -534,6 +534,52 @@ fn module_peer_hostname_uses_cache() {
     assert_eq!(result, Some("cached.example.com"));
 }
 
+// WHY: every daemon entry point - the accept loop, the async listener, the
+// `--server` stdio session and the inetd session - builds its module table
+// through this one helper. Three of them previously hand-rolled the same two
+// steps and passed a hardcoded `None`, silently disabling `max connections`
+// on those transports. Opening the daemon-wide lock file inside the helper is
+// what makes that spelling unavailable to a future entry point.
+//
+// The second assertion is the one that discriminates: an implementation that
+// ignores `lock_file` and returns `None` still satisfies the first arm.
+//
+// upstream: clientserver.c:791 - `rsync_module()` calls `claim_connection()`
+// for every daemon connection regardless of how it arrived.
+#[test]
+fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lock = dir.path().join("daemon.lock");
+
+    let def = ModuleDefinition {
+        name: "shared".to_owned(),
+        ..Default::default()
+    };
+
+    // No `lock file` configured: nothing is opened, matching upstream's
+    // `if (max_connections == 0) return 1` short-circuit ahead of the open.
+    let (runtimes, limiter) =
+        build_module_runtimes_with_lock_file(vec![def.clone()], None).expect("build without lock");
+    assert!(limiter.is_none(), "no lock file must open no limiter");
+    assert!(runtimes[0].connection_limiter.is_none());
+
+    // A daemon-wide `lock file` reaches a module that has no override.
+    let (runtimes, limiter) = build_module_runtimes_with_lock_file(vec![def], Some(lock.clone()))
+        .expect("build with lock");
+    let limiter = limiter.expect("daemon-wide limiter opened");
+    assert!(
+        std::sync::Arc::ptr_eq(
+            runtimes[0]
+                .connection_limiter
+                .as_ref()
+                .expect("module limiter"),
+            &limiter,
+        ),
+        "a module without its own `lock file` must share the daemon-wide limiter",
+    );
+    assert!(lock.exists(), "the daemon-wide lock file must be created");
+}
+
 // upstream: clientserver.c:746 `claim_connection(lp_lock_file(i), ...)` - the
 // lock file is P_LOCAL, so a module that sets its own `lock file` claims slots
 // in that file while modules without an override share the daemon-wide file.

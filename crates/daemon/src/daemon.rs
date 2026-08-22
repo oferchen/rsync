@@ -245,7 +245,6 @@ pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only"
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
-use self::module_state::build_module_runtimes;
 pub(crate) use self::module_state::{
     AuthUser, ConnectionLimiter, GidSetting, MaxConnections, ModuleConnectionError,
     ModuleDefinition, ModuleRuntime, PeerHost, UserAccessLevel, module_peer_hostname,
@@ -256,6 +255,7 @@ pub(crate) use self::module_state::{
     clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
     set_test_netgroup_members,
 };
+use self::module_state::{build_module_runtimes, build_module_runtimes_with_lock_file};
 use self::module_state::{peer_host_display, resolve_peer_hostname};
 
 // upstream: log.c:122-132 logit() - every daemon log-file line is stamped
@@ -392,6 +392,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         bandwidth_limit,
         log_file,
         reverse_lookup,
+        lock_file,
         ..
     } = options;
 
@@ -407,11 +408,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     // regardless of which entry point launched the daemon.
     apply_startup_hardening(log_sink.as_ref());
 
-    let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
-    let modules: Vec<ModuleRuntime> = modules
-        .into_iter()
-        .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
-        .collect();
+    let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
     // LSM-CAP.5: verify required Linux capabilities are present before serving
     // the remote-shell daemon session. Same pre-flight as the standalone and
@@ -575,14 +572,10 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     apply_startup_hardening(log_sink.as_ref());
 
-    let connection_limiter = if let Some(path) = lock_file {
-        Some(Arc::new(ConnectionLimiter::open(path)?))
-    } else {
-        None
-    };
-
-    let modules: Arc<Vec<ModuleRuntime>> =
-        Arc::new(build_module_runtimes(modules, &connection_limiter)?);
+    // The async listener has no SIGHUP reload path, so the daemon-wide limiter
+    // is not retained past module construction.
+    let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
+    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(modules);
 
     // Reject privileged per-module settings for the same reason as the global
     // checks above.
