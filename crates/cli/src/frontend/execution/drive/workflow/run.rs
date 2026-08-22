@@ -1222,10 +1222,17 @@ fn derive_batch_seed() -> i32 {
 /// upstream: `syscall.c:537` `open_no_attacker_symlinks()` - the entry point for
 /// the opens that are not confined beneath a root, `--log-file` among them
 /// (`syscall.c:232`).
+/// Opens the client `--log-file` for appending, refusing untrusted symlinks.
+///
+/// upstream: log.c:170 passes `0644`, not `0666`. The difference is observable:
+/// upstream additionally forces `umask(022 | orig_umask)` around the open
+/// (log.c:163), so it can never create a group- or world-writable log; passing
+/// `0666` here would do exactly that under a permissive umask. `0644` reaches
+/// upstream's fixed point without needing the umask dance.
 fn open_log_file(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
-        fast_io::operator_open_append(path, 0o666)
+        fast_io::operator_open_append(path, 0o644)
     }
     #[cfg(not(unix))]
     {

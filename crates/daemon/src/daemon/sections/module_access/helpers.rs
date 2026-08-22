@@ -10,12 +10,15 @@
 ///
 /// The log file is opened in append mode, creating it if it doesn't exist.
 /// Returns a thread-safe [`SharedLogSink`] for concurrent logging.
+///
+/// upstream: log.c:169 opens the logfile through `open_no_attacker_symlinks()`
+/// with `O_WRONLY|O_APPEND|O_CREAT, 0644`, for the reason stated at log.c:165 -
+/// `--log-file` and `log file =` are operator-supplied paths that may transit
+/// attacker-writable directories, and a planted symlink would redirect the root
+/// daemon's log into a file of the attacker's choosing. The ownership walk
+/// refuses symlink components not owned by uid 0 or our euid.
 pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| log_file_error(path, error))?;
+    let file = open_log_file(path).map_err(|error| log_file_error(path, error))?;
     // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` on
     // every log-file line; the wrapper applies the same shared formatter used
     // by the client `--log-file` sink.
@@ -23,6 +26,31 @@ pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, 
         logging_sink::logfile::LogFileWriter::new(file),
         brand,
     ))))
+}
+
+/// Mode applied when the log file is created.
+///
+/// upstream: log.c:170 passes `0644`. The surrounding `umask(022 | orig_umask)`
+/// (log.c:163) is what forbids a group- or world-writable log file under a
+/// permissive umask; passing `0644` here reaches the same fixed point without
+/// the dance, because `0644` has no group or other write bit for a umask to
+/// need to clear.
+#[cfg(unix)]
+const LOG_FILE_MODE: u32 = 0o644;
+
+/// Opens the log file for appending, refusing untrusted symlink components.
+///
+/// Windows has no POSIX mode bits and no ownership-walk equivalent, so it keeps
+/// the plain open.
+fn open_log_file(path: &Path) -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_append(path, LOG_FILE_MODE)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new().create(true).append(true).open(path)
+    }
 }
 
 /// Reopens the connection's log sink to the selected module's `log file`.
