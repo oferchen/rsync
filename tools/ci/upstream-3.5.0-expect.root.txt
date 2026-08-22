@@ -80,7 +80,7 @@ daemon-deny-dns-failopen skip
 daemon-dot-file-force-wipe skip
 daemon-early-exec-nameconv fail
 daemon-exclude-from-outside-module pass
-daemon-exclude-namebased fail
+daemon-exclude-namebased pass
 daemon-exec pass
 daemon-exec-metachar-documented-limit fail
 daemon-exec-metachar-refused fail
