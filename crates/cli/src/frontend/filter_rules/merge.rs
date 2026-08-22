@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -47,7 +46,7 @@ pub(crate) fn apply_merge_directive(
     directive: MergeDirective,
     base_dir: &Path,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut Vec<PathBuf>,
     source: RuleSource<'_>,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
@@ -83,10 +82,23 @@ pub(crate) fn apply_merge_directive(
         resolved_path.clone()
     };
 
-    if !visited.insert(guard_key.clone()) {
-        let text = format!("recursive filter merge detected for '{display}'");
-        return Err(rsync_error!(1, text).with_role(Role::Client));
+    // upstream: exclude.c:1619-1627 parse_filter_file() bounds the nesting DEPTH
+    // at MAX_MERGE_DEPTH (exclude.c:168) instead of detecting a cycle, and under
+    // XFLG_FATAL_ERRORS - which every operator-supplied merge carries - reports
+    // the limit and exits RERR_FILEIO.
+    //
+    // `visited` is the enclosing merge chain, so its length is that depth. It is
+    // a stack rather than a set precisely because the depth is what is bounded:
+    // a set cannot count a self-including file, whose second insert would not
+    // grow it.
+    if visited.len() >= filters::MAX_MERGE_DEPTH {
+        // upstream renders the offending directive with rule_text() and prefixes
+        // who_am_i(); filter arguments are parsed before any fork, where
+        // who_am_i() is "client" - the role this error already carries.
+        let text = filters::depth_limit_exceeded("client", &display);
+        return Err(rsync_error!(11, text).with_role(Role::Client));
     }
+    visited.push(guard_key.clone());
 
     let next_base_storage = if is_stdin {
         None
@@ -123,7 +135,7 @@ pub(crate) fn apply_merge_directive(
             &contents, &options, next_base, &display, &mut local, visited,
         )
     })();
-    visited.remove(&guard_key);
+    visited.pop();
     if result.is_ok() {
         destination.extend(local);
         if options.excludes_self() && !is_stdin {
@@ -141,7 +153,7 @@ fn parse_merge_contents(
     base_dir: &Path,
     display: &str,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
         let mut tokens = contents.split_whitespace();
@@ -276,7 +288,7 @@ pub(crate) fn process_merge_directive(
     display: &str,
     source: RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     match parse_filter_directive(OsStr::new(directive)) {
         Ok(FilterDirective::Rule(mut rule)) => {

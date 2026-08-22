@@ -17,7 +17,7 @@ fn apply_merge_directive_resolves_relative_paths() {
     std::fs::write(&grand, b"+ grand\n").expect("write grand");
 
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     let directive = MergeDirective::new(OsString::from("outer.rules"), None)
         .with_options(DirMergeOptions::default().allow_list_clearing(true));
     super::apply_merge_directive(
@@ -43,7 +43,7 @@ fn apply_merge_directive_respects_forced_include() {
     std::fs::write(&path, b"alpha\n!\nbeta\n").expect("write filters");
 
     let mut rules = vec![FilterRuleSpec::exclude("existing".to_owned())];
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include))
         .with_options(
             DirMergeOptions::default()
