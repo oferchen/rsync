@@ -188,15 +188,14 @@ pub(super) fn process_links(
             }
         }
 
-        // upstream: hlink.c:236 - rprintf(code, "%s => %s\n", fname, realname)
-        // emitted at INFO_GTE(NAME, 1) when a hard link is created via --link-dest.
-        info_log!(
-            Name,
-            1,
-            "{} => {}",
-            record_path.display(),
-            link_target.display()
-        );
+        // No notice is emitted for a link made from an alt-dest basis.
+        // `hlink.c:236` belongs to maybe_hard_link(), the -H COHORT path, which
+        // names the in-transfer group leader by its relative realname.
+        // --link-dest goes through a DIFFERENT upstream function -
+        // hard_link_one(file, fname, oldname, terse) at hlink.c:475-492 - which
+        // prints nothing on success and only rsyserr()s on failure. Its caller
+        // try_dests_reg() (generator.c) then itemizes with an EMPTY xname, so
+        // the itemize row is the only output upstream produces here.
 
         // upstream: hlink.c:215-224 / generator.c:1020-1025 - a `--link-dest`
         // cluster member is linked from the basis, so it ends up sharing the

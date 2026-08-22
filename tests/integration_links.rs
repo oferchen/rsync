@@ -859,3 +859,65 @@ fn hardlinks_modify_through_any_link() {
         b"modified content"
     );
 }
+
+/// A `--link-dest` basis link is announced by its itemize row only - never by an
+/// `"%s => %s"` arrow.
+///
+/// The alt-dest path does NOT go through maybe_hard_link(). try_dests_reg()
+/// calls hard_link_one(file, fname, cmpbuf, 1) (hlink.c:475-492), which prints
+/// nothing on success and only rsyserr()s the `"link %s => %s failed"` message
+/// on failure; the caller then itemizes with an EMPTY xname. Sharing
+/// `hlink.c:236` between the two is what produced a spurious arrow here naming
+/// the basis by ABSOLUTE path - a form upstream never emits at any verbosity.
+///
+/// The `is uptodate` assertion is the non-vacuity anchor: without it, "no
+/// arrows" would also hold for a fixture that linked nothing at all.
+#[test]
+#[cfg(unix)]
+fn link_dest_basis_link_is_not_announced_with_an_arrow() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let basis_dir = test_dir.mkdir("basis").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    fs::write(src_dir.join("a-leader.txt"), b"shared content").unwrap();
+    fs::hard_link(src_dir.join("a-leader.txt"), src_dir.join("z-alias.txt")).unwrap();
+
+    let mut seed = RsyncCommand::new();
+    seed.args([
+        "-a",
+        "--hard-links",
+        &format!("{}/", src_dir.display()),
+        &format!("{}/", basis_dir.display()),
+    ]);
+    seed.assert_success();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-vv",
+        "-plrtH",
+        &format!("--link-dest={}", basis_dir.display()),
+        &format!("{}/", src_dir.display()),
+        &format!("{}/", dest_dir.display()),
+    ]);
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let arrows = stdout
+        .lines()
+        .filter(|line| line.contains(" => "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arrows.len(),
+        0,
+        "hard_link_one() prints nothing on success (hlink.c:475-492)\n\
+         --- full output ---\n{stdout}"
+    );
+    for name in ["a-leader.txt", "z-alias.txt"] {
+        assert!(
+            stdout.contains(&format!("{name} is uptodate")),
+            "fixture must actually link {name} from the basis, else the \
+             arrow count above is vacuous\n--- full output ---\n{stdout}"
+        );
+    }
+}
