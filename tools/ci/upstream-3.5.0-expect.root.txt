@@ -50,7 +50,7 @@ clean-fname-collapse pass
 clean-fname-underflow pass
 compare pass
 compress-options pass
-compress-zlib-insert fail
+compress-zlib-insert pass
 connect-prog-host-quoting pass
 connect-prog-nested-singlequote-host-injection pass
 copy-dest-source-symlink pass
