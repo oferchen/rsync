@@ -1157,7 +1157,10 @@ mod module_access_tests {
         ];
         let mut config = ServerConfig::default();
         let offender = apply_long_form_args(&args, &mut config);
-        assert_eq!(offender.as_deref(), Some("--write-batch=/tmp/bad.batch"));
+        assert_eq!(
+            offender,
+            Some(ClientArgRejection::Unrecognized("--write-batch=/tmp/bad.batch".to_owned()))
+        );
     }
 
     #[test]
@@ -1169,7 +1172,10 @@ mod module_access_tests {
         ];
         let mut config = ServerConfig::default();
         let offender = apply_long_form_args(&args, &mut config);
-        assert_eq!(offender.as_deref(), Some("--read-batch=/tmp/in.batch"));
+        assert_eq!(
+            offender,
+            Some(ClientArgRejection::Unrecognized("--read-batch=/tmp/in.batch".to_owned()))
+        );
     }
 
     #[test]
@@ -1181,7 +1187,130 @@ mod module_access_tests {
         ];
         let mut config = ServerConfig::default();
         let offender = apply_long_form_args(&args, &mut config);
-        assert_eq!(offender.as_deref(), Some("--only-write-batch=/tmp/dry.batch"));
+        assert_eq!(
+            offender,
+            Some(ClientArgRejection::Unrecognized("--only-write-batch=/tmp/dry.batch".to_owned()))
+        );
+    }
+
+    // upstream: options.c:2998-3001 - `server_options()` forwards
+    // `--min-size`/`--max-size` only under `if (am_sender)`, i.e. only to a
+    // daemon that is RECEIVING a push, because enforcement lives in the
+    // generator (generator.c:2118-2133) on the receiving side. Dropping the
+    // value made a push deposit exactly the files the client asked to
+    // exclude - measured against real rsync 3.5.0, which lands only the small
+    // file where oc landed both.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_max_size() {
+        let args = vec![
+            "--server".to_owned(),
+            "-logDtpr".to_owned(),
+            "--max-size=100".to_owned(),
+            ".".to_owned(),
+            "module/".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.file_selection.max_file_size, Some(100));
+    }
+
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_min_size_with_a_suffix() {
+        let args = vec![
+            "--server".to_owned(),
+            "-logDtpr".to_owned(),
+            "--min-size=1K".to_owned(),
+            ".".to_owned(),
+            "module/".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.file_selection.min_file_size, Some(1024));
+    }
+
+    // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
+    // terminator, so an empty value parses as 0. For `--max-size` that means
+    // "exclude every non-empty file", NOT "no limit"; treating it as absent
+    // would ship the files upstream withholds.
+    #[test]
+    fn apply_long_form_args_treats_an_empty_max_size_as_zero() {
+        let args = vec!["--server".to_owned(), "--max-size=".to_owned()];
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.file_selection.max_file_size, Some(0));
+    }
+
+    // upstream: options.c:1808-1817 - a `parse_size_arg` failure aborts option
+    // parsing, and options.c:1253 renders `--%s=%s is %s`. Silently ignoring
+    // the value would re-open the drop this arm exists to close, so the
+    // rejection carries the value's own message rather than the
+    // unknown-option one.
+    #[test]
+    fn apply_long_form_args_rejects_an_unparseable_max_size() {
+        let args = vec!["--server".to_owned(), "--max-size=12Q".to_owned()];
+        let mut config = ServerConfig::default();
+        assert_eq!(
+            apply_long_form_args(&args, &mut config),
+            Some(ClientArgRejection::InvalidValue(
+                "--max-size=12Q is invalid".to_owned()
+            ))
+        );
+        assert_eq!(config.file_selection.max_file_size, None);
+    }
+
+    // Boundary MEASURED against real rsync 3.5.0, not derived from the C by
+    // reading: upstream's range check compares the strtod `double` with a
+    // strict `dsize >= size_max` (options.c:1216-1221), and
+    // `(double)(SIZE_MAX / 2)` rounds to 2^63 - so `i64::MAX` itself is
+    // already "too large" and the largest accepted value is 2^63 - 1024.
+    // An integer comparison would accept that whole band.
+    #[test]
+    fn apply_long_form_args_rejects_a_min_size_above_upstreams_ceiling() {
+        for value in ["9223372036854775807", "9223372036854775806", "8192P"] {
+            let args = vec!["--server".to_owned(), format!("--min-size={value}")];
+            let mut config = ServerConfig::default();
+            assert_eq!(
+                apply_long_form_args(&args, &mut config),
+                Some(ClientArgRejection::InvalidValue(format!(
+                    "--min-size={value} is too large"
+                ))),
+                "{value} must be refused exactly as upstream refuses it"
+            );
+            assert_eq!(config.file_selection.min_file_size, None, "{value}");
+        }
+    }
+
+    // Non-vacuity companion: the greatest value upstream ACCEPTS must still be
+    // accepted, so the ceiling cannot pass by rejecting everything large.
+    #[test]
+    fn apply_long_form_args_accepts_the_largest_value_upstream_allows() {
+        for (value, bytes) in [
+            ("9223372036854774784", 9_223_372_036_854_774_784u64),
+            ("8191P", 8191 * 1024 * 1024 * 1024 * 1024 * 1024),
+        ] {
+            let args = vec!["--server".to_owned(), format!("--min-size={value}")];
+            let mut config = ServerConfig::default();
+            assert!(
+                apply_long_form_args(&args, &mut config).is_none(),
+                "{value} must be accepted exactly as upstream accepts it"
+            );
+            assert_eq!(config.file_selection.min_file_size, Some(bytes), "{value}");
+        }
+    }
+
+    // A positional operand that happens to look like the option must not be
+    // decoded: everything after the standalone `.` is a path, and upstream
+    // consumes it through `glob_expand_module()` instead.
+    #[test]
+    fn apply_long_form_args_ignores_a_max_size_shaped_operand() {
+        let args = vec![
+            "--server".to_owned(),
+            ".".to_owned(),
+            "--max-size=12Q".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.file_selection.max_file_size, None);
     }
 
     // Recognised client args do NOT produce the unknown-arg signal. This
