@@ -377,6 +377,9 @@ impl ReceiverContext {
         self.sanitize_segment_paths(flat_start)?;
         self.recheck_received_filter_entries(&self.file_list[flat_start..])?;
         self.recheck_received_implied_includes_entries(&self.file_list[flat_start..])?;
+        // upstream: flist.c:1230-1252 - the implied-parent downgrade is part of
+        // the same per-entry defense set, so sub-list dirs get it too.
+        self.downgrade_implied_parent_dirs_from(flat_start)?;
 
         match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 

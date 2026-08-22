@@ -97,9 +97,9 @@ ki62-io-error-mask pass
 link-dest-module-escape pass
 link-dest-pathroot pass
 link-dest-relative-basis pass
-malicious-dot-dir-delete-scope fail
+malicious-dot-dir-delete-scope pass
 malicious-dot-file-delete-scope pass
-malicious-sender-delete-scope fail
+malicious-sender-delete-scope pass
 malicious-server-partial-basis-symlink-overwrite fail
 match-append-empty-nullmap skip
 match-want-i-nolen skip
