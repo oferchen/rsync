@@ -957,6 +957,51 @@ fn run_module_list_uses_connect_program_command() {
     assert_eq!(entry.comment(), Some("example.com:873"));
 }
 
+/// A host refused by the `%H` safety check must exit `RERR_SOCKETIO` (10), the
+/// code upstream uses for a connection that could not be opened - not the
+/// syntax code.
+///
+/// upstream: `open_socket_out_wrapped()` prints the refusal and returns -1
+/// (socket.c:490-493); `start_socket_client()` turns that into
+/// `exit_cleanup(RERR_SOCKETIO)` (clientserver.c:163-165). Measured against
+/// real rsync 3.5.0: `rsync rsync://-rf/mod/` with a `%H` template reports
+/// `unsafe host characters for RSYNC_CONNECT_PROG` and exits 10, where oc
+/// exited 1.
+///
+/// The message assertion is the non-vacuity anchor: without it the exit-code
+/// check would also pass for a fixture that failed somewhere else entirely and
+/// happened to carry the same code.
+#[cfg(unix)]
+#[test]
+fn connect_program_host_refusal_exits_socket_io() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+
+    // The template must contain a specifier: upstream inspects the host only
+    // inside `if (prog && strchr(prog, '%'))`, so a template without one never
+    // reaches the refusal at all.
+    let _prog_guard = EnvGuard::set_os("RSYNC_CONNECT_PROG", &OsString::from("sh -c 'echo %H'"));
+    let _shell_guard = EnvGuard::remove("RSYNC_SHELL");
+    let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
+
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new("-rf".to_string(), 873),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+
+    let error = run_module_list(request).expect_err("an unsafe host must be refused");
+    assert!(
+        error.to_string().contains("unsafe host characters"),
+        "expected the upstream refusal message, got: {error}"
+    );
+    assert_eq!(
+        error.exit_code(),
+        crate::client::SOCKET_IO_EXIT_CODE,
+        "upstream exits RERR_SOCKETIO for a connection it could not open \
+         (clientserver.c:163-165)"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn run_module_list_collects_motd_after_acknowledgement() {

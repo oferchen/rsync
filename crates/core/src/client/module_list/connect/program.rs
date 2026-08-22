@@ -51,7 +51,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 use super::super::DaemonAddress;
-use crate::client::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
+use crate::client::{
+    ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, SOCKET_IO_EXIT_CODE, daemon_error,
+};
 
 /// Spawns a connect program with a loopback TCP socketpair for stdin/stdout.
 ///
@@ -70,7 +72,7 @@ pub(crate) fn connect_via_program(
 ) -> Result<super::DaemonStream, ClientError> {
     let command = program
         .format_command(addr.host(), addr.port())
-        .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
+        .map_err(refused_connect_host_error)?;
 
     let shell = program
         .shell()
@@ -165,7 +167,7 @@ pub(crate) fn connect_via_program(
 ) -> Result<super::DaemonStream, ClientError> {
     let command = program
         .format_command(addr.host(), addr.port())
-        .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
+        .map_err(refused_connect_host_error)?;
 
     let shell = program
         .shell()
@@ -645,6 +647,21 @@ fn shell_quote_connect_host(host: &str) -> String {
     }
     quoted.push('\'');
     quoted
+}
+
+/// Maps a [`ConnectProgramConfig::format_command`] refusal onto upstream's exit
+/// code for it.
+///
+/// `format_command` fails for exactly one reason - the host did not survive
+/// [`shell_unsafe_connect_host`] - and upstream reports that as a failure to
+/// open the connection, not as a usage error: `open_socket_out_wrapped()`
+/// returns -1 (socket.c:490-493) and `start_socket_client()` answers with
+/// `exit_cleanup(RERR_SOCKETIO)` (clientserver.c:163-165).
+///
+/// Both `connect_via_program` arms route through here so the unix and non-unix
+/// builds cannot drift to different codes.
+fn refused_connect_host_error(error: String) -> ClientError {
+    daemon_error(error, SOCKET_IO_EXIT_CODE)
 }
 
 fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
