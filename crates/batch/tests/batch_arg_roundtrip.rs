@@ -139,16 +139,20 @@ fn batch_sh_options_round_trip_through_the_shell_to_the_replay_set() {
     );
 }
 
-/// KNOWN LIMITATION (shared with upstream, pinned not papered over): an arg
-/// value containing a literal single quote does NOT round-trip through the
-/// `.sh`. Upstream `write_arg()` (batch.c:174-185) wraps in single quotes and
-/// emits an embedded `'` as `''`, which POSIX sh collapses to nothing
-/// (`'a''b'` tokenizes to `ab`). oc mirrors that byte-for-byte for `.sh`
-/// fidelity (#116), so it inherits the same lossy behavior - this is NOT an
-/// oc-vs-upstream divergence. Pinned so any change to the quoting is a
-/// deliberate, reviewed decision.
+/// An arg value containing a literal single quote round-trips through the
+/// `.sh` intact.
+///
+/// This was a KNOWN LIMITATION until upstream 3.5.0: `write_arg()` used to wrap
+/// in single quotes and emit an embedded `'` as `''`, which POSIX sh collapses
+/// to nothing (`'a''b'` tokenizes to `ab`), silently corrupting the option
+/// value in the generated replay script. 3.5.0 switched to the POSIX
+/// close/escape/reopen idiom `'\''` (batch.c:189-192) and the loss is gone.
+///
+/// Pinned in the round-trip direction - through the real `/bin/sh` - because
+/// the byte-golden tests in `script.rs` cannot tell a quoting form that *looks*
+/// right from one that *tokenizes* right.
 #[test]
-fn embedded_single_quote_is_lossy_matching_upstream_write_arg() {
+fn embedded_single_quote_survives_the_sh_round_trip() {
     let dir = tempdir().expect("tempdir");
     let shim = write_echo_shim(dir.path());
     let batch = dir.path().join("b");
@@ -168,14 +172,16 @@ fn embedded_single_quote_is_lossy_matching_upstream_write_arg() {
 
     let argv = replay_argv(&config.script_file_path());
 
-    // The single quote is dropped by the shell (`'a''b'` -> `ab`), exactly as an
-    // upstream-generated batch `.sh` would behave.
+    // upstream 3.5.0 emits the POSIX close/escape/reopen idiom (`'a'\''b'`,
+    // batch.c:189-192), so the quote survives evaluation. Its 3.4.x predecessor
+    // wrote `'a''b'`, which the shell collapses to `ab` - the option value was
+    // silently corrupted by the generated replay script.
     assert!(
-        argv.iter().any(|a| a == "--suffix=ab"),
-        "embedded single quote is collapsed (upstream-identical): {argv:?}"
+        argv.iter().any(|a| a == "--suffix=a'b"),
+        "the literal single quote must survive the .sh round-trip: {argv:?}"
     );
     assert!(
-        !argv.iter().any(|a| a == "--suffix=a'b"),
-        "the literal single quote does not survive the .sh round-trip: {argv:?}"
+        !argv.iter().any(|a| a == "--suffix=ab"),
+        "the quote must not be collapsed away (the pre-3.5.0 behaviour): {argv:?}"
     );
 }

@@ -232,7 +232,7 @@ pub(crate) fn finalize_batch(
     }
 
     // upstream: batch.c:305-306 - embed filter rules in the replay script
-    let filter_text = serialize_filter_rules(config.filter_rules());
+    let filter_text = serialize_filter_rules(config.filter_rules())?;
     let filter_opt = if filter_text.is_empty() {
         None
     } else {
@@ -279,17 +279,39 @@ pub(crate) fn finalize_batch(
 /// flags (`s`/`r`/`p`/`x`/`!`). A trailing `/` is appended for
 /// directory-only patterns. Returns an empty string when no rules are present.
 ///
+/// A pattern containing a newline is refused rather than written. Each rule is
+/// one here-doc line, so an embedded newline lets a crafted pattern - from a
+/// dir-merge or `--exclude-from` file in an untrusted tree - forge the `#E#`
+/// terminator on a line of its own and inject shell commands into the
+/// generated replay script. Such a pattern also cannot round-trip a
+/// line-delimited here-doc, so upstream fails closed and so does this.
+///
+/// This is the last layer that still sees rules individually; the script
+/// emitter receives one flattened string, where a rule-internal newline is
+/// indistinguishable from the separator between rules.
+///
 /// # Upstream Reference
 ///
-/// - `batch.c:205-222`: `write_filter_rules()` iterates filter_list
+/// - `batch.c:213-240`: `write_filter_rules()` iterates filter_list and, per
+///   rule, `if (ent->pattern && strchr(ent->pattern, '\n'))` reports the error
+///   below and calls `exit_cleanup(RERR_SYNTAX)`.
 /// - `exclude.c:1525-1587`: `get_rule_prefix()` builds the prefix string
-fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> String {
+fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> Result<String, ClientError> {
     if rules.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
 
     let mut output = String::new();
     for rule in rules {
+        // upstream: batch.c:222-231 - refuse a newline-bearing pattern before
+        // any of it reaches the script.
+        if rule.pattern().contains('\n') {
+            let msg = "cannot write a filter rule containing a newline to the batch replay script";
+            return Err(ClientError::new(
+                1,
+                rsync_error!(1, "{}", msg).with_role(Role::Client),
+            ));
+        }
         // upstream: exclude.c:1532-1541 - action prefix
         let action_char = match rule.kind() {
             FilterRuleKind::Include => '+',
@@ -339,7 +361,7 @@ fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> String {
         output.push('\n');
     }
 
-    output
+    Ok(output)
 }
 
 /// Replay a batch file to reconstruct the transfer at the destination.
@@ -666,27 +688,27 @@ mod tests {
 
     #[test]
     fn serialize_empty_rules_returns_empty_string() {
-        assert_eq!(serialize_filter_rules(&[]), "");
+        assert_eq!(serialize_filter_rules(&[]).expect("no rules to reject"), "");
     }
 
     #[test]
     fn serialize_exclude_rule() {
         let rules = [FilterRuleSpec::exclude("*.tmp")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "- *.tmp\n");
     }
 
     #[test]
     fn serialize_include_rule() {
         let rules = [FilterRuleSpec::include("*.rs")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "+ *.rs\n");
     }
 
     #[test]
     fn serialize_protect_rule() {
         let rules = [FilterRuleSpec::protect("/data")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         // upstream: protect is 'P', receiver-only gets 'r' modifier
         assert_eq!(output, "Pr /data\n");
     }
@@ -694,7 +716,7 @@ mod tests {
     #[test]
     fn serialize_risk_rule() {
         let rules = [FilterRuleSpec::risk("/temp")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         // upstream: risk is 'R', receiver-only gets 'r' modifier
         assert_eq!(output, "Rr /temp\n");
     }
@@ -702,7 +724,7 @@ mod tests {
     #[test]
     fn serialize_clear_rule() {
         let rules = [FilterRuleSpec::clear()];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "! \n");
     }
 
@@ -714,14 +736,14 @@ mod tests {
             FilterRuleSpec::include("*.txt"),
             FilterRuleSpec::exclude("*"),
         ];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "- *.tmp\n+ */\n+ *.txt\n- *\n");
     }
 
     #[test]
     fn serialize_sender_only_rule() {
         let rules = [FilterRuleSpec::hide("*.bak")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         // upstream: sender-only gets 's' modifier
         assert_eq!(output, "-s *.bak\n");
     }
@@ -729,21 +751,21 @@ mod tests {
     #[test]
     fn serialize_perishable_rule() {
         let rules = [FilterRuleSpec::exclude("*.tmp").with_perishable(true)];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "-p *.tmp\n");
     }
 
     #[test]
     fn serialize_xattr_only_rule() {
         let rules = [FilterRuleSpec::exclude("user.*").with_xattr_only(true)];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "-x user.*\n");
     }
 
     #[test]
     fn serialize_negated_rule() {
         let rules = [FilterRuleSpec::exclude("*.txt").with_negate(true)];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "-! *.txt\n");
     }
 
@@ -751,7 +773,7 @@ mod tests {
     fn serialize_directory_only_pattern() {
         // FilterRuleSpec stores the trailing '/' as part of the pattern
         let rules = [FilterRuleSpec::exclude("build/")];
-        let output = serialize_filter_rules(&rules);
+        let output = serialize_filter_rules(&rules).expect("rules must serialize");
         assert_eq!(output, "- build/\n");
     }
 
@@ -769,7 +791,7 @@ mod tests {
             FilterRuleSpec::include("*.txt"),
             FilterRuleSpec::exclude("*"),
         ];
-        let filter_text = serialize_filter_rules(&rules);
+        let filter_text = serialize_filter_rules(&rules).expect("rules must serialize");
 
         let result = engine::batch::script::generate_script_with_filters(
             &batch_cfg,
