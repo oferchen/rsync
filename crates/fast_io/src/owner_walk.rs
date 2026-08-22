@@ -422,6 +422,40 @@ pub fn operator_open_rw_create(path: &Path, mode: u32) -> io::Result<std::fs::Fi
     )
 }
 
+/// Open an operator-supplied path for writing, creating or truncating it.
+///
+/// The batch-file shape: `--write-batch` and its `.sh` companion are named by
+/// the operator and created fresh on every run, so the `O_CREAT` is again the
+/// dangerous part - the leaf need not exist for a planted symlink at any
+/// component to redirect the write.
+///
+/// `mode` applies only when the file is created, as with `open(2)`. Upstream
+/// relies on exactly that: re-running `--write-batch` over an existing batch
+/// file truncates it and leaves its mode alone. Forcing the mode afterwards
+/// with a `chmod` would both diverge from that and reopen the window this walk
+/// closes, so the mode is passed to the create and never re-applied.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/batch.c:263` - the batch file itself:
+///   `open_no_attacker_symlinks(batch_name, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY,
+///   S_IRUSR|S_IWUSR)` - owner-only, because the batch holds the file data.
+/// - `rsync-3.5.0/batch.c:254` - the `.sh` companion, the same call with
+///   `S_IRUSR|S_IWUSR|S_IXUSR` so the generated script is executable.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_with(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
+
 /// Read an operator-supplied file to a `String` through the ownership walk.
 ///
 /// The `read_to_string` counterpart to [`operator_open_read`], for the auxiliary
