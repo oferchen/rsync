@@ -237,6 +237,109 @@ fn encode_decode_with_see_token_roundtrip() {
     assert!(combined.starts_with(literal_data));
 }
 
+/// Deterministic incompressible bytes. A run of identical bytes deflates to
+/// almost nothing, so the compressible fixtures the other tests use never grow
+/// the insert's deflate output past a buffer boundary.
+fn incompressible(len: usize) -> Vec<u8> {
+    let mut state = 0x2545_F491_4F6C_DD1Du64;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 33) as u8
+        })
+        .collect()
+}
+
+/// Drives one literal / block-match / literal exchange with a matched block of
+/// `insert_len` bytes, mirroring what the sender and receiver do on the wire,
+/// and returns the decoded literal stream.
+///
+/// The second literal is the discriminator: a desynced dictionary only shows up
+/// once the peer inflates data that follows the insert.
+fn roundtrip_across_insert(
+    insert_len: usize,
+    head_len: usize,
+    tail_len: usize,
+) -> io::Result<Vec<u8>> {
+    let block_data = incompressible(insert_len);
+    let head = incompressible(head_len);
+    let tail = incompressible(tail_len);
+
+    let mut encoded = Vec::new();
+    let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+    encoder.send_literal(&mut encoded, &head)?;
+    encoder.send_block_match(&mut encoded, 0)?;
+    encoder.see_token(&block_data)?;
+    encoder.send_literal(&mut encoded, &tail)?;
+    encoder.finish(&mut encoded)?;
+
+    let mut cursor = Cursor::new(&encoded);
+    let mut decoder = CompressedTokenDecoder::new();
+    let mut literals = Vec::new();
+    loop {
+        match decoder.recv_token(&mut cursor)? {
+            CompressedToken::Literal(data) => literals.extend_from_slice(&data),
+            CompressedToken::BlockMatch(_) => decoder.see_token(&block_data)?,
+            CompressedToken::End => break,
+        }
+    }
+
+    let mut expected = head;
+    expected.extend_from_slice(&tail);
+    assert_eq!(
+        literals, expected,
+        "insert_len={insert_len} head_len={head_len} tail_len={tail_len}"
+    );
+    Ok(literals)
+}
+
+#[test]
+fn literal_only_roundtrips_at_every_buffer_boundary() {
+    // Control for the matrix below: no block match, no dictionary insert, so
+    // any failure here is the plain literal path rather than see_token.
+    for literal_len in [8 * 1024, CHUNK_SIZE + 1, 40_000, 0x1_0000 + 1000] {
+        let data = incompressible(literal_len);
+        let mut encoded = Vec::new();
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        encoder.send_literal(&mut encoded, &data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut literals = Vec::new();
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(d) => literals.extend_from_slice(&d),
+                CompressedToken::BlockMatch(_) => unreachable!("no matches sent"),
+                CompressedToken::End => break,
+            }
+        }
+        assert_eq!(literals, data, "literal_len={literal_len}");
+    }
+}
+
+#[test]
+fn matched_block_roundtrips_at_every_buffer_boundary() {
+    // Both the insert and the literal cross codec buffer boundaries as
+    // --block-size grows: CHUNK_SIZE is the decoder's inflate output buffer
+    // and the encoder's literal chunk unit, 2*CHUNK_SIZE the encoder's deflate
+    // output buffer. The small/small cell is the non-vacuity companion - it
+    // proves the harness transfers at all, so a failure in any other cell is
+    // about the size and not the fixture.
+    const SMALL: usize = 8 * 1024;
+    for insert_len in [SMALL, CHUNK_SIZE + 1, 40_000, 0xFFFF, 0x1_0000 + 1000] {
+        for literal_len in [SMALL, CHUNK_SIZE, CHUNK_SIZE + 1, 40_000, 0x1_0000 + 1000] {
+            // Vary head and tail independently: only a literal *after* the
+            // match reopens a token run, so a symmetric fixture would leave the
+            // discriminating case (large tail) tangled with the inert one.
+            roundtrip_across_insert(insert_len, literal_len, SMALL).unwrap();
+            roundtrip_across_insert(insert_len, SMALL, literal_len).unwrap();
+        }
+    }
+}
+
 #[test]
 fn encoder_protocol_version_31_advances_offset() {
     // Protocol >= 31 advances the offset between 0xFFFF chunks in see_token,
