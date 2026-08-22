@@ -117,7 +117,7 @@ operator-path-insecure-links-refused pass
 operator-path-partial-dir-daemon fail
 operator-path-partial-dir-exclude-daemon fail
 operator-path-traversal-backup-dir-daemon fail
-operator-path-traversal-dest-dir-daemon fail
+operator-path-traversal-dest-dir-daemon pass
 operator-path-traversal-partial-dir-daemon pass
 password-file-symlink skip
 peer-legacy-implied-delete-scope pass
