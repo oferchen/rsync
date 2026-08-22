@@ -30,9 +30,7 @@ pub(crate) fn connect_direct(
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
 
-    let result = try_candidates(&addresses, connect_timeout, |candidate| {
-        connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts)
-    });
+    let result = connect_first_reachable(&addresses, bind_address, connect_timeout, tfo, sockopts);
 
     match result {
         Ok(stream) => {
@@ -89,6 +87,56 @@ pub(crate) fn try_candidates<T>(
     }
 
     Err(last_error.expect("try_candidates requires at least one candidate"))
+}
+
+/// Connects to the first reachable candidate, preserving upstream's
+/// "try every address" contract.
+///
+/// upstream: socket.c:336 - "Try to connect to all addresses for this machine
+/// until we get through. It might e.g. be multi-homed, or have both IPv4 and
+/// IPv6 addresses." The fallback is what makes a dual-stack host reachable when
+/// only one family is served, so nothing may quietly truncate the walk.
+///
+/// This is the single entry point for both the direct and the proxy candidate
+/// loops so that the TCP Fast Open rule below cannot be bypassed by adding a
+/// third caller.
+pub(crate) fn connect_first_reachable(
+    candidates: &[SocketAddr],
+    bind_address: Option<SocketAddr>,
+    connect_timeout: Option<Duration>,
+    tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
+) -> Result<TcpStream, (SocketAddr, io::Error)> {
+    let tfo = fastopen_mode_for(candidates, tfo);
+
+    try_candidates(candidates, connect_timeout, |candidate| {
+        connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts)
+    })
+}
+
+/// Resolves the TCP Fast Open mode that may safely be used for a candidate set.
+///
+/// TFO defers the SYN until the first write (Linux `TCP_FASTOPEN_CONNECT`,
+/// macOS `connectx(CONNECT_RESUME_ON_READ_WRITE)`), so `connect(2)` reports
+/// success without having reached the peer. An unreachable candidate then looks
+/// connected, [`try_candidates`] stops at it, and the refusal only surfaces once
+/// the handshake reads - by which point the remaining addresses are gone. On a
+/// dual-stack host whose first resolved address is not served, that turns a
+/// working connection into a hard failure.
+///
+/// TFO is therefore restricted to a single-candidate set, where there is no
+/// fallback to lose. Multi-homed and dual-stack names take an ordinary blocking
+/// connect, whose failure is observable in time to try the next address. This
+/// applies to every enabled mode - the option is a latency optimisation, and
+/// `on` requests unconditional *use* of TFO, not connectivity loss.
+///
+/// TFO is an oc-rsync extension; upstream has no equivalent option, so the
+/// only upstream rule in play is the address-loop contract above.
+fn fastopen_mode_for(candidates: &[SocketAddr], requested: TcpFastOpenMode) -> TcpFastOpenMode {
+    if candidates.len() > 1 {
+        return TcpFastOpenMode::Off;
+    }
+    requested
 }
 
 /// Maps a final `connect(2)` failure to a [`ClientError`] with the correct exit
@@ -331,6 +379,68 @@ mod tests {
         let error = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
         let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
         assert_eq!(mapped.exit_code(), 10);
+    }
+
+    // upstream: socket.c:336 - the address loop exists so a multi-homed or
+    // dual-stack host stays reachable when only one address is served. TFO
+    // defers the SYN, so connect(2) cannot observe the refusal and the loop
+    // would stop at the first, dead candidate. With more than one candidate
+    // there is a fallback to protect, so TFO must not be used.
+    #[test]
+    fn fastopen_is_withheld_when_a_fallback_candidate_exists() {
+        let addrs = candidates(2);
+        assert_eq!(
+            fastopen_mode_for(&addrs, TcpFastOpenMode::Auto),
+            TcpFastOpenMode::Off
+        );
+        // `on` asks for TFO unconditionally, not for connectivity loss.
+        assert_eq!(
+            fastopen_mode_for(&addrs, TcpFastOpenMode::On),
+            TcpFastOpenMode::Off
+        );
+    }
+
+    // Non-vacuity companion: without it the rule above would also pass if TFO
+    // were disabled outright. A single candidate has no fallback to lose, so
+    // the requested mode must survive.
+    #[test]
+    fn fastopen_survives_when_there_is_no_fallback_to_lose() {
+        let addrs = candidates(1);
+        assert_eq!(
+            fastopen_mode_for(&addrs, TcpFastOpenMode::Auto),
+            TcpFastOpenMode::Auto
+        );
+        assert_eq!(
+            fastopen_mode_for(&addrs, TcpFastOpenMode::On),
+            TcpFastOpenMode::On
+        );
+        assert_eq!(
+            fastopen_mode_for(&addrs, TcpFastOpenMode::Off),
+            TcpFastOpenMode::Off
+        );
+    }
+
+    // The wiring, not just the policy: a listener bound to ONE family only,
+    // reached through a candidate list whose FIRST entry is dead - the exact
+    // shape `getaddrinfo("localhost")` produces on a dual-stack host. A test
+    // that binds every interface cannot observe this, because no candidate is
+    // ever unreachable.
+    #[test]
+    fn connect_falls_back_to_a_later_candidate_with_fastopen_requested() {
+        use std::net::{Ipv6Addr, TcpListener};
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind v4 loopback");
+        let served = listener.local_addr().expect("listener addr");
+
+        // Same port on IPv6 loopback: nothing is bound there, so this candidate
+        // fails immediately (refused, or unreachable where ::1 is absent).
+        let dead = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), served.port());
+
+        let stream =
+            connect_first_reachable(&[dead, served], None, None, TcpFastOpenMode::On, None)
+                .expect("the served candidate must be reached after the dead one");
+
+        assert_eq!(stream.peer_addr().expect("peer addr"), served);
     }
 
     fn candidates(n: usize) -> Vec<SocketAddr> {
