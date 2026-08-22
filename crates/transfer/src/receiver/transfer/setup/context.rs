@@ -412,6 +412,13 @@ impl ReceiverContext {
         // sender injected a name that was never requested (CVE-2022-29154).
         self.recheck_received_implied_includes()?;
 
+        // upstream: flist.c:1230-1252 recv_file_entry() re-asserts
+        // XMIT_NO_CONTENT_DIR|XMIT_TOP_DIR on any directory the implied-include
+        // list only allows as a parent, so a sender that omits
+        // XMIT_NO_CONTENT_DIR cannot make delete_in_dir() sweep the siblings of
+        // a path the client merely traversed.
+        self.downgrade_implied_parent_dirs()?;
+
         let checksum_factory = ChecksumFactory::from_negotiation(
             self.negotiated_algorithms.as_ref(),
             self.protocol,

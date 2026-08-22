@@ -61,6 +61,11 @@ pub struct ImpliedIncludes {
     opts: ImpliedIncludeOptions,
     rules: Vec<CompiledRule>,
     seen: HashSet<String>,
+    /// Whether an arg contributed a rule accepting the transfer root's own
+    /// contents (upstream: the `/**` / `/*` patterns `is_implied_parent_dir()`
+    /// scans for at `exclude.c:1153-1163`). Only the empty-arg branch of
+    /// [`add_arg`](Self::add_arg) can produce them.
+    root_content: bool,
 }
 
 impl ImpliedIncludes {
@@ -71,6 +76,7 @@ impl ImpliedIncludes {
             opts,
             rules: Vec::new(),
             seen: HashSet::new(),
+            root_content: false,
         }
     }
 
@@ -156,6 +162,10 @@ impl ImpliedIncludes {
             let suffix = if self.opts.recurse { "**" } else { "*" };
             let pattern = format!("{base}/{suffix}");
             self.push_rule(&pattern, false)?;
+            // upstream: exclude.c:1153-1163 - `/**` / `/*` are the only implied
+            // patterns that accept the transfer root's own contents, and only an
+            // empty (root) arg produces them.
+            self.root_content |= segments.is_empty();
         }
 
         Ok(())
@@ -179,6 +189,53 @@ impl ImpliedIncludes {
         self.rules
             .iter()
             .any(|rule| rule.matches(path, is_dir, false))
+    }
+
+    /// Returns `true` when `path` is only reachable as a *parent* of something
+    /// the client requested - i.e. every implied rule it matches is
+    /// directory-only, and none names it as a requested leaf.
+    ///
+    /// The receiver uses this to refuse a malicious sender that marks such a
+    /// directory as a content dir: the honest encoding of an implied parent is
+    /// `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`, so trusting the sender's byte would
+    /// let `--delete` sweep pre-existing siblings under the parent.
+    ///
+    /// An empty set returns `false` (the mechanism is inactive, as upstream's
+    /// `!implied_filter_list.head` early return does). The transfer root is
+    /// parent-only unless an empty source arg contributed a root-content rule.
+    ///
+    /// Upstream skips per-dir-merge and CVS-ignore rules, and considers only
+    /// include rules; the implied list holds neither by construction (every rule
+    /// is an anchored `FilterRule::include`), so no filtering is needed here.
+    ///
+    /// upstream: `exclude.c:1144` `is_implied_parent_dir()`.
+    #[must_use]
+    pub fn is_parent_only_dir(&self, path: &Path) -> bool {
+        if self.rules.is_empty() {
+            return false;
+        }
+
+        // upstream: exclude.c:1151-1165 - the receiver's synthetic transfer-root
+        // entry is exempt from the requested-name filter, so it is treated as
+        // parent-only unless a root-content rule exists.
+        if path == Path::new(".") || path == Path::new("/.") {
+            return !self.root_content;
+        }
+
+        let mut parent_match = false;
+        for rule in &self.rules {
+            if !rule.matches(path, true, false) {
+                continue;
+            }
+            if rule.is_directory_only() {
+                parent_match = true;
+                continue;
+            }
+            // upstream: exclude.c:1178-1180 - a non-directory include rule names
+            // a leaf the client asked for, so the dir is legitimately content.
+            return false;
+        }
+        parent_match
     }
 
     /// Compiles and stores one anchored include rule, de-duplicating repeats.
