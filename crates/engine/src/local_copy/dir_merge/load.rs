@@ -232,17 +232,34 @@ pub(crate) fn load_dir_merge_rules_recursive(
     delete_excluded: bool,
     visited: &mut Vec<PathBuf>,
 ) -> Result<DirMergeEntries, LocalCopyError> {
-    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if visited.contains(&canonical) {
-        let path_display = path.display();
-        let message = format!("recursive filter merge detected for {path_display}");
-        return Err(LocalCopyError::io(
-            "parse filter file",
-            path.to_path_buf(),
-            io::Error::new(io::ErrorKind::InvalidData, message),
-        ));
+    // upstream: exclude.c:1619-1627 parse_filter_file() bounds the nesting
+    // DEPTH at MAX_MERGE_DEPTH (exclude.c:168) rather than detecting a cycle.
+    // `visited` is the enclosing merge chain, so its length is that depth.
+    //
+    // The depth bound strictly subsumes a cycle test: a self-including file
+    // reaches the cap after 32 cheap re-reads, and a long non-cyclic chain -
+    // which no "have I seen this file?" test refuses - is bounded too.
+    //
+    // Upstream drops the rule rather than aborting here, because the per-dir
+    // merge is parsed without XFLG_FATAL_ERRORS (exclude.c:1623-1626 gates
+    // exit_cleanup on that flag). That is the same choice the failed-open arm
+    // below already makes, so both refusals leave the transfer running.
+    if visited.len() >= filters::MAX_MERGE_DEPTH {
+        // upstream renders the offending directive with rule_text(), i.e. the
+        // rule as written; oc reaches this site with the resolved merge target
+        // only, so it reports that. `sender` is upstream's who_am_i() here:
+        // the merge chain is walked by the file-list scan, which is the
+        // sender's phase (exclude.c is reached from flist.c:send_directory).
+        logging::emit_info_coded(
+            logging::InfoFlag::Misc,
+            0,
+            logging::LogCode::Error,
+            filters::depth_limit_exceeded("sender", &path.display().to_string()),
+        );
+        return Ok(DirMergeEntries::default());
     }
 
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     visited.push(canonical);
 
     // The merge file is opened from a scanned source directory, so every

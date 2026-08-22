@@ -1,6 +1,5 @@
 #![deny(unsafe_code)]
 
-use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -45,7 +44,7 @@ where
     Err: std::io::Write,
 {
     let mut filter_rules = Vec::new();
-    let mut merge_stack = HashSet::new();
+    let mut merge_stack = Vec::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
 
@@ -97,7 +96,7 @@ fn push_filter_directive(
     filter_rules: &mut Vec<FilterRuleSpec>,
     rule: &OsString,
     merge_base: &std::path::Path,
-    merge_stack: &mut HashSet<PathBuf>,
+    merge_stack: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     match parse_filter_directive(rule.as_os_str())? {
         FilterDirective::Rule(spec) => filter_rules.push(spec),

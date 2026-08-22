@@ -105,8 +105,6 @@ use logging_sink::MessageSink;
 use outbuf::{OutbufAdapter, parse_outbuf_mode};
 use progress::diagnostic::flush_diagnostics;
 #[cfg(test)]
-use std::collections::HashSet;
-#[cfg(test)]
 use std::env;
 #[cfg(test)]
 use std::net::IpAddr;
@@ -189,7 +187,7 @@ pub(crate) fn process_merge_directive(
     display: &str,
     source: filters::RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     filter_rules::process_merge_directive(
         directive,

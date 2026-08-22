@@ -40,7 +40,7 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
     let directive = MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     apply_merge_directive(
         directive,
         temp.path(),
@@ -77,7 +77,7 @@ fn apply_merge_directive_rejects_per_dir_alias() {
     let directive = MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     // "per-dir" is not an upstream directive, so a merge file that uses it must
     // fail to load rather than silently accept the oc-only alias.
     assert!(
@@ -140,7 +140,7 @@ fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
 
     let directive = MergeDirective::new(OsString::from("a/b/../rules.txt"), None);
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     apply_merge_directive(
         directive,
         temp.path(),
@@ -170,7 +170,7 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
 
     let directive = MergeDirective::new(OsString::from("a/b/../missing.txt"), None);
     let mut rules = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     assert!(
         apply_merge_directive(
             directive,

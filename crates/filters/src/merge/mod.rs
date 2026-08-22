@@ -44,6 +44,7 @@
 //! - upstream: exclude.c:parse_filter_file() - reading rules from merge files
 //! - upstream: exclude.c lines 1220-1288 - modifier character handling
 
+mod depth;
 mod error;
 pub(crate) mod parse;
 pub(crate) mod read;
@@ -51,6 +52,7 @@ pub(crate) mod read;
 #[cfg(test)]
 mod tests;
 
+pub use depth::{MAX_MERGE_DEPTH, depth_limit_exceeded};
 pub use error::MergeFileError;
 pub use parse::parse_rules;
 pub(crate) use read::scope_local_clear;
