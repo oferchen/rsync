@@ -241,3 +241,72 @@ fn no_source_args_is_a_no_op() {
     ctx.recheck_received_implied_includes()
         .expect("no recorded source args means nothing to validate");
 }
+
+/// A malicious daemon-sender that omits `XMIT_NO_CONTENT_DIR` from an implied
+/// parent must not widen the receiver's `--delete` scope.
+///
+/// Shape of the PoC the rsync 3.5.0 testsuite drives (`malicious-sender-delete-
+/// scope`): `-rR --delete rsync://host/m/dir/file` asks for one leaf, so `dir`
+/// is reachable only as its parent. An honest sender encodes that pair as
+/// `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR` (oc: `top_dir` without `content_dir`);
+/// a sender that drops the second flag would otherwise get `delete_in_dir()`
+/// run on `dest/dir`, sweeping siblings the client never named.
+///
+/// upstream: `flist.c:1230-1252` `recv_file_entry()`.
+#[test]
+fn implied_parent_dir_is_downgraded_whatever_the_sender_sent() {
+    let mut config = test_config();
+    config.flags.relative = true;
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec!["m/dir/file".to_owned()];
+    config.connection.implied_skip_daemon_module = true;
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+
+    // The malicious encoding: a content dir where the honest sender would have
+    // cleared the flag.
+    let mut parent = FileEntry::new_directory("dir".into(), 0o755);
+    parent.set_content_dir(true);
+    ctx.file_list.push(parent);
+    ctx.file_list
+        .push(FileEntry::new_file("dir/file".into(), 12, 0o644));
+
+    ctx.downgrade_implied_parent_dirs()
+        .expect("downgrade never fails on a well-formed list");
+
+    assert!(
+        !ctx.file_list[0].content_dir(),
+        "an implied parent must not stay a content dir: the deletion pass \
+         would sweep its pre-existing siblings"
+    );
+    assert!(
+        ctx.file_list[0].top_dir(),
+        "upstream re-asserts XMIT_TOP_DIR alongside XMIT_NO_CONTENT_DIR, \
+         which is oc's FLAG_IMPLIED_DIR encoding"
+    );
+}
+
+/// Non-vacuity companion: a directory the client *requested* keeps its content
+/// flag, so the downgrade cannot be passing the test above by clearing the flag
+/// on everything.
+///
+/// upstream: `exclude.c:1178-1180` - a non-directory-only include rule names a
+/// requested leaf, so the entry is legitimately a content dir.
+#[test]
+fn a_requested_directory_keeps_its_content_flag() {
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec!["dir".to_owned()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+
+    let mut requested = FileEntry::new_directory("dir".into(), 0o755);
+    requested.set_content_dir(true);
+    ctx.file_list.push(requested);
+
+    ctx.downgrade_implied_parent_dirs()
+        .expect("downgrade never fails on a well-formed list");
+
+    assert!(
+        ctx.file_list[0].content_dir(),
+        "the client asked for `dir` itself, so --delete legitimately scopes to it"
+    );
+}

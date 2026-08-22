@@ -186,7 +186,7 @@ longdir pass
 macos-setgid-ordinary-mode-regression skip
 malicious-dot-dir-delete-scope skip
 malicious-dot-file-delete-scope skip
-malicious-sender-delete-scope fail
+malicious-sender-delete-scope pass
 malicious-server-partial-basis-symlink-overwrite skip
 match-append-empty-nullmap skip
 match-want-i-nolen skip

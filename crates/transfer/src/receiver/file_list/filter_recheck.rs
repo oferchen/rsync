@@ -181,36 +181,9 @@ impl ReceiverContext {
         &self,
         entries: &[FileEntry],
     ) -> io::Result<()> {
-        // upstream: options.c:2510 / exclude.c:385 - trust_sender_args makes
-        // add_implied_include() a no-op, leaving implied_filter_list empty.
-        if self.config.trust_sender {
+        let Some(implied) = self.build_implied_includes()? else {
             return Ok(());
-        }
-
-        let sources = &self.config.connection.implied_source_args;
-        if sources.is_empty() {
-            return Ok(());
-        }
-
-        // upstream: exclude.c:403-567 - relative_paths, recurse, xfer_dirs and
-        // the daemon-module flag shape the implied rules. The module-name strip
-        // applies only to a daemon source arg (main.c:1549 passes
-        // skip_daemon_module=daemon_connection); local --files-from entries are
-        // already module-relative, so upstream records them with
-        // skip_daemon_module=0 (io.c:427,464). The strip decision is read from
-        // the stable flag recorded when the args were built: files_from_data is
-        // consumed while forwarding the list and would misreport here.
-        let opts = ImpliedIncludeOptions {
-            relative: self.config.flags.relative,
-            recurse: self.config.flags.recursive,
-            dirs: self.config.flags.dirs,
-            skip_daemon_module: self.config.connection.implied_skip_daemon_module,
         };
-        let implied = ImpliedIncludes::from_args(opts, sources)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-        if implied.is_empty() {
-            return Ok(());
-        }
 
         for entry in entries {
             let path = entry.path().as_path();
@@ -233,6 +206,98 @@ impl ReceiverContext {
                         path.display()
                     ),
                 ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Builds the implied-include set from the client's requested source args,
+    /// or `None` when the mechanism is inactive.
+    ///
+    /// Shared by the unrequested-name refusal and the implied-parent downgrade,
+    /// which upstream drives from the one `implied_filter_list` global.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2510` / `exclude.c:385` - `trust_sender_args` makes
+    ///   `add_implied_include()` a no-op, leaving `implied_filter_list` empty.
+    /// - `exclude.c:403-567` - `relative_paths`, `recurse`, `xfer_dirs` and the
+    ///   daemon-module flag shape the implied rules. The module-name strip
+    ///   applies only to a daemon source arg (`main.c:1549` passes
+    ///   `skip_daemon_module=daemon_connection`); local `--files-from` entries
+    ///   are already module-relative, so upstream records them with
+    ///   `skip_daemon_module=0` (`io.c:427,464`). The strip decision is read
+    ///   from the stable flag recorded when the args were built:
+    ///   `files_from_data` is consumed while forwarding the list and would
+    ///   misreport here.
+    fn build_implied_includes(&self) -> io::Result<Option<ImpliedIncludes>> {
+        if self.config.trust_sender {
+            return Ok(None);
+        }
+
+        let sources = &self.config.connection.implied_source_args;
+        if sources.is_empty() {
+            return Ok(None);
+        }
+
+        let opts = ImpliedIncludeOptions {
+            relative: self.config.flags.relative,
+            recurse: self.config.flags.recursive,
+            dirs: self.config.flags.dirs,
+            skip_daemon_module: self.config.connection.implied_skip_daemon_module,
+        };
+        let implied = ImpliedIncludes::from_args(opts, sources)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        Ok((!implied.is_empty()).then_some(implied))
+    }
+
+    /// Forces every implied-parent directory entry back to the honest
+    /// non-content encoding, whatever xflags byte the sender sent.
+    ///
+    /// A malicious sender can omit `XMIT_NO_CONTENT_DIR` from an implied parent
+    /// (whose honest encoding is `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`) to make
+    /// the receiver treat it as a content dir. The deletion pass would then run
+    /// on that directory and sweep pre-existing siblings the client never asked
+    /// to touch - a `--delete` scope expansion chosen by the peer.
+    ///
+    /// `implied_source_args` is receiver-owned state, so this is deliberately
+    /// **not** gated on the sender-trusting escape hatches that suppress the
+    /// per-directory filter re-check: a per-dir merge rule must not be able to
+    /// downgrade the defense.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1230-1252` `recv_file_entry()` - re-asserts
+    ///   `XMIT_NO_CONTENT_DIR | XMIT_TOP_DIR` before flag mapping, so the entry
+    ///   lands in `FLAG_IMPLIED_DIR` rather than `FLAG_CONTENT_DIR`.
+    /// - `exclude.c:1144` `is_implied_parent_dir()` - the parent-only test.
+    pub(in crate::receiver) fn downgrade_implied_parent_dirs(&mut self) -> io::Result<()> {
+        self.downgrade_implied_parent_dirs_from(0)
+    }
+
+    /// Range-scoped variant of
+    /// [`downgrade_implied_parent_dirs`](Self::downgrade_implied_parent_dirs)
+    /// covering only `self.file_list[flat_start..]`, so INC_RECURSE sub-list
+    /// entries get the same defense. upstream: `flist.c:1230` runs per received
+    /// entry, sub-lists included.
+    pub(in crate::receiver) fn downgrade_implied_parent_dirs_from(
+        &mut self,
+        flat_start: usize,
+    ) -> io::Result<()> {
+        let Some(implied) = self.build_implied_includes()? else {
+            return Ok(());
+        };
+
+        for entry in &mut self.file_list[flat_start..] {
+            if !entry.is_dir() || !entry.content_dir() {
+                continue;
+            }
+            if implied.is_parent_only_dir(entry.path().as_path()) {
+                // upstream: flist.c:1249 - both flags, so the entry maps to
+                // FLAG_IMPLIED_DIR (oc: top_dir without content_dir).
+                entry.set_content_dir(false);
+                entry.set_top_dir(true);
             }
         }
 
