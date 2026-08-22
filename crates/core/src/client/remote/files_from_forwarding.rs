@@ -78,7 +78,10 @@ fn read_path_into(
     eol_nulls: bool,
     iconv_converter: Option<&protocol::FilenameConverter>,
 ) -> Result<(), ClientError> {
-    let mut file = std::fs::File::open(path).map_err(|e| {
+    // upstream: options.c:2654 - the same `open_no_attacker_symlinks()` guard
+    // as the local read. Forwarding the list to a remote sender does not make
+    // the local path any less operator-supplied.
+    let mut file = super::operator_file::open_read(path).map_err(|e| {
         invalid_argument_error(
             &format!("failed to open --files-from {}: {e}", path.display()),
             23,
