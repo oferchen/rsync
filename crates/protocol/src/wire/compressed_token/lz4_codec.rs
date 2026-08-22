@@ -97,7 +97,28 @@ impl Lz4TokenEncoder {
         self.literal_buf.extend_from_slice(data);
         // upstream: token.c lines 923-947 - compress in MAX_DATA_COUNT chunks
         while self.literal_buf.len() >= MAX_DATA_COUNT {
+            // The chunk flush below writes DEFLATED_DATA to the wire, so any
+            // open token run has to be closed first. Upstream never faces this
+            // ordering choice: send_compressed_token() writes the run
+            // (token.c:945-961) and the literal data (token.c:965-993) in ONE
+            // call, so a run is always on the wire before the literal that
+            // follows it.
+            self.flush_pending_token_run(writer)?;
             self.compress_one_chunk(writer)?;
+        }
+        Ok(())
+    }
+
+    /// Emits the pending token run, if any, and records that the literal data
+    /// which follows opens a fresh run.
+    ///
+    /// upstream: token.c:943 - `last_token == -2` is the state meaning "the run
+    /// is closed"; the next token starts a new one at `run_start = token`
+    /// without re-emitting the run just written.
+    fn flush_pending_token_run<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        if self.last_token >= 0 {
+            self.write_token_run(writer)?;
+            self.last_token = -2;
         }
         Ok(())
     }
@@ -140,9 +161,7 @@ impl Lz4TokenEncoder {
     ///
     /// upstream: token.c lines 950-953
     pub(super) fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.last_token >= 0 {
-            self.write_token_run(writer)?;
-        }
+        self.flush_pending_token_run(writer)?;
         self.compress_and_emit(writer)?;
         writer.write_all(&[END_FLAG])?;
         self.reset();
