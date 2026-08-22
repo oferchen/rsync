@@ -73,8 +73,21 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Records a skip event for a directory (when `-r` is not enabled).
+    ///
+    /// Emits the notice here, not from the verbose renderer. Upstream's guard
+    /// is `S_ISDIR(st.st_mode) && !xfer_dirs` and nothing else - there is no
+    /// `INFO_GTE` and no verbosity test at either call site - so the line
+    /// prints at DEFAULT verbosity. The event log this record joins is only
+    /// collected when `verbosity > 0 || progress || list_only`, so a renderer
+    /// arm alone is unreachable in exactly the case upstream prints. `--quiet`
+    /// still suppresses it, at `rwrite()`'s FINFO arm, which
+    /// `logging::message_stream` owns.
+    // upstream: flist.c:1338 and flist.c:2452 -
+    // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
+    // with no surrounding quotes and no trailing "(no recursion)" suffix.
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
+            info_log!(Misc, 0, "skipping directory {}", path.display());
             self.record(LocalCopyRecord::new(
                 path.to_path_buf(),
                 LocalCopyAction::SkippedDirectory,

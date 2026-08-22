@@ -555,7 +555,14 @@ impl<'a> CopyContext<'a> {
     /// Records a completed copy action: updates the `--stats` created-entry
     /// counters, forwards the record to the observer, and appends it to the
     /// event log when event collection is enabled.
-    pub(super) fn record(&mut self, record: LocalCopyRecord) {
+    pub(super) fn record(&mut self, mut record: LocalCopyRecord) {
+        // Fix the record's place in the output stream here, before either
+        // consumer sees it, so the observer's copy and the logged copy carry
+        // the same key. This is the moment the action becomes observable, and
+        // it is the only ordering the renderer can reconstruct once the two
+        // output channels are drained at different times.
+        record.stamp();
+
         // upstream: receiver.c:733-746 / sender.c:295-308 - every ITEM_IS_NEW
         // entry bumps `stats.created_*` for its type, whether or not file data
         // moved. `was_created()` is the ITEM_IS_NEW mirror; classify by action

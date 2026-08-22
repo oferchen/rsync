@@ -18,12 +18,22 @@
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::log_code::LogCode;
-use std::cell::RefCell;
+use super::sequence::Stamped;
+use std::cell::{Cell, RefCell};
 
 thread_local! {
     static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
+    /// upstream: log.c:345 - `quiet` is its own global, consulted in the FINFO
+    /// arm of `rwrite()`. It is NOT the same state as the verbosity level, so
+    /// folding `--quiet` into `verbose = 0` cannot express it: a notice
+    /// upstream prints at DEFAULT verbosity still has to disappear under `-q`.
+    static QUIET: Cell<bool> = const { Cell::new(false) };
+    /// Events are held stamped with their production order so a consumer that
+    /// interleaves them with another output channel can recover that order.
+    /// The buffer itself stays thread-local; only the ordering key is shared
+    /// process-wide, which is what makes keys from two threads comparable.
     #[allow(clippy::missing_const_for_thread_local)]
-    static EVENTS: RefCell<Vec<DiagnosticEvent>> = RefCell::new(Vec::new());
+    static EVENTS: RefCell<Vec<Stamped<DiagnosticEvent>>> = RefCell::new(Vec::new());
 }
 
 /// A diagnostic event collected during execution.
@@ -78,6 +88,28 @@ pub fn init(config: VerbosityConfig) {
     });
 }
 
+/// Record whether `-q` / `--quiet` was requested, for the current thread.
+///
+/// Upstream keeps `quiet` as a global of its own, separate from `verbose` and
+/// from `info_levels[]`, and consults it in exactly one place: the `FINFO` arm
+/// of `rwrite()` returns without writing (upstream: log.c:344-345). Anything
+/// that only folds `--quiet` into `verbose = 0` cannot express a notice
+/// upstream prints at default verbosity and suppresses only under `-q` - the
+/// two states become indistinguishable.
+pub fn set_quiet(quiet: bool) {
+    QUIET.with(|q| q.set(quiet));
+}
+
+/// Whether `FINFO` output is suppressed on this thread.
+///
+/// The single question a producer or renderer should ask before emitting an
+/// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
+// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
+#[must_use]
+pub fn finfo_suppressed() -> bool {
+    QUIET.with(Cell::get)
+}
+
 /// Check if the info flag is at or above the specified level.
 ///
 /// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h).
@@ -113,12 +145,12 @@ pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
 /// code to pick the client stream versus the log file).
 pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Info {
+        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Info {
             flag,
             level,
             code,
             message,
-        });
+        }));
     });
 }
 
@@ -161,21 +193,38 @@ pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
 /// code to pick the client stream versus the log file).
 pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Debug {
+        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Debug {
             flag,
             level,
             code,
             message,
-        });
+        }));
     });
+}
+
+/// Drain all collected events with their production order, clearing the buffer.
+///
+/// This is the drain for a consumer that has to interleave these events with
+/// another output channel: the key says which of two messages was produced
+/// first, which the buffers alone cannot say once they are drained at
+/// different times.
+pub fn drain_stamped_events() -> Vec<Stamped<DiagnosticEvent>> {
+    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
 /// Drain all collected events, clearing the internal buffer.
 ///
 /// Returns events in emission order. After draining, the buffer is empty
 /// and ready to accumulate new events.
+///
+/// A projection of [`drain_stamped_events`] for the consumers that render this
+/// buffer on its own: with nothing to interleave against, the vector's own
+/// order already is the production order, and the key would be noise.
 pub fn drain_events() -> Vec<DiagnosticEvent> {
-    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+    drain_stamped_events()
+        .into_iter()
+        .map(Stamped::into_value)
+        .collect()
 }
 
 /// Drain the events whose code `accept` selects, leaving the rest queued.
@@ -185,13 +234,13 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
 /// its own codes without disturbing the others. Keeping one retain loop here
 /// means a new consumer supplies a policy, not another copy of the traversal.
 /// Returns matches in emission order.
-fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> {
+fn drain_stamped_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<Stamped<DiagnosticEvent>> {
     EVENTS.with(|e| {
         let mut events = e.borrow_mut();
         let mut matched = Vec::new();
-        events.retain(|event| {
-            if accept(event.code()) {
-                matched.push(event.clone());
+        events.retain(|stamped| {
+            if accept(stamped.value().code()) {
+                matched.push(stamped.clone());
                 false
             } else {
                 true
@@ -199,6 +248,28 @@ fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> 
         });
         matched
     })
+}
+
+/// A projection of [`drain_stamped_events_where`] for the consumers that render
+/// their share of the buffer on its own, where the key would be noise.
+fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> {
+    drain_stamped_events_where(accept)
+        .into_iter()
+        .map(Stamped::into_value)
+        .collect()
+}
+
+/// Drain the events bound for the client stream, leaving `FLOG` queued.
+///
+/// This is the client renderer's drain, and it carries the production key
+/// because that renderer has something to interleave against: the buffered
+/// per-file event stream, which it emits post-hoc. `FLOG` is left behind
+/// because upstream's `rwrite()` writes a log message and returns before the
+/// client-stream dispatch (upstream: log.c:290-307) - the log-file sink takes
+/// those through [`drain_events_coded`], and draining them here would consume
+/// them before that sink ever runs.
+pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
+    drain_stamped_events_where(|code| code != LogCode::Log)
 }
 
 /// Drain only the events carrying `code`, leaving all other events queued.

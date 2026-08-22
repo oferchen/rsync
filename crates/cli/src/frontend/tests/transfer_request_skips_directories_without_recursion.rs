@@ -81,6 +81,82 @@ fn non_trailing_slash_source_without_recursion_skips_directory() {
     );
 }
 
+/// Runs `oc-rsync <flags> <src-dir> <dst>/` on a fresh tree and returns stdout.
+///
+/// The source is a bare directory operand with no `-r`/`-d`, which is the only
+/// shape that reaches upstream's `!xfer_dirs` guard.
+fn skip_notice_stdout(flags: &[&str]) -> String {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("subdir");
+    std::fs::create_dir(&source_dir).expect("create source");
+    std::fs::write(source_dir.join("child.txt"), b"payload").expect("write child");
+    let dest_dir = tmp.path().join("dst");
+    std::fs::create_dir(&dest_dir).expect("create dest");
+
+    let mut args = vec![OsString::from(RSYNC)];
+    args.extend(flags.iter().map(OsString::from));
+    args.push(source_dir.into_os_string());
+    args.push(dest_dir.into_os_string());
+
+    let (code, stdout, _stderr) = run_with_args(args);
+    assert_eq!(code, 0, "skipping a directory operand is a success");
+    String::from_utf8(stdout).expect("stdout is utf-8")
+}
+
+fn skip_notice_count(stdout: &str) -> usize {
+    stdout
+        .lines()
+        .filter(|line| *line == "skipping directory subdir")
+        .count()
+}
+
+/// The notice is printed at DEFAULT verbosity, and `--info=name0` does not
+/// silence it.
+///
+/// upstream's condition is `!xfer_dirs` and nothing else - there is no
+/// `INFO_GTE` and no verbosity test at either call site (flist.c:1484 in
+/// `send_file_name`, flist.c:2724 in `send_file_list`). The only suppressor is
+/// `quiet` inside `rwrite()` (log.c:344-345). Routing it through the NAME
+/// output level, as the per-file listing is, hides it from every operator who
+/// did not pass `-v` - and from one who explicitly disabled NAME, which is what
+/// makes `--info=name0` the discriminating cell rather than a variation on the
+/// default.
+///
+/// Measured against rsync 3.5.0: it prints the line in all three cells below.
+#[test]
+fn skipping_directory_prints_without_name_output() {
+    for flags in [&[][..], &["--info=name0"][..], &["--info=skip1"][..]] {
+        assert_eq!(
+            skip_notice_count(&skip_notice_stdout(flags)),
+            1,
+            "`skipping directory subdir` must print exactly once with {flags:?}"
+        );
+    }
+}
+
+/// `-q` is the one thing that does suppress it, and the notice must not
+/// duplicate at `-v`.
+///
+/// Without the `-q` half this pin would also pass on a renderer that simply
+/// printed the line unconditionally, so the two cells are a pair: one proves
+/// the notice escapes the NAME gate, the other proves it still answers to
+/// upstream's actual suppressor.
+#[test]
+fn quiet_suppresses_the_notice_and_verbose_does_not_duplicate_it() {
+    assert_eq!(
+        skip_notice_count(&skip_notice_stdout(&["-q"])),
+        0,
+        "upstream's rwrite() returns early for FINFO under --quiet (log.c:344-345)"
+    );
+    assert_eq!(
+        skip_notice_count(&skip_notice_stdout(&["-v"])),
+        1,
+        "-v must not add a second copy of the notice"
+    );
+}
+
 /// Verifies that `-r` re-enables the recursive copy that the default would have
 /// skipped. Guards against an over-broad fix that disables recursion entirely.
 #[test]

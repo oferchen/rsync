@@ -10,7 +10,7 @@ use core::{
     },
     message::Message,
 };
-use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, info_gte};
+use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, drain_stamped_events_for_client, info_gte};
 use logging_sink::{MessageSink, logfile::LogFileWriter};
 
 use crate::frontend::escape::EscapeStyle;
@@ -19,7 +19,8 @@ use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
         DeltaTransmissionState, DeltaTransmissionSummary, LiveProgress, NameOutputLevel,
-        ProgressMode, ProgressOutputConfig, StderrMode, emit_transfer_summary,
+        PendingDiagnostics, ProgressMode, ProgressOutputConfig, StderrMode, emit_transfer_summary,
+        partition_by_summary_stream, render_diagnostic_events,
     },
 };
 
@@ -230,6 +231,26 @@ where
                 .with_escape_style(EscapeStyle::terminal(eight_bit_output))
                 .with_preserve_links(preserve_links)
                 .with_full_checksum(full_checksum_algorithm, always_checksum);
+            // upstream: log.c:272-373 rwrite() writes each diagnostic the moment
+            // it is produced, so it lands among the per-file lines rather than
+            // after them. oc buffers the event stream and renders it here, so
+            // the diagnostics have to be merged back in by production order.
+            // This is the only place that holds both streams, so it is where the
+            // stream split has to happen: `emit_transfer_summary` receives one
+            // writer and can only carry the half bound for it.
+            //
+            // `FLOG` events stay queued - the log-file sink below takes those.
+            let (interleaved, other_stream) =
+                partition_by_summary_stream(drain_stamped_events_for_client(), msgs_to_stderr);
+            let mut pending = PendingDiagnostics::new(interleaved);
+            if !other_stream.is_empty() {
+                let _ = render_diagnostic_events(
+                    &other_stream,
+                    stdout,
+                    stderr.writer_mut(),
+                    msgs_to_stderr,
+                );
+            }
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -253,6 +274,7 @@ where
                     show_crtimes,
                     EscapeStyle::terminal(eight_bit_output),
                     writer,
+                    &mut pending,
                 )
             }) {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -436,6 +458,9 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         // and 0xA0-0xFF stay verbatim.
         EscapeStyle::passthrough(),
         &mut log.file,
+        // The log file is fed from the FLOG queue above, not from the
+        // client-stream diagnostics, so there is nothing to interleave here.
+        &mut PendingDiagnostics::empty(),
     )?;
     // upstream: cleanup.c:222-226 gates log_exit() on
     // `logfile_name && (am_server || !INFO_GTE(STATS, 1))`, and log_exit()
