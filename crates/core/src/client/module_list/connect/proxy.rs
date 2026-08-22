@@ -7,7 +7,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use super::direct::{connect_with_optional_bind, map_connect_failure, try_candidates};
+use super::direct::{connect_first_reachable, map_connect_failure};
 use crate::client::module_list::{DaemonAddress, types::SocketAddrDisplay};
 use crate::client::{ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, socket_error};
 use crate::message::Role;
@@ -50,14 +50,13 @@ pub(crate) fn connect_via_proxy(
     // the proxy host in place of the daemon host, so the same per-address
     // --contimeout semantics (try each address, but abort immediately - not
     // move to the next address - once the alarm fires) apply here too.
-    let mut stream = match try_candidates(&addrs, connect_timeout, |candidate| {
-        connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts)
-    }) {
-        Ok(stream) => stream,
-        Err((candidate, error)) => {
-            return Err(map_connect_failure(connect_timeout, candidate, error));
-        }
-    };
+    let mut stream =
+        match connect_first_reachable(&addrs, bind_address, connect_timeout, tfo, sockopts) {
+            Ok(stream) => stream,
+            Err((candidate, error)) => {
+                return Err(map_connect_failure(connect_timeout, candidate, error));
+            }
+        };
 
     establish_proxy_tunnel(&mut stream, addr, proxy)?;
 
