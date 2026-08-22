@@ -528,12 +528,12 @@ fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
 /// Relative paths join under `resolve_base`; absolute paths are normalised
 /// in place. Both branches then run the same canonicalise-with-lexical-
 /// fallback containment check. The fallback is essential because a basis
-/// directory is allowed to be missing on disk - upstream `main.c:841
+/// directory is allowed to be missing on disk - upstream `main.c:867
 /// check_alt_basis_dirs` only warns, never aborts - and we must still apply
 /// the containment policy in that case.
 ///
 /// upstream: util1.c:1138 `sanitize_path` collapses `..` against the
-/// module root depth; main.c:1199-1206 `check_alt_basis_dirs` warns on
+/// module root depth; main.c:867 `check_alt_basis_dirs` warns (main.c:901) on
 /// out-of-tree basis. We mirror the silent-drop side of that contract
 /// instead of upstream's path-rewrite because our daemon does not chdir
 /// per connection.

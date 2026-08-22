@@ -240,7 +240,7 @@ fn build_server_config(
                 cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
-            // upstream: main.c:1217-1224 calls `check_alt_basis_dirs()` after
+            // upstream: main.c:1230-1241 calls `check_alt_basis_dirs()` after
             // `get_local_name(flist, argv[0])` chdir's into the dest directory,
             // so relative basis paths like `--link-dest=../01` resolve against
             // the receiver's destination (a sibling of `dest/00/`), not against
