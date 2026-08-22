@@ -30,16 +30,22 @@ impl BatchWriter {
     /// Create a new batch writer.
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
         let batch_path = config.batch_file_path();
-        let file = File::create(batch_path).map_err(|e| {
-            BatchError::Io(io::Error::new(
-                e.kind(),
-                format!(
-                    "Failed to create batch file '{}': {}",
-                    batch_path.display(),
-                    e
-                ),
-            ))
-        })?;
+        // upstream: batch.c:263 creates the batch file through
+        // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR`. Owner-only is
+        // load-bearing: the batch stream carries the transferred file contents,
+        // so a `File::create` default (0666 & ~umask) publishes them.
+        let file =
+            crate::operator_file::create_write(batch_path, crate::operator_file::BATCH_FILE_MODE)
+                .map_err(|e| {
+                BatchError::Io(io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create batch file '{}': {}",
+                        batch_path.display(),
+                        e
+                    ),
+                ))
+            })?;
 
         Ok(Self {
             config,
