@@ -15,7 +15,7 @@ chroot-copy-dest-inner-module skip
 chroot-link-dest-inner-module skip
 chroot-receiver-write-inner-module skip
 chroot-special-inner-module skip
-compress-zlib-insert fail
+compress-zlib-insert pass
 connect-prog-host-quoting pass
 connect-prog-nested-singlequote-host-injection pass
 copy-dest-source-symlink pass

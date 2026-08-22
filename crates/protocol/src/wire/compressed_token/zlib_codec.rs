@@ -78,7 +78,27 @@ impl ZlibTokenEncoder {
     pub(super) fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
         while self.literal_buf.len() >= CHUNK_SIZE {
+            // The chunk flush below writes DEFLATED_DATA to the wire, so any
+            // pending token run has to be closed first: the receiver ends an
+            // inflate run at the first non-DEFLATED_DATA flag and injects the
+            // Z_SYNC_FLUSH trailer there, so a token byte arriving after these
+            // blocks would split one deflate stream in two.
+            self.flush_pending_token_run(writer)?;
             self.compress_chunk_no_flush(writer)?;
+        }
+        Ok(())
+    }
+
+    /// Emits the pending token run, if any, and records that the literal data
+    /// which follows opens a fresh run.
+    ///
+    /// upstream: token.c:414 `last_token = token` with the caller's `-2`
+    /// flush sentinel - emitting literal data leaves `last_token` at -2, the
+    /// state `send_block_match` already tests for at token.c:394.
+    fn flush_pending_token_run<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        if self.last_token >= 0 {
+            self.write_token_run(writer)?;
+            self.last_token = -2;
         }
         Ok(())
     }
@@ -105,9 +125,7 @@ impl ZlibTokenEncoder {
     }
 
     pub(super) fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.last_token >= 0 {
-            self.write_token_run(writer)?;
-        }
+        self.flush_pending_token_run(writer)?;
         self.flush_all_literals(writer)?;
         writer.write_all(&[END_FLAG])?;
         self.reset();
