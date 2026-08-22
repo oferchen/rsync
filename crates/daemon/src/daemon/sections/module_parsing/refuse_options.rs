@@ -234,10 +234,31 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
     // pass catches the timing variants the client actually sends on the wire
     // (oc emits `--delete-during` for a plain `-a --delete`). The reported
     // option is always `--delete`, matching `create_refuse_error(refused_delete)`.
-    if is_option_refused(module, "delete", None)
-        && client_args.iter().any(|arg| enables_delete_mode(arg))
-    {
-        return Some("--delete".to_owned());
+    if is_option_refused(module, "delete", None) {
+        if client_args.iter().any(|arg| enables_delete_mode(arg)) {
+            return Some("--delete".to_owned());
+        }
+
+        // upstream: options.c:2359-2367 - `--remove-source-files` inherits the
+        // refusal of `delete`, but ONLY when this process is the sender:
+        // `if (refused_delete && am_sender)`. On a pull the daemon is the
+        // sender and would be deleting its OWN module contents, which is what
+        // the rule exists to stop; on a push the deletions happen on the
+        // client's side and upstream does not refuse them. The reported option
+        // is `--delete`, from the same `create_refuse_error(refused_delete)`.
+        //
+        // Upstream's own comment pins the narrower half: the inference runs off
+        // the refusal of "delete" only, never a `delete-FOO` option - and
+        // `refused_delete` is set solely by the bare `delete` row
+        // (options.c:1128), which is exactly what `is_option_refused(.., "delete")`
+        // asks here.
+        if daemon_is_sender(client_args)
+            && client_args
+                .iter()
+                .any(|arg| is_long_option(arg, "remove-source-files"))
+        {
+            return Some("--delete".to_owned());
+        }
     }
 
     for arg in client_args {
@@ -313,6 +334,28 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
 /// refuses the transfer whenever `refused_delete` is set and any of those is
 /// active. `--delete-missing-args` also needs the `missing_args == 2` guard
 /// there, which matches this option once it has been requested.
+/// Reports whether `arg` is the long option `--<long_name>`.
+///
+/// The `--` prefix is required: [`canonical_option`] strips leading dashes, so
+/// matching on it alone would also fire on a bare transfer operand that happens
+/// to be named like the option. Upstream's popt only ever treats the dashed
+/// form as an option, and the operands sit after it in the same argv.
+fn is_long_option(arg: &str, long_name: &str) -> bool {
+    let trimmed = arg.trim();
+    trimmed.starts_with("--") && canonical_option(trimmed) == long_name
+}
+
+/// Reports whether the daemon is the sender for this transfer, i.e. the client
+/// is pulling from the module.
+///
+/// upstream: options.c:863 + :1524 - the client puts `--sender` in the server
+/// argv and `OPT_SENDER` sets `am_sender = 1`. `sender` is one of the options a
+/// module may never refuse (options.c:1048, mirrored in [`VITAL_OPTIONS`]), so
+/// it is always present and never filtered out when the daemon is sending.
+fn daemon_is_sender(client_args: &[String]) -> bool {
+    client_args.iter().any(|arg| is_long_option(arg, "sender"))
+}
+
 fn enables_delete_mode(arg: &str) -> bool {
     let canonical = canonical_option(arg);
     matches!(
