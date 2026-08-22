@@ -142,10 +142,9 @@ fn filter_file_open_error(
 /// and both `--*clude-from` and a `merge` rule run with `XFLG_FATAL_ERRORS`,
 /// so the failure is fatal either way.
 ///
-/// The walk is Unix-only. The `cfg` is deliberately spelled at the call site
-/// rather than hidden behind a cross-platform `fast_io` export: this is a
-/// security control, and a silent fallback would make its absence on non-Unix
-/// invisible to a reader of this function.
+/// The walk itself lives in [`crate::frontend::operator_file`], the crate's
+/// single platform seam for operator-named opens, so the Unix-only `cfg` is
+/// written once rather than once per option.
 ///
 /// # Upstream Reference
 ///
@@ -156,14 +155,7 @@ fn filter_file_open_error(
 /// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the trust
 ///   rule is at `syscall.c:406`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
-    #[cfg(unix)]
-    {
-        fast_io::operator_open_read(path)
-    }
-    #[cfg(not(unix))]
-    {
-        File::open(path)
-    }
+    crate::frontend::operator_file::open_read(path)
 }
 
 /// Reads the raw pattern lines from a filter file, or from standard input when
