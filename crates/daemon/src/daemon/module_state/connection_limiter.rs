@@ -73,6 +73,10 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 /// mode is upstream's explicit choice rather than an inherited
 /// `0666 & ~umask`, so a shared `lock file` is not left group- or
 /// world-readable on a daemon running with a permissive umask.
+///
+/// Unix-only: the mode is consumed by the ownership-walk arm of
+/// [`open_lock_file`], and Windows has no POSIX mode bits to pass.
+#[cfg(unix)]
 const LOCK_FILE_MODE: u32 = 0o600;
 
 /// Opens the operator-named lock file, creating it if absent.
