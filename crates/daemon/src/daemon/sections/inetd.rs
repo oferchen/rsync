@@ -55,6 +55,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         bandwidth_limit,
         log_file,
         reverse_lookup,
+        lock_file,
         ..
     } = options;
 
@@ -72,11 +73,11 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // inetd-style logs.
     apply_startup_hardening(log_sink.as_ref());
 
-    let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
-    let modules: Vec<ModuleRuntime> = modules
-        .into_iter()
-        .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
-        .collect();
+    // The lock file matters MORE here than on the accept loop, not less. This
+    // process serves one session and exits, so there is no in-process counter
+    // spanning concurrent inetd children - the `fcntl` byte-range lock is the
+    // only mechanism that can enforce `max connections` across them.
+    let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
     // LSM-CAP.5: verify required Linux capabilities are present before serving
     // the inetd session. Mirrors the standalone path so per-module
