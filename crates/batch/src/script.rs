@@ -343,49 +343,60 @@ fn write_replay_options(
 }
 
 /// Quote an argument for the generated `.sh` batch wrapper, byte-matching
-/// upstream rsync's `write_arg` (batch.c:164-190).
+/// upstream rsync's `write_arg` (batch.c:164-198).
 ///
-/// A leading `-opt=value` token has its `-opt=` prefix written bare and only
-/// the value quote-processed (batch.c:169-172). Quoting engages only when the
-/// remaining argument contains one of upstream's special characters
-/// (`strpbrk(arg, " \"'&;|[]()$#!*?^\\")`, batch.c:174); otherwise the argument
-/// is emitted verbatim, so `,` `+` `@` `~` `%` `{` `}` `<` `>` stay bare.
-/// Embedded single quotes are closed rather than escaped (`''`,
-/// batch.c:176-179), reproducing upstream's byte output for `.sh` fidelity.
+/// Quoting is UNCONDITIONAL. Upstream's own comment gives the reason: single
+/// quotes keep "every shell metacharacter (backtick, newline, redirection,
+/// ...) literal in the replay script". Its 3.4.x predecessor quoted only when
+/// `strpbrk` matched a special-character set that omitted the backtick, `<`,
+/// `>` and the braces - so a destination path such as ``d`cmd`x`` was emitted
+/// bare and the backtick *executed* when the operator ran `BATCH.sh`.
+///
+/// An embedded `'` closes the quote, is backslash-escaped, then the quote
+/// reopens (`'\''`, batch.c:189-192).
+///
+/// A leading `-opt=` prefix is written bare so the replay script stays
+/// readable, but only when every byte from the leading `-` up to the first `=`
+/// is `[-_0-9A-Za-z]` (batch.c:169-183). A metacharacter before the `=` marks
+/// what upstream calls "an attacker-shaped arg", which is quoted whole.
+///
+/// upstream: batch.c:164 write_arg()
 fn shell_quote(s: &str) -> String {
-    // upstream: batch.c:174 special-character set for strpbrk().
-    const SPECIAL: &[char] = &[
-        ' ', '"', '\'', '&', ';', '|', '[', ']', '(', ')', '$', '#', '!', '*', '?', '^', '\\',
-    ];
-
     let mut result = String::new();
     let mut arg = s;
 
-    // upstream: batch.c:169-172 — a leading "-opt=" prefix is written unquoted,
-    // then only the value that follows the first '=' is quote-processed.
-    if let Some(eq) = arg.strip_prefix('-').and(arg.find('=')) {
-        result.push_str(&arg[..=eq]);
-        arg = &arg[eq + 1..];
+    // upstream: batch.c:169-183 - the bare "-opt=" prefix is conditional on the
+    // option name being a plain token; upstream walks `p` from `arg` to the '='
+    // accepting only `-`, `_` and alphanumerics, and emits the prefix only when
+    // the walk reaches the '=' (`p == x`).
+    if arg.starts_with('-') {
+        if let Some(eq) = arg.find('=') {
+            if arg[..eq].bytes().all(is_plain_option_byte) {
+                result.push_str(&arg[..=eq]);
+                arg = &arg[eq + 1..];
+            }
+        }
     }
 
-    // upstream: batch.c:174 — quote only when a special character is present.
-    if !arg.contains(SPECIAL) {
-        result.push_str(arg);
-        return result;
-    }
-
-    // upstream: batch.c:175-182 — single-quote wrap; an embedded single quote
-    // closes the quote (`''`) instead of being backslash-escaped.
+    // upstream: batch.c:187-195 - unconditional single-quote wrap.
     result.push('\'');
     for ch in arg.chars() {
         if ch == '\'' {
-            result.push_str("''");
+            // upstream: batch.c:191 - write "'\\''", i.e. the four bytes '\''
+            result.push_str("'\\''");
         } else {
             result.push(ch);
         }
     }
     result.push('\'');
     result
+}
+
+/// Bytes upstream accepts in the option name of a bare `-opt=` prefix.
+///
+/// upstream: batch.c:174-178 - `'-' || '_' || 0-9 || A-Z || a-z`.
+fn is_plain_option_byte(b: u8) -> bool {
+    b == b'-' || b == b'_' || b.is_ascii_alphanumeric()
 }
 
 /// Find the destination path from the argument list (last non-option argument).
@@ -503,36 +514,53 @@ mod tests {
 
     #[test]
     fn test_shell_quote() {
-        assert_eq!(shell_quote("simple"), "simple");
-        assert_eq!(shell_quote("with-dash"), "with-dash");
-        assert_eq!(shell_quote("/path/to/file"), "/path/to/file");
+        // Quoting is unconditional (batch.c:187-195): even an argument with no
+        // metacharacter at all comes back wrapped.
+        assert_eq!(shell_quote("simple"), "'simple'");
+        assert_eq!(shell_quote("with-dash"), "'with-dash'");
+        assert_eq!(shell_quote("/path/to/file"), "'/path/to/file'");
         assert_eq!(shell_quote("needs quoting"), "'needs quoting'");
-        // upstream closes the quote (`''`) instead of `'\''` (batch.c:176-179).
-        assert_eq!(shell_quote("has'quote"), "'has''quote'");
+        // upstream closes, escapes, then reopens: `'\''` (batch.c:189-192).
+        assert_eq!(shell_quote("has'quote"), "'has'\\''quote'");
         assert_eq!(shell_quote("$special"), "'$special'");
     }
 
-    /// Golden byte parity with upstream `write_arg` (batch.c:164-190).
+    /// The metacharacters upstream's 3.4.x `strpbrk` set did NOT cover.
+    ///
+    /// Each of these was emitted bare by the old conditional quoting, so a
+    /// destination path or option value containing one was interpreted by the
+    /// shell when the operator ran `BATCH.sh`. The backtick is the live
+    /// exploit: the rsync 3.5.0 `write-batch-quoting` cell plants a
+    /// destination named ``d`>PWNED`x/`` and fails if the command substitution
+    /// runs.
     #[test]
-    fn test_shell_quote_matches_upstream_write_arg() {
-        // Characters upstream never quotes (outside its strpbrk set) stay bare,
-        // even though oc's old whitelist would have single-quoted them.
-        for bare in [
+    fn shell_quote_neutralises_the_metacharacters_the_old_set_missed() {
+        for arg in [
+            "d`>PWNED`x/",
+            "a`cmd`b",
+            "a>b",
+            "a<b",
+            "a{b}c",
             "a,b",
             "a+b",
             "user@host",
             "~/dir",
             "50%",
-            "a{b}c",
-            "a<b>c",
-            "=val",
-            "x:y=z",
+            "a\nb",
         ] {
-            assert_eq!(shell_quote(bare), bare, "{bare:?} must stay bare");
+            assert_eq!(
+                shell_quote(arg),
+                format!("'{arg}'"),
+                "{arg:?} must be quoted whole"
+            );
         }
+    }
 
-        // Each character in upstream's special set (batch.c:174) triggers
-        // single-quote wrapping.
+    /// Golden byte parity with upstream `write_arg` (batch.c:164-198).
+    #[test]
+    fn test_shell_quote_matches_upstream_write_arg() {
+        // Every character in the old special set still quotes - the set simply
+        // stopped being the deciding factor.
         for c in [
             ' ', '"', '&', ';', '|', '[', ']', '(', ')', '$', '#', '!', '*', '?', '^', '\\',
         ] {
@@ -540,20 +568,30 @@ mod tests {
             assert_eq!(shell_quote(&arg), format!("'{arg}'"), "{c:?} must quote");
         }
 
-        // Embedded single quote: upstream emits `''` (drops the quote on eval),
-        // not the POSIX `'\''` idiom.
-        assert_eq!(shell_quote("'"), "''''");
-        assert_eq!(shell_quote("a'b"), "'a''b'");
-        assert_eq!(shell_quote("a'b'c"), "'a''b''c'");
+        // Embedded single quote: close, backslash-escape, reopen
+        // (batch.c:189-192).
+        assert_eq!(shell_quote("'"), "''\\'''");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote("a'b'c"), "'a'\\''b'\\''c'");
 
-        // Leading "-opt=" prefix is written bare; only the value is quoted
-        // (batch.c:169-172).
+        // A leading "-opt=" prefix is written bare so the replay script stays
+        // readable; only the value is quote-processed (batch.c:169-183).
         assert_eq!(shell_quote("--filter=- *.tmp"), "--filter='- *.tmp'");
         assert_eq!(shell_quote("--rsh=ssh -p 22"), "--rsh='ssh -p 22'");
-        // Value with no special char stays bare after the split.
-        assert_eq!(shell_quote("--opt=a,b+c"), "--opt=a,b+c");
-        // Non-option token with '=' is not split.
+        // The value is quoted even when it holds no metacharacter.
+        assert_eq!(shell_quote("--opt=a,b+c"), "--opt='a,b+c'");
+        // A non-option token with '=' is not split.
         assert_eq!(shell_quote("a=b c"), "'a=b c'");
+        assert_eq!(shell_quote("x:y=z"), "'x:y=z'");
+        // The bare prefix is conditional: a metacharacter before the '=' marks
+        // an attacker-shaped argument, which upstream quotes whole
+        // (batch.c:169-183).
+        assert_eq!(shell_quote("-a`b=c"), "'-a`b=c'");
+        assert_eq!(shell_quote("-a b=c"), "'-a b=c'");
+        assert_eq!(shell_quote("-$x=c"), "'-$x=c'");
+        // ... while `-`, `_` and alphanumerics keep the readable prefix.
+        assert_eq!(shell_quote("--no_iconv=x"), "--no_iconv='x'");
+        assert_eq!(shell_quote("-4=x"), "-4='x'");
     }
 
     #[test]
@@ -627,7 +665,7 @@ mod tests {
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
         assert!(
-            content.contains("${1:-/remote/dest}"),
+            content.contains("${1:-'/remote/dest'}"),
             "remote host: prefix must be stripped from the default: {content}"
         );
         assert!(
@@ -688,7 +726,7 @@ mod tests {
         let content = fs::read_to_string(config.script_file_path()).unwrap();
         let first_line = content.lines().next().expect("script must have content");
         assert!(
-            first_line.starts_with(absolute_invoker),
+            first_line.starts_with(&format!("'{absolute_invoker}'")),
             "wrapper script must start with the configured invoker path \
              (matches upstream batch.c:259 raw_argv[0]); got: {first_line}"
         );
@@ -734,7 +772,7 @@ mod tests {
         generate_script(&config).unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
-        assert!(content.starts_with("oc-rsync "));
+        assert!(content.starts_with("'oc-rsync' "));
     }
 
     #[test]
@@ -838,7 +876,7 @@ mod tests {
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();
         assert!(
-            content.contains("--read-batch=mybatch"),
+            content.contains("--read-batch='mybatch'"),
             "Bare --write-batch should be converted to --read-batch=<name>: {content}"
         );
         let occurrences = content.matches("mybatch").count();
@@ -1062,7 +1100,7 @@ mod tests {
         let content = fs::read_to_string(&script_path).unwrap();
 
         assert!(
-            content.contains("${1:-/path/to/dest}"),
+            content.contains("${1:-'/path/to/dest'}"),
             "Script must embed destination in placeholder: {content}"
         );
         assert!(
@@ -1157,16 +1195,16 @@ mod tests {
 
         // Transfer-affecting flags must be preserved for replay.
         assert!(
-            content.contains(" -az"),
+            content.contains(" '-az'"),
             "replay script must re-apply -az: {content}"
         );
         assert!(
-            content.contains(" --numeric-ids"),
+            content.contains(" '--numeric-ids'"),
             "replay script must re-apply --numeric-ids: {content}"
         );
         // --write-batch is converted to --read-batch.
         assert!(
-            content.contains(&format!("--read-batch={batch_name}")),
+            content.contains(&format!("--read-batch='{batch_name}'")),
             "replay script must convert --write-batch to --read-batch: {content}"
         );
         assert!(
@@ -1184,7 +1222,7 @@ mod tests {
         );
         // Filename operands are elided; the destination returns via ${1:-<dest>}.
         assert!(
-            content.contains("${1:-dst/}"),
+            content.contains("${1:-'dst/'}"),
             "destination must be re-supplied via placeholder: {content}"
         );
         assert!(

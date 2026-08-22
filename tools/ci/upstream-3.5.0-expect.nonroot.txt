@@ -340,8 +340,8 @@ update pass
 variety pass
 variety-symlink-traversal skip
 wildmatch pass
-write-batch-filter-injection fail
-write-batch-quoting fail
+write-batch-filter-injection pass
+write-batch-quoting pass
 xattr-wire-cap skip
 xattrs pass
 xattrs-depth pass
