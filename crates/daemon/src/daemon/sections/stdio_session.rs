@@ -85,6 +85,7 @@ pub fn run_stdio_session(
         bandwidth_limit,
         log_file,
         reverse_lookup,
+        lock_file,
         ..
     } = options;
 
@@ -94,11 +95,7 @@ pub fn run_stdio_session(
         None
     };
 
-    let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
-    let modules: Vec<ModuleRuntime> = modules
-        .into_iter()
-        .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
-        .collect();
+    let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();

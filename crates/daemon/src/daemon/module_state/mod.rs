@@ -33,8 +33,8 @@ pub(in crate::daemon) use hostname::{
     forward_resolve, netgroup_contains, peer_host_display, resolve_peer_hostname,
 };
 pub(crate) use max_connections::MaxConnections;
-pub(in crate::daemon) use runtime::build_module_runtimes;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
+pub(in crate::daemon) use runtime::{build_module_runtimes, build_module_runtimes_with_lock_file};
 
 #[cfg(test)]
 pub(in crate::daemon) use hostname::UNKNOWN_HOSTNAME;
