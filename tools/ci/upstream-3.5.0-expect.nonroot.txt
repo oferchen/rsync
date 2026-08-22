@@ -149,7 +149,7 @@ files-from-path-clamp fail
 filter-depth pass
 filter-leak skip
 filter-merge-content-echo fail
-filter-merge-recursion fail
+filter-merge-recursion pass
 filter-merge-symlink skip
 fuzzy pass
 fuzzy-basis pass
