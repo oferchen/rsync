@@ -74,23 +74,30 @@ workflow or called as a reusable workflow. For a standalone workflow
 triggered on `pull_request`, GitHub reports the context as the job
 `name:` field. The recommended context name is `RSS regression bench`.
 
-### 2.2 ci-skip.yml coordination
+### 2.2 Docs-only PRs must not need a stand-in workflow
 
-When a PR touches only docs, scripts, or workflow files - paths that
-do not trigger `ci.yml` - the `ci-skip.yml` workflow provides stub
-jobs that satisfy the required check contexts. If the RSS bench becomes
-a required check, a matching stub must be added to `ci-skip.yml`:
+A required context has to arrive on every pull request, including one
+that changes only docs. The obsolete answer was `ci-skip.yml`: a second
+workflow declaring the same job names with `echo` bodies, under the
+complementary `paths` list. That approach is **withdrawn and must not be
+revived** - `on.pull_request.paths` is an ANY-match over the changed
+files, so a PR touching one code file and one docs file matched both
+workflows and published two check runs per required context, one real
+and one stand-in. The ruleset resolved whichever it liked, so a real
+`failure` could be answered by a stand-in `success` on the same commit.
 
-```yaml
-rss-bench:
-  name: RSS regression bench
-  runs-on: ubuntu-latest
-  steps:
-    - run: echo "Skipped - no code changes"
-```
+The rule that replaced it: **exactly one workflow may declare a given
+check-run name, and that workflow must run unfiltered on
+`pull_request`.** `tools/ci/check_pr_check_name_uniqueness.py` asserts
+the first half in the `fmt + clippy` job.
 
-Without this stub, docs-only PRs would hang indefinitely waiting for
-the RSS check context to appear.
+So if the RSS bench becomes required, do NOT add a stub anywhere. Drop
+any `paths` filter from its `pull_request` trigger so the job always
+runs and always reports, and if running the benchmark on a docs-only PR
+is not worth the minutes, gate the expensive *steps* inside the job
+rather than the job itself - a job that still runs reports a real
+`success`, and sidesteps the question of whether a skipped job satisfies
+a required check.
 
 ### 2.3 Required vs. advisory
 
@@ -233,8 +240,8 @@ pull_request:
 checksum algorithm changes, daemon config parsing, transport layer,
 or workflow files other than `bench-rss.yml`.
 
-If the check becomes required, the `ci-skip.yml` stub (section 2.2)
-handles the non-triggered case.
+If the check becomes required, section 2.2 applies: the trigger must be
+unfiltered so the context always arrives.
 
 ### 5.2 Timeout configuration
 
@@ -280,7 +287,7 @@ conditions must be met:
 |---|---|---|
 | Nightly stability | 14 consecutive nightly runs with zero false positives | Review workflow run history |
 | Baseline established | `peak_rss_mb` set from post-RSS-8..11 measurements, not a placeholder | Verify the baseline JSON `notes` field references actual measurements |
-| ci-skip.yml stub | Stub job added to `ci-skip.yml` with matching context name | PR that adds the stub |
+| Unfiltered trigger | `bench-rss.yml` reports on every pull request, with no `paths` filter | PR that removes the filter |
 | Override mechanism | `rss-override` label created in repository | Verify label exists |
 | Documentation | Contributing guide updated to explain the RSS check and override process | PR with docs update |
 | Median variance | Observed stddev across 14 nightly runs is < 2 MB | Compute from artifact JSON |
@@ -331,13 +338,13 @@ The RSS bench should be promoted to required when:
 1. RSS-8..11 arena migration has landed and been released.
 2. A measured baseline is established from 5+ `workflow_dispatch` runs.
 3. 14 consecutive nightly runs pass without false positives.
-4. The `ci-skip.yml` stub and `rss-override` label are in place.
+4. The unfiltered trigger (section 2.2) and `rss-override` label are in place.
 
 At that point, the promotion is a two-step change:
 
 **Step 1: Workflow change (PR)**
 - Remove `continue-on-error: true` from `bench-rss.yml`.
-- Add the `ci-skip.yml` stub job.
+- Remove the `paths` filter from the `pull_request` trigger.
 - Add the `rss-override` label condition.
 
 **Step 2: Ruleset update (admin)**
@@ -371,7 +378,7 @@ Tasks to implement RSS-12.b promotion when readiness criteria (section
 - [ ] Verify 14 nightly runs pass (zero false positives).
 - [ ] Confirm baseline JSON has measured (not projected) `peak_rss_mb`.
 - [ ] Create `rss-override` GitHub label with description.
-- [ ] Add `ci-skip.yml` stub job with context `RSS regression bench`.
+- [ ] Remove the `paths` filter from `bench-rss.yml`'s `pull_request` trigger.
 - [ ] Add `rss-override` label skip condition to `bench-rss.yml`.
 - [ ] Remove `continue-on-error: true` from `bench-rss.yml`.
 - [ ] Update "Protect master" ruleset to add `RSS regression bench`.

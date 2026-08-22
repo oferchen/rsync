@@ -14,46 +14,32 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - '.github/actions/**'
-      # ANY workflow change runs the real matrix. Listing the reusable
-      # workflows individually left every other workflow file to ci-skip.yml,
-      # and `paths` is an ANY-match: a PR touching both an excluded file and
-      # any other workflow still fired the shim, which then published a
-      # stand-in green for contexts it never ran. Matching the whole directory
-      # here makes the two trigger sets disjoint, so exactly one workflow
-      # emits each required context.
       - '.github/workflows/**'
       - 'docker/**'
       - 'Cross.toml'
+  # Deliberately UNFILTERED. This workflow declares every required context, so
+  # it must run on every pull request or a required check never arrives and the
+  # pull request is unmergeable.
+  #
+  # A `paths` filter here previously left docs-only pull requests uncovered, and
+  # the gap was filled by ci-skip.yml, a second workflow declaring the same job
+  # names with `echo` bodies under the complementary path list. That does not
+  # work: `paths` is an ANY-match over the changed files, so a pull request
+  # touching one code file and one docs file matched BOTH filters and published
+  # two check runs per required context - one real, one stand-in. Measured on
+  # PR #7433: `upstream-testsuite / upstream testsuite (root)` resolved to
+  # `failure` from this workflow and `success` from the shim, on one commit.
+  #
+  # Disjoint path LISTS cannot fix that, because the lists are not what is
+  # matched - the changed-file SET is, and one pull request can draw from both.
+  # The only property that makes a publisher unique is a unique job name, which
+  # tools/ci/check_pr_check_name_uniqueness.py now asserts in the lint job.
   pull_request:
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'xtask/**'
-      - 'fuzz/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
-      - '.github/actions/**'
-      # ANY workflow change runs the real matrix. Listing the reusable
-      # workflows individually left every other workflow file to ci-skip.yml,
-      # and `paths` is an ANY-match: a PR touching both an excluded file and
-      # any other workflow still fired the shim, which then published a
-      # stand-in green for contexts it never ran. Matching the whole directory
-      # here makes the two trigger sets disjoint, so exactly one workflow
-      # emits each required context.
-      - '.github/workflows/**'
-      - 'docker/**'
-      - 'Cross.toml'
   # Merge-queue validation. This is the workflow that publishes every required
   # context, so without this trigger a merge group would never receive them and
   # would sit unmergeable forever. `merge_group` accepts no `paths` filter, so
   # the full matrix runs for every batch regardless of what it touches - which
-  # is the intent: the merge group is the last gate before master, and the
-  # docs-only stand-in contexts published by ci-skip.yml are deliberately not
-  # wired here (ci-skip.yml stays `pull_request`-only; giving it this trigger
-  # would publish a second check run per required context and race this one).
+  # is the intent: the merge group is the last gate before master.
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -96,6 +82,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Branch protection matches a required status check by NAME alone, so a
+      # name declared by two pull_request workflows lets the ruleset be
+      # satisfied by whichever run it resolves - including one that did no
+      # work. Placed before the toolchain install so it fails in seconds.
+      # python3-yaml is installed explicitly rather than assumed present on the
+      # runner image, so the gate cannot silently stop running.
+      - name: Install PyYAML (required by the check-name uniqueness gate)
+        run: sudo apt-get install -y python3-yaml
+
+      - name: Check-run name uniqueness
+        run: python3 tools/ci/check_pr_check_name_uniqueness.py
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -891,9 +889,7 @@ jobs:
   # interop cells above cannot see any of it.
   #
   # The harness exits non-zero on UNEXPECTED failures or UNEXPECTED passes;
-  # both surface regressions worth blocking on. The ci-skip umbrella emits the
-  # matching `upstream-testsuite / upstream testsuite` context on doc-only PRs
-  # so this required check never deadlocks.
+  # both surface regressions worth blocking on.
   # ===========================================================================
   upstream-testsuite:
     needs: lint
