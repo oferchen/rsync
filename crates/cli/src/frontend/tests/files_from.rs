@@ -1928,3 +1928,38 @@ fn files_from_integration_keeps_every_top_level_entry() {
         assert_eq!(actual, format!("body of {name}").as_bytes());
     }
 }
+
+/// The ownership walk must still FOLLOW a symlink the operator owns.
+///
+/// upstream: syscall.c:270-272 states the contract in its own words - "a
+/// trusted-owned symlink (e.g. root's `/var/log -> /data/log`) is still
+/// followed; an untrusted one fails `ELOOP`". Routing `--files-from` through
+/// `open_no_attacker_symlinks()` (options.c:2654) closes the attacker case, and
+/// this pins the other direction: the ordinary administrative layout, where the
+/// list is reached through a symlink the invoking user owns, must keep working.
+///
+/// The refusal half needs a symlink owned by a *third* uid, which only root can
+/// plant - it is covered by the upstream 3.5.0 testsuite's root leg, not here.
+/// This test is the half that runs unprivileged, and it is the half that would
+/// break if the walk ever over-refused.
+#[cfg(unix)]
+#[test]
+fn files_from_follows_a_symlink_the_operator_owns() {
+    let tmp = test_support::create_tempdir();
+    let real_dir = tmp.path().join("real");
+    std::fs::create_dir(&real_dir).expect("create real dir");
+    std::fs::write(real_dir.join("file.list"), "file1.txt\nfile2.txt\n").expect("write list");
+
+    let link_dir = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real_dir, &link_dir).expect("symlink the list's parent");
+
+    let through_link = link_dir.join("file.list");
+    let entries =
+        load_file_list_operands(&[through_link.into_os_string()], false).expect("load entries");
+
+    assert_eq!(
+        entries,
+        vec![OsString::from("file1.txt"), OsString::from("file2.txt")],
+        "the walk refused a symlink owned by the invoking user; upstream follows it"
+    );
+}

@@ -121,6 +121,7 @@ pub mod info_output;
 pub mod itemize;
 mod local_time;
 mod lsm_status;
+mod operator_file;
 mod out_format;
 pub(crate) mod password;
 /// Progress and verbose output helpers extracted from the CLI front-end.
