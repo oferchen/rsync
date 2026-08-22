@@ -1479,6 +1479,7 @@ fn list_only_renders_specials_and_symlink_arrow_gate() {
             false,
             EscapeStyle::terminal(false),
             preserve_links,
+            &mut PendingDiagnostics::empty(),
         )
         .expect("render");
         String::from_utf8(out).expect("utf8").trim_end().to_owned()
@@ -1564,6 +1565,7 @@ fn list_only_renders_atime_and_crtime_columns() {
         true,
         EscapeStyle::terminal(false),
         true,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render");
     let rendered = String::from_utf8(out).expect("utf8");

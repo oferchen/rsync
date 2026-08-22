@@ -282,6 +282,13 @@ where
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);
+    // The parser already folded `--quiet` into `verbosity = 0`, which is what
+    // silences every verbosity-gated line. Upstream additionally keeps `quiet`
+    // as its own global and consults it in the `FINFO` arm of `rwrite()`
+    // (log.c:344-345), so a notice it prints at DEFAULT verbosity - `skipping
+    // directory %s` (flist.c:1484) - still disappears under `-q`. Carrying the
+    // flag past the parser is what makes those two states distinguishable.
+    logging::set_quiet(quiet);
 
     let rayon_thread_count = rayon_threads.and_then(|n| NonZeroUsize::new(n as usize));
     let tokio_thread_count = tokio_threads.and_then(|n| NonZeroUsize::new(n as usize));
