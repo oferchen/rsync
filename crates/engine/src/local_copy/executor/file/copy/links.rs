@@ -445,23 +445,21 @@ pub(super) fn process_links(
             }
         }
 
-        // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1) when an
-        // already-copied inode is hard-linked into place.
-        info_log!(
-            Name,
-            1,
-            "{} => {}",
-            record_path.display(),
-            existing_target.display()
-        );
-        // upstream: hlink.c:223 - "%s is uptodate" at INFO_GTE(NAME, 2) when
-        // the destination's content is already in sync with the source group
-        // leader's inode. Upstream emits both the `=> realname` arrow (NAME>=1)
-        // and the `is uptodate` notice (NAME>=2) for the same alias when the
-        // generator pipes the row through `maybe_hard_link()` against a matched
-        // basis. Mirror that pairing here so `-vv` reports the leader-uptodate
-        // status alongside the freshly-linked alias.
-        info_log!(Name, 2, "{} is uptodate", record_path.display());
+        // The alias notice is NOT emitted here. upstream hard_link_one()
+        // (hlink.c:229-253) picks exactly one of two notices and the choice is
+        // enforced by an early return: a destination that already shares the
+        // leader's dev+ino prints `"%s is uptodate"` at INFO_GTE(NAME, 2) and
+        // returns (hlink.c:238-241), so it never reaches the
+        // `"%s => %s"` arrow that the freshly-linked branch prints at
+        // INFO_GTE(NAME, 1) (hlink.c:251). The two are mutually exclusive for
+        // one alias, and the arrow names the leader by its RELATIVE `realname`,
+        // not an absolute path.
+        //
+        // The client renderer owns both notices and already mirrors that
+        // structure - `is uptodate` for an up-to-date alias and `=> <leader>`
+        // for a freshly-linked one, keyed on the same distinction. Emitting
+        // from here as well produced a second, absolute-path copy of a line the
+        // renderer had already written correctly.
 
         // upstream: hlink.c:474-521 finish_hard_link() - every alias in a cohort
         // is linked against the group's data-holder (`our_name` stays fixed for

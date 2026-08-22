@@ -174,6 +174,73 @@ fn hard_links_preserved_with_hard_links_flag() {
     );
 }
 
+/// A freshly-linked hardlink alias must be announced EXACTLY ONCE, by the
+/// relative leader name.
+///
+/// upstream hard_link_one() (hlink.c:229-253) chooses one of two notices and
+/// enforces the choice with an early return: a destination that already shares
+/// the leader's dev+ino prints `"%s is uptodate"` at INFO_GTE(NAME, 2) and
+/// returns, so it never reaches the `"%s => %s"` arrow the freshly-linked
+/// branch prints at INFO_GTE(NAME, 1). One alias therefore yields one line, and
+/// the arrow names the leader by its RELATIVE `realname`.
+///
+/// This COUNTS rather than asserting containment: the defect this pins was a
+/// second, absolute-path copy of the arrow plus a spurious `is uptodate`, and a
+/// `contains` assertion is satisfied by one occurrence and by three alike.
+#[test]
+#[cfg(unix)]
+fn freshly_linked_alias_is_announced_exactly_once() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let prior_dir = test_dir.mkdir("prior").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    fs::write(src_dir.join("a-leader.txt"), b"shared content").unwrap();
+    fs::hard_link(src_dir.join("a-leader.txt"), src_dir.join("z-alias.txt")).unwrap();
+
+    // Populate the --copy-dest basis so the alias is linked rather than sent.
+    let mut seed = RsyncCommand::new();
+    seed.args([
+        "-a",
+        "--hard-links",
+        &format!("{}/", src_dir.display()),
+        &format!("{}/", prior_dir.display()),
+    ]);
+    seed.assert_success();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-vv",
+        "-plrtH",
+        &format!("--copy-dest={}", prior_dir.display()),
+        &format!("{}/", src_dir.display()),
+        &format!("{}/", dest_dir.display()),
+    ]);
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let arrows = stdout
+        .lines()
+        .filter(|line| line.starts_with("z-alias.txt => "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arrows.len(),
+        1,
+        "the alias must be announced once, got {arrows:?}\n--- full output ---\n{stdout}"
+    );
+    assert_eq!(
+        arrows[0], "z-alias.txt => a-leader.txt",
+        "upstream names the leader by its relative realname (hlink.c:251)\n\
+         --- full output ---\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("z-alias.txt is uptodate"),
+        "a freshly-linked alias takes the arrow branch, which upstream reaches \
+         only after the `is uptodate` branch has returned (hlink.c:238-241)\n\
+         --- full output ---\n{stdout}"
+    );
+}
+
 #[test]
 #[cfg(unix)]
 fn hard_links_copied_separately_without_flag() {
