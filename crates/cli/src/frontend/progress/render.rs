@@ -49,6 +49,7 @@ use super::format::{
     format_progress_rate, format_size, format_stat_categories, format_summary_rate,
     is_progress_event, list_only_event,
 };
+use super::interleave::PendingDiagnostics;
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
 use logging::{InfoFlag, info_gte};
@@ -122,6 +123,12 @@ pub(crate) fn emit_transfer_summary(
     show_crtimes: bool,
     escape: EscapeStyle,
     writer: &mut dyn Write,
+    // Diagnostics produced during the transfer, already routed to this writer's
+    // stream by the caller (which holds both handles). They render at the
+    // position they were produced rather than dead-last, mirroring upstream's
+    // write-on-production ordering. `PendingDiagnostics::empty()` for a caller
+    // with nothing to interleave, such as the log-file renderer.
+    pending: &mut PendingDiagnostics,
 ) -> io::Result<()> {
     let events = summary.events();
     let stats_on = stats_level > 0;
@@ -137,9 +144,11 @@ pub(crate) fn emit_transfer_summary(
                 show_crtimes,
                 escape,
                 out_format_context.preserve_links(),
+                pending,
             )?;
             wrote_listing = true;
         }
+        pending.finish(writer)?;
 
         if stats_on {
             if wrote_listing {
@@ -227,7 +236,7 @@ pub(crate) fn emit_transfer_summary(
     let progress_rendered = if progress_already_rendered {
         true
     } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
-        emit_progress(events, writer, human_readable_mode, escape)?
+        emit_progress(events, writer, human_readable_mode, escape, pending)?
     } else {
         false
     };
@@ -271,8 +280,14 @@ pub(crate) fn emit_transfer_summary(
             human_readable_mode,
             escape,
             writer,
+            pending,
         )?;
     }
+
+    // Whatever was produced after the last rendered entry belongs at the end of
+    // the per-file block - where upstream wrote it, ahead of the match_report
+    // totals and the summary trailer below.
+    pending.finish(writer)?;
 
     // upstream: match.c:439-446 match_report() - the sender prints the
     // cumulative match totals once at DEBUG_GTE(DELTASUM, 1) (first active at
@@ -375,8 +390,10 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
     show_crtimes: bool,
     escape: EscapeStyle,
     preserve_links: bool,
+    pending: &mut PendingDiagnostics,
 ) -> io::Result<()> {
     for event in events {
+        pending.begin_event(event.sequence(), stdout)?;
         if !list_only_event(event.kind()) {
             continue;
         }
@@ -464,6 +481,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     stdout: &mut W,
     human_readable: HumanReadableMode,
     escape: EscapeStyle,
+    pending: &mut PendingDiagnostics,
 ) -> io::Result<bool> {
     // upstream: progress.c counts every checked file-list entry toward
     // `to-chk=<remaining>/<total>`, but prints a per-file block and advances
@@ -493,6 +511,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     let mut xfr_index = 0usize;
     let mut checked = 0usize;
     for event in flist_entries.into_iter() {
+        pending.begin_event(event.sequence(), stdout)?;
         checked += 1;
         if !event.kind().is_transfer() || is_uptodate_event(event) {
             continue;
@@ -951,6 +970,7 @@ fn verbose_listing_name(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
 }
 
 /// Renders verbose listings for the provided transfer events.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_verbose<W: Write + ?Sized>(
     events: &[ClientEvent],
     verbosity: u8,
@@ -959,6 +979,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     _human_readable: HumanReadableMode,
     escape: EscapeStyle,
     stdout: &mut W,
+    pending: &mut PendingDiagnostics,
 ) -> io::Result<()> {
     // upstream: log.c:920 log_delete() prints "deleting %n" whenever
     // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
@@ -1000,6 +1021,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     });
 
     for event in ordered_events {
+        // The list above is re-sorted into upstream's generator-then-receiver
+        // phase order, so keys are not monotonic here. The merge stays correct
+        // because it only ever flushes forward: a diagnostic renders before the
+        // first event it preceded, which is the position upstream wrote it at.
+        pending.begin_event(event.sequence(), stdout)?;
         let kind = event.kind();
         // upstream: log.c:920-924 log_delete() prints "deleting %n" gated on
         // INFO_GTE(DEL, 1), which -v raises to 1 (options.c:251). The deletion
@@ -1167,17 +1193,17 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedDirectory => {
-                // upstream: flist.c:1338 and flist.c:2452 -
-                // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare
-                // relative name with no surrounding quotes and no trailing
-                // "(no recursion)" suffix.
-                writeln_wrapped(
-                    stdout,
-                    "skipping directory ",
-                    event.relative_path(),
-                    escape,
-                    "",
-                )?;
+                // Deliberately silent here, for the same reason as
+                // `SkippedNonRegular` above. Upstream gates the notice on
+                // `!xfer_dirs` and nothing else - no INFO_GTE, no verbosity
+                // test - so it prints at DEFAULT verbosity, where this
+                // renderer never runs: the event log itself is only collected
+                // when `verbosity > 0 || progress || list_only`
+                // (core: client/config/client/output.rs `collect_events`), so
+                // at `-q` and at the default the record never reaches here.
+                // The engine emits it on the info channel instead
+                // (context_impl/reporting.rs), which is where `--quiet` can
+                // still suppress it via `message_stream`.
                 continue;
             }
             ClientEventKind::SkippedUnsafeSymlink => {
@@ -1339,6 +1365,7 @@ mod tests {
             HumanReadableMode::Grouped,
             EscapeStyle::terminal(false),
             &mut out,
+            &mut PendingDiagnostics::empty(),
         )
         .expect("emit_verbose writes to an in-memory buffer");
         String::from_utf8(out).expect("output is valid UTF-8")
@@ -1358,6 +1385,7 @@ mod tests {
             HumanReadableMode::Grouped,
             EscapeStyle::terminal(false),
             &mut out,
+            &mut PendingDiagnostics::empty(),
         )
         .expect("emit_verbose writes to an in-memory buffer");
         String::from_utf8(out).expect("output is valid UTF-8")
@@ -1503,7 +1531,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_directory_matches_upstream_bare_message() {
+    fn skipped_directory_renders_nothing_because_the_engine_owns_the_notice() {
         let event = ClientEvent::for_test(
             PathBuf::from("subdir"),
             ClientEventKind::SkippedDirectory,
@@ -1511,11 +1539,20 @@ mod tests {
             Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
             LocalCopyChangeSet::new(),
         );
-        // upstream: flist.c:1338 and flist.c:2452 emit
-        // `rprintf(FINFO, "skipping directory %s\n", ...)` - a bare relative
-        // name with no surrounding quotes and no "(no recursion)" suffix. Byte
-        // fidelity with upstream requires exactly this form.
-        assert_eq!(render_verbose(event), "skipping directory subdir\n");
+        // Upstream gates `skipping directory %s` on `!xfer_dirs` alone, so it
+        // prints at DEFAULT verbosity - but this renderer only ever runs over a
+        // collected event log, and collection requires
+        // `verbosity > 0 || progress || list_only`. Rendering the notice here
+        // therefore emitted it at `-v` and above while staying silent in
+        // exactly the case upstream prints. The notice now comes from
+        // `record_skipped_directory` in the engine; a second copy here would
+        // duplicate it at `-v`.
+        //
+        // The upstream byte form - bare relative name, no quotes, no
+        // "(no recursion)" suffix - is pinned end to end against the real
+        // binary's stdout by `skipping_directory_prints_without_name_output`,
+        // which compares whole lines, not by this unit.
+        assert_eq!(render_verbose(event), "");
     }
 
     /// Renders the summary trailer for an empty (default) transfer at the given
@@ -1545,6 +1582,7 @@ mod tests {
             false,                               // show_crtimes
             EscapeStyle::terminal(false),        // escape style
             &mut out,
+            &mut PendingDiagnostics::empty(),
         )
         .expect("emit_transfer_summary writes to an in-memory buffer");
         String::from_utf8(out).expect("output is valid UTF-8")

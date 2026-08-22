@@ -248,6 +248,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut with_out_format,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render with out-format");
 
@@ -274,6 +275,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,                               // show_crtimes
         EscapeStyle::terminal(false),        // escape style
         &mut without_out_format,
+        &mut PendingDiagnostics::empty(),
     )
     .expect("render without out-format");
 
