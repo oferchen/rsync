@@ -393,6 +393,16 @@ impl ClientEvent {
         &self.kind
     }
 
+    /// Returns where this event sits in the overall output order.
+    ///
+    /// A renderer merging this event stream with the diagnostic buffer compares
+    /// against this key. `None` means the event carries no position - it is not
+    /// "position zero", and a merge must flush nothing rather than guess.
+    #[must_use]
+    pub const fn sequence(&self) -> Option<Sequence> {
+        self.sequence
+    }
+
     /// Returns the number of bytes transferred as part of this event.
     #[must_use]
     pub const fn bytes_transferred(&self) -> u64 {

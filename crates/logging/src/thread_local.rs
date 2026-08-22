@@ -207,13 +207,13 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
 /// its own codes without disturbing the others. Keeping one retain loop here
 /// means a new consumer supplies a policy, not another copy of the traversal.
 /// Returns matches in emission order.
-fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> {
+fn drain_stamped_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<Stamped<DiagnosticEvent>> {
     EVENTS.with(|e| {
         let mut events = e.borrow_mut();
         let mut matched = Vec::new();
         events.retain(|stamped| {
             if accept(stamped.value().code()) {
-                matched.push(stamped.value().clone());
+                matched.push(stamped.clone());
                 false
             } else {
                 true
@@ -221,6 +221,28 @@ fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> 
         });
         matched
     })
+}
+
+/// A projection of [`drain_stamped_events_where`] for the consumers that render
+/// their share of the buffer on its own, where the key would be noise.
+fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> {
+    drain_stamped_events_where(accept)
+        .into_iter()
+        .map(Stamped::into_value)
+        .collect()
+}
+
+/// Drain the events bound for the client stream, leaving `FLOG` queued.
+///
+/// This is the client renderer's drain, and it carries the production key
+/// because that renderer has something to interleave against: the buffered
+/// per-file event stream, which it emits post-hoc. `FLOG` is left behind
+/// because upstream's `rwrite()` writes a log message and returns before the
+/// client-stream dispatch (upstream: log.c:290-307) - the log-file sink takes
+/// those through [`drain_events_coded`], and draining them here would consume
+/// them before that sink ever runs.
+pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
+    drain_stamped_events_where(|code| code != LogCode::Log)
 }
 
 /// Drain only the events carrying `code`, leaving all other events queued.
