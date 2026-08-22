@@ -206,17 +206,28 @@ fn build_server_config(
             // upstream: options.c:1460-1465 - daemon-mode unknown option
             // emits `rsync: <BAD>: <err> (in daemon mode)` and exits
             // `RERR_SYNTAX` via `daemon_error:` (options.c:1480-1482).
-            if let Some(offender) = apply_long_form_args(client_args, &mut cfg) {
+            if let Some(rejection) = apply_long_form_args(client_args, &mut cfg) {
+                let (log_text, error_text) = match rejection {
+                    ClientArgRejection::Unrecognized(offender) => (
+                        format!(
+                            "module '{}': refusing client-only flag '{offender}' in daemon mode",
+                            ctx.request,
+                        ),
+                        format!("{offender}: unrecognized option (in daemon mode)"),
+                    ),
+                    // upstream: options.c:907-918 `option_error()` reports the
+                    // parser's own `err_buf` text, so the value's own message
+                    // is what reaches the client - not the unknown-option one.
+                    ClientArgRejection::InvalidValue(message) => (
+                        format!("module '{}': {message}", ctx.request),
+                        message.clone(),
+                    ),
+                };
                 if let Some(log) = ctx.log_sink {
-                    let text = format!(
-                        "module '{}': refusing client-only flag '{offender}' in daemon mode",
-                        ctx.request,
-                    );
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    let message = rsync_warning!(log_text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                let error =
-                    AtError::message(format!("{offender}: unrecognized option (in daemon mode)"));
+                let error = AtError::message(error_text);
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 return Ok(None);
             }
