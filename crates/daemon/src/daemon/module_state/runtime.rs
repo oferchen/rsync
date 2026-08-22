@@ -9,6 +9,37 @@ use crate::error::DaemonError;
 
 use super::{ConnectionLimiter, ConnectionLockGuard, MaxConnections, ModuleDefinition};
 
+/// Opens the daemon-wide `lock file`, if one is configured, and pairs every
+/// module with the limiter enforcing its `max connections`.
+///
+/// This is the single entry point every daemon entry point builds its module
+/// table through - the standalone accept loop, the async listener, the
+/// `--server` stdio session and the inetd session - so a module's
+/// `lock file` / `max connections` pair is honoured identically on all of
+/// them. Opening the daemon-wide lock file separately at each entry point is
+/// what let two of them silently pass `None` and disable the cap entirely.
+///
+/// The limiter is returned alongside the runtimes because callers that rebuild
+/// their module table on SIGHUP need to hand the same daemon-wide handle to
+/// [`build_module_runtimes`] again.
+///
+/// upstream: clientserver.c:791 calls `claim_connection()` from
+/// `rsync_module()` - the one per-module entry every daemon connection reaches,
+/// whether it arrived over a listening socket, inetd or a remote shell. The
+/// `am_daemon > 0` test just above it guards only the "allowed access" log
+/// line, not the claim, so the cap is deliberately not standalone-only.
+pub(in crate::daemon) fn build_module_runtimes_with_lock_file(
+    definitions: Vec<ModuleDefinition>,
+    lock_file: Option<PathBuf>,
+) -> Result<(Vec<ModuleRuntime>, Option<Arc<ConnectionLimiter>>), DaemonError> {
+    let global_limiter = match lock_file {
+        Some(path) => Some(Arc::new(ConnectionLimiter::open(path)?)),
+        None => None,
+    };
+    let runtimes = build_module_runtimes(definitions, &global_limiter)?;
+    Ok((runtimes, global_limiter))
+}
+
 /// Pairs each module definition with the connection limiter that enforces its
 /// `max connections` cap, honouring a per-module `lock file` override.
 ///
