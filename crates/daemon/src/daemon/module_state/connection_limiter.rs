@@ -1,4 +1,8 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+// Only the non-Unix arm of `open_lock_file` opens by path; Unix goes through
+// the ownership walk.
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -62,6 +66,46 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+/// Mode applied when the lock file is created.
+///
+/// upstream: connection.c:35 `claim_connection()` passes `0600` to
+/// `open_no_attacker_symlinks()`. The lock file records nothing secret, but the
+/// mode is upstream's explicit choice rather than an inherited
+/// `0666 & ~umask`, so a shared `lock file` is not left group- or
+/// world-readable on a daemon running with a permissive umask.
+const LOCK_FILE_MODE: u32 = 0o600;
+
+/// Opens the operator-named lock file, creating it if absent.
+///
+/// `lock file = PATH` is named by the operator in `oc-rsyncd.conf`, and the
+/// daemon opens it as whatever user it is running as - typically root, and
+/// before the per-module privilege drop. A symlink planted at any component
+/// therefore redirects a privileged `O_CREAT` open to a file the operator never
+/// named, and because the leaf need not exist yet a leaf-only `O_NOFOLLOW`
+/// cannot reject it. The ownership walk refuses any component symlink not owned
+/// by uid 0 or our euid.
+///
+/// upstream: connection.c:35 `claim_connection()` -
+/// `open_no_attacker_symlinks(fname, O_RDWR|O_CREAT, 0600)`.
+///
+/// On Windows there is no `st_uid` to trust, so this degrades to a plain open,
+/// matching how the rest of the tree gates `fast_io`'s operator-path helpers.
+fn open_lock_file(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_rw_create(path, LOCK_FILE_MODE)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)
+    }
+}
+
 impl ConnectionLimiter {
     /// Opens or creates the lock file at the given path.
     pub(crate) fn open(path: PathBuf) -> Result<Self, DaemonError> {
@@ -71,13 +115,7 @@ impl ConnectionLimiter {
             std::fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| lock_file_error(&path, error))?;
+        let file = open_lock_file(&path).map_err(|error| lock_file_error(&path, error))?;
 
         drop(file);
 
@@ -85,8 +123,13 @@ impl ConnectionLimiter {
     }
 
     /// Opens the lock file for read/write access.
+    ///
+    /// Creates it when absent, as upstream does on every `claim_connection()`:
+    /// re-opening without `O_CREAT` would fail if the file were removed between
+    /// [`ConnectionLimiter::open`] and the claim, and would resolve the operator
+    /// path a second time outside the ownership walk.
     fn open_file(&self) -> io::Result<File> {
-        OpenOptions::new().read(true).write(true).open(&self.path)
+        open_lock_file(&self.path)
     }
 }
 
