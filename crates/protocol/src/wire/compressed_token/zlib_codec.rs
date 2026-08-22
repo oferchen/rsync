@@ -580,7 +580,24 @@ impl ZlibTokenDecoder {
                 }
                 let produced = (self.deflate.decompressor.total_out() - before_out) as usize;
 
-                if input.is_empty() || (consumed == 0 && produced == 0) {
+                if consumed == 0 && produced == 0 {
+                    // No forward progress with the stream idle: nothing is left
+                    // buffered, so looping again cannot make any.
+                    break;
+                }
+                if input.is_empty() && produced < self.deflate.output_buf.len() {
+                    // upstream: token.c:726 `} while (len || rx_strm.avail_out
+                    // == 0);` - consuming the input is only half the exit
+                    // condition. A filled output buffer means inflate still
+                    // holds pending output, and that residue is delivered at
+                    // the head of the NEXT decompress call, where it displaces
+                    // the real token's bytes and leaves its 00 00 FF FF sync
+                    // trailer unconsumed - the desync `see_token`'s caller
+                    // reports. An insert only has to exceed `output_buf` for
+                    // this to bite, which a 0xffff incompressible matched block
+                    // does. The encoder's `see_token` above already carries the
+                    // matching `avail_out` clause (token.c:509); upstream has
+                    // it on both sides and so must we.
                     break;
                 }
             }
