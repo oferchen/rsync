@@ -319,11 +319,20 @@ fn negative_max_connections_still_opens_the_lock_file_first() {
     // connection.c:44-46 afterwards. The two failures are distinguishable on
     // the wire - an unopenable lock file reports "failed to open lock file" -
     // so a disabled module must not short-circuit ahead of the open.
+    //
+    // ⚠ The unopenable condition is a DIRECTORY at the lock path, not a
+    // missing file. Upstream opens `O_RDWR|O_CREAT` on every claim
+    // (connection.c:35), so a merely absent lock file is recreated rather than
+    // reported - deleting it would silently stop detecting the short-circuit
+    // this test exists to catch. A directory fails `EISDIR` even with
+    // `O_CREAT`, so the detector survives the create. Do not "simplify" this
+    // back to `remove_file`.
     let dir = tempfile::tempdir().expect("tempdir");
     let lock_path = dir.path().join("module.lock");
     let limiter =
         std::sync::Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("lock file"));
     std::fs::remove_file(&lock_path).expect("remove lock file");
+    std::fs::create_dir(&lock_path).expect("obstruct the lock path with a directory");
 
     let def = ModuleDefinition {
         name: "disabled".to_owned(),
