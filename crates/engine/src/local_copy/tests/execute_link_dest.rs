@@ -1794,3 +1794,51 @@ fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_recursive_transfer() {
     );
     assert_eq!(summary.hard_links_created(), 0);
 }
+
+/// upstream: generator.c:1227 try_dests_non() - a directory entry consults the
+/// basis through the same `basis_link_stat(..) < 0 || .. continue` arm, so a
+/// non-directory basis must be skipped rather than abort the run.
+///
+/// This is a FIFTH candidate-stat site, distinct from the four the regular /
+/// symlink / special / recursive-file pins cover: `find_copy_dest_basis` serves
+/// the DIRECTORY lookup. A source tree carrying a subdirectory is what reaches
+/// it - a flat source never emits a directory entry, which is why the
+/// recursive-file pin above stayed green while `oc-rsync -a src/ dst/` against
+/// a plain-file basis still exited 23 with `NotADirectory (20)`.
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_directory_entry() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let nested = source_dir.join("nested");
+    fs::create_dir_all(&nested).expect("create source");
+    fs::write(nested.join("file.txt"), b"content").expect("write source");
+
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            basis,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail a directory entry");
+
+    assert_eq!(
+        fs::read(dest_dir.join("nested").join("file.txt")).expect("read dest"),
+        b"content",
+        "the nested file must still be transferred"
+    );
+    assert_eq!(summary.hard_links_created(), 0);
+}

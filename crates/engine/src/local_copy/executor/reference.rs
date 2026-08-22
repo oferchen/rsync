@@ -384,16 +384,14 @@ pub(crate) fn find_copy_dest_basis(
     // row itemizes against the basis root.
     for reference in context.reference_directories() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
-        let candidate_metadata = match fs::symlink_metadata(&candidate) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "inspect reference directory",
-                    candidate,
-                    error,
-                ));
-            }
+        // upstream: generator.c:1227 - `if (basis_link_stat(cmpbuf, &sxp->st) < 0
+        // || ...) continue;`. ANY stat failure means "no candidate in this basis
+        // dir", not just ENOENT. This is the transfer-root (`./`) lookup, so an
+        // alt-dest arg naming a plain file yields ENOTDIR here on the very first
+        // entry; aborting would fail a run upstream completes normally, having
+        // merely warned once from check_alt_basis_dirs().
+        let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+            continue;
         };
         if candidate_metadata.file_type().is_dir() {
             return Ok(Some(candidate_metadata));
