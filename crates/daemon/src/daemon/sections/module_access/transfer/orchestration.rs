@@ -388,7 +388,7 @@ fn process_approved_module(
     // operator's configuration permits, so the Landlock allowlist below can
     // be widened to cover them (URV-5.b.REOPEN). Out-of-module paths are
     // silently dropped here and again in `build_server_config`'s ref_dir
-    // retain block - upstream `main.c:841 check_alt_basis_dirs` warns on
+    // retain block - upstream `main.c:867 check_alt_basis_dirs` warns on
     // a missing/out-of-tree basis but never aborts, and the standalone
     // link-dest / copy-dest interop fixtures rely on that contract.
     //

@@ -2474,7 +2474,7 @@ mod module_access_tests {
         // root (a sibling path `<module>/../linkdest-ref-daemon`). The
         // daemon must silently drop the basis so the receiver re-transfers
         // instead of aborting with `@ERROR` - aborting broke the standalone
-        // suite on master. upstream `main.c:841 check_alt_basis_dirs` warns
+        // suite on master. upstream `main.c:867 check_alt_basis_dirs` warns
         // on a missing/out-of-tree basis but never aborts.
         let module = tempfile::TempDir::new().expect("module tempdir");
         let outside = tempfile::TempDir::new().expect("outside tempdir");
@@ -2527,7 +2527,7 @@ mod module_access_tests {
     #[test]
     fn confine_basis_joins_relative_under_resolve_base() {
         // Relative basis paths still resolve under the receiver's dest dir
-        // (the `resolve_base`), matching upstream `main.c:1199-1206`
+        // (the `resolve_base`), matching upstream `main.c:1230-1241`
         // post-`get_local_name` chdir behaviour. This pins the legacy
         // relative branch so the absolute-path extension doesn't regress it.
         let module = tempfile::TempDir::new().expect("module tempdir");
@@ -2584,7 +2584,7 @@ mod module_access_tests {
     // Behavioural divergence from the upstream test: upstream's daemon never
     // emits a literal "outside the module" `@ERROR` for these scenarios. Its
     // `util1.c:1138 sanitize_path` collapses `..` against the module root
-    // depth (rewriting the path under the module) and `main.c:841
+    // depth (rewriting the path under the module) and `main.c:867
     // check_alt_basis_dirs` only warns when the resulting basis is missing.
     // PR #5778 aligned the oc-rsync daemon with that contract by switching
     // from a hard `@ERROR` reject to a silent drop. These tests pin the
@@ -2621,8 +2621,8 @@ mod module_access_tests {
         // Positive control paired with the `../etc/passwd` negative case
         // above. A relative basis that resolves to an in-module sibling
         // must survive so operator-permitted snapshot layouts (e.g. the
-        // upstream `dest/00 + --link-dest=../01` pattern from main.c:1199
-        // -1206) still hard-link instead of re-transferring.
+        // upstream `dest/00 + --link-dest=../01` pattern from
+        // main.c:885-898) still hard-link instead of re-transferring.
         let module = tempfile::TempDir::new().expect("module tempdir");
         let module_root = module.path().canonicalize().expect("canonicalise module");
         let dest = module_root.join("00");
