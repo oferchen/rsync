@@ -21,10 +21,11 @@
 /// in a way that asserting an upper bound would not be - scheduler jitter only
 /// ever pushes the measurement further past the bound, never under it.
 ///
-/// ⚠ The RST itself is NOT reproduced here. Measured on macOS loopback, a
-/// zero-length linger still delivers the queued frames, so this test cannot
-/// stand in for the Linux socketpair behaviour the CI failure showed; it pins
-/// the linger, not the packet-level consequence.
+/// Whether the close is seen as FIN or RST is platform-dependent and is
+/// deliberately not asserted. Measured: macOS loopback still delivers the queued
+/// frames even with a zero-length linger, while Windows answers the same close
+/// with a reset that surfaces as `ConnectionReset` on the final drain. Both are
+/// the connection ending, which is the only thing the linger governs.
 #[test]
 fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
     /// Lower bound on how long the connection must stay open after the refusal
@@ -159,11 +160,22 @@ fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
         "refusal exit code",
     );
 
-    // Drain to EOF: the daemon closes only after its linger elapses.
+    // Drain until the connection ends: the daemon closes only after its linger
+    // elapses. A reset counts as the end just as a clean EOF does - the daemon
+    // still holds 512 unread bytes from us, and on Windows closing in that state
+    // makes the kernel answer RST rather than FIN. That is the very phenomenon
+    // the linger exists to outrun, so the measurement is *when* the connection
+    // ended, never *how*.
     let mut trailing = Vec::new();
-    reader
-        .read_to_end(&mut trailing)
-        .expect("read to EOF after the refusal");
+    match reader.read_to_end(&mut trailing) {
+        Ok(_) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ) => {}
+        Err(error) => panic!("read to end of stream after the refusal: {error}"),
+    }
     let open_for = refusal_written.elapsed();
     assert!(
         open_for >= MIN_LINGER,
