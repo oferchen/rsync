@@ -448,3 +448,21 @@ fn from_i32_covers_all_exit_codes() {
         );
     }
 }
+
+#[test]
+fn from_io_error_maps_tagged_syntax_violation_to_syntax() {
+    // WHY: an option-usage refusal raised from a transfer role carries no
+    // ErrorKind that means "syntax", so without the marker it lands on the
+    // mapper's `_ => FileIo` arm and reports 11 where upstream exits 1
+    // (errcode.h RERR_SYNTAX). This pins the marker as the selector.
+    let err = protocol::syntax_violation("Your options have been rejected by the server.");
+    assert_eq!(ExitCode::from_io_error(&err), ExitCode::Syntax);
+
+    // Non-vacuity: the SAME ErrorKind without the tag must NOT map to Syntax,
+    // otherwise the assertion above would hold for the wrong reason.
+    let untagged = std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "Your options have been rejected by the server.",
+    );
+    assert_ne!(ExitCode::from_io_error(&untagged), ExitCode::Syntax);
+}
