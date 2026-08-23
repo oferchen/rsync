@@ -614,6 +614,59 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// The error upstream reports for a premature EOF while mapping a source.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `fileio.c:362`: `map->status = nread ? errno : ENODATA` - a `read()`
+    ///   that returns 0 with the window unfilled is reported as `ENODATA`,
+    ///   which `strerror` renders as "No data available".
+    /// - `fileio.c:25-26`: `#ifndef ENODATA / #define ENODATA EAGAIN` - the
+    ///   same fallback shape for platforms that lack the code.
+    #[cfg(unix)]
+    fn premature_eof_error() -> io::Error {
+        io::Error::from_raw_os_error(libc::ENODATA)
+    }
+
+    /// Non-Unix counterpart of [`Self::premature_eof_error`]. `ENODATA` has no
+    /// portable numeric value here, so the text is carried directly;
+    /// `upstream_io_error` passes a non-OS message through verbatim.
+    #[cfg(not(unix))]
+    fn premature_eof_error() -> io::Error {
+        io::Error::other("No data available")
+    }
+
+    /// Diagnoses a source that ended before the length this transfer was sized
+    /// from - it shrank after the file list recorded it - and lets the run
+    /// continue with the remaining entries.
+    ///
+    /// Every content path funnels its byte count through here so the three of
+    /// them cannot drift: a `copy_file_range` that returns short, a dense read
+    /// loop that hits EOF early, and the sparse loop all describe the same
+    /// upstream condition.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `fileio.c:359-365`: `map_ptr()` records `ENODATA` when a `read()`
+    ///   returns 0 with the window unfilled ("the file has changed mid
+    ///   transfer"), or `errno` when the read fails outright; the first status
+    ///   wins.
+    /// - `sender.c:787-795`: `j = unmap_file(mbuf); if (j) { io_error |=
+    ///   IOERR_GENERAL; rsyserr(FERROR_XFER, j, "read errors mapping %s",
+    ///   full_fname(fname)); }` - one line, then the loop moves to the next
+    ///   file-list entry, and the run finishes `RERR_PARTIAL` (23).
+    fn note_short_source_read(&mut self, source: &Path, copied: u64, expected: u64) {
+        if copied >= expected {
+            return;
+        }
+        self.record_source_read_error();
+        eprintln!(
+            "rsync: [sender] read errors mapping \"{}\": {}",
+            source.display(),
+            crate::local_copy::upstream_io_error(&Self::premature_eof_error()),
+        );
+    }
+
     /// Copies file contents from `reader` to `writer`, dispatching to a delta,
     /// sparse, or plain streaming path depending on the arguments. Reports
     /// progress to the observer and enforces the bandwidth limiter and
@@ -671,6 +724,9 @@ impl<'a> CopyContext<'a> {
                 buffer,
             )
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+            // A short return here is the kernel telling us the source ran out
+            // early - the same condition upstream's read loop reports.
+            self.note_short_source_read(source, copied, expected_remaining);
             if self.observer.is_some() {
                 let progressed = initial_bytes.saturating_add(copied);
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
@@ -761,6 +817,10 @@ impl<'a> CopyContext<'a> {
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
             }
         }
+
+        // `read == 0` breaks out of the loop above; arriving here with fewer
+        // bytes than the transfer was sized for means the source shrank.
+        self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
@@ -885,6 +945,10 @@ impl<'a> CopyContext<'a> {
             )
         })?;
         self.register_progress();
+
+        // `read == 0` breaks out of the loop above; arriving here with fewer
+        // bytes than the transfer was sized for means the source shrank.
+        self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {

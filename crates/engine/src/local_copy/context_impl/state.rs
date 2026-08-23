@@ -67,6 +67,7 @@ impl<'a> CopyContext<'a> {
             destination_metadata_cache: HashMap::new(),
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
+            source_read_error: false,
             iconv_conversion_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
@@ -535,6 +536,30 @@ impl<'a> CopyContext<'a> {
     /// even though every other entry was copied.
     pub(super) const fn sender_remove_error_occurred(&self) -> bool {
         self.sender_remove_error
+    }
+
+    /// Records that a source file ended before the length this transfer was
+    /// sized from, and suppresses deletions like any other general I/O error.
+    ///
+    /// Upstream reaches the same state through `map_ptr()`: a `read()` that
+    /// returns 0 with the window unfilled stores `ENODATA` in `map->status`
+    /// (fileio.c:359-365), `unmap_file()` hands that status back
+    /// (fileio.c:385), and the sender turns it into `io_error |=
+    /// IOERR_GENERAL` plus one `read errors mapping %s` line at `FERROR_XFER`
+    /// before moving on to the next entry (sender.c:787-795).
+    pub(super) fn record_source_read_error(&mut self) {
+        self.source_read_error = true;
+        self.io_errors_occurred = true;
+    }
+
+    /// Reports whether a short source read must force `RERR_PARTIAL` (23).
+    ///
+    /// Deliberately not gated on `--ignore-errors`: that flag decides whether
+    /// the sender *transmits* its `io_error` to the peer and whether the
+    /// delete pass proceeds, not whether the process that saw the read error
+    /// exits non-zero.
+    pub(super) const fn source_read_error_occurred(&self) -> bool {
+        self.source_read_error
     }
 
     /// Records that the delete emitter stepped over a genuine unlink/rmdir
