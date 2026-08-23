@@ -237,7 +237,6 @@ fn perform_module_authentication(
     // upstream: authenticate.c:307-332 - the floor sits here, after the digest
     // is negotiated and before any challenge is generated.
     if let Err(denial) = enforce_auth_digest_floor(module.auth_digest.as_deref(), digest) {
-        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied(denial));
     }
 
@@ -257,7 +256,6 @@ fn perform_module_authentication(
     let response = if let Some(line) = read_trimmed_line(reader)? {
         line
     } else {
-        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     };
 
@@ -266,15 +264,13 @@ fn perform_module_authentication(
     let (username, response_digest) = parse_daemon_auth_response(&response);
 
     if username.is_empty() || response_digest.is_empty() {
-        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
     let auth_match = match module.get_auth_user(username) {
         Some(matched) => matched,
         None => {
-            send_auth_failed(reader.get_mut(), module, limiter)?;
-            // upstream: authenticate.c:412 - the rule scan ended with no token,
+                // upstream: authenticate.c:412 - the rule scan ended with no token,
             // so `err = "no matching rule"`.
             return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
                 user: username.to_owned(),
@@ -294,14 +290,12 @@ fn perform_module_authentication(
     let auth_group = auth_match.group.as_deref();
 
     if !verify_secret_response(module, username, auth_group, &challenge, response_digest, digest)? {
-        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
     // upstream: authenticate.c:334-335 - `opt_ch == 'd'` ("deny") reports
     // "denied by rule" and auth_server() returns NULL (auth failure).
     if auth_user.access_level == UserAccessLevel::Deny {
-        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
             user: username.to_owned(),
             rule: AuthUserRule::DeniedByRule,
@@ -365,8 +359,8 @@ fn verify_secret_response(
     // In every case auth_server() reports an auth failure and the client
     // still receives `@ERROR: auth failed on module X`. check_secret() never
     // aborts the connection. Treat these as a denial (Ok(false)) rather than
-    // propagating an io::Error, so the daemon emits the @ERROR line via
-    // send_auth_failed() instead of dropping the socket mid-handshake.
+    // propagating an io::Error, so the caller emits the @ERROR line on the
+    // Denied arm instead of dropping the socket mid-handshake.
     if module.strict_modes && check_secrets_file_permissions(secrets_path).is_err() {
         return Ok(false);
     }
@@ -437,16 +431,3 @@ fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     platform::secrets::check_secrets_file_permissions(path)
 }
 
-/// Sends an auth failure response to the client and closes the session.
-///
-/// upstream: clientserver.c:812 - `@ERROR: auth failed on module %s\n`
-fn send_auth_failed(
-    stream: &mut DaemonStream,
-    module: &ModuleDefinition,
-    limiter: &mut Option<BandwidthLimiter>,
-) -> io::Result<()> {
-    let error = AtError::AuthFailed {
-        module: sanitize_module_identifier(&module.name).into_owned(),
-    };
-    send_error(stream, limiter, &error)
-}

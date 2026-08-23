@@ -540,6 +540,14 @@ fn handle_authentication(
             Ok(None)
         }
         AuthenticationStatus::Denied(denial) => {
+            // upstream: authenticate.c:433 writes the FLOG auth-failure line
+            // from inside auth_server(); only after it returns NULL does
+            // rsync_module() emit `@ERROR: auth failed on module %s`
+            // (clientserver.c:812). The log must therefore be on disk BEFORE
+            // the peer can observe the refusal - a client that reads the error
+            // and immediately inspects the daemon log has to find the reason
+            // already there. Authentication deliberately does not write the
+            // error itself, so this arm owns both halves in upstream's order.
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(
                     log,
@@ -549,6 +557,10 @@ fn handle_authentication(
                     denial.log_suffix().as_deref(),
                 );
             }
+            let error = AtError::AuthFailed {
+                module: sanitize_module_identifier(&module.name).into_owned(),
+            };
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             // FSM: -> Closing on auth failure (session ends).
             ctx.conn_state = ctx
                 .conn_state
