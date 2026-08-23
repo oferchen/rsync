@@ -51,6 +51,7 @@
 //! run_client_with_observer(config, Some(&mut observer))?;
 //! ```
 
+mod alt_basis;
 mod batch;
 mod filters;
 
@@ -437,6 +438,12 @@ fn run_client_internal(
             return Err(super::error::destination_access_error(dest_to_check, error));
         }
     }
+
+    // upstream: main.c:1241 / main.c:1424 call `check_alt_basis_dirs()` once the
+    // destination is known, so a stale `--link-dest` is reported rather than
+    // silently costing the hard-link optimisation. Warn-only: the exit code is
+    // untouched, matching upstream's FWARNING.
+    alt_basis::check_alt_basis_dirs(config.reference_directories(), plan.destination());
 
     let filter_program =
         filters::compile_filter_program(config.filter_rules(), config.delete_excluded())?;
