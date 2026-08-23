@@ -135,7 +135,11 @@ mod reader;
 pub mod receiver;
 pub mod role;
 pub(crate) mod role_trailer;
-pub mod sanitize_path;
+/// Re-export of the shared traversal clamp, which now lives in `filters`
+/// alongside `clean_fname` so the CLI and the daemon can reach the same rule.
+/// Kept as a path here because this crate's own call sites (and the daemon's)
+/// name it as `transfer::sanitize_path`.
+pub use filters::sanitize_path;
 pub mod setup;
 pub mod shared;
 pub mod symlink_safety;

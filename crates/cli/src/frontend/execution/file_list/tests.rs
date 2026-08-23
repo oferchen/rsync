@@ -317,12 +317,98 @@ fn resolve_file_list_entries_files_from_with_relative_still_inserts_marker() {
     assert_eq!(entries[0], expected.as_os_str());
 }
 
+/// A `--files-from` entry that climbs above the transfer root is CLAMPED to
+/// the root, not carried through verbatim.
+///
+/// Measured against real upstream 3.5.0: given `src/secret/leak.txt` and a
+/// files-from line `../secret/leak.txt`, upstream clamps to `secret/leak.txt`,
+/// finds it under argv[0], and TRANSFERS it (exit 0). Before this clamp oc
+/// carried the `..` into the join, producing `src/./../secret/leak.txt`, which
+/// addresses a different file entirely - so the entry upstream delivers failed
+/// with `link_stat ... No such file or directory` and exit 23.
+///
+/// This is the shape that proves the clamp RUNS. Asserting only that an escape
+/// is refused would pass without it: the confinement layer already blocks the
+/// write, which is why the pre-fix behaviour was a failed transfer rather than
+/// a leak.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2571` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`,
+///   applied unconditionally to every line read from `filesfrom_fd`.
 #[test]
-fn resolve_file_list_entries_files_from_absolute_entry_unchanged() {
+fn resolve_file_list_entries_files_from_clamps_parent_dir_escape() {
+    let mut entries = vec![OsString::from("../secret/leak.txt")];
+    let operands = vec![OsString::from("/base/src"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    let expected = Path::new("/base/src").join(".").join("secret/leak.txt");
+    assert_eq!(
+        entries[0],
+        expected.as_os_str(),
+        "a `..` entry must be clamped to the transfer root, not joined verbatim"
+    );
+}
+
+/// Non-vacuity companion to the clamp test: an entry with no `..` is passed
+/// through byte-for-byte.
+///
+/// Without this, a clamp that mangled ordinary names would still satisfy the
+/// test above, since that one only pins what happens to the escaping shape.
+#[test]
+fn resolve_file_list_entries_files_from_ordinary_entry_survives_the_clamp() {
+    let mut entries = vec![OsString::from("secret/leak.txt")];
+    let operands = vec![OsString::from("/base/src"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    let expected = Path::new("/base/src").join(".").join("secret/leak.txt");
+    assert_eq!(entries[0], expected.as_os_str());
+}
+
+/// The clamp must not eat an entry's own `/./` marker.
+///
+/// `SP_KEEP_DOT_DIRS` exists precisely so the split at `flist.c:2316` can still
+/// find the marker; the plain `SP_DEFAULT` dialect would strip it and silently
+/// move the entry's chdir pivot, changing where the file lands at the
+/// destination.
+#[test]
+fn resolve_file_list_entries_files_from_clamp_keeps_the_entry_dot_marker() {
+    let mut entries = vec![OsString::from("from/./dir/file.txt")];
+    let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    let expected = Path::new("/base").join("from/./dir/file.txt");
+    assert_eq!(entries[0], expected.as_os_str());
+}
+
+#[test]
+fn resolve_file_list_entries_files_from_absolute_entry_is_taken_relative_to_the_root() {
+    // upstream: `sanitize_path` skips one leading slash before walking the
+    // components (flist.c:2571 -> util1.c), so a `/absolute/path.txt`
+    // files-from line names an entry INSIDE the transfer root, not a
+    // filesystem-absolute path. Measured against rsync 3.5.0: a `/file` entry
+    // transfers `<source>/file`; oc used to bail out on `is_absolute()` before
+    // the clamp could run and failed with exit 23.
     let mut entries = vec![OsString::from("/absolute/path.txt")];
     let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
     resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    let expected = Path::new("/base").join(".").join("absolute/path.txt");
+    assert_eq!(entries[0], expected.as_os_str());
+}
+
+/// The legacy (non-files-from) path still leaves an absolute operand alone -
+/// that clamp is specific to lines read from a files-from source.
+#[test]
+fn resolve_file_list_entries_absolute_entry_unchanged_without_files_from() {
+    let mut entries = vec![OsString::from("/absolute/path.txt")];
+    let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, false);
 
     assert_eq!(entries[0], "/absolute/path.txt");
 }

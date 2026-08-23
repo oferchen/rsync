@@ -1026,13 +1026,23 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_with_trailing_dot_after_sanitize_keeps_base_as_path() {
-        // UTS-21.REOPEN: `sanitize_path_keep_dot_dirs("from/./")` returns
-        // `"from/."` because our sanitizer strips the trailing slash that
-        // upstream preserves. Without trailing-dot handling, the split would
-        // miss the anchor and emit a `from/` directory entry instead of
-        // promoting `from` to the walk base.
-        let sanitized = crate::sanitize_path::sanitize_path_keep_dot_dirs_bytes(b"from/./");
+        // A `from/.` line - written without the trailing slash - sanitizes to
+        // `from/.`, so the split must still promote `from` to the walk base
+        // rather than emitting a `from/` directory entry.
+        //
+        // This case used to be reached from `from/./` as well, because the
+        // sanitizer stripped the trailing slash that upstream preserves. That
+        // strip is gone (see `filters::sanitize_path`), so `from/./` now keeps
+        // its slash and is covered by
+        // `split_files_from_entry_with_trailing_anchor_keeps_base_as_path`;
+        // the trailing-dot branch stays reachable through this spelling.
+        let sanitized = crate::sanitize_path::sanitize_path_keep_dot_dirs_bytes(b"from/.");
         assert_eq!(sanitized, b"from/.");
+        assert_eq!(
+            crate::sanitize_path::sanitize_path_keep_dot_dirs_bytes(b"from/./"),
+            b"from/./",
+            "the trailing slash must survive sanitising, as it does upstream"
+        );
         let base = PathBuf::from("/src");
         let split = split_files_from_entry(&base, &sanitized, true, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
