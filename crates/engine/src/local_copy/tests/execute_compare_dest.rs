@@ -43,6 +43,119 @@ fn compare_dest_skips_identical_file() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
+/// A destination that an exact `--compare-dest` basis makes redundant is
+/// REMOVED, not left sitting there stale.
+///
+/// upstream: generator.c:1115-1119 - the `find_exact_for_existing` unlink sits
+/// ABOVE the `alt_dest_type == LINK_DEST` branch, so a match_level-3 basis clears
+/// a pre-existing destination for `--compare-dest` as well. That is the option's
+/// whole point: the file lives in the reference tree, so the destination keeps
+/// only what differs. `find_exact_for_existing` is `statret == 0` at the call
+/// site (generator.c:2156) - exactly "the destination already exists".
+///
+/// The companion below is what makes this non-vacuous: it pins that the removal
+/// follows from an EXACT basis match rather than from the destination merely
+/// existing.
+#[test]
+fn compare_dest_removes_a_redundant_existing_destination() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&compare_dir).expect("create compare");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let source_file = source_dir.join("file.txt");
+    let compare_file = compare_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"identical content").expect("write source");
+    fs::write(&compare_file, b"identical content").expect("write compare");
+    // Differs in length from the source, so a stale leftover is unmistakable.
+    fs::write(&dest_file, b"stale destination payload").expect("write dest");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+    set_file_mtime(&compare_file, timestamp).expect("set compare mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    assert!(
+        !dest_file.exists(),
+        "an exact compare-dest basis must clear the redundant destination, \
+         but it was left behind"
+    );
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
+
+/// Non-vacuity companion for the pin above: the destination is cleared because
+/// the basis is an EXACT match, not merely because it exists. With a basis whose
+/// contents differ from the source, the same fixture must transfer the file and
+/// leave a destination in place.
+#[test]
+fn compare_dest_keeps_a_destination_whose_basis_differs() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&compare_dir).expect("create compare");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let source_file = source_dir.join("file.txt");
+    let compare_file = compare_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"identical content").expect("write source");
+    fs::write(&compare_file, b"a wholly different basis").expect("write compare");
+    fs::write(&dest_file, b"stale destination payload").expect("write dest");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+    set_file_mtime(&compare_file, timestamp).expect("set compare mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    assert_eq!(
+        fs::read(&dest_file).expect("destination still present"),
+        b"identical content",
+        "a non-matching basis must transfer the source, not clear the destination"
+    );
+}
+
 #[test]
 fn compare_dest_transfers_different_file() {
     let temp = tempdir().expect("tempdir");
