@@ -92,7 +92,7 @@ pub fn apply_file_metadata_with_options(
             metadata,
             destination,
             None,
-            options.keep_dirlinks(),
+            options.resolves_symlinked_parent(destination),
         )?;
     }
     if options.crtimes() {
@@ -210,7 +210,7 @@ pub fn apply_file_metadata_if_changed(
             metadata,
             destination,
             Some(existing),
-            options.keep_dirlinks(),
+            options.resolves_symlinked_parent(destination),
         )?;
     }
     if options.crtimes() {
@@ -722,7 +722,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
             destination,
             entry,
             cached_meta.as_ref(),
-            options.keep_dirlinks(),
+            options.resolves_symlinked_parent(destination),
         )?;
     }
 
