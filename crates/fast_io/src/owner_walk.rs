@@ -182,6 +182,27 @@ fn open_final(
 /// - `ENOTDIR` when an interior component is not a directory.
 /// - Otherwise the `openat`/`statat`/`readlinkat` errno verbatim.
 fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd> {
+    // upstream: syscall.c:300-302 - "Opted out (local --insecure-links, or a
+    // daemon module with `insecure links = yes`): restore the legacy
+    // symlink-following open." The test sits at the top of ona_open(), so it
+    // covers open_no_attacker_symlinks() and owner_walk_parent() alike; the
+    // single short-circuit here covers this walk's two entry points for the
+    // same reason. Opting out is not "confine less" - it is the pre-3.4.3
+    // resolver verbatim, which is what the option promises.
+    if crate::confinement::session_optout_allowed() {
+        // `owner_trusted_parent` hands the walk an EMPTY parent for a bare
+        // relative leaf ("rsync.log"), which the walk below resolves by
+        // starting at ".". A plain open() has no such convention and would
+        // report ENOENT, so the same meaning has to be spelled out here.
+        let target = if path.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            path
+        };
+        return rustix::fs::open(target, flags, mode)
+            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
+    }
+
     let mut pending = walk_components(path);
     let mut dirfd = open_start_dir(path.is_absolute())?;
     let mut hops = MAX_SYMLINK_HOPS;
