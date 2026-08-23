@@ -150,20 +150,41 @@ pub fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Pat
     for reference in references {
         let basis = strip_one_trailing_separator(&reference.path);
         let resolved = resolve_against_destination(&basis, destination);
-        let option = alt_dest_opt(reference.kind);
+        check_alt_basis_dir_at(reference.kind, &resolved, &resolved);
+    }
+}
 
-        // `warn_log!` expands to a statement (it ends in `;`), so each arm keeps
-        // it in statement position. Calling it directly as an arm value puts a
-        // trailing-semicolon macro in expression position, which newer compilers
-        // reject outright - and every other caller in the tree does it this way.
-        match fs::metadata(&resolved) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => {
-                warn_log!("{option} arg is not a dir: {}", resolved.display());
-            }
-            Err(_) => {
-                warn_log!("{option} arg does not exist: {}", resolved.display());
-            }
+/// Warns about ONE basis directory, given the path to stat and the spelling to
+/// print.
+///
+/// Split out because the two are not always the same string. A daemon receiver
+/// has `sanitize_paths` set (`clientserver.c:1068`), so `main.c:885`'s
+/// `if (*bdir != '/' && (dry_run > 1 || !sanitize_paths))` skips the join onto
+/// `curr_dir` and upstream stats and prints the *sanitized* value: relative for
+/// a relative arg (`--link-dest arg does not exist: sibling`), absolute for an
+/// absolute one, because `util1.c:1145-1152` re-roots an absolute arg at
+/// `module_dir` inside the sanitize itself. Upstream can stat that relative
+/// name because it chdir'd into the destination; oc does not, so the caller
+/// supplies the absolute equivalent to stat and keeps upstream's spelling to
+/// print.
+///
+/// Path resolution therefore belongs to the caller, which knows its own
+/// anchoring rules; what is shared - and what must not be duplicated - is the
+/// choice between the two diagnostics and their exact wording.
+pub fn check_alt_basis_dir_at(kind: ReferenceDirectoryKind, stat_path: &Path, reported: &Path) {
+    let option = alt_dest_opt(kind);
+
+    // `warn_log!` expands to a statement (it ends in `;`), so each arm keeps
+    // it in statement position. Calling it directly as an arm value puts a
+    // trailing-semicolon macro in expression position, which newer compilers
+    // reject outright - and every other caller in the tree does it this way.
+    match fs::metadata(stat_path) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            warn_log!("{option} arg is not a dir: {}", reported.display());
+        }
+        Err(_) => {
+            warn_log!("{option} arg does not exist: {}", reported.display());
         }
     }
 }

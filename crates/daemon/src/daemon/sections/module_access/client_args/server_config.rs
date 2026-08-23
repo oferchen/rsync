@@ -250,11 +250,13 @@ fn build_server_config(
             // keep the module-root fallback so the legacy compare-dest lookup
             // path stays unchanged.
             //
-            // The resolved path is then confined inside the module root: if
-            // the lexical climb (`..`) escapes the module tree the ref_dir is
-            // silently dropped so the basis lookup falls through to a normal
-            // transfer instead of leaking files from outside the module
-            // (link-dest-module-escape security pin).
+            // The resolved path is then CLAMPED to the module root rather than
+            // dropped: upstream's `sanitize_path()` rewrites a climbing basis
+            // (`../sibling` -> `sibling`) and leaves `check_alt_basis_dirs()` to
+            // warn that the rewritten path does not exist, so the operator
+            // learns their basis was out of tree. Dropping it silently kept the
+            // same confinement but withheld the diagnostic
+            // (link-dest-module-escape security pin, daemon-link-dest-escape).
             let module_root_canonical = std::path::Path::new(&module.path)
                 .canonicalize()
                 .unwrap_or_else(|_| std::path::PathBuf::from(&module.path));
@@ -267,17 +269,52 @@ fn build_server_config(
                 std::path::PathBuf::from(&module.path)
             };
             cfg.reference_directories.retain_mut(|ref_dir| {
-                match confine_basis_under_module(
-                    &ref_dir.path,
-                    &resolve_base,
-                    &module_root_canonical,
-                ) {
-                    Some(resolved) => {
-                        ref_dir.path = resolved;
-                        true
-                    }
-                    None => false,
+                // upstream prints the SANITIZED value verbatim (main.c:885
+                // skips the `curr_dir` join under `sanitize_paths`), which is
+                // relative for a relative arg and absolute for an absolute one
+                // - `util1.c:1145-1152` re-roots the latter at `module_dir`
+                // during the sanitize itself. oc has no chdir, so it keeps the
+                // absolute form for the basis lookup and reproduces upstream's
+                // spelling only for the diagnostic.
+                let arg_was_absolute = ref_dir.path.is_absolute();
+                let clamped =
+                    clamp_basis_to_module(&ref_dir.path, &resolve_base, &module_root_canonical);
+
+                // SECOND, independent rule: the clamp is lexical, so a name
+                // that stays module-relative on paper can still resolve out of
+                // the tree through an in-module symlink - the
+                // `alt-dest-symlink-race` attack shape, where `mod/cd ->
+                // /outside` turns `--link-dest=cd` into a read-disclosure
+                // primitive. Upstream refuses that at basis-lookup time in
+                // `secure_relative_open()` (receiver.c); oc drops the basis
+                // here instead, before the request reaches the receiver.
+                //
+                // Deliberately NOT folded into the clamp: `..` is a rewrite
+                // upstream never refuses, while a symlink escape is a refusal
+                // upstream never rewrites. Collapsing them either re-opens the
+                // escape or resurrects the silent-drop the testsuite cell
+                // daemon-link-dest-escape exists to detect.
+                if basis_resolves_outside_module(&clamped, &module_root_canonical) {
+                    return false;
                 }
+
+                // upstream: main.c:1241 - the server receiver runs
+                // `check_alt_basis_dirs()` immediately after that sanitize
+                // loop. Warn-only; the exit code is untouched.
+                if role == ServerRole::Receiver {
+                    let reported = if arg_was_absolute {
+                        clamped.clone()
+                    } else {
+                        clamped
+                            .strip_prefix(&module_root_canonical)
+                            .unwrap_or(&clamped)
+                            .to_path_buf()
+                    };
+                    ::core::client::check_alt_basis_dir_at(ref_dir.kind, &clamped, &reported);
+                }
+
+                ref_dir.path = clamped;
+                true
             });
 
             // upstream: loadparm.c - `temp dir` module parameter provides a

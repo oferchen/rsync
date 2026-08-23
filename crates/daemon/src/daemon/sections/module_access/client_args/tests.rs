@@ -309,21 +309,19 @@ mod daemon_module_suffix_tests {
 
 #[cfg(test)]
 mod daemon_clean_fname_collapse_tests {
-    use super::lexically_normalize;
+    use super::collapse_under_root;
     use std::path::{Path, PathBuf};
     use test_support::COLLAPSE_CASES;
 
     /// Every upstream `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` case must
     /// collapse identically here.
     ///
-    /// `lexically_normalize` folds a client-supplied `--link-dest` /
-    /// `--copy-dest` / `--compare-dest` basis before
-    /// `confine_basis_under_module` tests it against the module root. The
-    /// containment check is a `starts_with` on the folded path, so a `..` that
-    /// fails to consume the component before it leaves a path that still
-    /// *looks* like it sits under the module while resolving elsewhere. That is
-    /// exactly the shape of upstream's off-by-one, which left the collapse dead
-    /// for every multi-component and absolute path.
+    /// `collapse_under_root` folds a client-supplied `--link-dest` /
+    /// `--copy-dest` / `--compare-dest` basis into a module-relative tail. A
+    /// `..` that fails to consume the component before it would leave a path
+    /// that still *looks* module-relative while resolving elsewhere - exactly
+    /// the shape of upstream's off-by-one, which left the collapse dead for
+    /// every multi-component and absolute path.
     ///
     /// The table is shared (`test_support::COLLAPSE_CASES`) so a new edge case
     /// is one row and reaches every oc-rsync copy of this rule at once.
@@ -331,28 +329,47 @@ mod daemon_clean_fname_collapse_tests {
     #[test]
     fn upstream_collapse_cases_consume_the_preceding_component() {
         for (input, expected) in COLLAPSE_CASES {
+            // The shared table spells its expectations for a resolver that
+            // keeps a root or a bare `.`; this one emits a module-relative
+            // tail, so strip the leading `/` and read an empty tail as `.`.
+            let want = expected.strip_prefix('/').unwrap_or(expected);
+            let want = if want == "." { "" } else { want };
             assert_eq!(
-                lexically_normalize(Path::new(input)),
-                PathBuf::from(expected),
+                collapse_under_root(Path::new(input)),
+                PathBuf::from(want),
                 "clean_fname collapse case {input:?}"
             );
         }
     }
 
-    /// A `..` with nothing left to pop survives into the result so the
-    /// caller's `starts_with(module_root)` check sees the escape and rejects
-    /// the basis. Silently swallowing it would hand the caller a path that
-    /// passes containment while naming a directory outside the module.
-    // upstream: util1.c clean_fname() - "collapse '..' elements (except at the start)"
+    /// A `..` with nothing left to pop is DISCARDED, not preserved.
+    ///
+    /// That is upstream's rule, not a shortcut: a daemon runs
+    /// `sanitize_path()` at depth 0 (`options.c:2405`, gated on
+    /// `sanitize_paths` which `clientserver.c:1068` sets for every daemon
+    /// connection), so `util1.c:1183`'s `if (depth <= 0 || sanp != start)` arm
+    /// always wins and there is no arm that refuses. Discarding is what makes
+    /// the output closed under the module root by construction, which is what
+    /// lets `clamp_basis_to_module` join it onto the root with no separate
+    /// containment check - and it is why a client's `--link-dest=../sibling`
+    /// becomes an in-module `sibling` that then draws upstream's
+    /// `arg does not exist` warning instead of being dropped in silence.
+    // upstream: util1.c:1183-1191 sanitize_path(), depth 0
     #[test]
-    fn unpoppable_leading_dot_dot_is_preserved_for_the_containment_check() {
+    fn unpoppable_leading_dot_dot_is_discarded_at_the_root() {
         assert_eq!(
-            lexically_normalize(Path::new("../outside")),
-            PathBuf::from("../outside")
+            collapse_under_root(Path::new("../outside")),
+            PathBuf::from("outside")
         );
         assert_eq!(
-            lexically_normalize(Path::new("mod/../../outside")),
-            PathBuf::from("../outside")
+            collapse_under_root(Path::new("mod/../../outside")),
+            PathBuf::from("outside")
+        );
+        // Every level of an all-`..` climb is consumed, leaving the root
+        // itself rather than any ancestor of it.
+        assert_eq!(
+            collapse_under_root(Path::new("../../..")),
+            PathBuf::from("")
         );
     }
 }
