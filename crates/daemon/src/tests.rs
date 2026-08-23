@@ -392,7 +392,7 @@ include!("tests/chunks/runtime_options_rejects_invalid_uid.rs");
 include!("tests/chunks/runtime_options_rejects_ipv4_ipv6_combo.rs");
 include!("tests/chunks/runtime_options_rejects_missing_secrets_from_environment.rs");
 include!("tests/chunks/runtime_options_rejects_relative_path_with_chroot_enabled.rs");
-include!("tests/chunks/runtime_options_rejects_world_readable_secrets_file.rs");
+include!("tests/chunks/runtime_options_secrets_file_parse_time_modes.rs");
 include!("tests/chunks/runtime_options_require_secrets_file_with_auth_users.rs");
 include!("tests/chunks/sanitize_module_identifier_preserves_clean_input.rs");
 include!("tests/chunks/sanitize_module_identifier_replaces_control_characters.rs");
