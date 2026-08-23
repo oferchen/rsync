@@ -400,8 +400,8 @@ pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
 pub use owner_walk::{
     operator_link, operator_open_append, operator_open_read, operator_open_rw_create,
-    operator_open_write_create, operator_read_to_string, operator_rename, owner_trusted_parent,
-    symlink_owner_is_trusted,
+    operator_open_write_create, operator_read_to_string, operator_rename,
+    operator_symlink_metadata, owner_trusted_parent, symlink_owner_is_trusted,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]

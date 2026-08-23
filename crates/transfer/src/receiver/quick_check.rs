@@ -369,17 +369,11 @@ mod basis_trust_tests {
 /// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk itself.
 #[cfg(unix)]
 fn basis_stat(path: &Path, trust: BasisTrust) -> Option<fs::Metadata> {
-    use std::os::fd::AsFd;
-    use std::os::unix::fs::MetadataExt;
-
     if trust == BasisTrust::PlainStat {
         return fs::symlink_metadata(path).ok();
     }
 
-    let (parent, leaf) = fast_io::owner_walk::owner_trusted_parent(path).ok()?;
-    let confined = fast_io::fstatat_nofollow(parent.as_fd(), &leaf).ok()?;
-    let meta = fs::symlink_metadata(path).ok()?;
-    (meta.dev() == confined.dev() && meta.ino() == confined.ino()).then_some(meta)
+    fast_io::operator_symlink_metadata(path).ok()
 }
 
 /// Non-Unix fallback: the ownership walk is a dirfd construction with no
