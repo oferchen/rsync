@@ -289,6 +289,7 @@ pub struct ClientConfigBuilder {
     bind_address: Option<BindAddress>,
     sockopts: Option<OsString>,
     tcp_fastopen: TcpFastOpenMode,
+    daemon_port: Option<u16>,
     #[cfg(feature = "quic")]
     daemon_transport: crate::client::Transport,
     #[cfg(feature = "quic")]
@@ -594,6 +595,7 @@ impl ClientConfigBuilder {
             bind_address: self.bind_address,
             sockopts: self.sockopts,
             tcp_fastopen: self.tcp_fastopen,
+            daemon_port: self.daemon_port,
             #[cfg(feature = "quic")]
             daemon_transport: self.daemon_transport,
             #[cfg(feature = "quic")]

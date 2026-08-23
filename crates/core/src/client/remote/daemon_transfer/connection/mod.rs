@@ -39,16 +39,31 @@ impl DaemonTransferRequest {
     /// (design: `docs/design/quic-transport-policy.md`, Decision D).
     const DEFAULT_PORT: u16 = 873;
 
+    /// Resolves the port an operand that names none connects to.
+    ///
+    /// upstream: `main.c:1591-1594` - `--port` seeds `rsync_port`, and only the
+    /// `-1` sentinel (no `--port` and no `:port` in the operand) falls back to
+    /// `RSYNC_PORT`. An explicit `:port` in the operand still wins, because
+    /// `check_for_hostspec()` (`options.c:3301-3327`) overwrites `rsync_port`
+    /// while parsing it.
+    pub(crate) const fn resolve_default_port(configured: Option<u16>) -> u16 {
+        match configured {
+            Some(port) => port,
+            None => Self::DEFAULT_PORT,
+        }
+    }
+
     /// Parses an rsync:// URL into a transfer request.
     ///
-    /// Format: `rsync://[user@]host[:port]/module/path`
-    pub(crate) fn parse_rsync_url(url: &str) -> Result<Self, ClientError> {
+    /// Format: `rsync://[user@]host[:port]/module/path`. `default_port` applies
+    /// when the authority names no port; see [`Self::resolve_default_port`].
+    pub(crate) fn parse_rsync_url(url: &str, default_port: u16) -> Result<Self, ClientError> {
         let rest = url
             .strip_prefix("rsync://")
             .or_else(|| url.strip_prefix("RSYNC://"))
             .ok_or_else(|| invalid_argument_error(&format!("not an rsync:// URL: {url}"), 1))?;
 
-        Self::from_url_authority(rest, url, "rsync")
+        Self::from_url_authority(rest, url, "rsync", default_port)
     }
 
     /// Parses a quic:// URL into a transfer request, tagging the address with
@@ -57,26 +72,32 @@ impl DaemonTransferRequest {
     /// Format: `quic://[user@]host[:port]/module/path`. The grammar is
     /// identical to `rsync://`; only the selected transport differs (QUIC-8b).
     #[cfg(feature = "quic")]
-    pub(crate) fn parse_quic_url(url: &str) -> Result<Self, ClientError> {
+    pub(crate) fn parse_quic_url(url: &str, default_port: u16) -> Result<Self, ClientError> {
         let rest = url
             .strip_prefix("quic://")
             .or_else(|| url.strip_prefix("QUIC://"))
             .ok_or_else(|| invalid_argument_error(&format!("not a quic:// URL: {url}"), 1))?;
 
-        Ok(Self::from_url_authority(rest, url, "quic")?.with_transport(Transport::Quic))
+        Ok(Self::from_url_authority(rest, url, "quic", default_port)?
+            .with_transport(Transport::Quic))
     }
 
     /// Parses the shared daemon-URL body (`[user@]host[:port]/module/path`)
     /// after the scheme prefix has been stripped. `scheme` names the origin
     /// scheme for the "must specify a module" diagnostic.
-    fn from_url_authority(rest: &str, url: &str, scheme: &str) -> Result<Self, ClientError> {
+    fn from_url_authority(
+        rest: &str,
+        url: &str,
+        scheme: &str,
+        default_port: u16,
+    ) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
         let mut parts = rest.splitn(2, '/');
         let host_port = parts.next().unwrap_or("");
         let path_part = parts.next().unwrap_or("");
 
-        let target = parse_host_port(host_port, Self::DEFAULT_PORT)?;
+        let target = parse_host_port(host_port, default_port)?;
 
         let mut path_parts = path_part.splitn(2, '/');
         let module = path_parts.next().unwrap_or("").to_owned();
@@ -109,17 +130,21 @@ impl DaemonTransferRequest {
 
     /// Parses a double-colon daemon operand into a transfer request.
     ///
-    /// Format: `[user@]host::module[/path]`
+    /// Format: `[user@]host::module[/path]`. `default_port` applies when the
+    /// host names no port; see [`Self::resolve_default_port`].
     ///
     /// upstream: `main.c` - `host::module` is equivalent to `rsync://host/module`.
-    pub(crate) fn parse_double_colon(operand: &str) -> Result<Self, ClientError> {
+    pub(crate) fn parse_double_colon(
+        operand: &str,
+        default_port: u16,
+    ) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
         let (host_part, module_path) = operand.split_once("::").ok_or_else(|| {
             invalid_argument_error(&format!("not a daemon operand: {operand}"), 1)
         })?;
 
-        let target = parse_host_port(host_part, Self::DEFAULT_PORT)?;
+        let target = parse_host_port(host_part, default_port)?;
 
         let mut path_parts = module_path.splitn(2, '/');
         let module = path_parts.next().unwrap_or("").to_owned();

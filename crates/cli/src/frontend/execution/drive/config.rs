@@ -28,6 +28,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) bind_address: Option<core::client::BindAddress>,
     pub(crate) sockopts: Option<OsString>,
     pub(crate) tcp_fastopen: TcpFastOpenMode,
+    /// `--port=PORT` - daemon port used when the target names none.
+    pub(crate) daemon_port: Option<u16>,
     /// `--quic` - select the QUIC daemon transport (873/udp).
     #[cfg(feature = "quic")]
     pub(crate) quic: bool,
@@ -338,7 +340,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .human_readable(inputs.human_readable)
         .mkpath(inputs.mkpath)
         .prune_empty_dirs(inputs.prune_empty_dirs)
-        .qsort(inputs.qsort);
+        .qsort(inputs.qsort)
+        .daemon_port(inputs.daemon_port);
     // `--quic` selects the QUIC daemon transport; without it the default TCP
     // transport is preserved byte-for-byte (QUIC-8c/8d).
     #[cfg(feature = "quic")]
