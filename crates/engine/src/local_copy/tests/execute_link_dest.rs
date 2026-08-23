@@ -1842,3 +1842,54 @@ fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_directory_entry() {
     );
     assert_eq!(summary.hard_links_created(), 0);
 }
+
+/// An alt-dest arg that names a plain file, not a directory, must not abort a
+/// transfer that carries a symlink.
+///
+/// Joining a relative name onto a non-directory yields ENOTDIR, not ENOENT, so
+/// the symlink lookup used to classify it as a hard I/O error and fail the whole
+/// run with exit 23. Upstream never does: `try_dests_non()` skips any basis whose
+/// `basis_link_stat()` fails, and `check_alt_basis_dirs()` has already warned
+/// about the bad arg once. The regular-file lookup was corrected earlier; this
+/// pins the symlink lookup to the same rule.
+///
+/// upstream: generator.c:1227 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
+/// continue;`
+#[cfg(unix)]
+#[test]
+fn alt_dest_arg_that_is_not_a_directory_does_not_fail_a_symlink_transfer() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    std::os::unix::fs::symlink("target.txt", source_dir.join("link")).expect("plant source link");
+
+    // The alt-dest arg is a regular file: every candidate under it is ENOTDIR.
+    let not_a_directory = temp.path().join("previous");
+    fs::write(&not_a_directory, b"not a directory").expect("write alt-dest arg");
+
+    let dest_dir = temp.path().join("dest");
+    let operands = vec![
+        source_dir.clone().into_os_string(),
+        dest_dir.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .times(true)
+        .push_reference_directory(crate::local_copy::ReferenceDirectory::new(
+            crate::local_copy::ReferenceDirectoryKind::Copy,
+            not_a_directory,
+        ));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory alt-dest arg must be skipped, not fail the transfer");
+
+    let planted = dest_dir.join("source").join("link");
+    assert_eq!(
+        fs::read_link(&planted).expect("dest symlink"),
+        std::path::Path::new("target.txt"),
+        "the symlink must still be recreated at the destination"
+    );
+}
