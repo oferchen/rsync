@@ -479,80 +479,133 @@ fn glob_match_segment(pattern: &str, name: &str) -> bool {
     go(pat, s)
 }
 
-/// Collapses `.` and `..` segments lexically without touching the filesystem.
+/// Collapses `.` and `..` in a module-relative tail, the `Path`-typed
+/// counterpart of [`collapse_module_relative`].
 ///
-/// Used to fold a relative basis path like `mod/00/../01` into `mod/01` before
-/// the module-root containment check runs. Pure path arithmetic: no syscalls,
-/// no canonicalisation, so the result is well-defined even when the resolved
-/// directory does not exist yet (a `--link-dest` basis is allowed to be
-/// missing without aborting the transfer).
+/// Same rule, same anchor: upstream's `sanitize_path()` runs at **depth 0** for
+/// a daemon connection, so `util1.c:1183`'s `if (depth <= 0 || sanp != start)`
+/// arm always wins - a `..` either backs up over one already-emitted component
+/// or, with nothing to back up over, is discarded. There is no arm that
+/// refuses. The output is therefore closed under the module root by
+/// construction, which is what lets the caller join it onto the root without a
+/// separate containment check.
 ///
-/// `..` at the head of an otherwise relative path is preserved verbatim so a
-/// climb that escapes the join base survives into the caller's `starts_with`
-/// check, which then rejects the basis as out-of-module.
-fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
+/// Two functions rather than one because the inputs differ in type and
+/// separator policy: [`collapse_module_relative`] walks a `/`-separated wire
+/// string, this one walks OS `Path` components so a non-UTF-8 basis keeps its
+/// bytes. Both implement the identical upstream rule.
+///
+/// Pure path arithmetic: no syscalls, no canonicalisation, so the result is
+/// well-defined even when the resolved directory does not exist yet (a
+/// `--link-dest` basis is allowed to be missing without aborting the transfer).
+fn collapse_under_root(path: &std::path::Path) -> std::path::PathBuf {
     use std::path::{Component, PathBuf};
 
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                out.push(component.as_os_str());
-            }
-            Component::CurDir => {}
+            Component::Normal(name) => out.push(name),
+            // A tail is module-relative by construction; a root or drive
+            // prefix carries no meaning under the module and is dropped the
+            // way upstream drops the leading `/` at `util1.c:1151` (`p++`).
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
             Component::ParentDir => {
-                let popped = out.pop();
-                if !popped {
-                    // Nothing to pop; preserve the `..` so the caller's
-                    // `starts_with(module_root)` check rejects the escape.
-                    out.push("..");
-                }
+                out.pop();
             }
         }
-    }
-    if out.as_os_str().is_empty() {
-        out.push(".");
     }
     out
 }
 
-/// Resolves a client-supplied alt-basis path (`--link-dest` / `--copy-dest` /
-/// `--compare-dest`) against the receiver's resolve base and confines the
-/// result inside the module root.
+/// Clamps a client-supplied alt-basis path (`--link-dest` / `--copy-dest` /
+/// `--compare-dest`) to the served module, mirroring upstream's
+/// `sanitize_path()` rewrite.
 ///
-/// Returns `Some(resolved)` when the lexically-normalised path stays inside
-/// `module_root_canonical`, and `None` when the path escapes (in which case
-/// the caller silently drops the basis so the receiver re-transfers instead
-/// of hard-linking outside the module tree).
+/// upstream: `main.c:1233-1236` - a daemon receiver passes every `basis_dir[]`
+/// through `sanitize_path(NULL, dir, NULL, curr_dir_depth, SP_DEFAULT)` before
+/// `check_alt_basis_dirs()` runs. That call **rewrites**; it never rejects. A
+/// `--link-dest=../sibling` sent against the module root becomes `sibling`,
+/// which then fails to exist and draws the `arg does not exist` warning at
+/// `main.c:901` - so the operator learns their basis was out of tree instead of
+/// silently getting a full copy. `curr_dir_depth` is the destination's depth
+/// below the module root, so a client pushing into `mod/sub/` may legitimately
+/// climb one level to `mod/sibling`; the budget is exactly "up to the module
+/// root, no further".
 ///
-/// Relative paths join under `resolve_base`; absolute paths are normalised
-/// in place. Both branches then run the same canonicalise-with-lexical-
-/// fallback containment check. The fallback is essential because a basis
-/// directory is allowed to be missing on disk - upstream `main.c:867
-/// check_alt_basis_dirs` only warns, never aborts - and we must still apply
-/// the containment policy in that case.
+/// Two arms, both upstream's:
+/// - absolute: `util1.c:1145-1152` re-roots at `module_dir` and forces
+///   `depth = 0`, so `/etc` addresses `<module>/etc`.
+/// - relative: folded onto `curr_dir` (the receiver's destination), which oc
+///   supplies explicitly as `resolve_base` because the daemon does not chdir
+///   per connection.
 ///
-/// upstream: util1.c:1138 `sanitize_path` collapses `..` against the
-/// module root depth; main.c:867 `check_alt_basis_dirs` warns (main.c:901) on
-/// out-of-tree basis. We mirror the silent-drop side of that contract
-/// instead of upstream's path-rewrite because our daemon does not chdir
-/// per connection.
-fn confine_basis_under_module(
+/// The `..` collapse in [`collapse_under_root`] is what makes the result closed
+/// under the module root, so no separate containment check is needed - and no
+/// syscall either, which matters because a basis directory is allowed to be
+/// missing on disk.
+fn clamp_basis_to_module(
     ref_path: &std::path::Path,
     resolve_base: &std::path::Path,
     module_root_canonical: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    let joined = if ref_path.is_relative() {
-        resolve_base.join(ref_path)
-    } else {
+) -> std::path::PathBuf {
+    let tail = if ref_path.is_absolute() {
         ref_path.to_path_buf()
+    } else {
+        destination_below_root(resolve_base, module_root_canonical).join(ref_path)
     };
-    let resolved = lexically_normalize(&joined);
-    let resolved_canonical = resolved
+    module_root_canonical.join(collapse_under_root(&tail))
+}
+
+/// Whether an already-clamped basis directory resolves out of the module tree
+/// through a symlink.
+///
+/// The clamp in [`clamp_basis_to_module`] is lexical, so a name that is
+/// module-relative on paper - `cd` - can still land outside once `mod/cd` turns
+/// out to be a symlink to `/outside`. That is the `alt-dest-symlink-race`
+/// attack shape: the basis becomes a read-disclosure primitive through the
+/// delta-rolling checksums.
+///
+/// upstream: `receiver.c` `secure_relative_open()` refuses this at
+/// basis-lookup time rather than at argument-parse time. oc drops the basis
+/// here so the request never reaches the receiver; the receiver then
+/// re-transfers, which is the same observable outcome as upstream refusing the
+/// open.
+///
+/// A basis is allowed to be MISSING - that is upstream's `arg does not exist`
+/// warning, not an escape - so an unresolvable path is kept, not dropped.
+fn basis_resolves_outside_module(
+    clamped: &std::path::Path,
+    module_root_canonical: &std::path::Path,
+) -> bool {
+    clamped
         .canonicalize()
-        .unwrap_or_else(|_| resolved.clone());
-    if !resolved_canonical.starts_with(module_root_canonical) {
-        return None;
+        .is_ok_and(|resolved| !resolved.starts_with(module_root_canonical))
+}
+
+/// The receiver's destination expressed relative to the module root - upstream's
+/// `curr_dir_depth`, as a path rather than a count.
+///
+/// A destination that does not sit under the root (which `resolve_receiver_dest`
+/// does not produce) degrades to the root itself, which clamps harder rather
+/// than escaping.
+fn destination_below_root(
+    resolve_base: &std::path::Path,
+    module_root_canonical: &std::path::Path,
+) -> std::path::PathBuf {
+    if let Ok(relative) = resolve_base.strip_prefix(module_root_canonical) {
+        return relative.to_path_buf();
     }
-    Some(resolved)
+    // `resolve_base` can carry an uncanonicalised spelling of the same tree
+    // when the module path is reached through a symlink, so compare canonical
+    // forms before giving up.
+    resolve_base
+        .canonicalize()
+        .ok()
+        .and_then(|canonical| {
+            canonical
+                .strip_prefix(module_root_canonical)
+                .map(std::path::Path::to_path_buf)
+                .ok()
+        })
+        .unwrap_or_default()
 }

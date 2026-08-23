@@ -57,7 +57,7 @@ daemon-handshake-timeout fail
 daemon-http-proxy pass
 daemon-include-maxconn pass
 daemon-leaf-type-race-fchmod skip
-daemon-link-dest-escape fail
+daemon-link-dest-escape pass
 daemon-max-alloc-zero skip
 daemon-module-chdir-symlink skip
 daemon-module-options pass
