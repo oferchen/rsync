@@ -335,6 +335,76 @@ impl ReceiverContext {
             .with_group_mapping(self.config.group_mapping.clone())
     }
 
+    /// Collapses `..` and strips the daemon module root, yielding the name the
+    /// module's filter list is written against.
+    ///
+    /// The daemon filter is NAME-based and anchored at the module root, so it
+    /// must see the module-relative name. Upstream gets that for free:
+    /// `rsync_module()` chdir's into the module (clientserver.c:864
+    /// `module_chdir = normalize_path(module_dir, ..)`) long before either
+    /// consumer runs, which is why upstream's own diagnostics quote
+    /// `"excluded/x2.tx"` and `secret`, never an absolute path. oc instead
+    /// carries these paths as `<module root>/<peer tail>` joined absolute, so an
+    /// anchored rule like `/excluded/***` could never match and every rule
+    /// silently passed. Stripping the module root is upstream's
+    /// `p1 = curr_dir + module_dirlen` (util1.c:1285), and the basis-dir loop's
+    /// own `dir = clean + module_dirlen` (main.c:1252), expressed against an
+    /// owned path.
+    ///
+    /// A path that does not lie under the module root is left as-is rather than
+    /// guessed at: the confinement resolver refuses that shape before any data
+    /// lands, so there is no path here that needs a fabricated name.
+    fn daemon_filter_name(&self, path: &Path) -> PathBuf {
+        let cleaned = filters::collapse_dot_dot_dirs(path);
+        match self.config.connection.daemon_module_root.as_deref() {
+            Some(root) => cleaned
+                .strip_prefix(root)
+                .map_or(cleaned.clone(), Path::to_path_buf),
+            None => cleaned,
+        }
+    }
+
+    /// Refuses the session when the daemon module's filter list excludes one of
+    /// the alternate-basis directories the client asked for.
+    ///
+    /// upstream: `main.c:1243-1270` - after `check_alt_basis_dirs()`, a receiver
+    /// with a non-empty `daemon_filter_list` runs every `basis_dir[]` entry
+    /// through `check_filter(elp, FLOG, dir, 1)` and, on a match, prints
+    /// `"Your options have been rejected by the server."` and calls
+    /// `exit_cleanup(RERR_SYNTAX)`.
+    ///
+    /// This is a *read* barrier, distinct from the destination check above:
+    /// `--copy-dest`/`--link-dest` name a tree the receiver reads from, so
+    /// without it a client can name an excluded directory as its basis and have
+    /// the daemon copy or hard-link excluded content into a destination the
+    /// client can then pull back.
+    ///
+    /// `is_dir` is `true` only, mirroring upstream's single
+    /// `check_filter(..., 1)`, because a basis argument always names a
+    /// directory. That is the one place this differs from the destination
+    /// check, which cannot yet know what the dest names and so ORs both values.
+    pub(in crate::receiver) fn reject_daemon_excluded_basis_dirs(&self) -> io::Result<()> {
+        let Some(filters) = self.daemon_filter_set() else {
+            return Ok(());
+        };
+        for reference in &self.config.reference_directories {
+            // The basis is matched by the name the peer WROTE, not the path oc
+            // resolved it to: the daemon rewrites `path` to
+            // `<module>/<dest>/secret` while confining it, and no module-anchored
+            // rule could ever match that. See `ReferenceDirectory::requested`.
+            let cleaned = self.daemon_filter_name(&reference.requested);
+            if cleaned.as_os_str().is_empty() || filters.allows_name(&cleaned, true) {
+                continue;
+            }
+            // upstream: main.c:1267 - the refusal text carries no path; the
+            // rejected option is reported to the daemon's own log, not the peer.
+            return Err(protocol::syntax_violation(
+                "Your options have been rejected by the server.",
+            ));
+        }
+        Ok(())
+    }
+
     /// Refuses a destination argument that the daemon module's own filter list
     /// excludes.
     ///
@@ -369,28 +439,7 @@ impl ReceiverContext {
         let Some(filters) = self.daemon_filter_set() else {
             return Ok(());
         };
-        let cleaned = filters::collapse_dot_dot_dirs(dest);
-        // The daemon filter is NAME-based and anchored at the module root, so it
-        // must see the module-relative name. Upstream gets that for free:
-        // `rsync_module()` chdir's into the module (clientserver.c:864
-        // `module_chdir = normalize_path(module_dir, ..)`) long before
-        // `get_local_name()` runs, so its `dest_path` is already relative - which
-        // is why upstream's own diagnostic quotes `"excluded/x2.tx"`, not an
-        // absolute path. oc instead carries the dest as
-        // `<module root>/<peer tail>` joined absolute, so an anchored rule like
-        // `/excluded/***` could never match and every rule silently passed.
-        // Stripping the module root is upstream's `p1 = curr_dir + module_dirlen`
-        // (util1.c:1285) expressed against an owned path.
-        //
-        // A dest that does not lie under the module root is left as-is rather
-        // than guessed at: the confinement resolver refuses that shape before any
-        // data lands, so there is no path here that needs a fabricated name.
-        let cleaned = match self.config.connection.daemon_module_root.as_deref() {
-            Some(root) => cleaned
-                .strip_prefix(root)
-                .map_or(cleaned.clone(), Path::to_path_buf),
-            None => cleaned,
-        };
+        let cleaned = self.daemon_filter_name(dest);
         // upstream: main.c:729-730 - a trailing `/` or `/.` component is
         // lopped off before matching, and a bare `.` is not checked at all.
         let cleaned = match cleaned.file_name() {
@@ -469,6 +518,13 @@ impl ReceiverContext {
         let dest_dir = dest_arg.map_or_else(|| PathBuf::from("."), PathBuf::from);
 
         self.reject_daemon_excluded_destination(&dest_dir)?;
+
+        // upstream: main.c:1243-1270 - the daemon receiver vets the client's
+        // alternate-basis directories against the module filter list right after
+        // the destination is known, refusing the whole session if any is
+        // excluded. Ordered after the destination check because upstream reaches
+        // it later in the same function (get_local_name at :1229, this at :1243).
+        self.reject_daemon_excluded_basis_dirs()?;
 
         // upstream: main.c:805-832 get_local_name() - single-file rename
         // semantics. When the transfer is exactly one non-directory entry,

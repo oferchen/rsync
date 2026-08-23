@@ -153,6 +153,8 @@ pub mod secluded_args;
 pub mod state;
 /// Transfer statistics wire format encoding and decoding.
 pub mod stats;
+/// Marker error type for option-usage refusals (RERR_SYNTAX).
+pub mod syntax_violation;
 mod varint;
 mod version;
 /// Wire protocol serialization for signatures, deltas, and file entries.
@@ -220,6 +222,7 @@ pub use negotiation::{
 };
 pub use protocol_violation::{ProtocolViolation, protocol_violation};
 pub use stats::{CreatedStats, DeleteStats, TransferStats};
+pub use syntax_violation::{SyntaxViolation, syntax_violation};
 pub use varint::{
     decode_varint, encode_varint_to_vec, read_int, read_longint, read_varint, read_varint_bounded,
     read_varint_size, read_varint30_int, read_varlong, read_varlong30, write_int, write_longint,

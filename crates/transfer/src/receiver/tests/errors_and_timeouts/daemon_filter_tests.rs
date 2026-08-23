@@ -264,3 +264,103 @@ fn daemon_excluded_destination_honours_dir_only_rules() {
         "a dir-only rule must still refuse the directory itself"
     );
 }
+
+/// Builds a receiver whose module excludes `secret` and whose client asked for
+/// `basis` as an alternate-basis directory.
+///
+/// `requested` is what the peer wrote; `path` is set to the resolved shape the
+/// daemon's module-root confinement produces, so the fixture reproduces the
+/// real divergence between the two fields rather than assuming they agree.
+fn ctx_with_basis(requested: &str) -> ReceiverContext {
+    use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    // ANCHORED, as a module `exclude = /secret` is. An UNANCHORED rule would
+    // match the basename at any depth and so match the resolved path too -
+    // making the fixture unable to tell `requested` from `path`, which is
+    // exactly the bug under test.
+    config.daemon_filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: "secret".into(),
+        anchored: true,
+        ..FilterRuleWireFormat::default()
+    }];
+    config.connection.daemon_module_root = Some("/srv/mod".into());
+    let mut entry = ReferenceDirectory::new(ReferenceDirectoryKind::Link, requested);
+    // What the daemon's confinement pass leaves behind: the basis resolved
+    // against the destination and confined under the module root. Relative to
+    // the module that reads `dest/secret`, which an anchored rule cannot match.
+    entry.path = std::path::PathBuf::from(format!("/srv/mod/dest/{requested}"));
+    config.reference_directories = vec![entry];
+    ReceiverContext::new_for_test(&handshake, config)
+}
+
+/// upstream: `main.c:1243-1270` - a daemon receiver runs every `basis_dir[]`
+/// entry through the module filter list and refuses the whole session when one
+/// matches, with `"Your options have been rejected by the server."` and
+/// `RERR_SYNTAX`.
+///
+/// This is a READ barrier distinct from the destination check: `--copy-dest`
+/// at an excluded directory copies excluded content into a destination the
+/// client can then pull back.
+///
+/// ⚠ The match must use the name the peer WROTE. oc resolves and confines the
+/// basis before the receiver sees it, so `path` reads `<module>/<dest>/secret`
+/// and an anchored `secret` rule can never match it - which is exactly how this
+/// check shipped inert the first time.
+#[test]
+fn daemon_excluded_basis_dir_is_refused_by_requested_name() {
+    let ctx = ctx_with_basis("secret");
+    let err = ctx
+        .reject_daemon_excluded_basis_dirs()
+        .expect_err("an excluded alternate-basis directory must refuse the session");
+
+    assert_eq!(
+        err.to_string(),
+        "Your options have been rejected by the server.",
+        "upstream's exact refusal text (main.c:1267)"
+    );
+    // `crates/transfer` sits below `crates/core`, so the ExitCode mapping
+    // itself is pinned in `core::exit_code`. What is observable here is the
+    // marker that selects it - without the tag the refusal would fall through
+    // the mapper's catch-all to RERR_FILEIO (11) instead of upstream's 1.
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>()),
+        "the refusal must carry the RERR_SYNTAX marker"
+    );
+}
+
+/// Non-vacuity companion: with the SAME module filter, a basis the rules do not
+/// exclude must pass. Without this a refusal that fired unconditionally - or a
+/// fixture that could not produce a pass - would look identical.
+#[test]
+fn daemon_allows_a_basis_dir_the_module_does_not_exclude() {
+    let ctx = ctx_with_basis("nosuch");
+    assert!(
+        ctx.reject_daemon_excluded_basis_dirs().is_ok(),
+        "an allowed basis must not refuse the session"
+    );
+}
+
+/// A receiver with no daemon filter list at all must never refuse: upstream
+/// gates the whole block on `daemon_filter_list.head` (`main.c:1243`), so the
+/// client and SSH-server receivers keep passing basis dirs through untouched.
+#[test]
+fn no_daemon_filter_list_never_refuses_a_basis_dir() {
+    use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.reference_directories = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Link,
+        "secret",
+    )];
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    assert!(
+        ctx.reject_daemon_excluded_basis_dirs().is_ok(),
+        "without a module filter list there is no rule to enforce"
+    );
+}

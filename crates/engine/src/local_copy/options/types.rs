@@ -63,18 +63,48 @@ pub enum ReferenceDirectoryKind {
 pub struct ReferenceDirectory {
     /// The kind of reference directory operation.
     pub kind: ReferenceDirectoryKind,
-    /// The path to the reference directory.
+    /// The path to the reference directory, as resolved for use.
+    ///
+    /// The daemon rewrites this in place when it confines a client-supplied
+    /// basis under the module root, so it is the path to *open*, not the name
+    /// the peer asked for. Anything matching against operator-written rules
+    /// wants [`Self::requested`] instead.
     pub path: PathBuf,
+    /// The basis path exactly as the peer or operator wrote it.
+    ///
+    /// Upstream never rewrites `basis_dir[]` before matching it against the
+    /// daemon filter list: `main.c:1246-1252` runs `sanitize_path(clean,
+    /// *dir_p, "/", 0, SP_DEFAULT)` over the *given* argument, which leaves a
+    /// relative `--link-dest=secret` as `secret`. That is why upstream's own
+    /// diagnostics quote `secret` and not a resolved path, and why an anchored
+    /// module rule like `exclude = secret/` matches it.
+    ///
+    /// oc resolves the basis against the destination and confines it under the
+    /// module root before the receiver sees it, so `path` by then reads
+    /// `<module>/<dest>/secret` and no anchored rule can ever match. Keeping
+    /// the original here preserves the only value the filter check can use.
+    pub requested: PathBuf,
 }
 
 impl ReferenceDirectory {
     /// Creates a new reference directory entry.
+    ///
+    /// `requested` starts equal to `path`; only a later resolution step (the
+    /// daemon's module-root confinement) moves them apart.
     #[must_use]
     pub fn new(kind: ReferenceDirectoryKind, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
         Self {
             kind,
-            path: path.into(),
+            requested: path.clone(),
+            path,
         }
+    }
+
+    /// Returns the basis path as the peer or operator wrote it.
+    #[must_use]
+    pub fn requested(&self) -> &std::path::Path {
+        &self.requested
     }
 
     /// Returns the reference directory kind.

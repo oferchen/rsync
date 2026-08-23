@@ -1064,10 +1064,7 @@ mod info_copy_emission_tests {
         fs::set_permissions(&dest_dir, perms).expect("chmod dest");
 
         let entry = FileEntry::new_file(relative.clone(), payload.len() as u64, 0o644);
-        let reference = ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Copy,
-            path: ref_dir.clone(),
-        };
+        let reference = ReferenceDirectory::new(ReferenceDirectoryKind::Copy, ref_dir.clone());
         let metadata_opts = MetadataOptions::default();
         let mut metadata_errors = Vec::new();
 
@@ -1125,10 +1122,7 @@ mod info_copy_emission_tests {
         fs::set_permissions(&dest_dir, perms).expect("chmod dest");
 
         let entry = FileEntry::new_file(relative.clone(), payload.len() as u64, 0o644);
-        let reference = ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Copy,
-            path: ref_dir,
-        };
+        let reference = ReferenceDirectory::new(ReferenceDirectoryKind::Copy, ref_dir);
         let metadata_opts = MetadataOptions::default();
         let mut metadata_errors = Vec::new();
 
@@ -1232,10 +1226,7 @@ mod symlink_basis_tests {
         entry_size: u64,
     ) -> bool {
         let entry = FileEntry::new_file(PathBuf::from(entry_name), entry_size, 0o644);
-        let reference = ReferenceDirectory {
-            kind,
-            path: ref_dir.to_path_buf(),
-        };
+        let reference = ReferenceDirectory::new(kind, ref_dir.to_path_buf());
         let metadata_opts = MetadataOptions::default();
         let mut metadata_errors = Vec::new();
 
@@ -1825,10 +1816,10 @@ mod alt_dest_match_level_tests {
         let ref_path = write_basis(&ref_dir, "payload.bin", b"hello", 0o644, MTIME);
         let entry = source_entry("payload.bin", 5, 0o644, MTIME + 10_000);
 
-        let refs = [ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Link,
-            path: ref_dir.clone(),
-        }];
+        let refs = [ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            ref_dir.clone(),
+        )];
 
         let handled = run(&entry, &dest_dir, &refs, false, true);
         let dest_path = dest_dir.join("payload.bin");
@@ -1863,10 +1854,10 @@ mod alt_dest_match_level_tests {
         let ref_path = write_basis(&ref_dir, "payload.bin", b"world", 0o644, MTIME);
         let entry = source_entry("payload.bin", 5, 0o644, MTIME);
 
-        let refs = [ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Link,
-            path: ref_dir.clone(),
-        }];
+        let refs = [ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            ref_dir.clone(),
+        )];
 
         let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
@@ -1901,10 +1892,10 @@ mod alt_dest_match_level_tests {
         write_basis(&ref_dir, "payload.bin", b"abc", 0o600, MTIME);
         let entry = source_entry("payload.bin", 3, 0o644, MTIME);
 
-        let refs = [ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Compare,
-            path: ref_dir.clone(),
-        }];
+        let refs = [ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            ref_dir.clone(),
+        )];
 
         let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
@@ -1931,10 +1922,10 @@ mod alt_dest_match_level_tests {
         write_basis(&ref_dir, "payload.bin", b"abc", 0o644, MTIME);
         let entry = source_entry("payload.bin", 3, 0o644, MTIME);
 
-        let refs = [ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Compare,
-            path: ref_dir.clone(),
-        }];
+        let refs = [ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            ref_dir.clone(),
+        )];
 
         let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
@@ -1972,14 +1963,8 @@ mod alt_dest_match_level_tests {
         let entry = source_entry("payload.bin", 4, 0o644, MTIME);
 
         let refs = [
-            ReferenceDirectory {
-                kind: ReferenceDirectoryKind::Link,
-                path: early.clone(),
-            },
-            ReferenceDirectory {
-                kind: ReferenceDirectoryKind::Link,
-                path: late.clone(),
-            },
+            ReferenceDirectory::new(ReferenceDirectoryKind::Link, early.clone()),
+            ReferenceDirectory::new(ReferenceDirectoryKind::Link, late.clone()),
         ];
 
         let handled = run(&entry, &dest_dir, &refs, false, false);
@@ -2040,10 +2025,7 @@ mod non_regular_alt_dest_tests {
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     fn refs(kind: ReferenceDirectoryKind, dir: &Path) -> Vec<ReferenceDirectory> {
-        vec![ReferenceDirectory {
-            kind,
-            path: dir.to_path_buf(),
-        }]
+        vec![ReferenceDirectory::new(kind, dir.to_path_buf())]
     }
 
     /// Options that preserve no attributes, so `metadata_unchanged` is always
