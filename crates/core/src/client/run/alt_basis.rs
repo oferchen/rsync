@@ -137,10 +137,18 @@ pub(crate) fn check_alt_basis_dirs(references: &[ReferenceDirectory], destinatio
         let resolved = resolve_against_destination(&basis, destination);
         let option = alt_dest_opt(reference.kind);
 
+        // `warn_log!` expands to a statement (it ends in `;`), so each arm keeps
+        // it in statement position. Calling it directly as an arm value puts a
+        // trailing-semicolon macro in expression position, which newer compilers
+        // reject outright - and every other caller in the tree does it this way.
         match fs::metadata(&resolved) {
             Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => warn_log!("{option} arg is not a dir: {}", resolved.display()),
-            Err(_) => warn_log!("{option} arg does not exist: {}", resolved.display()),
+            Ok(_) => {
+                warn_log!("{option} arg is not a dir: {}", resolved.display());
+            }
+            Err(_) => {
+                warn_log!("{option} arg does not exist: {}", resolved.display());
+            }
         }
     }
 }
