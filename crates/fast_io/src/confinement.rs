@@ -39,6 +39,81 @@
 //! - `syscall.c:552` - `int operator_path_resolve = 0;`
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The session's answer to [`Activation::optout_allowed`], published for the
+/// ownership walk to read.
+///
+/// Upstream asks the question *inside* the walk - `ona_open()` opens with
+/// `symlink_optout_allowed()` and returns a plain symlink-following `open()`
+/// when it holds (`syscall.c:300-302`) - so the answer reaches both
+/// `open_no_attacker_symlinks()` and `owner_walk_parent()` from one place. It
+/// can do that because `insecure_links` and `am_daemon` are process globals.
+///
+/// Mirroring that shape is deliberate. The alternative - threading the flag
+/// through every operator-path open - would touch ten call sites across seven
+/// crates and every helper between them, and would let one un-threaded site
+/// silently keep confining under an opt-out the operator asked for. The value
+/// is a property of the session, not of the call, so it is stored once.
+///
+/// Only the derived bit is stored, never the flag itself: [`Activation`] stays
+/// the single place the daemon-vs-local rule is written down, and this is the
+/// answer it produced.
+static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
+
+/// Publish `activation`'s opt-out answer for the ownership walk.
+///
+/// Call once, as early as the flag and the daemon/module state are both known.
+/// Not calling it leaves the confinement fully engaged, which is the safe
+/// default and upstream's own (`options.c:134` `int insecure_links = 0;`).
+///
+/// Most callers want [`install_local_session`] or [`install_daemon_session`]:
+/// upstream's two arms read disjoint state, and those spell out which arm the
+/// caller is without making it invent values for fields its arm ignores.
+pub fn install_session(activation: &Activation) {
+    SESSION_OPTOUT.store(activation.optout_allowed(), Ordering::Relaxed);
+}
+
+/// Publish the opt-out for a non-daemon session: the local `--insecure-links`.
+///
+/// upstream: `syscall.c:126` - the `am_daemon`-false arm of
+/// `symlink_optout_allowed()` is `return insecure_links;`, reading nothing
+/// else. So this takes nothing else.
+pub fn install_local_session(insecure_links: LocalInsecureLinks) {
+    install_session(&Activation {
+        // Neither field is read by `optout_allowed`; they are the arm's
+        // don't-cares, spelled out here once rather than at every call site.
+        role: Role::Receiver,
+        confine_root: None,
+        daemon: DaemonState::NotDaemon,
+        insecure_links,
+    });
+}
+
+/// Publish the opt-out for a daemon serving `module`.
+///
+/// upstream: `syscall.c:125` - the `am_daemon`-true arm is
+/// `module_id >= 0 && lp_insecure_links(module_id)`. A peer-supplied
+/// `--insecure-links` is deliberately unreachable from here: a client cannot
+/// switch off a daemon's confinement (`syscall.c:117-121`), which is why this
+/// takes a [`ModuleState`] and not a [`LocalInsecureLinks`].
+pub fn install_daemon_session(module: ModuleState) {
+    install_session(&Activation {
+        role: Role::Receiver,
+        confine_root: None,
+        daemon: DaemonState::Daemon(module),
+        insecure_links: LocalInsecureLinks::default(),
+    });
+}
+
+/// Whether this session opted out of the operator-path symlink confinement.
+///
+/// upstream: `syscall.c:301` - the `symlink_optout_allowed()` test at the top
+/// of `ona_open()`.
+#[must_use]
+pub fn session_optout_allowed() -> bool {
+    SESSION_OPTOUT.load(Ordering::Relaxed)
+}
 
 /// Which end of the transfer this process is.
 ///
