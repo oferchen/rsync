@@ -173,4 +173,16 @@ impl MetadataOptions {
         self.keep_dirlinks = keep;
         self
     }
+
+    /// Records the operator-named destination root.
+    ///
+    /// Only callers that genuinely know the operator's destination argument
+    /// should set this; leaving it unset keeps every path fully confined. See
+    /// `MetadataOptions::destination_root` for why upstream never needs the
+    /// equivalent.
+    #[must_use]
+    pub fn with_destination_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.destination_root = root;
+        self
+    }
 }

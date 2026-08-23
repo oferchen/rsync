@@ -127,7 +127,7 @@ delay-updates-deep pass
 delete pass
 delete-deep pass
 delete-missing-args-files-from pass
-dest-symlinked-dir fail
+dest-symlinked-dir pass
 devices pass
 devices-fake pass
 dir-sgid pass

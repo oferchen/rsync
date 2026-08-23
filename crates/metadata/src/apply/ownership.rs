@@ -60,9 +60,9 @@ fn chown_path(
     owner: Option<unix_fs::Uid>,
     group: Option<unix_fs::Gid>,
     follow_symlinks: bool,
-    keep_dirlinks: bool,
+    resolve_symlinked_parent: bool,
 ) -> Result<(), MetadataError> {
-    if keep_dirlinks {
+    if resolve_symlinked_parent {
         let flag = if follow_symlinks {
             nix::fcntl::AtFlags::empty()
         } else {
@@ -530,7 +530,7 @@ pub(super) fn set_owner_like(
             owner,
             group,
             follow_symlinks,
-            options.keep_dirlinks(),
+            options.resolves_symlinked_parent(destination),
         )?;
 
         // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
@@ -679,7 +679,13 @@ pub(super) fn apply_ownership_from_entry(
             // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
             trace_chown_change(destination, owner, group, cached_meta);
 
-            chown_path(destination, owner, group, true, options.keep_dirlinks())?;
+            chown_path(
+                destination,
+                owner,
+                group,
+                true,
+                options.resolves_symlinked_parent(destination),
+            )?;
 
             // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
             return Ok(post_chown_bookkeeping(
@@ -758,7 +764,13 @@ pub(super) fn apply_symlink_ownership_from_entry(
     if needs_chown {
         trace_chown_change(destination, owner, group, cached_meta);
 
-        chown_path(destination, owner, group, false, options.keep_dirlinks())?;
+        chown_path(
+            destination,
+            owner,
+            group,
+            false,
+            options.resolves_symlinked_parent(destination),
+        )?;
 
         // upstream: rsync.c:558-561 - impossible-id warning also fires for
         // symlink chowns. The suid/sgid re-stat is irrelevant here because
