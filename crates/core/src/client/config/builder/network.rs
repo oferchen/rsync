@@ -17,6 +17,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the `--port=PORT` default used when a daemon target names no port.
+    ///
+    /// upstream: `options.c:852` stores `--port` in `rsync_port`, which
+    /// `main.c:1591-1594` keeps unless the operand carried its own `:port`.
+    #[must_use]
+    #[doc(alias = "--port")]
+    pub const fn daemon_port(mut self, port: Option<u16>) -> Self {
+        self.daemon_port = port;
+        self
+    }
+
     /// Selects the transport that carries the daemon protocol.
     ///
     /// [`Transport::Quic`](crate::client::Transport::Quic) is chosen by `--quic`
