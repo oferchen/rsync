@@ -133,8 +133,13 @@ pub(crate) fn resolve_file_list_entries(
             continue;
         }
 
-        let entry_path = Path::new(entry);
-        if entry_path.is_absolute() {
+        // An absolute entry is only left alone on the legacy (non-files-from)
+        // path. `sanitize_path` strips a leading `/` itself, so bailing out
+        // here would make the clamp unreachable for exactly the entries that
+        // most need it - upstream takes `/file` as relative to the transfer
+        // root, not as a filesystem-absolute path (flist.c:2571 via
+        // `util1.c`, which skips one leading slash before walking components).
+        if !files_from_active && Path::new(entry).is_absolute() {
             continue;
         }
 
@@ -184,7 +189,7 @@ pub(crate) fn resolve_file_list_entries(
             }
         } else {
             let mut combined = base_path.to_path_buf();
-            combined.push(entry_path);
+            combined.push(Path::new(entry));
             *entry = combined.into_os_string();
         }
     }

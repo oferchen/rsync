@@ -385,11 +385,30 @@ fn resolve_file_list_entries_files_from_clamp_keeps_the_entry_dot_marker() {
 }
 
 #[test]
-fn resolve_file_list_entries_files_from_absolute_entry_unchanged() {
+fn resolve_file_list_entries_files_from_absolute_entry_is_taken_relative_to_the_root() {
+    // upstream: `sanitize_path` skips one leading slash before walking the
+    // components (flist.c:2571 -> util1.c), so a `/absolute/path.txt`
+    // files-from line names an entry INSIDE the transfer root, not a
+    // filesystem-absolute path. Measured against rsync 3.5.0: a `/file` entry
+    // transfers `<source>/file`; oc used to bail out on `is_absolute()` before
+    // the clamp could run and failed with exit 23.
     let mut entries = vec![OsString::from("/absolute/path.txt")];
     let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
     resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    let expected = Path::new("/base").join(".").join("absolute/path.txt");
+    assert_eq!(entries[0], expected.as_os_str());
+}
+
+/// The legacy (non-files-from) path still leaves an absolute operand alone -
+/// that clamp is specific to lines read from a files-from source.
+#[test]
+fn resolve_file_list_entries_absolute_entry_unchanged_without_files_from() {
+    let mut entries = vec![OsString::from("/absolute/path.txt")];
+    let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, false);
 
     assert_eq!(entries[0], "/absolute/path.txt");
 }
