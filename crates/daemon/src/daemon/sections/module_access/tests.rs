@@ -2481,26 +2481,66 @@ mod module_access_tests {
         let module_root = module.path().canonicalize().expect("canonicalise module");
         let outside_root = outside.path().canonicalize().expect("canonicalise outside");
 
+        // upstream rewrites rather than refuses: util1.c:1145-1152 re-roots an
+        // absolute arg at `module_dir` with depth forced to 0, so the basis
+        // lands under the module and check_alt_basis_dirs then warns that it
+        // does not exist. The out-of-module directory is never reached.
+        let clamped = clamp_basis_to_module(&outside_root, &module_root, &module_root);
         assert!(
-            confine_basis_under_module(&outside_root, &module_root, &module_root).is_none(),
-            "absolute out-of-module basis must be dropped",
+            clamped.starts_with(&module_root),
+            "absolute out-of-module basis must be clamped under the module, got {clamped:?}",
         );
+        assert!(!clamped.exists(), "the clamped basis must not resolve to a real out-of-tree dir");
     }
 
     #[test]
-    fn confine_basis_accepts_absolute_in_module() {
-        // Companion to the drop-out-of-module pin: an absolute path that
-        // canonicalises *inside* the module root must survive so legitimate
-        // operator-permitted snapshots (e.g. `<module>/snap/01`) still
-        // hard-link instead of re-transferring.
+    fn confine_basis_re_roots_absolute_in_module_the_way_upstream_does() {
+        // An ABSOLUTE basis is re-rooted at the module unconditionally -
+        // upstream `util1.c:1145-1152` takes the `*p == '/'` branch, sets
+        // `rootdir = module_dir` and `depth = 0`, with no
+        // already-under-the-root special case. So even a path that already
+        // names an in-module directory gets the module prefix a second time
+        // and then fails to exist.
+        //
+        // MEASURED against real 3.5.0 over a daemon push, not inferred: with
+        // module `<B>/mod` and `--link-dest=<B>/mod/snap` (a directory that
+        // really exists), upstream prints
+        //   `--link-dest arg does not exist: <B>/mod<B>/mod/snap`
+        // and oc now prints the same bytes. Addressing an in-module basis
+        // from a daemon client therefore requires the RELATIVE spelling -
+        // which is what the sibling `../01` tests cover.
         let module = tempfile::TempDir::new().expect("module tempdir");
         let module_root = module.path().canonicalize().expect("canonicalise module");
         let in_module = module_root.join("snap");
         std::fs::create_dir(&in_module).expect("create in-module snap dir");
 
-        let resolved = confine_basis_under_module(&in_module, &module_root, &module_root)
-            .expect("in-module basis must be accepted");
-        assert_eq!(resolved, in_module);
+        let resolved = clamp_basis_to_module(&in_module, &module_root, &module_root);
+
+        // Asserted as OBSERVABLE PROPERTIES, not by recomputing the component
+        // walk: re-deriving the expected value with the same rule the function
+        // uses would pass for any rule at all. Spelling the root prefix by hand
+        // (`strip_prefix("/")`) is not portable either - an absolute path is
+        // `C:\...` on Windows, so that form panicked there while passing on
+        // Unix.
+        assert!(
+            resolved.starts_with(&module_root),
+            "the clamp must stay under the module root, got {resolved:?}",
+        );
+        assert_ne!(
+            resolved, in_module,
+            "an absolute basis is RE-ROOTED, not passed through - that is the \
+             whole divergence this test pins",
+        );
+        assert_eq!(
+            resolved.file_name(),
+            in_module.file_name(),
+            "re-rooting preserves the components, it only moves them",
+        );
+        assert!(
+            !resolved.exists(),
+            "the re-rooted path names nothing, which is why upstream warns \
+             `arg does not exist` even though `{in_module:?}` really exists",
+        );
     }
 
     #[test]
@@ -2518,10 +2558,12 @@ mod module_access_tests {
 
         // Lexical escape via `..` that resolves to a real sibling on disk.
         let escape = module_root.join("..").join("linkdest-ref-daemon");
+        let clamped = clamp_basis_to_module(&escape, &module_root, &module_root);
         assert!(
-            confine_basis_under_module(&escape, &module_root, &module_root).is_none(),
-            "absolute `..` escape to sibling must be dropped (was @ERROR pre-fix)",
+            clamped.starts_with(&module_root),
+            "absolute `..` escape must be clamped under the module, got {clamped:?}",
         );
+        assert_ne!(clamped, sibling, "the real sibling must never be reached");
     }
 
     #[test]
@@ -2537,12 +2579,7 @@ mod module_access_tests {
         let sibling = module_root.join("01");
         std::fs::create_dir(&sibling).expect("create sibling 01");
 
-        let resolved = confine_basis_under_module(
-            std::path::Path::new("../01"),
-            &dest,
-            &module_root,
-        )
-        .expect("relative climb to in-module sibling must be accepted");
+        let resolved = clamp_basis_to_module(std::path::Path::new("../01"), &dest, &module_root);
         // Lexically normalised: dest/../01 -> module_root/01.
         assert_eq!(resolved, module_root.join("01"));
     }
@@ -2610,9 +2647,15 @@ mod module_access_tests {
         let resolve_base = module_root.clone();
         let escape = std::path::Path::new("../etc/passwd");
 
+        // Upstream's depth-0 sanitize DISCARDS the unpoppable `..` rather than
+        // refusing, so the basis becomes the in-module `etc/passwd` - which
+        // does not exist, drawing the `arg does not exist` warning. The point
+        // is that `<module_parent>/etc/passwd` is never addressed.
+        let clamped = clamp_basis_to_module(escape, &resolve_base, &module_root);
+        assert_eq!(clamped, module_root.join("etc/passwd"));
         assert!(
-            confine_basis_under_module(escape, &resolve_base, &module_root).is_none(),
-            "--link-dest=../etc/passwd must be dropped (relative climb past module root)",
+            clamped.starts_with(&module_root),
+            "relative climb past the module root must be clamped, got {clamped:?}",
         );
     }
 
@@ -2630,12 +2673,7 @@ mod module_access_tests {
         let sibling = module_root.join("01");
         std::fs::create_dir(&sibling).expect("create sibling 01");
 
-        let resolved = confine_basis_under_module(
-            std::path::Path::new("../01"),
-            &dest,
-            &module_root,
-        )
-        .expect("relative in-module sibling basis must survive");
+        let resolved = clamp_basis_to_module(std::path::Path::new("../01"), &dest, &module_root);
         assert_eq!(resolved, module_root.join("01"));
     }
 
@@ -2667,13 +2705,15 @@ mod module_access_tests {
         // (the receiver dest for the bare-module push the upstream test
         // uses). The symlink resolution must be detected and the basis
         // dropped.
+        // The clamp is LEXICAL, so `cd` stays module-relative on paper; the
+        // separate symlink-resolution rule is what refuses it. Asserting both
+        // halves keeps a future simplification from collapsing them: a clamp
+        // alone would admit the escape.
+        let clamped =
+            clamp_basis_to_module(std::path::Path::new("cd"), &module_root, &module_root);
+        assert_eq!(clamped, trap, "the lexical clamp alone does NOT refuse this");
         assert!(
-            confine_basis_under_module(
-                std::path::Path::new("cd"),
-                &module_root,
-                &module_root,
-            )
-            .is_none(),
+            basis_resolves_outside_module(&clamped, &module_root),
             "in-module symlink whose target escapes the module must be dropped \
              (upstream alt-dest-symlink-race attack shape)",
         );
@@ -2700,10 +2740,12 @@ mod module_access_tests {
             .join("passwd");
         std::fs::write(&outside, b"root:x:0:0:root:/root:/bin/sh\n").expect("write outside file");
 
+        let clamped = clamp_basis_to_module(&outside, &module_root, &module_root);
         assert!(
-            confine_basis_under_module(&outside, &module_root, &module_root).is_none(),
-            "absolute --link-dest pointing outside the module root must be dropped",
+            clamped.starts_with(&module_root),
+            "absolute --link-dest pointing outside the module root must be clamped, got {clamped:?}",
         );
+        assert!(!clamped.exists(), "the clamped basis must not name the real outside file");
     }
 
     #[test]
