@@ -209,8 +209,8 @@ operator-path-backup-dir-daemon pass
 operator-path-backup-dir-exclude-daemon fail
 operator-path-backup-rmdir pass
 operator-path-backup-symlink pass
-operator-path-compare-dest fail
-operator-path-copy-dest fail
+operator-path-compare-dest pass
+operator-path-copy-dest pass
 operator-path-dir-daemon-inmodule pass
 operator-path-dir-daemon-leaf fail
 operator-path-dir-daemon-mkdir fail
@@ -219,7 +219,7 @@ operator-path-files-from pass
 operator-path-inplace-backup-dir fail
 operator-path-insecure-links-daemon pass
 operator-path-insecure-links-refused pass
-operator-path-link-dest fail
+operator-path-link-dest pass
 operator-path-log-file pass
 operator-path-partial-dir fail
 operator-path-partial-dir-daemon fail
