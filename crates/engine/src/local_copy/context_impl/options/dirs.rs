@@ -98,7 +98,8 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
     ///   left in place and the transfer writes through it. That redirection is
     ///   the documented effect of `--no-implied-dirs` - rsync(1) says the
     ///   receiver "updates path/foo/file using the existing path elements,
-    ///   which means that the file ends up being created in path/bar".
+    ///   which means that the file ends up being created in path/bar". The
+    ///   follow is confined: see `symlink_stays_within_destination`.
     ///
     /// The default `--relative` case is deliberately absent: with implied dirs
     /// the parent arrives as its own file-list entry and takes the
@@ -109,7 +110,33 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
     fn follows_existing_parent_symlink(&self, parent: &Path, existing: &fs::Metadata) -> bool {
         self.keep_dirlinks_enabled()
             || (parent == self.destination_root() && Self::operator_owns_symlink(existing))
-            || (self.relative_paths_enabled() && !self.implied_dirs_enabled())
+            || (self.relative_paths_enabled()
+                && !self.implied_dirs_enabled()
+                && self.symlink_stays_within_destination(parent))
+    }
+
+    /// Whether an existing symlink standing at `parent` resolves to a location
+    /// beneath the destination root.
+    ///
+    /// The `--no-implied-dirs` follow above is granted by a `do_stat_at()` that
+    /// follows, but the directory creation it guards runs through upstream's
+    /// confined walk, which follows a relative in-tree symlink
+    /// (`syscall.c:2961` `ds_descend`) and refuses an absolute target
+    /// (`syscall.c:2953`) or a `..` that climbs above the anchor
+    /// (`syscall.c:2896`). Without that second half the follow becomes an
+    /// escape: an attacker-planted `dest/A -> /elsewhere` would redirect the
+    /// whole implied-parent chain outside the tree.
+    ///
+    /// A link that does not resolve is not followed - there is nothing to write
+    /// through, and refusing is the conservative half of the rule.
+    fn symlink_stays_within_destination(&self, parent: &Path) -> bool {
+        let (Ok(root), Ok(target)) = (
+            fs::canonicalize(self.destination_root()),
+            fs::canonicalize(parent),
+        ) else {
+            return false;
+        };
+        target.starts_with(&root)
     }
 
     /// Removes a non-directory occupying a level where a directory must exist.
