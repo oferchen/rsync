@@ -132,23 +132,24 @@ pub fn run_daemon_transfer(
         .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
 
     let daemon_operand_str = daemon_operand.to_string_lossy();
+    let default_port = DaemonTransferRequest::resolve_default_port(config.daemon_port());
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
     let mut request = if daemon_operand_str.starts_with("rsync://")
         || daemon_operand_str.starts_with("RSYNC://")
     {
-        DaemonTransferRequest::parse_rsync_url(&daemon_operand_str)?
+        DaemonTransferRequest::parse_rsync_url(&daemon_operand_str, default_port)?
     } else {
         // A `quic://` operand is dispatched to the QUIC parser under the
         // feature; without it `is_daemon_url` never matches `quic://`, so this
         // branch only sees `host::module` targets.
         #[cfg(feature = "quic")]
         if daemon_operand_str.starts_with("quic://") || daemon_operand_str.starts_with("QUIC://") {
-            DaemonTransferRequest::parse_quic_url(&daemon_operand_str)?
+            DaemonTransferRequest::parse_quic_url(&daemon_operand_str, default_port)?
         } else {
-            DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?
+            DaemonTransferRequest::parse_double_colon(&daemon_operand_str, default_port)?
         }
         #[cfg(not(feature = "quic"))]
-        DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?
+        DaemonTransferRequest::parse_double_colon(&daemon_operand_str, default_port)?
     };
 
     // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
@@ -357,7 +358,13 @@ pub fn run_daemon_over_remote_shell(
         .find(|arg| arg.to_string_lossy().contains("::"))
         .ok_or_else(|| invalid_argument_error("no host::module operand found", 1))?;
     let daemon_operand_str = daemon_operand.to_string_lossy();
-    let request = DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?;
+    // upstream: main.c:1632 - a daemon-over-remote-shell connection carries the
+    // port to the child as RSYNC_PORT rather than dialling it, but the value is
+    // the same `rsync_port` the socket path uses.
+    let request = DaemonTransferRequest::parse_double_colon(
+        &daemon_operand_str,
+        DaemonTransferRequest::resolve_default_port(config.daemon_port()),
+    )?;
 
     // upstream: main.c:603-613 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().

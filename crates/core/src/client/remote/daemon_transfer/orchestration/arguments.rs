@@ -1246,7 +1246,8 @@ mod server_option_fidelity_tests {
     use protocol::ProtocolVersion;
 
     fn request() -> DaemonTransferRequest {
-        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path").expect("valid rsync url")
+        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path", 873)
+            .expect("valid rsync url")
     }
 
     fn args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
@@ -1917,7 +1918,8 @@ mod oc_flag_forwarding_tests {
     ];
 
     fn request() -> DaemonTransferRequest {
-        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path").expect("valid rsync url")
+        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path", 873)
+            .expect("valid rsync url")
     }
 
     /// Sets every oc-invented tuning knob to a non-default value. These are

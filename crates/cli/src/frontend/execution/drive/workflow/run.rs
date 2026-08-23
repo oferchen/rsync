@@ -913,6 +913,7 @@ where
         bind_address,
         sockopts: sockopts.clone(),
         tcp_fastopen,
+        daemon_port,
         #[cfg(feature = "quic")]
         quic,
         #[cfg(feature = "quic")]

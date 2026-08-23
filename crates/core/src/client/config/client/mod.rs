@@ -255,6 +255,14 @@ pub struct ClientConfig {
     pub(super) bind_address: Option<BindAddress>,
     pub(super) sockopts: Option<OsString>,
     pub(super) tcp_fastopen: TcpFastOpenMode,
+    /// `--port=PORT` - the daemon port to use when the target names none.
+    ///
+    /// upstream: `options.c` stores `--port` in `rsync_port`, and
+    /// `main.c:1590` `start_socket_client()` passes it to `open_socket_out*`
+    /// for every daemon connection. An explicit `:port` in an `rsync://` URL
+    /// still wins, matching upstream, which overwrites `rsync_port` while
+    /// parsing the URL.
+    pub(super) daemon_port: Option<u16>,
     /// Transport carrying the daemon protocol (`--quic` / `quic://`). QUIC is an
     /// opt-in oc extension compiled only under the `quic` feature; a default
     /// build always uses TCP, so the field is absent there.
@@ -485,6 +493,7 @@ impl Default for ClientConfig {
             bind_address: None,
             sockopts: None,
             tcp_fastopen: TcpFastOpenMode::Auto,
+            daemon_port: None,
             #[cfg(feature = "quic")]
             daemon_transport: crate::client::Transport::Tcp,
             #[cfg(feature = "quic")]

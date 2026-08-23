@@ -9,6 +9,16 @@ impl ClientConfig {
         self.address_mode
     }
 
+    /// Returns the `--port=PORT` default for daemon targets that name no port.
+    ///
+    /// `None` means the operator supplied no `--port`, so the connection falls
+    /// back to 873 (upstream `RSYNC_PORT`, `main.c:1591`).
+    #[must_use]
+    #[doc(alias = "--port")]
+    pub const fn daemon_port(&self) -> Option<u16> {
+        self.daemon_port
+    }
+
     /// Returns the transport that carries the daemon protocol.
     ///
     /// [`Transport::Quic`](crate::client::Transport::Quic) is selected by
