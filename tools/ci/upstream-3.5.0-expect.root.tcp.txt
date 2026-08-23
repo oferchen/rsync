@@ -25,7 +25,7 @@ daemon-access-ip pass
 daemon-argv-limit fail
 daemon-auth pass
 daemon-auth-digest-floor pass
-daemon-auth-group fail
+daemon-auth-group pass
 daemon-auth-users-comma-only pass
 daemon-chroot fail
 daemon-chroot-acl pass
