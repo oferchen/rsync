@@ -75,6 +75,43 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
     false
 }
 
+    /// Whether a symlink occupying one destination path level is followed
+    /// rather than deleted and recreated as a real directory.
+    ///
+    /// Upstream reaches this decision from three separate places, and each
+    /// grants the follow on its own:
+    ///
+    /// - `--keep-dirlinks`: `generator.c:1745` stats the entry with
+    ///   `gen_entry_stat(.., keep_dirlinks && is_dir)`, which FOLLOWS, so a
+    ///   symlink to a directory reports `FT_DIR` and never reaches the
+    ///   `delete_item(.., DEL_FOR_DIR)` at `generator.c:1840`. The same call
+    ///   passes `keep_dirlinks && is_dir`, so a sender *file* of that name
+    ///   still lstats and still replaces the symlink.
+    /// - The destination root: `util1.c:1216` `change_dir()` resolves the
+    ///   operator's own destination argument and `fchdir`s to it, independent
+    ///   of `--keep-dirlinks`. Trust here is ownership, not location - uid 0 or
+    ///   our euid is the admin's own `/backup -> /mnt/disk` layout; any other
+    ///   uid raced the component and stays refused.
+    /// - `--relative --no-implied-dirs`: `generator.c:1718-1719` tests the
+    ///   parent with `do_stat_at()`, which FOLLOWS. A parent that already
+    ///   resolves makes the whole `make_path()` arm dead, so the symlink is
+    ///   left in place and the transfer writes through it. That redirection is
+    ///   the documented effect of `--no-implied-dirs` - rsync(1) says the
+    ///   receiver "updates path/foo/file using the existing path elements,
+    ///   which means that the file ends up being created in path/bar".
+    ///
+    /// The default `--relative` case is deliberately absent: with implied dirs
+    /// the parent arrives as its own file-list entry and takes the
+    /// unconditional `DEL_FOR_DIR` rule, replacing the symlink with a real
+    /// directory. That is the same code path as a plain non-relative copy, so
+    /// widening this predicate to all of `--relative` would silently convert
+    /// both into follows.
+    fn follows_existing_parent_symlink(&self, parent: &Path, existing: &fs::Metadata) -> bool {
+        self.keep_dirlinks_enabled()
+            || (parent == self.destination_root() && Self::operator_owns_symlink(existing))
+            || (self.relative_paths_enabled() && !self.implied_dirs_enabled())
+    }
+
     /// Removes a non-directory occupying a level where a directory must exist.
     ///
     /// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
@@ -214,19 +251,6 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
         let parent_within_root = parent.starts_with(self.destination_root());
         let allow_creation =
             self.mkpath_enabled() || (self.implied_dirs_enabled() && parent_within_root);
-        let keep_dirlinks = self.keep_dirlinks_enabled();
-        // The destination ROOT is an operator-supplied path, so a symlink there
-        // is followed on the operator's own authority - `--keep-dirlinks`
-        // governs peer-supplied directories *inside* the tree, not the operand
-        // the operator typed. Trust is ownership, not location: uid 0 or our
-        // euid is the admin's own `/backup -> /mnt/disk` layout; any other uid
-        // is an attacker who raced the component, and stays refused.
-        //
-        // upstream: `rsync-3.5.0/util1.c:1216` `change_dir()` resolves an
-        // absolute destination with `open_no_attacker_symlinks()` and `fchdir`s
-        // to it, independent of `--keep-dirlinks`.
-        let follow_operator_dest_symlink = parent == self.destination_root();
-
         let result = if self.mode.is_dry_run() {
             match fs::symlink_metadata(parent) {
                 Ok(existing) => {
@@ -234,9 +258,7 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
                     if ty.is_dir() {
                         Ok(())
                     } else if ty.is_symlink()
-                        && (keep_dirlinks
-                            || (follow_operator_dest_symlink
-                                && Self::operator_owns_symlink(&existing)))
+                        && self.follows_existing_parent_symlink(parent, &existing)
                     {
                         follow_symlink_metadata(parent).and_then(|metadata| {
                             if metadata.file_type().is_dir() {
@@ -286,9 +308,7 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
                     if ty.is_dir() {
                         Ok(())
                     } else if ty.is_symlink()
-                        && (keep_dirlinks
-                            || (follow_operator_dest_symlink
-                                && Self::operator_owns_symlink(&existing)))
+                        && self.follows_existing_parent_symlink(parent, &existing)
                     {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
@@ -320,9 +340,7 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
                     if ty.is_dir() {
                         Ok(())
                     } else if ty.is_symlink()
-                        && (keep_dirlinks
-                            || (follow_operator_dest_symlink
-                                && Self::operator_owns_symlink(&existing)))
+                        && self.follows_existing_parent_symlink(parent, &existing)
                     {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
