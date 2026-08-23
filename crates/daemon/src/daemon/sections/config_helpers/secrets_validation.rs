@@ -1,7 +1,8 @@
 /// Validates a secrets file path from a config directive.
 ///
-/// Checks that the file exists, is a regular file, and has secure permissions
-/// (0600 on Unix). Returns a [`DaemonError`] with config context on failure.
+/// Checks that the file exists and is a regular file. Returns a [`DaemonError`]
+/// with config context on failure. Permission enforcement is deliberately NOT
+/// done here - see [`ensure_secrets_file`].
 fn validate_secrets_file(
     path: &Path,
     config_path: &Path,
@@ -56,29 +57,22 @@ fn validate_secrets_file_from_env(
     Ok(Some(path.to_path_buf()))
 }
 
-/// Ensures a file has proper secrets file permissions.
+/// Ensures a configured secrets file is usable as one.
 ///
-/// Verifies the file is a regular file and (on Unix) is not other-accessible.
-/// Group access (e.g. mode 0640) is allowed, matching upstream.
+/// Only the file *type* is checked here. Mode and ownership are NOT: upstream
+/// stores the `secrets file` value verbatim at parse time and applies the
+/// permission rules in `check_secret()` (authenticate.c:168-181), gated on
+/// `lp_strict_modes(module)`. Enforcing them here would make `strict modes = no`
+/// unhonourable - the daemon would refuse the whole config instead of serving
+/// the other-accessible file the operator deliberately opted into. The single
+/// owner of that rule is `platform::secrets::check_secrets_file_permissions`,
+/// called from `verify_secret_response` behind the module's `strict_modes` flag.
 fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), String> {
     if !metadata.is_file() {
         return Err(format!(
             "secrets file '{}' must be a regular file",
             path.display()
         ));
-    }
-
-    #[cfg(unix)]
-    {
-        let mode = metadata.permissions().mode();
-        // upstream: authenticate.c:120 check_secret() rejects only when OTHER
-        // has access ((st.st_mode & 06) != 0); group-readable (0640) is allowed.
-        if mode & 0o6 != 0 {
-            return Err(format!(
-                "secrets file '{}' must not be other-accessible",
-                path.display()
-            ));
-        }
     }
 
     Ok(())
