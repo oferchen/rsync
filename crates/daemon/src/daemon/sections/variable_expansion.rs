@@ -241,16 +241,318 @@ fn expand_daemon_path(template: &str, ctx: &PathExpansionContext<'_>) -> String 
     result
 }
 
-/// Applies single-character `%`-escape expansion to exec command strings.
+/// The shell quoting context a substituted value lands in.
 ///
-/// Expands `%P`, `%m`, `%u`, `%a`, `%h`, `%p`, and `%%` in the exec command
-/// template using the provided path expansion context. Called before passing
-/// exec commands to the shell.
+/// upstream: `loadparm.c:167-171` `enum shell_quote_context`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum ShellQuoteContext {
+    #[default]
+    Unquoted,
+    SingleQuoted,
+    DoubleQuoted,
+}
+
+/// Tracks the shell quoting context across the literal bytes of a hook template.
 ///
-/// upstream: `clientserver.c` - exec command strings are expanded at runtime
-/// before being passed to `sh -c`.
-fn expand_exec_command(command: &str, ctx: &PathExpansionContext<'_>) -> String {
-    expand_daemon_path(command, ctx)
+/// Only template bytes are fed to it; a substituted value is never re-scanned,
+/// so a value cannot open or close a quoted run.
+///
+/// upstream: `loadparm.c:289-310` - the tail of `expand_vars()` under
+/// `shell_escape`.
+#[derive(Default)]
+struct ShellQuoteScanner {
+    context: ShellQuoteContext,
+    escaped: bool,
+}
+
+impl ShellQuoteScanner {
+    /// The context a value substituted at the current position lands in.
+    fn context(&self) -> ShellQuoteContext {
+        self.context
+    }
+
+    /// Advances the tracker over one literal template character.
+    fn advance(&mut self, ch: char) {
+        if self.context == ShellQuoteContext::SingleQuoted {
+            // Nothing is special inside '...', not even a backslash; only the
+            // closing quote ends it. upstream: loadparm.c:290-294
+            if ch == '\'' {
+                self.context = ShellQuoteContext::Unquoted;
+            }
+        } else if self.escaped {
+            self.escaped = false;
+        } else if ch == '\\' {
+            self.escaped = true;
+        } else if self.context == ShellQuoteContext::DoubleQuoted {
+            // A single quote inside "..." is literal and must not be taken as
+            // opening a single-quoted run - doing so would de-sync the tracker
+            // and escape a later value for the wrong context.
+            // upstream: loadparm.c:299-305
+            if ch == '"' {
+                self.context = ShellQuoteContext::Unquoted;
+            }
+        } else if ch == '\'' {
+            self.context = ShellQuoteContext::SingleQuoted;
+        } else if ch == '"' {
+            self.context = ShellQuoteContext::DoubleQuoted;
+        }
+    }
+}
+
+/// Reports whether a value carries a character a shell could act on.
+///
+/// Quoting alone cannot be relied on: context-aware escaping is correct for
+/// exactly one level of shell parsing, and a hook such as
+/// `sh -c '... %RSYNC_USER_NAME% ...'` re-parses the word in a second shell
+/// that sees the value bare. Peer-supplied values carrying any of these are
+/// refused instead.
+///
+/// upstream: `loadparm.c:179-195` `shell_unsafe_value()`.
+fn shell_unsafe_value(value: &str) -> bool {
+    // `!` negates in command position, `~` is tilde-expanded, and `{`/`}`
+    // brace-expand in bash and zsh; none execute anything on their own, which
+    // is why a set built from the obvious metacharacters missed them.
+    const UNSAFE: &str = "'\"`$\\;&|<>()*?[]# !~{}";
+    value
+        .chars()
+        .any(|ch| UNSAFE.contains(ch) || (ch as u32) < 0x20 || ch as u32 == 0x7f)
+}
+
+/// Escapes a value for the shell quoting context it is substituted into.
+///
+/// A double-quoted value is deliberately BOTH backslash-escaped and wrapped in
+/// single quotes: the wrap is redundant for one level of shell parsing, but a
+/// hook that re-parses the word in a second shell has already lost the
+/// backslashes and only the quotes still protect it.
+///
+/// The per-character escape branches are unreachable behind
+/// `shell_unsafe_value`, which refuses every character they handle. Upstream
+/// keeps both layers too - the refusal is the newer rule laid over the older
+/// escaper - and dropping the escaper here would silently diverge if that
+/// refusal set were ever narrowed.
+///
+/// upstream: `loadparm.c:197-235` `expand_vars_shell_escape()`.
+fn shell_escape_value(value: &str, context: ShellQuoteContext) -> String {
+    let wrap = context != ShellQuoteContext::SingleQuoted;
+    let mut escaped = String::with_capacity(value.len() + 2);
+
+    if wrap {
+        escaped.push('\'');
+    }
+    for ch in value.chars() {
+        if context == ShellQuoteContext::DoubleQuoted && matches!(ch, '\\' | '"' | '`' | '$') {
+            escaped.push('\\');
+            escaped.push(ch);
+        } else if ch == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    if wrap {
+        escaped.push('\'');
+    }
+
+    escaped
+}
+
+/// A peer-influenced value carried a character a shell could act on.
+///
+/// The hook may be an access check, so skipping it is not an option: the
+/// daemon fails closed and aborts the transfer.
+///
+/// upstream: `loadparm.c:267-274` - `rprintf(FLOG, ...)` followed by
+/// `exit_cleanup(RERR_UNSUPPORTED)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShellHookRefusal {
+    /// The token as written in the template, e.g. `%RSYNC_USER_NAME%` or `%u`.
+    token: String,
+}
+
+impl ShellHookRefusal {
+    /// The daemon-log line upstream emits before aborting.
+    ///
+    /// upstream: `loadparm.c:270-272`.
+    pub(crate) fn log_line(&self) -> String {
+        format!(
+            "refusing to run shell hook: {} holds a shell metacharacter",
+            self.token
+        )
+    }
+}
+
+/// Splits a leading `NAME%` off `rest` when it is a well-formed variable name.
+///
+/// Requires the upstream shape - an uppercase first letter (`isUpper(f+1)`)
+/// followed by `[A-Z0-9_]` and a closing `%`. The well-formedness check is what
+/// keeps oc's single-character escapes working: `%P/%m` yields the candidate
+/// name `P/`, which is rejected here and falls through to the `%P` reading,
+/// while `%PATH%` is a real variable reference and is read as one.
+///
+/// upstream: `loadparm.c:250-252`.
+fn delimited_variable(rest: &str) -> Option<(&str, &str)> {
+    let end = rest.find('%')?;
+    let name = &rest[..end];
+    let mut bytes = name.bytes();
+
+    if !bytes.next()?.is_ascii_uppercase() {
+        return None;
+    }
+    if !bytes.all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_') {
+        return None;
+    }
+
+    Some((name, &rest[end + 1..]))
+}
+
+/// Resolves a delimited `%NAME%` reference for a shell-executed hook.
+///
+/// The connection variables are read from `ctx` rather than the process
+/// environment: upstream sets them on the daemon process before retrieving the
+/// hook directive (`clientserver.c:757/770/771/815/920`, all ahead of the
+/// retrieval at `:959`), whereas oc sets them on the hook child instead. Any
+/// other name falls back to the real environment, matching upstream's `getenv`.
+///
+/// `RSYNC_REQUEST` and `RSYNC_ARG<n>` are deliberately absent: upstream sets
+/// those inside the forked pre-exec child (`clientserver.c:568`), after the
+/// directive has already been expanded, so they are not references a template
+/// can resolve on either implementation.
+fn resolve_hook_variable(name: &str, ctx: &PathExpansionContext<'_>) -> Option<String> {
+    match name {
+        "RSYNC_MODULE_NAME" => Some(ctx.module_name.to_string()),
+        "RSYNC_MODULE_PATH" => Some(ctx.module_path.to_string()),
+        "RSYNC_HOST_NAME" => Some(ctx.hostname.to_string()),
+        "RSYNC_HOST_ADDR" => Some(ctx.remote_addr.to_string()),
+        "RSYNC_USER_NAME" => Some(ctx.username.to_string()),
+        _ => env_expansion(name),
+    }
+}
+
+/// Substitutes one resolved value, refusing or escaping it when peer-influenced.
+///
+/// Upstream keys the rule on the `RSYNC_` name prefix rather than on where the
+/// value came from (`loadparm.c:266`); mirroring that keeps ordinary string
+/// params such as `path = /home/%RSYNC_USER_NAME%` verbatim while every value
+/// reaching a shell-executed hook is checked.
+fn substitute_hook_value(
+    token: &str,
+    peer_influenced: bool,
+    value: &str,
+    context: ShellQuoteContext,
+) -> Result<String, ShellHookRefusal> {
+    if !peer_influenced {
+        return Ok(value.to_string());
+    }
+    if shell_unsafe_value(value) {
+        return Err(ShellHookRefusal {
+            token: token.to_string(),
+        });
+    }
+    Ok(shell_escape_value(value, context))
+}
+
+/// Expands a shell-executed hook command template.
+///
+/// Handles upstream's `%NAME%` environment references and oc's single-character
+/// escapes in ONE walk, so a substituted value is never rescanned by the other
+/// form. Delimited names win, because that is the only form upstream has.
+///
+/// Values that reach a shell-executed hook are escaped for the quoting context
+/// they land in, and refused outright when they carry a character a shell could
+/// act on.
+///
+/// upstream: `loadparm.c:237-325` `expand_vars(str, shell_escape=1)`, reached
+/// via `FN_LOCAL_STRING_SHELL` for `early exec`, `name converter`,
+/// `post-xfer exec` and `pre-xfer exec` (`daemon-parm.h:349/363/365/366`).
+fn expand_exec_command(
+    command: &str,
+    ctx: &PathExpansionContext<'_>,
+) -> Result<String, ShellHookRefusal> {
+    let mut out = String::with_capacity(command.len());
+    let mut scanner = ShellQuoteScanner::default();
+    let mut rest = command;
+
+    while let Some(pos) = rest.find('%') {
+        push_literal(&mut out, &mut scanner, &rest[..pos]);
+        rest = &rest[pos + 1..];
+
+        if let Some(tail) = rest.strip_prefix('%') {
+            push_literal(&mut out, &mut scanner, "%%");
+            rest = tail;
+            continue;
+        }
+
+        if let Some((name, tail)) = delimited_variable(rest) {
+            match resolve_hook_variable(name, ctx) {
+                Some(value) => {
+                    let token = format!("%{name}%");
+                    let peer_influenced = name.starts_with("RSYNC_");
+                    out.push_str(&substitute_hook_value(
+                        &token,
+                        peer_influenced,
+                        &value,
+                        scanner.context(),
+                    )?);
+                }
+                // upstream leaves an unresolved reference verbatim; it must not
+                // then be re-read as a single-character escape.
+                None => push_literal(&mut out, &mut scanner, &format!("%{name}%")),
+            }
+            rest = tail;
+            continue;
+        }
+
+        let mut chars = rest.chars();
+        match chars.next() {
+            Some(escape) => {
+                match single_char_escape(escape, ctx) {
+                    Some((value, peer_influenced)) => {
+                        let token = format!("%{escape}");
+                        out.push_str(&substitute_hook_value(
+                            &token,
+                            peer_influenced,
+                            &value,
+                            scanner.context(),
+                        )?);
+                    }
+                    None => push_literal(&mut out, &mut scanner, &format!("%{escape}")),
+                }
+                rest = chars.as_str();
+            }
+            None => push_literal(&mut out, &mut scanner, "%"),
+        }
+    }
+
+    push_literal(&mut out, &mut scanner, rest);
+    Ok(out)
+}
+
+/// Copies template text through to the output, advancing the quote tracker.
+fn push_literal(out: &mut String, scanner: &mut ShellQuoteScanner, text: &str) {
+    for ch in text.chars() {
+        scanner.advance(ch);
+    }
+    out.push_str(text);
+}
+
+/// Resolves one oc single-character escape, reporting whether the value is
+/// peer-influenced.
+///
+/// ⚠ These escapes are an oc extension: upstream expands only `%NAME%` in
+/// config values (`loadparm.c:250`, gated on `isUpper(f+1)` plus a closing
+/// `%`), so `%m` stays literal there. `%u`, `%h` and `%a` carry values the peer
+/// influences, so they take the same refusal as a `%RSYNC_*%` reference; the
+/// rest are operator- or daemon-derived and substitute verbatim.
+fn single_char_escape(escape: char, ctx: &PathExpansionContext<'_>) -> Option<(String, bool)> {
+    match escape {
+        'P' => Some((ctx.module_path.to_string(), false)),
+        'm' => Some((ctx.module_name.to_string(), false)),
+        'p' => Some((ctx.pid.to_string(), false)),
+        'u' => Some((ctx.username.to_string(), true)),
+        'a' => Some((ctx.remote_addr.to_string(), true)),
+        'h' => Some((ctx.hostname.to_string(), true)),
+        _ => None,
+    }
 }
 
 /// Applies single-character `%`-escape expansion to a log file path.
@@ -781,23 +1083,153 @@ mod variable_expansion_tests {
         );
     }
 
+    fn expanded(command: &str, ctx: &PathExpansionContext<'_>) -> String {
+        expand_exec_command(command, ctx).expect("template must expand")
+    }
 
     #[test]
-    fn exec_command_expands_module_name() {
+    fn exec_command_keeps_operator_supplied_values_verbatim() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo %m", &ctx), "echo backup");
+    }
+
+    #[test]
+    fn exec_command_escapes_peer_influenced_values() {
         let ctx = sample_path_ctx();
         assert_eq!(
-            expand_exec_command("echo %m", &ctx),
-            "echo backup"
+            expanded(
+                "/usr/local/bin/notify --module=%m --user=%u --host=%h",
+                &ctx
+            ),
+            "/usr/local/bin/notify --module=backup --user='alice' --host='client.example.com'"
         );
     }
 
     #[test]
-    fn exec_command_expands_multiple_vars() {
+    fn exec_command_resolves_delimited_connection_variables() {
         let ctx = sample_path_ctx();
         assert_eq!(
-            expand_exec_command("/usr/local/bin/notify --module=%m --user=%u --host=%h", &ctx),
-            "/usr/local/bin/notify --module=backup --user=alice --host=client.example.com"
+            expanded("notify %RSYNC_MODULE_NAME% %RSYNC_USER_NAME%", &ctx),
+            "notify 'backup' 'alice'"
         );
+    }
+
+    #[test]
+    fn exec_command_leaves_unresolved_reference_verbatim() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expanded("echo %OC_RSYNC_ABSENT_VARIABLE%", &ctx),
+            "echo %OC_RSYNC_ABSENT_VARIABLE%"
+        );
+    }
+
+    #[test]
+    fn exec_command_does_not_reread_a_substituted_value() {
+        let ctx = PathExpansionContext {
+            module_name: "%u",
+            ..sample_path_ctx()
+        };
+        assert_eq!(expanded("echo %m", &ctx), "echo %u");
+    }
+
+    #[test]
+    fn exec_command_omits_the_wrap_inside_a_single_quoted_run() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo '%u'", &ctx), "echo 'alice'");
+    }
+
+    #[test]
+    fn exec_command_refuses_before_the_double_quote_escape_can_apply() {
+        let ctx = PathExpansionContext {
+            username: "a$b",
+            ..sample_path_ctx()
+        };
+        // Every character the double-quoted arm backslash-escapes (`\ " ` $`)
+        // is also in the refusal set, so a peer value never reaches that arm.
+        // The arm is kept because upstream keeps it: `expand_vars_shell_escape`
+        // is written for any value, not just the ones that survive
+        // `shell_unsafe_value`. upstream: `loadparm.c:197-235`.
+        assert!(expand_exec_command("echo \"%u\"", &ctx).is_err());
+    }
+
+    #[test]
+    fn exec_command_tracks_quote_context_across_a_closed_run() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo 'x' %u", &ctx), "echo 'x' 'alice'");
+    }
+
+    #[test]
+    fn exec_command_treats_a_literal_quote_inside_double_quotes_as_text() {
+        let ctx = sample_path_ctx();
+        // The `'` inside `"..."` must not open a single-quoted run, or the
+        // value after it would be escaped for the wrong context.
+        // upstream: `loadparm.c:300-305`.
+        assert_eq!(
+            expanded("echo \"it's\" %u", &ctx),
+            "echo \"it's\" 'alice'"
+        );
+    }
+
+    #[test]
+    fn exec_command_keeps_a_doubled_percent_literal() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("fmt %%m %m", &ctx), "fmt %%m backup");
+    }
+
+    #[test]
+    fn exec_command_refuses_a_peer_value_holding_a_metacharacter() {
+        let ctx = PathExpansionContext {
+            username: "alice; rm -rf /",
+            ..sample_path_ctx()
+        };
+        let refusal = expand_exec_command("notify --user=%u", &ctx)
+            .expect_err("a shell metacharacter must fail closed");
+        assert_eq!(
+            refusal.log_line(),
+            "refusing to run shell hook: %u holds a shell metacharacter"
+        );
+    }
+
+    #[test]
+    fn exec_command_refusal_names_the_delimited_token() {
+        let ctx = PathExpansionContext {
+            hostname: "a`id`b",
+            ..sample_path_ctx()
+        };
+        let refusal = expand_exec_command("notify %RSYNC_HOST_NAME%", &ctx)
+            .expect_err("a shell metacharacter must fail closed");
+        assert_eq!(
+            refusal.log_line(),
+            "refusing to run shell hook: %RSYNC_HOST_NAME% holds a shell metacharacter"
+        );
+    }
+
+    #[test]
+    fn exec_command_refuses_the_full_unsafe_set() {
+        for probe in [
+            "a'b", "a\"b", "a`b", "a$b", "a\\b", "a;b", "a&b", "a|b", "a<b", "a>b", "a(b", "a)b",
+            "a*b", "a?b", "a[b", "a]b", "a#b", "a b", "a!b", "a~b", "a{b", "a}b", "a\nb", "a\x7fb",
+        ] {
+            let ctx = PathExpansionContext {
+                username: probe,
+                ..sample_path_ctx()
+            };
+            assert!(
+                expand_exec_command("notify %u", &ctx).is_err(),
+                "{probe:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn exec_command_allows_an_operator_value_holding_a_metacharacter() {
+        let ctx = PathExpansionContext {
+            module_path: "/srv/my backups",
+            ..sample_path_ctx()
+        };
+        // Only `RSYNC_`-named values are checked upstream, so an
+        // operator-configured path stays verbatim. upstream: `loadparm.c:266`.
+        assert_eq!(expanded("du %P", &ctx), "du /srv/my backups");
     }
 
 
