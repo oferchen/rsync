@@ -1083,23 +1083,153 @@ mod variable_expansion_tests {
         );
     }
 
+    fn expanded(command: &str, ctx: &PathExpansionContext<'_>) -> String {
+        expand_exec_command(command, ctx).expect("template must expand")
+    }
 
     #[test]
-    fn exec_command_expands_module_name() {
+    fn exec_command_keeps_operator_supplied_values_verbatim() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo %m", &ctx), "echo backup");
+    }
+
+    #[test]
+    fn exec_command_escapes_peer_influenced_values() {
         let ctx = sample_path_ctx();
         assert_eq!(
-            expand_exec_command("echo %m", &ctx),
-            "echo backup"
+            expanded(
+                "/usr/local/bin/notify --module=%m --user=%u --host=%h",
+                &ctx
+            ),
+            "/usr/local/bin/notify --module=backup --user='alice' --host='client.example.com'"
         );
     }
 
     #[test]
-    fn exec_command_expands_multiple_vars() {
+    fn exec_command_resolves_delimited_connection_variables() {
         let ctx = sample_path_ctx();
         assert_eq!(
-            expand_exec_command("/usr/local/bin/notify --module=%m --user=%u --host=%h", &ctx),
-            "/usr/local/bin/notify --module=backup --user=alice --host=client.example.com"
+            expanded("notify %RSYNC_MODULE_NAME% %RSYNC_USER_NAME%", &ctx),
+            "notify 'backup' 'alice'"
         );
+    }
+
+    #[test]
+    fn exec_command_leaves_unresolved_reference_verbatim() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expanded("echo %OC_RSYNC_ABSENT_VARIABLE%", &ctx),
+            "echo %OC_RSYNC_ABSENT_VARIABLE%"
+        );
+    }
+
+    #[test]
+    fn exec_command_does_not_reread_a_substituted_value() {
+        let ctx = PathExpansionContext {
+            module_name: "%u",
+            ..sample_path_ctx()
+        };
+        assert_eq!(expanded("echo %m", &ctx), "echo %u");
+    }
+
+    #[test]
+    fn exec_command_omits_the_wrap_inside_a_single_quoted_run() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo '%u'", &ctx), "echo 'alice'");
+    }
+
+    #[test]
+    fn exec_command_refuses_before_the_double_quote_escape_can_apply() {
+        let ctx = PathExpansionContext {
+            username: "a$b",
+            ..sample_path_ctx()
+        };
+        // Every character the double-quoted arm backslash-escapes (`\ " ` $`)
+        // is also in the refusal set, so a peer value never reaches that arm.
+        // The arm is kept because upstream keeps it: `expand_vars_shell_escape`
+        // is written for any value, not just the ones that survive
+        // `shell_unsafe_value`. upstream: `loadparm.c:197-235`.
+        assert!(expand_exec_command("echo \"%u\"", &ctx).is_err());
+    }
+
+    #[test]
+    fn exec_command_tracks_quote_context_across_a_closed_run() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("echo 'x' %u", &ctx), "echo 'x' 'alice'");
+    }
+
+    #[test]
+    fn exec_command_treats_a_literal_quote_inside_double_quotes_as_text() {
+        let ctx = sample_path_ctx();
+        // The `'` inside `"..."` must not open a single-quoted run, or the
+        // value after it would be escaped for the wrong context.
+        // upstream: `loadparm.c:300-305`.
+        assert_eq!(
+            expanded("echo \"it's\" %u", &ctx),
+            "echo \"it's\" 'alice'"
+        );
+    }
+
+    #[test]
+    fn exec_command_keeps_a_doubled_percent_literal() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expanded("fmt %%m %m", &ctx), "fmt %%m backup");
+    }
+
+    #[test]
+    fn exec_command_refuses_a_peer_value_holding_a_metacharacter() {
+        let ctx = PathExpansionContext {
+            username: "alice; rm -rf /",
+            ..sample_path_ctx()
+        };
+        let refusal = expand_exec_command("notify --user=%u", &ctx)
+            .expect_err("a shell metacharacter must fail closed");
+        assert_eq!(
+            refusal.log_line(),
+            "refusing to run shell hook: %u holds a shell metacharacter"
+        );
+    }
+
+    #[test]
+    fn exec_command_refusal_names_the_delimited_token() {
+        let ctx = PathExpansionContext {
+            hostname: "a`id`b",
+            ..sample_path_ctx()
+        };
+        let refusal = expand_exec_command("notify %RSYNC_HOST_NAME%", &ctx)
+            .expect_err("a shell metacharacter must fail closed");
+        assert_eq!(
+            refusal.log_line(),
+            "refusing to run shell hook: %RSYNC_HOST_NAME% holds a shell metacharacter"
+        );
+    }
+
+    #[test]
+    fn exec_command_refuses_the_full_unsafe_set() {
+        for probe in [
+            "a'b", "a\"b", "a`b", "a$b", "a\\b", "a;b", "a&b", "a|b", "a<b", "a>b", "a(b", "a)b",
+            "a*b", "a?b", "a[b", "a]b", "a#b", "a b", "a!b", "a~b", "a{b", "a}b", "a\nb", "a\x7fb",
+        ] {
+            let ctx = PathExpansionContext {
+                username: probe,
+                ..sample_path_ctx()
+            };
+            assert!(
+                expand_exec_command("notify %u", &ctx).is_err(),
+                "{probe:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn exec_command_allows_an_operator_value_holding_a_metacharacter() {
+        let ctx = PathExpansionContext {
+            module_path: "/srv/my backups",
+            ..sample_path_ctx()
+        };
+        // Only `RSYNC_`-named values are checked upstream, so an
+        // operator-configured path stays verbatim. upstream: `loadparm.c:266`.
+        assert_eq!(expanded("du %P", &ctx), "du /srv/my backups");
     }
 
 
