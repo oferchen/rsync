@@ -35,8 +35,9 @@ use super::super::error::{ClientError, invalid_argument_error, socket_error};
 #[cfg(feature = "quic")]
 use super::super::module_list::Transport;
 use super::super::module_list::{
-    DaemonConnectTimeouts, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
-    resolve_connect_timeout, spawn_rsh_daemon_stream,
+    DaemonConnectTimeouts, DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter,
+    QuicDialParams, RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout,
+    spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
@@ -265,12 +266,11 @@ pub fn run_daemon_transfer(
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
     let implied_source_args = [format!("{}/{}", request.module, request.path)];
-    match role {
+    let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
             &mut reader_half,
             &mut writer_half,
-            guard,
             &local_paths,
             &implied_source_args,
             protocol,
@@ -282,7 +282,6 @@ pub fn run_daemon_transfer(
             config,
             &mut reader_half,
             &mut writer_half,
-            guard,
             &local_paths,
             protocol,
             batch_ctx,
@@ -292,7 +291,29 @@ pub fn run_daemon_transfer(
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon are rejected earlier")
         }
-    }
+    };
+    close_then_reap(reader_half, writer_half, guard);
+    outcome
+}
+
+/// Tears the transport down in the order the peer needs after a transfer.
+///
+/// Both stream halves are closed BEFORE the guard is finished, so a connect
+/// program child sees EOF and exits on its own; only then is it reaped. The
+/// child is never signalled - it may still have work to do after the last
+/// transfer byte, and a daemon reached through `RSYNC_CONNECT_PROG` runs its
+/// `post-xfer exec` hook exactly there.
+///
+/// upstream: socket.c:1046 `sock_exec()` forks the connect program and never
+/// signals it; the child ends when the socket closes.
+fn close_then_reap(
+    reader: DaemonStreamReader,
+    writer: DaemonStreamWriter,
+    guard: DaemonStreamGuard,
+) {
+    drop(writer);
+    drop(reader);
+    guard.finish();
 }
 
 /// Executes a daemon transfer tunneled over a remote shell (SSH with `::` syntax).
@@ -429,12 +450,11 @@ pub fn run_daemon_over_remote_shell(
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
     let implied_source_args = [format!("{}/{}", request.module, request.path)];
-    match role {
+    let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
             &mut reader_half,
             &mut writer_half,
-            guard,
             &local_paths,
             &implied_source_args,
             protocol,
@@ -446,7 +466,6 @@ pub fn run_daemon_over_remote_shell(
             config,
             &mut reader_half,
             &mut writer_half,
-            guard,
             &local_paths,
             protocol,
             batch_ctx,
@@ -456,5 +475,7 @@ pub fn run_daemon_over_remote_shell(
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon-over-remote-shell are rejected earlier")
         }
-    }
+    };
+    close_then_reap(reader_half, writer_half, guard);
+    outcome
 }
