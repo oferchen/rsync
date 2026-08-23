@@ -85,12 +85,21 @@ fn refuse_shell_hook(
     refusal: &ShellHookRefusal,
 ) -> io::Result<()> {
     let text = refusal.log_line();
-    let error = AtError::message(text.clone());
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+
+    // Log BEFORE writing to the peer. upstream: loadparm.c:270-273 emits the
+    // FLOG line and only then calls exit_cleanup().
+    // ⚠ The order is load-bearing, not cosmetic: by the time a hook runs the
+    // stream is already multiplexed, so the plain `@ERROR` line can fail to
+    // land. Sending first meant `?` propagated that failure and the refusal
+    // never reached the daemon log at all - the operator's only record of a
+    // fail-closed security decision, silently dropped.
     if let Some(log) = ctx.log_sink {
-        let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text).with_role(Role::Daemon);
+        let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text.clone()).with_role(Role::Daemon);
         log_message(log, &message);
     }
+
+    let error = AtError::message(text);
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
     Ok(())
 }
 
