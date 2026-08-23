@@ -1,7 +1,6 @@
 //! Handling of reference directories and link-dest decisions.
 
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use ::metadata::MetadataOptions;
@@ -329,32 +328,25 @@ fn find_reference_symlink(
             continue;
         }
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
-        let candidate_metadata = match fs::symlink_metadata(&candidate) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "inspect reference symlink",
-                    candidate,
-                    error,
-                ));
-            }
+        // upstream: generator.c:1227 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
+        // continue;` in try_dests_non() - ANY stat failure means "no candidate in
+        // this basis dir", not just ENOENT, exactly as the regular-file lookup
+        // above already treats it. An alt-dest arg that is not a directory yields
+        // ENOTDIR here, and aborting on it would fail a run upstream completes.
+        let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+            continue;
         };
         if !candidate_metadata.file_type().is_symlink() {
             continue;
         }
+        // upstream: generator.c:642-646 quick_check_ok() FT_SYMLINK - a readlink
+        // that fails (`len <= 0`) returns 0, which try_dests_non() turns into a
+        // `continue`. The unreadable basis link is skipped, never fatal.
         match fs::read_link(&candidate) {
             Ok(basis_target) if basis_target == target => {
                 return Ok(Some(candidate_metadata));
             }
-            Ok(_) => continue,
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "read reference symlink",
-                    candidate,
-                    error,
-                ));
-            }
+            Ok(_) | Err(_) => continue,
         }
     }
     Ok(None)
