@@ -96,8 +96,8 @@ enum RefusalPhase {
     /// Refused before `@RSYNCD: OK`; the client is still reading raw text and
     /// reaches upstream's exit linger by returning -1 out of `rsync_module()`.
     PreHandshake,
-    /// Refused after `@RSYNCD: OK`; upstream adds `clientserver.c:1266`'s wait
-    /// on top of the server-exit one.
+    /// Refused after `@RSYNCD: OK`; upstream stacks
+    /// [`Self::POST_HANDSHAKE_EXTRA`] on top of the server-exit wait.
     PostHandshake,
 }
 
