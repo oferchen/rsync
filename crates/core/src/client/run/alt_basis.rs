@@ -122,6 +122,21 @@ fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
     anchor.join(basis)
 }
 
+/// Whether the CLIENT should run the basis-dir check for a remote transfer.
+///
+/// upstream: `main.c:1424` runs `check_alt_basis_dirs()` on the client only
+/// when the client is the receiver, i.e. on a pull. On a push the remote server
+/// is the receiver and checks its own forwarded argv (`main.c:1241`), because
+/// `options.c:2911-2934` emits the basis-dir args only in that direction - so
+/// warning here too would double-report.
+///
+/// The remote-operand conjunct keeps a purely local copy out: that path has its
+/// own call once `LocalCopyPlan` resolves the destination, and without this the
+/// same run would warn twice.
+pub(crate) fn client_checks_basis_dirs(is_pull: bool, has_remote_operand: bool) -> bool {
+    is_pull && has_remote_operand
+}
+
 /// Warns about each `--compare-dest` / `--copy-dest` / `--link-dest` argument
 /// that is missing or is not a directory.
 ///
@@ -131,7 +146,7 @@ fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
 ///
 /// The stat follows symlinks (upstream uses `do_stat`, not `do_lstat`), so a
 /// basis directory reached through a symlink is accepted silently.
-pub(crate) fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Path) {
+pub fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Path) {
     for reference in references {
         let basis = strip_one_trailing_separator(&reference.path);
         let resolved = resolve_against_destination(&basis, destination);
@@ -283,6 +298,30 @@ mod tests {
                 destination.join("absent").display()
             )],
             "the reported path must be anchored at the destination"
+        );
+    }
+
+    /// The client checks basis dirs only when it is the RECEIVER of a REMOTE
+    /// transfer. Exhaustive over both inputs: a push must stay silent (the
+    /// server reports it) and a local copy must stay silent here (the
+    /// local-copy path reports it), or the same run warns twice.
+    #[test]
+    fn client_only_checks_basis_dirs_on_a_remote_pull() {
+        assert!(
+            client_checks_basis_dirs(true, true),
+            "remote pull must check"
+        );
+        assert!(
+            !client_checks_basis_dirs(false, true),
+            "remote push: the server receiver checks its own forwarded argv"
+        );
+        assert!(
+            !client_checks_basis_dirs(true, false),
+            "local copy: checked once the LocalCopyPlan destination resolves"
+        );
+        assert!(
+            !client_checks_basis_dirs(false, false),
+            "local push is local"
         );
     }
 
