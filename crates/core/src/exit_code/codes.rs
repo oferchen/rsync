@@ -350,6 +350,16 @@ impl ExitCode {
             return Self::Protocol;
         }
 
+        // upstream: errcode.h RERR_SYNTAX=1 - an option-usage refusal is tagged
+        // at its call site, exactly as the protocol-violation class above;
+        // without the tag it would fall through to the `_ => FileIo` arm.
+        if error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>())
+        {
+            return Self::Syntax;
+        }
+
         match error.kind() {
             ErrorKind::NotFound | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists => {
                 Self::FileSelect

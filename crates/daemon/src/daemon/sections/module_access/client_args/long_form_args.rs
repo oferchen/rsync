@@ -172,28 +172,19 @@ fn apply_long_form_args(
             // upstream: options.c:2933-2941 - reference directories
             "--compare-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Compare,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, std::path::PathBuf::from(dir)));
                     i += 1;
                 }
             }
             "--copy-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Copy,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, std::path::PathBuf::from(dir)));
                     i += 1;
                 }
             }
             "--link-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Link,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, std::path::PathBuf::from(dir)));
                     i += 1;
                 }
             }
@@ -324,20 +315,11 @@ fn apply_long_form_args(
                 } else if let Some(suffix) = arg.strip_prefix("--backup-suffix=") {
                     config.backup_suffix = Some(suffix.to_owned());
                 } else if let Some(dir) = arg.strip_prefix("--link-dest=") {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Link,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, std::path::PathBuf::from(dir)));
                 } else if let Some(dir) = arg.strip_prefix("--compare-dest=") {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Compare,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, std::path::PathBuf::from(dir)));
                 } else if let Some(dir) = arg.strip_prefix("--copy-dest=") {
-                    config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
-                        kind: ReferenceDirectoryKind::Copy,
-                    });
+                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, std::path::PathBuf::from(dir)));
                 } else if let Some(dir) = arg.strip_prefix("--temp-dir=") {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
