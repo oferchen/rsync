@@ -852,10 +852,10 @@ mod tests {
         std::fs::create_dir(&sub).expect("mkdir sub");
         symlink(&secret, sub.join("basis")).expect("symlink basis -> secret");
 
-        let ref_dirs = vec![ReferenceDirectory {
-            kind: crate::config::ReferenceDirectoryKind::Compare,
-            path: ref_root.clone(),
-        }];
+        let ref_dirs = vec![ReferenceDirectory::new(
+            crate::config::ReferenceDirectoryKind::Compare,
+            ref_root.clone(),
+        )];
         let rel = std::path::Path::new("sub").join("basis");
 
         assert!(
@@ -1255,14 +1255,14 @@ mod tests {
 
         let dest_file = dest_dir.join("file.bin");
         let reference_directories = vec![
-            crate::config::ReferenceDirectory {
-                kind: crate::config::ReferenceDirectoryKind::Compare,
-                path: ref0.clone(),
-            },
-            crate::config::ReferenceDirectory {
-                kind: crate::config::ReferenceDirectoryKind::Compare,
-                path: ref1.clone(),
-            },
+            crate::config::ReferenceDirectory::new(
+                crate::config::ReferenceDirectoryKind::Compare,
+                ref0.clone(),
+            ),
+            crate::config::ReferenceDirectory::new(
+                crate::config::ReferenceDirectoryKind::Compare,
+                ref1.clone(),
+            ),
         ];
         let config = BasisFileConfig {
             file_path: &dest_file,
@@ -1332,10 +1332,10 @@ mod tests {
         }
 
         let dest_file = dest_dir.join("data.txt");
-        let reference_directories = vec![crate::config::ReferenceDirectory {
-            kind: crate::config::ReferenceDirectoryKind::Compare,
-            path: ref_dir.clone(),
-        }];
+        let reference_directories = vec![crate::config::ReferenceDirectory::new(
+            crate::config::ReferenceDirectoryKind::Compare,
+            ref_dir.clone(),
+        )];
         let config = BasisFileConfig {
             file_path: &dest_file,
             dest_dir: &dest_dir,

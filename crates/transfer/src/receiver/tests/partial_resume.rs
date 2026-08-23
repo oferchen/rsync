@@ -98,14 +98,11 @@ fn try_reference_directories_finds_file_in_first_directory() {
     std::fs::write(&test_file, b"test content from ref1").unwrap();
 
     let ref_dirs = vec![
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Compare,
-            path: ref_dir1.path().to_path_buf(),
-        },
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Link,
-            path: ref_dir2.path().to_path_buf(),
-        },
+        ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            ref_dir1.path().to_path_buf(),
+        ),
+        ReferenceDirectory::new(ReferenceDirectoryKind::Link, ref_dir2.path().to_path_buf()),
     ];
 
     let relative_path = std::path::Path::new("subdir/test.txt");
@@ -130,14 +127,11 @@ fn try_reference_directories_finds_file_in_second_directory() {
     std::fs::write(&test_file, b"test content from ref2").unwrap();
 
     let ref_dirs = vec![
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Compare,
-            path: ref_dir1.path().to_path_buf(),
-        },
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Copy,
-            path: ref_dir2.path().to_path_buf(),
-        },
+        ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            ref_dir1.path().to_path_buf(),
+        ),
+        ReferenceDirectory::new(ReferenceDirectoryKind::Copy, ref_dir2.path().to_path_buf()),
     ];
 
     let relative_path = std::path::Path::new("test.txt");
@@ -157,10 +151,10 @@ fn try_reference_directories_returns_none_when_not_found() {
 
     let ref_dir = test_support::create_tempdir();
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Link,
-        path: ref_dir.path().to_path_buf(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Link,
+        ref_dir.path().to_path_buf(),
+    )];
 
     let relative_path = std::path::Path::new("nonexistent.txt");
     let result = try_reference_directories(relative_path, &ref_dirs);

@@ -57,10 +57,10 @@ fn fuzzy_level2_finds_basis_in_reference_directory() {
     let file_path = dest_dir_a.join("data_v2.bin");
     let relative_path = Path::new("dir_a/data_v2.bin");
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Compare,
-        path: ref_base.clone(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Compare,
+        ref_base.clone(),
+    )];
 
     let config = BasisFileConfig {
         file_path: &file_path,
@@ -118,10 +118,10 @@ fn fuzzy_level1_does_not_search_reference_directories() {
     let file_path = dest_dir_a.join("data_v2.bin");
     let relative_path = Path::new("dir_a/data_v2.bin");
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Compare,
-        path: ref_base.clone(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Compare,
+        ref_base.clone(),
+    )];
 
     let config = BasisFileConfig {
         file_path: &file_path,
@@ -177,14 +177,8 @@ fn fuzzy_level2_selects_best_match_across_reference_dirs() {
     let relative_path = Path::new("subdir/report_2024.csv");
 
     let ref_dirs = vec![
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Compare,
-            path: ref1_base.clone(),
-        },
-        ReferenceDirectory {
-            kind: ReferenceDirectoryKind::Link,
-            path: ref2_base.clone(),
-        },
+        ReferenceDirectory::new(ReferenceDirectoryKind::Compare, ref1_base.clone()),
+        ReferenceDirectory::new(ReferenceDirectoryKind::Link, ref2_base.clone()),
     ];
 
     let config = BasisFileConfig {
@@ -239,10 +233,10 @@ fn fuzzy_level2_generates_valid_signature_from_basis() {
     let file_path = dest_dir.join("archive_v2.tar");
     let relative_path = Path::new("project/archive_v2.tar");
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Copy,
-        path: ref_base.clone(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Copy,
+        ref_base.clone(),
+    )];
 
     let config = BasisFileConfig {
         file_path: &file_path,
@@ -299,10 +293,10 @@ fn fuzzy_level0_skips_search() {
     let file_path = dest_dir.join("file_new.txt");
     let relative_path = Path::new("dir/file_new.txt");
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Compare,
-        path: ref_base.clone(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Compare,
+        ref_base.clone(),
+    )];
 
     let config = BasisFileConfig {
         file_path: &file_path,
@@ -349,10 +343,10 @@ fn whole_file_bypasses_fuzzy_search() {
     let file_path = dest_dir.join("data_v2.bin");
     let relative_path = Path::new("dir/data_v2.bin");
 
-    let ref_dirs = vec![ReferenceDirectory {
-        kind: ReferenceDirectoryKind::Compare,
-        path: ref_base.clone(),
-    }];
+    let ref_dirs = vec![ReferenceDirectory::new(
+        ReferenceDirectoryKind::Compare,
+        ref_base.clone(),
+    )];
 
     let config = BasisFileConfig {
         file_path: &file_path,
