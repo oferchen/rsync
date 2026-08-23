@@ -43,10 +43,10 @@ daemon-early-exec-nameconv fail
 daemon-exclude-from-outside-module pass
 daemon-exclude-namebased pass
 daemon-exec pass
-daemon-exec-metachar-documented-limit fail
-daemon-exec-metachar-refused fail
+daemon-exec-metachar-documented-limit pass
+daemon-exec-metachar-refused pass
 daemon-exec-rsync-env-shell-escape pass
-daemon-exec-second-shell-argument-injection fail
+daemon-exec-second-shell-argument-injection pass
 daemon-exec-singlequote-injection pass
 daemon-filter pass
 daemon-filter-merge-bypass pass
