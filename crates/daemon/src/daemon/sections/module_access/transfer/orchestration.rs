@@ -32,18 +32,34 @@ fn run_post_xfer_finalizer(
 
     let addr_str = ctx.peer_ip.to_string();
     let path_str = module.path.display().to_string();
-    // Mirror the success-path `exec_path_ctx`: %-expansion of the command
-    // string uses an empty username, while RSYNC_USER_NAME carries the
-    // authenticated user via the `XferExecContext` below.
+    // upstream: clientserver.c:815 sets RSYNC_USER_NAME to the authenticated
+    // user on the daemon process before the hook directive is retrieved, so a
+    // `%RSYNC_USER_NAME%` reference in the template resolves to that user.
     let path_ctx = PathExpansionContext {
         module_path: &path_str,
         module_name: &module.name,
-        username: "",
+        username: user_name.unwrap_or(""),
         remote_addr: &addr_str,
         hostname: host_name,
         pid: std::process::id(),
     };
-    let expanded_command = expand_exec_command(command, &path_ctx);
+    let expanded_command = match expand_exec_command(command, &path_ctx) {
+        Ok(expanded) => expanded,
+        Err(refusal) => {
+            // The transfer has already finished by the time the post-xfer hook
+            // runs, so the only fail-closed action left is to not run it.
+            // ⚠ upstream refuses earlier: it expands all four hook directives
+            // together at clientserver.c:959-960, before the transfer, and
+            // aborts via exit_cleanup(RERR_UNSUPPORTED). Hoisting oc's
+            // expansion to the same point is filed as a residual.
+            if let Some(log) = ctx.log_sink {
+                let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, refusal.log_line())
+                    .with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            return;
+        }
+    };
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
@@ -54,6 +70,28 @@ fn run_post_xfer_finalizer(
         client_args,
     };
     run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
+}
+
+/// Reports a refused shell hook to the peer and the daemon log.
+///
+/// The hook may be an access check, so a template whose substitution carries
+/// shell syntax fails the transfer rather than running the hook unprotected or
+/// skipping it.
+///
+/// upstream: `loadparm.c:267-274` - `rprintf(FLOG, ...)` then
+/// `exit_cleanup(RERR_UNSUPPORTED)`.
+fn refuse_shell_hook(
+    ctx: &mut ModuleRequestContext<'_>,
+    refusal: &ShellHookRefusal,
+) -> io::Result<()> {
+    let text = refusal.log_line();
+    let error = AtError::message(text.clone());
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+    if let Some(log) = ctx.log_sink {
+        let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    Ok(())
 }
 
 /// Processes an approved module request.
@@ -143,7 +181,13 @@ fn process_approved_module(
                 hostname: ctx.host_display(),
                 pid: std::process::id(),
             };
-            let expanded_command = expand_exec_command(command, &early_path_ctx);
+            let expanded_command = match expand_exec_command(command, &early_path_ctx) {
+                Ok(expanded) => expanded,
+                Err(refusal) => {
+                    refuse_shell_hook(ctx, &refusal)?;
+                    return Ok(());
+                }
+            };
             let early_ctx = XferExecContext {
                 module_name: &module.name,
                 module_path: &module.path,
@@ -414,7 +458,13 @@ fn process_approved_module(
             hostname: ctx.host_display(),
             pid: std::process::id(),
         };
-        let expanded = expand_exec_command(cmd, &nc_path_ctx);
+        let expanded = match expand_exec_command(cmd, &nc_path_ctx) {
+            Ok(expanded) => expanded,
+            Err(refusal) => {
+                refuse_shell_hook(ctx, &refusal)?;
+                return Ok(());
+            }
+        };
         match NameConverter::spawn(&expanded) {
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
@@ -596,14 +646,23 @@ fn process_approved_module(
         client_args: &client_args,
     };
 
-    // Build path expansion context for %-variable substitution in exec commands.
-    // upstream: clientserver.c - exec command strings support %P, %m, %u, %a, %h, %p.
+    // Build the expansion context for a shell-executed hook command.
+    //
+    // upstream: loadparm.c:237 expand_vars() resolves `%NAME%` references by
+    // getenv; clientserver.c:757/770/771/815/920 set RSYNC_MODULE_NAME,
+    // RSYNC_HOST_NAME, RSYNC_HOST_ADDR, RSYNC_USER_NAME and RSYNC_MODULE_PATH
+    // on the daemon process ahead of the hook retrieval at :959, so those are
+    // the names a template can resolve. `%RSYNC_USER_NAME%` must therefore see
+    // the authenticated user, not an empty string.
+    //
+    // ⚠ The single-character escapes this context also feeds (%P/%m/%u/%a/%h/%p)
+    // are an oc extension: upstream expands only the delimited `%NAME%` form.
     let addr_str_exec = ctx.peer_ip.to_string();
     let path_str_exec = module.path.display().to_string();
     let exec_path_ctx = PathExpansionContext {
         module_path: &path_str_exec,
         module_name: &module.name,
-        username: "",
+        username: auth_user.as_deref().unwrap_or(""),
         remote_addr: &addr_str_exec,
         hostname: &host_name_owned,
         pid: std::process::id(),
@@ -617,7 +676,21 @@ fn process_approved_module(
         .as_deref()
         .filter(|_| xfer_exec_enabled())
     {
-        let expanded_command = expand_exec_command(command, &exec_path_ctx);
+        let expanded_command = match expand_exec_command(command, &exec_path_ctx) {
+            Ok(expanded) => expanded,
+            Err(refusal) => {
+                refuse_shell_hook(ctx, &refusal)?;
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_name_owned,
+                    auth_user.as_deref(),
+                    &client_args,
+                    RERR_UNSUPPORTED_EXIT_CODE,
+                );
+                return Ok(());
+            }
+        };
         match run_pre_xfer_exec(
             &expanded_command,
             &xfer_ctx,
@@ -876,7 +949,14 @@ fn process_approved_module(
         .as_deref()
         .filter(|_| xfer_exec_enabled())
     {
-        let expanded_command = expand_exec_command(command, &exec_path_ctx);
+        // The transfer has already completed here, so the only fail-closed
+        // action left is to not run the hook. ⚠ upstream refuses earlier - it
+        // expands all four hook directives together at clientserver.c:959-960,
+        // before the transfer - so hoisting oc's expansion to that point is
+        // filed as a residual.
+        let Ok(expanded_command) = expand_exec_command(command, &exec_path_ctx) else {
+            return Ok(());
+        };
         run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
     }
 
