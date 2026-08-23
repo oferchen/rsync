@@ -264,7 +264,7 @@ fn classify_client_path_against_module(
 /// would EACCES legitimate writes (URV-5.b.REOPEN).
 ///
 /// upstream: util1.c:1138 `sanitize_path` collapses `..` against the
-/// module root depth; main.c:841 `check_alt_basis_dirs` warns but does not
+/// module root depth; main.c:867 `check_alt_basis_dirs` warns but does not
 /// abort when the sanitised basis is missing or out-of-tree.
 ///
 /// Returns `Ok(Some(ValidatedClientPaths))` carrying only the in-module
