@@ -75,6 +75,53 @@ impl<'a> ModuleRequestContext<'a> {
     }
 }
 
+/// Which refusal wrote the error, selecting how long the daemon holds the
+/// connection open before closing it.
+///
+/// The pause is load-bearing, not cosmetic. Closing a socket that still holds
+/// unread peer bytes makes the kernel discard the pending send queue and answer
+/// with RST, so the error just written never arrives: the client reports
+/// `Connection reset by peer` and the refusal looks like it never happened.
+/// Whether the peer's next write landed before the close decides it, which is
+/// why the symptom is intermittent.
+///
+/// Two upstream sites stack, and each arm below names the ones that apply:
+/// - `cleanup.c:263-264` - every server exiting non-zero sleeps 100 ms before
+///   `close_all()`.
+/// - `clientserver.c:1266` - a post-`@RSYNCD: OK` error waits a further 400 ms
+///   before `exit_cleanup(RERR_UNSUPPORTED)`, because the client must also
+///   drain the multiplexed frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RefusalPhase {
+    /// Refused before `@RSYNCD: OK`; the client is still reading raw text and
+    /// reaches upstream's exit linger by returning -1 out of `rsync_module()`.
+    PreHandshake,
+    /// Refused after `@RSYNCD: OK`; upstream stacks
+    /// [`Self::POST_HANDSHAKE_EXTRA`] on top of the server-exit wait.
+    PostHandshake,
+}
+
+impl RefusalPhase {
+    /// upstream: `cleanup.c:263-264` - `if (am_server && exit_code) msleep(100)`.
+    const SERVER_EXIT: Duration = Duration::from_millis(100);
+    /// upstream: `clientserver.c:1266` - `msleep(400)` before `exit_cleanup()`.
+    const POST_HANDSHAKE_EXTRA: Duration = Duration::from_millis(400);
+
+    const fn linger(self) -> Duration {
+        match self {
+            Self::PreHandshake => Self::SERVER_EXIT,
+            Self::PostHandshake => Self::SERVER_EXIT.saturating_add(Self::POST_HANDSHAKE_EXTRA),
+        }
+    }
+}
+
+/// Holds a refused connection open long enough for the peer to read the error
+/// the daemon just wrote. See [`RefusalPhase`] for why the wait exists and
+/// which upstream sites set each duration.
+fn linger_before_close(phase: RefusalPhase) {
+    thread::sleep(phase.linger());
+}
+
 /// Sends a fatal `@ERROR:` refusal line to the client and closes the session.
 ///
 /// Writes exactly `<payload>\n` and nothing more. Upstream never follows an
@@ -97,7 +144,9 @@ fn send_error(
 ) -> io::Result<()> {
     write_limited(stream, limiter, error.line().as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
-    stream.flush()
+    stream.flush()?;
+    linger_before_close(RefusalPhase::PreHandshake);
+    Ok(())
 }
 
 /// Sends a fatal error to the client through the multiplex stream and
@@ -125,7 +174,9 @@ fn send_multiplexed_error_and_exit(
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;
     write_limited(stream, limiter, &buffer)?;
-    stream.flush()
+    stream.flush()?;
+    linger_before_close(RefusalPhase::PostHandshake);
+    Ok(())
 }
 
 /// Sends an access denied response to the client and closes the session.
@@ -489,6 +540,14 @@ fn handle_authentication(
             Ok(None)
         }
         AuthenticationStatus::Denied(denial) => {
+            // upstream: authenticate.c:433 writes the FLOG auth-failure line
+            // from inside auth_server(); only after it returns NULL does
+            // rsync_module() emit `@ERROR: auth failed on module %s`
+            // (clientserver.c:812). The log must therefore be on disk BEFORE
+            // the peer can observe the refusal - a client that reads the error
+            // and immediately inspects the daemon log has to find the reason
+            // already there. Authentication deliberately does not write the
+            // error itself, so this arm owns both halves in upstream's order.
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(
                     log,
@@ -498,6 +557,10 @@ fn handle_authentication(
                     denial.log_suffix().as_deref(),
                 );
             }
+            let error = AtError::AuthFailed {
+                module: sanitize_module_identifier(&module.name).into_owned(),
+            };
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             // FSM: -> Closing on auth failure (session ends).
             ctx.conn_state = ctx
                 .conn_state
