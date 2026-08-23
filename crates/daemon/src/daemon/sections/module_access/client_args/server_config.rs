@@ -144,6 +144,7 @@ fn build_server_config(
     ctx: &mut ModuleRequestContext<'_>,
     client_args: &[String],
     module: &ModuleRuntime,
+    protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<Option<ServerConfig>> {
     let role = determine_server_role(client_args);
 
@@ -227,8 +228,16 @@ fn build_server_config(
                     let message = rsync_warning!(log_text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
+                // `@RSYNCD: OK` is already on the wire, so the client is
+                // reading multiplexed frames; the rejection has to travel as
+                // one. upstream: clientserver.c:1229-1266.
                 let error = AtError::message(error_text);
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                handle_client_arg_rejection_post_handshake(
+                    ctx,
+                    &error.line(),
+                    protocol_version,
+                    client_args,
+                )?;
                 return Ok(None);
             }
 
