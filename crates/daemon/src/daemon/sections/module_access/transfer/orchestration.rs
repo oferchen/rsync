@@ -461,7 +461,12 @@ fn process_approved_module(
         module
     };
 
-    let mut config = match build_server_config(ctx, &client_args, config_module)? {
+    let mut config = match build_server_config(
+        ctx,
+        &client_args,
+        config_module,
+        negotiated_protocol,
+    )? {
         Some(cfg) => cfg,
         None => {
             // upstream: clientserver.c - config assembly runs after the
