@@ -2515,12 +2515,32 @@ mod module_access_tests {
         std::fs::create_dir(&in_module).expect("create in-module snap dir");
 
         let resolved = clamp_basis_to_module(&in_module, &module_root, &module_root);
-        let re_rooted = module_root.join(
-            in_module
-                .strip_prefix("/")
-                .expect("an absolute tempdir path starts at the root"),
+
+        // Asserted as OBSERVABLE PROPERTIES, not by recomputing the component
+        // walk: re-deriving the expected value with the same rule the function
+        // uses would pass for any rule at all. Spelling the root prefix by hand
+        // (`strip_prefix("/")`) is not portable either - an absolute path is
+        // `C:\...` on Windows, so that form panicked there while passing on
+        // Unix.
+        assert!(
+            resolved.starts_with(&module_root),
+            "the clamp must stay under the module root, got {resolved:?}",
         );
-        assert_eq!(resolved, re_rooted);
+        assert_ne!(
+            resolved, in_module,
+            "an absolute basis is RE-ROOTED, not passed through - that is the \
+             whole divergence this test pins",
+        );
+        assert_eq!(
+            resolved.file_name(),
+            in_module.file_name(),
+            "re-rooting preserves the components, it only moves them",
+        );
+        assert!(
+            !resolved.exists(),
+            "the re-rooted path names nothing, which is why upstream warns \
+             `arg does not exist` even though `{in_module:?}` really exists",
+        );
     }
 
     #[test]
