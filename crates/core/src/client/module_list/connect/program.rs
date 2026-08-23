@@ -582,8 +582,15 @@ impl Write for ConnectProgramStream {
 
 impl Drop for ConnectProgramStream {
     fn drop(&mut self) {
+        // Close our end first so the child sees EOF and exits on its own, then
+        // reap it. The child is never signalled: whatever it still has to do
+        // after the last byte - a daemon spawned through `RSYNC_CONNECT_PROG`
+        // runs its `post-xfer exec` hook there - must be allowed to finish.
+        //
+        // upstream: socket.c:1046 `sock_exec()` forks the connect program and
+        // never signals it; the child ends when the socket closes.
+        drop(self.transport.take());
         if let Some(child) = &mut self.child {
-            let _ = child.kill();
             let _ = child.wait();
         }
     }
@@ -1012,5 +1019,82 @@ mod tests {
 
         let _ = parts.child.kill();
         let _ = parts.child.wait();
+    }
+
+    /// A connect program that keeps working after the last transfer byte must
+    /// be allowed to finish. A daemon reached through `RSYNC_CONNECT_PROG` runs
+    /// its `post-xfer exec` hook there, so signalling the child - as oc did -
+    /// destroys it.
+    ///
+    /// The fixture writes its marker only *after* stdin reaches EOF and a short
+    /// delay, so a child that is killed on drop deterministically leaves no
+    /// marker.
+    ///
+    /// upstream: socket.c:1046 `sock_exec()` never signals the child.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_stream_lets_the_connect_program_finish_after_eof() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("post.out");
+
+        let config = ConnectProgramConfig::new(
+            format!(
+                "cat >/dev/null; sleep 0.2; printf done > {}",
+                marker.display()
+            )
+            .into(),
+            None,
+        )
+        .unwrap();
+        let addr = DaemonAddress::new("localhost".to_owned(), 873);
+        let stream = connect_via_program(&addr, &config).unwrap();
+
+        drop(stream);
+
+        assert_eq!(
+            std::fs::read_to_string(&marker).ok().as_deref(),
+            Some("done"),
+            "the connect program must reach its post-transfer work and be waited for"
+        );
+    }
+
+    /// Same contract on the split path taken by every daemon transfer: the
+    /// halves close first, then `DaemonStreamGuard::finish` waits. Without the
+    /// wait the marker is not yet there; with a kill it never arrives at all.
+    #[cfg(unix)]
+    #[test]
+    fn finishing_the_split_guard_waits_for_the_connect_program() {
+        use std::process::Command;
+
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("post.out");
+
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "cat >/dev/null; sleep 0.2; printf done > {}",
+                marker.display()
+            ))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        let (reader, writer, guard) =
+            crate::client::module_list::DaemonStream::from_child_process(child, stdin, stdout)
+                .split()
+                .unwrap();
+        drop(writer);
+        drop(reader);
+        guard.finish();
+
+        assert_eq!(
+            std::fs::read_to_string(&marker).ok().as_deref(),
+            Some("done"),
+            "finish() must wait for the child that the closed halves released"
+        );
     }
 }

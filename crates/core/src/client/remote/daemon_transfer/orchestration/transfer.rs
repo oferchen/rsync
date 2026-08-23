@@ -15,8 +15,7 @@ use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
 use crate::client::module_list::{
-    DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply,
-    register_shutdown_wake,
+    DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply, register_shutdown_wake,
 };
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
@@ -45,7 +44,6 @@ pub(crate) fn run_pull_transfer(
     config: &ClientConfig,
     reader: &mut DaemonStreamReader,
     writer: &mut DaemonStreamWriter,
-    _guard: DaemonStreamGuard,
     local_paths: &[OsString],
     implied_source_args: &[String],
     protocol: ProtocolVersion,
@@ -167,7 +165,6 @@ pub(crate) fn run_push_transfer(
     config: &ClientConfig,
     reader: &mut DaemonStreamReader,
     writer: &mut DaemonStreamWriter,
-    _guard: DaemonStreamGuard,
     local_paths: &[OsString],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
