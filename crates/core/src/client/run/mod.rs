@@ -51,7 +51,7 @@
 //! run_client_with_observer(config, Some(&mut observer))?;
 //! ```
 
-mod alt_basis;
+pub(crate) mod alt_basis;
 mod batch;
 mod filters;
 
@@ -304,6 +304,27 @@ fn run_client_internal(
         }
         false
     });
+
+    let has_remote = config
+        .transfer_args()
+        .iter()
+        .any(|arg| remote::operand_is_remote(arg));
+
+    // upstream: main.c:1424 - the CLIENT receiver runs `check_alt_basis_dirs()`
+    // once its destination is known. On a PULL the client is the receiver, so
+    // the check belongs here, ahead of both remote transports. On a PUSH the
+    // remote server is the receiver and runs its own check from the forwarded
+    // argv - `options.c:2911-2934` emits the basis-dir args only in that
+    // direction, which is why neither side needs the other's copy.
+    //
+    // Gated on a remote operand so a purely local copy is not warned about
+    // twice: that path has its own call once `LocalCopyPlan` resolves the
+    // destination.
+    if alt_basis::client_checks_basis_dirs(config.is_pull(), has_daemon_url || has_remote)
+        && let Some(destination) = config.transfer_args().last()
+    {
+        alt_basis::check_alt_basis_dirs(config.reference_directories(), Path::new(destination));
+    }
 
     if has_daemon_url {
         // upstream: main.c:1593-1608 - when `-e`/`--rsh` is active with `::`,

@@ -482,6 +482,19 @@ where
     // returned an unexpected status; the latter is treated as a hard refusal
     // because the intended sandbox did not engage.
     if role == ServerRole::Receiver {
+        // upstream: main.c:1241 - the SERVER receiver runs `check_alt_basis_dirs()`
+        // once the destination is known. This is the push direction: the client
+        // is the sender and forwards the basis-dir args to us
+        // (`options.c:2911-2934` emits them only when the server receives), so
+        // the values are already in our own decoded argv and no per-connection
+        // plumbing is involved. Warn-only, exit code untouched.
+        if let Some(dest) = config.args.last() {
+            ::core::client::check_alt_basis_dirs(
+                &config.reference_directories,
+                std::path::Path::new(dest),
+            );
+        }
+
         if let Some(dest) = config.args.last() {
             let dest_path = std::path::PathBuf::from(dest);
             if let Some(root) = landlock_root_for_dest(&dest_path) {
