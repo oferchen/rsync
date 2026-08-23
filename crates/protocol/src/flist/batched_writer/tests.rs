@@ -11,6 +11,20 @@ fn test_protocol() -> ProtocolVersion {
     ProtocolVersion::try_from(32u8).unwrap()
 }
 
+/// A config whose only live flush trigger is the one the calling test exercises.
+///
+/// `BatchConfig::new()` keeps `DEFAULT_FLUSH_TIMEOUT` (100 ms) armed, so a stall
+/// longer than that between two loop iterations makes `should_flush` return
+/// `FlushReason::Timeout` instead of the entry-count or byte-size reason the test
+/// is asserting on. That changes both the flush COUNT and its ATTRIBUTION, which
+/// is exactly what a test about a size or count threshold must not depend on.
+///
+/// Only `check_timeout_flush` and `check_timeout_flush_no_timeout_yet` leave the
+/// clock armed, because the clock is their subject.
+fn untimed() -> BatchConfig {
+    BatchConfig::new().with_flush_timeout(Duration::MAX)
+}
+
 #[test]
 fn batch_config_default() {
     let config = BatchConfig::default();
@@ -86,7 +100,7 @@ fn explicit_flush_writes_to_output() {
 
 #[test]
 fn auto_flush_on_entry_count() {
-    let config = BatchConfig::new().with_max_entries(2);
+    let config = untimed().with_max_entries(2);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -103,7 +117,7 @@ fn auto_flush_on_entry_count() {
 
 #[test]
 fn auto_flush_on_byte_size() {
-    let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(50);
+    let config = untimed().with_max_entries(1000).with_max_bytes(50);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -156,7 +170,7 @@ fn finish_with_io_error() {
 
 #[test]
 fn add_entries_batch() {
-    let config = BatchConfig::new().with_max_entries(3);
+    let config = untimed().with_max_entries(3);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -175,7 +189,7 @@ fn add_entries_batch() {
 #[test]
 fn round_trip_batched_entries() {
     let protocol = test_protocol();
-    let config = BatchConfig::new().with_max_entries(3);
+    let config = untimed().with_max_entries(3);
     let mut writer = BatchedFileListWriter::with_config(protocol, config);
     let mut output = Vec::new();
 
@@ -207,7 +221,7 @@ fn round_trip_batched_entries() {
 
 #[test]
 fn stats_tracking() {
-    let config = BatchConfig::new().with_max_entries(2);
+    let config = untimed().with_max_entries(2);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -318,7 +332,7 @@ fn with_compat_flags_creates_valid_writer() {
 
 #[test]
 fn auto_flush_on_byte_size_deterministic() {
-    let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(30);
+    let config = untimed().with_max_entries(1000).with_max_bytes(30);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -342,7 +356,7 @@ fn auto_flush_on_byte_size_deterministic() {
 
 #[test]
 fn large_entry_exceeding_buffer_size() {
-    let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(10);
+    let config = untimed().with_max_entries(1000).with_max_bytes(10);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -367,7 +381,7 @@ fn large_entry_exceeding_buffer_size() {
 
 #[test]
 fn multiple_large_entries_each_triggers_flush() {
-    let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(10);
+    let config = untimed().with_max_entries(1000).with_max_bytes(10);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -388,7 +402,7 @@ fn multiple_large_entries_each_triggers_flush() {
 
 #[test]
 fn stats_track_flushes_by_size_correctly() {
-    let config = BatchConfig::new().with_max_entries(100).with_max_bytes(50);
+    let config = untimed().with_max_entries(100).with_max_bytes(50);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -414,7 +428,7 @@ fn stats_track_flushes_by_size_correctly() {
 
 #[test]
 fn mixed_flush_types_tracked_separately() {
-    let config = BatchConfig::new().with_max_entries(2).with_max_bytes(1000);
+    let config = untimed().with_max_entries(2).with_max_bytes(1000);
     let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
     let mut output = Vec::new();
 
@@ -434,4 +448,37 @@ fn mixed_flush_types_tracked_separately() {
     assert_eq!(writer.stats().flushes_by_size, 0);
     assert_eq!(writer.stats().explicit_flushes, 1);
     assert_eq!(writer.stats().batches_flushed, 2);
+}
+
+/// Pins the hazard `untimed()` exists to remove.
+///
+/// With the clock armed and already expired, a batch that has NOT reached its
+/// byte-size threshold still flushes - and the flush is attributed to
+/// `FlushReason::Timeout`, not `ByteSize`. Any test that asserts
+/// `flushes_by_size > 0` (or an exact flush count) while leaving
+/// `DEFAULT_FLUSH_TIMEOUT` armed is therefore asserting that the machine did not
+/// stall for 100 ms mid-loop, which is not a property of the code under test.
+#[test]
+fn an_armed_clock_preempts_a_size_trigger_that_was_never_reached() {
+    let config = BatchConfig::new()
+        .with_max_entries(1000)
+        .with_max_bytes(DEFAULT_MAX_BYTES)
+        .with_flush_timeout(Duration::ZERO);
+    let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
+    let mut output = Vec::new();
+
+    let entry = FileEntry::new_file("tiny.txt".into(), 1, 0o644);
+    let flushed = writer.add_entry(&mut output, &entry).unwrap();
+
+    assert!(flushed, "an expired clock must flush");
+    assert_eq!(
+        writer.stats().flushes_by_size,
+        0,
+        "the byte-size threshold was never reached, so nothing may be attributed to it"
+    );
+    assert_eq!(
+        writer.stats().flushes_by_timeout,
+        1,
+        "the flush belongs to the clock"
+    );
 }
