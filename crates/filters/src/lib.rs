@@ -121,6 +121,18 @@ pub mod merge;
 mod merge_open;
 mod rule;
 pub mod rule_source;
+/// Traversal clamp for peer- and file-supplied names, mirroring
+/// `sanitize_path()`.
+///
+/// Lives in the same crate as [`clean_fname`] because both port the same
+/// upstream file (`util1.c`) and answer the same question about a path, and
+/// because this is the one crate every consumer of the rule can reach: the CLI
+/// clamps `--files-from` lines, the daemon clamps peer-requested module paths,
+/// and the transfer generator clamps names arriving over the wire. Keeping one
+/// owner is what stops the two dialects drifting - they decide different things
+/// and are not interchangeable: `clean_fname` KEEPS a `..` it cannot consume,
+/// while `sanitize_path` DROPS it once the depth budget is spent.
+pub mod sanitize_path;
 mod set;
 mod wildmatch;
 

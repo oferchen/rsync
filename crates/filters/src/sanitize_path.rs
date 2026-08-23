@@ -190,10 +190,10 @@ fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec
         }
     }
 
-    if result.len() > 1 && result.last() == Some(&b'/') {
-        result.pop();
-    }
-
+    // upstream: util1.c copies each component "through next slash", so a
+    // trailing slash survives into the result and is only NUL-terminated. The
+    // slash is meaningful - on a `--files-from` line it selects a directory's
+    // contents rather than the directory itself - so it must not be stripped.
     if result.is_empty() {
         // upstream: util1.c:1103 - an empty result becomes ".".
         b".".to_vec()
@@ -221,9 +221,12 @@ mod tests {
         assert_eq!(sanitize_path("foo/bar"), "foo/bar");
     }
 
+    // upstream: util1.c - each component is copied "through next slash", so a
+    // trailing slash survives. It is not decoration: on a `--files-from` line
+    // `dir/` selects the directory's contents where `dir` selects the directory.
     #[test]
-    fn trailing_slash_removed() {
-        assert_eq!(sanitize_path("foo/bar/"), "foo/bar");
+    fn trailing_slash_preserved() {
+        assert_eq!(sanitize_path("foo/bar/"), "foo/bar/");
     }
 
     #[test]
@@ -277,17 +280,30 @@ mod tests {
     /// nothing means the retained name still carries `..` segments into the
     /// open, so this is a confinement invariant, not formatting.
     ///
-    /// `sanitize_path` additionally strips the leading `/` (that is the
-    /// `sanitize_path`-vs-`clean_fname` difference, not a collapse difference),
-    /// so the absolute row's expectation is de-anchored before comparison.
+    /// This test pins WHICH component a `..` consumes. The two functions differ
+    /// in two ways that are not collapse differences, so both are normalised
+    /// out before comparison:
+    ///
+    /// 1. `sanitize_path` strips the leading `/`, so the absolute row's
+    ///    expectation is de-anchored.
+    /// 2. After backing up, upstream's `clean_fname` resets `t` to the prior
+    ///    component's first character while `sanitize_path` rewinds `sanp` to
+    ///    just past the preceding separator - so `d/e/..` is `d` through the
+    ///    first and `d/` through the second. The trailing separator is pinned
+    ///    on its own by `trailing_slash_preserved` and
+    ///    `dotdot_with_trailing_slash`; keeping it out of this comparison is
+    ///    what lets the table stay shared.
+    ///
     /// The table is shared (`test_support::COLLAPSE_CASES`) so a new edge case
     /// is one row and reaches every oc-rsync copy of this rule at once.
     // upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS; t_clean_fname.c
     #[test]
     fn upstream_collapse_cases_consume_the_preceding_component() {
         for (input, expected) in test_support::COLLAPSE_CASES {
+            let collapsed = sanitize_path(input);
+            let consumed = collapsed.strip_suffix('/').unwrap_or(&collapsed);
             assert_eq!(
-                sanitize_path(input),
+                consumed,
                 expected.trim_start_matches('/'),
                 "clean_fname collapse case {input:?}"
             );
@@ -296,7 +312,7 @@ mod tests {
 
     #[test]
     fn dotdot_at_end_collapses() {
-        assert_eq!(sanitize_path("a/b/.."), "a");
+        assert_eq!(sanitize_path("a/b/.."), "a/");
     }
 
     #[test]
@@ -384,7 +400,9 @@ mod tests {
 
     #[test]
     fn dotdot_with_trailing_slash() {
-        assert_eq!(sanitize_path("a/b/../"), "a");
+        // Backing out `b/` leaves the slash that terminated `a`, matching
+        // upstream, which rewinds `sanp` to just past the previous separator.
+        assert_eq!(sanitize_path("a/b/../"), "a/");
     }
 
     #[test]

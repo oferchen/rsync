@@ -34,6 +34,46 @@ fn entry_contains_dot_marker(operand: &OsStr) -> bool {
     }
 }
 
+/// Clamps one `--files-from` entry to the transfer root.
+///
+/// Delegates to the shared [`filters::sanitize_path`] rule rather than
+/// re-deriving it: the daemon applies the same clamp to peer-requested module
+/// paths and the transfer generator applies it to names arriving over the wire,
+/// and a second implementation here would be free to drift from those.
+///
+/// Note this is the `sanitize_path` dialect, not the `clean_fname` one that
+/// `filters::clean_fname::collapse_dot_dot_dirs` provides. They disagree on
+/// exactly the input that matters here: `clean_fname` KEEPS a leading `..` it
+/// cannot consume, `sanitize_path` DROPS it once the depth budget (0) is spent.
+/// Using the collapse helper would leave the `..` in place and be inert.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2571` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)` on
+///   every line read from `filesfrom_fd`.
+fn clamp_files_from_entry(entry: &OsStr) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        // The byte entry point keeps a non-UTF-8 filename intact; upstream
+        // carries the name as a raw `char *` and never transcodes it here.
+        OsString::from_vec(filters::sanitize_path::sanitize_path_keep_dot_dirs_bytes(
+            entry.as_bytes(),
+        ))
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Windows paths are UTF-16 and have no byte-oriented `OsStr` view, so
+        // this arm necessarily goes through `str`. That matches how the rest of
+        // this module already handles non-Unix operands (see
+        // `entry_contains_dot_marker`).
+        OsString::from(filters::sanitize_path::sanitize_path_keep_dot_dirs(
+            &entry.to_string_lossy(),
+        ))
+    }
+}
+
 /// Resolves file list entries against the source base directory.
 ///
 /// When `files_from_active` is true, entries are joined with a `./` marker
@@ -93,12 +133,39 @@ pub(crate) fn resolve_file_list_entries(
             continue;
         }
 
-        let entry_path = Path::new(entry);
-        if entry_path.is_absolute() {
+        // An absolute entry is only left alone on the legacy (non-files-from)
+        // path. `sanitize_path` strips a leading `/` itself, so bailing out
+        // here would make the clamp unreachable for exactly the entries that
+        // most need it - upstream takes `/file` as relative to the transfer
+        // root, not as a filesystem-absolute path (flist.c:2571 via
+        // `util1.c`, which skips one leading slash before walking components).
+        if !files_from_active && Path::new(entry).is_absolute() {
             continue;
         }
 
         if files_from_active {
+            // upstream: flist.c:2571 - `sanitize_path(fbuf, fbuf, "", 0,
+            // SP_KEEP_DOT_DIRS)` is applied UNCONDITIONALLY to every line read
+            // from the files-from fd, before the name is joined onto argv[0].
+            // The neighbouring argv arm at :2576 makes the same call but gates
+            // it on `sanitize_paths`, and that asymmetry is the point: a line
+            // out of a files-from file is supplied by the file, an argv operand
+            // is supplied by the operator. Every entry reaching here came from
+            // `load_file_list_operands`, i.e. upstream's `use_ff_fd` arm, so it
+            // takes the unconditional clamp.
+            //
+            // Without it a `../x` entry survives into the join and the
+            // resulting `base/./../x` addresses a file outside the transfer
+            // root: the confinement layer then refuses the write, but only
+            // after upstream would already have retargeted the name, so a
+            // legitimate clamped entry fails to transfer and the refusal
+            // reports ELOOP instead of naming the real cause.
+            //
+            // `SP_KEEP_DOT_DIRS` preserves an entry's own `./` marker so the
+            // split below still sees it (see `entry_contains_dot_marker`).
+            let clamped = clamp_files_from_entry(entry);
+            let entry_path = Path::new(&clamped);
+
             // upstream: flist.c:2316-2318 - when relative_paths is set and a
             // file list entry contains "/./", upstream splits the entry at that
             // marker: the portion before becomes a chdir prefix (relative to
@@ -110,7 +177,7 @@ pub(crate) fn resolve_file_list_entries(
             // second "./" would create base/./from/./dir/file which makes the
             // engine split at the first marker, incorrectly keeping "from/" in
             // the destination path.
-            if entry_contains_dot_marker(entry.as_os_str()) {
+            if entry_contains_dot_marker(clamped.as_os_str()) {
                 let mut combined = base_path.to_path_buf();
                 combined.push(entry_path);
                 *entry = combined.into_os_string();
@@ -122,7 +189,7 @@ pub(crate) fn resolve_file_list_entries(
             }
         } else {
             let mut combined = base_path.to_path_buf();
-            combined.push(entry_path);
+            combined.push(Path::new(entry));
             *entry = combined.into_os_string();
         }
     }

@@ -145,7 +145,7 @@ file-to-file-mkpath-dry-run pass
 files-from pass
 files-from-depth pass
 files-from-leak fail
-files-from-path-clamp fail
+files-from-path-clamp pass
 filter-depth pass
 filter-leak fail
 filter-merge-content-echo fail
