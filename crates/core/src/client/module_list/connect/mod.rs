@@ -558,7 +558,7 @@ impl DaemonStream {
                 Ok((
                     DaemonStreamReader::Program(parts.reader),
                     DaemonStreamWriter::Program(parts.writer),
-                    DaemonStreamGuard::Child(parts.child),
+                    DaemonStreamGuard::Child(Some(parts.child)),
                 ))
             }
             // The QUIC read and write handles are cheap clones over one
@@ -600,26 +600,52 @@ impl DaemonStream {
 
 /// Ownership guard for resources backing a split [`DaemonStream`].
 ///
-/// For connect programs, this holds the `Child` process handle and
-/// kills/reaps it on drop. For TCP streams, no guard is needed.
+/// For connect programs, this owns the `Child` process handle. For TCP
+/// streams, no guard is needed.
 pub(crate) enum DaemonStreamGuard {
     /// No resource to guard (TCP).
     None,
-    /// Owns a connect program child process.
-    Child(std::process::Child),
+    /// Owns a connect program child process; `None` once [`Self::finish`] reaped it.
+    Child(Option<std::process::Child>),
     /// Owns the QUIC connection teardown (flush + FIN + graceful close on drop).
     #[cfg(feature = "quic")]
     Quic(rsync_io::quic::QuicShutdown),
+}
+
+impl DaemonStreamGuard {
+    /// Waits for a connect program child to exit on its own.
+    ///
+    /// The caller must drop both stream halves first: closing them is what
+    /// gives the child EOF, and the child does the rest of its work - a daemon
+    /// reached through `RSYNC_CONNECT_PROG` runs its `post-xfer exec` hook
+    /// after the last transfer byte - before exiting.
+    ///
+    /// upstream: socket.c:1046 `sock_exec()` forks the connect program and
+    /// never signals it; the child ends when the socket closes.
+    pub(crate) fn finish(mut self) {
+        if let Self::Child(child) = &mut self {
+            if let Some(mut child) = child.take() {
+                let _ = child.wait();
+            }
+        }
+    }
 }
 
 impl Drop for DaemonStreamGuard {
     fn drop(&mut self) {
         match self {
             Self::None => {}
-            Self::Child(child) => {
-                let _ = child.kill();
+            // Safety net for abnormal control flow (early return, panic) that
+            // never reached `finish`. The halves may still be open here, so the
+            // child cannot be waited for; kill it rather than block. Mirrors
+            // `SshChildHandle::drop`.
+            Self::Child(Some(child)) => {
+                if let Ok(None) = child.try_wait() {
+                    let _ = child.kill();
+                }
                 let _ = child.wait();
             }
+            Self::Child(None) => {}
             // The QUIC teardown (flush + FIN + graceful close) runs when the
             // held `QuicShutdown` drops right after this body; nothing to do
             // here beyond keeping ownership until now.
