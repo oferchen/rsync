@@ -352,6 +352,40 @@ fn handle_access_denied_post_handshake(
     )
 }
 
+/// Rejects a post-`@RSYNCD: OK` client-argument parse failure through the
+/// multiplexed error path.
+///
+/// upstream: clientserver.c:1258-1266 - when `parse_arguments()` returns 0 (or
+/// leaves a deferred `err_msg`), `rsync_module()` runs `option_error()`, which
+/// emits the parser's own `err_buf` text over `FERROR`
+/// (options.c:915 `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`), and then
+/// `exit_cleanup(RERR_UNSUPPORTED)`. Both writes happen *after* the
+/// `setup_protocol()` + `io_start_multiplex_out()` pair at
+/// clientserver.c:1229-1251, which upstream performs precisely so "we can get
+/// the error back to the client".
+///
+/// Delivering this rejection with [`send_error`] instead put raw `@ERROR:`
+/// text on a stream the client had already switched to multiplex input,
+/// leaving it to decode the plaintext as a frame header: the daemon's
+/// diagnostic was replaced on the client by
+/// `unknown multiplexed message code 38` (the `-` of `--max-size` at the tag
+/// position, minus `MPLEX_BASE = 7`), so the operator never learned which
+/// option was rejected.
+fn handle_client_arg_rejection_post_handshake(
+    ctx: &mut ModuleRequestContext<'_>,
+    payload: &str,
+    protocol_version: Option<ProtocolVersion>,
+    client_args: &[String],
+) -> io::Result<()> {
+    finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
+    send_multiplexed_error_and_exit(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        payload,
+        RERR_UNSUPPORTED_EXIT_CODE,
+    )
+}
+
 /// Mirrors the prefix of upstream's `setup_protocol(f_out, f_in)` that the
 /// daemon writes before turning on `io_start_multiplex_out()` for an error
 /// it needs to deliver after `@RSYNCD: OK`.
