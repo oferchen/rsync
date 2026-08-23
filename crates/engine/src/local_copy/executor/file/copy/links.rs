@@ -639,66 +639,87 @@ pub(super) fn process_links(
                 // destination. Compare source against the basis with
                 // `destination_previously_existed = true` so identical files
                 // stay blank.
-                context.summary_mut().record_regular_file_matched();
-                let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
-                    LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
-                })?;
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-                    .virtualize_fake_super(source, metadata_options.fake_super_enabled());
-                let total_bytes = Some(metadata_snapshot.len());
-                let change_set = LocalCopyChangeSet::for_file(
-                    metadata,
-                    Some(&basis_metadata),
-                    &metadata_options,
-                    true,
-                    false,
-                    {
-                        #[cfg(all(unix, feature = "xattr"))]
+                //
+                // upstream: generator.c:1115-1119 - the `find_exact_for_existing`
+                // unlink sits ABOVE the `alt_dest_type == LINK_DEST` branch, so an
+                // exact (match_level 3) basis clears a pre-existing destination for
+                // `--compare-dest` too, not only for `--link-dest`. That is the
+                // point of `--compare-dest`: the file lives in the reference tree,
+                // so the destination keeps only what differs, and leaving a
+                // redundant copy behind would defeat it. `find_exact_for_existing`
+                // is `statret == 0` at the call site (generator.c:2156) - i.e.
+                // exactly "the destination already exists".
+                //
+                // upstream: generator.c:1119 `goto got_nothing_for_ya` - a failed
+                // unlink (other than ENOENT, which `remove_existing_destination`
+                // already tolerates) abandons the basis match entirely, so the file
+                // transfers normally instead of being reported up to date over a
+                // destination that is still sitting there. Falling out of this arm
+                // without a `copy_source_override` is exactly that outcome.
+                let destination_cleared =
+                    existing_metadata.is_none() || remove_existing_destination(destination).is_ok();
+                if destination_cleared {
+                    context.summary_mut().record_regular_file_matched();
+                    let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
+                        LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
+                    })?;
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+                    let total_bytes = Some(metadata_snapshot.len());
+                    let change_set = LocalCopyChangeSet::for_file(
+                        metadata,
+                        Some(&basis_metadata),
+                        &metadata_options,
+                        true,
+                        false,
                         {
-                            preserve_xattrs
-                        }
-                        #[cfg(not(all(unix, feature = "xattr")))]
+                            #[cfg(all(unix, feature = "xattr"))]
+                            {
+                                preserve_xattrs
+                            }
+                            #[cfg(not(all(unix, feature = "xattr")))]
+                            {
+                                false
+                            }
+                        },
                         {
-                            false
-                        }
-                    },
-                    {
-                        #[cfg(all(any(unix, windows), feature = "acl"))]
-                        {
-                            preserve_acls
-                        }
-                        #[cfg(not(all(any(unix, windows), feature = "acl")))]
-                        {
-                            false
-                        }
-                    },
-                    context.options().modify_window(),
-                );
-                context.record(
-                    LocalCopyRecord::new(
-                        record_path.to_path_buf(),
-                        LocalCopyAction::MetadataReused,
-                        0,
-                        total_bytes,
-                        Duration::default(),
-                        Some(metadata_snapshot),
-                    )
-                    .with_change_set(change_set),
-                );
-                context.register_progress();
-                remove_source_entry_if_requested(
-                    context,
-                    source,
-                    destination,
-                    metadata,
-                    Some(record_path),
-                    file_type,
-                )?;
-                return Ok(LinkOutcome {
-                    copy_source_override: None,
-                    reference_basis: None,
-                    completed: true,
-                });
+                            #[cfg(all(any(unix, windows), feature = "acl"))]
+                            {
+                                preserve_acls
+                            }
+                            #[cfg(not(all(any(unix, windows), feature = "acl")))]
+                            {
+                                false
+                            }
+                        },
+                        context.options().modify_window(),
+                    );
+                    context.record(
+                        LocalCopyRecord::new(
+                            record_path.to_path_buf(),
+                            LocalCopyAction::MetadataReused,
+                            0,
+                            total_bytes,
+                            Duration::default(),
+                            Some(metadata_snapshot),
+                        )
+                        .with_change_set(change_set),
+                    );
+                    context.register_progress();
+                    remove_source_entry_if_requested(
+                        context,
+                        source,
+                        destination,
+                        metadata,
+                        Some(record_path),
+                        file_type,
+                    )?;
+                    return Ok(LinkOutcome {
+                        copy_source_override: None,
+                        reference_basis: None,
+                        completed: true,
+                    });
+                }
             }
             ReferenceDecision::Copy(path) => {
                 // upstream: generator.c:1033-1039 - copy_altdest_file() copies
