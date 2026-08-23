@@ -4,6 +4,8 @@
 //! modification, enabling callers to query which metadata attributes
 //! will be preserved during a transfer.
 
+use std::path::Path;
+
 use crate::chmod::ChmodModifiers;
 use crate::{GroupMapping, UserMapping};
 
@@ -163,5 +165,70 @@ impl MetadataOptions {
             || self.owner_override.is_some()
             || self.group_override.is_some()
             || self.chmod.is_some()
+    }
+
+    /// Whether a path-based metadata apply may resolve a symlinked parent
+    /// instead of being refused by the dirfd-anchored walk in
+    /// `fast_io::secure_*_at`.
+    ///
+    /// Two upstream reasons, either sufficient on its own:
+    ///
+    /// - `--keep-dirlinks`: the operator opted into following dest-side
+    ///   symlinked directories (`generator.c:1356`,
+    ///   `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`).
+    /// - The entry sits directly under the operator-named destination root and
+    ///   that root is a symlink the operator owns. Upstream never meets this
+    ///   case at all: it resolves the destination once up front (`main.c:765`
+    ///   `change_dir`), so every later syscall sees a real directory -
+    ///   `do_lchown` is a bare `lchown(2)` with no sandbox of any kind.
+    ///
+    /// Only the immediate parent is consulted, because that is the entire
+    /// horizon of the walk: it inspects the entry and its parent, never the
+    /// grandparent, so an entry deeper than one level never sees the root as a
+    /// path component.
+    ///
+    /// oc is deliberately STRICTER than upstream here. For a non-daemon
+    /// receiver upstream's `change_dir` is a plain `chdir` with no ownership
+    /// test at all; it walks with `open_no_attacker_symlinks` only when
+    /// `am_daemon && !am_chrooted`. oc applies that walk's uid rule - trust
+    /// only uid 0 or our euid - on every path, so a destination root raced in
+    /// by another uid stays refused where upstream would follow it.
+    pub(crate) fn resolves_symlinked_parent(&self, destination: &Path) -> bool {
+        self.keep_dirlinks() || self.parent_is_owned_destination_root(destination)
+    }
+
+    /// Whether `destination`'s immediate parent is the operator-named
+    /// destination root and that root is a symlink the operator owns.
+    ///
+    /// upstream: `syscall.c:406` - the `ona_open` component walk follows a
+    /// symlink only when its `st_uid` is 0 or our euid.
+    #[cfg(unix)]
+    fn parent_is_owned_destination_root(&self, destination: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+
+        let Some(root) = self.destination_root.as_deref() else {
+            return false;
+        };
+        // The operator's destination argument usually keeps its trailing slash
+        // (`dst/`), and that slash is load-bearing twice over: `Path::parent`
+        // never produces one, and `lstat("sym/")` resolves THROUGH the symlink
+        // because a trailing slash demands a directory - so the raw form would
+        // both miss the comparison and report the target instead of the link.
+        // `components().as_path()` drops it once for both uses.
+        let root = root.components().as_path();
+        if destination.parent() != Some(root) {
+            return false;
+        }
+        let Ok(metadata) = std::fs::symlink_metadata(root) else {
+            return false;
+        };
+        metadata.file_type().is_symlink() && fast_io::symlink_owner_is_trusted(metadata.uid())
+    }
+
+    /// Non-Unix has no uid to consult, so the root is never treated as
+    /// operator-owned and every path stays confined.
+    #[cfg(not(unix))]
+    fn parent_is_owned_destination_root(&self, _destination: &Path) -> bool {
+        false
     }
 }

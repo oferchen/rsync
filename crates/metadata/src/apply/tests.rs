@@ -2343,6 +2343,64 @@ fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
     );
 }
 
+/// The operator-named destination ROOT is followed even without
+/// `--keep-dirlinks`.
+///
+/// upstream: `main.c:765` resolves the destination exactly once via
+/// `change_dir(dest_path, CD_NORMAL)` - a plain `chdir` for a non-daemon
+/// receiver - and then works relative to it, so the root never reappears as a
+/// path component and the per-entry syscalls always meet a real directory
+/// (`do_lchown` is a bare `lchown(2)` with no sandbox at all). oc keeps
+/// absolute paths, so without this the root re-enters the dirfd walk on every
+/// entry and is refused.
+///
+/// This is the exact companion of
+/// `keep_dirlinks_bypasses_secure_chmod_sandbox` above, which pins the other
+/// half of the rule: a symlink that is a CHILD of the destination root stays
+/// refused. Only the root itself is operator-named, so only the root is
+/// trusted.
+#[cfg(unix)]
+#[test]
+fn operator_destination_root_symlink_is_followed_without_keep_dirlinks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let real = temp.path().join("real");
+    fs::create_dir(&real).expect("create real");
+
+    // The operator's destination argument IS the symlink.
+    let dest_root = temp.path().join("backup");
+    std::os::unix::fs::symlink(&real, &dest_root).expect("symlink dest root");
+
+    let source = temp.path().join("a.txt");
+    fs::write(&source, b"alpha").expect("write source");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o644)).expect("source mode");
+
+    // Directly under the root - the only depth the two-level walk inspects.
+    let dest_file = dest_root.join("a.txt");
+    fs::write(&dest_file, b"alpha").expect("write dest through the root symlink");
+    fs::set_permissions(&dest_file, PermissionsExt::from_mode(0o600)).expect("dest mode");
+
+    let source_meta = fs::metadata(&source).expect("stat source");
+    let options = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(false)
+        .with_destination_root(Some(dest_root.clone()));
+
+    apply_file_metadata_with_options(&dest_file, &source_meta, &options)
+        .expect("the operator's own destination root must be followed");
+
+    let landed_mode = fs::metadata(real.join("a.txt"))
+        .expect("stat real/a.txt")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(
+        landed_mode, 0o644,
+        "the chmod must land through the root symlink on real/a.txt (got {landed_mode:o})",
+    );
+}
+
 // KDL.7.1 cross-platform regression: `--keep-dirlinks` must succeed through a
 // symlinked destination directory on every supported platform. Pins the
 // guarantee from PR #5793 (macOS chmod bypass), PRs #5798/#5799 (extended to

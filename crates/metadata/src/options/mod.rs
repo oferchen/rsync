@@ -14,6 +14,8 @@ mod tests;
 
 pub use attrs_flags::AttrsFlags;
 
+use std::path::PathBuf;
+
 use crate::chmod::ChmodModifiers;
 use crate::{GroupMapping, UserMapping};
 
@@ -49,6 +51,21 @@ pub struct MetadataOptions {
     /// is incompatible with `secure_open_dir`'s ELOOP/ENOTDIR rejection of
     /// symlinked parents.
     pub(crate) keep_dirlinks: bool,
+    /// The operator-named destination root, when the caller knows it.
+    ///
+    /// Upstream resolves the destination exactly once, before any entry is
+    /// touched: `main.c:765` calls `change_dir(dest_path, CD_NORMAL)`. For a
+    /// non-daemon receiver that is a plain `chdir`; for a daemon it walks the
+    /// path with `open_no_attacker_symlinks` and `fchdir`s the result
+    /// (`util1.c` `change_dir`). Either way the root never reappears as a path
+    /// component, so the per-entry syscalls - `do_lchown` is a bare
+    /// `lchown(2)` - always see a real directory.
+    ///
+    /// oc keeps absolute paths instead, so a symlinked root re-enters the
+    /// dirfd-anchored walk on every entry. Recording it here lets
+    /// `resolves_symlinked_parent` restore upstream's outcome without widening
+    /// the walk for anything below the root.
+    pub(crate) destination_root: Option<PathBuf>,
 }
 
 impl MetadataOptions {
@@ -75,6 +92,7 @@ impl MetadataOptions {
             group_mapping: None,
             destination_is_new: false,
             keep_dirlinks: false,
+            destination_root: None,
         }
     }
 }

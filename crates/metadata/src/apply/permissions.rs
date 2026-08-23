@@ -698,7 +698,7 @@ fn chmod_path_honoring_keep_dirlinks(
     options: &MetadataOptions,
     action: &'static str,
 ) -> Result<(), MetadataError> {
-    if options.keep_dirlinks() {
+    if options.resolves_symlinked_parent(destination) {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(destination, fs::Permissions::from_mode(mode))
             .map_err(|error| MetadataError::new(action, destination, error))?;
