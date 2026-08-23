@@ -114,7 +114,7 @@ daemon-refuse-delete-alias pass
 daemon-scan-cwd-desync pass
 daemon-scan-dir-escape pass
 daemon-secrets-file-symlink skip
-daemon-size-arg-overflow fail
+daemon-size-arg-overflow pass
 daemon-standalone-detach skip
 daemon-strict-modes-matrix fail
 daemon-subdir-climb-symlink pass
