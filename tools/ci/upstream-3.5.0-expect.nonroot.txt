@@ -116,7 +116,7 @@ daemon-scan-dir-escape pass
 daemon-secrets-file-symlink skip
 daemon-size-arg-overflow pass
 daemon-standalone-detach skip
-daemon-strict-modes-matrix fail
+daemon-strict-modes-matrix pass
 daemon-subdir-climb-symlink pass
 daemon-symlink-escape-matrix skip
 daemon-unix-socket-atfd pass
