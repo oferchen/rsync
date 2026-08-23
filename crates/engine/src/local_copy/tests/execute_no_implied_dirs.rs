@@ -646,3 +646,96 @@ fn mkpath_creates_missing_dest_arg_parent() {
     assert_eq!(fs::read(&destination).expect("read"), b"content");
     assert_eq!(summary.files_copied(), 1);
 }
+
+/// Builds `dest/` holding `path` as a symlink to a real sibling directory, and
+/// the `src/./path/file` operand that targets it.
+#[cfg(unix)]
+fn dest_with_symlinked_path_element(temp: &Path, name: &str) -> (OsString, PathBuf) {
+    let source_root = temp.join(format!("{name}-src"));
+    let listed = source_root.join("path");
+    fs::create_dir_all(&listed).expect("create source path dir");
+    fs::write(listed.join("file"), b"NEW\n").expect("write source file");
+
+    let dest_root = temp.join(format!("{name}-dest"));
+    fs::create_dir_all(dest_root.join("real")).expect("create real dest dir");
+    std::os::unix::fs::symlink("real", dest_root.join("path")).expect("plant dest symlink");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push("/./");
+    source_operand.push("path/file");
+    (source_operand, dest_root)
+}
+
+/// `--relative --no-implied-dirs` FOLLOWS an existing destination symlink used
+/// as a path element, so the write is redirected through it.
+///
+/// upstream: `generator.c:1718-1719` gates the on-demand `make_path()` on
+/// `do_stat_at(dn, &sx.st) < 0` - a FOLLOW-stat. A parent that already resolves
+/// to a directory makes that arm dead, leaving the symlink in place, and the
+/// later open of `path/file` traverses it. rsync(1) documents the consequence
+/// under `--no-implied-dirs`: the receiver "updates path/foo/file using the
+/// existing path elements, which means that the file ends up being created in
+/// path/bar".
+#[cfg(unix)]
+#[test]
+fn no_implied_dirs_follows_an_existing_dest_symlink_path_element() {
+    let temp = tempdir().expect("tempdir");
+    let (source_operand, dest_root) = dest_with_symlinked_path_element(temp.path(), "follow");
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .relative_paths(true)
+        .implied_dirs(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("--no-implied-dirs follows the existing dest symlink");
+
+    assert!(
+        dest_root.join("path").symlink_metadata().expect("stat path").file_type().is_symlink(),
+        "--no-implied-dirs must KEEP the dest symlink, not replace it"
+    );
+    let through = dest_root.join("real").join("file");
+    assert_eq!(
+        fs::read(&through).expect("read through the symlink"),
+        b"NEW\n",
+        "the write must be redirected through the kept symlink into real/"
+    );
+}
+
+/// Non-vacuity companion, and the guard on the trap: with implied dirs (the
+/// default) the SAME fixture must still delete the symlink and recreate it as a
+/// real directory. Without this, a fix that simply followed every symlinked
+/// path element would also pass the test above.
+///
+/// upstream: `generator.c:1840-1842` - the implied parent arrives as its own
+/// file-list entry, finds a non-directory in its place, and takes the
+/// unconditional `delete_item(.., DEL_FOR_DIR)`.
+#[cfg(unix)]
+#[test]
+fn implied_dirs_replaces_the_same_dest_symlink_with_a_real_directory() {
+    let temp = tempdir().expect("tempdir");
+    let (source_operand, dest_root) = dest_with_symlinked_path_element(temp.path(), "replace");
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().relative_paths(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("default implied dirs recreates the path element");
+
+    let planted = dest_root.join("path");
+    assert!(
+        !planted.symlink_metadata().expect("stat path").file_type().is_symlink(),
+        "the default must REPLACE the dest symlink with a real directory"
+    );
+    assert_eq!(
+        fs::read(planted.join("file")).expect("read the recreated dir"),
+        b"NEW\n",
+        "the file must land in the recreated real directory"
+    );
+    assert!(
+        !dest_root.join("real").join("file").exists(),
+        "nothing may be written through the replaced symlink"
+    );
+}
