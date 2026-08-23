@@ -1633,3 +1633,212 @@ fn link_dest_links_special_when_the_destination_accepts_it() {
         "an accepted link must share the basis inode"
     );
 }
+
+// An alt-dest arg naming something that is NOT a directory must degrade to a
+// normal transfer, not fail the run.
+//
+// upstream: main.c:867 check_alt_basis_dirs() warns `%s arg is not a dir: %s`
+// (main.c:903) and keeps going, and every basis_link_stat() caller in
+// generator.c (:1084, :1110, :1227, :1254) treats ANY stat failure as "no
+// candidate here". Joining a non-directory basis with the relative name yields
+// ENOTDIR, which is not NotFound - oc used to surface that as a fatal
+// LocalCopyError and abort the whole transfer, so a stale --link-dest pointing
+// at a file destroyed the run instead of merely losing the hard-link
+// optimisation.
+//
+// `link_dest_hardlinks_identical_file` above is the non-vacuity companion:
+// it proves this same fixture shape DOES hard-link when the basis really is a
+// directory, so a green result here cannot come from a basis that could never
+// have matched anyway.
+
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_the_transfer() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"content").expect("write source");
+
+    // The alt-dest arg is a regular FILE, not a directory.
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .extend_link_dests([basis]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail the transfer");
+
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"content");
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.hard_links_created(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_symlink_transfer() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    std::os::unix::fs::symlink("target", source_dir.join("link")).expect("symlink");
+
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .extend_link_dests([basis]);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail a symlink transfer");
+
+    let copied = fs::read_link(dest_dir.join("link")).expect("destination symlink");
+    assert_eq!(copied, std::path::Path::new("target"));
+}
+
+#[cfg(unix)]
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_special_transfer() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    mkfifo_for_tests(&source_dir.join("node"), 0o600).expect("mkfifo");
+
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .specials(true)
+        .extend_link_dests([basis]);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail a special-file transfer");
+
+    let created = fs::symlink_metadata(dest_dir.join("node")).expect("destination entry");
+    assert!(created.file_type().is_fifo(), "the fifo must be recreated");
+}
+
+// The RECURSIVE regular-file path resolves alt-dest candidates through
+// `executor::reference::…`, a different scan from the single-file
+// `link_dest_target` above. It carried its own copy of the same fatal-on-
+// ENOTDIR arm, so the pin above passed while a real `-r` transfer still
+// aborted. Both callers need their own cell.
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_recursive_transfer() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::write(source_dir.join("file.txt"), b"content").expect("write source");
+
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // `extend_reference_directories`, NOT `extend_link_dests`: they populate two
+    // different lists consulted by two different scans. `link_dest_entries()`
+    // drives `link_dest_target` (step 1); `reference_directories()` drives
+    // `executor::reference::find_reference_action` (step 3), which carries its
+    // OWN copy of the same stat arm. A real `--link-dest` invocation populates
+    // the reference list, so only this shape reaches the second site.
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            basis,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail a recursive transfer");
+
+    assert_eq!(
+        fs::read(dest_dir.join("file.txt")).expect("read dest"),
+        b"content",
+        "the file must still be transferred"
+    );
+    assert_eq!(summary.hard_links_created(), 0);
+}
+
+/// upstream: generator.c:1227 try_dests_non() - a directory entry consults the
+/// basis through the same `basis_link_stat(..) < 0 || .. continue` arm, so a
+/// non-directory basis must be skipped rather than abort the run.
+///
+/// This is a FIFTH candidate-stat site, distinct from the four the regular /
+/// symlink / special / recursive-file pins cover: `find_copy_dest_basis` serves
+/// the DIRECTORY lookup. A source tree carrying a subdirectory is what reaches
+/// it - a flat source never emits a directory entry, which is why the
+/// recursive-file pin above stayed green while `oc-rsync -a src/ dst/` against
+/// a plain-file basis still exited 23 with `NotADirectory (20)`.
+#[test]
+fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_directory_entry() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let nested = source_dir.join("nested");
+    fs::create_dir_all(&nested).expect("create source");
+    fs::write(nested.join("file.txt"), b"content").expect("write source");
+
+    let basis = temp.path().join("basis");
+    fs::write(&basis, b"not a directory").expect("write basis file");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            basis,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("a non-directory link-dest must not fail a directory entry");
+
+    assert_eq!(
+        fs::read(dest_dir.join("nested").join("file.txt")).expect("read dest"),
+        b"content",
+        "the nested file must still be transferred"
+    );
+    assert_eq!(summary.hard_links_created(), 0);
+}
