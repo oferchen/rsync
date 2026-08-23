@@ -1,6 +1,7 @@
 //! Handling of reference directories and link-dest decisions.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use ::metadata::MetadataOptions;
@@ -44,6 +45,48 @@ pub(crate) fn resolve_reference_candidate(
     }
 }
 
+/// `lstat`s an alt-dest basis candidate with its parent resolved by the
+/// ownership walk, mirroring upstream's `basis_link_stat()`.
+///
+/// A `--link-dest` / `--copy-dest` / `--compare-dest` argument is an
+/// operator-supplied path, so it may legitimately point outside the transfer
+/// tree and location cannot be the trust signal. Authority is: a symlink
+/// component owned by uid 0 or our euid is the operator's own layout and is
+/// followed; any other owner is refused. Without that, an unprivileged user who
+/// controls a directory anywhere along the basis path can swap a component for a
+/// symlink and redirect the stat - and then the hard link, the copy, or the
+/// `--compare-dest` skip - at a file of their choosing.
+///
+/// A refusal is reported as "no basis here", which is upstream's outcome too:
+/// `basis_link_stat()` returns `-1` and every call site turns that into a
+/// `continue`, so the file transfers normally instead of being linked, copied or
+/// skipped through an attacker's symlink.
+///
+/// Local copy has no daemon arm. Upstream selects the plain `link_stat()`
+/// fall-through on `am_daemon` (generator.c:1010), whose confinement comes from
+/// the module resolver instead; a local copy is never a daemon worker, so the
+/// ownership walk is the only reachable arm here.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - the non-daemon arm:
+///   `owner_walk_parent()` then `link_stat_at()` on the leaf.
+/// - `rsync-3.5.0/generator.c:1084` / `:1110` / `:1227` / `:1254` - its call
+///   sites in `try_dests_reg()` and `try_dests_non()`.
+#[cfg(unix)]
+fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
+    fast_io::operator_symlink_metadata(path)
+}
+
+/// Non-Unix fallback: the ownership walk is a dirfd construction with no Windows
+/// analogue, so the basis is stat'd by path. `symlink_metadata` still refuses to
+/// follow a symlink at the leaf, which keeps a symlinked basis entry from being
+/// consumed; only the parent components are unguarded.
+#[cfg(not(unix))]
+fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
+    fs::symlink_metadata(path)
+}
+
 /// Parameters for finding a matching file in reference directories.
 pub(crate) struct ReferenceQuery<'a> {
     pub(crate) destination: &'a Path,
@@ -84,7 +127,7 @@ pub(crate) fn reference_attrs_unchanged(
     options: &MetadataOptions,
     preserve_xattrs: bool,
 ) -> bool {
-    let Ok(basis_meta) = fs::symlink_metadata(basis) else {
+    let Ok(basis_meta) = basis_stat(basis) else {
         return false;
     };
 
@@ -201,7 +244,7 @@ pub(crate) fn find_reference_action(
         // or is not a directory has already been reported once by
         // check_alt_basis_dirs() (main.c:867); aborting the transfer on the
         // resulting ENOTDIR would fail a run upstream completes normally.
-        let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+        let Ok(candidate_metadata) = basis_stat(&candidate) else {
             continue;
         };
 
@@ -333,7 +376,7 @@ fn find_reference_symlink(
         // this basis dir", not just ENOENT, exactly as the regular-file lookup
         // above already treats it. An alt-dest arg that is not a directory yields
         // ENOTDIR here, and aborting on it would fail a run upstream completes.
-        let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+        let Ok(candidate_metadata) = basis_stat(&candidate) else {
             continue;
         };
         if !candidate_metadata.file_type().is_symlink() {
@@ -382,7 +425,7 @@ pub(crate) fn find_copy_dest_basis(
         // alt-dest arg naming a plain file yields ENOTDIR here on the very first
         // entry; aborting would fail a run upstream completes normally, having
         // merely warned once from check_alt_basis_dirs().
-        let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+        let Ok(candidate_metadata) = basis_stat(&candidate) else {
             continue;
         };
         if candidate_metadata.file_type().is_dir() {

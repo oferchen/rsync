@@ -513,6 +513,58 @@ pub fn operator_read_to_string(path: &Path) -> io::Result<String> {
     Ok(contents)
 }
 
+/// `lstat`s an operator-supplied path with its parent resolved by the ownership
+/// walk, so a foreign-owned symlink among the parent components cannot redirect
+/// the stat.
+///
+/// Only the parent is walked. The leaf is `fstatat`'d with
+/// `AT_SYMLINK_NOFOLLOW`, never opened and never resolved: a symlink sitting at
+/// the leaf must report *as a symlink* so a caller's file-type filter can drop
+/// it, even when the link is trusted-owned. Opening the leaf instead would both
+/// follow that symlink and demand read permission the caller may not need.
+///
+/// The returned [`std::fs::Metadata`] comes from a second, path-based stat, so
+/// callers keep the `std` type their comparisons are written against. It is
+/// accepted only when it names the same `(dev, ino)` the confined stat saw: a
+/// parent flipped between the two calls lands on a different inode and is
+/// refused, which is what makes the path stat safe to use as the carrier.
+///
+/// Callers are expected to treat any error as "nothing here" - upstream's
+/// `basis_link_stat()` returns `-1` on a refused walk, and every one of its call
+/// sites turns that into a `continue`, so a redirected basis simply looks absent
+/// and the file transfers normally.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - `owner_walk_parent()`
+///   for the parent components, then `link_stat_at()` on the leaf through the
+///   returned descriptor.
+/// - `rsync-3.5.0/generator.c:1084` / `:1110` / `:1227` / `:1254` - the call
+///   sites, each treating a failure as "no candidate in this basis dir".
+///
+/// # Errors
+///
+/// Surfaces the walk's `ELOOP` when a parent component is a symlink owned by
+/// neither uid 0 nor our euid, any other error the walk reports (see
+/// [`owner_trusted_parent`]), the `fstatat` error for a missing or unreadable
+/// leaf, and `io::ErrorKind::NotFound` when the path-based stat disagrees with
+/// the confined one about which inode the leaf names.
+pub fn operator_symlink_metadata(path: &Path) -> io::Result<std::fs::Metadata> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let (parent, leaf) = owner_trusted_parent(path)?;
+    let confined = crate::fstatat_nofollow(parent.as_fd(), &leaf)?;
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.dev() == confined.dev() && meta.ino() == confined.ino() {
+        Ok(meta)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "operator path changed inode between the confined and path stat",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -557,9 +609,66 @@ mod tests {
             "motd line\n"
         );
     }
+    use super::operator_symlink_metadata;
     use std::io::{Read, Write};
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
+
+    /// The basis lookup must see a LEAF symlink *as a symlink*, so a caller's
+    /// `is_file()` filter drops it - even though the same link would be followed
+    /// were it a parent component. That asymmetry is deliberate: upstream reaches
+    /// the leaf through `link_stat_at(.., 0)` after walking only the parent
+    /// (`generator.c:979-990`), which is what stops a symlinked `--link-dest`
+    /// entry from being hard-linked or read.
+    #[test]
+    fn operator_symlink_metadata_does_not_follow_a_leaf_symlink() {
+        let temp = TempDir::new().expect("tempdir");
+        let target = temp.path().join("real");
+        std::fs::write(&target, b"basis payload").expect("write");
+
+        let link = temp.path().join("basis");
+        symlink(&target, &link).expect("symlink");
+
+        let meta = operator_symlink_metadata(&link).expect("stat the leaf symlink");
+        assert!(
+            meta.file_type().is_symlink(),
+            "a leaf symlink must report as a symlink so the is_file() filter drops it"
+        );
+    }
+
+    /// A PARENT component the operator owns is their own layout
+    /// (`--link-dest=/var/backups` where `/var/backups -> /data/backups`) and
+    /// must still be followed. Refusing it would make every such basis look
+    /// absent and silently re-transfer files upstream hard-links.
+    ///
+    /// The refusing half needs a symlink owned by neither uid 0 nor our euid and
+    /// therefore root, so it is pinned at the predicate by
+    /// `refuses_an_owner_that_is_neither_root_nor_the_euid`. This cell pins the
+    /// half that a careless "refuse every symlink" change would break.
+    #[test]
+    fn operator_symlink_metadata_follows_a_self_owned_parent_symlink() {
+        let temp = TempDir::new().expect("tempdir");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).expect("mkdir");
+        std::fs::write(outside.join("basis"), b"basis payload").expect("write");
+
+        let link = temp.path().join("via");
+        symlink(&outside, &link).expect("symlink");
+
+        let meta = operator_symlink_metadata(&link.join("basis"))
+            .expect("follow a euid-owned parent symlink");
+        assert!(meta.file_type().is_file());
+        assert_eq!(meta.len(), b"basis payload".len() as u64);
+    }
+
+    /// A missing leaf is an error, not a zero-sized success - callers read any
+    /// error as "no basis in this directory", and a silent empty result there
+    /// would make an absent basis look like a matching one.
+    #[test]
+    fn operator_symlink_metadata_reports_a_missing_leaf_as_an_error() {
+        let temp = TempDir::new().expect("tempdir");
+        assert!(operator_symlink_metadata(&temp.path().join("absent")).is_err());
+    }
 
     /// A plain path with no symlink anywhere resolves and opens normally - the
     /// walk must not break the ordinary case it guards.
