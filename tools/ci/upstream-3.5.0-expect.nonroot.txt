@@ -199,7 +199,7 @@ mkpath pass
 msg-io-timeout-overflow pass
 msg-io-timeout-zero pass
 nested-socket-specials pass
-no-implied-dirs-symlink fail
+no-implied-dirs-symlink pass
 nondaemon-symlink-race skip
 nonroot-restrictive-perms skip
 omit-times pass
