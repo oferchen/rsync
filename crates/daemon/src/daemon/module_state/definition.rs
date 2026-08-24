@@ -90,6 +90,15 @@ pub(crate) struct ModuleDefinition {
     /// Enables backup/restore operations without root privileges by storing ownership
     /// and special file metadata in the `user.rsync.%stat` extended attribute.
     pub(crate) fake_super: bool,
+    /// Whether this module opts out of the operator-path symlink confinement.
+    ///
+    /// upstream: `daemon-parm.h:314` - `{"insecure links", P_BOOL, P_LOCAL,
+    /// &Vars.l.insecure_links, NULL, 0}`, defaulting false (`daemon-parm.h:208`).
+    /// Read only through `lp_insecure_links(module_id)` inside
+    /// `symlink_optout_allowed()` (`syscall.c:125`); a peer-supplied
+    /// `--insecure-links` can never reach it, which is why the daemon and local
+    /// opt-outs are distinct types in `fast_io::confinement`.
+    pub(crate) insecure_links: bool,
     /// Controls whether symlink targets are munged with a `/rsyncd-munged/` prefix.
     ///
     /// When `None`, the effective value defaults to `!use_chroot` (upstream behaviour).

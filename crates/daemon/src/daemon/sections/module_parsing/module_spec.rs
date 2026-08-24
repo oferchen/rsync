@@ -128,6 +128,7 @@ fn parse_module_definition(
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,
+        insecure_links: false,
         munge_symlinks: None,
         max_verbosity: 1,
         ignore_errors: false,
