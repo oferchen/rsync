@@ -221,7 +221,7 @@ operator-path-insecure-links-daemon pass
 operator-path-insecure-links-refused pass
 operator-path-link-dest pass
 operator-path-log-file pass
-operator-path-partial-dir fail
+operator-path-partial-dir pass
 operator-path-partial-dir-daemon fail
 operator-path-partial-dir-exclude-daemon fail
 operator-path-temp-dir fail
