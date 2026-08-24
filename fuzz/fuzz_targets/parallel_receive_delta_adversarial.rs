@@ -164,8 +164,17 @@ fn renumber(records: Vec<Record>) -> Vec<Record> {
 
 /// Compute the sequential-reference SHA-256 per file by sorting records by
 /// `chunk_sequence` and hashing the concatenated payloads.
-fn sequential_reference(records: &[Record]) -> BTreeMap<u8, [u8; 32]> {
-    let mut per_file: BTreeMap<u8, Vec<&Record>> = BTreeMap::new();
+///
+/// Every file in `0..file_count` is registered with the applier, so every one
+/// of them gets an entry here even when no record addresses it: such a file
+/// must end up empty, and the SHA-256 of zero bytes is what says so. Keying
+/// only the files that appear in `records` would leave the two maps with
+/// different key sets - which compares unequal on the key set alone, and
+/// discards exactly the entries that detect a slot-map collision writing one
+/// file's chunks into a file the stream never addressed.
+fn sequential_reference(file_count: u8, records: &[Record]) -> BTreeMap<u8, [u8; 32]> {
+    let mut per_file: BTreeMap<u8, Vec<&Record>> =
+        (0..file_count).map(|file| (file, Vec::new())).collect();
     for r in records {
         per_file.entry(r.file_ndx).or_default().push(r);
     }
@@ -257,7 +266,7 @@ fuzz_target!(|data: &[u8]| {
     if records.is_empty() {
         return;
     }
-    let expected = sequential_reference(&records);
+    let expected = sequential_reference(file_count, &records);
     let Some(actual) = parallel_destination_hashes(file_count, &records) else {
         return;
     };
