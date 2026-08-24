@@ -31,7 +31,8 @@ use self::commit::ForceExdev;
 use self::commit::rename_config_sandboxed;
 #[cfg(test)]
 use self::commit::{
-    is_cross_device, make_backup, make_backup_copy, partial_dir_path, rename_with_io_uring_fallback,
+    delay_updates_staging_path, is_cross_device, make_backup, make_backup_copy,
+    rename_with_io_uring_fallback,
 };
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;

@@ -304,21 +304,72 @@ fn rename_io_uring_availability_consistent() {
     );
 }
 
-/// Verifies `partial_dir_path` constructs `.~tmp~/<basename>` under the
-/// file's parent directory, matching upstream `options.c:tmp_partialdir`.
-#[test]
-fn partial_dir_path_constructs_staging_path() {
-    let path = Path::new("/dest/subdir/file.txt");
-    let staging = partial_dir_path(path);
-    assert_eq!(staging, PathBuf::from("/dest/subdir/.~tmp~/file.txt"));
+fn delay_updates_config(partial_mode: crate::disk_commit::PartialMode) -> DiskCommitConfig {
+    DiskCommitConfig {
+        delay_updates: true,
+        partial_mode,
+        ..DiskCommitConfig::default()
+    }
 }
 
-/// Verifies `partial_dir_path` handles files directly in the root dest dir.
+/// Verifies a bare `--delay-updates` stages into `.~tmp~/<basename>` beside
+/// the destination file, matching upstream `options.c:2563-2564`, which the
+/// receiver applies when deriving its `PartialMode`.
 #[test]
-fn partial_dir_path_root_level_file() {
-    let path = Path::new("/dest/file.txt");
-    let staging = partial_dir_path(path);
-    assert_eq!(staging, PathBuf::from("/dest/.~tmp~/file.txt"));
+fn delay_updates_stages_into_implicit_tmp_dir() {
+    let config = delay_updates_config(crate::disk_commit::PartialMode::PartialDir(PathBuf::from(
+        crate::disk_commit::DELAY_UPDATES_PARTIAL_DIR,
+    )));
+    let staging = delay_updates_staging_path(&config, Path::new("/dest/subdir/file.txt"));
+    assert_eq!(
+        staging,
+        Some(PathBuf::from("/dest/subdir/.~tmp~/file.txt")),
+        "bare --delay-updates stages into the implicit .~tmp~"
+    );
+}
+
+/// Verifies an operator-named relative `--partial-dir` is honoured instead of
+/// the implicit `.~tmp~`. This is the case a hardcoded staging name silently
+/// got wrong: upstream stages `--delay-updates` into whatever `--partial-dir`
+/// names (options.c:2563-2564 only substitutes when none was given).
+#[test]
+fn delay_updates_honours_an_explicit_relative_partial_dir() {
+    let config = delay_updates_config(crate::disk_commit::PartialMode::PartialDir(PathBuf::from(
+        ".staging",
+    )));
+    let staging = delay_updates_staging_path(&config, Path::new("/dest/subdir/file.txt"));
+    assert_eq!(
+        staging,
+        Some(PathBuf::from("/dest/subdir/.staging/file.txt")),
+        "an explicit --partial-dir must override the implicit .~tmp~"
+    );
+}
+
+/// Verifies an absolute `--partial-dir` is used as-is rather than being
+/// re-anchored under the destination's parent, matching upstream
+/// `util1.c partial_dir_fname`'s `*partial_dir != '/'` guard.
+#[test]
+fn delay_updates_uses_an_absolute_partial_dir_verbatim() {
+    let config = delay_updates_config(crate::disk_commit::PartialMode::PartialDir(PathBuf::from(
+        "/var/tmp/staging",
+    )));
+    let staging = delay_updates_staging_path(&config, Path::new("/dest/subdir/file.txt"));
+    assert_eq!(
+        staging,
+        Some(PathBuf::from("/var/tmp/staging/file.txt")),
+        "an absolute --partial-dir is not re-anchored under the destination"
+    );
+}
+
+/// Verifies a config carrying no partial directory stages nothing, leaving the
+/// caller on the ordinary rename-to-destination path.
+#[test]
+fn delay_updates_without_a_partial_dir_stages_nothing() {
+    let config = delay_updates_config(crate::disk_commit::PartialMode::None);
+    assert_eq!(
+        delay_updates_staging_path(&config, Path::new("/dest/file.txt")),
+        None
+    );
 }
 
 /// Verifies `make_backup` returns the upstream-format backup notice with

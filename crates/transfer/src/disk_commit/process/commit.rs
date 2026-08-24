@@ -115,19 +115,21 @@ pub(super) fn commit_file(
     };
 
     if needs_rename && config.delay_updates {
-        // upstream: receiver.c:1039-1052 - stage to partial dir (.~tmp~)
-        let staging_path = partial_dir_path(&begin.file_path);
-        if let Some(parent) = staging_path.parent() {
-            fs::create_dir_all(parent)?;
+        if let Some(staging_path) = delay_updates_staging_path(config, &begin.file_path) {
+            // upstream: util1.c handle_partial_dir(..., PDIR_CREATE) creates the
+            // partial directory before moving the temp into it.
+            if let Some(parent) = staging_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)?;
+            CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+            cleanup_guard.keep();
+            return Ok(CommitOutcome {
+                was_copy: result,
+                delayed_path: Some(staging_path),
+                backup_notice,
+            });
         }
-        let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)?;
-        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
-        cleanup_guard.keep();
-        return Ok(CommitOutcome {
-            was_copy: result,
-            delayed_path: Some(staging_path),
-            backup_notice,
-        });
     }
 
     let was_copy = if needs_rename {
@@ -196,21 +198,27 @@ fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
     }
 }
 
-/// Upstream partial dir name for `--delay-updates` staging.
+/// Resolves the `--delay-updates` staging path for a destination file.
 ///
-/// upstream: options.c - `static char tmp_partialdir[] = ".~tmp~";`
-const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
-
-/// Computes the `.~tmp~/<filename>` staging path for a destination file.
+/// upstream: receiver.c - under `--delay-updates` the received temp is
+/// committed through `handle_partial_dir(partialptr, PDIR_CREATE)` instead of
+/// being renamed onto the destination, where `partialptr` comes from
+/// `partial_dir_fname(fname)`. The directory itself is whatever
+/// `--partial-dir` names; `--delay-updates` alone is promoted to the implicit
+/// `.~tmp~` by `TransferConfigBuilder::effective_partial_dir`
+/// (upstream options.c:2563-2564), so the staging directory is read from the
+/// configured partial mode rather than hardcoded here.
 ///
-/// upstream: receiver.c:537 - `partial_dir_fname(fname)` returns
-/// `<parent>/.~tmp~/<basename>`.
-pub(super) fn partial_dir_path(file_path: &Path) -> PathBuf {
-    let parent = file_path.parent().unwrap_or(Path::new("."));
-    let basename = file_path
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("unknown"));
-    parent.join(DELAY_UPDATES_PARTIAL_DIR).join(basename)
+/// Returns `None` when the config carries no partial directory, which leaves
+/// the caller on the ordinary rename-to-destination path.
+pub(super) fn delay_updates_staging_path(
+    config: &DiskCommitConfig,
+    dest_path: &Path,
+) -> Option<PathBuf> {
+    let PartialMode::PartialDir(ref dir) = config.partial_mode else {
+        return None;
+    };
+    crate::temp_guard::partial_dir_fname(dest_path, dir)
 }
 
 /// Retains a partial temp file instead of deleting it on interrupt.

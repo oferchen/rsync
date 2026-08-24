@@ -681,6 +681,23 @@ impl Drop for PipelinedReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds the config a `--delay-updates` receiver actually runs with.
+    ///
+    /// `--delay-updates` always stages through a partial directory: upstream
+    /// substitutes the implicit `.~tmp~` when the operator named none
+    /// (options.c:2563-2564), and oc mirrors that where the receiver derives
+    /// its `PartialMode`. A `delay_updates` config carrying no partial mode is
+    /// a state the production path cannot produce.
+    fn delay_updates_config() -> DiskCommitConfig {
+        DiskCommitConfig {
+            delay_updates: true,
+            partial_mode: PartialMode::PartialDir(std::path::PathBuf::from(
+                crate::disk_commit::DELAY_UPDATES_PARTIAL_DIR,
+            )),
+            ..DiskCommitConfig::default()
+        }
+    }
     use crate::pipeline::messages::BeginMessage;
 
     #[test]
@@ -1729,11 +1746,7 @@ mod tests {
         let dir = test_support::create_tempdir();
         let file_path = dir.path().join("drop_staged.dat");
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
-            delay_updates: true,
-            ..DiskCommitConfig::default()
-        })
-        .unwrap();
+        let mut pr = PipelinedReceiver::new(delay_updates_config()).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -1796,11 +1809,7 @@ mod tests {
         let dir = test_support::create_tempdir();
         let file_path = dir.path().join("shutdown_staged.dat");
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
-            delay_updates: true,
-            ..DiskCommitConfig::default()
-        })
-        .unwrap();
+        let mut pr = PipelinedReceiver::new(delay_updates_config()).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -1853,11 +1862,7 @@ mod tests {
         let dir = test_support::create_tempdir();
         let file_path = dir.path().join("e2e.dat");
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
-            delay_updates: true,
-            ..DiskCommitConfig::default()
-        })
-        .unwrap();
+        let mut pr = PipelinedReceiver::new(delay_updates_config()).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
