@@ -710,13 +710,24 @@ impl<'a> CopyContext<'a> {
 
         let expected_remaining = total_size.saturating_sub(initial_bytes);
 
-        // Fast path: use copy_file_range for simple whole-file copies.
+        // Fast path: hand the whole file to the kernel. `fast_io` tries
+        // io_uring first and falls back to copy_file_range; neither performs a
+        // userspace read, so both are gated together by the one policy the
+        // operator sets with `--no-zero-copy`. Without that conjunct the flag
+        // is inert here: `apply_zero_copy_policy` only swaps the
+        // clone/reflink tier, which never reaches these movers.
+        //
         // Requires no sparse detection, no compression, no bandwidth limiter.
         // Disabled for append mode (initial_bytes > 0) because copy_file_range
         // and io_uring on Linux do not reliably respect the seeked file position
         // when both source and destination have been seeked to non-zero offsets.
         // upstream: receiver.c - append path uses standard read/write loop.
-        if !sparse && !compress && self.limiter.is_none() && initial_bytes == 0 {
+        if self.options.kernel_content_copy_allowed()
+            && !sparse
+            && !compress
+            && self.limiter.is_none()
+            && initial_bytes == 0
+        {
             let copied = fast_io::copy_file_range::copy_file_contents_buffered(
                 reader,
                 writer,

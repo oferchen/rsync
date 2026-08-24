@@ -285,6 +285,15 @@ pub struct LocalCopyOptions {
     /// macOS, ReFS reflink/CopyFileExW on Windows) with portable fallback.
     /// Tests can inject a fake implementation to verify dispatch.
     pub(super) platform_copy: Arc<dyn PlatformCopy>,
+    /// I/O-level zero-copy policy for the file *content* path, mirroring
+    /// `--zero-copy` / `--no-zero-copy`.
+    ///
+    /// Distinct from [`Self::platform_copy`], which selects the filesystem
+    /// clone/reflink tier. This one governs the kernel-side content movers
+    /// (io_uring, `copy_file_range`) that run when no clone tier applied, and
+    /// [`fast_io::ZeroCopyPolicy::Disabled`] routes the copy through the
+    /// portable read/write loop instead.
+    pub(super) zero_copy: fast_io::ZeroCopyPolicy,
 }
 
 impl LocalCopyOptions {
@@ -396,6 +405,7 @@ impl LocalCopyOptions {
             log_file: None,
             log_file_format: None,
             platform_copy: Arc::new(DefaultPlatformCopy::new()),
+            zero_copy: fast_io::ZeroCopyPolicy::Auto,
         }
     }
 }
