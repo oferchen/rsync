@@ -36,8 +36,42 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7417, #7388)
 - Add the path-confinement activation predicate as four explicit decisions
   (opt-out / hardened / root / path kind) rather than one boolean (#7322)
+- Route every operator-named auxiliary file open onto the ownership walk, which
+  refuses a symlink component owned by neither root nor the running user. This
+  is upstream's `open_no_attacker_symlinks()` applied at the call sites upstream
+  applies it: the daemon config, motd and secrets files (#7422), the daemon
+  `lock file` at mode 0600 (#7439), `--password-file` (#7424), `--log-file`
+  (#7441), `--files-from` and `--early-input` (#7442), `--exclude-from` /
+  `--include-from` and the CLI merge files (#7426), per-directory merge files
+  (#7425), and the batch read/write files at upstream's modes (#7443)
+- Stat an alt-dest basis entry through the ownership walk rather than opening
+  it, on the receiver (#7421) and on the local-copy path (#7463). The leaf is
+  `lstat`ed and never opened, matching `generator.c`; opening it instead is what
+  regressed the `--link-dest` / `--compare-dest` cells on the first attempt
+- Honour `--insecure-links` inside the operator-path walk, so the opt-out
+  reaches the resolver instead of being consulted only by its callers (#7459)
 
 **Daemon**
+- Refuse shell metacharacters when expanding a hook variable, closing command
+  injection through the `pre-xfer exec` / `post-xfer exec` environment
+  (CVE-2026-53790, #7465). The live sink is oc's own single-character expander,
+  not the upstream-shaped one, so porting upstream's guard alone would have been
+  inert
+- Validate and quote the `RSYNC_CONNECT_PROG` `%H` substitution instead of
+  interpolating the host verbatim (#7430)
+- Enforce `max connections` on the stdio, inetd and remote-shell entry points,
+  not only the TCP accept loop, and honour the per-module `lock file` (#7440)
+- Gate the secrets-file mode check on `strict modes` rather than validating it
+  unconditionally at parse time (#7468)
+- `refuse options = delete` must also refuse a pull's `--remove-source-files`;
+  the inference is `am_sender`-gated, so a blanket refusal would have rejected
+  every push (#7448)
+- A refuse rule names a capability, not one spelling of it (#7427)
+- Apply the module `exclude` to the client's destination argument (#7450) and
+  refuse an alternate-basis directory the module excludes (#7455); clamp a
+  client's alt-dest basis into the module instead of dropping it silently
+  (#7467)
+- Close two replay-script injections in the generated batch `.sh` (#7445)
 - Resolve the real peer address on both stdio paths. The inetd and remote-shell
   entry points fabricated `127.0.0.1`, which made every `hosts allow` /
   `hosts deny` rule evaluate against a synthetic localhost (#7303)
@@ -66,6 +100,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   renderer so remote-controlled writes cannot reach the terminal raw (#7296,
   #7357)
 - Redact peer-chosen rule text in filter-rule diagnostics (#7384)
+- Bound merge-file nesting by depth (`MAX_MERGE_DEPTH`), not by cycle detection;
+  a cycle set terminates a loop but not an unbounded acyclic chain (#7432)
+- Clamp every `--files-from` line through upstream's `sanitize_path`, which
+  `flist.c` applies unconditionally to a real files-from stream (#7460)
+- Don't let the sender widen the receiver's `--delete` scope through an implied
+  parent directory (#7446)
 
 ### Added
 
@@ -77,6 +117,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The `auth digest` daemon directive (#7350)
 - The soft file-descriptor limit is raised at startup, and a deep path that
   exhausts descriptors warns once instead of failing silently (#7324, #7323)
+- A missing or non-directory `--compare-dest` / `--copy-dest` / `--link-dest`
+  argument now warns instead of passing silently, on the local path (#7453) and
+  on the network paths (#7454)
 
 ### Changed
 
@@ -140,6 +183,15 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   delayed-deletion flush (#7363, #7326, #7359)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Local `--write-batch` must encode the flist the reader decodes (#7355)
+- Write the pending token run before flushing literals, in the zlib (#7434) and
+  lz4 (#7436) encoders. A round-trip cannot observe this - the decoder
+  reassembles either order - so the regression is pinned on wire framing
+- `--delay-updates` stages through the partial dir and is renamed onto the
+  destination only after the walk, matching `receiver.c`: the implicit `.~tmp~`
+  on the receiver (#7475) and the operator's `--partial-dir` on the local-copy
+  path, created at upstream's private 0700 (#7476)
+- TCP Fast Open must not defeat the multi-address connect fallback; deferring
+  the SYN left a dead first address looking alive (#7447)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -150,12 +202,29 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Honour `--safe-links` before the backup fast path (#7356)
 - `--link-dest` must create the node when a hard link is refused (#7327)
 - Clearing a directory obstruction is not `--force`'s job (#7416)
+- `--preallocate` with `--sparse` must punish neither: the reserved extent was
+  being punched straight back out (#7429)
+- A non-directory alt-dest argument must not fail the transfer, on the regular
+  path (#7451) and on a symlink transfer (#7458)
+- `--compare-dest` must clear a destination its basis makes redundant; upstream
+  leaves the entry absent where oc left it stale (#7464)
+- Match upstream's hardlink notices on both alt-dest paths (#7435)
+- Follow an existing destination symlink under `--no-implied-dirs` (#7461)
+- Diagnose a local-copy source that ended before its declared length instead of
+  committing the short result (#7472)
 
 **Daemon**
 - Collapse `..` in client paths instead of refusing the request (#7343)
 - Keep the trailing slash that marks the destination a directory (#7411)
 - Probe `nobody` then `nogroup` for the default privilege-drop group (#7342)
 - The Landlock root must be the destination's directory (#7316)
+- Honour a forwarded `--max-size` / `--min-size` on a push (#7449)
+- Linger before closing a refused connection, so the client reads the refusal
+  instead of an RST (#7457)
+- Frame a post-OK client-argument rejection as a multiplex error rather than a
+  bare close (#7466)
+- Route `--early-input` to the early-exec hook, not the pre-transfer one (#7471)
+- Mirror upstream's `daemon_usage` text in `--daemon --help` (#7444)
 
 **CLI and output**
 - Honour the `--` end-of-options marker in server-mode argv (#7402)
@@ -170,9 +239,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Reject a `-M` value that does not start with a dash (#7413)
 - Re-port `SHELL_CHARS` to 3.5.0 and stop escaping daemon path operands (#7399)
 - `--chmod=a+s` must set both setuid and setgid (#7287)
+- Print `skipping directory` at default verbosity, in upstream's order (#7433)
+- Exit `RERR_SOCKETIO` when `RSYNC_CONNECT_PROG` refuses the host (#7437)
+- Let a connect program finish instead of killing it, which was destroying the
+  daemon's post-transfer exec (#7470)
+- Take the `rsync://` daemon host verbatim; three separate rewrites were being
+  applied to it (#7431)
+- Honour `--port` on a daemon transfer, not only on a listing (#7456)
 
 **Metadata**
 - An installed name converter must replace the host database (#7360)
+- Follow the operator's own symlinked destination root when applying metadata
+  (#7462)
 
 ### Testing and CI
 
@@ -196,6 +274,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Regression tests for the benchmark report renderer, covering the peak-RSS
   columns, the missing-measurement fallback, and the requirement that a bytes
   metric is not described in duration language ("higher", not "slower").
+- Every required check now has exactly one publishing workflow. The skip shim
+  and the real workflow could both claim a context on a pull request that mixed
+  code and docs, and the shim's green would win - a vacuous pass on a required
+  gate (#7438)
+- The batched-writer threshold tests disarm the flush clock instead of racing
+  it, which is what made the musl beta cell flake (#7469)
 
 ### Documentation
 
@@ -214,6 +298,13 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   new-option count (#7307, #7334, #7335, #7284)
 - Fixed the intra-doc links breaking the rustdoc and Pages builds (#7338,
   #7406)
+- Upstream's `iobuf` / `perform_io` contract extracted into a design note, with
+  every anchor verified by reading rather than assumed (#7428)
+- Retargeted the `check_alt_basis_dirs` citations at 3.5.0 (#7452)
+
+### Maintenance
+
+- Dependency and action updates (#7473, #7474)
 
 ## [0.6.4] - 2026-07-18
 
