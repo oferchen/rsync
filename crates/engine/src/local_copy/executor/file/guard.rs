@@ -468,6 +468,67 @@ impl DestinationWriteGuard {
         }
     }
 
+    /// Publishes the staged temp into the `--partial-dir` entry, leaving the
+    /// pending [`commit`](Self::commit) to rename that entry onto the
+    /// destination.
+    ///
+    /// Returns the staged path, or `None` when no `--partial-dir` applies - the
+    /// guard is then untouched and its ordinary commit still renames the temp
+    /// straight onto the destination.
+    ///
+    /// upstream: `receiver.c:1301-1314` - under `--delay-updates` the receiver
+    /// calls `handle_partial_dir(partialptr, PDIR_CREATE)` and then
+    /// `finish_transfer(partialptr, fnametmp, ...)`, so the completed file lands
+    /// in the partial dir under its real name and only
+    /// `handle_delayed_updates()` (`receiver.c:685-720`) renames it onto the
+    /// destination after the walk. Deferring this guard's own
+    /// temp-to-destination rename instead reaches the same end state but never
+    /// creates the operator-named `--partial-dir` at all.
+    ///
+    /// The abort path is deliberately unchanged: the temp now already sits at
+    /// its partial-dir resting place, so an interrupted run leaves it there to
+    /// be resumed exactly as before.
+    pub fn stage_into_partial_dir(&mut self) -> Result<Option<PathBuf>, LocalCopyError> {
+        #[allow(irrefutable_let_patterns)]
+        let GuardStrategy::NamedTempFile { temp_path, partial } = &mut self.strategy else {
+            return Ok(None);
+        };
+        let PartialKind::Dir { file, .. } = partial else {
+            return Ok(None);
+        };
+        let staged = file.clone();
+        if let Some(parent) = staged.parent() {
+            crate::create_partial_dir(parent)
+                .map_err(|error| LocalCopyError::io("create partial dir", parent, error))?;
+        }
+        hardened_rename(temp_path, &staged, self.dest_root.as_deref())
+            .map_err(|error| LocalCopyError::io("stage delayed update", &staged, error))?;
+        CleanupManager::global().unregister_partial(temp_path);
+        // The pending commit now renames the staged entry onto the destination,
+        // and `partial_dest()` still points at that same entry, so a drop before
+        // the commit is a self-rename that leaves the staged file in place.
+        *temp_path = staged.clone();
+        Ok(Some(staged))
+    }
+
+    /// The `--partial-dir` entry a relative partial dir should be rmdir'd from
+    /// once the entry has been moved out of it.
+    ///
+    /// `None` for an absolute `--partial-dir`, which upstream treats as a
+    /// reserved location and never removes.
+    ///
+    /// upstream: `util1.c:handle_partial_dir()` - `if (!create && *partial_dir
+    /// == '/') return 1;` guards the `do_rmdir_at()`.
+    pub fn partial_dir_to_remove(&self) -> Option<&Path> {
+        match &self.strategy {
+            GuardStrategy::NamedTempFile {
+                partial: PartialKind::Dir { remove_dir, .. },
+                ..
+            } => remove_dir.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Commits the temporary file to the final destination.
     ///
     /// For named temp files, this atomically renames the temp file. For anonymous
