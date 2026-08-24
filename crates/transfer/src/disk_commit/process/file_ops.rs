@@ -892,38 +892,15 @@ fn open_output_file(
             false,
         ))
     } else if begin.is_inplace {
-        // upstream: receiver.c:968 - do_open(fname, O_WRONLY|O_CREAT, 0600)
-        let opened = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&begin.file_path);
-        // upstream: receiver.c:978-986 - under the fs.protected_regular sysctl
-        // the kernel returns EACCES for an O_CREAT open of an existing file we
-        // do not own in a sticky, world-writable dir. The inplace target
-        // already exists, so retry without O_CREAT.
-        #[cfg(target_os = "linux")]
-        let opened = match opened {
-            Err(error) if error.raw_os_error() == Some(libc::EACCES) => fs::OpenOptions::new()
-                .write(true)
-                .truncate(false)
-                .open(&begin.file_path),
-            other => other,
-        };
-        // upstream: receiver.c:1219-1224 - the third arm, recovering a read-only
-        // destination. Unlike the protected_regular retry above it is NOT
-        // platform-gated: a read-only file is an EACCES everywhere.
-        #[cfg(unix)]
-        let opened = match opened {
-            Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
-                fast_io::readonly_inplace::open_readonly_inplace(
-                    &begin.file_path,
-                    fs::OpenOptions::new().write(true).truncate(false),
-                )
-            }
-            other => other,
-        };
-        let mut file = opened?;
+        // upstream: receiver.c:1195-1224 - the whole three-arm chain, owned by
+        // `fast_io`. The receiver never truncates: the destination it opens IS
+        // the delta basis. `Direct` because this is the destination leaf, whose
+        // parents the caller has already anchored - not an operator path.
+        let mut file = fast_io::open_inplace_output(
+            &begin.file_path,
+            false,
+            fast_io::InplaceResolution::Direct,
+        )?;
         // upstream: receiver.c:372-373 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;

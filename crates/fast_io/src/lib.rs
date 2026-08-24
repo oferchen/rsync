@@ -106,6 +106,9 @@ pub mod container;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod dir_sandbox;
+/// The receiver's in-place output open: upstream's three-arm chain
+/// (`receiver.c:1195-1224`) with the path resolution injected.
+pub mod inplace_open;
 /// Kernel version parsing and io_uring probe logging.
 pub mod kernel_version;
 /// Cached runtime probes for Linux-specific kernel capabilities used by the
@@ -393,6 +396,7 @@ pub use dir_sandbox::{
     symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
     utimensat_via_sandbox_or_fallback,
 };
+pub use inplace_open::{InplaceResolution, open_inplace_output};
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,
     SendZcRequirement, StatxRenameatRequirement, VersionRequirement, log_io_uring_probe_result,
@@ -403,7 +407,7 @@ pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
 pub use owner_walk::{
-    operator_link, operator_mkdir, operator_open_append, operator_open_read,
+    operator_link, operator_mkdir, operator_open_append, operator_open_read, operator_open_recv,
     operator_open_rw_create, operator_open_write_create, operator_read_to_string, operator_rename,
     operator_symlink_metadata, owner_trusted_parent, symlink_owner_is_trusted,
 };

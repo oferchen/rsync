@@ -512,6 +512,55 @@ pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs:
     )
 }
 
+/// Open an operator-supplied path as a receiver output through the ownership
+/// walk.
+///
+/// The `--partial-dir` staging target of a `one_inplace` update: the receiver
+/// writes the file data straight into the operator-named partial directory, so
+/// a symlink planted at any component redirects the peer's payload to a file
+/// the operator never named.
+///
+/// `create` and `truncate` carry `O_CREAT` and `O_TRUNC` respectively, matching
+/// the flags the caller would pass to `open(2)`; `mode` applies only when the
+/// file is created.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/receiver.c:1204-1206` - `secure_recv_open(fnametmp,
+///   O_WRONLY|O_CREAT, 0600, one_inplace)`, the primary arm.
+/// - `rsync-3.5.0/receiver.c:1212-1214` - the same call without `O_CREAT`, the
+///   `protected_regular` retry. Upstream threads `one_inplace` through both, so
+///   a retry cannot silently drop to the plain resolver.
+///
+/// `O_TRUNC` never appears at either upstream site: a staged partial IS the
+/// delta basis, and upstream sizes the result with a final `ftruncate`. The
+/// parameter exists so the chain's contract stays the caller's to state.
+///
+/// # Errors
+///
+/// See [`operator_open_with`].
+pub fn operator_open_recv(
+    path: &Path,
+    create: bool,
+    truncate: bool,
+    mode: u32,
+) -> io::Result<std::fs::File> {
+    let mut flags = OFlags::WRONLY;
+    if create {
+        flags |= OFlags::CREATE;
+    }
+    if truncate {
+        flags |= OFlags::TRUNC;
+    }
+    operator_open_with(
+        path,
+        flags,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
+
 /// Read an operator-supplied file to a `String` through the ownership walk.
 ///
 /// The `read_to_string` counterpart to [`operator_open_read`], for the auxiliary

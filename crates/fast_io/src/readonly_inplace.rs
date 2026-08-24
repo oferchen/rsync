@@ -4,11 +4,16 @@
 //! upstream: `open_readonly_inplace()` (receiver.c:200-287), the third arm of
 //! the in-place open chain at receiver.c:1219-1224 - after the primary
 //! `O_WRONLY|O_CREAT` and after Linux's `protected_regular` retry.
+//!
+//! Reached through [`crate::inplace_open::open_inplace_output`], which owns the
+//! chain; this module owns only the mode dance.
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+
+use crate::inplace_open::InplaceResolution;
 
 /// `CHMOD_BITS` (rsync.h) - the mode bits a chmod may carry.
 const CHMOD_BITS: u32 = 0o7777;
@@ -18,9 +23,10 @@ const OWNER_WRITE: u32 = 0o200;
 /// Opens a read-only regular file for an in-place update, restoring its mode
 /// before returning.
 ///
-/// `options` supplies the caller's own open semantics (the receiver never
-/// truncates; the local-copy path truncates when there is no delta basis), so
-/// this owns the upstream mode dance and nothing else. It must be write-enabled.
+/// `truncate` is the caller's own open semantics (the receiver never truncates;
+/// the local-copy path truncates when there is no delta basis), and
+/// `resolution` is upstream's `one_inplace` argument - both are passed straight
+/// through, so this owns the upstream mode dance and nothing else.
 ///
 /// The prior mode is restored *before* the descriptor is handed back: once a
 /// writable descriptor exists the writes no longer consult the pathname's
@@ -42,15 +48,17 @@ const OWNER_WRITE: u32 = 0o200;
 /// directory and a chmod could not help). Otherwise the underlying open or
 /// chmod error - and a failed *restore* wins over a successful open, because
 /// leaving the file owner-writable is the worse outcome.
-pub fn open_readonly_inplace(path: &Path, options: &fs::OpenOptions) -> io::Result<fs::File> {
+pub fn open_readonly_inplace(
+    path: &Path,
+    truncate: bool,
+    resolution: InplaceResolution,
+) -> io::Result<fs::File> {
     let eacces = || io::Error::from_raw_os_error(libc::EACCES);
 
-    // upstream: receiver.c:216 - O_NOFOLLOW refuses a symlink at the leaf, so
-    // every syscall below acts on this one pinned inode.
-    let probe = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
+    // upstream: receiver.c:214-216 - the probe honours `one_inplace` exactly as
+    // the write open does, so a raced operator path is refused here too rather
+    // than silently walked by the plain resolver.
+    let probe = resolution.open_probe(path)?;
 
     let metadata = probe.metadata()?;
     // upstream: receiver.c:219-222 - not the read-only regular file we recover.
@@ -67,7 +75,7 @@ pub fn open_readonly_inplace(path: &Path, options: &fs::OpenOptions) -> io::Resu
 
     probe.set_permissions(fs::Permissions::from_mode(prior_mode | OWNER_WRITE))?;
 
-    let opened = options.open(path);
+    let opened = resolution.open_write(path, false, truncate);
 
     // upstream: receiver.c:235-241 - restore unconditionally, and a failed
     // restore WINS: drop the descriptor and report the restore error.
