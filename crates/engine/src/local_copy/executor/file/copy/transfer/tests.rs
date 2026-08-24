@@ -208,3 +208,139 @@ fn copy_is_bounded_by_the_opened_file_not_the_recorded_length() {
         "destination was bounded by the recorded length instead of the opened file's size"
     );
 }
+
+/// Length the file list recorded for a source that then shrank.
+const SHRUNK_LEN: usize = 1024;
+
+/// A source that ends before the length the transfer was sized from must be
+/// diagnosed, not silently reported as a complete copy.
+///
+/// upstream: `map_ptr()` (fileio.c:359-371) records `ENODATA` when a read
+/// returns 0 before the mapped window is filled, `unmap_file()` (fileio.c:385)
+/// returns that status, and the sender turns it into
+/// `io_error |= IOERR_GENERAL` plus one `read errors mapping %s` line
+/// (sender.c:787-795) - which main.c reports as `RERR_PARTIAL` (23). Without
+/// this the destination is silently short and the run exits 0, so data loss is
+/// indistinguishable from success.
+///
+/// Driving the loop with a `total_size` larger than the file reproduces
+/// "the source shrank after it was sized" without racing a real truncation.
+/// Each copy path owns its own loop, so each gets its own `#[test]`: a single
+/// test looping over them would stop at the first panic and report nothing
+/// about the rest, silently halving the mutation kill set.
+fn assert_short_source_is_recorded(sparse: bool, paced: bool) {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    write_bytes(&source, SHRUNK_LEN);
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&destination).expect("create destination");
+    let mut buffer = vec![0u8; 128 * 1024];
+
+    // A limiter keeps the dense case off the `copy_file_range` fast path, so
+    // the two are exercised separately rather than one masking the other.
+    const NO_PACING: u64 = 1 << 30;
+    let options = if paced {
+        LocalCopyOptions::default().bandwidth_limit(Some(NonZeroU64::new(NO_PACING).unwrap()))
+    } else {
+        LocalCopyOptions::default()
+    };
+    let mut context = CopyContext::new(
+        LocalCopyExecution::Apply,
+        options,
+        None,
+        temp.path().to_path_buf(),
+    );
+
+    context
+        .copy_file_contents(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            sparse,
+            false,
+            &source,
+            &destination,
+            Path::new("src.bin"),
+            None,
+            // Declared longer than the file: the source shrank after sizing.
+            (SHRUNK_LEN + APPENDED_LEN) as u64,
+            0,
+            0,
+            Instant::now(),
+            false,
+        )
+        .expect("a short source must not abort the copy");
+    drop(writer);
+
+    assert!(
+        context.source_read_error_occurred(),
+        "sparse={sparse} paced={paced}: a source that ended early was not recorded, \
+         so the run would exit 0 on a short destination"
+    );
+}
+
+#[test]
+fn dense_copy_records_a_source_that_ended_early() {
+    assert_short_source_is_recorded(false, true);
+}
+
+#[test]
+fn sparse_copy_records_a_source_that_ended_early() {
+    assert_short_source_is_recorded(true, false);
+}
+
+#[test]
+fn copy_file_range_records_a_source_that_ended_early() {
+    assert_short_source_is_recorded(false, false);
+}
+
+/// Non-vacuity companion: the same fixture with an honest length must leave
+/// the flag clear. Without this, a predicate that fired unconditionally would
+/// satisfy every assertion above.
+#[test]
+fn a_complete_source_records_no_read_error() {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    write_bytes(&source, SHRUNK_LEN);
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&destination).expect("create destination");
+    let mut buffer = vec![0u8; 128 * 1024];
+
+    let mut context = CopyContext::new(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default(),
+        None,
+        temp.path().to_path_buf(),
+    );
+
+    context
+        .copy_file_contents(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            false,
+            false,
+            &source,
+            &destination,
+            Path::new("src.bin"),
+            None,
+            SHRUNK_LEN as u64,
+            0,
+            0,
+            Instant::now(),
+            false,
+        )
+        .expect("copy");
+    drop(writer);
+
+    assert!(
+        !context.source_read_error_occurred(),
+        "a source that matched its recorded length was reported as short"
+    );
+}

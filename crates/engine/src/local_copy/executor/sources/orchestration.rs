@@ -601,6 +601,14 @@ pub(crate) fn copy_sources(
             if context.sender_remove_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
+            // upstream: sender.c:787-795 - a source that shrank mid-transfer
+            // sets `io_error |= IOERR_GENERAL` and logs one `read errors
+            // mapping %s` at FERROR_XFER without aborting; main.c then exits
+            // RERR_PARTIAL (23). The per-entry diagnostic was already printed
+            // at the copy site, so surface only the summary error here.
+            if context.source_read_error_occurred() {
+                return Err(LocalCopyError::partial_transfer());
+            }
             // upstream: delete.c:86-210 - the delete pass logs each
             // un-removable entry via `rsyserr(FERROR_XFER, ...)` and sets
             // `io_error |= IOERR_GENERAL` without aborting; main.c then exits
