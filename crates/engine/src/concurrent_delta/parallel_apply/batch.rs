@@ -14,7 +14,7 @@
 //! the first [`ParallelApplyError::ChecksumMismatch`]), the per-file write
 //! step runs serially on the calling thread: for each verified chunk the
 //! applier acquires the per-slot [`std::sync::Mutex`] via
-//! [`super::SlotHandle::lock_slot`] and feeds the chunk through the
+//! `super::SlotHandle::lock_slot` and feeds the chunk through the
 //! per-file [`super::FileSlot::ingest`] reorder buffer. The Mutex
 //! preserves per-file write exclusivity and the reorder buffer preserves
 //! per-file `chunk_sequence` order, mirroring the invariants documented

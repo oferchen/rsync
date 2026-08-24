@@ -217,7 +217,7 @@ pub fn drain_stamped_events() -> Vec<Stamped<DiagnosticEvent>> {
 /// Returns events in emission order. After draining, the buffer is empty
 /// and ready to accumulate new events.
 ///
-/// A projection of [`drain_stamped_events`] for the consumers that render this
+/// A projection of `drain_stamped_events` for the consumers that render this
 /// buffer on its own: with nothing to interleave against, the vector's own
 /// order already is the production order, and the key would be noise.
 pub fn drain_events() -> Vec<DiagnosticEvent> {

@@ -25,7 +25,7 @@ impl<'a> CopyContext<'a> {
     /// Upstream rsync batch files are a raw tee of the protocol stream, which
     /// includes the end-of-list marker (0x00 byte for non-varint, varint(0) +
     /// varint(io_error) for varint mode) after all file entries. Without this
-    /// marker, [`BatchReader::read_protocol_flist`] cannot determine where
+    /// marker, `BatchReader::read_protocol_flist` cannot determine where
     /// the file list ends and delta operations begin.
     ///
     /// Must be called after all file entries have been captured and before

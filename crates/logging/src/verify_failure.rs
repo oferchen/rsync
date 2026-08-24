@@ -139,8 +139,8 @@ impl VerifyFailure {
 /// # Upstream Reference
 ///
 /// - `receiver.c:1071` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
-/// - `receiver.c:1072` - the emission gate, [`VerifyFailure::is_reported`].
-/// - `receiver.c:1073-1079` - `keptstr`, [`VerifyFailure::kept_str`].
+/// - `receiver.c:1072` - the emission gate, `VerifyFailure::is_reported`.
+/// - `receiver.c:1073-1079` - `keptstr`, `VerifyFailure::kept_str`.
 /// - `receiver.c:1080-1087` - `errstr` and `redostr`.
 /// - `receiver.c:1088-1091` - the format string reproduced below.
 #[must_use]

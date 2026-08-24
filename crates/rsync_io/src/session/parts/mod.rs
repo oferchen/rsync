@@ -1,4 +1,4 @@
-//! Decomposed [`SessionHandshake`] helpers shared across binary and legacy flows.
+//! Decomposed `SessionHandshake` helpers shared across binary and legacy flows.
 //!
 //! The module is split across smaller files to respect the workspace line-count
 //! guardrails while preserving the public API. `state` declares the

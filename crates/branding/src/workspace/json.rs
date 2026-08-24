@@ -21,7 +21,7 @@ fn render_metadata_json(pretty: bool) -> String {
 
 /// Returns the cached JSON representation of the workspace metadata snapshot.
 ///
-/// The returned string mirrors [`metadata()`](super::metadata) and is cached
+/// The returned string mirrors [`metadata()`](super::metadata()) and is cached
 /// for the lifetime of the process.
 ///
 /// ```

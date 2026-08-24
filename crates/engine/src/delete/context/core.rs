@@ -57,7 +57,7 @@ pub(super) fn should_use_fast_path(total_extras: usize, rayon_threads: usize) ->
 ///
 /// Carrying owned `PathBuf` and `Vec<FileEntry>` lets the producer return
 /// immediately without holding any lock on the cursor itself; the consumer
-/// builds the cursor lazily in [`DeleteContext::into_emitter`].
+/// builds the cursor lazily in `DeleteContext::into_emitter`.
 #[derive(Debug)]
 pub(super) struct CursorObservation {
     pub(super) dir: PathBuf,
@@ -115,11 +115,11 @@ pub struct DeleteContext {
     pub(super) cursor_root: PathBuf,
     /// Producer side of the cursor observation channel. Workers calling
     /// [`Self::observe_segment_for_delete`] enqueue observations here.
-    /// Wrapped in `Mutex<Option<_>>` so [`Self::into_emitter`] can drop
+    /// Wrapped in `Mutex<Option<_>>` so `Self::into_emitter` can drop
     /// the master sender to close the channel from the drain side.
     pub(super) cursor_tx: Mutex<Option<Sender<CursorObservation>>>,
     /// Consumer side of the cursor observation channel. Owned by the
-    /// drain; taken on first call into [`Self::into_emitter`] and then
+    /// drain; taken on first call into `Self::into_emitter` and then
     /// drained until the channel reports closure.
     pub(super) cursor_rx: Mutex<Option<Receiver<CursorObservation>>>,
 }
@@ -280,7 +280,7 @@ impl DeleteContext {
 
     /// Enqueues a cursor observation onto the producer channel.
     ///
-    /// A closed channel (sender already taken by [`Self::into_emitter`])
+    /// A closed channel (sender already taken by `Self::into_emitter`)
     /// drops the observation silently. This matches the upstream
     /// `delete_in_dir` contract: late observations after the drain has
     /// committed to its traversal order are ignored, exactly like
@@ -595,7 +595,7 @@ impl DeleteContext {
     }
 
     /// Extracts the owned drain inputs (plan map, traversal cursor,
-    /// emitter policy) from this context. Shared by [`Self::into_emitter`]
+    /// emitter policy) from this context. Shared by `Self::into_emitter`
     /// (sequential path) and the parallel `emit_parallel_from_parts`
     /// path under the `parallel-delete-consumer` feature. The
     /// channel-shutdown semantics and `Arc::try_unwrap` invariant are

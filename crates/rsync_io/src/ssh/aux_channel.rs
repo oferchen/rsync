@@ -197,7 +197,7 @@ pub(super) trait StderrAuxChannel: Send {
     /// Joins the drain thread, blocking until it finishes.
     ///
     /// Idempotent - subsequent calls are no-ops. Callers that already know
-    /// the child has exited should call [`shutdown_read`](Self::shutdown_read)
+    /// the child has exited should call `shutdown_read`
     /// first to guarantee the drain thread is not blocked in `read()`.
     fn join(&mut self);
 
@@ -294,7 +294,7 @@ pub(super) struct SocketpairStderrChannel {
     handle: Option<JoinHandle<()>>,
     buffer: Arc<Mutex<Vec<u8>>>,
     /// Cloned reference to the parent socketpair endpoint. The drain thread
-    /// owns the original `UnixStream`; this clone lets [`shutdown_read`]
+    /// owns the original `UnixStream`; this clone lets `shutdown_read`
     /// wake the parked read by calling `shutdown(Both)` from outside the
     /// thread. `try_clone` failures degrade gracefully to the timeout path.
     parent_clone: Option<UnixStream>,

@@ -201,7 +201,7 @@ pub fn renameat_via_sandbox_or_fallback(
 /// One endpoint of a confined commit, already reduced to a dirfd plus a name to
 /// pass to the `*at` syscall.
 ///
-/// The [`Anchored`](Self::Anchored) arm owns the walked [`DirSandbox`], so the
+/// The [`Anchored`](Self::Anchored) arm owns the walked `DirSandbox`, so the
 /// parent descriptor stays open for the duration of the syscall.
 ///
 /// Shared by [`confined_rename`] and by the `O_TMPFILE` `linkat(2)` commit

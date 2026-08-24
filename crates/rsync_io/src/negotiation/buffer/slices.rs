@@ -8,9 +8,9 @@ use super::errors::CopyToSliceError;
 ///
 /// The structure exposes up to two [`IoSlice`] segments: the remaining portion of the
 /// canonical legacy prefix (`@RSYNCD:`) and any buffered payload that followed the prologue.
-/// Consumers obtain instances via [`NegotiationBufferAccess::buffered_vectored`],
-/// [`NegotiationBufferAccess::buffered_remaining_vectored`], or their counterparts on
-/// [`NegotiatedStream`](super::NegotiatedStream) and [`NegotiatedStreamParts`](super::NegotiatedStreamParts).
+/// Consumers obtain instances via `NegotiationBufferAccess::buffered_vectored`,
+/// `NegotiationBufferAccess::buffered_remaining_vectored`, or their counterparts on
+/// `NegotiatedStream` and `NegotiatedStreamParts`.
 /// The iterator interface allows the slices to be passed directly to
 /// [`Write::write_vectored`] without allocating intermediate buffers, flattened into a
 /// [`Vec<u8>`] via [`extend_vec`](NegotiationBufferedSlices::extend_vec), or iterated over

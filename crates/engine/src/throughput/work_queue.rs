@@ -12,7 +12,7 @@
 //! sized from the drum's measured service time, *weighted by expected buffer
 //! footprint*, memory-bounded, and clamped to `[min, max]`. When the governor is
 //! [`GovernorMode::Off`] the selector falls back to the byte-for-byte original:
-//! a fixed-capacity [`bounded_with_capacity`] queue whose crossbeam channel is
+//! a fixed-capacity `bounded_with_capacity` queue whose crossbeam channel is
 //! the sole admission gate. The default is therefore unchanged; the weighted
 //! ceiling is opt-in behind `OC_RSYNC_GOVERNOR=on`.
 //!
@@ -98,12 +98,12 @@ impl CeilingBounds {
 /// an optional [`Rope`]:
 ///
 /// - **Off / fallback** - `rope` is `None`; the queue is a plain
-///   [`bounded_with_capacity`](crate::concurrent_delta::work_queue::bounded_with_capacity)
+///   `bounded_with_capacity`
 ///   fixed bound, byte-identical to the pre-governor path.
 /// - **Governed** - `rope` is `Some`; [`retune`](Self::retune) sizes the
 ///   admission semaphore to the governor's drum each control window.
 ///
-/// The caller takes the [`sender`](Self::sender)/[`receiver`](Self::receiver)
+/// The caller takes the [`sender`](Self::sender)/`receiver`
 /// halves (via [`into_parts`](Self::into_parts)) and wires the receiver into a
 /// consumer exactly as with any work queue; the reorder window should be sized
 /// to [`reorder_window`](Self::reorder_window) so a grown ceiling never overruns
@@ -213,7 +213,7 @@ impl GovernedWorkQueue {
 ///
 /// `baseline` is the static `2 * thread_count`-style capacity the fixed path
 /// uses verbatim. When `mode` is [`GovernorMode::Off`] the result is exactly a
-/// [`bounded_with_capacity`](crate::concurrent_delta::work_queue::bounded_with_capacity)
+/// `bounded_with_capacity`
 /// queue - the crossbeam channel is the sole gate and no rope is attached - so
 /// the default build is byte-identical to the pre-governor pipeline.
 ///
@@ -232,7 +232,7 @@ impl GovernedWorkQueue {
 /// # Panics
 ///
 /// Panics if `baseline` is zero, matching
-/// [`bounded_with_capacity`](crate::concurrent_delta::work_queue::bounded_with_capacity).
+/// `bounded_with_capacity`.
 #[must_use]
 pub fn governed_work_queue(baseline: usize, mode: GovernorMode) -> GovernedWorkQueue {
     assert!(

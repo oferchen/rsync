@@ -591,7 +591,7 @@ where
 /// `--log-format=%i%I` for `-ii`, so a server that sees `%I` must emit those
 /// rows too.
 ///
-/// Both [`InfoFlags::itemize`] and [`InfoFlags::out_format_forwards_i`] come out
+/// Both `InfoFlags::itemize` and `InfoFlags::out_format_forwards_i` come out
 /// of this one parse because upstream has one variable. The distinction in oc is
 /// only about who set it - a client's own `--out-format` versus a forwarded
 /// `--log-format` - and every reader of upstream's `stdout_format_has_i` must

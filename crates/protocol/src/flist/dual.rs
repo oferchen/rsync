@@ -178,7 +178,7 @@ impl DualFileList {
     /// - **Nested duplicates are collapsed.** oc walks the whole tree eagerly, so
     ///   a repeated source dir yields duplicate *nested* entries that upstream -
     ///   scanning each physical dir once - never produces. Those are collapsed
-    ///   via [`resolve_duplicate`](super::sort::resolve_duplicate)'s keep/drop
+    ///   via `resolve_duplicate`'s keep/drop
     ///   tie-break, leaving the wire byte-identical to upstream's single scan.
     ///
     /// # Panics

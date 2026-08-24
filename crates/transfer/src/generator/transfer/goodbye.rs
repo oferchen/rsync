@@ -107,7 +107,7 @@ impl GeneratorContext {
         )
     }
 
-    /// Variant of [`handle_goodbye`](Self::handle_goodbye) that runs an
+    /// Variant of `handle_goodbye` that runs an
     /// arbitrary finalizer between writing the sender's goodbye NDX_DONE and
     /// blocking on the receiver's final NDX_DONE reply.
     ///

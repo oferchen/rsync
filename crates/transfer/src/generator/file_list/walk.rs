@@ -32,7 +32,7 @@ impl GeneratorContext {
     ///
     /// This method applies `--ignore-missing-args` and `--delete-missing-args`
     /// semantics for top-level source paths and `--files-from` entries. The
-    /// distinction from recursive children (which use [`walk_path`] directly)
+    /// distinction from recursive children (which use `walk_path` directly)
     /// is critical: a missing top-level source is "never existed at flist time"
     /// (upstream `link_stat ... failed`, exit 23), while a missing recursive
     /// child is "vanished during walk" (upstream `file has vanished`, exit 24).
@@ -48,7 +48,7 @@ impl GeneratorContext {
         self.try_walk_source_entry_dedup(base, path, None)
     }
 
-    /// Like [`try_walk_source_entry`], but consults `emitted_dirs` to skip
+    /// Like `try_walk_source_entry`, but consults `emitted_dirs` to skip
     /// re-emitting a directory entry that was already pushed by an earlier
     /// pass (e.g. the implied-parent loop in `build_file_list_with_base`).
     ///
@@ -180,7 +180,7 @@ impl GeneratorContext {
     /// descents into directory children always pass `false`. The flag controls
     /// whether the directory entry receives `XMIT_TOP_DIR` (upstream `FLAG_TOP_DIR`).
     ///
-    /// This is the inner implementation shared by [`walk_path`] (which resolves
+    /// This is the inner implementation shared by `walk_path` (which resolves
     /// metadata itself) and the batched-stat path (which pre-resolves metadata
     /// for all directory children in parallel before processing them).
     fn walk_path_with_metadata(
@@ -393,7 +393,7 @@ impl GeneratorContext {
     ///
     /// Collects all `DirEntry` paths from `read_dir()`, resolves their metadata
     /// in parallel via [`batch_stat_dir_entries`], then processes each child
-    /// through [`walk_path_with_metadata`]. Entries whose stat fails are logged
+    /// through `walk_path_with_metadata`. Entries whose stat fails are logged
     /// and recorded as I/O errors without aborting the traversal.
     ///
     /// # Upstream Reference

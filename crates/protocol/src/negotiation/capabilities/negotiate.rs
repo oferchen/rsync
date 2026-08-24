@@ -642,7 +642,7 @@ pub(super) fn choose_checksum_algorithm(
 
 /// Chooses a checksum algorithm from an explicit local candidate list.
 ///
-/// Behaves like [`choose_checksum_algorithm`] but takes the ordered local
+/// Behaves like `choose_checksum_algorithm` but takes the ordered local
 /// candidate names as a parameter so the caller can substitute the
 /// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:350).
 pub(super) fn choose_checksum_algorithm_in(
@@ -669,7 +669,7 @@ pub(super) fn choose_checksum_algorithm_in(
 
 /// Chooses a compression algorithm using upstream rsync's precedence rules.
 ///
-/// Same convergence logic as [`choose_checksum_algorithm`] - both sides pick
+/// Same convergence logic as `choose_checksum_algorithm` - both sides pick
 /// the first entry in the client's list that also appears in the server's list.
 ///
 /// upstream: compat.c:333-364 `parse_negotiate_str()`
@@ -692,7 +692,7 @@ pub(super) fn choose_compression_algorithm(
 
 /// Chooses a compression algorithm from an explicit local candidate list.
 ///
-/// Behaves like [`choose_compression_algorithm`] but takes the ordered local
+/// Behaves like `choose_compression_algorithm` but takes the ordered local
 /// candidate names as a parameter so the caller can substitute the
 /// `RSYNC_COMPRESS_LIST` env override.
 pub(super) fn choose_compression_algorithm_in(

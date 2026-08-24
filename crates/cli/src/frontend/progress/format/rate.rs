@@ -92,7 +92,7 @@ pub(crate) fn format_progress_rate_decimal(rate: f64) -> String {
 /// Unlike [`format_progress_rate`] which computes the rate from cumulative
 /// bytes and elapsed time, this function accepts a rate value directly.
 /// This supports the sliding-window rate used in progress2 mode, where
-/// the rate comes from the [`RemainingTimeEstimator::window_rate`] method
+/// the rate comes from the `RemainingTimeEstimator::window_rate` method
 /// rather than a simple bytes/elapsed division.
 ///
 /// upstream: progress.c:108-116 rprint_progress - rate unit selection
