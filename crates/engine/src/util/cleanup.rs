@@ -25,6 +25,45 @@ struct PartialEntry {
     tweak_mtime: bool,
 }
 
+/// Creates a `--partial-dir` with upstream's private 0700 mode.
+///
+/// upstream: `util1.c:handle_partial_dir()` - `do_mkdir_at(dir, 0700)`. The mode
+/// is load-bearing rather than incidental: the partial dir holds a complete copy
+/// of the file for the length of the transfer (and across runs, for a reserved
+/// absolute dir), so a umask-derived 0755 exposes that content to every local
+/// user. This is the single owner of the rule for both the abort path
+/// ([`finalize_partial`]) and the `--delay-updates` staging path.
+///
+/// On unix the create goes through `fast_io::operator_mkdir`, so a symlink
+/// planted at any component by a foreign uid is refused rather than followed -
+/// an absolute `--partial-dir` names a location outside the transfer tree, and
+/// without the walk a planted parent redirects the staged file (which is a
+/// complete copy of the source) out of the tree entirely. Upstream wraps the
+/// same `do_mkdir_at()` in `operator_path_resolve = 1` for that reason.
+///
+/// Any missing ancestor is created first, matching what the abort path has
+/// always done; upstream mkdirs only the final component and fails when the
+/// parent is absent. Each level goes through its own walk.
+pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        if dir.as_os_str().is_empty() || dir.is_dir() {
+            return Ok(());
+        }
+        if let Some(parent) = dir.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.is_dir()
+        {
+            create_partial_dir(parent)?;
+        }
+        fast_io::operator_mkdir(dir, 0o700)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::DirBuilder::new().recursive(true).create(dir)
+    }
+}
+
 /// Moves an interrupted temp file to its partial destination, or removes it.
 ///
 /// upstream: `cleanup.c:exit_cleanup()` calls `finish_transfer()` to rename the
@@ -36,7 +75,7 @@ pub fn finalize_partial(temp: &Path, partial_dest: Option<&Path>, tweak_mtime: b
     match partial_dest {
         Some(dest) => {
             if let Some(parent) = dest.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                let _ = create_partial_dir(parent);
             }
             // Best-effort: an already-committed transfer leaves no temp, so a
             // failed rename here is expected and harmless.
