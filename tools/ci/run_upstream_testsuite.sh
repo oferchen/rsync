@@ -14,9 +14,9 @@
 #   - known failures are tracked in tools/ci/upstream_testsuite_known_failures.conf
 #
 # Usage:
-#   tools/ci/run_upstream_testsuite.sh                # run all *.test
+#   tools/ci/run_upstream_testsuite.sh                # run the whole suite
 #   WHICHTESTS=00-hello.test tools/ci/...sh           # run a single test
-#   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin upstream version
+#   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin an older release
 #   PRESERVE_SCRATCH=yes tools/ci/...sh               # keep per-test scratch dirs
 #
 # Python-suite options (see run_python_suite_mode):
@@ -66,7 +66,12 @@
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-upstream_version="${UPSTREAM_VERSION:-3.4.4}"
+# Default to the current upstream stable release. Every CI caller passes
+# UPSTREAM_VERSION explicitly, so this default is what a bare local invocation
+# gets - and 3.4.4 silently routed those runs into the 57-cell `*.test` shell
+# suite instead of the 345-cell Python suite the committed expect-manifests are
+# written against, which reads as a passing run over a fifth of the coverage.
+upstream_version="${UPSTREAM_VERSION:-3.5.0}"
 # Git-ref mode is selected by an explicit UPSTREAM_REF, or by the sentinel
 # UPSTREAM_VERSION=master. Default (empty UPSTREAM_REF, numeric version) keeps
 # the release-tarball path untouched.
