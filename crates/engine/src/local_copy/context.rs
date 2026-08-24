@@ -189,6 +189,14 @@ pub(crate) struct CopyContext<'a> {
     /// general I/O error occurred without `--ignore-errors`.
     // upstream: generator.c:299 static int already_warned
     io_error_delete_warning_emitted: bool,
+    /// Set when a source file ended before the length this transfer was sized
+    /// from - it shrank after the file list recorded it. Drives the final
+    /// `RERR_PARTIAL` (exit 23) exit code without aborting the remaining
+    /// file-list entries.
+    // upstream: sender.c:787-795 - `unmap_file()` returns the status
+    // `map_ptr()` recorded, and the sender sets `io_error |= IOERR_GENERAL`
+    // plus one `read errors mapping %s` line before continuing.
+    source_read_error: bool,
     /// Set when an `--iconv` filename could not be strictly transcoded to the
     /// remote charset and its entry was skipped. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
