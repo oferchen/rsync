@@ -9,6 +9,22 @@ use crate::pipeline::spsc::TryRecvError;
 use super::config::{BackupConfig, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode};
 use super::thread::spawn_disk_thread;
 
+/// Builds the config a `--delay-updates` receiver actually runs with.
+///
+/// `--delay-updates` always stages through a partial directory: upstream
+/// substitutes the implicit `.~tmp~` when the operator named none
+/// (options.c:2563-2564) and oc mirrors that in
+/// `TransferConfigBuilder::effective_partial_dir`. Constructing
+/// `delay_updates` without a partial mode would exercise a state the
+/// production config cannot produce.
+fn delay_updates_config() -> DiskCommitConfig {
+    DiskCommitConfig {
+        delay_updates: true,
+        partial_mode: PartialMode::PartialDir(std::path::PathBuf::from(DELAY_UPDATES_PARTIAL_DIR)),
+        ..DiskCommitConfig::default()
+    }
+}
+
 #[test]
 fn default_config() {
     let _lock = channel_cap_env::ENV_LOCK.lock().unwrap();
@@ -927,10 +943,7 @@ fn delay_updates_stages_to_partial_dir() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("delayed.dat");
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
@@ -997,10 +1010,7 @@ fn delay_updates_whole_file_stages_to_partial_dir() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole_delayed.dat");
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
@@ -2577,10 +2587,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     // Commit file 1 successfully - it should be staged in .~tmp~/.
@@ -2675,10 +2682,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     // Commit file 1 successfully.
@@ -2760,10 +2764,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     // Commit two files.
@@ -2845,10 +2846,7 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
-    let config = DiskCommitConfig {
-        delay_updates: true,
-        ..DiskCommitConfig::default()
-    };
+    let config = delay_updates_config();
     let h = spawn_disk_thread(config).unwrap();
 
     // Commit a file successfully.

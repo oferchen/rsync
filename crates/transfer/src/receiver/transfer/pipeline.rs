@@ -299,7 +299,9 @@ impl ReceiverContext {
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<PipelineResult> {
-        use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
+        use crate::disk_commit::{
+            BackupConfig, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode,
+        };
         use crate::pipeline::receiver::{PipelinedReceiver, VerifyReport};
         use crate::shared::TransferDeadline;
 
@@ -421,13 +423,25 @@ impl ReceiverContext {
         } else {
             None
         };
-        // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags
-        let partial_mode = if let Some(ref dir) = self.config.partial_dir {
-            PartialMode::PartialDir(dir.clone())
-        } else if self.config.flags.partial {
-            PartialMode::Partial
-        } else {
-            PartialMode::None
+        // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags.
+        //
+        // `--delay-updates` with no explicit `--partial-dir` stages through the
+        // implicit `.~tmp~` beside each destination file:
+        // upstream options.c:2563-2564 `if (delay_updates && !partial_dir)
+        // partial_dir = tmp_partialdir;` (`static char tmp_partialdir[] = ".~tmp~"`).
+        //
+        // The substitution belongs here, on the receiver, rather than on the
+        // option value itself: upstream keeps the implicit directory off the wire
+        // by comparing the pointer against `tmp_partialdir` before forwarding
+        // `--partial-dir` (options.c:3052-3055), sending only `--delay-updates`
+        // so the peer re-derives `.~tmp~` for itself. oc builds its argv from
+        // `ClientConfig`, which this never touches, so the same split holds
+        // without threading provenance through the option value.
+        let partial_mode = match (&self.config.partial_dir, self.config.write.delay_updates) {
+            (Some(dir), _) => PartialMode::PartialDir(dir.clone()),
+            (None, true) => PartialMode::PartialDir(PathBuf::from(DELAY_UPDATES_PARTIAL_DIR)),
+            (None, false) if self.config.flags.partial => PartialMode::Partial,
+            (None, false) => PartialMode::None,
         };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
