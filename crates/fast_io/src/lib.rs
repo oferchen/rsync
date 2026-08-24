@@ -134,6 +134,10 @@ pub mod page_aligned;
 pub mod parallel;
 /// Total physical memory detection (for the buffer pool's RAM-derived cap).
 pub mod physical_memory;
+/// Unix-only: read-only in-place recovery, mirroring upstream
+/// `open_readonly_inplace` (`receiver.c:200`).
+#[cfg(unix)]
+pub mod readonly_inplace;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
 pub mod same_fs;
 /// Strict-resolution directory open for the SEC-1 dirfd sandbox.

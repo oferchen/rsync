@@ -874,6 +874,8 @@ fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
 ///
 /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` - inplace write to device
 /// - `receiver.c:968-984`: opens destination directly when inplace
+/// - `receiver.c:1219-1224`: recovers a read-only destination via
+///   `open_readonly_inplace`
 fn open_output_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -906,6 +908,19 @@ fn open_output_file(
                 .write(true)
                 .truncate(false)
                 .open(&begin.file_path),
+            other => other,
+        };
+        // upstream: receiver.c:1219-1224 - the third arm, recovering a read-only
+        // destination. Unlike the protected_regular retry above it is NOT
+        // platform-gated: a read-only file is an EACCES everywhere.
+        #[cfg(unix)]
+        let opened = match opened {
+            Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
+                fast_io::readonly_inplace::open_readonly_inplace(
+                    &begin.file_path,
+                    fs::OpenOptions::new().write(true).truncate(false),
+                )
+            }
             other => other,
         };
         let mut file = opened?;
@@ -1127,3 +1142,6 @@ pub(super) fn make_writer<'a>(
     }
     Ok(Writer::Buffered(ReusableBufWriter::new(file, write_buf)))
 }
+
+#[cfg(all(test, unix))]
+mod tests;

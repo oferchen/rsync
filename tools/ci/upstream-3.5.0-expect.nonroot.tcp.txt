@@ -134,7 +134,7 @@ proxy-host-crlf pass
 proxy-protocol-trusted-peer fail
 proxy-response-header-too-long fail
 proxy-response-line-too-long pass
-readonly-partial-abort-mode-regression fail
+readonly-partial-abort-mode-regression pass
 recv-discard-nullderef pass
 rename-mixed-parent-transfer skip
 reverse-daemon-delta pass

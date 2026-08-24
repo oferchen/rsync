@@ -155,6 +155,20 @@ pub(in crate::local_copy) fn open_destination_writer(
                     .open(destination),
                 other => other,
             };
+            // upstream: receiver.c:1219-1224 - the third arm, recovering a
+            // read-only destination. Not platform-gated: a read-only file is an
+            // EACCES everywhere. The caller's truncate choice is preserved, so
+            // this changes only *whether* the open succeeds.
+            #[cfg(unix)]
+            let opened = match opened {
+                Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
+                    fast_io::readonly_inplace::open_readonly_inplace(
+                        destination,
+                        fs::OpenOptions::new().write(true).truncate(should_truncate),
+                    )
+                }
+                other => other,
+            };
             opened.map_err(|error| LocalCopyError::io("copy file", destination, error))
         }
         WriteStrategy::Direct => {
