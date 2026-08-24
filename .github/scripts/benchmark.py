@@ -15,9 +15,14 @@ import sys
 import tempfile
 import time
 
-UPSTREAM = os.environ.get(
-    "UPSTREAM_RSYNC", "target/interop/upstream-src/rsync-3.4.4/rsync"
-)
+UPSTREAM = os.environ.get("UPSTREAM_RSYNC", "")
+if not UPSTREAM:
+    sys.exit(
+        "UPSTREAM_RSYNC is not set: point it at the upstream rsync binary to "
+        "compare against, e.g. target/interop/upstream-src/rsync-3.5.0/rsync. "
+        "The caller that builds that binary owns the version, so this script "
+        "does not name one."
+    )
 OC_RSYNC = "target/release/oc-rsync"
 OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
 OC_RSYNC_RUSSH = os.environ.get("OC_RSYNC_RUSSH", "")
