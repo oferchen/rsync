@@ -170,7 +170,7 @@ the test passes on master with the flush in place.
 
 ## 5. tcpdump reproduction (REOPEN.1)
 
-The standing CLAUDE.md / `feedback_container_debug` guidance is to use
+The standing project-standards / `feedback_container_debug` guidance is to use
 the persistent `rsync-profile` podman container for byte-level wire
 captures. The exact command set to reproduce the 612425 cutoff against
 a daemon running pre-PR #5609:

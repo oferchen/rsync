@@ -37,9 +37,8 @@
 //!   [`ReorderBuffer::try_drain_ready`];
 //! - no extra crate dependency.
 //!
-//! The standard-library-first preference (see crate-level
-//! `CLAUDE.md`-equivalent guidance in the engine's `plan_map.rs`
-//! header) keeps the dependency footprint flat.
+//! The standard-library-first preference (see the equivalent
+//! crate-level guidance in the engine's `plan_map.rs` header) keeps the dependency footprint flat.
 //!
 //! # Cohort key shape
 //!

@@ -3,7 +3,7 @@
 ## Scope
 
 Workspace-wide audit of `unsafe { ... }` expression blocks for SAFETY comments
-and conformance with the unsafe-code policy declared in `CLAUDE.md`.
+and conformance with the unsafe-code policy declared in the project coding standards.
 
 Methodology:
 
@@ -18,13 +18,13 @@ Methodology:
 4. Bucket each violation as either `missing` (no comment found) or
    `placeholder` (TODO/FIXME/empty body).
 5. Cross-reference each crate against the permitted-unsafe list in
-   `CLAUDE.md`.
+   the project coding standards.
 
 The audit script is checked in at `tools/audit/unsafe_safety_comment_audit.py`.
 
 ## Permitted vs. forbidden crates
 
-`CLAUDE.md` lists the crates that may host unsafe code (directly or via
+The project coding standards list the crates that may host unsafe code (directly or via
 `#[allow(unsafe_code)]` on specific functions):
 
 | Status         | Crates                                                |
@@ -87,19 +87,19 @@ inline SAFETY justification.
 ## Policy violations (forbidden crates that contain unsafe)
 
 The following crates host `unsafe { ... }` blocks despite being outside the
-`CLAUDE.md` allowlist. Each one is a candidate either for migration into a
+project's unsafe-code allowlist. Each one is a candidate either for migration into a
 permitted crate, replacement with a safe wrapper crate, or a documented
-exception in `CLAUDE.md` (preferred for tiny POSIX shims that exist purely to
+exception in the project coding standards (preferred for tiny POSIX shims that exist purely to
 serialise environment-variable mutations during tests). All listed blocks now
 carry SAFETY comments; the recommendations below address the policy layer, not
 the comment layer.
 
 | Crate            | Blocks | Recommendation |
 |------------------|-------:|----------------|
-| `platform`       |     56 | Migrate Windows console/service/privilege shims into `fast_io` and gate them through safe wrappers (`ctrlc`, `windows-rs`). Env-guard helpers can stay if `CLAUDE.md` is updated to list `platform` as the canonical home for POSIX env serialisation. |
-| `windows-gnu-eh` |     13 | Compile-time fallback for `*-windows-gnu` only; gate the entire crate behind `#[cfg(all(target_os = "windows", target_env = "gnu"))]` and document an explicit exception in `CLAUDE.md`. The shim cannot be replaced by a safe wrapper because it patches the gnu personality routine. |
+| `platform`       |     56 | Migrate Windows console/service/privilege shims into `fast_io` and gate them through safe wrappers (`ctrlc`, `windows-rs`). Env-guard helpers can stay if the project coding standards is updated to list `platform` as the canonical home for POSIX env serialisation. |
+| `windows-gnu-eh` |     13 | Compile-time fallback for `*-windows-gnu` only; gate the entire crate behind `#[cfg(all(target_os = "windows", target_env = "gnu"))]` and document an explicit exception in the project coding standards. The shim cannot be replaced by a safe wrapper because it patches the gnu personality routine. |
 | `core`           |     12 | Move the SIGWINCH handler in `signal/unix.rs` into `platform` (POSIX side) or directly into `fast_io`. Test-only unsafe (`module_list_auth`, `client_integration`) should be moved into a shared helper crate already on the permitted list. |
-| `cli`            |     11 | Test-only env-guard helpers. Either re-use the helper that already lives in `platform::env::EnvGuard` or add `cli` test modules to the `CLAUDE.md` exception list. |
+| `cli`            |     11 | Test-only env-guard helpers. Either re-use the helper that already lives in `platform::env::EnvGuard` or add `cli` test modules to the the project coding standards exception list. |
 | `flist`          |      8 | Wrap `statx`/`fstatat` syscalls behind a safe API exposed from `fast_io::syscall_batch` (`fast_io` already exposes statx helpers in `io_uring/statx.rs`). The current direct `libc::syscall` calls duplicate functionality. |
 | `embedding`      |      3 | Replace with `platform::env::EnvGuard`. |
 | `daemon`         |      2 | Migrate the connection-scaling `getrusage` stress test to a shared test helper. |
@@ -107,7 +107,7 @@ the comment layer.
 
 ## Missing SAFETY comments
 
-`CLAUDE.md` requires every `unsafe { ... }` block to be preceded by a SAFETY
+The project coding standards require every `unsafe { ... }` block to be preceded by a SAFETY
 comment explaining the invariants the caller relies on. The current outstanding
 count is **0 blocks**.
 
@@ -236,7 +236,7 @@ Common patterns documented:
 
 1. **Policy follow-up**: either migrate the unsafe code in `platform`,
    `windows-gnu-eh`, `core`, `cli`, `flist`, `daemon`, `embedding`, and
-   `branding` into the permitted crates, or extend the `CLAUDE.md` allowlist
+   `branding` into the permitted crates, or extend the project's unsafe-code allowlist
    with explicit, narrow exceptions. Comment coverage is now 100%; the
    remaining work is structural, not documentary.
 2. **Regression gate**: wire `tools/audit/unsafe_safety_comment_audit.py` into

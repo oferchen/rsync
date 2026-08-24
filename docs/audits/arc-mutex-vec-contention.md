@@ -99,11 +99,11 @@ files, >= 16 rayon threads`:
    `Mutex<Vec>` baseline, with no regression > 2% at `threads = 1`.
 2. **Lock contention**: `perf lock:contention_begin` events at the
    replaced site fall below 1% of cycles in the `--threads = 32` run.
-3. **Memory**: peak RSS delta <= 5% (target from `CLAUDE.md` is < 10%
+3. **Memory**: peak RSS delta <= 5% (target from the project coding standards is < 10%
    total vs upstream; we keep half the budget for the change itself).
 4. **Dependency budget**: any new crate (`dashmap`, `thread_local`,
    `parking_lot`) must clear an unsafe-policy review per
-   `CLAUDE.md` "Unsafe Code Policy" - `flist` and `transfer` deny
+   the unsafe-code policy - `flist` and `transfer` deny
    unsafe today; the dep's unsafe must stay encapsulated inside its
    own crate and the wrapper API must remain safe.
 

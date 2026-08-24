@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit `unsafe { ... }` blocks across `crates/` for SAFETY comments.
 
-CLAUDE.md requires every `unsafe { ... }` expression block to be preceded by a
+The project coding standards require every `unsafe { ... }` expression block to be preceded by a
 SAFETY comment explaining the invariants the caller upholds. This script
 enumerates every block under `crates/` and reports either:
 
@@ -12,7 +12,7 @@ enumerates every block under `crates/` and reports either:
 - `placeholder`: the comment body is empty or matches `todo`/`fixme`/`tbd`/`n/a`.
 
 The script also tags each crate as `permitted` or `NOT PERMITTED` based on the
-CLAUDE.md unsafe-code policy.
+project's unsafe-code policy.
 
 Usage:
 

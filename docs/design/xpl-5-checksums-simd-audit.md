@@ -6,7 +6,7 @@ Continues the XPL-2 (kqueue) / XPL-3 (transfer) audit pattern.
 
 Hazard catalogue (SIMD-specific) drawn from
 `feedback_proactive_cross_platform.md` and the "Cross-Platform
-Compilation" + "Performance" sections of CLAUDE.md:
+Compilation" + "Performance" sections of the project coding standards:
 
 - `#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]` blocks
   with stale imports on aarch64.

@@ -138,7 +138,7 @@ Reasoning:
   release cadence. Apple has shipped libdispatch since macOS 10.6 with
   no ABI breaks; the symbols we touch are foundational.
 - The unsafe policy already permits this pattern in `fast_io` and the
-  long-term direction in CLAUDE.md is to consolidate unsafe code in
+  long-term direction in the project coding standards is to consolidate unsafe code in
   `fast_io`. New macOS FFI fits cleanly.
 - `block2` is small, actively maintained, and usable without the rest of
   the `objc2` framework family. It is the minimum incremental dep.

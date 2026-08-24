@@ -465,7 +465,7 @@ No additional API surface is required.
   considered and rejected: it requires impls (`Display`, `Ord`,
   `PartialOrd`, `Debug`) that already exist for tuples, and the
   existing code base uniformly uses `(u32, u32)`. Conformance over
-  taste (CLAUDE.md rule 11).
+  taste (the project coding standards, rule 11).
 
 ## 7. Acceptance criteria for the IKV-2 implementation PR
 

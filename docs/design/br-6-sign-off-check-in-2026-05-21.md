@@ -198,7 +198,7 @@ Check-in state as of 2026-05-21:
       `docs/audits/br-13-beta-bench-2026-05-20.md`.
 - [x] Unsafe-code policy audited (BR-10). `#[allow(unsafe_code)]`
       confined to the permitted crates per `SECURITY.md` and
-      `CLAUDE.md`; no new unsafe in `daemon`, `cli`, `core`,
+      the project coding standards; no new unsafe in `daemon`, `cli`, `core`,
       `transfer`, `batch`, `filters`, `signature`, `matching`,
       `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`,
       `compress`, `apple-fs`, `flist`.

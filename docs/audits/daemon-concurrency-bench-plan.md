@@ -298,7 +298,7 @@ metric exposes app-level fd hygiene, not the kernel default.
 ## 5. Container setup
 
 The benchmark runs inside the existing `rsync-profile` container
-(parent `CLAUDE.md` "Containers (Podman)"), which already has
+(the project coding standards, "Containers (Podman)"), which already has
 upstream rsync 3.4.1 and the `oc-rsync-dev` build. No new image is
 needed.
 
@@ -328,7 +328,7 @@ in `docs/audits/daemon-thread-per-connection-scalability.md`.
 
 The benchmark host is the container's view of the loopback
 interface. No external network is involved. Per the project
-container-safety rule (parent `CLAUDE.md` "Containers & Bind
+container-safety rule (the project coding standards, "Containers & Bind
 Mounts"), the harness writes all transient data under
 `/tmp/oc-rsync-bench/` *not* under the bind-mounted `/workspace/`
 tree, so a misquoted cleanup never touches the host repo. The

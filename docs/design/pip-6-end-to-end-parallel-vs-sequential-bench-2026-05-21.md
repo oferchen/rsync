@@ -214,7 +214,7 @@ gets drawn from the cell-level numbers.
   numbers. Bench execution is hardware-sensitive (NVMe vs HDD,
   core count, ambient load); the right place to capture numbers
   is the `rsync-profile` and `oc-rsync-bench` containers
-  documented in the project CLAUDE.md, on the same hardware that
+  documented in the project coding standards, on the same hardware that
   produces the BR-3i.f and BR-3j.f baselines.
 - **SSH transport.** The bench drives `rsync://` daemon loopback
   because the comparison is about the receiver apply path, not

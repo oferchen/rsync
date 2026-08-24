@@ -371,7 +371,7 @@ that cites the criterion JSON output and lists the chosen branch.
    the 64-thread cell will oversubscribe and produce noisy timings.
    Mitigation: run the gating measurement on the `rsync-profile`
    container (Linux, > 16 cores) per the project's container policy
-   in `CLAUDE.md`. Document the platform in the result note.
+   in the project coding standards. Document the platform in the result note.
 4. **TLS slot warm-up artefact.** After
    `thread_local_cache::try_store` succeeds once per thread, the slot
    stays warm for the rest of the benchmark. This means the second

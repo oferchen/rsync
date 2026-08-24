@@ -283,7 +283,7 @@ SQPOLL rootless testing because:
 
 The SQPOLL rootless tests use ephemeral (`--rm`) Alpine containers with
 read-only mounts specifically to avoid the pitfalls documented in
-CLAUDE.md about `rm -rf` in bind-mounted containers. No destructive
+the project coding standards for `rm -rf` in bind-mounted containers. No destructive
 commands run inside any test container.
 
 ## 7. Kernel version detection in test harness

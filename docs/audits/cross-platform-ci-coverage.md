@@ -24,7 +24,7 @@ Inputs:
 - Recent GitHub Actions history (`gh run list --workflow=ci.yml` over the
   last 14 days, including failure-only filter).
 
-Per `CLAUDE.md` the gating required checks are: `fmt+clippy`,
+Per the project coding standards the gating required checks are: `fmt+clippy`,
 `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, and
 `Linux musl (stable)`. Everything else is informational.
 

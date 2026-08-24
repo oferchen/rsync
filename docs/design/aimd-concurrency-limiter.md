@@ -165,7 +165,7 @@ The daemon path (`crates/daemon/`) reaches the same `core::session()` entry as t
 
 We do not pull in a Rust port of Netflix `concurrency-limits` or wrap the JVM library. Justifications:
 
-- The algorithm is roughly 200 lines of code; a dependency is not worth the supply-chain surface, especially given the unsafe-code policy in CLAUDE.md.
+- The algorithm is roughly 200 lines of code; a dependency is not worth the supply-chain surface, especially given the unsafe-code policy in the project coding standards.
 - We need tight integration with `crossbeam-channel::try_send` semantics and the existing `WorkQueueSender` type, which a generic library does not give us.
 - Native code lets us share atomics and `Instant` baselines with the existing `ReorderBuffer` instrumentation (#1885) without an FFI boundary.
 

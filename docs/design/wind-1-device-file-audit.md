@@ -195,7 +195,7 @@ documented as out-of-scope for the 0.x series and revisited when
 Justification:
 
 - Skip-and-warn is observable. Today's silent `Ok(())` violates the
-  CLAUDE.md "Fail loud" rule; this audit's purpose was to surface that.
+  project's "fail loud" rule; this audit's purpose was to surface that.
 - Fake-super piggy-backs on shipping code (`xattr_windows.rs`,
   `xattrs.c:rsync_xal_set` parity). The mapping is upstream-compatible
   byte-for-byte and round-trips with Linux-side `--fake-super` peers.

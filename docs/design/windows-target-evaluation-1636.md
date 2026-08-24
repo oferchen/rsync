@@ -46,7 +46,7 @@ There is no `build.rs`, no proc-macro, no conditional feature flag. The dependen
 
 ## 2. GNU-specific divergences across the codebase
 
-A workspace-wide grep for `target_env = "gnu"` (excluding `.claude/worktrees/` and `target/`) returns exactly the call sites listed above:
+A workspace-wide grep for `target_env = "gnu"` (excluding local scratch worktrees and `target/`) returns exactly the call sites listed above:
 
 ```
 crates/windows-gnu-eh/src/lib.rs:28   (doc comment)

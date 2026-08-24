@@ -35,7 +35,7 @@ The host is macOS; podman runs Linux containers for wire capture because
 `tcpdump` on the loopback under macOS does not see the same packet
 boundaries as Linux veth pairs and lacks the `--time-stamp-precision=nano`
 flag the analysis needs. The long-running `rsync-profile` container
-documented in `CLAUDE.md` is the canonical environment.
+documented in the project coding standards is the canonical environment.
 
 ### Container setup
 

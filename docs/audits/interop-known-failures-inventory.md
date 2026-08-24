@@ -236,7 +236,7 @@ Justification:
   Compare to `hardlinks` (INC_RECURSE sender) or `crtimes` (three
   platforms), which need wire-format or platform coordination.
 - **High interop value.** Daemon-config parity is a project-wide goal
-  (oc-rsync is the binary mode of `oc-rsyncd`, per `CLAUDE.md`
+  (oc-rsync is the binary mode of `oc-rsyncd`, per the project coding standards
   Architecture). Clearing these three tests proves daemon-config interop
   against upstream's canonical config shape, not just our own fixtures.
 - **No upstream-version risk.** Unlike the protocol-locked entries
