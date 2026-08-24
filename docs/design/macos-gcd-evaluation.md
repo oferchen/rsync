@@ -23,7 +23,7 @@ single import path; downstream tasks do not get to re-litigate per call site.
   `extern "C"` declarations in a private `fast_io::macos::dispatch_sys` module.
 
 `fast_io` already permits `#[allow(unsafe_code)]` on functions that touch
-platform FFI (CLAUDE.md: "fast_io ... platform copy dispatch"), so any of the
+platform FFI (the project coding standards: "fast_io ... platform copy dispatch"), so any of the
 three is policy-compatible.
 
 ## Option A — the `dispatch` crate
@@ -136,7 +136,7 @@ Reasons:
 - `fast_io` already holds platform FFI under `#[allow(unsafe_code)]` for
   io_uring, IOCP, `clonefile`, and `CopyFileExW`. Adding GCD FFI fits the
   same pattern and keeps the unsafe surface in one crate, consistent with
-  CLAUDE.md's "consolidate unsafe in fast_io" direction.
+  the project coding standards' "consolidate unsafe in fast_io" direction.
 - `block2` is small, well-maintained, and used independently of the full
   `objc2` stack.
 

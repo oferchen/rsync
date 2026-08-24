@@ -1,3 +1,10 @@
+//! The `oc-rsync` binary entry point.
+//!
+//! Selects the global allocator per platform, then hands off to the `cli`
+//! frontend. Every mode - client, `--server`, `--daemon` - enters through the
+//! same `main`, matching upstream's single-binary model where the role is
+//! decided by argv rather than by which executable was invoked.
+
 #![deny(unsafe_code)]
 
 // High-performance global allocator, selected per platform.
@@ -24,9 +31,17 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 // eliminating the throughput regression on I/O-bound transfers and halving it
 // on allocation-heavy small-file workloads.
 //
-// The symbol name matches the default `_rjem_`-prefixed tikv-jemalloc-sys
-// build. Were the crate built with `unprefixed_malloc_on_supported_platforms`,
-// the expected symbol would be `malloc_conf` instead.
+/// jemalloc tuning applied at allocator init, before `main` runs.
+///
+/// `dirty_decay_ms` and `muzzy_decay_ms` bound how long freed pages are held
+/// before being returned to the OS. The default is measured in seconds, which
+/// keeps peak RSS high across the many short-lived allocations a file-per-entry
+/// walk produces; 250 ms returns them promptly enough to matter on a large
+/// tree without paying a syscall per free.
+///
+/// The symbol name matches the default `_rjem_`-prefixed tikv-jemalloc-sys
+/// build. Were the crate built with `unprefixed_malloc_on_supported_platforms`,
+/// the expected symbol would be `malloc_conf` instead.
 #[cfg(unix)]
 #[allow(unsafe_code, non_upper_case_globals)]
 #[unsafe(no_mangle)]

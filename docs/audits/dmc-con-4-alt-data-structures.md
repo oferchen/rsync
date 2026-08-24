@@ -245,7 +245,7 @@ Document the missing gate in a follow-up addendum to this audit.
 - It does not measure papaya, flurry, or crossbeam-skiplist against
   the applier's bench harness. The numbers in section 3 are estimates;
   the DMB.c/d nightly harness is the canonical place to land measured
-  cells. CLAUDE.md (rule 12) requires surfacing this rather than
+  cells. The project coding standards (rule 12) require surfacing this rather than
   asserting numbers we did not run.
 - It does not change any code. DMC-CON.3 (PR #5604) is the active
   implementation track for the DashMap shard count; DMC-CON.4 is

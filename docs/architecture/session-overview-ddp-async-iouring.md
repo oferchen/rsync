@@ -403,7 +403,7 @@ filesystems that lack it.
 
 ### Required vs informational
 
-Per `CLAUDE.md`, the gating required checks are: `fmt+clippy`,
+Per the project coding standards, the gating required checks are: `fmt+clippy`,
 `nextest (stable)`, `Windows (stable)`, `macOS (stable)`,
 `Linux musl (stable)`, plus the macOS interop smoke harness. The new
 cross-OS feature matrix and the Windows interop job are

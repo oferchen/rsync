@@ -252,7 +252,7 @@ impl<W: Write + Seek> SparseWriter<W> {
 ### 2.5 Single-seek-per-zero-run invariant
 
 The existing implementation already preserves the
-"single seek per zero run" invariant (CLAUDE.md performance section). The
+"single seek per zero run" invariant (the performance section of the project coding standards). The
 decorator must preserve it as well. The two preconditions are:
 
 1. `accumulate(n)` must never seek - it only updates `pending_zeros`. The

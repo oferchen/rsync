@@ -562,7 +562,7 @@ twice.
 4. **Mmap concurrency.** `MmapBacked` is `Send + Sync` because the
    mmap is read-only post-construction. The `Arc<Mmap>` plus
    `&'static` slice trick requires unsafe, which under the project's
-   policy (CLAUDE.md) must live in `fast_io` or another permitted
+   policy (the project coding standards) must live in `fast_io` or another permitted
    crate. PR E will need to either move the unsafe to `fast_io` or
    defer mmap support entirely.
 5. **Wire reader flow control.** `ArenaBacked` construction during

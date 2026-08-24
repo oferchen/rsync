@@ -78,7 +78,7 @@ unchanged, runs the generator decision tree, registers
 `CreatedEntryKind::Device` as bookkeeping, applies metadata to a
 non-existent inode, and reports success. The destination is missing the
 device / FIFO / socket entry and the operator has no signal that anything
-was skipped. This violates the CLAUDE.md "Fail loud" rule.
+was skipped. This violates the project's "fail loud" rule.
 
 ## Strategy: (a) skip-and-warn, with opt-in (c) fake-super placeholder
 
@@ -168,7 +168,7 @@ WIND-3 MUST NOT change the Unix arms of any of:
 WIND-4 MUST include negative-control assertions that the Unix tests for
 the above paths still pass unchanged. The intent is that WIND-3 adds a
 Windows-specific arm; it does not refactor or "improve" adjacent Unix
-code. CLAUDE.md Rule 3 (Surgical Changes) is binding here.
+code. The project coding standards' rule 3 (Surgical Changes) is binding here.
 
 ## Follow-up tasks
 

@@ -199,7 +199,7 @@ Pros:
 - The factory API matches the Builder pattern used elsewhere in the
   codebase (`FileEntryBuilder`, `CoreConfig`, `TransferConfigBuilder`,
   `FilterChain`), so it is consistent with the project's design-pattern
-  policy in CLAUDE.md.
+  policy in the project coding standards.
 - Eliminates the only remaining reason for tests outside the buffer-pool
   module to take a process-wide env-var lock for cap concerns.
 
@@ -328,7 +328,7 @@ These are the success bars for the follow-up tasks:
     `docs/development/buffer-pool-test-isolation.md` describing the
     `BufferPool::isolated()` pattern, when to use it vs the global
     singleton, and how to write new cap-tests.
-  - Update CLAUDE.md or the engine crate's rustdoc to point at the new
+  - Update the project coding standards or the engine crate's rustdoc to point at the new
     guide.
 
 ## 9. Cross-references

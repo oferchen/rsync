@@ -1,3 +1,15 @@
+//! Build-provenance constants for the orchestration crate.
+//!
+//! Emits the git revision the binary reports, resolved from the workspace
+//! checkout rather than the crate directory so a path dependency built from
+//! elsewhere still records the right commit. Falls back silently when no git
+//! directory is reachable, which is the normal case for a vendored or
+//! published build.
+//!
+//! The `rerun-if-changed` wiring is what keeps the value honest across
+//! incremental builds; see `crates/branding/build.rs` for the same rule
+//! applied to the branding metadata.
+
 use std::{
     env,
     path::{Path, PathBuf},

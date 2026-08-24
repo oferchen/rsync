@@ -116,7 +116,7 @@ caller (CI, ci-skip, benchmark). They are not separately triageable.
 - Failure category: (b) known issue / documented limitation
   - Latest failure: `FileNotFoundError: target/interop/upstream-src/rsync-3.4.1/rsync`
     because the workflow expects an upstream binary that the cached path no
-    longer ships. Per CLAUDE.md "Benchmark appends to release body" already
+    longer ships. Per the project coding standards ("Benchmark appends to release body") already
     notes the workflow's brittleness around release tags.
   - 2026-05-03 failures: build step `Build oc-rsync with embedded-ssh
     (release)` failed because `embedded-ssh` feature was renamed; that
@@ -163,7 +163,7 @@ caller (CI, ci-skip, benchmark). They are not separately triageable.
   test process panicking with a Windows backtrace
   (`std::sys::pal::windows::thread::impl$0::new::thread_start`) and
   `106/1114 tests were not run due to test failure`. This is the
-  panicking-thread-on-Windows pattern flagged in CLAUDE.md
+  panicking-thread-on-Windows pattern flagged in the project coding standards
   "Cross-Platform Compilation" notes.
 - Recommendation: file a follow-up to add a retry shim (e.g.
   `nextest --retries 2` on Windows) and to capture the panicking test name
@@ -194,7 +194,7 @@ caller (CI, ci-skip, benchmark). They are not separately triageable.
 - Workflow id: 278453065
 - Last 3 results: success, success, success.
 - Failure category: (d) informational-only by design. Marked
-  `continue-on-error: true` per CLAUDE.md known-good list.
+  `continue-on-error: true` per the project coding standards known-good list.
 - Recommendation: no action.
 
 ### Coverage (`coverage.yml`)

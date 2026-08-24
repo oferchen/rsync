@@ -1,3 +1,15 @@
+//! Link configuration for POSIX ACL support.
+//!
+//! Decides whether this target can reach `acl_*` at all and, when it can, how
+//! to link it: macOS exposes the functions through libSystem with nothing to
+//! link, glibc Linux needs an explicit `-lacl` and a `libacl.so` located via
+//! `ldconfig`, and musl has no libacl to find. A cross-compile whose host and
+//! target triples disagree is treated as "cannot probe", so the build never
+//! links the host's library into a foreign target.
+//!
+//! Emitting no `cargo:rustc-link-lib` is a supported outcome: the crate's
+//! `#[cfg(feature = "acl")]` paths degrade rather than fail to build.
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

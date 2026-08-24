@@ -184,7 +184,7 @@ Reproduced inside the `rsync-profile` podman container (Debian
 `rust:latest`, bind-mounted host repo) against the worktree build:
 
 ```
-podman exec rsync-profile bash -c 'cd /workspace/.claude/worktrees/<wt> && \
+podman exec rsync-profile bash -c 'cd /workspace/<worktree> && \
   cargo build --release --features parallel-receive-delta'
 ```
 

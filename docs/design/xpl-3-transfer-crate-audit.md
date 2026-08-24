@@ -5,7 +5,7 @@ consistency, following the model established by XPL-1 (`apple-fs`) and
 XPL-2 (`kqueue_stub`).
 
 The hazards looked for, drawn from `feedback_proactive_cross_platform.md`
-and the "Cross-Platform Compilation" section of `CLAUDE.md`:
+and the "Cross-Platform Compilation" section of the project coding standards:
 
 - Unused imports/variables behind `#[cfg(target_os = "...")]` gates on
   the other platform.
@@ -75,7 +75,7 @@ on master.
 let mut cleared = Vec::new();
 ```
 
-CLAUDE.md recommends `let _ = &var;` over `#[allow(unused_mut)]` for
+The project coding standards recommend `let _ = &var;` over `#[allow(unused_mut)]` for
 exactly this shape, but the existing form compiles cleanly across all
 target/feature matrices and carries a `REASON:` comment naming the
 trigger condition. Leaving in place: refactoring would churn the only
