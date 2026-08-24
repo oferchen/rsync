@@ -105,6 +105,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 name = "batch"
 version = "0.6.4"
 dependencies = [
+ "fast_io",
  "filetime",
  "metadata",
  "protocol",
@@ -528,6 +529,7 @@ version = "0.6.4"
 dependencies = [
  "dashmap",
  "filetime",
+ "io-uring",
  "landlock",
  "libc",
  "logging",
@@ -560,6 +562,7 @@ dependencies = [
 name = "filters"
 version = "0.6.4"
 dependencies = [
+ "fast_io",
  "globset",
  "logging",
  "thiserror",
@@ -665,6 +668,17 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "io-uring"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64d8ca234d152948ceaede1f419b6a83983a5ecccaac05fb337a809c96d3aa6"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
