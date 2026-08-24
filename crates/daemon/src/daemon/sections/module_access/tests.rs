@@ -1423,6 +1423,41 @@ mod module_access_tests {
         ModuleRuntime::from(ModuleDefinition::default())
     }
 
+    /// `insecure links = yes` must actually reach the ownership walk's opt-out.
+    ///
+    /// upstream: `syscall.c:117-126` - for a daemon, `symlink_optout_allowed()`
+    /// IS `module_id >= 0 && lp_insecure_links(module_id)`. Without this pin the
+    /// directive could parse and be stored while the walk stayed fully engaged:
+    /// an inert change that every parse-only test would still call green.
+    ///
+    /// Safe against the process-global `SESSION_OPTOUT` because this workspace
+    /// runs under cargo-nextest, which executes each test in its own process.
+    #[test]
+    fn insecure_links_directive_reaches_the_session_optout() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            insecure_links: true,
+            ..Default::default()
+        });
+        publish_module_confinement(&module, std::path::Path::new("/srv/module"), false);
+        assert!(
+            fast_io::confinement::session_optout_allowed(),
+            "`insecure links = yes` must disengage the operator-path walk"
+        );
+    }
+
+    /// Non-vacuity companion for the pin above: with the directive absent the
+    /// confinement stays engaged, so that test measures the directive and not a
+    /// predicate that is unconditionally true.
+    #[test]
+    fn absent_insecure_links_leaves_the_confinement_engaged() {
+        let module = test_module_with_defaults();
+        publish_module_confinement(&module, std::path::Path::new("/srv/module"), false);
+        assert!(
+            !fast_io::confinement::session_optout_allowed(),
+            "a module without the directive must keep the walk engaged"
+        );
+    }
+
     #[test]
     fn build_daemon_filter_rules_empty_module() {
         let module = test_module_with_defaults();
