@@ -138,38 +138,15 @@ pub(in crate::local_copy) fn open_destination_writer(
             // Inplace + delta must NOT truncate: the existing blocks are the
             // basis the delta reads from.
             let should_truncate = delta_signature.is_none();
-            let opened = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(should_truncate)
-                .open(destination);
-            // upstream: receiver.c:978-986 - under the fs.protected_regular
-            // sysctl the kernel returns EACCES for an O_CREAT open of an
-            // existing file we do not own in a sticky, world-writable dir. The
-            // file already exists on the inplace path, so retry without O_CREAT.
-            #[cfg(target_os = "linux")]
-            let opened = match opened {
-                Err(error) if error.raw_os_error() == Some(libc::EACCES) => fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(should_truncate)
-                    .open(destination),
-                other => other,
-            };
-            // upstream: receiver.c:1219-1224 - the third arm, recovering a
-            // read-only destination. Not platform-gated: a read-only file is an
-            // EACCES everywhere. The caller's truncate choice is preserved, so
-            // this changes only *whether* the open succeeds.
-            #[cfg(unix)]
-            let opened = match opened {
-                Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
-                    fast_io::readonly_inplace::open_readonly_inplace(
-                        destination,
-                        fs::OpenOptions::new().write(true).truncate(should_truncate),
-                    )
-                }
-                other => other,
-            };
-            opened.map_err(|error| LocalCopyError::io("copy file", destination, error))
+            // upstream: receiver.c:1195-1224 - the whole three-arm chain, owned
+            // by `fast_io`. `Direct` because this is the destination leaf,
+            // already anchored by the caller, not an operator path.
+            fast_io::open_inplace_output(
+                destination,
+                should_truncate,
+                fast_io::InplaceResolution::Direct,
+            )
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))
         }
         WriteStrategy::Direct => {
             // Direct write when there is no existing file to protect.
