@@ -254,7 +254,7 @@ proxy-protocol-trusted-peer skip
 proxy-response-header-too-long skip
 proxy-response-line-too-long skip
 prune-empty-dirs pass
-readonly-partial-abort-mode-regression fail
+readonly-partial-abort-mode-regression pass
 recv-discard-nullderef pass
 recv-generator-acl-leak skip
 relative pass
