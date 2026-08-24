@@ -101,21 +101,54 @@ fn build_post_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessC
     build_base_xfer_command(command, ctx)
 }
 
+/// The `RSYNC_REQUEST` value an early-exec hook sees.
+///
+/// Early exec runs before the client has named a request, so upstream passes
+/// `request = NULL` and `write_pre_exec_args` substitutes this literal
+/// (clientserver.c:614-615, called from clientserver.c:1004 with all three
+/// arg pointers NULL). The hook therefore sees no `RSYNC_ARG<n>` either.
+pub(crate) const EARLY_EXEC_REQUEST: &str = "(NONE)";
+
 /// Runs the early exec command for a daemon module.
 ///
 /// The command is executed via `sh -c` (Unix) or `cmd /C` (Windows) with
 /// upstream-compatible environment variables. If the command exits non-zero,
 /// returns an error indicating the connection should be denied.
 ///
-/// Upstream: `clientserver.c` - `early_exec()` runs early in the connection,
-/// before authentication and argument exchange.
-fn run_early_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Result<(), String>> {
+/// `early_input` carries the client's `--early-input` bytes, which become the
+/// hook's stdin. Early exec is the *only* hook that receives them: upstream
+/// writes them under `exec_type == 1` (clientserver.c:630-631) and frees
+/// `early_input` immediately after the exec-setup block (clientserver.c:1035),
+/// before the pre-xfer and name-converter args are written at all.
+///
+/// Upstream: `clientserver.c:996-1010` - `early_exec()` runs early in the
+/// connection, before argument exchange.
+fn run_early_exec(
+    command: &str,
+    ctx: &XferExecContext<'_>,
+    early_input: Option<&[u8]>,
+) -> io::Result<Result<(), String>> {
     let mut cmd = build_pre_xfer_command(command, ctx);
-    cmd.stdin(Stdio::null());
+    cmd.stdin(if early_input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
 
-    let output = cmd.output()?;
+    let output = if let Some(data) = early_input {
+        let mut child = cmd.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            // Best-effort: a hook that never reads stdin exits with the pipe
+            // still full, and upstream's write_buf tolerates that too.
+            let _ = stdin.write_all(data);
+            drop(stdin);
+        }
+        child.wait_with_output()?
+    } else {
+        cmd.output()?
+    };
 
     if output.status.success() {
         Ok(Ok(()))
@@ -177,44 +210,27 @@ struct PreXferError {
 /// error paths. The caller is responsible for sending it to the client as an
 /// info message (on success) or before the `@ERROR` response (on failure).
 ///
-/// When `early_input` is `Some`, the data is written to the child process's
-/// stdin before closing it. This mirrors upstream `clientserver.c:583-584`
-/// where `write_buf(write_fd, early_input, early_input_len)` pipes client-sent
-/// early-input data to the pre-xfer exec script.
+/// The hook gets no stdin. `--early-input` belongs to the *early* exec hook
+/// only: upstream writes those bytes under `exec_type == 1`
+/// (clientserver.c:630-631) and the pre-xfer args go out as `exec_type == 0`
+/// (clientserver.c:1181), by which point `early_input` has already been freed
+/// (clientserver.c:1035-1038).
 ///
-/// Upstream: `clientserver.c` - `pre_exec()` / `write_pre_exec_args()` runs
-/// the command, captures stdout for the client, and pipes early-input data to
-/// its stdin.
+/// Upstream: `clientserver.c:1013-1022` / `clientserver.c:610-633` - `pre_exec()`
+/// runs the command and captures stdout for the client.
 fn run_pre_xfer_exec(
     command: &str,
     ctx: &XferExecContext<'_>,
-    early_input: Option<&[u8]>,
 ) -> io::Result<Result<PreXferOutput, PreXferError>> {
     let mut cmd = build_pre_xfer_command(command, ctx);
 
-    if early_input.is_some() {
-        cmd.stdin(Stdio::piped());
-    } else {
-        cmd.stdin(Stdio::null());
-    }
+    cmd.stdin(Stdio::null());
     // upstream: clientserver.c:pre_exec() - stdout is captured and relayed to
     // the client as an informational message.
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    let mut child = cmd.spawn()?;
-
-    // Pipe early-input data to the child's stdin, then close it.
-    // upstream: clientserver.c:585-586 - write_buf(write_fd, early_input, early_input_len)
-    if let Some(data) = early_input {
-        if let Some(mut stdin) = child.stdin.take() {
-            // Best-effort write; ignore broken pipe if the child exits early.
-            let _ = stdin.write_all(data);
-            drop(stdin);
-        }
-    }
-
-    let output = child.wait_with_output()?;
+    let output = cmd.output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     if output.status.success() {
@@ -412,7 +428,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_early_exec_succeeds_on_zero_exit() {
         let ctx = test_context();
-        let result = run_early_exec("true", &ctx).expect("command should run");
+        let result = run_early_exec("true", &ctx, None).expect("command should run");
         assert!(result.is_ok());
     }
 
@@ -420,7 +436,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_early_exec_fails_on_nonzero_exit() {
         let ctx = test_context();
-        let result = run_early_exec("false", &ctx).expect("command should run");
+        let result = run_early_exec("false", &ctx, None).expect("command should run");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("early exec command failed"));
@@ -432,7 +448,7 @@ mod xfer_exec_tests {
     fn run_early_exec_captures_stderr() {
         let ctx = test_context();
         let result =
-            run_early_exec("echo 'early error' >&2; exit 1", &ctx).expect("command should run");
+            run_early_exec("echo 'early error' >&2; exit 1", &ctx, None).expect("command should run");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("early error"));
@@ -445,6 +461,7 @@ mod xfer_exec_tests {
         let result = run_early_exec(
             "test \"$RSYNC_MODULE_NAME\" = \"testmod\" && test \"$RSYNC_HOST_ADDR\" = \"192.168.1.100\"",
             &ctx,
+            None,
         )
         .expect("command should run");
         assert!(result.is_ok(), "env vars should be set correctly");
@@ -454,7 +471,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_succeeds_on_zero_exit() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("true", &ctx, None).expect("command should run");
+        let result = run_pre_xfer_exec("true", &ctx).expect("command should run");
         assert!(result.is_ok());
     }
 
@@ -462,7 +479,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_fails_on_nonzero_exit() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("false", &ctx, None).expect("command should run");
+        let result = run_pre_xfer_exec("false", &ctx).expect("command should run");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("pre-xfer exec returned"));
@@ -473,7 +490,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stderr() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None)
+        let result = run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx)
             .expect("command should run");
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -486,7 +503,7 @@ mod xfer_exec_tests {
         let ctx = test_context();
         let result = run_pre_xfer_exec(
             "test \"$RSYNC_MODULE_NAME\" = \"testmod\" && test \"$RSYNC_HOST_ADDR\" = \"192.168.1.100\"",
-            &ctx, None,
+            &ctx,
         )
         .expect("command should run");
         assert!(result.is_ok(), "env vars should be set correctly");
@@ -552,20 +569,25 @@ mod xfer_exec_tests {
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
         let result =
-            run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None).expect("sh -c should run");
+            run_pre_xfer_exec("/nonexistent/binary/path", &ctx).expect("sh -c should run");
         assert!(result.is_err());
     }
 
+    /// `--early-input` reaches the EARLY-exec hook's stdin. These three cells
+    /// previously asserted it on `run_pre_xfer_exec`, which encoded oc's
+    /// divergence: upstream writes the bytes only for `exec_type == 1`
+    /// (clientserver.c:630-631) and frees the buffer (clientserver.c:1035-1038)
+    /// before the pre-xfer args are written at all.
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_pipes_early_input_to_stdin() {
+    fn run_early_exec_pipes_early_input_to_stdin() {
         let ctx = test_context();
         let dir = tempfile::tempdir().unwrap();
         let out_path = dir.path().join("stdin_capture.txt");
         // The script reads stdin and writes it to a file so we can verify.
         let cmd = format!("cat > '{}'", out_path.display());
-        let data = b"early-input-payload-for-pre-xfer";
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data)).expect("command should run");
+        let data = b"early-input-payload-for-early-exec";
+        let result = run_early_exec(&cmd, &ctx, Some(data)).expect("command should run");
         assert!(result.is_ok(), "script should exit 0");
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
@@ -573,26 +595,45 @@ mod xfer_exec_tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_without_early_input_has_closed_stdin() {
+    fn run_early_exec_without_early_input_has_closed_stdin() {
         let ctx = test_context();
         // `cat` with null stdin exits 0 immediately.
-        let result = run_pre_xfer_exec("cat", &ctx, None).expect("command should run");
+        let result = run_early_exec("cat", &ctx, None).expect("command should run");
         assert!(result.is_ok());
     }
 
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_early_input_binary_data() {
+    fn run_early_exec_early_input_binary_data() {
         let ctx = test_context();
         let dir = tempfile::tempdir().unwrap();
         let out_path = dir.path().join("binary_capture.bin");
         let cmd = format!("cat > '{}'", out_path.display());
         // All byte values 0x00..=0xFF
         let data: Vec<u8> = (0..=255u8).collect();
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data)).expect("command should run");
+        let result = run_early_exec(&cmd, &ctx, Some(&data)).expect("command should run");
         assert!(result.is_ok());
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
+    }
+
+    /// The pre-xfer hook must see an empty stdin. Without this the removal of
+    /// its `early_input` parameter would be pinned only by the type signature,
+    /// which the next refactor could restore without noticing.
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_has_closed_stdin() {
+        let ctx = test_context();
+        let dir = tempfile::tempdir().unwrap();
+        let out_path = dir.path().join("pre_xfer_stdin.txt");
+        let cmd = format!("cat > '{}'", out_path.display());
+        let result = run_pre_xfer_exec(&cmd, &ctx).expect("command should run");
+        assert!(result.is_ok(), "script should exit 0 on an empty stdin");
+        let captured = std::fs::read(&out_path).expect("output file should exist");
+        assert!(
+            captured.is_empty(),
+            "pre-xfer exec must read nothing from stdin, got {captured:?}"
+        );
     }
 
     #[test]
@@ -689,7 +730,7 @@ mod xfer_exec_tests {
     fn run_pre_xfer_exec_captures_stdout_on_success() {
         let ctx = test_context();
         let result =
-            run_pre_xfer_exec("echo 'hello from script'", &ctx, None).expect("command should run");
+            run_pre_xfer_exec("echo 'hello from script'", &ctx).expect("command should run");
         let output = result.expect("should succeed");
         assert_eq!(output.stdout, "hello from script");
     }
@@ -698,7 +739,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stdout_on_failure() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx, None)
+        let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx)
             .expect("command should run");
         let err = result.unwrap_err();
         assert_eq!(err.stdout, "pre-xfer info");
@@ -709,7 +750,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_empty_stdout_on_success() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("true", &ctx, None).expect("command should run");
+        let result = run_pre_xfer_exec("true", &ctx).expect("command should run");
         let output = result.expect("should succeed");
         assert!(output.stdout.is_empty());
     }
@@ -718,7 +759,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_multiline_stdout() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'line1'; echo 'line2'; echo 'line3'", &ctx, None)
+        let result = run_pre_xfer_exec("echo 'line1'; echo 'line2'; echo 'line3'", &ctx)
             .expect("command should run");
         let output = result.expect("should succeed");
         assert!(output.stdout.contains("line1"));
@@ -742,7 +783,6 @@ mod xfer_exec_tests {
         let result = run_pre_xfer_exec(
             "test \"$RSYNC_ARG0\" = \"rsync\" && test \"$RSYNC_ARG1\" = \"--server\"",
             &ctx,
-            None,
         )
         .expect("command should run");
         assert!(result.is_ok(), "RSYNC_ARG env vars should be set correctly");
