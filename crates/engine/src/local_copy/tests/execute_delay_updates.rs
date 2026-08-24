@@ -2340,3 +2340,169 @@ fn delay_updates_restores_nested_directory_mtime_after_rename() {
          not just the transfer root"
     );
 }
+
+// --- staging THROUGH the --partial-dir -------------------------------------
+//
+// upstream: receiver.c:1301-1314 - under --delay-updates a completed file is
+// published INTO the --partial-dir under its real name
+// (`handle_partial_dir(partialptr, PDIR_CREATE)` then
+// `finish_transfer(partialptr, fnametmp, ...)`), and only
+// `handle_delayed_updates()` (receiver.c:685-720) renames it onto the
+// destination after the walk. Merely holding the temp back until the end
+// reaches the same destination content but never creates the partial dir,
+// which an operator who named `--partial-dir=DIR` can observe.
+
+/// 2001-09-09. Any later mtime means the directory was written through.
+/// A pinned epoch rather than a sub-second delta: on a 1-second-granularity
+/// filesystem a same-second change is invisible, and the test would then read
+/// a staged file as "never staged".
+const PINNED_EPOCH: i64 = 1_000_000_000;
+
+#[test]
+fn delay_updates_creates_an_absolute_partial_dir_and_leaves_it() {
+    let temp = create_tempdir();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let partial_dir = temp.path().join("staging").join("pd");
+    fs::write(&source, b"PAYLOAD-DATA").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .delay_updates(true)
+                .with_partial_directory(Some(partial_dir.clone())),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"PAYLOAD-DATA",
+        "the delayed update must still land on the destination"
+    );
+    assert!(
+        partial_dir.is_dir(),
+        "an absolute --partial-dir must be created and left in place: upstream \
+         handle_partial_dir() returns early on PDIR_DELETE when *partial_dir == '/'"
+    );
+    assert_eq!(
+        fs::read_dir(&partial_dir)
+            .expect("read partial dir")
+            .count(),
+        0,
+        "the staged entry must have been renamed out of the partial dir"
+    );
+}
+
+#[test]
+fn delay_updates_writes_through_a_pre_existing_partial_dir() {
+    // Non-vacuity companion for the test above: that one is satisfied by a
+    // bare mkdir, this one is not. Staging is what advances the directory's
+    // mtime, so an implementation that created the dir and then renamed the
+    // temp straight onto the destination leaves the pinned mtime untouched.
+    let temp = create_tempdir();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let partial_dir = temp.path().join("pd");
+    fs::write(&source, b"PAYLOAD-DATA").expect("write source");
+    fs::create_dir_all(&partial_dir).expect("pre-create partial dir");
+
+    let pinned = FileTime::from_unix_time(PINNED_EPOCH, 0);
+    set_file_mtime(&partial_dir, pinned).expect("pin partial dir mtime");
+    let stored = FileTime::from_last_modification_time(
+        &fs::metadata(&partial_dir).expect("partial dir metadata"),
+    );
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .delay_updates(true)
+                .with_partial_directory(Some(partial_dir.clone())),
+        )
+        .expect("copy succeeds");
+
+    let after = FileTime::from_last_modification_time(
+        &fs::metadata(&partial_dir).expect("partial dir metadata"),
+    );
+    assert_ne!(
+        after, stored,
+        "the delayed update must be staged INTO the --partial-dir, which \
+         advances its mtime; an unchanged mtime means nothing was written there"
+    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"PAYLOAD-DATA");
+}
+
+#[test]
+fn delay_updates_removes_a_relative_partial_dir_after_the_rename() {
+    // upstream: receiver.c:718 handle_partial_dir(partialptr, PDIR_DELETE)
+    // rmdir's a now-empty RELATIVE partial dir once the delayed rename lands.
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+    fs::write(source_root.join("f0"), b"PAYLOAD-DATA").expect("write source");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .delay_updates(true)
+                .with_partial_directory(Some(std::path::PathBuf::from(".pd"))),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(fs::read(dest_root.join("f0")).expect("read dest"), b"PAYLOAD-DATA");
+    assert!(
+        !dest_root.join(".pd").exists(),
+        "a relative --partial-dir must be rmdir'd once emptied"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delay_updates_creates_the_partial_dir_private() {
+    // upstream: util1.c:handle_partial_dir() - `do_mkdir_at(dir, 0700)`. The
+    // partial dir holds a complete copy of the file mid-transfer, so a
+    // umask-derived 0755 would expose it to every local user meanwhile.
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = create_tempdir();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let partial_dir = temp.path().join("pd");
+    fs::write(&source, b"PAYLOAD-DATA").expect("write source");
+
+    let operands = vec![source.into_os_string(), destination.into_os_string()];
+    LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .delay_updates(true)
+                .with_partial_directory(Some(partial_dir.clone())),
+        )
+        .expect("copy succeeds");
+
+    let mode = fs::metadata(&partial_dir)
+        .expect("partial dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700, "the partial dir must be created private (0700)");
+}
