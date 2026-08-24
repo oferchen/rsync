@@ -209,6 +209,11 @@ impl LocalCopyOptionsBuilder {
             log_file: self.log_file,
             log_file_format: self.log_file_format,
             platform_copy: self.platform_copy,
+            // Defaults to the same `Auto` as `LocalCopyOptions::new()`. The
+            // policy is an operator flag, applied after construction by
+            // `core::client::run::apply_zero_copy_policy`, so the builder has
+            // no setter for it rather than a setter nobody calls.
+            zero_copy: fast_io::ZeroCopyPolicy::Auto,
         };
         options.apply_delay_updates_partial_dir_default();
         options

@@ -764,19 +764,30 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options
     }
 
-    /// Swaps in [`fast_io::NoZeroCopyPlatformCopy`] when the user passed
-    /// `--no-zero-copy`, forcing whole-file copies through the portable
-    /// `std::fs::copy` fallback.
+    /// Applies `--zero-copy` / `--no-zero-copy` to both halves of the local
+    /// copy path.
     ///
-    /// `Auto` and `Enabled` leave the engine's default platform copy
-    /// strategy in place so the platform fallback chain
-    /// (`FICLONE`/`copy_file_range` on Linux, `clonefile`/`fcopyfile` on
-    /// macOS, `CopyFileExW`/ReFS on Windows) remains active.
+    /// The policy governs two independent mechanisms, and disabling only one
+    /// leaves the flag half-inert:
+    ///
+    /// 1. The **clone/reflink tier** - swapped to
+    ///    [`fast_io::NoZeroCopyPlatformCopy`] so whole-file copies take the
+    ///    portable `std::fs::copy` fallback.
+    /// 2. The **content path** - carried on the options so the engine skips
+    ///    the kernel-side movers (`io_uring`, then `copy_file_range`) that run
+    ///    when no clone tier applied, and reads the source in userspace
+    ///    instead.
+    ///
+    /// `Auto` and `Enabled` leave both in place, so the platform fallback
+    /// chain (`FICLONE`/`copy_file_range` on Linux, `clonefile`/`fcopyfile` on
+    /// macOS, `CopyFileExW`/ReFS on Windows) remains active by default.
     fn apply_zero_copy_policy(
         options: LocalCopyOptions,
         config: &ClientConfig,
     ) -> LocalCopyOptions {
-        if matches!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Disabled) {
+        let policy = config.zero_copy_policy();
+        let options = options.with_zero_copy_policy(policy);
+        if matches!(policy, fast_io::ZeroCopyPolicy::Disabled) {
             options.with_platform_copy(std::sync::Arc::new(fast_io::NoZeroCopyPlatformCopy::new()))
         } else {
             options
