@@ -34,12 +34,15 @@ struct PartialEntry {
 /// user. This is the single owner of the rule for both the abort path
 /// ([`finalize_partial`]) and the `--delay-updates` staging path.
 ///
-/// On unix the create goes through `fast_io::operator_mkdir`, so a symlink
-/// planted at any component by a foreign uid is refused rather than followed -
-/// an absolute `--partial-dir` names a location outside the transfer tree, and
-/// without the walk a planted parent redirects the staged file (which is a
-/// complete copy of the source) out of the tree entirely. Upstream wraps the
-/// same `do_mkdir_at()` in `operator_path_resolve = 1` for that reason.
+/// On unix *both* path decisions go through the ownership walk, because
+/// upstream wraps both in `operator_path_resolve = 1`: the reuse probe
+/// (`do_lstat_at`, `util1.c:1521`) and the create (`do_mkdir_at`,
+/// `util1.c:1529`). An absolute `--partial-dir` names a location outside the
+/// transfer tree, so a foreign-owned symlink planted at any component would
+/// otherwise redirect the staged file - a complete copy of the source - out of
+/// the tree. Probing with `Path::is_dir()` would defeat the walk on exactly the
+/// case an operator hits most: a reserved absolute partial dir that already
+/// exists, where the create is never reached at all.
 ///
 /// Any missing ancestor is created first, matching what the abort path has
 /// always done; upstream mkdirs only the final component and fails when the
@@ -47,14 +50,34 @@ struct PartialEntry {
 pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        if dir.as_os_str().is_empty() || dir.is_dir() {
+        // `""`, `/`, `.` and `..` name a directory that already exists and have
+        // no leaf for the walk to resolve.
+        if dir.file_name().is_none() {
             return Ok(());
         }
-        if let Some(parent) = dir.parent()
-            && !parent.as_os_str().is_empty()
-            && !parent.is_dir()
-        {
-            create_partial_dir(parent)?;
+        // upstream: util1.c:1521 - `do_lstat_at(dir, &st)` under
+        // `operator_path_resolve`, so the reuse probe is confined by the same
+        // rule as the create. A refusal propagates rather than degrading to an
+        // unconfined create.
+        match fast_io::operator_symlink_metadata(dir) {
+            // upstream: util1.c:1522 - `statret == 0 && S_ISDIR` skips the
+            // mkdir and the dir is reused as it stands.
+            Ok(metadata) if metadata.is_dir() => return Ok(()),
+            // Something that is not a directory occupies the name. Upstream
+            // unlinks it (util1.c:1523); oc has never done that, and the
+            // `operator_mkdir` below keeps today's behaviour of reporting the
+            // resulting `EEXIST` as success. Left unchanged here on purpose:
+            // this function also creates ancestors upstream never touches, so
+            // an unlink placed here would delete beyond the leaf.
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = dir.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    create_partial_dir(parent)?;
+                }
+            }
+            Err(error) => return Err(error),
         }
         fast_io::operator_mkdir(dir, 0o700)
     }
@@ -71,11 +94,25 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
 /// `handle_partial_dir(PDIR_CREATE)`), tweaking the modtime to epoch 0 when the
 /// partial lands on the real destination file so `--update` will not skip it.
 /// With no partial destination it unlinks the temp (`do_unlink_at`).
+///
+/// Creating the partial dir is a PRECONDITION of the rename, not a best-effort
+/// prelude: upstream guards `finish_transfer()` on it in both places
+/// (`cleanup.c:168` has the call inside a `&&`; `receiver.c:1302-1306` reports
+/// "Unable to create partial-dir for %s -- discarding %s" and `do_unlink_at`s
+/// the temp). Renaming anyway would undo the ownership walk's refusal - the
+/// rename resolves the same path with plain libc and lands the file exactly
+/// where the walk declined to create the directory.
 pub fn finalize_partial(temp: &Path, partial_dest: Option<&Path>, tweak_mtime: bool) {
     match partial_dest {
         Some(dest) => {
-            if let Some(parent) = dest.parent() {
-                let _ = create_partial_dir(parent);
+            if let Some(parent) = dest.parent()
+                && create_partial_dir(parent).is_err()
+            {
+                // upstream: receiver.c:1306 `do_unlink_at(fnametmp)` - the
+                // completed file is discarded rather than retained somewhere
+                // the operator did not name.
+                let _ = std::fs::remove_file(temp);
+                return;
             }
             // Best-effort: an already-committed transfer leaves no temp, so a
             // failed rename here is expected and harmless.
@@ -472,6 +509,83 @@ mod tests {
         manager.register_temp_file(path);
 
         assert_eq!(manager.temp_file_count(), 1, "HashSet deduplicates");
+    }
+
+    /// Builds the shape the `--partial-dir` reuse probe has to decide on: an
+    /// absolute partial dir `<plant>/opd/sub` whose parent component `opd` is a
+    /// symlink to an out-of-tree directory, with `sub` ALREADY PRESENT inside
+    /// it. Returns `(partial_dir, planted_link, out_of_tree_leaf)`.
+    ///
+    /// The leaf existing is the whole point: it is the arm a probe that stats
+    /// through the symlink answers "already a directory, nothing to do" - never
+    /// reaching the create, and therefore never reaching the ownership walk.
+    #[cfg(unix)]
+    fn plant_reused_partial_dir(base: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let outside = base.join("outside");
+        let leaf = outside.join("sub");
+        fs::create_dir_all(&leaf).expect("create the out-of-tree leaf");
+        let plant = base.join("plant");
+        fs::create_dir(&plant).expect("create the plant dir");
+        let link = plant.join("opd");
+        std::os::unix::fs::symlink(&outside, &link).expect("plant the parent symlink");
+        (link.join("sub"), link, leaf)
+    }
+
+    /// The operator's own symlink is followed, so an existing partial dir
+    /// reached through it is reused. This is the half that must keep working:
+    /// `/backup -> /mnt/disk` is the ordinary administrative layout, and
+    /// refusing every parent symlink would break it.
+    ///
+    /// upstream: `syscall.c:406` - uid 0 or our euid is trusted and followed.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_partial_dir_behind_the_operators_own_parent_symlink_is_reused() {
+        let base = tempdir().expect("tempdir");
+        let (partial_dir, _link, leaf) = plant_reused_partial_dir(base.path());
+
+        create_partial_dir(&partial_dir).expect("the operator's own symlink must be followed");
+        assert!(leaf.is_dir(), "the existing leaf is reused, not replaced");
+    }
+
+    /// The same shape with the symlink owned by someone else must be refused,
+    /// even though the leaf already exists.
+    ///
+    /// upstream: `util1.c:1521` `handle_partial_dir()` runs its `do_lstat_at()`
+    /// reuse probe under `operator_path_resolve = 1`, i.e. through the same
+    /// ownership walk as the `do_mkdir_at()` beneath it. Probing with a
+    /// following stat would answer this case before the walk ever ran, and the
+    /// staged file - a complete copy of the source - would land in
+    /// `outside/sub`.
+    ///
+    /// Planting a symlink owned by a foreign uid needs root, which is why
+    /// upstream's own `operator-path-partial-dir [reuse]` cell only exercises
+    /// this on its root leg. The companion above carries the other direction at
+    /// any uid.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_partial_dir_behind_a_foreign_owned_parent_symlink_is_refused() {
+        if rustix::process::geteuid().as_raw() != 0 {
+            eprintln!(
+                "SKIPPED an_existing_partial_dir_behind_a_foreign_owned_parent_symlink_is_refused: \
+                 planting a symlink owned by a foreign uid requires root"
+            );
+            return;
+        }
+        // An arbitrary uid that is neither 0 nor our euid; `lchown` accepts it
+        // whether or not an account exists, and the walk compares numbers.
+        const ATTACKER_UID: u32 = 12345;
+
+        let base = tempdir().expect("tempdir");
+        let (partial_dir, link, leaf) = plant_reused_partial_dir(base.path());
+        std::os::unix::fs::lchown(&link, Some(ATTACKER_UID), Some(ATTACKER_UID))
+            .expect("give the planted symlink to the attacker");
+
+        create_partial_dir(&partial_dir)
+            .expect_err("a foreign-owned parent symlink must be refused, leaf present or not");
+        assert!(
+            leaf.is_dir(),
+            "the refusal must not have disturbed the out-of-tree leaf"
+        );
     }
 
     #[test]
