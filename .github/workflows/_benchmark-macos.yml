@@ -112,6 +112,10 @@ jobs:
           ssh -o StrictHostKeyChecking=no localhost true
 
       - name: Run benchmark
+        env:
+          # The build step above owns the upstream version; naming it again
+          # inside benchmark.py is what let the two drift apart.
+          UPSTREAM_RSYNC: target/interop/upstream-src/rsync-3.5.0/rsync
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results_macos.json
