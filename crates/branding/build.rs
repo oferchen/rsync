@@ -1,3 +1,14 @@
+//! Compile-time branding and build-provenance constants.
+//!
+//! Resolves the build revision - `OC_RSYNC_BUILD_OVERRIDE` first so packagers
+//! and reproducible builds can pin it, then `git describe`, then a fallback -
+//! and reads the workspace `Cargo.toml` for the branding metadata the binary
+//! reports in `--version`.
+//!
+//! Every input is registered with `cargo:rerun-if-changed` /
+//! `cargo:rerun-if-env-changed`, because a stale revision baked into a cached
+//! artifact is worse than a slower build: it misattributes bug reports.
+
 use std::{
     env, fs,
     path::{Path, PathBuf},
