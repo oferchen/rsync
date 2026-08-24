@@ -1893,3 +1893,175 @@ fn alt_dest_arg_that_is_not_a_directory_does_not_fail_a_symlink_transfer() {
         "the symlink must still be recreated at the destination"
     );
 }
+
+/// A basis whose mtime differs from the source only in the NANOSECOND
+/// component is still an exact match for upstream, so it is hard-linked.
+///
+/// Every other cell in this file synchronises the two timestamps exactly, which
+/// is why none of them can see this: `same_time()` with the default
+/// `modify_window` of 0 compares WHOLE SECONDS, and a basis produced by anything
+/// other than rsync itself routinely lands on a different nanosecond. Comparing
+/// the full `SystemTime` demoted such a basis from match_level 3 to 2, copying
+/// the file into a fresh inode instead of linking it - silently, with exit 0.
+///
+/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()`;
+/// `generator.c:400` `mtime_differs()` -> `generator.c:1090` `try_dests_reg()`.
+#[cfg(unix)]
+#[test]
+fn link_dest_hardlinks_a_basis_differing_only_in_mtime_nanoseconds() {
+    let fixture = NanosecondBasis::build();
+
+    let summary = fixture.run(LocalCopyOptions::default().times(true));
+
+    assert_eq!(
+        summary.hard_links_created(),
+        1,
+        "the basis matched exactly, so it is linked not copied"
+    );
+    assert_eq!(
+        fixture.dest_ino(),
+        fixture.basis_ino(),
+        "a basis differing only in mtime nanoseconds must still be hard-linked"
+    );
+}
+
+/// End-to-end companion: under `--modify-window=-1` upstream DOES compare
+/// nanoseconds (`same_time` returns `f1_sec == f2_sec && f1_nsec == f2_nsec`),
+/// so the very same fixture must NOT link.
+///
+/// ⚠ Measured: mutating the attrs comparison to drop nanoseconds entirely does
+/// NOT kill this row - the negative window is already discriminating in the
+/// data-level quick check, which rejects the candidate before the attrs
+/// comparison is reached. It is kept as an end-to-end pin of the option, not as
+/// the non-vacuity proof for the line below; that role belongs to
+/// `whole_second_difference_refuses_the_basis`.
+#[cfg(unix)]
+#[test]
+fn nsec_exact_modify_window_still_refuses_a_nanosecond_differing_basis() {
+    let fixture = NanosecondBasis::build();
+
+    let summary = fixture.run(
+        LocalCopyOptions::default()
+            .times(true)
+            .with_modify_window(::metadata::ModifyWindow::from_secs(-1)),
+    );
+
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "the basis did not match, so nothing is linked"
+    );
+    assert_ne!(
+        fixture.dest_ino(),
+        fixture.basis_ino(),
+        "an nsec-exact window must not link a nanosecond-differing basis"
+    );
+}
+
+/// End-to-end pin of the seconds arm: a basis one WHOLE SECOND away is not
+/// `same_time` under the default window, so it must not be hard-linked.
+///
+/// ⚠ Measured: mutating the attrs comparison to report "same" unconditionally
+/// does NOT kill this row either. The data-level quick check applies the same
+/// `same_time` predicate first and rejects the candidate before the attrs
+/// comparison runs, so no reachable input can distinguish an over-permissive
+/// attrs comparison - which mirrors upstream, where `quick_check_ok()` and
+/// `unchanged_attrs()` both route through `same_time()`. The one lethal
+/// mutation is restoring the nanosecond-exact comparison, which kills
+/// `link_dest_hardlinks_a_basis_differing_only_in_mtime_nanoseconds`.
+#[cfg(unix)]
+#[test]
+fn whole_second_difference_refuses_the_basis() {
+    let fixture = NanosecondBasis::build_with_basis_offset_secs(1);
+
+    let summary = fixture.run(LocalCopyOptions::default().times(true));
+
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "a basis a whole second away is not an exact match"
+    );
+    assert_ne!(
+        fixture.dest_ino(),
+        fixture.basis_ino(),
+        "a basis a whole second away must not be hard-linked"
+    );
+}
+
+/// Source and `--link-dest` basis with identical content, size and mtime
+/// SECONDS, differing only in the nanosecond component.
+#[cfg(unix)]
+struct NanosecondBasis {
+    _temp: tempfile::TempDir,
+    source_file: std::path::PathBuf,
+    basis_dir: std::path::PathBuf,
+    basis_file: std::path::PathBuf,
+    dest_file: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl NanosecondBasis {
+    fn build() -> Self {
+        Self::build_with_basis_offset_secs(0)
+    }
+
+    fn build_with_basis_offset_secs(offset: i64) -> Self {
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("source");
+        let basis_dir = temp.path().join("previous");
+        let dest_dir = temp.path().join("dest");
+        for dir in [&source_dir, &basis_dir, &dest_dir] {
+            fs::create_dir_all(dir).expect("create dir");
+        }
+
+        let source_file = source_dir.join("file.txt");
+        let basis_file = basis_dir.join("file.txt");
+        fs::write(&source_file, b"identical content").expect("write source");
+        fs::write(&basis_file, b"identical content").expect("write basis");
+
+        // Same second, different nanoseconds - the shape a basis acquires
+        // whenever its mtime was not copied at nanosecond resolution.
+        const SECS: i64 = 1_700_000_000;
+        set_file_times(
+            &source_file,
+            FileTime::from_unix_time(SECS, 111_000_000),
+            FileTime::from_unix_time(SECS, 111_000_000),
+        )
+        .expect("set source times");
+        set_file_times(
+            &basis_file,
+            FileTime::from_unix_time(SECS + offset, 222_000_000),
+            FileTime::from_unix_time(SECS + offset, 222_000_000),
+        )
+        .expect("set basis times");
+
+        Self {
+            _temp: temp,
+            source_file,
+            basis_dir,
+            basis_file,
+            dest_file: dest_dir.join("file.txt"),
+        }
+    }
+
+    fn run(&self, options: LocalCopyOptions) -> crate::local_copy::LocalCopySummary {
+        let operands = vec![
+            self.source_file.clone().into_os_string(),
+            self.dest_file.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            options.extend_link_dests([self.basis_dir.clone()]),
+        )
+        .expect("copy succeeds")
+    }
+
+    fn dest_ino(&self) -> u64 {
+        fs::metadata(&self.dest_file).expect("dest metadata").ino()
+    }
+
+    fn basis_ino(&self) -> u64 {
+        fs::metadata(&self.basis_file).expect("basis metadata").ino()
+    }
+}

@@ -83,6 +83,7 @@ impl<'a> CopyContext<'a> {
                 source,
                 metadata,
                 &metadata_options,
+                self.options.modify_window(),
                 preserve_xattrs,
             ) {
                 3
@@ -249,10 +250,13 @@ impl<'a> CopyContext<'a> {
 /// Returns `true` when two nodes' modification times are equal within
 /// `--modify-window`.
 ///
-/// upstream: util1.c:1478 same_time() - a whole-second delta within
-/// `modify_window` counts as unchanged. For a zero window (the default) or a
-/// negative window (`--modify-window < 0`, nsec-exact) a hardlink candidate
-/// must match on both the whole-second and nanosecond components.
+/// Delegates to the shared predicate so the special-file basis and the regular
+/// -file basis cannot disagree about what "same time" means.
+///
+/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()` - a zero window (the
+/// default) compares WHOLE SECONDS; only a negative window
+/// (`--modify-window < 0`) also compares nanoseconds; a positive window is a
+/// whole-second tolerance in which "the nanoseconds do not figure".
 #[cfg(unix)]
 fn mtimes_within_window(
     source: &fs::Metadata,
@@ -261,11 +265,10 @@ fn mtimes_within_window(
 ) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    let delta = source.mtime().abs_diff(candidate.mtime());
-    let window = modify_window.as_secs();
-    if window <= 0 {
-        delta == 0 && source.mtime_nsec() == candidate.mtime_nsec()
-    } else {
-        delta <= window as u64
-    }
+    modify_window.same_time(
+        source.mtime(),
+        source.mtime_nsec() as u32,
+        candidate.mtime(),
+        candidate.mtime_nsec() as u32,
+    )
 }

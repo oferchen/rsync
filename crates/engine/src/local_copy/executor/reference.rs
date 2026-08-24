@@ -3,8 +3,9 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use ::metadata::MetadataOptions;
+use ::metadata::{MetadataOptions, ModifyWindow};
 
 use crate::local_copy::{CopyContext, LocalCopyError, ReferenceDirectoryKind};
 
@@ -104,6 +105,49 @@ pub(crate) struct ReferenceQuery<'a> {
     pub(crate) preserve_xattrs: bool,
 }
 
+/// Splits a `SystemTime` into the `(seconds, nanoseconds)` pair `same_time`
+/// compares, mirroring the `st_mtime` / `ST_MTIME_NSEC` split upstream reads
+/// from `struct stat`. `fs::Metadata::modified` is the only portable source, so
+/// the split happens here rather than through the Unix-only `MetadataExt`.
+///
+/// A pre-epoch time carries a negative second count with a positive nanosecond
+/// remainder, exactly as `struct timespec` stores it.
+fn unix_time_parts(time: SystemTime) -> (i64, u32) {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(since) => (
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
+            since.subsec_nanos(),
+        ),
+        Err(before) => {
+            let delta = before.duration();
+            let secs = i64::try_from(delta.as_secs()).unwrap_or(i64::MAX);
+            match delta.subsec_nanos() {
+                0 => (-secs, 0),
+                nanos => (-secs - 1, 1_000_000_000 - nanos),
+            }
+        }
+    }
+}
+
+/// Whether a reference basis carries the source's modification time under
+/// `--modify-window`.
+///
+/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()` - a zero window (the
+/// default) compares whole seconds, a negative window compares seconds and
+/// nanoseconds, and a positive window is a whole-second tolerance.
+fn reference_mtime_matches(
+    source_meta: &fs::Metadata,
+    basis_meta: &fs::Metadata,
+    modify_window: ModifyWindow,
+) -> bool {
+    let (Ok(source_time), Ok(basis_time)) = (source_meta.modified(), basis_meta.modified()) else {
+        return false;
+    };
+    let (source_secs, source_nanos) = unix_time_parts(source_time);
+    let (basis_secs, basis_nanos) = unix_time_parts(basis_time);
+    modify_window.same_time(source_secs, source_nanos, basis_secs, basis_nanos)
+}
+
 /// Reports whether a reference basis already carries the source's preserved
 /// attributes, mirroring upstream `generator.c:475 unchanged_attrs()`.
 ///
@@ -125,6 +169,7 @@ pub(crate) fn reference_attrs_unchanged(
     source: &Path,
     source_meta: &fs::Metadata,
     options: &MetadataOptions,
+    modify_window: ModifyWindow,
     preserve_xattrs: bool,
 ) -> bool {
     let Ok(basis_meta) = basis_stat(basis) else {
@@ -138,15 +183,17 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:492 any_time_differs - the mtime must match for a
-    // level-3 basis. Compared through `SystemTime` (like the quick-check
-    // `unchanged_file` path) so the check holds on every platform, not just Unix
-    // where `st_mtime` is available.
-    if options.times() {
-        match (source_meta.modified(), basis_meta.modified()) {
-            (Ok(source_time), Ok(basis_time)) if source_time == basis_time => {}
-            _ => return false,
-        }
+    // upstream: generator.c:400 mtime_differs -> util1.c:1649 same_time - the
+    // mtime must match for a level-3 basis, and `same_time` compares WHOLE
+    // SECONDS for the default `modify_window` of 0. Nanoseconds only enter the
+    // comparison for a negative window (`--modify-window` < 0, nsec-exact), and
+    // a positive window is a whole-second tolerance. Comparing `SystemTime`
+    // directly would be nsec-exact always, so a basis whose mtime was not
+    // preserved to nanosecond precision - the common case for anything not
+    // written by rsync itself - is demoted from match_level 3 to 2 and copied
+    // instead of hard-linked.
+    if options.times() && !reference_mtime_matches(source_meta, &basis_meta, modify_window) {
+        return false;
     }
 
     // upstream: generator.c:494 perms_differ - Unix compares the full permission
@@ -274,6 +321,7 @@ pub(crate) fn find_reference_action(
             source,
             metadata,
             metadata_options,
+            context.options().modify_window(),
             preserve_xattrs,
         ) {
             3
