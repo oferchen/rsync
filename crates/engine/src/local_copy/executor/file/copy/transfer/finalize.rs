@@ -51,9 +51,16 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
     #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
     let relative_for_removal = Some(record_path.to_path_buf());
-    if let Some(guard) = guard {
+    if let Some(mut guard) = guard {
         if delay_updates_enabled {
             drop(writer_for_metadata.take());
+            // upstream: receiver.c:1301-1314 - a delayed update is published into
+            // the --partial-dir first and only renamed onto its real name by
+            // handle_delayed_updates() after the walk. Staging here (rather than
+            // simply holding the temp back) is what creates the partial dir, and
+            // `--partial-dir` with `--delay-updates` is always set: options.c
+            // substitutes `.~tmp~` when the operator named none.
+            guard.stage_into_partial_dir()?;
             let destination_path = guard.final_path().to_path_buf();
             let update = DeferredUpdate::new(
                 guard,

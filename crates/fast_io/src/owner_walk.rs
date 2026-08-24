@@ -291,6 +291,41 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
     Ok((dirfd, leaf))
 }
 
+/// Create a directory at an operator-supplied path through the ownership walk.
+///
+/// The `mkdir` counterpart to the `operator_open_*` family: the parent chain is
+/// resolved by the ownership walk and the leaf created with `mkdirat` on the
+/// resulting descriptor, so a symlink planted at any component by a foreign uid
+/// cannot redirect the new directory out of the tree. An existing directory at
+/// the leaf is success, which makes the call idempotent across runs that reuse a
+/// reserved `--partial-dir`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/util1.c:1501` `handle_partial_dir()` - sets
+///   `operator_path_resolve = 1` around its `do_lstat_at()`/`do_mkdir_at(dir,
+///   0700)` pair precisely so the partial dir is created through the ownership
+///   walk rather than by a plain path-based `mkdir`.
+///
+/// # Errors
+///
+/// Surfaces any walk error (including the refusal of a foreign-owned symlink)
+/// and any `mkdirat` error other than `EEXIST`.
+pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent(path)?;
+    match rustix::fs::mkdirat(
+        &parent,
+        leaf.as_os_str(),
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    ) {
+        Ok(()) => Ok(()),
+        Err(Errno::EXIST) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Rename `old_path` to `new_path` with both endpoints resolved by the
 /// ownership walk.
 ///

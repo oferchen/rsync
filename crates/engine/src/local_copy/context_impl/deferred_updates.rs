@@ -29,17 +29,14 @@ impl<'a> CopyContext<'a> {
     /// Queues a deferred update for `--delay-updates` and records the hard-link
     /// source. The staging directory is tracked for cleanup after commit.
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
-        // Track the `.~tmp~` staging directory for cleanup after all updates
-        // are committed.
-        if let Some(parent) = update.guard.staging_path().parent() {
-            if parent
-                .file_name()
-                .is_some_and(|name| name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR)
-            {
-                self.deferred_ops
-                    .delay_staging_dirs
-                    .insert(parent.to_path_buf());
-            }
+        // Track the staging directory for rmdir once every update has been moved
+        // out of it. The guard reports it only for a RELATIVE `--partial-dir`;
+        // an absolute one is a reserved location upstream never removes.
+        //
+        // upstream: receiver.c:718 handle_partial_dir(partialptr, PDIR_DELETE)
+        // after the delayed rename succeeds.
+        if let Some(dir) = update.guard.partial_dir_to_remove() {
+            self.deferred_ops.delay_staging_dirs.insert(dir.to_path_buf());
         }
         let metadata = update.metadata.clone();
         let destination = update.destination.clone();
