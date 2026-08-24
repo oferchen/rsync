@@ -108,6 +108,9 @@ jobs:
       - name: Run benchmark
         id: benchmark
         env:
+          # The build step above owns the upstream version; naming it again
+          # inside benchmark.py is what let the two drift apart.
+          UPSTREAM_RSYNC: target/interop/upstream-src/rsync-3.5.0/rsync
           OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
           OC_RSYNC_RUSSH: target/release/oc-rsync-russh
         run: |
