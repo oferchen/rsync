@@ -189,6 +189,30 @@ fn hardened_rename(
     }
 }
 
+/// Whether a `linkat(2)` failure means the platform cannot publish an anonymous
+/// inode *at all*, as opposed to refusing this particular commit.
+///
+/// `O_TMPFILE` is an optimisation, and the write strategy already degrades to a
+/// named temp when the *open* fails. The same rule has to hold at commit time:
+/// a filesystem can accept `O_TMPFILE` and still refuse the `linkat` that gives
+/// the inode a name (a filesystem without hard links reports `EPERM`, an
+/// interposed or restricted `linkat` reports `EOPNOTSUPP`, an old kernel
+/// `ENOSYS`). Upstream never reaches this state - `receiver.c` only ever stages
+/// into a named temp - so aborting here would lose a file no upstream run can
+/// lose.
+///
+/// The set is deliberately narrow. A confinement refusal reports `ELOOP`
+/// (`fast_io::confined_link_anonymous`) and stays fatal: degrading it would
+/// write the payload through the very path the confined walk just refused.
+/// `ENOSPC`, `EDQUOT` and `EMLINK` are genuine failures and stay fatal too.
+#[cfg(target_os = "linux")]
+fn anonymous_publish_unsupported(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EOPNOTSUPP | libc::EPERM | libc::ENOSYS)
+    )
+}
+
 // Test-only fault injection for the commit rename boundary. A thread-local flag
 // (nextest runs each test in its own process, and the guard is thread-scoped
 // regardless) makes `hardened_rename` report a cross-device error, driving the
@@ -241,6 +265,44 @@ impl ForceExdev {
 impl Drop for ForceExdev {
     fn drop(&mut self) {
         FORCE_EXDEV.with(|c| c.set(false));
+    }
+}
+
+// Test-only fault injection for the anonymous commit boundary, mirroring
+// `ForceExdev` above: it makes the `linkat` report a chosen errno, so both
+// sides of the degrade decision - the unsupported errnos that fall back and the
+// refusals that must stay fatal - are exercised on a filesystem that does
+// support publishing an `O_TMPFILE` inode. Zero means "no injection".
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static FORCED_LINK_ERRNO: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn forced_link_errno() -> Option<i32> {
+    match FORCED_LINK_ERRNO.with(std::cell::Cell::get) {
+        0 => None,
+        errno => Some(errno),
+    }
+}
+
+/// Test-only RAII guard that forces the anonymous commit's `linkat` to fail
+/// with `errno` for its lifetime.
+#[cfg(all(test, target_os = "linux"))]
+struct ForceLinkErrno;
+
+#[cfg(all(test, target_os = "linux"))]
+impl ForceLinkErrno {
+    fn new(errno: i32) -> Self {
+        FORCED_LINK_ERRNO.with(|c| c.set(errno));
+        Self
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+impl Drop for ForceLinkErrno {
+    fn drop(&mut self) {
+        FORCED_LINK_ERRNO.with(|c| c.set(0));
     }
 }
 
@@ -672,6 +734,11 @@ impl DestinationWriteGuard {
     /// Commits an anonymous `O_TMPFILE` via `linkat(2)`.
     ///
     /// If the destination already exists, it is removed first so `linkat` succeeds.
+    ///
+    /// When `linkat` reports that the platform cannot publish an anonymous inode
+    /// at all, the commit degrades to a named temp file
+    /// ([`commit_anonymous_via_named_temp`](Self::commit_anonymous_via_named_temp))
+    /// instead of failing the transfer.
     #[cfg(target_os = "linux")]
     fn commit_anonymous(&self, file: Option<fs::File>) -> Result<(), LocalCopyError> {
         let file = file.ok_or_else(|| {
@@ -686,21 +753,32 @@ impl DestinationWriteGuard {
         // *refused* commit destructive: the confined walk rejects an escaping
         // destination after the unlink, leaving nothing behind. Upstream
         // refuses without touching the file, and so must this.
-        let attempt = |guard: &Self| match guard.dest_root.as_deref() {
-            Some(root) => {
-                use std::os::fd::AsFd;
-                fast_io::confined_link_anonymous(file.as_fd(), root, &guard.final_path)
+        let attempt = |guard: &Self| {
+            #[cfg(test)]
+            if let Some(errno) = forced_link_errno() {
+                return Err(io::Error::from_raw_os_error(errno));
             }
-            None => fast_io::link_anonymous_tmpfile(&file, &guard.final_path),
+            match guard.dest_root.as_deref() {
+                Some(root) => {
+                    use std::os::fd::AsFd;
+                    fast_io::confined_link_anonymous(file.as_fd(), root, &guard.final_path)
+                }
+                None => fast_io::link_anonymous_tmpfile(&file, &guard.final_path),
+            }
         };
 
-        match attempt(self) {
-            Ok(()) => Ok(()),
+        let published = match attempt(self) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(&self.final_path)?;
-                attempt(self).map_err(|error| {
-                    LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
-                })
+                attempt(self)
+            }
+            result => result,
+        };
+
+        match published {
+            Ok(()) => Ok(()),
+            Err(error) if anonymous_publish_unsupported(&error) => {
+                self.commit_anonymous_via_named_temp(&file)
             }
             Err(error) => Err(LocalCopyError::io(
                 "finalise anonymous temp file",
@@ -708,6 +786,36 @@ impl DestinationWriteGuard {
                 error,
             )),
         }
+    }
+
+    /// Materialises the staged anonymous inode through a named temp file.
+    ///
+    /// The payload only exists in the unnamed inode, so it is copied into a
+    /// `.name.XXXXXX` temp beside the destination and committed by the same
+    /// confined rename every non-Linux run uses. That reuses
+    /// [`new_confined`](Self::new_confined) and [`commit`](Self::commit)
+    /// wholesale, so the degraded path cannot drift from the primary one.
+    #[cfg(target_os = "linux")]
+    fn commit_anonymous_via_named_temp(&self, file: &fs::File) -> Result<(), LocalCopyError> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let (guard, mut temp) = Self::new_confined(
+            &self.final_path,
+            false,
+            None,
+            None,
+            self.dest_root.as_deref(),
+        )?;
+        let staging = guard.staging_path().to_path_buf();
+        let mut staged = file;
+        let mut copy = || -> io::Result<()> {
+            staged.seek(SeekFrom::Start(0))?;
+            io::copy(&mut staged, &mut temp)?;
+            temp.flush()
+        };
+        copy().map_err(|error| LocalCopyError::io("copy file", staging, error))?;
+        drop(temp);
+        guard.commit().map(|_| ())
     }
 
     /// Returns the final destination path.
@@ -1207,6 +1315,69 @@ mod tests {
 
             guard.commit().expect("commit");
             assert_eq!(fs::read_to_string(&dest).expect("read"), "new");
+        }
+
+        /// A filesystem can accept `O_TMPFILE` and still refuse to publish the
+        /// inode. The commit must degrade to a named temp, exactly as the open
+        /// degrades when `O_TMPFILE` itself is unavailable, rather than abort
+        /// the transfer and lose the payload.
+        #[test]
+        fn anonymous_commit_degrades_to_named_temp_when_publish_unsupported() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_degrade.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            fs::write(&dest, b"stale").expect("create existing");
+
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
+            file.write_all(b"degraded payload").expect("write");
+            drop(file);
+
+            let _forced = ForceLinkErrno::new(libc::EOPNOTSUPP);
+            guard.commit().expect("commit degrades instead of failing");
+
+            assert_eq!(
+                fs::read_to_string(&dest).expect("read"),
+                "degraded payload",
+                "the staged payload must reach the destination"
+            );
+            let leftovers: Vec<_> = fs::read_dir(temp.path())
+                .expect("read dir")
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .filter(|name| name != "anon_degrade.txt")
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "the degraded commit must leave no temp behind: {leftovers:?}"
+            );
+        }
+
+        /// The degrade is keyed on "the platform cannot publish an anonymous
+        /// inode", not on "the commit failed". A confinement refusal reports
+        /// `ELOOP` and must stay fatal - falling back there would write the
+        /// payload through the path the confined walk just refused.
+        #[test]
+        fn anonymous_commit_refusal_stays_fatal() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_refused.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            let (guard, mut file) =
+                DestinationWriteGuard::new_anonymous(&dest, None).expect("guard");
+            file.write_all(b"refused payload").expect("write");
+            drop(file);
+
+            let _forced = ForceLinkErrno::new(libc::ELOOP);
+            guard
+                .commit()
+                .expect_err("a refused commit must not degrade");
+            assert!(!dest.exists(), "a refused commit must not create the file");
         }
 
         #[test]

@@ -88,12 +88,14 @@ mod linux {
         };
 
         // Safety: `dir_cstr` is a valid null-terminated C string pointing to an
-        // existing directory. `O_TMPFILE | O_WRONLY` creates an unnamed inode
+        // existing directory. `O_TMPFILE | O_RDWR` creates an unnamed inode
         // with no directory entry. Mode 0o600 is used for the probe file.
+        // The access mode matches `open_anonymous_tmpfile` so the probe answers
+        // the question the caller actually asks.
         let fd = unsafe {
             libc::open(
                 dir_cstr.as_ptr(),
-                libc::O_TMPFILE | libc::O_WRONLY,
+                libc::O_TMPFILE | libc::O_RDWR,
                 libc::mode_t::from(0o600u32),
             )
         };
@@ -114,6 +116,12 @@ mod linux {
     /// The returned file has no directory entry - it exists only as an open
     /// file descriptor. Write data to it, then call [`link_anonymous_tmpfile`]
     /// to atomically materialize it at the final path.
+    ///
+    /// The descriptor is opened `O_RDWR`, not `O_WRONLY`: the staged inode has
+    /// no name, so the descriptor is the only handle on the payload. A caller
+    /// whose `linkat` is refused by the filesystem can then still read the
+    /// bytes back out and fall back to a named temp file instead of losing
+    /// them.
     ///
     /// # Arguments
     ///
@@ -136,13 +144,13 @@ mod linux {
         })?;
 
         // Safety: `dir_cstr` is a valid null-terminated C string. `O_TMPFILE |
-        // O_WRONLY` creates an unnamed inode with no directory entry. `mode` is
+        // O_RDWR` creates an unnamed inode with no directory entry. `mode` is
         // the permission bits for the new file. The returned fd is valid on
         // success (>= 0) and is immediately wrapped in a `File` which owns it.
         let fd = unsafe {
             libc::open(
                 dir_cstr.as_ptr(),
-                libc::O_TMPFILE | libc::O_WRONLY | libc::O_CLOEXEC,
+                libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
                 libc::mode_t::from(mode),
             )
         };
@@ -249,6 +257,27 @@ mod linux {
             if let Ok(file) = result {
                 drop(file);
             }
+        }
+
+        /// The staged inode has no name, so the descriptor is the only handle
+        /// on the payload: a caller whose `linkat` is refused must be able to
+        /// read the bytes back and fall back to a named temp. `O_WRONLY` would
+        /// make that fallback impossible and lose the file.
+        #[test]
+        fn anonymous_tmpfile_is_readable() {
+            use std::io::{Read, Seek, SeekFrom};
+
+            let dir = tempfile::tempdir().unwrap();
+            let mut file = match open_anonymous_tmpfile(dir.path(), 0o644) {
+                Ok(f) => f,
+                Err(_) => return, // O_TMPFILE not supported on this filesystem
+            };
+            file.write_all(b"readable payload").unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+
+            let mut back = String::new();
+            file.read_to_string(&mut back).unwrap();
+            assert_eq!(back, "readable payload");
         }
 
         #[test]
