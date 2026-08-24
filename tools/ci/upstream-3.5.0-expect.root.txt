@@ -178,7 +178,7 @@ ki73-cvs-clear-list pass
 link-dest-module-escape pass
 link-dest-pathroot pass
 link-dest-relative-basis pass
-link-dest-symlink-enotsup fail
+link-dest-symlink-enotsup pass
 links pass
 log-control-chars pass
 log-file-symlink pass

@@ -137,6 +137,7 @@ pub(super) fn process_links(
             source,
             metadata,
             &metadata_options,
+            context.options().modify_window(),
             preserve_xattrs_flag,
         );
         // On Unix a match_level-2 basis is routed through the same reference-copy
