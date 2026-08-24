@@ -610,6 +610,13 @@ fn apply_global_directive(
                 state.module_defaults.fake_super = Some(parsed);
             }
         }
+        "insecurelinks" => {
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "insecure links", path, line_number)
+            {
+                state.module_defaults.insecure_links = Some(parsed);
+            }
+        }
         "maxconnections" => {
             let max = parse_max_connections_directive(value).ok_or_else(|| {
                 config_parse_error(

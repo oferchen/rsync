@@ -28,6 +28,7 @@ struct GlobalModuleDefaults {
     munge_symlinks: Option<Option<bool>>,
     numeric_ids: Option<bool>,
     fake_super: Option<bool>,
+    insecure_links: Option<bool>,
     max_connections: Option<MaxConnections>,
     ignore_errors: Option<bool>,
     ignore_nonreadable: Option<bool>,

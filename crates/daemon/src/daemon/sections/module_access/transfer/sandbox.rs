@@ -21,6 +21,28 @@
 /// hook. A `resolve_drop_target` uid/gid *name* resolution failure does not:
 /// upstream: clientserver.c:784-786/657-659 - that lookup runs before the
 /// fork point, so the waiting parent never sees a child at all.
+/// Publishes this module's `insecure links` opt-out for the ownership walk.
+///
+/// upstream: `syscall.c:117-126` `symlink_optout_allowed()` - a daemon reads
+/// ONLY `lp_insecure_links(module_id)`. A client that sends `--insecure-links`
+/// cannot relax a daemon's confinement, which is why this takes the served
+/// module and never a peer-supplied flag.
+///
+/// Called on EVERY success exit below, including the early return taken when
+/// neither chroot nor a privilege drop is configured - the commonest rootless
+/// deployment, and precisely the path an install placed after the chroot would
+/// skip.
+fn publish_module_confinement(module: &ModuleRuntime, root: &Path, chrooted: bool) {
+    fast_io::confinement::install_daemon_session(fast_io::confinement::ModuleState {
+        root: Some(root.to_path_buf()),
+        chrooted,
+        selected: true,
+        insecure_links: fast_io::confinement::ModuleInsecureLinks::from_module_config(
+            module.insecure_links,
+        ),
+    });
+}
+
 fn apply_privilege_restrictions_with_upstream_errors(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
@@ -35,6 +57,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     let needs_privdrop = am_root || module.uid.is_some() || module.gid.is_some();
 
     if !needs_chroot && !needs_privdrop {
+        publish_module_confinement(module, &module.path, false);
         return Ok(Some(PrivilegeOutcome::not_chrooted()));
     }
 
@@ -134,6 +157,12 @@ fn apply_privilege_restrictions_with_upstream_errors(
             }
         }
     }
+
+    publish_module_confinement(
+        module,
+        inner_module_path.as_deref().unwrap_or(&module.path),
+        chroot_applied,
+    );
 
     Ok(Some(PrivilegeOutcome {
         chroot_applied,

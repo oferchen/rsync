@@ -186,6 +186,10 @@ impl ModuleDefinitionBuilder {
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.or(defaults.fake_super).unwrap_or(false),
+            insecure_links: self
+                .insecure_links
+                .or(defaults.insecure_links)
+                .unwrap_or(false),
             munge_symlinks: self.munge_symlinks.or(defaults.munge_symlinks).unwrap_or(None),
             max_verbosity: self.max_verbosity.or(defaults.max_verbosity).unwrap_or(1),
             ignore_errors: self.ignore_errors.or(defaults.ignore_errors).unwrap_or(false),
