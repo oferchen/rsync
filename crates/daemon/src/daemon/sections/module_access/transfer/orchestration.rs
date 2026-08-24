@@ -203,11 +203,18 @@ fn process_approved_module(
                 host_addr: ctx.peer_ip,
                 host_name: ctx.host_display(),
                 user_name: auth_user.as_deref(),
-                request: ctx.request,
-                // Early exec runs before client args are received.
+                // Early exec runs before the client names a request, so
+                // upstream passes NULL and the hook sees "(NONE)" with no
+                // RSYNC_ARG<n>. upstream: clientserver.c:1004 -
+                // write_pre_exec_args(arg_fd, NULL, NULL, NULL, 1).
+                request: EARLY_EXEC_REQUEST,
                 client_args: &[],
             };
-            match run_early_exec(&expanded_command, &early_ctx) {
+            match run_early_exec(
+                &expanded_command,
+                &early_ctx,
+                ctx.early_input_data.as_deref(),
+            ) {
                 Ok(Ok(())) => {
                     if let Some(log) = ctx.log_sink {
                         let text = format!("early exec succeeded for module '{}'", ctx.request);
@@ -678,8 +685,8 @@ fn process_approved_module(
     };
 
     // upstream: clientserver.c - pre_exec() runs before the transfer starts.
-    // Early-input data (if any) is piped to the script's stdin. Stdout from the
-    // script is sent to the client as an info message.
+    // Stdout from the script is sent to the client as an info message. It gets
+    // no stdin: `--early-input` belongs to the early-exec hook alone.
     if let Some(command) = module
         .pre_xfer_exec
         .as_deref()
@@ -700,11 +707,7 @@ fn process_approved_module(
                 return Ok(());
             }
         };
-        match run_pre_xfer_exec(
-            &expanded_command,
-            &xfer_ctx,
-            ctx.early_input_data.as_deref(),
-        ) {
+        match run_pre_xfer_exec(&expanded_command, &xfer_ctx) {
             Ok(Ok(output)) => {
                 // upstream: clientserver.c:pre_exec() - stdout from the script is
                 // sent to the client as an info message before the transfer.

@@ -39,7 +39,7 @@ daemon-copylinks-parent-target-regression pass
 daemon-delete-stats pass
 daemon-deny-dns-failopen pass
 daemon-dot-file-force-wipe pass
-daemon-early-exec-nameconv fail
+daemon-early-exec-nameconv pass
 daemon-exclude-from-outside-module pass
 daemon-exclude-namebased pass
 daemon-exec pass
@@ -84,7 +84,7 @@ daemon-unix-socket-atfd pass
 daemon-zstd-thread-exhaustion fail
 deep-path pass
 delete-missing-args-files-from pass
-early-input-symlink fail
+early-input-symlink pass
 exclude-implied-trailing-backslash skip
 files-from-leak fail
 filter-leak fail
