@@ -1925,10 +1925,16 @@ fn link_dest_hardlinks_a_basis_differing_only_in_mtime_nanoseconds() {
     );
 }
 
-/// The non-vacuity companion: under `--modify-window=-1` upstream DOES compare
+/// End-to-end companion: under `--modify-window=-1` upstream DOES compare
 /// nanoseconds (`same_time` returns `f1_sec == f2_sec && f1_nsec == f2_nsec`),
-/// so the very same fixture must NOT link. Without this row a fix that ignored
-/// nanoseconds unconditionally would look correct.
+/// so the very same fixture must NOT link.
+///
+/// ⚠ Measured: mutating the attrs comparison to drop nanoseconds entirely does
+/// NOT kill this row - the negative window is already discriminating in the
+/// data-level quick check, which rejects the candidate before the attrs
+/// comparison is reached. It is kept as an end-to-end pin of the option, not as
+/// the non-vacuity proof for the line below; that role belongs to
+/// `whole_second_difference_refuses_the_basis`.
 #[cfg(unix)]
 #[test]
 fn nsec_exact_modify_window_still_refuses_a_nanosecond_differing_basis() {
@@ -1952,6 +1958,36 @@ fn nsec_exact_modify_window_still_refuses_a_nanosecond_differing_basis() {
     );
 }
 
+/// End-to-end pin of the seconds arm: a basis one WHOLE SECOND away is not
+/// `same_time` under the default window, so it must not be hard-linked.
+///
+/// ⚠ Measured: mutating the attrs comparison to report "same" unconditionally
+/// does NOT kill this row either. The data-level quick check applies the same
+/// `same_time` predicate first and rejects the candidate before the attrs
+/// comparison runs, so no reachable input can distinguish an over-permissive
+/// attrs comparison - which mirrors upstream, where `quick_check_ok()` and
+/// `unchanged_attrs()` both route through `same_time()`. The one lethal
+/// mutation is restoring the nanosecond-exact comparison, which kills
+/// `link_dest_hardlinks_a_basis_differing_only_in_mtime_nanoseconds`.
+#[cfg(unix)]
+#[test]
+fn whole_second_difference_refuses_the_basis() {
+    let fixture = NanosecondBasis::build_with_basis_offset_secs(1);
+
+    let summary = fixture.run(LocalCopyOptions::default().times(true));
+
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "a basis a whole second away is not an exact match"
+    );
+    assert_ne!(
+        fixture.dest_ino(),
+        fixture.basis_ino(),
+        "a basis a whole second away must not be hard-linked"
+    );
+}
+
 /// Source and `--link-dest` basis with identical content, size and mtime
 /// SECONDS, differing only in the nanosecond component.
 #[cfg(unix)]
@@ -1966,6 +2002,10 @@ struct NanosecondBasis {
 #[cfg(unix)]
 impl NanosecondBasis {
     fn build() -> Self {
+        Self::build_with_basis_offset_secs(0)
+    }
+
+    fn build_with_basis_offset_secs(offset: i64) -> Self {
         let temp = tempdir().expect("tempdir");
         let source_dir = temp.path().join("source");
         let basis_dir = temp.path().join("previous");
@@ -1990,8 +2030,8 @@ impl NanosecondBasis {
         .expect("set source times");
         set_file_times(
             &basis_file,
-            FileTime::from_unix_time(SECS, 222_000_000),
-            FileTime::from_unix_time(SECS, 222_000_000),
+            FileTime::from_unix_time(SECS + offset, 222_000_000),
+            FileTime::from_unix_time(SECS + offset, 222_000_000),
         )
         .expect("set basis times");
 
