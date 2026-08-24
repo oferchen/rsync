@@ -152,6 +152,13 @@ fn apply_module_directive(
                 builder.set_fake_super(parsed);
             }
         }
+        "insecurelinks" => {
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "insecure links", path, line_number)
+            {
+                builder.set_insecure_links(parsed);
+            }
+        }
         "mungesymlinks" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "munge symlinks", path, line_number)

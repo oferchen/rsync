@@ -1107,6 +1107,55 @@ mod config_parsing_tests {
 
 
     #[test]
+    fn parse_module_insecure_links_yes() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!("[mod]\npath = {}\ninsecure links = yes\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].insecure_links);
+    }
+    #[test]
+    fn parse_module_insecure_links_defaults_false() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(
+            !result.modules[0].insecure_links,
+            "upstream daemon-parm.h:208 defaults `insecure links` to false"
+        );
+    }
+    #[test]
+    fn parse_global_insecure_links_applies_as_a_module_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!("insecure links = yes\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].insecure_links);
+    }
+    #[test]
+    fn module_insecure_links_overrides_the_global_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!(
+            "insecure links = yes\n[mod]\npath = {}\ninsecure links = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(
+            !result.modules[0].insecure_links,
+            "P_LOCAL: the per-module value wins over the global default"
+        );
+    }
+    #[test]
     fn parse_module_strict_modes_yes() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
