@@ -216,7 +216,7 @@ operator-path-dir-daemon-leaf fail
 operator-path-dir-daemon-mkdir fail
 operator-path-dir-daemon-outside pass
 operator-path-files-from pass
-operator-path-inplace-backup-dir fail
+operator-path-inplace-backup-dir pass
 operator-path-insecure-links-daemon pass
 operator-path-insecure-links-refused pass
 operator-path-link-dest pass

@@ -11,8 +11,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    CleanupManager, compute_backup_path, create_backup_dir_parents, trace_make_backup_copy,
-    trace_make_backup_hlink, trace_make_backup_rename,
+    CleanupManager, compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
+    trace_make_backup_copy, trace_make_backup_hlink, trace_make_backup_rename,
 };
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
@@ -877,9 +877,11 @@ pub(super) fn make_backup_copy(
     // upstream: generator.c:1866 copy_file() - duplicate the pre-transfer bytes
     // into the backup, leaving the original inode in place to be updated. A
     // pre-existing backup at this path is overwritten (upstream robust_unlinks
-    // it at generator.c:1901); `fs::copy` truncates, reaching the same end
-    // state. `fs::copy` is portable across Linux/macOS/Windows.
-    fs::copy(file_path, &backup_path)?;
+    // it at generator.c:1901); the O_TRUNC create reaches the same end state.
+    // The backup path is operator-named and resolves through the ownership
+    // walk: generator.c:2283 raises `operator_path_resolve` around this copy
+    // precisely because the in-place backup bypasses `make_backup()`.
+    copy_pre_image_to_backup(file_path, &backup_path)?;
 
     // upstream: generator.c:1990-1992 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
