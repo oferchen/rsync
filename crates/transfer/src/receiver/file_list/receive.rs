@@ -258,10 +258,10 @@ impl ReceiverContext {
     /// Receives one INC_RECURSE sub-list segment framed by a `NDX_FLIST_OFFSET`
     /// marker whose raw wire value is `ndx`.
     ///
-    /// This is the body of a single [`receive_extra_file_lists`] loop iteration,
+    /// This is the body of a single `receive_extra_file_lists` loop iteration,
     /// minus the `read_ndx` and the `NDX_FLIST_EOF` termination check. It is the
     /// shared segment-append primitive used both by the batched
-    /// [`receive_extra_file_lists`] wrapper (kept for `--files-from` and the
+    /// `receive_extra_file_lists` wrapper (kept for `--files-from` and the
     /// wire-parity tests) and by the lazy on-demand fetch in
     /// [`super::super::ReceiverContext::read_next_frame`]. Returns the number of
     /// entries appended for this segment.
@@ -432,7 +432,7 @@ impl ReceiverContext {
     /// so a duplicate sub-list is rejected.
     ///
     /// Two guards, both mapped to `RERR_PROTOCOL` (2) via
-    /// [`protocol::protocol_violation`]:
+    /// [`protocol::protocol_violation()`]:
     ///
     /// 1. **Range** - a `dir_ndx` that references a directory not yet received
     ///    (`dir_ndx >= dir_flist_used`) cannot belong to any real sender tree and
@@ -473,7 +473,7 @@ impl ReceiverContext {
     }
 
     /// Records the full relative path of every directory in `file_list[from..]`
-    /// into [`dir_flist_names`](super::super::ReceiverContext::dir_flist_names),
+    /// into `dir_flist_names`,
     /// in the order they appear. Called after each list/sub-list is sorted (and,
     /// under non-iconv, deduped) so the vector index matches the wire `dir_ndx`
     /// the sender assigns to that directory.
@@ -499,7 +499,7 @@ impl ReceiverContext {
     /// offending segment's entries are dropped so nothing escapes into the
     /// transfer.
     ///
-    /// The parent name is looked up in [`dir_flist_names`] built by
+    /// The parent name is looked up in `dir_flist_names` built by
     /// [`record_dir_flist_names`](Self::record_dir_flist_names). Leading slashes
     /// (present only under `--relative`, where upstream defers stripping to
     /// `flist_sort_and_clean(..., strip_root)`) are ignored on both sides so a

@@ -32,7 +32,7 @@
 //! user-facing knob. The single environment escape hatch
 //! `OC_RSYNC_ADAPTIVE_QUEUE` exists only for reproducibility and debugging:
 //! setting it to a disabling value (`0`/`false`/`off`/`no`) pins the
-//! deterministic static [`bounded`](super::bounded) queue with no controller.
+//! deterministic static [`bounded`](super::bounded()) queue with no controller.
 //! [`adaptive_queue_enabled`] reports the resulting choice.
 //!
 //! # Invariants

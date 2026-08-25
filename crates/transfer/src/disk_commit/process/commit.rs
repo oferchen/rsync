@@ -59,7 +59,7 @@ pub(super) struct CommitOutcome {
     /// staging path. `None` for immediate commits and inplace writes.
     pub(super) delayed_path: Option<PathBuf>,
     /// Destination-relative paths recorded when `--backup` renamed an
-    /// existing file. Propagated to the main thread via [`CommitResult`]
+    /// existing file. Propagated to the main thread via `CommitResult`
     /// so the upstream `INFO_GTE(BACKUP, 1)` notice can be emitted by the
     /// thread whose `VerbosityConfig` carries the user's `--info=backup`.
     pub(super) backup_notice: Option<BackupNotice>,
@@ -357,7 +357,7 @@ pub(super) fn retain_partial_file(
 /// destination.
 ///
 /// On Windows the commit rename routes through
-/// [`crate::temp_guard::commit_rename_no_follow`] and the `#[cfg(not(windows))]`
+/// `crate::temp_guard::commit_rename_no_follow` and the `#[cfg(not(windows))]`
 /// arm of [`rename_config_sandboxed`] is compiled out, so this path-based
 /// helper has no non-test caller there; the tests still exercise it.
 #[cfg_attr(windows, allow(dead_code))]
@@ -445,7 +445,7 @@ pub(super) fn rename_config_sandboxed(
 
 /// Non-Unix: the `*at` sandbox helpers do not exist. On Windows the commit
 /// rename routes through the reparse-point-anchored handle rename
-/// ([`crate::temp_guard::commit_rename_no_follow`]), the counterpart to the
+/// (`crate::temp_guard::commit_rename_no_follow`), the counterpart to the
 /// Unix `renameat` anchoring, so a junction/mount-point swap on the commit
 /// parent between temp-create and rename cannot redirect the committed file
 /// (CVE-2024-12747 residual). Other non-Unix targets keep the path-based
@@ -629,7 +629,7 @@ fn backup_rename_sandboxed(
 /// receiver's destination sandbox when the backup name is a single component
 /// under `dest_dir` (SEC-1.h shape, same as the hardlink-follower create).
 ///
-/// Under `cfg(test)` the [`ForceExdev`] guard makes this report a cross-device
+/// Under `cfg(test)` the `ForceExdev` guard makes this report a cross-device
 /// error, matching a real `--backup-dir` on another mount where `link(2)` fails
 /// with `EXDEV` before `rename(2)` does.
 fn backup_hardlink_syscall(

@@ -70,7 +70,7 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// rather than `PathBuf::join`, which would emit `\` on Windows for a path that
 /// is about to be compared against module-relative wire names.
 ///
-/// Deliberately NOT [`lexically_normalize`], which walks the same components but
+/// Deliberately NOT `lexically_normalize`, which walks the same components but
 /// PRESERVES an unpoppable leading `..` so its caller's `starts_with` containment
 /// check can reject an escaping alt-basis path. Four differences - input type,
 /// output type, separator policy, leading-`..` policy - so they are two

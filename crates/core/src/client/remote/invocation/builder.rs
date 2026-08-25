@@ -160,7 +160,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// The leading `"rsync"` element mirrors `rsync.c:293 args[i] =
     /// "rsync";`, which overwrites the NULL-cutoff slot with a synthetic
     /// arg0 so the receiver's `read_args()`/`parse_arguments()` can skip
-    /// argv[0] the same way it would for a real command line; the
+    /// argv\[0\] the same way it would for a real command line; the
     /// server-side reader (`frontend/server/run.rs`) discards this element.
     fn build_tail_args_for_stdin(&self, remote_paths: &[&OsStr]) -> Vec<OsString> {
         let mut args = vec![OsString::from("rsync")];

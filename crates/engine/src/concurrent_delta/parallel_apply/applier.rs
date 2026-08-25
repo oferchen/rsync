@@ -270,9 +270,8 @@ impl ParallelDeltaApplier {
     /// The warning goes through `tracing::warn!` (visible at `--info=ALL`
     /// minimum) and is mirrored to stderr via [`eprintln!`] so default
     /// builds without the `tracing` feature still surface it. Mirrors the
-    /// SRO-6 pattern used by [`SpillableReorderBuffer`].
+    /// SRO-6 pattern used by `SpillableReorderBuffer`.
     ///
-    /// [`SpillableReorderBuffer`]: super::super::reorder::SpillableReorderBuffer
     pub(crate) fn note_reorder_saturation(&self, ndx: FileNdx, chunk_sequence: u64) {
         self.reorder_saturations.fetch_add(1, Ordering::Relaxed);
         if self

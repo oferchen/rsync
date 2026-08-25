@@ -723,7 +723,7 @@ fn async_privileged_module_error() -> DaemonError {
 /// constraint below the operator's configured `max connections`: a daemon set
 /// to `max connections = 1000` should serve up to 1000 concurrent sessions,
 /// not the 512-thread flood floor. So the cap is the larger of the configured
-/// limit and [`DEFAULT_MAX_INFLIGHT_WORKERS`]. When `max connections` is unset
+/// limit and `DEFAULT_MAX_INFLIGHT_WORKERS`. When `max connections` is unset
 /// (unbounded, matching the sync default) the floor alone applies. Keeping the
 /// cap at or above the configured limit also preserves the per-session refusal
 /// semantics: the `max connections` admission semaphore inside the worker still

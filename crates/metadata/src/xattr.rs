@@ -5,7 +5,7 @@
 //!
 //! - On Unix the [`xattr_unix`](crate::xattr_unix) module wraps the
 //!   `xattr` crate (`get`/`set`/`list`/`remove`).
-//! - On Windows the [`xattr_windows`](crate::xattr_windows) module
+//! - On Windows the `xattr_windows` module
 //!   maps every named xattr onto an NTFS Alternate Data Stream
 //!   (`path:name:$DATA`) so the client/daemon surface remains the same.
 //!

@@ -121,7 +121,7 @@ fn build_protocol_file_entry(
 ///
 /// When batch mode is active, encodes the file entry using the protocol
 /// flist wire encoder (same format as network transfers) and writes the
-/// raw bytes to the batch file via [`BatchWriter::write_data`]. This
+/// raw bytes to the batch file via `BatchWriter::write_data`. This
 /// produces batch files compatible with upstream rsync's `--read-batch`.
 ///
 /// The `FileListWriter` in the context maintains cross-entry compression

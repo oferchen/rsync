@@ -17,8 +17,8 @@ use super::sources::{read_merge_file, read_merge_from_standard_input};
 ///
 /// Upstream keeps the two apart: `parse_filter_file` opens `open_path` but
 /// reports `src_name`, a verbatim copy of the name it was handed
-/// (exclude.c:1727). That name comes from `parse_merge_name`, which "return[s]
-/// the name unchanged [if] it doesn't have any slashes" (exclude.c:704-715) and
+/// (exclude.c:1727). That name comes from `parse_merge_name`, which "return\[s\]
+/// the name unchanged \[if\] it doesn't have any slashes" (exclude.c:704-715) and
 /// only joins it onto the filter dir when it does. So `--filter='. f.rules'`
 /// reports `f.rules`, not the absolute path the open resolved to.
 ///

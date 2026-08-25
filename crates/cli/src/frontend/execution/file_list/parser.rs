@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Resolves a `--files-from` CLI value into a [`FilesFromSource`].
+/// Resolves a `--files-from` CLI value into a `FilesFromSource`.
 ///
 /// The resolution mirrors upstream rsync's `options.c:2447-2490`:
 /// - `"-"` means stdin

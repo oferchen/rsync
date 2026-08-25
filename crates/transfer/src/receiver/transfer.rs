@@ -88,8 +88,8 @@ impl ReceiverContext {
     /// halves of that model:
     ///
     /// - `batch_input` is wrapped as an undemultiplexed (`Plain`)
-    ///   [`ServerReader`](crate::reader::ServerReader) `f_in`, and the
-    ///   [`local_replay`](Self::local_replay) flag it sets keeps it Plain by
+    ///   `ServerReader` `f_in`, and the
+    ///   `local_replay` flag it sets keeps it Plain by
     ///   suppressing input-multiplex activation.
     /// - a [`DiscardSink`](crate::writer::DiscardSink) stands in for the
     ///   generator's consumer-less `f_out`, swallowing every request, signature

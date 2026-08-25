@@ -145,7 +145,7 @@ pub struct PipelinedReceiver {
 }
 
 /// The session state upstream's receiver consults when a whole-file
-/// verification fails, beyond what the per-file [`PendingChecksum`] carries.
+/// verification fails, beyond what the per-file `PendingChecksum` carries.
 ///
 /// Both fields are process-wide globals upstream and are `false` by default
 /// there, so [`Default`] reproduces a plain, non-batch run with no `%i` in the
@@ -547,7 +547,7 @@ impl PipelinedReceiver {
     ///
     /// The disk thread cannot emit this line itself because its thread-local
     /// [`logging::VerbosityConfig`] is never seeded with the user's
-    /// `--info=backup` selection. Instead, [`crate::disk_commit::make_backup`]
+    /// `--info=backup` selection. Instead, `crate::disk_commit::make_backup`
     /// records destination-relative paths on the [`CommitResult`] and the
     /// main thread surfaces them here, so the `info_log!` guard runs against
     /// the correct verbosity configuration.

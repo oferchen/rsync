@@ -78,13 +78,12 @@ pub struct DeltaWork {
     basis_path: Option<PathBuf>,
     /// Optional source path for self-contained delta computation.
     ///
-    /// When `Some` together with `basis_path`, [`DeltaTransferStrategy::process`]
+    /// When `Some` together with `basis_path`, `DeltaTransferStrategy::process`
     /// runs the full `DeltaGenerator` pipeline (signature build, block matching,
     /// script application) and reports actual stats. When `None`, the strategy
     /// reports the pre-computed `literal_bytes`/`matched_bytes` set by the
     /// receiver pipeline that already applied the wire delta.
     ///
-    /// [`DeltaTransferStrategy::process`]: super::strategy::DeltaTransferStrategy::process
     source_path: Option<PathBuf>,
     /// Expected target file size from the file list entry.
     target_size: u64,

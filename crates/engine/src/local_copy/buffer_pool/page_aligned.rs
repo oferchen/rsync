@@ -6,7 +6,7 @@
 //! allocating page-aligned memory satisfies the constraint without having to
 //! query the underlying volume.
 //!
-//! The standard heap allocator that backs the regular [`BufferPool`] makes
+//! The standard heap allocator that backs the regular `BufferPool` makes
 //! no alignment guarantees beyond `align_of::<u8>() == 1`. Submitting such a
 //! buffer to a no-buffering write forces the kernel to bounce-copy the data
 //! through an aligned scratch buffer it allocates on the caller's behalf,
@@ -15,7 +15,7 @@
 //! [`fast_io::PageAlignedBuffer`]) so the IOCP writer can hand them directly
 //! to overlapped `WriteFile` calls without any bounce copy.
 //!
-//! The pool mirrors the lock-free hot path used by [`BufferPool`] (a fixed
+//! The pool mirrors the lock-free hot path used by `BufferPool` (a fixed
 //! [`crossbeam_queue::ArrayQueue`] guarded by an atomic admission counter)
 //! to keep the acquire/return cost wait-free under rayon concurrency. Hard
 //! capacity is enforced on return: the queue never grows beyond
@@ -41,7 +41,7 @@ fn queue_capacity(max_buffers: usize) -> usize {
 
 /// Lock-free pool of page-aligned [`PageAlignedBuffer`] instances.
 ///
-/// Use this in place of [`BufferPool`](super::BufferPool) whenever the
+/// Use this in place of `BufferPool` whenever the
 /// consumer submits the buffer to an I/O backend that requires sector
 /// alignment - notably Windows IOCP writers opened with
 /// `FILE_FLAG_NO_BUFFERING`. The two pools are deliberately separate

@@ -33,13 +33,13 @@
 /// Extended-length (`\\?\`) path conversion shared by the no-follow commit
 /// primitives.
 ///
-/// The handle-based opens in [`imp`] all go through `OpenOptions::open`, which
+/// The handle-based opens in `imp` all go through `OpenOptions::open`, which
 /// applies std's `maybe_verbatim` internally, so they already accept paths over
 /// the legacy 260-char `MAX_PATH`. The one Win32 call that receives a raw path
 /// string is `SetFileInformationByHandle(FileRenameInfo)` in
-/// [`imp::set_rename_info`]: its `FILE_RENAME_INFO::FileName` is passed straight
+/// `imp::set_rename_info`: its `FILE_RENAME_INFO::FileName` is passed straight
 /// to the kernel with no long-path awareness, so a deep destination fails with
-/// `ERROR_FILENAME_EXCED_RANGE` (206). [`to_verbatim_wide`] converts an
+/// `ERROR_FILENAME_EXCED_RANGE` (206). `to_verbatim_wide` converts an
 /// already-absolute, already-normalized destination path into the `\\?\`
 /// verbatim form the way std does, restoring the long-path behaviour the prior
 /// `std::fs::rename` commit path had.
@@ -629,7 +629,7 @@ pub fn is_cross_device(error: &std::io::Error) -> bool {
 /// destination produces while another committer briefly holds the no-follow pin
 /// on the destination parent.
 ///
-/// [`imp::rename_no_follow`] pins that parent without `FILE_SHARE_DELETE` (the
+/// `imp::rename_no_follow` pins that parent without `FILE_SHARE_DELETE` (the
 /// reparse-swap hardening), so a second committer racing to replace the same
 /// destination can be denied for the moment the pin is held:
 ///

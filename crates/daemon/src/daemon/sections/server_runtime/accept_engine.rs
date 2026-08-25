@@ -606,7 +606,7 @@ fn try_build_kqueue_engine(
 
 /// Builds the accept engine for the bound listener topology.
 ///
-/// On macOS a [`KqueueAcceptEngine`] is tried first, falling back to the
+/// On macOS a `KqueueAcceptEngine` is tried first, falling back to the
 /// portable engines if `kqueue(2)` setup fails. Otherwise a single bound
 /// listener uses [`SingleListenerEngine`]; multiple listeners (dual-stack) use
 /// [`MultiListenerEngine`]. The choice is made once here and never re-evaluated

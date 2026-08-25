@@ -239,7 +239,7 @@ fn extract_user(text: &str) -> (Option<&str>, &str) {
 
 /// Extracts host and path from the operand after user has been removed.
 ///
-/// Handles both bracketed IPv6 ([::1]:path) and regular (host:path) formats.
+/// Handles both bracketed IPv6 (\[::1\]:path) and regular (host:path) formats.
 fn extract_host_and_path(text: &str) -> Result<(&str, &str), RemoteOperandParseError> {
     if text.starts_with('[') {
         if let Some(close_bracket) = text.find(']') {

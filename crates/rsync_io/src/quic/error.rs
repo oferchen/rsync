@@ -87,7 +87,7 @@ impl TransportFault {
 /// Classifies a lost-connection reason.
 ///
 /// `ApplicationClosed(0)` and `LocallyClosed` are clean session ends handled by
-/// the caller ([`super::Terminal::from_loss`]); their arms here are defensive
+/// the caller (`super::Terminal::from_loss`); their arms here are defensive
 /// and unreachable in practice.
 #[must_use]
 pub fn connection_fault(reason: &ConnectionError) -> TransportFault {
