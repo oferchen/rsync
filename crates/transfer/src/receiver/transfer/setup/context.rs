@@ -448,7 +448,54 @@ impl ReceiverContext {
                 ));
             }
         }
-        Ok(())
+        self.reject_daemon_excluded_partial_dir()
+    }
+    /// Refuses a peer-supplied `--partial-dir` that the daemon module's own
+    /// filter list excludes.
+    ///
+    /// upstream: `main.c:1258-1266` - the server receiver, inside the same
+    /// `if (daemon_filter_list.head)` block that screens `basis_dir[]`, screens
+    /// `partial_dir` too: re-sanitise against rootdir `"/"`, drop the
+    /// module-dir prefix, then `check_filter(elp, FLOG, dir, 1)`; a match jumps
+    /// to `options_rejected`.
+    ///
+    /// Two things about that block are load-bearing and are the reason this is
+    /// a separate function rather than another entry in the staging array:
+    ///
+    /// - It is gated on `*partial_dir == '/'`. By the time it runs, an absolute
+    ///   value has already been re-rooted at `module_dir` by the `sanitize_path`
+    ///   at `main.c:1239`, so "absolute" means "module-anchored", while a
+    ///   relative value still names a directory beside each destination file and
+    ///   is covered by the destination check instead. oc reaches the same state
+    ///   through `clamp_basis_to_module` on the daemon's client-arg path, so the
+    ///   same predicate selects the same values.
+    /// - It matches the NAME, never the resolved path. A `--partial-dir` whose
+    ///   name is not excluded stays allowed even when an in-module symlink
+    ///   redirects it into an excluded directory - upstream defends a writable
+    ///   module with `munge symlinks`, not with this filter. Resolving first
+    ///   would refuse what upstream permits.
+    ///
+    /// There is deliberately no empty-value arm here. `options.c:2597-2598`
+    /// normalises an empty or `"."` partial-dir to `NULL` before it can ever be
+    /// forwarded, so unlike `--backup-dir` upstream has nothing to reject.
+    fn reject_daemon_excluded_partial_dir(&self) -> io::Result<()> {
+        let Some(filters) = self.daemon_filter_set() else {
+            return Ok(());
+        };
+        let Some(dir) = self.config.partial_dir.as_deref() else {
+            return Ok(());
+        };
+        if !dir.is_absolute() {
+            return Ok(());
+        }
+        if filters.allows_name(&self.daemon_filter_name(dir), true) {
+            return Ok(());
+        }
+        // upstream: main.c:1267 - the refusal text carries no path; the rejected
+        // option goes to the daemon's log, not the peer.
+        Err(protocol::syntax_violation(
+            "Your options have been rejected by the server.",
+        ))
     }
     /// Refuses a destination argument that the daemon module's own filter list
     /// excludes.

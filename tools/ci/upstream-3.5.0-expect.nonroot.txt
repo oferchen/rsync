@@ -212,7 +212,7 @@ operator-path-backup-symlink skip
 operator-path-compare-dest pass
 operator-path-copy-dest pass
 operator-path-dir-daemon-inmodule pass
-operator-path-dir-daemon-leaf fail
+operator-path-dir-daemon-leaf pass
 operator-path-dir-daemon-mkdir fail
 operator-path-dir-daemon-outside pass
 operator-path-files-from pass
@@ -222,8 +222,8 @@ operator-path-insecure-links-refused pass
 operator-path-link-dest pass
 operator-path-log-file pass
 operator-path-partial-dir pass
-operator-path-partial-dir-daemon fail
-operator-path-partial-dir-exclude-daemon fail
+operator-path-partial-dir-daemon pass
+operator-path-partial-dir-exclude-daemon pass
 operator-path-temp-dir pass
 operator-path-traversal-backup-dir-daemon pass
 operator-path-traversal-dest-dir-daemon pass

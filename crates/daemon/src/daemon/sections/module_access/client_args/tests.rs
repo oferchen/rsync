@@ -373,3 +373,64 @@ mod daemon_clean_fname_collapse_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod daemon_partial_dir_arg_tests {
+    use super::{ServerConfig, ServerRole, apply_long_form_args};
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    fn parse(client_args: &[&str]) -> ServerConfig {
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            "-logDtpre.iLsfxCIvu".to_owned(),
+            vec![OsString::from(".")],
+        )
+        .expect("server flag string parses");
+        let owned: Vec<String> = client_args.iter().map(|a| (*a).to_owned()).collect();
+        let unknown = apply_long_form_args(&owned, &mut config);
+        assert_eq!(unknown, None, "no arg in {client_args:?} is client-only");
+        config
+    }
+
+    /// The spelling upstream actually puts on the wire.
+    ///
+    /// upstream: `options.c:3052-3056` - `server_options()` emits
+    /// `--partial-dir` and its value as TWO argv entries via
+    /// `safe_arg("", partial_dir)`, exactly as it does for `--temp-dir` and
+    /// `--backup-dir`. Without this arm the value fell through to the
+    /// positional region and the daemon receiver staged nowhere.
+    #[test]
+    fn split_partial_dir_reaches_the_daemon_receiver() {
+        let config = parse(&["--partial-dir", "pdir", "--delay-updates"]);
+        assert_eq!(
+            config.partial_dir.as_deref(),
+            Some(Path::new("pdir")),
+            "the split spelling upstream emits must reach the receiver",
+        );
+        assert!(config.has_partial_dir);
+        assert!(config.write.delay_updates);
+    }
+
+    /// oc's own daemon client emits the joined spelling
+    /// (`daemon_transfer/orchestration/arguments.rs`), and upstream's popt
+    /// accepts it too, so both must resolve to the same configuration.
+    #[test]
+    fn joined_partial_dir_reaches_the_daemon_receiver() {
+        let config = parse(&["--partial-dir=pdir", "--delay-updates"]);
+        assert_eq!(config.partial_dir.as_deref(), Some(Path::new("pdir")));
+        assert!(config.has_partial_dir);
+    }
+
+    /// Non-vacuity companion: the two assertions above are attributable to the
+    /// option and not to a default. Without `--partial-dir` the receiver has no
+    /// staging directory even when `--delay-updates` is present - which is
+    /// precisely the state the missing arm used to produce for both spellings.
+    #[test]
+    fn delay_updates_alone_leaves_no_partial_dir() {
+        let config = parse(&["--delay-updates"]);
+        assert_eq!(config.partial_dir, None);
+        assert!(!config.has_partial_dir);
+        assert!(config.write.delay_updates);
+    }
+}
