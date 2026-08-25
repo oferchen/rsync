@@ -306,20 +306,34 @@ const fn fake_super_acl_xattr(is_access_acl: bool) -> &'static str {
 /// ACL is stashed in `%aacl`/`%dacl` instead, mirroring how ownership is
 /// stashed in `%stat`.
 ///
+/// `mode` is the source entry's permission word. An access ACL is condensed
+/// into the wire-round-tripped form upstream ends up storing (see
+/// [`protocol::acl::RsyncAcl::condense_for_fake_super_store`]) before it is
+/// encoded; a default ACL is stored as-is, because upstream's sender strips
+/// only the access ACL. Doing this here rather than at the call sites makes
+/// this function the single owner of the on-disk `%aacl`/`%dacl` form: the
+/// condensing is idempotent, so a caller holding an ACL that already came off
+/// the wire gets the same bytes.
+///
 /// # Upstream Reference
 ///
 /// Mirrors the `am_root < 0` branch of `set_rsync_acl()` in `acls.c` lines
-/// 950-971, which calls `set_xattr_acl()` (`xattrs.c` lines 1118-1126).
+/// 1229-1245, which calls `set_xattr_acl()` (`xattrs.c` lines 1196-1207).
 #[cfg(all(unix, feature = "xattr"))]
 pub fn store_fake_super_acl(
     path: &Path,
     is_access_acl: bool,
     acl: &protocol::acl::RsyncAcl,
+    mode: u32,
 ) -> io::Result<()> {
+    let mut stored = acl.clone();
+    if is_access_acl {
+        stored.condense_for_fake_super_store(mode);
+    }
     xattr::set(
         path,
         fake_super_acl_xattr(is_access_acl),
-        &acl.to_fake_super_bytes(),
+        &stored.to_fake_super_bytes(),
     )
 }
 
@@ -491,11 +505,17 @@ pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
 }
 
 /// Returns `Unsupported` on platforms without xattr support.
+///
+/// Takes `_mode` so the signature matches the xattr arm above: the two are one
+/// API with two implementations, and a caller must not have to know which arm
+/// it compiled against. The mode is unused here only because this arm stores
+/// nothing.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn store_fake_super_acl(
     _path: &Path,
     _is_access_acl: bool,
     _acl: &protocol::acl::RsyncAcl,
+    _mode: u32,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -753,9 +773,12 @@ mod tests {
         }
     }
 
-    // A stored access ACL must read back byte-for-byte identical, including
-    // named user/group entries - the exact round trip a `--fake-super --acls`
-    // receive-then-resend cycle depends on.
+    // A stored access ACL loses exactly the slots upstream's wire round trip
+    // loses (user_obj/other_obj, and group_obj when it equals the mode's group
+    // bits) and keeps everything else, including named user/group entries -
+    // the round trip a `--fake-super --acls` receive-then-resend depends on.
+    // The identity a reader needs is not byte equality with the source ACL: it
+    // is that every slot left as NO_ENTRY is recoverable from the mode.
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn store_and_load_fake_super_acl_roundtrips() {
@@ -773,20 +796,80 @@ mod tests {
         acl.names.push(IdAccess::user(1000, 0x07));
 
         // Skip when the FS can't hold user xattrs (e.g. tmpfs without support).
-        if store_fake_super_acl(&path, true, &acl).is_err() {
+        // 0o774: group bits equal the mask, the shape a real `setfacl` leaves.
+        if store_fake_super_acl(&path, true, &acl, 0o774).is_err() {
             return;
         }
 
         let loaded = load_fake_super_acl(&path, true)
             .expect("load must succeed")
             .expect("xattr must be present");
-        assert_eq!(loaded, acl);
+        let mut expected = acl.clone();
+        expected.condense_for_fake_super_store(0o774);
+        assert_eq!(loaded, expected);
+        assert_eq!(loaded.user_obj, protocol::acl::NO_ENTRY);
+        assert_eq!(loaded.other_obj, protocol::acl::NO_ENTRY);
+        // group_obj (5) differs from the mode's group bits (7), so it survives;
+        // the mask survives because the receiver restores it from those bits.
+        assert_eq!(loaded.group_obj, 0x05);
+        assert_eq!(loaded.mask_obj, 0x07);
+        assert_eq!(loaded.names.len(), 1);
 
         // The default-ACL xattr is a separate attribute; it must not exist yet.
         assert!(
             load_fake_super_acl(&path, false)
                 .expect("load must succeed")
                 .is_none()
+        );
+    }
+
+    // Wiring pin for the byte-level oracle in `protocol::acl::tests`: the bytes
+    // that actually reach the xattr must be the condensed form for `%aacl` and
+    // the verbatim form for `%dacl`. The oracle test proves the transform is the
+    // one upstream 3.5.0 produces; this proves the storage site applies it (and
+    // applies it to the access ACL only).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn stored_blobs_condense_the_access_acl_and_not_the_default() {
+        use protocol::acl::{IdAccess, RsyncAcl};
+
+        const NOBODY: u32 = 65534;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("acl-target");
+        std::fs::write(&path, b"body").expect("write");
+
+        // `chmod 0644 f; setfacl -m u:nobody:rwx f` leaves mode 0o674.
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0o6;
+        acl.group_obj = 0o4;
+        acl.mask_obj = 0o7;
+        acl.other_obj = 0o4;
+        acl.names.push(IdAccess::user(NOBODY, 0o7));
+
+        // Skip when the FS can't hold user xattrs.
+        if store_fake_super_acl(&path, true, &acl, 0o674).is_err() {
+            return;
+        }
+        store_fake_super_acl(&path, false, &acl, 0o674).expect("store default ACL");
+
+        let read_u32s = |name: &str| -> Vec<u32> {
+            xattr::get(&path, name)
+                .expect("getxattr")
+                .expect("xattr present")
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect()
+        };
+
+        // Measured from `rsync-3.5.0/rsync -rA -M--fake-super src/ dst/`.
+        assert_eq!(
+            read_u32s(FAKE_SUPER_ACCESS_ACL_XATTR),
+            vec![128, 4, 7, 128, NOBODY, 0x8000_0007]
+        );
+        assert_eq!(
+            read_u32s(FAKE_SUPER_DEFAULT_ACL_XATTR),
+            vec![6, 4, 7, 4, NOBODY, 0x8000_0007]
         );
     }
 
@@ -802,7 +885,7 @@ mod tests {
         // Confirm the FS supports user xattrs at all; skip otherwise.
         let probe = temp.path().join("probe");
         std::fs::write(&probe, b"probe").expect("write");
-        if store_fake_super_acl(&probe, true, &RsyncAcl::new()).is_err() {
+        if store_fake_super_acl(&probe, true, &RsyncAcl::new(), 0o644).is_err() {
             return;
         }
 
@@ -868,7 +951,7 @@ mod tests {
         fn store_fake_super_acl_stub_returns_unsupported() {
             let path = Path::new("/nonexistent/file");
             let acl = protocol::acl::RsyncAcl::new();
-            let err = store_fake_super_acl(path, true, &acl).unwrap_err();
+            let err = store_fake_super_acl(path, true, &acl, 0o644).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::Unsupported);
         }
 
