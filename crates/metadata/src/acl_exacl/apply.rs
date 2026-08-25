@@ -139,6 +139,8 @@ pub fn apply_acls_from_cache(
 /// * `default_ndx` - Optional index into the default ACL cache (directories only).
 /// * `follow_symlinks` - Whether to process this entry at all. If `false`,
 ///   returns immediately.
+/// * `mode` - The entry's permission word, which decides which access-ACL
+///   slots the stored blob may leave as `NO_ENTRY`.
 ///
 /// # Errors
 ///
@@ -147,7 +149,7 @@ pub fn apply_acls_from_cache(
 /// # Upstream Reference
 ///
 /// Mirrors the `am_root < 0` branch of `set_rsync_acl()` in `acls.c` lines
-/// 933-971.
+/// 1229-1245.
 #[allow(clippy::module_name_repetitions)]
 pub fn store_acls_via_fake_super(
     destination: &Path,
@@ -155,6 +157,7 @@ pub fn store_acls_via_fake_super(
     access_ndx: u32,
     default_ndx: Option<u32>,
     follow_symlinks: bool,
+    mode: u32,
 ) -> Result<(), MetadataError> {
     use crate::fake_super::{remove_fake_super_default_acl, store_fake_super_acl};
 
@@ -163,7 +166,7 @@ pub fn store_acls_via_fake_super(
     }
 
     if let Some(acl) = cache.get_access(access_ndx) {
-        store_fake_super_acl(destination, true, acl)
+        store_fake_super_acl(destination, true, acl, mode)
             .map_err(|e| MetadataError::new("store fake-super access ACL", destination, e))?;
     }
 
@@ -177,7 +180,7 @@ pub fn store_acls_via_fake_super(
                 })?;
             }
             Some(def_acl) => {
-                store_fake_super_acl(destination, false, def_acl).map_err(|e| {
+                store_fake_super_acl(destination, false, def_acl, mode).map_err(|e| {
                     MetadataError::new("store fake-super default ACL", destination, e)
                 })?;
             }

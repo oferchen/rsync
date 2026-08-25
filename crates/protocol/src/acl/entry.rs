@@ -487,6 +487,42 @@ impl RsyncAcl {
         self.other_obj = NO_ENTRY;
     }
 
+    /// Condenses an access ACL into the form upstream stores in the
+    /// `--fake-super` `%aacl` xattr.
+    ///
+    /// Upstream never condenses at the storage site: `set_rsync_acl()` writes
+    /// `duo_item->racl` verbatim (`acls.c:1235-1238`). The `NO_ENTRY` slots in a
+    /// stored `%aacl` are the residue of the *wire* round trip the ACL took to
+    /// reach the receiver, so an implementation that stores an ACL it never sent
+    /// over the wire has to reproduce that round trip explicitly. It is exactly
+    /// two steps:
+    ///
+    /// 1. the sender's strip (`acls.c:888` `send_acl()` calling
+    ///    `rsync_acl_strip_perms()`), which blanks the slots recoverable from
+    ///    the file mode, and
+    /// 2. the receiver's mask restoration (`acls.c:1000-1006`
+    ///    `recv_rsync_acl()`), which puts back a mask that named entries
+    ///    require - for an access ACL from the mode's group bits.
+    ///
+    /// Composing the two leaves `mask_obj` unchanged whenever step 1 stripped it
+    /// (it strips only when the mask already equals those group bits), which is
+    /// why a stored `%aacl` keeps a real mask while `user_obj` and `other_obj`
+    /// read `NO_ENTRY`. The composition is idempotent, so applying it to an ACL
+    /// that already arrived over the wire is a no-op beyond that restoration.
+    ///
+    /// Default ACLs take no condensing: `send_acl()` strips only `acc_acl`, so
+    /// a `%dacl` blob holds the fully populated ACL.
+    pub fn condense_for_fake_super_store(&mut self, mode: u32) {
+        self.strip_perms_for_send(mode);
+
+        // upstream: acls.c:1000-1006 recv_rsync_acl() - "Mask must be non-empty
+        // with lists", and for SMB_ACL_TYPE_ACCESS the replacement value is
+        // `(mode >> 3) & 7` rather than the OR of the named entries' bits.
+        if !self.names.is_empty() && self.mask_obj == NO_ENTRY {
+            self.mask_obj = ((mode >> 3) & 7) as u8;
+        }
+    }
+
     /// Reports whether two ACLs are exactly equal in every object and named
     /// entry. Used for the default ACL of a directory, which upstream compares
     /// with strict equality (default ACLs are transmitted un-stripped, so both

@@ -199,7 +199,7 @@ pub fn sync_acls_via_fake_super(
         .flatten()
         .unwrap_or_else(|| super::read::get_rsync_acl(source, source_mode, false));
 
-    crate::fake_super::store_fake_super_acl(destination, true, &access_acl)
+    crate::fake_super::store_fake_super_acl(destination, true, &access_acl, source_mode)
         .map_err(|e| MetadataError::new("store fake-super access ACL", destination, e))?;
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -217,9 +217,13 @@ pub fn sync_acls_via_fake_super(
             // upstream: acls.c:934-935 - user_obj == NO_ENTRY means "no default
             // ACL", so the xattr is removed rather than storing an empty ACL.
             if default_acl.has_user_obj() {
-                crate::fake_super::store_fake_super_acl(destination, false, &default_acl).map_err(
-                    |e| MetadataError::new("store fake-super default ACL", destination, e),
-                )?;
+                crate::fake_super::store_fake_super_acl(
+                    destination,
+                    false,
+                    &default_acl,
+                    source_mode,
+                )
+                .map_err(|e| MetadataError::new("store fake-super default ACL", destination, e))?;
             } else {
                 crate::fake_super::remove_fake_super_default_acl(destination).map_err(|e| {
                     MetadataError::new("remove fake-super default ACL", destination, e)
