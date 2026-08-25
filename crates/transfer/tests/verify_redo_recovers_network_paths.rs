@@ -106,6 +106,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
@@ -279,38 +280,86 @@ struct RunOutcome {
     stderr: String,
 }
 
-/// Drive one `oc-rsync` invocation under a deadline.
-///
-/// The child is polled rather than waited on so a transport that deadlocks (the
-/// pre-fix remote-shell pull) is reported as a failure instead of hanging the
-/// test binary. Returns `Err` describing the timeout after killing the child.
+/// Drive one `oc-rsync` invocation under [`CLIENT_DEADLINE`].
 fn run_oc_rsync_deadlined(bin: &Path, args: &[&OsStr]) -> io::Result<RunOutcome> {
+    run_deadlined(bin, args, CLIENT_DEADLINE)
+}
+
+/// Drive one child under `budget`, returning `Err(TimedOut)` if the whole run -
+/// process *and* output - is not finished by then.
+///
+/// Two properties this has to hold, both of which a naive poll loop loses:
+///
+/// 1. Both pipes are drained by dedicated threads from the moment the child is
+///    spawned. A child that writes past the pipe buffer (64 KiB is typical)
+///    blocks in `write` until someone reads; polling `try_wait` while the buffer
+///    fills starves the child for the whole budget and reports the harness's own
+///    back-pressure as a transport hang.
+/// 2. The budget bounds *every* wait, not just the process wait. A descendant
+///    that outlives the client keeps the pipe write end open, so the final
+///    read-to-EOF never returns - `wait_with_output()` there hangs forever, past
+///    a deadline that has already been checked for the last time. The remote-shell
+///    cells spawn exactly that shape (client -> `lsh-stub` -> `--server`), so the
+///    collection is bounded against the same instant as the process poll.
+fn run_deadlined(bin: &Path, args: &[&OsStr], budget: Duration) -> io::Result<RunOutcome> {
     let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let deadline = Instant::now() + budget;
+    let stdout = drain(child.stdout.take().expect("stdout piped"));
+    let stderr = drain(child.stderr.take().expect("stderr piped"));
 
-    let deadline = Instant::now() + CLIENT_DEADLINE;
-    while child.try_wait()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("client did not finish within {CLIENT_DEADLINE:?}"),
-            ));
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("client did not finish within {budget:?}"),
+                ));
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
         }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    };
 
-    let output = child.wait_with_output()?;
     Ok(RunOutcome {
-        status: output.status,
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        status,
+        stdout: collect(stdout, deadline, budget, "stdout")?,
+        stderr: collect(stderr, deadline, budget, "stderr")?,
     })
+}
+
+/// Read one child pipe to EOF on its own thread, handing the text back over a
+/// channel so the caller can wait for it under a deadline.
+fn drain<R: io::Read + Send + 'static>(mut pipe: R) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = pipe.read_to_end(&mut buf);
+        let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+    });
+    rx
+}
+
+/// Wait for one drained stream, giving up at `deadline`.
+fn collect(
+    rx: mpsc::Receiver<String>,
+    deadline: Instant,
+    budget: Duration,
+    stream: &str,
+) -> io::Result<String> {
+    rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("client {stream} was still open {budget:?} after spawn"),
+            )
+        })
 }
 
 /// Seeds the authoritative source and the wrong-prefix destination basis,
@@ -950,5 +999,109 @@ fn daemon_pull_redo_redeltas_against_the_retained_basis() {
         "matched {matched} exceeds the retained tail plus its short trailing \
          block - the redo counted unmatchable bytes\nstdout:\n{}",
         outcome.stdout,
+    );
+}
+
+// The harness itself. Every cell above trusts [`run_deadlined`] to turn a stuck
+// transport into a failing test; these two pin that it can, on the two shapes
+// that break a naive `try_wait` poll over undrained pipes.
+
+/// Budget for the harness self-tests. Long enough that `/bin/sh` finishing a
+/// few hundred KiB of output cannot race it, short enough that the pre-fix
+/// starvation shows up as a bounded failure rather than a slow one.
+const HARNESS_BUDGET: Duration = Duration::from_secs(10);
+/// Output per stream, comfortably past the 64 KiB pipe buffer on both Linux and
+/// macOS so the child MUST block unless the parent is reading.
+const PIPE_FLOOD_BYTES: usize = 256 * 1024;
+
+/// Run `body` on a worker thread, failing if it does not return within `bound`.
+///
+/// The bound has to live outside the code under test: a regression in
+/// [`run_deadlined`] blocks its caller forever, so an assertion placed after the
+/// call would never be reached and the test would hang CI instead of failing it.
+fn within<T: Send + 'static>(bound: Duration, body: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(body());
+    });
+    rx.recv_timeout(bound)
+        .unwrap_or_else(|_| panic!("harness call did not return within {bound:?}"))
+}
+
+/// A child that outwrites the pipe buffer must still be collected in full.
+///
+/// Undrained, the child blocks in `write` at ~64 KiB and the poll loop reports
+/// the harness's own back-pressure as a client that missed its deadline - a
+/// verbose cell or a larger tree would fail every run for a reason that has
+/// nothing to do with the redo under test.
+#[test]
+fn deadlined_runner_collects_a_child_that_outwrites_the_pipe_buffer() {
+    let script = format!(
+        "yes 0123456789abcdef | head -c {PIPE_FLOOD_BYTES}\n\
+         yes 0123456789abcdef | head -c {PIPE_FLOOD_BYTES} >&2\n"
+    );
+    let outcome = within(HARNESS_BUDGET * 3, move || {
+        run_deadlined(
+            Path::new("/bin/sh"),
+            &[OsStr::new("-c"), OsStr::new(script.as_str())],
+            HARNESS_BUDGET,
+        )
+    })
+    .expect("flooding child must not be reported as a timeout");
+
+    assert!(outcome.status.success(), "flooding child exited non-zero");
+    assert_eq!(
+        outcome.stdout.len(),
+        PIPE_FLOOD_BYTES,
+        "stdout was truncated - the drain did not read to EOF",
+    );
+    assert_eq!(
+        outcome.stderr.len(),
+        PIPE_FLOOD_BYTES,
+        "stderr was truncated - the drain did not read to EOF",
+    );
+}
+
+/// The deadline must bound the whole run, not just the process wait.
+///
+/// The child exits immediately, so `try_wait` reports done on the first poll and
+/// the deadline is never consulted again - but a descendant still holds the pipe
+/// write end, so reading to EOF never returns. That is the remote-shell shape
+/// (client -> `lsh-stub` -> `--server`), and it hangs with no bound at all
+/// unless the collection is deadlined too.
+#[test]
+fn deadlined_runner_times_out_when_a_descendant_holds_the_pipe_open() {
+    let budget = Duration::from_secs(2);
+    let started = Instant::now();
+    let outcome = within(HARNESS_BUDGET * 3, move || {
+        run_deadlined(
+            Path::new("/bin/sh"),
+            // Backgrounded, so `sh` exits at once while the child keeps stdout
+            // and stderr open well past the budget.
+            &[OsStr::new("-c"), OsStr::new("sleep 30 & exit 0")],
+            budget,
+        )
+    });
+    let err = match outcome {
+        Ok(outcome) => panic!(
+            "a run whose output never reaches EOF must time out, got {:?}",
+            outcome.status,
+        ),
+        Err(err) => err,
+    };
+
+    assert_eq!(
+        err.kind(),
+        io::ErrorKind::TimedOut,
+        "expected a timeout, got: {err}",
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= budget,
+        "returned before the budget expired: {elapsed:?}",
+    );
+    assert!(
+        elapsed < HARNESS_BUDGET,
+        "the deadline did not bound the collection: {elapsed:?}",
     );
 }
