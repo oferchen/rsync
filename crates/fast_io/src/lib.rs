@@ -87,6 +87,12 @@ pub mod cached_sort;
 /// Unix-only: mirrors upstream `secure_relative_open` so a non-chroot
 /// daemon sender cannot be redirected outside its module by a swapped
 /// directory symlink (TOCTOU escape).
+/// Upstream's three-arm fallback contract for a path-based syscall.
+///
+/// Unix-only: the contract is stated in terms of a parent dirfd and a
+/// `*at` syscall, neither of which the Windows arms have.
+#[cfg(unix)]
+pub mod confined_fallback;
 pub mod confined_open;
 pub mod confined_readdir;
 /// Path-confinement activation: who is confined, and against what root.
@@ -378,6 +384,8 @@ pub use traits::{FileReader, FileWriter};
 pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
+pub use confined_fallback::{ConfinedFallback, FallbackArm};
+#[cfg(unix)]
 pub use confined_open::{
     DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined, read_link_confined,
 };
@@ -410,7 +418,8 @@ pub use owner_walk::{
     operator_link, operator_mkdir, operator_open_append, operator_open_create_new,
     operator_open_read, operator_open_read_confined, operator_open_recv, operator_open_rw_create,
     operator_open_write_create, operator_open_write_create_confined, operator_read_to_string,
-    operator_rename, operator_symlink_metadata, owner_trusted_parent, symlink_owner_is_trusted,
+    operator_rename, operator_symlink_metadata, owner_trusted_parent, owner_trusted_parent_kind,
+    symlink_owner_is_trusted,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
