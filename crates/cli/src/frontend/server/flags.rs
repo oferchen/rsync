@@ -1063,6 +1063,27 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--timeout=")
         || arg.starts_with("--io-uring-depth=")
         || arg.starts_with("--log-format=")
+        // upstream: options.c:796 - `--log-file` is POPT_ARG_STRING in the
+        // client/server table, so a server accepts it and binds the value.
+        // `server_options()` never emits it; it reaches a server only as a
+        // client's remote option (`-M--log-file=FILE`), which a restricted
+        // wrapper forwards verbatim after rewriting the path
+        // (`support/rrsync:84` types it 3, the confined-path class). Without
+        // this entry the whole token falls through to the positional list and
+        // becomes the destination. MEASURED on the 3.5.0 suite
+        // (`rrsync-no-overwrite-logfile`): Linux rewrites the value to
+        // `/proc/self/fd/N`, so the receiver statx'd the literal
+        // `--log-file=/proc/self/fd/3` and reported `server error: No such
+        // file or directory`, rc=12; macOS has no such rewrite, so the same
+        // leak instead CREATED a file named `--log-file=protected` in the
+        // module root and exited 0 - a silent wrong-destination write, not a
+        // pass. Same allow-list-drift class as `--confine-root=` above.
+        //
+        // The value is deliberately not captured: oc's server has no log-file
+        // sink (upstream calls `log_init(0)` from options.c:2530), so storing
+        // it would create a field with no reader. Recognising the token is
+        // what stops the leak; server-side `--log-file` writing is separate.
+        || arg.starts_with("--log-file=")
         || arg.starts_with("--info=")
         // upstream: options.c:1777 - `--debug=FLAGS` parsed via
         // parse_output_words(debug_words, ...). The client forwards it like
