@@ -756,7 +756,6 @@ where
             password_file.is_some() || password_command.is_some(),
             connect_program.as_ref(),
             parsed.rsync_path.as_ref(),
-            &remote_options,
             stderr,
         ) {
             return exit_code;
