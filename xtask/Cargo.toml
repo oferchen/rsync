@@ -24,3 +24,8 @@ which = "8"
 toml_edit = "0.25"
 tempfile = { workspace = true }
 regex = "1"
+
+# `spawn_with_timeout` delegates to the workspace's single bounded
+# drain-and-wait primitive rather than carrying its own poll loop.
+[dev-dependencies]
+test-support = { path = "../crates/test-support" }

@@ -13,12 +13,11 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
+use crate::deadline::Deadlined;
 use crate::skip::locate_workspace_binary;
 
 /// Default wall-time cap for a single invocation.
@@ -27,9 +26,6 @@ use crate::skip::locate_workspace_binary;
 /// regression that would otherwise hang (e.g. a goodbye-flush stall) fails
 /// loud inside nextest's per-test budget instead of stalling the cell.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Poll interval used while waiting for the child to exit.
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Error raised when a runner cannot locate, spawn, or drive the binary.
 ///
@@ -230,14 +226,6 @@ impl OcRsyncCliRunner {
         if let Some(dir) = &self.cwd {
             cmd.current_dir(dir);
         }
-        cmd.stdin(if self.stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        });
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
         #[cfg(unix)]
         if let Some(mask) = self.umask {
             use std::os::unix::process::CommandExt;
@@ -255,59 +243,47 @@ impl OcRsyncCliRunner {
         }
 
         let start = Instant::now();
-        let mut child = cmd.spawn().map_err(RunnerError::Spawn)?;
-
-        if let Some(data) = &self.stdin {
-            // Write on a scratch thread so a child that never drains stdin
-            // cannot deadlock us; the timeout below still reaps such a child.
-            let mut sink = child.stdin.take().expect("stdin was piped");
-            let data = data.clone();
-            // Detached: the thread finishes when the child consumes the input
-            // or when the pipe closes on child exit. Dropping the JoinHandle
-            // does not detach the OS thread, which is intended here.
-            let _ = thread::spawn(move || {
-                let _ = sink.write_all(&data);
-                // Dropping `sink` closes the pipe, signalling EOF.
-            });
-        }
-
-        // Poll for completion under the timeout. Draining the pipes happens
-        // after exit via `wait_with_output`; the payloads in operational tests
-        // are small (design section 8), so pipe buffers do not fill before the
-        // child exits.
-        loop {
-            match child.try_wait().map_err(RunnerError::Wait)? {
-                Some(_) => break,
-                None => {
-                    if start.elapsed() >= self.timeout {
-                        let _ = child.kill();
-                        let output = child.wait_with_output().map_err(RunnerError::Wait)?;
-                        return Err(RunnerError::Timeout {
-                            after: self.timeout,
-                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                        });
-                    }
-                    thread::sleep(POLL_INTERVAL);
-                }
-            }
-        }
-
-        let output = child.wait_with_output().map_err(RunnerError::Wait)?;
+        // Both pipes are drained throughout and the timeout bounds the whole
+        // run, output included. The earlier form polled `try_wait()` over
+        // undrained pipes on the reasoning that operational payloads are small
+        // enough never to fill a pipe buffer; that assumption is false in the
+        // general case - a child writing past ~64 KiB blocks in `write` and the
+        // runner reports its own back-pressure as a timeout.
+        let outcome = crate::deadline::run_deadlined_with_stdin(
+            &mut cmd,
+            self.timeout,
+            self.stdin.as_deref(),
+        )
+        .map_err(RunnerError::Spawn)?;
         let duration = start.elapsed();
+
+        let (status, stdout, stderr) = match outcome {
+            Deadlined::Finished {
+                status,
+                stdout,
+                stderr,
+            } => (status, stdout, stderr),
+            Deadlined::Expired { budget, stderr, .. } => {
+                return Err(RunnerError::Timeout {
+                    after: budget,
+                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                });
+            }
+        };
 
         #[cfg(unix)]
         let signal = {
             use std::os::unix::process::ExitStatusExt;
-            output.status.signal()
+            status.signal()
         };
         #[cfg(not(unix))]
         let signal = None;
 
         Ok(CliOutput {
-            status: output.status.code(),
+            status: status.code(),
             signal,
-            stdout: output.stdout,
-            stderr: output.stderr,
+            stdout,
+            stderr,
             duration,
         })
     }

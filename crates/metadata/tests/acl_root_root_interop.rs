@@ -67,10 +67,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use exacl::{AclEntry, AclOption, Perm, getfacl, setfacl};
 use tempfile::TempDir;
+use test_support::Deadlined;
 
 /// Wall-clock cap for any single rsync invocation. Generous because some
 /// CI machines run under cgroup throttling, but still short enough to
@@ -136,33 +137,44 @@ fn locate_upstream_rsync() -> Option<PathBuf> {
 /// detailed assertion message; the caller decides whether non-zero is
 /// fatal.
 fn run_with_timeout(bin: &Path, args: &[&OsStr]) -> io::Result<Output> {
-    let mut child = Command::new(bin)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let start = Instant::now();
-    loop {
-        match child.try_wait()? {
-            Some(_) => return child.wait_with_output(),
-            None => {
-                if start.elapsed() >= RUN_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!(
-                            "{} exceeded {:?} and was killed",
-                            bin.display(),
-                            RUN_TIMEOUT
-                        ),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+    let mut command = Command::new(bin);
+    command.args(args);
+    match test_support::run_deadlined(&mut command, RUN_TIMEOUT)? {
+        Deadlined::Finished {
+            status,
+            stdout,
+            stderr,
+        } => Ok(Output {
+            status,
+            stdout,
+            stderr,
+        }),
+        Deadlined::Expired { budget, .. } => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{} exceeded {budget:?} and was killed", bin.display()),
+        )),
     }
+}
+
+/// The harness must collect a child that outwrites the pipe buffer.
+///
+/// An `rsync -v` over a large ACL tree passes 64 KiB easily; undrained, the
+/// child blocks in `write` and [`run_with_timeout`] reports the harness's own
+/// back-pressure as a transfer that overran [`RUN_TIMEOUT`].
+#[test]
+fn run_with_timeout_collects_a_child_that_outwrites_the_pipe_buffer() {
+    const FLOOD: usize = 256 * 1024;
+    let script = format!(
+        "yes 0123456789abcdef | head -c {FLOOD}\n\
+         yes 0123456789abcdef | head -c {FLOOD} >&2\n"
+    );
+    let output = run_with_timeout(
+        Path::new("/bin/sh"),
+        &[OsStr::new("-c"), OsStr::new(script.as_str())],
+    )
+    .expect("flooding child must not be reported as a timeout");
+    assert_eq!(output.stdout.len(), FLOOD, "stdout was truncated");
+    assert_eq!(output.stderr.len(), FLOOD, "stderr was truncated");
 }
 
 /// Run a binary in transfer mode and require success. Includes stdout and

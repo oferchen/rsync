@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod clean_fname;
 pub mod cli;
 pub mod daemon_port;
+pub mod deadline;
 pub mod dir_diff;
 pub mod lsh;
 pub mod skip;
@@ -22,6 +23,7 @@ pub use capabilities::Capabilities;
 pub use clean_fname::COLLAPSE_CASES;
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
 pub use daemon_port::{daemon_listen_port, spawn_daemon_on_free_port};
+pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
 pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
 pub use skip::{
