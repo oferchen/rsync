@@ -249,7 +249,7 @@ pub use util::cleanup::CleanupManager;
 /// Moves an interrupted `--partial` temp file onto its partial destination (or
 /// unlinks it when no partial is kept). Shared by the transfer guard and the
 /// signal-driven abort path so both finalise identically.
-pub use util::cleanup::{create_partial_dir, finalize_partial};
+pub use util::cleanup::{create_partial_dir, finalize_partial, remove_partial_dir};
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
