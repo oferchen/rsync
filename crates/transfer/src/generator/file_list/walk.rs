@@ -602,11 +602,29 @@ impl GeneratorContext {
         //
         // follow_dirlinks has TWO disjuncts upstream, not one
         // (flist.c:2697 `copy_dirlinks || name_type != NORMAL_NAME`). A DOTDIR
-        // operand follows unconditionally, because asking for the CONTENTS of
-        // `current/` is only meaningful once `current` has been resolved to the
-        // directory it points at. Gating on `--copy-dirlinks` alone made
+        // operand follows, because asking for the CONTENTS of `current/` is
+        // only meaningful once `current` has been resolved to the directory it
+        // points at. Gating on `--copy-dirlinks` alone made
         // `oc-rsync -a host:current/ dest/` deliver nothing and exit 0.
-        if (self.config.flags.copy_dirlinks || is_dotdir) && meta.file_type().is_symlink() {
+        //
+        // ⚠ The DOTDIR disjunct is gated on OWNERSHIP, `--copy-dirlinks` is
+        // not, and the asymmetry is deliberate. Upstream reaches this stat with
+        // the operand ALREADY resolved: the daemon runs
+        // `change_dir(module_chdir)` through `open_no_attacker_symlinks()`
+        // (util1.c:1216) before the file list is walked, so by the time
+        // `link_stat()` sees `.` there is no symlink left to follow. oc walks
+        // the unresolved path, and every daemon transfer sends `.` as its
+        // operand - so an ungated DOTDIR follow lets a foreign-uid symlink
+        // planted at the module root redirect the listing outside the module.
+        // `--copy-dirlinks` is an explicit client request over a client-named
+        // tree and keeps its existing meaning untouched.
+        //
+        // upstream: `rsync-3.5.0/syscall.c:406` - a symlink owned by uid 0 or
+        // our euid is the operator's own layout and is followed; any other uid
+        // is an attacker's plant and is refused.
+        let follow_dirlinks = self.config.flags.copy_dirlinks
+            || (is_dotdir && symlink_target_is_operator_owned(&meta));
+        if follow_dirlinks && meta.file_type().is_symlink() {
             if let Ok(followed) = std::fs::metadata(path) {
                 if followed.file_type().is_dir() {
                     return Ok(followed);
@@ -634,6 +652,73 @@ impl GeneratorContext {
         }
 
         Ok(meta)
+    }
+}
+
+/// Is a symlink the operator's own, and therefore safe to follow for a DOTDIR
+/// operand?
+///
+/// Ownership - not location - is upstream's trust signal here. A link owned by
+/// uid 0 or our own euid is the operator's layout (the `current -> releases/X`
+/// deploy pattern this follow exists to serve); any other uid is a plant.
+///
+/// This is the DOTDIR half of `follow_dirlinks` only. `--copy-dirlinks` is an
+/// explicit request over a client-named tree and is deliberately not gated.
+///
+/// On a non-Unix target there is no `st_uid` to test and no unprivileged way to
+/// plant a foreign-owned link in a module root, so the follow proceeds.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:406` - `st_uid != 0 && st_uid != trusted_uid`
+///   refuses the symlink; otherwise the walk follows it.
+/// - `rsync-3.5.0/util1.c:1216` `change_dir()` - the daemon resolves the module
+///   root through this same rule BEFORE the file list is walked, which is why
+///   upstream never reaches this stat with an unresolved operand.
+fn symlink_target_is_operator_owned(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        fast_io::symlink_owner_is_trusted(meta.uid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+#[cfg(all(test, unix))]
+mod dotdir_follow_trust_tests {
+    /// The DOTDIR follow is gated on upstream's ownership rule, not on
+    /// location: uid 0 and our own euid are the operator's own layout, any
+    /// other uid is a plant.
+    ///
+    /// This pins the RULE. The behavioural proof that a foreign-owned symlink
+    /// at a daemon module root is not followed lives in the upstream testsuite
+    /// cell `daemon-module-chdir-symlink`, which needs root to create a
+    /// non-self-owned link and therefore cannot run here.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:406`.
+    #[test]
+    fn only_root_and_our_own_euid_are_trusted_symlink_owners() {
+        let euid = rustix::process::geteuid().as_raw();
+        assert!(
+            fast_io::symlink_owner_is_trusted(0),
+            "uid 0 is the operator"
+        );
+        assert!(
+            fast_io::symlink_owner_is_trusted(euid),
+            "our own euid is the operator"
+        );
+
+        // Pick a uid that is neither 0 nor ours. 65534 (nobody) is the uid the
+        // testsuite plants with; fall back if we happen to be running as it.
+        let foreign = if euid == 65534 { 65533 } else { 65534 };
+        assert!(
+            !fast_io::symlink_owner_is_trusted(foreign),
+            "uid {foreign} is neither root nor our euid, so it is a plant"
+        );
     }
 }
 
