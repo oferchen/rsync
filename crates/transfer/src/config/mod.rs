@@ -8,7 +8,7 @@ pub use error::BuilderError;
 
 use std::ffi::OsString;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use bandwidth::BandwidthLimitComponents;
@@ -327,6 +327,35 @@ pub struct ConnectionConfig {
     /// - `options.c:2394-2397` - `bwlimit_writemax = bwlimit * 128`, min 512.
     /// - `main.c:1068` - the receiver disables its own bwlimit.
     pub bwlimit: Option<BandwidthLimitComponents>,
+}
+
+impl ConnectionConfig {
+    /// The module root this process serves **as the daemon**, or `None` when it
+    /// is not one.
+    ///
+    /// This is oc-rsync's `am_daemon`, and it is deliberately not
+    /// [`is_daemon_connection`](Self::is_daemon_connection). That flag is set on
+    /// BOTH ends of an `rsync://` transfer - the connecting client sets it too -
+    /// while upstream's `am_daemon` is true only in the serving process. Every
+    /// confinement decision upstream gates on `am_daemon` must read this
+    /// instead, or a client pulling from a daemon has a daemon's confinement
+    /// applied to its own local destination, which upstream leaves unconfined.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1093` - `use_secure_symlinks = am_daemon &&
+    ///   (!am_chrooted || module_dirlen)`
+    /// - `syscall.c:136` - `confinement_root()` yields `module_dir` only when
+    ///   `am_daemon`
+    /// - `receiver.c:152` - `if (!am_daemon || ...)` takes the plain-open arm
+    #[must_use]
+    pub fn served_module_root(&self) -> Option<&Path> {
+        if self.is_daemon_connection {
+            self.daemon_module_root.as_deref()
+        } else {
+            None
+        }
+    }
 }
 
 /// File selection and filtering options for transfer candidates.

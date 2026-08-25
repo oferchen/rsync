@@ -24,7 +24,7 @@ use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPhase;
 
 #[cfg(unix)]
-use super::sandbox::{open_sandbox_for_dest_anchored, open_sandbox_for_dest_strict};
+use super::sandbox::{open_sandbox_for_dest, open_sandbox_for_dest_anchored};
 use super::wire_filters::parse_wire_filters_for_receiver;
 
 /// Merges the daemon module `incoming chmod` modifiers with the client
@@ -712,20 +712,32 @@ impl ReceiverContext {
         // relative to the resolved cwd. We mirror that by canonicalizing
         // here instead of relying on chdir.
         //
-        // Skipped under daemon connections: the daemon strict path in
-        // `open_sandbox_for_dest_strict` refuses a symlinked dest outright
-        // (chdir-symlink-race defense), and the module loader has already
-        // restricted `module.path`. Canonicalizing here would mask the
-        // symlink and let strict mode silently succeed against the resolved
-        // target. Local-mode and non-daemon SSH transfers are the
-        // upstream-parity case (issue #715 `symlink-dirlink-basis`).
+        // Skipped only in the daemon SERVER process: there `dest_dir` is
+        // `<module root>/<peer tail>` and `open_sandbox_for_dest_anchored`
+        // gives each half its own resolve policy. Canonicalizing first would
+        // mask a symlinked tail and let the anchored walk succeed against the
+        // already-resolved target. Every other receiver - local, SSH, and the
+        // CLIENT half of an `rsync://` pull - is `am_daemon == 0` upstream and
+        // gets `change_dir()`'s ordinary resolution (issue #715
+        // `symlink-dirlink-basis`).
+        //
+        // The probe runs on the operand with its trailing separators trimmed.
+        // `lstat("dest/")` resolves the link - the kernel reads a trailing
+        // separator as a directory reference - so probing the operand verbatim
+        // reports a directory for exactly the shape that needs resolving, and
+        // `oc-rsync -a rsync://h/m/ DEST/` then carried the link path into the
+        // metadata apply and failed it. Upstream never meets the distinction:
+        // `change_dir()` chdir's through both spellings alike.
+        // `Components::as_path` trims separators without collapsing `.` or
+        // `..`, so nothing else about the operand moves.
+        let probe = dest_dir.components().as_path().to_path_buf();
         let dest_dir = if !self.config.flags.skip_dest_writes()
-            && !self.config.connection.is_daemon_connection
-            && dest_dir
+            && self.config.connection.served_module_root().is_none()
+            && probe
                 .symlink_metadata()
                 .is_ok_and(|m| m.file_type().is_symlink())
         {
-            match std::fs::canonicalize(&dest_dir) {
+            match std::fs::canonicalize(&probe) {
                 Ok(resolved) => {
                     debug_log!(
                         Recv,
@@ -777,37 +789,28 @@ impl ReceiverContext {
         // destination root may not exist yet, and the existing
         // path-based fall-backs cover that case today).
         //
-        // Daemon receivers without chroot tighten this: a leaf-symlink at
-        // the destination is the chdir-symlink-race attack window, so we
-        // refuse the transfer outright when DirSandbox open fails with
-        // ELOOP/ENOTDIR instead of falling through to path-based syscalls
-        // that would follow the symlink. ENOENT (first-run push that has
-        // not created the directory yet) and EACCES (real permission
-        // problems) keep the existing soft-fail behaviour.
-        // upstream: clientserver.c:1018 - `use_secure_symlinks = am_daemon
-        // && !am_chrooted` gates the do_*_at wrappers in syscall.c that
-        // implement the same refusal.
-        //
-        // A daemon receiver takes the anchored path instead. `dest_dir` is
-        // `module_root.join(peer_tail)` (see
+        // Only the daemon SERVER confines its destination. `dest_dir` is
+        // `module_root.join(peer_tail)` there (see
         // `open_sandbox_for_dest_anchored`), and the two halves are not
         // equally trusted: the operator authored the root, the client sent
         // the tail. Opening the fused string under one resolve policy made
         // an operator's own symlinked module root - `path = /srv/...` where
         // `/srv` is a link - refuse every transfer, because the policy that
         // belongs to the tail was being applied to the root as well.
+        //
+        // upstream: clientserver.c:1093 - `use_secure_symlinks = am_daemon &&
+        // (!am_chrooted || module_dirlen)` gates the do_*_at wrappers in
+        // syscall.c. `am_daemon` is the serving process only, so the client
+        // half of an `rsync://` pull, an SSH server receiver and a local
+        // receiver are all unconfined here and take the plain-open arm of
+        // `secure_basis_open()` (receiver.c:152). Reading
+        // `is_daemon_connection` instead - it is set on BOTH ends of an
+        // `rsync://` transfer - made oc refuse an ordinary symlinked
+        // destination on a daemon pull that upstream accepts.
         #[cfg(unix)]
-        let sandbox = {
-            let strict = self.config.connection.is_daemon_connection;
-            match self.config.connection.daemon_module_root.as_deref() {
-                Some(module_root) if strict => {
-                    open_sandbox_for_dest_anchored(module_root, &dest_dir)?
-                }
-                // No module root recorded (every non-daemon receiver, plus a
-                // daemon connection that never resolved one): there is no
-                // operator/peer split to make, so keep the existing open.
-                _ => open_sandbox_for_dest_strict(&dest_dir, strict)?,
-            }
+        let sandbox = match self.config.connection.served_module_root() {
+            Some(module_root) => open_sandbox_for_dest_anchored(module_root, &dest_dir)?,
+            None => open_sandbox_for_dest(&dest_dir),
         };
 
         // FSM: file list received and sanitized. Advance to DeltaTransfer.
