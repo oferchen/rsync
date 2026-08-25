@@ -405,6 +405,51 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Refuses a peer-supplied staging directory that the daemon module's own
+    /// filter list excludes.
+    ///
+    /// upstream: `options.c:2409-2436` - with a non-empty `daemon_filter_list`
+    /// and `!am_sender`, both `tmpdir` and `backup_dir` are re-sanitised against
+    /// rootdir `"/"` and run through `check_filter(elp, FLOG, dir, 1)`. An empty
+    /// value, or a match, jumps to `options_rejected`, which prints
+    /// `"Your options have been rejected by the server."` and exits
+    /// `RERR_SYNTAX`.
+    ///
+    /// Unlike the basis-directory check above, this matches the value oc has
+    /// already stored rather than the name the peer wrote. That is upstream's
+    /// own ordering, not a shortcut: `options.c:2400-2407` sanitises both
+    /// options IN PLACE first (rootdir `NULL`, i.e. `module_dir`), so by the
+    /// time the filter block runs, `backup_dir` is already the operational,
+    /// module-rooted path. A basis directory has no such prior pass, which is
+    /// why `ReferenceDirectory` must retain `requested` and this must not.
+    ///
+    /// `is_dir` is `true`, mirroring upstream's single `check_filter(..., 1)`:
+    /// both options always name a directory.
+    ///
+    /// The empty-value arm is upstream's `if (!*backup_dir) goto
+    /// options_rejected;` and deliberately tests the value as given, before any
+    /// cleaning - an empty option is refused outright rather than matched.
+    pub(in crate::receiver) fn reject_daemon_excluded_staging_dirs(&self) -> io::Result<()> {
+        let Some(filters) = self.daemon_filter_set() else {
+            return Ok(());
+        };
+        let staging = [
+            self.config.temp_dir.as_deref(),
+            self.config.backup_dir.as_deref().map(Path::new),
+        ];
+        for dir in staging.into_iter().flatten() {
+            if dir.as_os_str().is_empty()
+                || !filters.allows_name(&self.daemon_filter_name(dir), true)
+            {
+                // upstream: options.c:1267 - the refusal text carries no path;
+                // the rejected option goes to the daemon's log, not the peer.
+                return Err(protocol::syntax_violation(
+                    "Your options have been rejected by the server.",
+                ));
+            }
+        }
+        Ok(())
+    }
     /// Refuses a destination argument that the daemon module's own filter list
     /// excludes.
     ///
@@ -525,6 +570,12 @@ impl ReceiverContext {
         // excluded. Ordered after the destination check because upstream reaches
         // it later in the same function (get_local_name at :1229, this at :1243).
         self.reject_daemon_excluded_basis_dirs()?;
+        // upstream: options.c:2409-2436 - the same daemon-filter gate also vets
+        // the client's staging directories (--temp-dir, --backup-dir), refusing
+        // the session when either names an excluded directory. Ordered with the
+        // other two module-filter refusals so a rejected session never reaches
+        // the transfer.
+        self.reject_daemon_excluded_staging_dirs()?;
 
         // upstream: main.c:805-832 get_local_name() - single-file rename
         // semantics. When the transfer is exactly one non-directory entry,
