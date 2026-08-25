@@ -916,17 +916,20 @@ fn emit_relative_implied_parents(
     // the itemize row and the created-dir tally - not the flist entry itself.
     let itemize = context.implied_dirs_enabled();
 
+    let metadata_options = context.metadata_options();
+    let omit_dir_times = context.omit_dir_times_enabled();
+    let modify_window = context.options().modify_window();
+
     // Dot-dir transfer root ".": upstream flist.c:2368+2417-2419 injects a
     // synthetic "." entry into the flist only for an operand that *begins* with
     // `./` (`implied_dot_dir`), so it counts toward "Number of files" whenever
     // directories are being transferred (the `xfer_dirs` gate below). A dot in
     // the middle of the path (e.g. `src/./sub`) reroots the relative path but
     // adds no "." entry. `dot_dir_anchor()` returns "." exactly for the leading
-    // form (its prefix-skip is zero). The receiver never itemizes the
-    // pre-existing destination root and end-of-run touch-up leaves it unchanged,
-    // so the entry stays count-only (no verbose/itemize row, no created-dir bump
-    // - the latter is owned by `mark_destination_root_created` when the root is
-    // freshly made).
+    // form (its prefix-skip is zero). The entry is a real flist member, so it is
+    // both counted and itemized like any other implied parent; the created-dir
+    // bump stays owned by `mark_destination_root_created`, which is what
+    // distinguishes the freshly made root from a pre-existing one.
     if source.dot_dir_anchor().as_deref() == Some(Path::new(".")) {
         let dot = PathBuf::from(".");
         if context.mark_implied_dir_emitted(&dot) {
@@ -961,26 +964,65 @@ fn emit_relative_implied_parents(
                 // which exists in both modes (the destination may not yet).
                 let root_created = destination_root_created
                     || (context.mode().is_dry_run() && !destination_path.exists());
-                if root_created
-                    && itemize
+                if itemize
                     && let Some(anchor) = source.dot_dir_anchor()
                     && let Ok(meta) = fs::symlink_metadata(&anchor)
                     && meta.file_type().is_dir()
                 {
-                    context.summary_mut().record_directory();
                     let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
                     let snapshot_len = snapshot.len();
-                    context.record(
-                        LocalCopyRecord::new(
-                            dot.clone(),
-                            LocalCopyAction::DirectoryCreated,
-                            0,
-                            Some(snapshot_len),
-                            Duration::default(),
-                            Some(snapshot),
+                    let record = if root_created {
+                        context.summary_mut().record_directory();
+                        Some(
+                            LocalCopyRecord::new(
+                                dot.clone(),
+                                LocalCopyAction::DirectoryCreated,
+                                0,
+                                Some(snapshot_len),
+                                Duration::default(),
+                                Some(snapshot),
+                            )
+                            .with_creation(true),
                         )
-                        .with_creation(true),
-                    );
+                    } else if let Ok(existing) = fs::symlink_metadata(destination_path)
+                        && existing.file_type().is_dir()
+                    {
+                        // Pre-existing transfer root: upstream still placed the
+                        // synthetic "." in the flist, so the receiver reaches it
+                        // like any other implied parent and itemizes it against
+                        // the basis - an unchanged root is an all-dot `.d ./`
+                        // row, surfaced under -ii and under --list-only and
+                        // suppressed at -i. Same treatment the ancestor loop
+                        // below gives `sub/`; only the leading "." was missing
+                        // it, so the row vanished from both those cells while
+                        // `--stats` (fed by record_file_list_entry above) still
+                        // counted it.
+                        let change_set = LocalCopyChangeSet::for_existing_directory(
+                            &meta,
+                            &existing,
+                            &metadata_options,
+                            omit_dir_times,
+                            false,
+                            false,
+                            modify_window,
+                        );
+                        Some(
+                            LocalCopyRecord::new(
+                                dot.clone(),
+                                LocalCopyAction::MetadataReused,
+                                0,
+                                Some(snapshot_len),
+                                Duration::default(),
+                                Some(snapshot),
+                            )
+                            .with_change_set(change_set),
+                        )
+                    } else {
+                        None
+                    };
+                    if let Some(record) = record {
+                        context.record(record);
+                    }
                 }
             } else {
                 context.record_skipped_directory(non_empty_path(dot.as_path()));
@@ -999,10 +1041,6 @@ fn emit_relative_implied_parents(
     };
     let destination_root = strip_path_suffix(destination_path, relative)
         .unwrap_or_else(|| destination_path.to_path_buf());
-
-    let metadata_options = context.metadata_options();
-    let omit_dir_times = context.omit_dir_times_enabled();
-    let modify_window = context.options().modify_window();
 
     let mut accumulated = PathBuf::new();
     for component in &components[..parent_count] {
