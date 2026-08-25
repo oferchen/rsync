@@ -4881,6 +4881,7 @@ dependencies = [
  "serde_json",
  "tar",
  "tempfile",
+ "test-support",
  "toml",
  "toml_edit",
  "walkdir",

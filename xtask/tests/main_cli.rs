@@ -1,30 +1,32 @@
 use std::io;
 use std::process::{Command, Output, Stdio};
 use std::str;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use test_support::Deadlined;
 
 /// Spawn a process and wait for completion with a timeout.
 ///
-/// Kills the process if it exceeds the timeout, preventing CI hangs.
+/// Delegates to the workspace's bounded drain-and-wait primitive, which reads
+/// both pipes throughout and bounds the output collection against the same
+/// deadline as the process wait. An `xtask` subcommand is among the most
+/// verbose children in the repo, so an undrained poll loop would report the
+/// harness's own back-pressure as a timeout.
 fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
-    let mut child = command.spawn()?;
-    let start = Instant::now();
-
-    loop {
-        match child.try_wait()? {
-            Some(_status) => return child.wait_with_output(),
-            None => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!("process exceeded timeout of {timeout:?} and was killed"),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+    match test_support::run_deadlined(&mut command, timeout)? {
+        Deadlined::Finished {
+            status,
+            stdout,
+            stderr,
+        } => Ok(Output {
+            status,
+            stdout,
+            stderr,
+        }),
+        Deadlined::Expired { budget, .. } => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("process exceeded timeout of {budget:?} and was killed"),
+        )),
     }
 }
 
@@ -73,4 +75,25 @@ fn xtask_unknown_command_reports_error() {
 
     let stderr = str::from_utf8(&output.stderr).expect("stderr is UTF-8");
     assert!(stderr.contains("unrecognized subcommand"));
+}
+
+/// RED-FIRST probe: `spawn_with_timeout` must collect a child that outwrites
+/// the pipe buffer. Undrained, the child blocks in `write` at ~64 KiB and the
+/// poll loop reports the harness's own back-pressure as a timeout.
+#[cfg(unix)]
+#[test]
+fn spawn_with_timeout_collects_a_child_that_outwrites_the_pipe_buffer() {
+    const FLOOD: usize = 256 * 1024;
+    let script = format!(
+        "yes 0123456789abcdef | head -c {FLOOD}\n\
+         yes 0123456789abcdef | head -c {FLOOD} >&2\n"
+    );
+    let mut command = Command::new("/bin/sh");
+    command.arg("-c").arg(&script);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let output = spawn_with_timeout(command, Duration::from_secs(10))
+        .expect("flooding child must not be reported as a timeout");
+    assert_eq!(output.stdout.len(), FLOOD, "stdout truncated");
+    assert_eq!(output.stderr.len(), FLOOD, "stderr truncated");
 }
