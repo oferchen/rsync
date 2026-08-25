@@ -265,6 +265,16 @@ where
     if let Some(specials) = long_flags.specials {
         config.flags.specials = specials;
     }
+    // upstream: options.c:63 keeps `drop_devices` in its own variable, and
+    // `generator.c:2031` gates creation on `!drop_devices && (...)`. It is not
+    // in a last-one-wins relationship with `-D` / `--specials`: it beats them
+    // unconditionally, whatever their order in argv. A restricted wrapper
+    // relies on exactly that - `support/rrsync:616-635` appends `--drop-D` and
+    // deliberately does NOT strip the client's `-D`, because `--no-D` would
+    // also reframe the file list's rdev fields.
+    if let Some(drop_devices) = long_flags.drop_devices {
+        config.flags.drop_devices = drop_devices;
+    }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
     // upstream: options.c:2976-2977 / flist.c:2468 - `--no-implied-dirs` is
