@@ -1904,3 +1904,184 @@ mod endpoint_provenance {
         );
     }
 }
+
+/// The `sandbox = None` tail of every `*_via_sandbox_or_fallback` helper.
+///
+/// These are the ONLY cells that reach that tail. Measured: reverting all five
+/// tails to their old `std::fs` form killed nothing in fast_io (1140/1140),
+/// transfer (2761/2761) or engine - the routing shipped uncovered until these
+/// existed. Each cell asserts the out-of-root VICTIM survives, not merely that
+/// the call returned `Err`, because an unwritable parent would produce `Err`
+/// too and could not tell a refusal from an unrelated failure.
+#[cfg(unix)]
+mod no_sandbox_tail {
+    use super::*;
+    use crate::UnlinkFlags;
+    use crate::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, ModuleInsecureLinks, ModuleState, Role,
+        install_daemon_session, install_session,
+    };
+    use std::path::{Path, PathBuf};
+
+    struct Fx {
+        _keep: tempfile::TempDir,
+        root: PathBuf,
+        /// Spelled inside the root, lands outside it through a euid-owned
+        /// symlink the walk trusts and therefore FOLLOWS.
+        escape: PathBuf,
+        /// What `escape` really resolves to.
+        victim: PathBuf,
+        /// The out-of-root directory `escape`'s parent resolves to.
+        outside: PathBuf,
+    }
+
+    fn fixture() -> Fx {
+        let (keep, temp) = canonical_tempdir();
+        let root = temp.join("module");
+        std::fs::create_dir(&root).expect("mkdir module");
+        let outside = temp.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        let victim = outside.join("secret");
+        std::fs::write(&victim, b"OUTSIDE").expect("write victim");
+        symlink("../outside", root.join("esc")).expect("symlink esc");
+        // The root half of the confinement predicate only fires once a session
+        // supplies a root; without it the ownership walk FOLLOWS our own
+        // symlink and the tail is inert. See ConfinedFallback's
+        // `an_escape_is_not_refused_until_a_confinement_session_installs_a_root`.
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(root.clone()),
+        });
+        Fx {
+            _keep: keep,
+            escape: root.join("esc").join("secret"),
+            root,
+            victim,
+            outside,
+        }
+    }
+
+    #[test]
+    fn unlink_tail_refuses_an_escaping_path() {
+        let fx = fixture();
+        unlink_via_sandbox_or_fallback(
+            None,
+            &fx.root,
+            Path::new("esc/secret"),
+            &fx.escape,
+            UnlinkFlags::File,
+        )
+        .expect_err("the tail must apply the three-arm contract, not unlink()");
+        assert!(fx.victim.exists(), "the out-of-root victim must survive");
+    }
+
+    #[test]
+    fn recursive_unlink_tail_refuses_an_escaping_tree() {
+        let fx = fixture();
+        let victim_dir = fx.outside.join("subdir");
+        std::fs::create_dir(&victim_dir).expect("mkdir subdir");
+        std::fs::write(victim_dir.join("child"), b"CHILD").expect("write child");
+        recursive_unlinkat_via_sandbox_or_fallback(
+            None,
+            &fx.root,
+            Path::new("esc/subdir"),
+            &fx.root.join("esc").join("subdir"),
+        )
+        .expect_err("the recursive tail must refuse an escaping root");
+        assert!(
+            victim_dir.join("child").exists(),
+            "the out-of-root tree must survive"
+        );
+    }
+
+    #[test]
+    fn mkdir_tail_refuses_an_escaping_path() {
+        let fx = fixture();
+        let planted = fx.root.join("esc").join("planted");
+        mkdirat_via_sandbox_or_fallback(None, &fx.root, Path::new("esc/planted"), &planted, 0o777)
+            .expect_err("the tail must refuse an escaping directory name");
+        assert!(
+            !fx.outside.join("planted").exists(),
+            "no directory may appear outside the root"
+        );
+    }
+
+    #[test]
+    fn symlink_tail_refuses_an_escaping_path() {
+        let fx = fixture();
+        let planted = fx.root.join("esc").join("planted");
+        symlinkat_via_sandbox_or_fallback(
+            None,
+            &fx.root,
+            Path::new("esc/planted"),
+            &planted,
+            Path::new("/etc/passwd"),
+        )
+        .expect_err("the tail must refuse an escaping link name");
+        assert!(
+            fx.outside.join("planted").symlink_metadata().is_err(),
+            "no link may appear outside the root"
+        );
+    }
+
+    /// The DAEMON session, which is where this routing is live today.
+    ///
+    /// `install_daemon_session` supplies `module.root`, so `root()` is `Some`
+    /// and the root half of the predicate fires - unlike
+    /// `install_local_session`, which leaves it `None`. Without this cell the
+    /// suite would pin only the shape that a test fixture arranges, never the
+    /// one production actually reaches first.
+    #[test]
+    fn daemon_session_refuses_an_escaping_unlink() {
+        let (keep, temp) = canonical_tempdir();
+        let root = temp.join("module");
+        std::fs::create_dir(&root).expect("mkdir module");
+        let outside = temp.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        let victim = outside.join("secret");
+        std::fs::write(&victim, b"OUTSIDE").expect("write victim");
+        symlink("../outside", root.join("esc")).expect("symlink esc");
+        install_daemon_session(ModuleState {
+            root: Some(root.clone()),
+            chrooted: false,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::default(),
+        });
+        unlink_via_sandbox_or_fallback(
+            None,
+            &root,
+            Path::new("esc/secret"),
+            &root.join("esc").join("secret"),
+            UnlinkFlags::File,
+        )
+        .expect_err("a daemon session must refuse a module escape");
+        assert!(victim.exists(), "the out-of-module victim must survive");
+        drop(keep);
+    }
+
+    #[test]
+    fn rename_tail_refuses_an_escaping_destination() {
+        let fx = fixture();
+        let inside = fx.root.join("payload");
+        std::fs::write(&inside, b"INSIDE").expect("write inside");
+        let landing = fx.root.join("esc").join("moved");
+        renameat_via_sandbox_or_fallback(
+            None,
+            &fx.root,
+            Path::new("payload"),
+            &inside,
+            &fx.root,
+            Path::new("esc/moved"),
+            &landing,
+            true,
+        )
+        .expect_err("an escaping destination must refuse the whole rename");
+        assert!(
+            !fx.outside.join("moved").exists(),
+            "nothing may land outside the root"
+        );
+        assert!(inside.exists(), "and the source must be left alone");
+    }
+}
