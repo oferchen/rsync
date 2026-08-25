@@ -357,15 +357,20 @@ fn build_server_config(
             // SP_DEFAULT)`), and `clientserver.c` sets `sanitize_paths` for
             // every daemon connection. An ABSOLUTE `--partial-dir` therefore
             // re-roots at `module_dir` (util1.c:1145-1152) instead of naming a
-            // filesystem-absolute path, exactly as `--backup-dir` above -
-            // so the same clamp is reused rather than reimplemented.
+            // filesystem-absolute path, exactly as `--backup-dir` above.
             //
             // Without it an absolute `--partial-dir=/pdir` resolved against the
             // filesystem root, where the daemon has no business writing: the
             // staging `mkstemp` failed EACCES and the entry was reported as an
             // I/O error rather than transferred.
+            //
+            // A RELATIVE value must NOT go through the basis clamp, though:
+            // that clamp folds the destination in and returns an absolute path,
+            // which is right only for a consumer that anchors once. This one
+            // anchors per file, so the value stays relative - see
+            // `sanitize_partial_dir`.
             if let Some(dir) = cfg.partial_dir.as_deref() {
-                cfg.partial_dir = Some(clamp_basis_to_module(
+                cfg.partial_dir = Some(sanitize_partial_dir(
                     dir,
                     &resolve_base,
                     &module_root_canonical,

@@ -796,20 +796,28 @@ where
     let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
         .map(PathBuf::from);
-    let partial_dir = if no_partial {
+    let partial_dir_given = if no_partial {
         None
     } else if let Some(dir) = partial_dir_cli {
         Some(dir)
     } else if partial_flag {
-        // upstream: options.c:2448-2454 - RSYNC_PARTIAL_DIR is consulted only
+        // upstream: options.c:2590-2593 - RSYNC_PARTIAL_DIR is consulted only
         // when keep_partial is set (--partial/-P) and no explicit --partial-dir
-        // was given. An empty value or a literal "." is treated as unset.
+        // was given. Upstream's own guard here is only `*arg` (non-empty); a
+        // literal "." is rejected by the shared normalisation below, which runs
+        // over the CLI value and the environment value alike.
         env::var_os("RSYNC_PARTIAL_DIR")
-            .filter(|value| !value.is_empty() && value.as_os_str() != std::ffi::OsStr::new("."))
+            .filter(|value| !value.is_empty())
             .map(PathBuf::from)
     } else {
         None
     };
+    // upstream: options.c:2594-2598 - the end-of-parse normalisation runs over
+    // whichever value survived above, collapsing `..` and mapping the
+    // "no partial directory" spellings to NULL.
+    let partial_dir = partial_dir_given
+        .as_deref()
+        .and_then(crate::frontend::partial_dir::normalize_partial_dir);
     let partial = if no_partial {
         false
     } else {
