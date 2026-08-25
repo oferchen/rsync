@@ -434,3 +434,154 @@ mod daemon_partial_dir_arg_tests {
         assert!(config.write.delay_updates);
     }
 }
+
+#[cfg(test)]
+mod daemon_partial_dir_sanitize_tests {
+    use super::{clamp_basis_to_module, collapse_relative_within_depth, sanitize_partial_dir};
+    use std::path::{Path, PathBuf};
+
+    /// upstream: `util1.c:1184-1197` `sanitize_path()` - the `..` arms.
+    ///
+    /// `depth` budgets LEADING `..` only. Upstream keeps a virtual start that
+    /// advances past each allowed `../`, so consecutive leading `..` each
+    /// consume one unit while budget lasts, and a `..` that pops the output
+    /// back to empty re-enters the leading state.
+    #[test]
+    fn relative_collapse_matches_upstream_depth_budget() {
+        // depth 0 - upstream's `if (depth <= 0 || sanp != start)` always wins,
+        // so every `..` either pops or is discarded, and nothing escapes.
+        for (given, want) in [
+            ("pdir", "pdir"),
+            ("a/b", "a/b"),
+            ("a/../b", "b"),
+            ("../pdir", "pdir"),
+            ("../../pdir", "pdir"),
+            ("a/../../pdir", "pdir"),
+        ] {
+            assert_eq!(
+                collapse_relative_within_depth(Path::new(given), 0),
+                PathBuf::from(want),
+                "depth 0: {given:?}"
+            );
+        }
+
+        // depth 1 - exactly one LEADING `..` survives.
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("../pdir"), 1),
+            PathBuf::from("../pdir")
+        );
+        // The second one exhausts the budget and is discarded.
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("../../pdir"), 1),
+            PathBuf::from("../pdir")
+        );
+        // A `..` AFTER a real component pops instead of being kept, even with
+        // budget remaining - upstream's `sanp != start` half of the guard.
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("a/../pdir"), 1),
+            PathBuf::from("pdir")
+        );
+        // ...but once that pop empties the output, the leading state returns
+        // and the budget applies again.
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("a/../../pdir"), 1),
+            PathBuf::from("../pdir")
+        );
+
+        // depth 2 - consecutive leading `..` each consume one unit.
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("../../pdir"), 2),
+            PathBuf::from("../../pdir")
+        );
+
+        // upstream: util1.c:1203-1206 - an empty result becomes ".".
+        assert_eq!(
+            collapse_relative_within_depth(Path::new("a/.."), 0),
+            PathBuf::from(".")
+        );
+    }
+
+    /// THE DEFECT THIS FIXES: a relative `--partial-dir` must stay RELATIVE.
+    ///
+    /// `partial_dir_fname()` re-anchors the value at `dirname(fname)` for every
+    /// entry, so an absolute result pins every entry's staging directory at the
+    /// transfer root. Upstream leaves a relative value relative
+    /// (`util1.c:1145-1151` applies the rootdir only inside `if (*p == '/')`),
+    /// and a nested entry then stages at `<dest>/sub/pdir`.
+    ///
+    /// Measured against real rsync 3.5.0 over a daemon push with
+    /// `--delay-updates --partial-dir=pdir` into `mod/sub/`: upstream consumes
+    /// `<module>/sub/pdir`, oc staged at `<module>/pdir` and left `sub/pdir`
+    /// untouched.
+    #[test]
+    fn a_relative_partial_dir_stays_relative() {
+        let module_root = Path::new("/srv/mod");
+        let dest = Path::new("/srv/mod/sub");
+
+        assert_eq!(
+            sanitize_partial_dir(Path::new("pdir"), dest, module_root),
+            PathBuf::from("pdir"),
+            "a relative --partial-dir must not be anchored at the destination"
+        );
+        // The destination's depth below the module root IS upstream's
+        // `curr_dir_depth`, so one `..` is affordable from `mod/sub`.
+        assert_eq!(
+            sanitize_partial_dir(Path::new("../pdir"), dest, module_root),
+            PathBuf::from("../pdir")
+        );
+        // At the module root the budget is 0, so the same value collapses
+        // rather than climbing out.
+        assert_eq!(
+            sanitize_partial_dir(Path::new("../pdir"), module_root, module_root),
+            PathBuf::from("pdir")
+        );
+    }
+
+    /// Non-vacuity companion: the ABSOLUTE arm must still re-root at the module,
+    /// exactly as `--backup-dir` and the alt-basis dirs do.
+    ///
+    /// Without this the pin above would also hold for a fix that simply stopped
+    /// clamping altogether, which would let `--partial-dir=/pdir` address the
+    /// filesystem root - the defect PR #7498 closed.
+    #[test]
+    fn an_absolute_partial_dir_still_re_roots_at_the_module() {
+        let module_root = Path::new("/srv/mod");
+        let dest = Path::new("/srv/mod/sub");
+
+        assert_eq!(
+            sanitize_partial_dir(Path::new("/pdir"), dest, module_root),
+            PathBuf::from("/srv/mod/pdir")
+        );
+        assert_eq!(
+            sanitize_partial_dir(Path::new("/etc/pdir"), dest, module_root),
+            PathBuf::from("/srv/mod/etc/pdir")
+        );
+        // And it agrees with the basis clamp on that arm, which is why the
+        // absolute case delegates rather than reimplementing.
+        assert_eq!(
+            sanitize_partial_dir(Path::new("/pdir"), dest, module_root),
+            clamp_basis_to_module(Path::new("/pdir"), dest, module_root)
+        );
+    }
+
+    /// The two consumers genuinely need different answers for a RELATIVE value:
+    /// the basis clamp anchors once and returns an absolute path, the partial
+    /// dir must not. Pinning the disagreement is what stops the two being
+    /// "simplified" back into one call.
+    #[test]
+    fn the_basis_clamp_and_the_partial_dir_disagree_on_a_relative_value() {
+        let module_root = Path::new("/srv/mod");
+        let dest = Path::new("/srv/mod/sub");
+
+        assert_eq!(
+            clamp_basis_to_module(Path::new("pdir"), dest, module_root),
+            PathBuf::from("/srv/mod/sub/pdir"),
+            "the basis clamp folds the destination in, as its consumer expects"
+        );
+        assert_eq!(
+            sanitize_partial_dir(Path::new("pdir"), dest, module_root),
+            PathBuf::from("pdir"),
+            "the partial dir must not, because its consumer re-anchors per file"
+        );
+    }
+}
