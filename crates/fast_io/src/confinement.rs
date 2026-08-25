@@ -39,6 +39,7 @@
 //! - `syscall.c:552` - `int operator_path_resolve = 0;`
 
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The session's answer to [`Activation::optout_allowed`], published for the
@@ -72,6 +73,92 @@ static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
 /// caller is without making it invent values for fields its arm ignores.
 pub fn install_session(activation: &Activation) {
     SESSION_OPTOUT.store(activation.optout_allowed(), Ordering::Relaxed);
+    *SESSION_ROOT
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = activation.root().map(physical_root);
+}
+
+/// Resolve the confinement root to a PHYSICAL path.
+///
+/// This is load-bearing, not tidiness. The walk tracks where an open would
+/// really land, after following every trusted symlink, so the path it offers
+/// for judging is always physical. A root kept as the operator SPELLED it is
+/// lexical, and comparing the two compares different namespaces: the first
+/// version of this check over-refused two in-module controls on macOS, where
+/// `/var` is a symlink to `/private/var`, so a root under `/var/folders/...`
+/// never prefix-matched a walk that had already resolved to `/private/var/...`.
+/// The same shape exists wherever an ancestor is a symlink - `/home ->
+/// /usr/home` on FreeBSD, a bind-mounted or symlinked module root anywhere -
+/// and it fails CLOSED, refusing paths that are plainly inside the module, so
+/// it presents as a broken daemon rather than as a hole.
+///
+/// Resolving once, here, is also what keeps [`Activation`] free of I/O, which
+/// is what lets its truth table compile and run on every target.
+///
+/// A root that cannot be resolved (it does not exist yet) keeps the name it was
+/// given: that is the value the caller supplied, and substituting anything else
+/// would be inventing a boundary.
+fn physical_root(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+/// The session's answer to [`Activation::root`], published for the ownership
+/// walk to read.
+///
+/// Stored for the same reason as [`SESSION_OPTOUT`]: upstream reads
+/// `confinement_root()` from *inside* `ona_open()` because `module_dir` and
+/// `confine_root` are process globals, so both entry points into the walk get
+/// the same answer from one place. Threading the root through every operator
+/// open instead would let one un-threaded site silently confine nothing, which
+/// is the failure mode this exists to prevent. The value is a property of the
+/// session, not of the call - unlike [`PathKind`], which is.
+static SESSION_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Whether an already-resolved absolute path must be refused for landing
+/// outside the session's confinement root.
+///
+/// The session-scoped counterpart of [`Activation::outside_root`], for the
+/// ownership walk, which has no [`Activation`] in hand.
+///
+/// upstream: `syscall.c:186-240` `abspath_outside_confinement()`.
+#[must_use]
+pub fn outside_session_root(abspath: &Path, kind: PathKind) -> bool {
+    SESSION_ROOT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_deref()
+        .is_some_and(|root| path_outside_root(root, abspath, kind))
+}
+
+/// The session's confinement root, or `None` when nothing is confined.
+///
+/// The walk needs the value itself, not just the verdict: a *relative*
+/// operator path has to be anchored somewhere before it can be judged.
+///
+/// upstream: `syscall.c:128-144` `confinement_root()`.
+#[must_use]
+pub fn session_confinement_root() -> Option<PathBuf> {
+    SESSION_ROOT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// The shared rule behind [`Activation::outside_root`] and
+/// [`outside_session_root`]: one implementation, two ways of naming the root.
+fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind) -> bool {
+    // upstream: `rootlen <= 1` - a root of "/" (or none) confines nothing.
+    if root.parent().is_none() || root.as_os_str().is_empty() {
+        return false;
+    }
+    if abspath.starts_with(root) {
+        return false;
+    }
+    // An empty path, or an ancestor of the root: still descending.
+    if abspath.as_os_str().is_empty() || root.starts_with(abspath) {
+        return false;
+    }
+    kind == PathKind::Confined
 }
 
 /// Publish the opt-out for a non-daemon session: the local `--insecure-links`.
@@ -329,21 +416,8 @@ impl Activation {
     ///
     /// - `syscall.c:197-240` - `abspath_outside_confinement()`
     pub fn outside_root(&self, abspath: &Path, kind: PathKind) -> bool {
-        let Some(root) = self.root() else {
-            return false;
-        };
-        // upstream: `rootlen <= 1` - a root of "/" (or none) confines nothing.
-        if root.parent().is_none() || root.as_os_str().is_empty() {
-            return false;
-        }
-        if abspath.starts_with(root) {
-            return false;
-        }
-        // An empty path, or an ancestor of the root: still descending.
-        if abspath.as_os_str().is_empty() || root.starts_with(abspath) {
-            return false;
-        }
-        kind == PathKind::Confined
+        self.root()
+            .is_some_and(|root| path_outside_root(root, abspath, kind))
     }
 
     fn is_daemon(&self) -> bool {

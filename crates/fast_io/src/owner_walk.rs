@@ -110,6 +110,100 @@ fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
     *pending = head;
 }
 
+/// The absolute path the walk has actually resolved so far, for the
+/// confinement refusal.
+///
+/// Ownership alone cannot bound a peer-driven path: a trusted-owned symlink is
+/// FOLLOWED by design (`syscall.c:406`), so it can redirect the resolved target
+/// out of the tree. Tracking where the walk has really arrived is what lets the
+/// leaf be judged against the confinement root.
+///
+/// [`Disabled`](AbsPathTracker::Disabled) is not an optimisation but the
+/// contract: an [`Ancillary`](crate::confinement::PathKind::Ancillary) open, or
+/// a session with no root, has nothing to be outside of, and upstream's own
+/// check returns 0 for both (`syscall.c:216`, `syscall.c:239`).
+///
+/// upstream: `rsync-3.5.0/syscall.c:245` `abspath_step()` and the `abspath`
+/// state it advances (`syscall.c:304-329`).
+enum AbsPathTracker {
+    Disabled,
+    Tracking { abspath: PathBuf },
+}
+
+impl AbsPathTracker {
+    /// Seed the tracker for a walk of `path`.
+    ///
+    /// An absolute path starts at `/`. A relative one starts where the walk
+    /// itself does, which is the process's physical working directory - read,
+    /// not assumed. Upstream shortcuts the daemon arm to `module_dir` because
+    /// it knows a daemon's cwd IS the module root (`syscall.c:308-310`);
+    /// reading the real cwd agrees with that whenever the assumption holds and
+    /// is right when it does not, which is why it is used for both arms. It is
+    /// the PHYSICAL cwd, as upstream's own comment requires: a lexical name
+    /// would sit at a different depth after descending a trusted symlink, and a
+    /// `..` that really escapes would look like it landed inside.
+    fn start(path: &Path, kind: crate::confinement::PathKind) -> io::Result<Self> {
+        if kind != crate::confinement::PathKind::Confined
+            || crate::confinement::session_confinement_root().is_none()
+        {
+            return Ok(Self::Disabled);
+        }
+        let abspath = if path.is_absolute() {
+            PathBuf::from("/")
+        } else {
+            std::env::current_dir()?
+        };
+        Ok(Self::Tracking { abspath })
+    }
+
+    /// Advance by one resolved component, normalising `.` and `..` exactly as
+    /// `openat` does so the check sees the REAL resolved target.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:245` `abspath_step()`.
+    fn step(&mut self, name: &OsStr) {
+        let Self::Tracking { abspath } = self else {
+            return;
+        };
+        if name == OsStr::new(".") {
+            return;
+        }
+        if name == OsStr::new("..") {
+            // `pop` at the root is a no-op, which is what `/..` resolves to.
+            abspath.pop();
+            return;
+        }
+        abspath.push(name);
+    }
+
+    /// A followed absolute symlink target restarts resolution at `/`.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:445`.
+    fn restart_at_root(&mut self) {
+        if let Self::Tracking { abspath } = self {
+            *abspath = PathBuf::from("/");
+        }
+    }
+
+    /// Refuse with `ELOOP` when the resolved path has left the confinement
+    /// root.
+    ///
+    /// `ELOOP` and deliberately not `EXDEV`: callers treat `EXDEV` as
+    /// cross-device and fall back to copy+remove, which would launder the
+    /// refusal.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:464-466`.
+    fn refuse_if_outside(&self) -> io::Result<()> {
+        let Self::Tracking { abspath } = self else {
+            return Ok(());
+        };
+        if crate::confinement::outside_session_root(abspath, crate::confinement::PathKind::Confined)
+        {
+            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        }
+        Ok(())
+    }
+}
+
 /// Open the walk's starting directory: `/` for an absolute path, `.` otherwise.
 fn open_start_dir(absolute: bool) -> io::Result<OwnedFd> {
     rustix::fs::open(
@@ -181,7 +275,12 @@ fn open_final(
 ///   back to copy+remove, which would defeat the refusal.
 /// - `ENOTDIR` when an interior component is not a directory.
 /// - Otherwise the `openat`/`statat`/`readlinkat` errno verbatim.
-fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd> {
+fn owner_walk_open(
+    path: &Path,
+    flags: OFlags,
+    mode: Mode,
+    kind: crate::confinement::PathKind,
+) -> io::Result<OwnedFd> {
     // upstream: syscall.c:300-302 - "Opted out (local --insecure-links, or a
     // daemon module with `insecure links = yes`): restore the legacy
     // symlink-following open." The test sits at the top of ona_open(), so it
@@ -206,6 +305,7 @@ fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd
     let mut pending = walk_components(path);
     let mut dirfd = open_start_dir(path.is_absolute())?;
     let mut hops = MAX_SYMLINK_HOPS;
+    let mut tracker = AbsPathTracker::start(path, kind)?;
 
     while !pending.is_empty() {
         let name = pending.remove(0);
@@ -221,6 +321,12 @@ fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd
                 Err(errno)
                     if is_last && errno == Errno::NOENT && flags.contains(OFlags::CREATE) =>
                 {
+                    // upstream: syscall.c:387-391 - the confinement is checked on
+                    // this arm too. A create is exactly where a redirected leaf
+                    // does its damage, so skipping it here would leave the
+                    // `--partial-dir`/`--temp-dir` shapes unconfined.
+                    tracker.step(&name);
+                    tracker.refuse_if_outside()?;
                     return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
                 }
                 Err(errno) => return Err(io::Error::from_raw_os_error(errno.raw_os_error())),
@@ -244,14 +350,23 @@ fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd
             if target.is_absolute() {
                 // upstream: syscall.c:445 "followed an absolute target: restart from /".
                 dirfd = open_start_dir(true)?;
+                tracker.restart_at_root();
             }
             prepend_components(&mut pending, &target);
             continue;
         }
 
         if is_last {
+            // upstream: syscall.c:460-468 - `abspath_step()` then
+            // `abspath_outside_confinement()`. The check belongs HERE and not on
+            // interior components: an absolute walk passes through the root's
+            // own ancestors on the way down, which are not-yet-arrived rather
+            // than diverged.
+            tracker.step(&name);
+            tracker.refuse_if_outside()?;
             return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
         }
+        tracker.step(&name);
 
         // upstream: syscall.c:479 - an interior component that is not a
         // directory is ENOTDIR, not a silent stop.
@@ -287,7 +402,12 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     };
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
-    let dirfd = owner_walk_open(parent, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())?;
+    let dirfd = owner_walk_open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY,
+        Mode::empty(),
+        crate::confinement::PathKind::Ancillary,
+    )?;
     Ok((dirfd, leaf))
 }
 
@@ -409,12 +529,26 @@ pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
 /// - `EINVAL` when `path` has no final component.
 /// - Otherwise see `owner_walk_open`.
 fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std::fs::File> {
+    operator_open_kind(path, flags, mode, crate::confinement::PathKind::Ancillary)
+}
+
+/// `operator_open_with` with the caller's [`PathKind`](crate::confinement::PathKind).
+///
+/// Upstream expresses the same distinction as a global toggled around each call
+/// site; passing it makes an unstated answer a compile error instead of a
+/// control-flow accident.
+fn operator_open_kind(
+    path: &Path,
+    flags: OFlags,
+    mode: Mode,
+    kind: crate::confinement::PathKind,
+) -> io::Result<std::fs::File> {
     // `/`, `.` and `..` name a directory, never a file to open; the walk would
     // otherwise hand back its own anchor.
     if path.file_name().is_none() {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
-    owner_walk_open(path, flags, mode).map(std::fs::File::from)
+    owner_walk_open(path, flags, mode, kind).map(std::fs::File::from)
 }
 
 /// Open an operator-supplied path read-only through the ownership walk.
@@ -428,6 +562,41 @@ fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std:
 /// See `operator_open_with`.
 pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
     operator_open_with(path, OFlags::RDONLY, Mode::empty())
+}
+
+/// Open a filter/merge file read-only through the ownership walk, additionally
+/// bound to the session's confinement root.
+///
+/// The ownership walk on its own is not enough for a peer-driven merge file: a
+/// non-chrooted daemon writes `--backup-dir` entries as root, so a raced backup
+/// symlink is ROOT-owned - exactly what the walk treats as trusted - and naming
+/// it in a dir-merge rule would read an out-of-module file in as filter rules,
+/// whose text comes back to the peer in "Unknown filter rule" errors. The root
+/// check after the follow is what closes that.
+///
+/// The daemon's OWN `filter` / `include from` / `exclude from` parameters are
+/// deliberately NOT opened through this: they are operator-configured and
+/// legitimately live outside the module (`/etc/rsync/excludes` and the like).
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/exclude.c:1668-1684` `parse_filter_file()` - the comment this
+///   paraphrases, and the `if (!daemon_config_filter_file)
+///   operator_path_resolve = 1;` that scopes it.
+/// - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()`.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved path lands outside the confinement root.
+/// - Otherwise see `operator_open_with`.
+pub fn operator_open_read_confined(path: &Path) -> io::Result<std::fs::File> {
+    operator_open_kind(
+        path,
+        OFlags::RDONLY,
+        Mode::empty(),
+        crate::confinement::PathKind::Confined,
+    )
 }
 
 /// Open an operator-supplied path for appending, creating it if absent.

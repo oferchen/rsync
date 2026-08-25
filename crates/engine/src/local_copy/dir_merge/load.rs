@@ -534,7 +534,15 @@ pub(crate) fn load_dir_merge_rules_recursive(
 fn open_merge_file(path: &std::path::Path) -> io::Result<fs::File> {
     #[cfg(unix)]
     {
-        fast_io::operator_open_read(path)
+        // Confined as well as ownership-walked: a per-directory merge file is
+        // named by the PEER, and its contents come back to that peer in
+        // "Unknown filter rule" errors, so a trusted-owned symlink redirecting
+        // the read out of the module is a disclosure. Ownership cannot catch
+        // it - a non-chrooted daemon writes as root, so a planted backup
+        // symlink is root-owned, which the walk trusts by design.
+        //
+        // upstream: `rsync-3.5.0/exclude.c:1668-1684` `parse_filter_file()`.
+        fast_io::operator_open_read_confined(path)
     }
     #[cfg(not(unix))]
     {
