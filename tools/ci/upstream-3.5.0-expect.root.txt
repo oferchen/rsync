@@ -144,10 +144,10 @@ fake-super-backup-fifo-regression pass
 file-to-file-mkpath-dry-run pass
 files-from pass
 files-from-depth pass
-files-from-leak fail
+files-from-leak skip
 files-from-path-clamp pass
 filter-depth pass
-filter-leak fail
+filter-leak skip
 filter-merge-content-echo fail
 filter-merge-recursion pass
 filter-merge-symlink pass
@@ -206,7 +206,7 @@ omit-times pass
 open-noatime pass
 operator-path-backup-dir pass
 operator-path-backup-dir-daemon pass
-operator-path-backup-dir-exclude-daemon fail
+operator-path-backup-dir-exclude-daemon pass
 operator-path-backup-rmdir pass
 operator-path-backup-symlink pass
 operator-path-compare-dest pass
