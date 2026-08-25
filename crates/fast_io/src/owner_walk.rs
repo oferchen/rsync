@@ -539,7 +539,7 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
 /// - `ELOOP` when the walk refuses an untrusted-owner symlink, or when the
 ///   resolved leaf lands outside the confinement root.
 /// - Otherwise see [`owner_trusted_parent`].
-fn owner_trusted_parent_kind(
+pub fn owner_trusted_parent_kind(
     path: &Path,
     kind: crate::confinement::PathKind,
 ) -> io::Result<(OwnedFd, OsString)> {
