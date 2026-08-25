@@ -89,6 +89,7 @@ pub fn store_acls_via_fake_super(
     _access_ndx: u32,
     _default_ndx: Option<u32>,
     _follow_symlinks: bool,
+    _mode: u32,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())
@@ -171,7 +172,7 @@ mod tests {
     fn store_acls_via_fake_super_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = store_acls_via_fake_super(dst, &cache, 0, Some(1), true);
+        let result = store_acls_via_fake_super(dst, &cache, 0, Some(1), true, 0o644);
         assert!(result.is_ok());
     }
 }

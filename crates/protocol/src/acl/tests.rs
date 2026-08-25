@@ -2090,3 +2090,145 @@ mod strip_perms_for_send_tests {
         }
     }
 }
+
+/// Byte-level oracle for the `--fake-super` ACL blobs, measured against the
+/// real upstream rsync 3.5.0 binary rather than derived from oc's own encoder.
+///
+/// A store/load round trip through [`RsyncAcl::to_fake_super_bytes`] and
+/// [`RsyncAcl::from_fake_super_bytes`] cannot see the defect these tests exist
+/// for: oc's encoder and decoder are symmetric, so a blob that omits upstream's
+/// `NO_ENTRY` slots round-trips perfectly while being byte-incompatible with a
+/// tree upstream wrote or reads.
+///
+/// Each `UPSTREAM_*` constant below is the `user.rsync.%aacl` / `%dacl` value
+/// decoded as little-endian `u32`s from a real run of
+/// `rsync-3.5.0/rsync -rA -M--fake-super src/ dst/` on Linux (`-M--fake-super`
+/// puts the receiving side, and only the receiving side, into fake-super mode -
+/// the invocation `testsuite/fake-super-acl-xattr_test.py` leg 1 uses).
+mod fake_super_store_oracle_tests {
+    use super::*;
+
+    /// Named-entry access value as it appears in a stored blob: the in-memory
+    /// `NAME_IS_USER` bit is written verbatim, so a named *user* with `rwx`
+    /// encodes as `0x8000_0007`.
+    const NAMED_USER_RWX: u32 = NAME_IS_USER | 0x07;
+    const NAMED_USER_RX: u32 = NAME_IS_USER | 0x05;
+    const NOBODY: u32 = 65534;
+
+    /// `chmod 0644 f; setfacl -m u:nobody:rwx f` - setfacl raises the mode's
+    /// group bits to the new mask, leaving mode 0o674.
+    const UPSTREAM_FILE_AACL: [u32; 6] = [128, 4, 7, 128, NOBODY, NAMED_USER_RWX];
+
+    /// `chmod 0755 d; setfacl -m u:nobody:rx d` on a directory (mode 0o755).
+    const UPSTREAM_DIR_AACL: [u32; 6] = [128, 128, 5, 128, NOBODY, NAMED_USER_RX];
+
+    /// `setfacl -d -m u:nobody:rwx d` on the same directory.
+    const UPSTREAM_DIR_DACL: [u32; 6] = [7, 5, 7, 5, NOBODY, NAMED_USER_RWX];
+
+    fn le_u32s(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    /// The access ACL of `f` as `getfacl` reports it: `user::rw-`,
+    /// `user:nobody:rwx`, `group::r--`, `mask::rwx`, `other::r--`.
+    fn file_access_acl() -> RsyncAcl {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0o6;
+        acl.group_obj = 0o4;
+        acl.mask_obj = 0o7;
+        acl.other_obj = 0o4;
+        acl.names.push(IdAccess::user(NOBODY, 0o7));
+        acl
+    }
+
+    /// The access ACL of `d`: `user::rwx`, `user:nobody:r-x`, `group::r-x`,
+    /// `mask::r-x`, `other::r-x`.
+    fn dir_access_acl() -> RsyncAcl {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0o7;
+        acl.group_obj = 0o5;
+        acl.mask_obj = 0o5;
+        acl.other_obj = 0o5;
+        acl.names.push(IdAccess::user(NOBODY, 0o5));
+        acl
+    }
+
+    /// The default ACL of `d`: `user::rwx`, `user:nobody:rwx`, `group::r-x`,
+    /// `mask::rwx`, `other::r-x`.
+    fn dir_default_acl() -> RsyncAcl {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0o7;
+        acl.group_obj = 0o5;
+        acl.mask_obj = 0o7;
+        acl.other_obj = 0o5;
+        acl.names.push(IdAccess::user(NOBODY, 0o7));
+        acl
+    }
+
+    #[test]
+    fn file_access_blob_matches_upstream_3_5_0() {
+        let mut acl = file_access_acl();
+        acl.condense_for_fake_super_store(0o674);
+        assert_eq!(le_u32s(&acl.to_fake_super_bytes()), UPSTREAM_FILE_AACL);
+    }
+
+    #[test]
+    fn dir_access_blob_matches_upstream_3_5_0() {
+        let mut acl = dir_access_acl();
+        acl.condense_for_fake_super_store(0o755);
+        assert_eq!(le_u32s(&acl.to_fake_super_bytes()), UPSTREAM_DIR_AACL);
+    }
+
+    // Upstream's sender strips only the access ACL (`send_acl()`, acls.c:888
+    // passes `sxp->acc_acl`), so the default ACL reaches the receiver fully
+    // populated and is stored verbatim. Condensing it would be a divergence in
+    // the opposite direction, so this pins that it is NOT condensed.
+    #[test]
+    fn dir_default_blob_is_stored_verbatim() {
+        let acl = dir_default_acl();
+        assert_eq!(le_u32s(&acl.to_fake_super_bytes()), UPSTREAM_DIR_DACL);
+    }
+
+    // Non-vacuity: without the condensing step the same two ACLs encode to
+    // something upstream never writes. If this ever stops holding, the two
+    // assertions above have become tautologies.
+    #[test]
+    fn uncondensed_access_blobs_differ_from_upstream() {
+        assert_ne!(
+            le_u32s(&file_access_acl().to_fake_super_bytes()),
+            UPSTREAM_FILE_AACL
+        );
+        assert_ne!(
+            le_u32s(&dir_access_acl().to_fake_super_bytes()),
+            UPSTREAM_DIR_AACL
+        );
+    }
+
+    // The composition is idempotent, which is what lets one storage site serve
+    // both the local-copy path (a freshly read filesystem ACL) and the network
+    // path (an ACL that already took upstream's strip on the wire).
+    #[test]
+    fn condensing_is_idempotent() {
+        for (mut acl, mode) in [(file_access_acl(), 0o674), (dir_access_acl(), 0o755)] {
+            acl.condense_for_fake_super_store(mode);
+            let once = acl.clone();
+            acl.condense_for_fake_super_store(mode);
+            assert_eq!(acl, once);
+        }
+    }
+
+    // An access ACL with no named entries has no mask to restore, so the whole
+    // group slot is derivable and only the mask stays NO_ENTRY.
+    #[test]
+    fn base_only_access_acl_keeps_nothing_but_the_absent_mask() {
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.condense_for_fake_super_store(0o644);
+        assert_eq!(
+            le_u32s(&acl.to_fake_super_bytes()),
+            vec![128, 128, 128, 128]
+        );
+    }
+}

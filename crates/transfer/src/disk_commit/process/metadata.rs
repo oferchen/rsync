@@ -165,6 +165,7 @@ fn apply_metadata_acls_and_xattrs(
                     access_ndx,
                     entry.def_acl_ndx(),
                     follow,
+                    entry.mode(),
                 )
             } else {
                 metadata::apply_acls_from_cache(

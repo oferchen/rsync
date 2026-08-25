@@ -354,7 +354,10 @@ pub fn apply_acls_from_cache(
 /// (upstream: `acls.c`'s `am_root < 0` branch operates on `SMB_ACL_T`, which
 /// has no Windows equivalent). Windows ACLs are already persisted via their
 /// own SDDL xattr (`WINDOWS_SDDL_XATTR_NAME`), so this falls straight through
-/// to the normal apply path unchanged.
+/// to the normal apply path unchanged - `mode` included, since the sender
+/// strips mode-derivable entries before transmitting (`acls.c:142`
+/// `rsync_acl_strip_perms()`, called from `send_acl()` at `acls.c:888`) and
+/// `reconstruct_acl` needs it to put them back.
 ///
 /// # Errors
 ///
@@ -366,6 +369,7 @@ pub fn store_acls_via_fake_super(
     access_ndx: u32,
     default_ndx: Option<u32>,
     follow_symlinks: bool,
+    mode: u32,
 ) -> Result<(), MetadataError> {
     apply_acls_from_cache(
         destination,
@@ -373,7 +377,7 @@ pub fn store_acls_via_fake_super(
         access_ndx,
         default_ndx,
         follow_symlinks,
-        None,
+        Some(mode),
         None,
     )
 }

@@ -107,8 +107,16 @@ pub fn store_acls_via_fake_super(
     access_ndx: u32,
     default_ndx: Option<u32>,
     follow_symlinks: bool,
+    mode: u32,
 ) -> Result<(), MetadataError> {
-    let _ = (destination, cache, access_ndx, default_ndx, follow_symlinks);
+    let _ = (
+        destination,
+        cache,
+        access_ndx,
+        default_ndx,
+        follow_symlinks,
+        mode,
+    );
     warn_acl_unsupported();
     Ok(())
 }
@@ -174,7 +182,7 @@ mod tests {
     fn store_acls_via_fake_super_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = store_acls_via_fake_super(dst, &cache, 0, None, false);
+        let result = store_acls_via_fake_super(dst, &cache, 0, None, false, 0o644);
         assert!(result.is_ok());
     }
 }
