@@ -5,6 +5,8 @@
 //! - [`error_policy`] - DDP-C3 error-classification / continue-on-error
 //!   behaviour, mirroring upstream `delete.c:178-207`.
 //! - [`cohort`] - DDP-D2 hardlink-cohort observer log.
+//! - [`unconfined_escape`] - CF-P0a/CF-P0b RED baseline pinning the
+//!   symlink escape the path-based `RealDeleteFs` methods still allow.
 //!
 //! Shared helpers (synthetic plan/entry builders, the [`ScriptedDeleteFs`]
 //! failure fake) live here.
@@ -29,6 +31,8 @@ mod dispatch;
 mod error_policy;
 #[cfg(unix)]
 mod sandbox;
+#[cfg(unix)]
+mod unconfined_escape;
 
 pub(super) fn entry(name: &str, kind: DeleteEntryKind) -> DeleteEntry {
     DeleteEntry::new(OsString::from(name), kind)
