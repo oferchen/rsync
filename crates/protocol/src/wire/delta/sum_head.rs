@@ -207,7 +207,7 @@ impl SumHead {
     /// Rejects a head whose per-block strong sum is wider than the negotiated
     /// transfer digest `xfer_sum_len`.
     ///
-    /// [`check`](Self::check) only bounds `s2length` by the static
+    /// `check` only bounds `s2length` by the static
     /// [`MAX_STRONG_SUM_LEN`] ceiling (SHA-1, the widest negotiable digest).
     /// A peer that negotiated a narrower transfer checksum (XXH64 / XXH3-64 =
     /// 8 bytes) can still advertise a legal-looking `s2length` up to 20; the

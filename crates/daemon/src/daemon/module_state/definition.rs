@@ -366,7 +366,7 @@ impl ModuleDefinition {
     /// Returns the authorizing match if the username is authorized for this
     /// module, including the concrete group name for an `@group` match.
     ///
-    /// Delegates to [`authorize_auth_user`], which evaluates `auth users`
+    /// Delegates to `authorize_auth_user`, which evaluates `auth users`
     /// tokens in configuration order (wildcard match for plain tokens; wildcard
     /// match against the user's own groups for `@group` tokens), first match
     /// wins.

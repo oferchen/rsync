@@ -54,7 +54,7 @@ pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
 /// so the sanitizer must preserve every non-separator byte verbatim rather
 /// than route through `String`, which would drop non-UTF-8 names. The
 /// traversal-guard logic is identical to the `&str` path - both delegate to
-/// [`sanitize_path_bytes`], which only ever inspects the ASCII `/` and `.`
+/// `sanitize_path_bytes`, which only ever inspects the ASCII `/` and `.`
 /// bytes.
 ///
 /// # Upstream Reference
@@ -72,7 +72,7 @@ pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
 /// valid UTF-8. Routing them through `String` would replace non-UTF-8 bytes
 /// and rewrite the very value the sanitizer exists to make safe, so this
 /// entry point stays on `&[u8]` end to end. Shares
-/// [`sanitize_path_bytes`] with the `&str` form, so the traversal guard
+/// `sanitize_path_bytes` with the `&str` form, so the traversal guard
 /// cannot diverge between the two.
 ///
 /// `depth` is how many leading `..` may survive - upstream passes the depth of
@@ -98,7 +98,7 @@ pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
 /// - `depth`: number of leading `..` segments allowed (0 for daemon mode)
 /// - `keep_dot_dirs`: when true, preserves leading `./` (SP_KEEP_DOT_DIRS)
 ///
-/// The `&str` input is valid UTF-8 and [`sanitize_path_bytes`] only rewrites
+/// The `&str` input is valid UTF-8 and `sanitize_path_bytes` only rewrites
 /// ASCII separators/dot components, so the result is always valid UTF-8.
 ///
 /// # Upstream Reference

@@ -185,7 +185,7 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// Optional subscription to the throughput governor's buffer-pool ceiling.
     ///
     /// When present and the governor has published a ceiling, adaptive resizing
-    /// composes it with the local [`PressureTracker`] via conservative-min: the
+    /// composes it with the local `PressureTracker` via conservative-min: the
     /// pool never grows more aggressively than the governor permits. `None` (the
     /// default) leaves resizing on local pressure alone, byte-identical to the
     /// pre-governor path. Wired via
@@ -411,8 +411,8 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Subscribes adaptive resizing to the throughput governor's buffer-pool
     /// ceiling.
     ///
-    /// Once subscribed, [`maybe_resize`](Self::maybe_resize) composes the
-    /// governor's published ceiling with the local [`PressureTracker`] via
+    /// Once subscribed, `maybe_resize` composes the
+    /// governor's published ceiling with the local `PressureTracker` via
     /// conservative-min: the pool grows to `min(local_target, governor_ceiling)`
     /// and so never grows more aggressively than the governor permits. When the
     /// governor publishes no ceiling - always the case for an inert

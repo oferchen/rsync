@@ -168,7 +168,7 @@ fn open_final(
 ///   splice at `:421-455`, the `is_last` open at `:460-469`, and the
 ///   `S_ISDIR`/`ENOTDIR` guard on interior components at `:479`.
 /// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - `ona_open` on
-///   the full path, which is [`operator_open_with`].
+///   the full path, which is `operator_open_with`.
 /// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same `ona_open` on
 ///   the *parent directory*, which is [`owner_trusted_parent`]. One walk, two
 ///   entry points; the difference is only what path each hands it.
@@ -275,13 +275,13 @@ fn owner_walk_open(path: &Path, flags: OFlags, mode: Mode) -> io::Result<OwnedFd
 /// correct outcome, not something to refuse.
 ///
 /// upstream: `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same walk
-/// as [`owner_walk_open`], handed the parent directory instead of the path.
+/// as `owner_walk_open`, handed the parent directory instead of the path.
 ///
 /// # Errors
 ///
 /// - `EINVAL` when `path` has no final component (`/`, `.`, `..`, or empty),
 ///   which no operator path being renamed onto can have.
-/// - Otherwise see [`owner_walk_open`].
+/// - Otherwise see `owner_walk_open`.
 pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
     let Some(leaf) = path.file_name().map(OsStr::to_os_string) else {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
@@ -407,7 +407,7 @@ pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
 /// # Errors
 ///
 /// - `EINVAL` when `path` has no final component.
-/// - Otherwise see [`owner_walk_open`].
+/// - Otherwise see `owner_walk_open`.
 fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std::fs::File> {
     // `/`, `.` and `..` name a directory, never a file to open; the walk would
     // otherwise hand back its own anchor.
@@ -425,7 +425,7 @@ fn operator_open_with(path: &Path, flags: OFlags, mode: Mode) -> io::Result<std:
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`].
+/// See `operator_open_with`.
 pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
     operator_open_with(path, OFlags::RDONLY, Mode::empty())
 }
@@ -438,7 +438,7 @@ pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`].
+/// See `operator_open_with`.
 pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File> {
     operator_open_with(
         path,
@@ -467,7 +467,7 @@ pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File>
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`].
+/// See `operator_open_with`.
 pub fn operator_open_rw_create(path: &Path, mode: u32) -> io::Result<std::fs::File> {
     operator_open_with(
         path,
@@ -501,7 +501,7 @@ pub fn operator_open_rw_create(path: &Path, mode: u32) -> io::Result<std::fs::Fi
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`].
+/// See `operator_open_with`.
 pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs::File> {
     operator_open_with(
         path,
@@ -586,7 +586,7 @@ pub fn operator_open_recv(
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`]. Additionally surfaces any read error, including
+/// See `operator_open_with`. Additionally surfaces any read error, including
 /// `InvalidData` when the file is not valid UTF-8.
 pub fn operator_read_to_string(path: &Path) -> io::Result<String> {
     use std::io::Read as _;

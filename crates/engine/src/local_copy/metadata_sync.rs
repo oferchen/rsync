@@ -102,7 +102,7 @@ pub(crate) fn sync_xattrs_if_requested(
 /// different `rsync_xal_get()` globals: the sender with `am_sender = 1`
 /// (`user_only = 0`, plus the `rsync.%FOO` strip below `-XX`), the generator
 /// with `am_sender = 0` (`user_only = !am_root`, no strip). Reading each side
-/// with its own [`XattrRole`] reproduces that split; the comparison itself is
+/// with its own `XattrRole` reproduces that split; the comparison itself is
 /// [`::metadata::dest_xattrs_differ`], shared with the network receiver.
 ///
 /// Call this before [`sync_xattrs_if_requested`] writes the source attributes

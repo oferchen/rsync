@@ -17,7 +17,7 @@ const S: [u32; 64] = [
     21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
 
-/// Pre-computed T[i] = floor(2^32 * |sin(i + 1)|) constants.
+/// Pre-computed T\[i\] = floor(2^32 * |sin(i + 1)|) constants.
 const K: [u32; 64] = [
     0xd76a_a478,
     0xe8c7_b756,

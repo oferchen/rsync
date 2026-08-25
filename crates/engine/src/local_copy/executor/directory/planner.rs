@@ -90,7 +90,7 @@ pub(crate) struct DirectoryPlan<'a> {
 /// non-directory-specific filter rule (e.g., `*` rather than `cache/`),
 /// we still return [`EntryAction::CopyDirectory`] so the directory is
 /// descended into. This allows file-level include rules to be evaluated
-/// inside the directory; the pruning logic in [`copy_directory_recursive`]
+/// inside the directory; the pruning logic in `copy_directory_recursive`
 /// removes the directory afterwards if no children survive filtering.
 /// This matches upstream rsync behavior where the sender includes all
 /// directories in the file list and the receiver prunes empty ones

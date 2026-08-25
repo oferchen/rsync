@@ -136,7 +136,7 @@ fn serves_ipv4_loopback(addr: Ipv4Addr) -> bool {
 /// inodes it owns on Linux, or scoped to the pid by `lsof` on macOS), so an
 /// unrelated process listening on loopback is never mistaken for the daemon.
 /// A daemon that bound only its IPv6 socket is deliberately *not* reported:
-/// see [`serves_ipv4_loopback`] and this module's header.
+/// see `serves_ipv4_loopback` and this module's header.
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn daemon_listen_port(pid: u32) -> Option<u16> {

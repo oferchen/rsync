@@ -887,7 +887,7 @@ struct DeletionCandidate {
 }
 
 /// Mirrors the upstream classification table used by
-/// [`crate::delete::extras::compute_extras`]: regular files, dirs,
+/// `crate::delete::extras::compute_extras`: regular files, dirs,
 /// symlinks, devices, FIFOs/sockets each fall into their own
 /// [`DeleteEntryKind`] bucket; anything else collapses to `File`.
 fn classify_kind(file_type: fs::FileType) -> DeleteEntryKind {

@@ -836,7 +836,7 @@ fn apply_ownership_via_fake_super(
 /// This is the local-copy counterpart to [`apply_ownership_via_fake_super`]:
 /// the caller already has the source's `fs::Metadata`, so there is no wire
 /// `FileEntry` to consult. Mode (with the full `S_IFMT` bits), uid, gid, and
-/// device rdev are captured via [`FakeSuperStat::from_metadata`] and stored
+/// device rdev are captured via `FakeSuperStat::from_metadata` and stored
 /// in the `user.rsync.%stat` xattr.
 ///
 /// Mirrors `apply_ownership_via_fake_super`'s "no-op when the existing xattr

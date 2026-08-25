@@ -2,7 +2,7 @@
 //!
 //! Upstream rsync enforces the negotiated `--timeout` (`io_timeout`) uniformly
 //! across every transport: the `select`/`poll` loop in `io.c` aborts with
-//! [`RERR_TIMEOUT`] (exit code 30) when no I/O has made progress for
+//! `RERR_TIMEOUT` (exit code 30) when no I/O has made progress for
 //! `io_timeout` seconds, and keepalive writes reset the progress clock so a
 //! legitimate computation lull does not trip the timeout.
 //!

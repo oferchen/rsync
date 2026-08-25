@@ -57,7 +57,7 @@ pub const DEFAULT_SAFETY_FACTOR: f64 = 2.0;
 /// It bounds the ceiling for large-file transfers (where each permit reserves a
 /// megabyte-class buffer) while leaving small-file transfers - whose per-permit
 /// weight is a few kilobytes - free to reach the configured `max`. Operators who
-/// need a tighter or looser bound override it via [`RopeConfig::mem_budget`].
+/// need a tighter or looser bound override it via `RopeConfig::mem_budget`.
 pub const DEFAULT_MEM_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 
 // Per-permit memory weight tiers.

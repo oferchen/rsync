@@ -2,7 +2,7 @@
 //!
 //! The rsync protocol compresses file list entries by omitting fields that
 //! match the previous entry. This module provides a shared state structure
-//! used by both [`FileListReader`] and [`FileListWriter`] to track the
+//! used by both `FileListReader` and `FileListWriter` to track the
 //! previous entry's values.
 //!
 //! # Upstream Reference

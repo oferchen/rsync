@@ -15,7 +15,7 @@ use protocol::flist::FileEntry;
 use filters::FilterSet;
 use metadata::AclIdMapper;
 
-/// Shared configuration produced by [`ReceiverContext::setup_transfer`].
+/// Shared configuration produced by `ReceiverContext::setup_transfer`.
 ///
 /// Groups the checksum, metadata, and ACL state that is common to all
 /// transfer modes (sync, pipelined, incremental). Passed to the pipeline
@@ -43,7 +43,7 @@ pub(in crate::receiver) struct PipelineSetup {
     /// pipeline so the SEC-1.f-j cutover sites can replace path-based
     /// syscalls with their `*at` siblings without re-walking the path
     /// through the kernel. The carrier is threaded through to
-    /// [`ReceiverContext`] but no syscalls are migrated yet; the existing
+    /// `ReceiverContext` but no syscalls are migrated yet; the existing
     /// path-based code paths remain the active code (SEC-1.e).
     ///
     /// `None` on Unix when the destination root cannot be opened (for

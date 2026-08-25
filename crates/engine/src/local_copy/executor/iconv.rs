@@ -11,7 +11,7 @@
 //! LOCAL -> REMOTE transcoding. The bridge from `--iconv` to the
 //! [`FilenameConverter`](protocol::iconv::FilenameConverter) used here lives
 //! in
-//! [`IconvSetting::resolve_local_copy_converter`](core::client::config::IconvSetting::resolve_local_copy_converter).
+//! `IconvSetting::resolve_local_copy_converter`.
 //!
 //! # Upstream Reference
 //!

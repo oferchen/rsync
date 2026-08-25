@@ -1,7 +1,7 @@
 //! Operator override for the per-file reorder-ring capacity (ROB-11, #3678).
 //!
 //! [`super::ParallelDeltaApplier`] sizes each per-file
-//! [`super::ReorderBuffer`] with the hard default
+//! `super::ReorderBuffer` with the hard default
 //! [`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`] (64).
 //! The ROB series (#3667) covers the case where adaptive sizing or a
 //! workload-tuned cap would avoid normal-operation spill activations. Until
@@ -33,7 +33,7 @@
 //! because the ring is per-file and spill-to-disk is disabled by default,
 //! honouring them verbatim would pin unbounded RAM with no relief valve.
 //! Over-max values warn and clamp to the ceiling; the parser rejects `0`
-//! since a zero-capacity ring would panic [`super::ReorderBuffer::new`] at
+//! since a zero-capacity ring would panic `super::ReorderBuffer::new` at
 //! construction time.
 
 use std::sync::OnceLock;

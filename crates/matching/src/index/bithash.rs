@@ -1,4 +1,4 @@
-//! Bithash prefilter for the [`DeltaSignatureIndex`].
+//! Bithash prefilter for the `DeltaSignatureIndex`.
 //!
 //! Translates zsync's `librcksum` bithash mechanism (see
 //! `librcksum/hash.c:101-102` and `librcksum/rsum.c:362-366` in zsync 0.6.2)

@@ -19,7 +19,7 @@
 //!
 //! # Platform Notes
 //!
-//! On Linux, [`syncfs()`] can sync an entire filesystem more efficiently than
+//! On Linux, `syncfs()` can sync an entire filesystem more efficiently than
 //! multiple `fsync()` calls. This module uses `syncfs()` when available.
 
 use std::collections::HashSet;

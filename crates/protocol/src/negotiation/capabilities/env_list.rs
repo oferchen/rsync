@@ -101,7 +101,7 @@ pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Opti
 /// Upstream keeps four distinct MD4 name-num slots (`CSUM_MD4`,
 /// `CSUM_MD4_OLD`, `CSUM_MD4_BUSTED`, `CSUM_MD4_ARCHAIC`) and, when `md4` is in
 /// the env list, marks all four as seen (`compat.c:443-444`). oc-rsync collapses
-/// the whole MD4 family into a single [`ChecksumAlgorithm::MD4`] whose wire name
+/// the whole MD4 family into a single `ChecksumAlgorithm::MD4` whose wire name
 /// is `md4`, so a forced MD4 choice matches iff `md4` is a candidate - the
 /// special case is subsumed by the collapsed representation.
 ///

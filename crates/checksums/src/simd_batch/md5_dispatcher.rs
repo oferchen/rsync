@@ -47,7 +47,7 @@ pub enum Backend {
 impl Backend {
     /// Returns the number of parallel SIMD lanes for this backend.
     ///
-    /// Used by [`super::parallel_lanes()`] for runtime diagnostics.
+    /// Used by `super::parallel_lanes()` for runtime diagnostics.
     #[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
     pub const fn lanes(self) -> usize {
         match self {
@@ -557,7 +557,7 @@ impl Dispatcher {
 
     /// Computes an MD5 digest for a single input using the scalar path.
     ///
-    /// Used by [`super::digest()`] for single-input convenience.
+    /// Used by `super::digest()` for single-input convenience.
     #[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
     pub fn digest(&self, input: &[u8]) -> Digest {
         scalar::digest(input)

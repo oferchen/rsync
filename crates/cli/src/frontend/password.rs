@@ -262,7 +262,7 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
 /// Reads a password from the process' standard input.
 ///
 /// Tests can override the captured bytes via
-/// [`set_password_stdin_input`] so the helper remains deterministic.
+/// `set_password_stdin_input` so the helper remains deterministic.
 pub(crate) fn read_password_from_stdin() -> io::Result<Vec<u8>> {
     #[cfg(test)]
     if let Some(bytes) = take_password_stdin_input() {

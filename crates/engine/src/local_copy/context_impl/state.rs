@@ -468,7 +468,7 @@ impl<'a> CopyContext<'a> {
 
     /// Returns an Arc reference to the shared buffer pool.
     ///
-    /// The Arc is returned so that [`BufferGuard`] can hold an owned reference,
+    /// The Arc is returned so that `BufferGuard` can hold an owned reference,
     /// avoiding borrow checker issues when the context is mutably borrowed.
     pub(super) fn buffer_pool(&self) -> Arc<BufferPool> {
         Arc::clone(&self.buffer_pool)
@@ -595,7 +595,7 @@ impl<'a> CopyContext<'a> {
     /// upstream skip notice exactly once.
     ///
     /// The message renders at the default verbosity through the `NONREG`
-    /// info category (info_verbosity[0], enabled at verbose level 0), the
+    /// info category (info_verbosity\[0\], enabled at verbose level 0), the
     /// same channel oc uses for the sibling "skipping non-regular file"
     /// notice. `--ignore-errors` keeps [`Self::deletions_allowed`] true, so
     /// neither the warning nor the skip fires in that case - matching

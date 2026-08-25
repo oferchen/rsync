@@ -53,7 +53,7 @@ impl LocalCopyChangeSet {
     /// flag: upstream `generator.c:566-572` sets `ITEM_REPORT_XATTR` only when
     /// `xattr_diff()` finds the destination's attributes differ from the
     /// sender's. Compute it with
-    /// [`xattrs_differ_from_source`](crate::local_copy::xattrs_differ_from_source)
+    /// `xattrs_differ_from_source`
     /// before anything writes the source attributes onto the destination.
     #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub fn for_file_with_checksum(

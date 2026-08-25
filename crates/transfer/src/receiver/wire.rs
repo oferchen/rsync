@@ -386,7 +386,7 @@ impl SenderAttrs {
     ///
     /// This is the second half of upstream `read_ndx_and_attrs()`: everything
     /// from the `iflags` read onwards. Splitting it from the NDX read is what
-    /// lets [`crate::receiver::ndx_stream::read_ndx_and_attrs`] honour
+    /// lets `crate::receiver::ndx_stream::read_ndx_and_attrs` honour
     /// `rsync.c:334-335`, where `NDX_DONE` returns *before* any attribute byte
     /// is consumed - calling the combined helper there would swallow two
     /// phantom `iflags` bytes that the peer never sent.

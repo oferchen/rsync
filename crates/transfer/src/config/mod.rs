@@ -178,7 +178,7 @@ pub struct ConnectionConfig {
     /// rendered relative to this root and the server's real filesystem layout
     /// never reaches the client. oc-rsync does not `chdir()`, so the root is
     /// carried explicitly and stripped by
-    /// [`crate::full_fname::full_fname`]. `None` outside a daemon server
+    /// `crate::full_fname::full_fname`. `None` outside a daemon server
     /// process, alongside [`daemon_module`](Self::daemon_module).
     ///
     /// # Upstream Reference
@@ -816,7 +816,7 @@ impl ServerConfig {
     /// - `options.c:2400-2411` - `if (append_mode) { ...; inplace = 1; }`.
     /// - `options.c:2413-2419` - `if (write_devices) { ...; inplace = 1; }`, the
     ///   adjacent block carrying the same implication for `--write-devices`.
-    ///   Both are evaluated here through [`implies_inplace`] so the two options
+    ///   Both are evaluated here through `implies_inplace` so the two options
     ///   cannot drift apart the way they did when only `--append` was handled.
     /// - `receiver.c:968` - `if (inplace || one_inplace)` selects the live
     ///   destination as the write target instead of a temp file.

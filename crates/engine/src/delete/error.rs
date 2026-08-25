@@ -2,7 +2,7 @@
 //!
 //! The phase-2 drain (`emit_one` / `emit_all`) hands the shared
 //! `DeletePlanMap` off to a freshly-built `DeleteEmitter` via
-//! [`Arc::try_unwrap`]. When the receiver still holds a clone of the
+//! `Arc::try_unwrap`. When the receiver still holds a clone of the
 //! plan-map handle, or the cursor receiver channel has already been
 //! taken by a prior drain attempt, the drain cannot proceed.
 //!
@@ -17,7 +17,7 @@
 //! (#2381), so the historical `CursorStillShared`/`CursorPoisoned`
 //! variants are no longer reachable; the residual cursor-side failure
 //! mode is `CursorReceiverAlreadyTaken`, which only fires if
-//! [`super::DeleteContext::into_emitter`] is called twice on the same
+//! `super::DeleteContext::into_emitter` is called twice on the same
 //! context value.
 //!
 //! [`Arc::strong_count`]: std::sync::Arc::strong_count

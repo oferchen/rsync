@@ -4,11 +4,11 @@
 //! state is split across [`BarrierState`] (in-flight counter +
 //! [`Condvar`]) and [`SlotData`] (per-file [`Mutex<FileSlot>`]), stored
 //! together as a [`SlotEntry`] in the [`super::ParallelDeltaApplier`]
-//! [`DashMap`]. The split lets [`super::SlotHandle`] (the payload
+//! [`DashMap`]. The split lets `super::SlotHandle` (the payload
 //! [`Arc<SlotData>`]) and `finish_file`'s writer reclaim
 //! ([`Arc::try_unwrap`] on the same payload Arc) hold independent Arc
 //! graphs from the notify-bearing [`Arc<BarrierState>`] the
-//! [`super::DecrementGuard`] carries, per the Option-B spec at
+//! `super::DecrementGuard` carries, per the Option-B spec at
 //! `docs/design/dg-2a-option-b-spec.md`.
 //!
 //! [`Arc<SlotData>`]: std::sync::Arc
@@ -33,7 +33,7 @@ use super::{FileSlot, ParallelApplyError};
 /// The DG-1 audit (`docs/design/decrementguard-audit.md`, section 4)
 /// traced the `finish_file` release race to one [`Arc`] graph being
 /// asked to carry two unrelated ownership obligations: the worker's
-/// `notify_all` fires from inside [`super::DecrementGuard::drop`] while
+/// `notify_all` fires from inside `super::DecrementGuard::drop` while
 /// the matching `Arc::clone` is still live (it only drops once the
 /// implicit field-drop glue runs after the body returns), so the
 /// flusher's `Arc::try_unwrap` on the same allocation observes
@@ -50,7 +50,7 @@ use super::{FileSlot, ParallelApplyError};
 ///   re-checks the predicate after waking observes a consistent value.
 /// - The counter is monotonic per slot-lifetime: every
 ///   `increment_inflight` is matched 1:1 with a `decrement_inflight`
-///   via the [`super::DecrementGuard`] RAII pairing. The guard holds an
+///   via the `super::DecrementGuard` RAII pairing. The guard holds an
 ///   [`Arc<BarrierState>`] so the pairing travels on this allocation
 ///   directly.
 ///
@@ -74,7 +74,7 @@ impl BarrierState {
     /// counter. The counter is bumped by [`Self::increment_inflight`]
     /// once a [`super::handle::SlotHandle`] is handed out and dropped
     /// back by [`Self::decrement_inflight`] when the matching
-    /// [`super::DecrementGuard`] retires.
+    /// `super::DecrementGuard` retires.
     pub(super) fn new() -> Self {
         Self {
             inflight: Mutex::new(0),
@@ -102,7 +102,7 @@ impl BarrierState {
     /// chance to re-evaluate the predicate; spurious wakeups are
     /// filtered by [`Self::wait_until_idle`]'s `wait_while` loop.
     ///
-    /// Invoked exclusively from [`super::DecrementGuard::drop`].
+    /// Invoked exclusively from `super::DecrementGuard::drop`.
     pub(super) fn decrement_inflight(&self) {
         let mut guard = self
             .inflight
@@ -142,7 +142,7 @@ impl BarrierState {
 /// payload Arc structurally disjoint from the notify-bearing Arc,
 /// `finish_file`'s `Arc::try_unwrap` on [`Arc<SlotData>`] becomes
 /// independent of the worker's lingering [`Arc<BarrierState>`] between
-/// `notify_all` and the end of [`super::DecrementGuard::drop`].
+/// `notify_all` and the end of `super::DecrementGuard::drop`.
 ///
 /// # Invariants
 ///
@@ -227,7 +227,7 @@ pub(super) struct SlotEntry {
     /// Per-file payload Arc. `finish_file` calls [`Arc::try_unwrap`]
     /// on this field to recover the [`FileSlot`].
     pub(super) data: Arc<SlotData>,
-    /// Per-file bookkeeping Arc. Workers' [`super::DecrementGuard`]
+    /// Per-file bookkeeping Arc. Workers' `super::DecrementGuard`
     /// clones live on this graph; `finish_file` never inspects the
     /// strong count.
     pub(super) barrier: Arc<BarrierState>,

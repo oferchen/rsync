@@ -53,7 +53,7 @@ pub enum RemoteRole {
 pub(super) struct RemoteOperandParsed {
     /// Full operand string (e.g., "user@host:/path").
     pub(super) operand: String,
-    /// Host portion (e.g., "host" or "192.168.1.1" or "[::1]").
+    /// Host portion (e.g., "host" or "192.168.1.1" or "\[::1\]").
     pub(super) host: String,
     /// Optional user portion (e.g., "user").
     pub(super) user: Option<String>,

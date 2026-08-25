@@ -1,7 +1,7 @@
 //! Nested-path parent anchoring for the `*_via_sandbox_or_fallback`
 //! helpers.
 //!
-//! The single-component fast path in [`single_component_leaf`] pins the
+//! The single-component fast path in `single_component_leaf` pins the
 //! leaf on the sandbox parent dirfd but leaves multi-component relative
 //! paths (`a/b/leaf`) to re-resolve every interior component through the
 //! ambient namespace on a path-based `std::fs` call. That re-resolution

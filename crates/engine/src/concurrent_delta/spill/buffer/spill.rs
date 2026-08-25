@@ -291,7 +291,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// On [`io::ErrorKind::NotFound`] for a directory-backed buffer this
     /// invokes [`recreate_spill_dir`](Self::recreate_spill_dir) and retries
     /// once. All other errors (ENOSPC, partial writes via the
-    /// [`Write::write_all`] contract, encoder failures) bubble up unchanged.
+    /// `Write::write_all` contract, encoder failures) bubble up unchanged.
     ///
     /// The on-disk record layout is `[u8 tag][u32 LE len][payload]` where
     /// `tag` selects the payload codec ([`SPILL_TAG_RAW`] or

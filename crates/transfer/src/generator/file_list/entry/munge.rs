@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// `munge symlinks = yes`, the sender restores the original target before it
 /// is encoded onto the wire so the receiver can reapply the prefix on its
 /// side. The receiver-side write path uses the matching
-/// [`crate::receiver::directory::apply_symlink_munge_prefix`] helper.
+/// `crate::receiver::directory::apply_symlink_munge_prefix` helper.
 ///
 /// Targets that lack the prefix pass through unchanged; this is the
 /// `llen > SYMLINK_PREFIX_LEN && strncmp(...) == 0` branch in upstream's

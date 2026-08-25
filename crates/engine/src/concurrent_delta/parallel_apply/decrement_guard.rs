@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use super::slot_barrier::BarrierState;
 
-/// RAII guard returned alongside a [`SlotHandle`] that decrements the
+/// RAII guard returned alongside a `SlotHandle` that decrements the
 /// per-slot in-flight counter when dropped. Keeping the decrement in a
 /// dedicated drop type makes the bookkeeping exception-safe: if the worker
 /// panics mid-write or returns early via `?`, the counter still drops
@@ -36,7 +36,6 @@ use super::slot_barrier::BarrierState;
 /// `docs/design/dg-2a-option-b-spec.md` section 2 for the wider
 /// rationale.
 ///
-/// [`SlotHandle`]: super::SlotHandle
 /// [`Arc<BarrierState>`]: std::sync::Arc
 pub(super) struct DecrementGuard {
     pub(super) barrier: Arc<BarrierState>,

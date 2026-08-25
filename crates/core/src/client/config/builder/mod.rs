@@ -12,7 +12,7 @@ pub struct ConfigConflict {
     /// The first conflicting option (e.g. `--inplace`).
     pub option1: &'static str,
     /// The second conflicting option (e.g. `--partial-dir`), or a sentinel such
-    /// as [`SSH_URL_OPERAND`] when the conflict is against an operand rather
+    /// as `SSH_URL_OPERAND` when the conflict is against an operand rather
     /// than a second option.
     pub option2: &'static str,
 }

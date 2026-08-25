@@ -30,7 +30,7 @@ use super::super::finalize::finalize_guard_and_metadata;
 
 /// Returns whether the current transfer satisfies every FICLONE precondition.
 ///
-/// Mirrors the macOS [`super::clonefile::eligible`] gate: FICLONE preserves
+/// Mirrors the macOS `super::clonefile::eligible` gate: FICLONE preserves
 /// the source's data and timestamps verbatim, so any code path that needs
 /// delta, sparse handling, inplace writes, compression, bandwidth shaping,
 /// staging directories, or xattr filter rules must fall through to the

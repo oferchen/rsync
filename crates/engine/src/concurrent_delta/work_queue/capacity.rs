@@ -1,6 +1,6 @@
 //! Capacity policy for the bounded work queue.
 //!
-//! Defines the default capacity multiplier used by [`bounded`](super::bounded)
+//! Defines the default capacity multiplier used by [`bounded`](super::bounded())
 //! plus the [`adaptive_queue_depth`] heuristic that tunes queue depth based on
 //! the average file size of the transfer set.
 

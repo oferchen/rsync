@@ -141,7 +141,7 @@ impl StageSignals {
 /// Classifies the instantaneous constraint stage from one window's signals.
 ///
 /// Returns the slowest stage matching the constraint signature (see the
-/// [module docs](self)), or [`Constraint::Unknown`] when none match. Pure and
+/// `module docs`), or [`Constraint::Unknown`] when none match. Pure and
 /// side-effect free so it can be exhaustively truth-tabled; [`DrumIdentifier`]
 /// layers hysteresis on top.
 #[must_use]

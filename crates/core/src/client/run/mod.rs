@@ -815,7 +815,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
     /// destination-side bytes (`REMOTE`) because no wire stage is
     /// present. This is the composition of the sender and receiver
     /// iconv contexts upstream rsync opens when both processes share an
-    /// address space: see [`IconvSetting::resolve_local_copy_converter`]
+    /// address space: see `IconvSetting::resolve_local_copy_converter`
     /// for the derivation against `rsync.c:118-140`. The SSH/daemon
     /// invocation builder already forwards the user's `--iconv=` string
     /// to the remote CLI verbatim, so the bare-`LOCAL` form keeps
