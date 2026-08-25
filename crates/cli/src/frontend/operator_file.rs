@@ -42,3 +42,25 @@ pub(crate) fn open_read(path: &Path) -> io::Result<File> {
         File::open(path)
     }
 }
+
+/// Opens a filter file through the same walk, additionally confined to the
+/// session's root.
+///
+/// A filter file is the one operator path whose CONTENTS come back to a peer,
+/// in "Unknown filter rule" errors, so an out-of-tree read is a disclosure and
+/// not merely a wrong file. Ownership alone cannot stop it: a root-owned
+/// symlink is trusted by the walk by design.
+///
+/// upstream: `rsync-3.5.0/exclude.c:1680-1684` - `parse_filter_file()` sets
+/// `operator_path_resolve = 1` around its open, exempting only the daemon's own
+/// `filter` / `include from` / `exclude from` parameters.
+pub(crate) fn open_read_confined(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_read_confined(path)
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path)
+    }
+}
