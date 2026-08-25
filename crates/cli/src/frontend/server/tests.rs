@@ -322,6 +322,50 @@ fn parse_server_args_does_not_leak_confine_root_into_the_destination() {
     );
 }
 
+/// A peer's `-M--log-file=FILE` must not become the destination path.
+///
+/// `server_options()` never emits `--log-file`, so it reaches a server only as
+/// a client's remote option, forwarded verbatim by a restricted wrapper
+/// (`support/rrsync:84` allows it as a confined-path argument). It was in
+/// neither server option table, so the whole token fell through to the
+/// positional list and was taken for the destination.
+///
+/// Both spellings below are the two MEASURED failure shapes of the same leak,
+/// and they fail DIFFERENTLY - which is why the divergence looked
+/// platform-specific rather than universal:
+///
+/// - the multi-component `/proc/self/fd/3` value (what a Linux restricted
+///   wrapper rewrites the path to) cannot be created as a relative directory,
+///   so the receiver reported `server error: No such file or directory`, rc=12;
+/// - the single-component `protected` value (no such rewrite on macOS) CAN be
+///   created, so the transfer silently wrote into a file literally named
+///   `--log-file=protected` in the module root and exited 0. That vacuous
+///   success is why `rrsync-no-overwrite-logfile` passed on one platform.
+///
+/// upstream: options.c:796 - the `POPT_ARG_STRING` entry that binds the value
+/// on the server side, so it is never an operand there either.
+#[test]
+fn parse_server_args_does_not_leak_log_file_into_the_destination() {
+    for value in ["/proc/self/fd/3", "protected"] {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("-rIe.iLsfxCIvu"),
+            OsString::from(format!("--log-file={value}")),
+            OsString::from("--log-format=X"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-rIe.iLsfxCIvu");
+        assert_eq!(
+            pos_args,
+            vec![OsString::from("dest")],
+            "--log-file={value} must be consumed as a flag, never left in the \
+             positional list where it is taken for the destination"
+        );
+    }
+}
+
 /// The value must also survive to the config, not merely be swallowed.
 ///
 /// Paired with the operand test above on purpose: they exercise DIFFERENT

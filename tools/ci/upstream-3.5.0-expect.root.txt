@@ -281,7 +281,7 @@ rrsync-logfile-symlink pass
 rrsync-merge-file-confine fail
 rrsync-no-overwrite-backup-collision pass
 rrsync-no-overwrite-delay-updates pass
-rrsync-no-overwrite-logfile fail
+rrsync-no-overwrite-logfile pass
 rrsync-no-overwrite-partial-dir pass
 rrsync-pull-arg-shapes fail
 rrsync-pull-delivers-content pass
