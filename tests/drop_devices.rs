@@ -343,3 +343,113 @@ fn drop_d_does_not_change_the_remote_argv() {
         "--drop-D must never be forwarded to the remote side"
     );
 }
+
+/// Writes an SSH-shaped remote-shell shim that drops the options and the host
+/// placeholder, then execs the server command locally. Mirrors the shim in
+/// `tests/only_write_batch_remote_push.rs`; it gives a genuine two-process push
+/// over a pipe pair without an SSH server.
+fn write_rsh_shim(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let script = dir.join("fake_rsh.sh");
+    let body = "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do\n\
+         case \"$1\" in\n\
+         -*) shift ;;\n\
+         *) break ;;\n\
+         esac\n\
+         done\n\
+         # $1 is the host placeholder; the server command follows it.\n\
+         shift || true\n\
+         exec \"$@\"\n";
+    fs::write(&script, body).expect("write rsh shim");
+    let mut perms = fs::metadata(&script).expect("stat shim").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod shim");
+    script
+}
+
+/// Runs a remote-shell push of `src/` into `dest/` with `flags`, and reports
+/// which of the seeded special entries exist at the destination afterwards.
+///
+/// `--rsync-path` forces a real external `--server` process. That is the whole
+/// point: the in-process embedded-ssh path builds its `ServerConfig` straight
+/// from the client's config, so it carries every flag across without ever
+/// consulting the server argument decoder - the one layer this exercises.
+fn remote_push(flags: &[&str]) -> (test_support::CliOutput, Vec<&'static str>, bool) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (src, seeded) = seed_specials(temp.path());
+    assert!(
+        !seeded.is_empty(),
+        "no special file type could be created, so this test would be vacuous"
+    );
+
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(&dest).expect("create dest");
+    let binary = oc_rsync_binary();
+    let shim = write_rsh_shim(temp.path());
+
+    let output = test_support::OcRsyncCliRunner::new()
+        .binary(&binary)
+        .args(["-a", "--specials"])
+        .args(flags)
+        .arg("--rsh")
+        .arg(&shim)
+        .arg("--rsync-path")
+        .arg(&binary)
+        .arg(format!("{}/", src.display()))
+        .arg(format!("droptesthost:{}/", dest.display()))
+        .run()
+        .expect("remote push did not finish");
+
+    let created: Vec<&'static str> = seeded
+        .iter()
+        .copied()
+        .filter(|name| is_special(&dest.join(name)))
+        .collect();
+    let regular_arrived = dest.join("regular.txt").is_file();
+    (output, created, regular_arrived)
+}
+
+/// A `--drop-D` that reaches the server in its own argv must be honoured by the
+/// server-side receiver.
+///
+/// This is the shape a restricted wrapper depends on: `support/rrsync:616-635`
+/// appends `--drop-D` to the server command and deliberately does NOT strip the
+/// client's `-D`, because `--no-D` would also reframe the file list's rdev
+/// fields. `--remote-option` is the client-side spelling of the same argv edit.
+///
+/// Upstream keeps `drop_devices` in its own variable (`options.c:63`) and gates
+/// creation on `!drop_devices && (...)` at `generator.c:2031`, so it beats `-D`
+/// and `--specials` unconditionally rather than by argv order - which is why
+/// `--specials` is passed here alongside it.
+#[test]
+fn remote_option_drop_d_withholds_specials_on_the_server_receiver() {
+    let (output, created, regular_arrived) = remote_push(&["-M--drop-D"]);
+
+    output.assert_success();
+    assert!(
+        created.is_empty(),
+        "the server receiver created {created:?} despite --drop-D in its own argv"
+    );
+    assert!(
+        regular_arrived,
+        "--drop-D must withhold only the special entries; the ordinary transfer continues"
+    );
+}
+
+/// The non-vacuity companion: without the forwarded option the very same push
+/// creates every special type. Without this, the test above would also pass if
+/// the fixture could never produce a special at the destination at all.
+#[test]
+fn the_same_remote_push_creates_specials_without_drop_d() {
+    let (output, created, regular_arrived) = remote_push(&[]);
+
+    output.assert_success();
+    assert!(
+        !created.is_empty(),
+        "no special type survived an ordinary remote push, so the --drop-D cell \
+         above would pass for the wrong reason"
+    );
+    assert!(regular_arrived, "the ordinary transfer must still happen");
+}
