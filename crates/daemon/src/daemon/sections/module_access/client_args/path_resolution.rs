@@ -548,12 +548,124 @@ fn clamp_basis_to_module(
     resolve_base: &std::path::Path,
     module_root_canonical: &std::path::Path,
 ) -> std::path::PathBuf {
-    let tail = if ref_path.is_absolute() {
+    // upstream: `util1.c:1145` tests `*p == '/'` on the peer-supplied byte
+    // string, not a platform notion of absoluteness. `Path::is_absolute()` is
+    // FALSE on Windows for `/etc/foo` (no drive prefix), which would route a
+    // peer-sent absolute value down the relative arm and skip the re-root
+    // entirely. `has_root()` is true for a leading separator on both platforms
+    // and additionally true for a drive-absolute Windows path.
+    let tail = if ref_path.has_root() {
         ref_path.to_path_buf()
     } else {
         destination_below_root(resolve_base, module_root_canonical).join(ref_path)
     };
     module_root_canonical.join(collapse_under_root(&tail))
+}
+
+/// Collapses a RELATIVE operator path the way `sanitize_path()` does when the
+/// value carries no leading `/`, keeping the result relative.
+///
+/// upstream: `util1.c:1145-1151` prefixes the rootdir **only** inside
+/// `if (*p == '/')`. A relative value therefore keeps no prefix at all: it is
+/// merely `..`-collapsed and handed back relative, for the consumer to anchor
+/// wherever it anchors.
+///
+/// The `depth` budget is upstream's, and it is a budget for *leading* `..`
+/// only (`util1.c:1184-1197`): a `..` is kept when nothing has been emitted
+/// yet and budget remains, in which case upstream advances its virtual start
+/// past the `../` so the following component is again "at the start" - which
+/// is why consecutive leading `..` each consume one unit, and why a `..` that
+/// pops the output back to empty re-enters the leading state. Any other `..`
+/// backs up over one emitted component, or is discarded when there is nothing
+/// to back up over. There is no arm that refuses.
+///
+/// Pure path arithmetic: no syscalls, so it is well defined for a directory
+/// that does not exist yet.
+fn collapse_relative_within_depth(path: &std::path::Path, depth: usize) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+
+    let mut budget = depth;
+    let mut leading_parents = 0usize;
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => tail.push(name.to_os_string()),
+            // upstream: util1.c:1173-1182 drops extra slashes and `.` elements.
+            // A root or prefix cannot reach here - the caller routes absolute
+            // values to `clamp_basis_to_module` instead.
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            Component::ParentDir => {
+                if tail.is_empty() && budget > 0 {
+                    budget -= 1;
+                    leading_parents += 1;
+                } else {
+                    tail.pop();
+                }
+            }
+        }
+    }
+
+    let mut out = PathBuf::new();
+    for _ in 0..leading_parents {
+        out.push("..");
+    }
+    out.extend(tail);
+    if out.as_os_str().is_empty() {
+        // upstream: util1.c:1203-1206 - "If the resulting name would be empty,
+        // change it into a `.`".
+        return PathBuf::from(".");
+    }
+    out
+}
+
+/// Sanitises a client-supplied `--partial-dir` for a daemon receiver.
+///
+/// upstream: `main.c:1238-1239` runs `partial_dir` through the very same
+/// `sanitize_path(NULL, partial_dir, NULL, curr_dir_depth, SP_DEFAULT)` call it
+/// runs over `basis_dir[]`, so the *rewrite* is identical for both. What
+/// differs is the CONSUMER, and that is why this cannot simply reuse
+/// [`clamp_basis_to_module`]:
+///
+/// - an alt-basis dir and `--backup-dir` are anchored ONCE, at the destination,
+///   so pre-joining the destination onto a relative value (what
+///   `clamp_basis_to_module` does) reaches the same place upstream reaches when
+///   its consumer resolves the still-relative value against `curr_dir`;
+/// - `--partial-dir` is anchored PER FILE at `dirname(fname)`
+///   (`util1.c` `partial_dir_fname()`, mirrored by `temp_guard.rs`
+///   `partial_dir_fname`). Pre-joining the destination would pin every entry's
+///   staging directory at the transfer root, so a nested entry would stage at
+///   `<module_root>/pdir` where upstream stages at `<dest>/sub/pdir`.
+///
+/// So the two arms are kept apart: an ABSOLUTE value re-roots at the module
+/// root exactly as a basis dir does, and a RELATIVE value stays relative with
+/// only its `..` collapsed, for `partial_dir_fname` to anchor per file.
+///
+/// Keeping a relative value relative also preserves the meaning of
+/// `engine::remove_partial_dir`'s absolute-path guard, which reads the value's
+/// own shape to decide whether the directory is operator-named.
+fn sanitize_partial_dir(
+    ref_path: &std::path::Path,
+    resolve_base: &std::path::Path,
+    module_root_canonical: &std::path::Path,
+) -> std::path::PathBuf {
+    if ref_path.has_root() {
+        // upstream: util1.c:1145-1151 - the test is `*p == '/'` on the
+        // peer-supplied bytes, so `has_root()` not `is_absolute()`: the latter
+        // is FALSE on Windows for a leading-slash path and would skip the
+        // re-root. See `clamp_basis_to_module` for the same rule. - the rootdir replaces the leading slash
+        // and `depth` is forced to 0, which is exactly the absolute arm of
+        // `clamp_basis_to_module`.
+        return clamp_basis_to_module(ref_path, resolve_base, module_root_canonical);
+    }
+    // upstream: util1.c:47 + :1391 - `curr_dir_depth` is the destination's
+    // depth below the module root, "only set for a sanitizing daemon", counted
+    // by `count_dir_elements()`. oc has no chdir, so the destination is passed
+    // explicitly and its component count is the same number.
+    let depth = destination_below_root(resolve_base, module_root_canonical)
+        .components()
+        .count();
+    collapse_relative_within_depth(ref_path, depth)
 }
 
 /// Whether an already-clamped basis directory resolves out of the module tree

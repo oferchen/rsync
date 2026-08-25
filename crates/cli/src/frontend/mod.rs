@@ -123,6 +123,7 @@ mod local_time;
 mod lsm_status;
 mod operator_file;
 mod out_format;
+mod partial_dir;
 pub(crate) mod password;
 /// Progress and verbose output helpers extracted from the CLI front-end.
 pub mod progress;

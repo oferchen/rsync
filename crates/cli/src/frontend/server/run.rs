@@ -383,10 +383,17 @@ where
     // with no partial-dir at all - in that case the receiver's normal commit
     // path runs, which is what the regression test
     // `symlink-dirlink-basis_test.py` exercises through `lsh.sh`.
+    //
+    // upstream: options.c:2594-2598 - the end-of-parse normalisation sits
+    // OUTSIDE the `!am_server` guard at :2590, so the server applies it to the
+    // value the peer sent exactly as the client applies it to its own. Taking
+    // the peer's spelling verbatim let `--partial-dir=.` through, and a
+    // relative partial dir is re-anchored per file at `dirname(dest)`, so `.`
+    // would make the staging target the destination file itself.
     if let Some(dir) = &long_flags.partial_dir {
-        let path = std::path::PathBuf::from(dir);
-        config.partial_dir = Some(path);
-        config.has_partial_dir = true;
+        config.partial_dir =
+            crate::frontend::partial_dir::normalize_partial_dir(std::path::Path::new(dir));
+        config.has_partial_dir = config.partial_dir.is_some();
     }
     // upstream: options.c:2891-2892 - `--delay-updates` rides alongside
     // `--partial-dir` whenever both are active.
