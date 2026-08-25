@@ -166,10 +166,18 @@ else
 fi
 
 # The crate list must be derived from the tree, not pinned in the script.
+#
+# The negatives are pure libraries that never spawn a subprocess, so they can
+# only appear if the derivation has broken. `test-support` is deliberately NOT
+# among them: it is the provider, and `derive_resolver_packages` exempts only a
+# provider's `src/`, counting any `tests/` reference as a real call site. Its own
+# integration tests name `OcRsyncCliRunner`, so it joins the set by that rule -
+# a conservative classification, since being in the set only ever *demands* a
+# build step, never omits one.
 cases=$((cases + 1))
 crates=$(python3 "${target}" --list-crates)
 if grep -qE '^(cli|core|engine|metadata|transfer)$' <<<"${crates}" &&
-    ! grep -qE '^(checksums|protocol|test-support)$' <<<"${crates}"; then
+    ! grep -qE '^(checksums|protocol)$' <<<"${crates}"; then
     echo "ok(derived_crates)"
 else
     echo "FAIL(derived_crates): unexpected crate list:" >&2
