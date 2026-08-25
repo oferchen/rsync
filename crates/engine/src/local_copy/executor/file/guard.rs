@@ -118,13 +118,40 @@ pub fn remove_incomplete_destination(destination: &Path) {
 /// closing the CVE-2024-12747 residual on the temp-create side. This mirrors the
 /// transfer receiver's `temp_guard::try_create_new`. On every other platform it
 /// is the plain `create_new` open the local-copy guard has always used.
-fn create_new_temp(path: &Path) -> io::Result<fs::File> {
+/// Exclusively creates the staging temp, resolving through the ownership walk
+/// when the operator named a `--temp-dir`.
+///
+/// upstream: `receiver.c:426-434` `open_tmpfile()` - for any non-chrooted
+/// receiver upstream calls `secure_mkstemp(fnametmp, mode, tmpdir != NULL)`,
+/// whose third argument selects the ownership-walk resolver for an
+/// operator-supplied `--temp-dir` and the strict transfer-path one otherwise.
+/// `operator_path` carries upstream's own parameter name and meaning, and it is
+/// `temp_dir.is_some()` for the same reason upstream writes `tmpdir != NULL`.
+///
+/// Without the walk, `O_EXCL` guards only the final component: it refuses a
+/// planted `.name.XXXXXX`, but a symlink planted at the `--temp-dir` itself is
+/// resolved through before the leaf is reached, so the scratch file - and the
+/// transferred data with it - is written outside the tree.
+///
+/// The `--insecure-links` opt-out needs no threading here: the walk consults
+/// the installed session policy itself (`fast_io::confinement`), so an
+/// opted-out session keeps following exactly as before.
+///
+/// The mode stays `0o666` so the umask still decides the created bits, matching
+/// what `OpenOptions::create_new` did; this change is about WHICH path is
+/// resolved, not what permissions land on the temp.
+fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
     #[cfg(windows)]
     {
+        // Windows was already hardened here; the walk is the Unix counterpart.
+        let _ = operator_path;
         fast_io::create_new_no_follow(path)
     }
     #[cfg(not(windows))]
     {
+        if operator_path {
+            return fast_io::operator_open_create_new(path, 0o666);
+        }
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -436,7 +463,7 @@ impl DestinationWriteGuard {
         // partial only appears at its final resting place on interrupt/success.
         loop {
             let temp_path = temp_name_with_suffix(destination, temp_dir, &temp_suffix());
-            match create_new_temp(&temp_path) {
+            match create_new_temp(&temp_path, temp_dir.is_some()) {
                 Ok(file) => {
                     let final_path = destination.to_path_buf();
                     // Only --partial/--partial-dir temps need the abort-path
