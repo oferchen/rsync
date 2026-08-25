@@ -37,6 +37,8 @@ pub mod invocation;
 /// Shared client-visible itemize sink for the remote transports.
 pub(crate) mod itemize_sink;
 /// `--info=`/`--debug=` server-argument construction (make_output_option).
+/// Shared source/destination operand split for the remote transports.
+pub(crate) mod operand_split;
 pub(crate) mod operator_file;
 pub(crate) mod output_option;
 /// Remote-to-remote transfer via local proxy relay.

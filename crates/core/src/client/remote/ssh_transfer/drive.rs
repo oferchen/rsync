@@ -28,6 +28,7 @@ use super::super::flags;
 use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
 use super::super::itemize_sink::ItemizeEventSink;
+use super::super::operand_split::split_transfer_operands;
 use super::connection::build_ssh_connection;
 use super::exit_status::{convert_server_stats_to_summary, map_child_exit_status};
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
@@ -88,15 +89,11 @@ pub fn run_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    if args.len() < 2 {
-        return Err(invalid_argument_error(
-            "need at least one source and one destination",
-            1,
-        ));
-    }
-
-    let (sources, destination) = args.split_at(args.len() - 1);
-    let destination = &destination[0];
+    // upstream: main.c:1465-1466 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // has already inferred list-only from the operand count.
+    let fallback_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
 

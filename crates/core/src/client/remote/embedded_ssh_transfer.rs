@@ -42,6 +42,7 @@ use super::implied_source::implied_source_args_for_pull;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
+use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::convert_server_stats_to_summary;
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
@@ -77,15 +78,11 @@ pub fn run_embedded_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    if args.len() < 2 {
-        return Err(invalid_argument_error(
-            "need at least one source and one destination",
-            1,
-        ));
-    }
-
-    let (sources, destination) = args.split_at(args.len() - 1);
-    let destination = &destination[0];
+    // upstream: main.c:1465-1466 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // has already inferred list-only from the operand count.
+    let fallback_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
 
