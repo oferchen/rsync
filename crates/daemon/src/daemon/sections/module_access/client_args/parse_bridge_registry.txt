@@ -1,0 +1,11 @@
+# Registered parse-bridge gaps: options the daemon client EMITS that the
+# daemon's server-argument parser does not bridge into ServerConfig.
+#
+# Format: <option-name> <reason>
+#
+# Keyed on OPTION NAME, never on a count. A numeric baseline would freeze in
+# the rows this gate exists to surface and make gap N+1 invisible inside it
+# (task 668). Anything not listed here is red the moment it appears.
+#
+# Removing a line is how a fix lands: once an option is bridged the gate FAILS
+# on the stale entry, so the registry can only shrink.

@@ -26,3 +26,5 @@ include!("client_args/long_form_args.rs");
 include!("client_args/module_directives.rs");
 
 include!("client_args/tests.rs");
+
+include!("client_args/parse_bridge_gate.rs");
