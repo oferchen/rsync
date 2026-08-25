@@ -27,6 +27,8 @@ use super::{DeleteEvent, DeleteFs, RecordingDeleteFs};
 use crate::util::poison::lock_or_recover;
 
 mod cohort;
+#[cfg(unix)]
+mod daemon_escape;
 mod dispatch;
 mod error_policy;
 #[cfg(unix)]

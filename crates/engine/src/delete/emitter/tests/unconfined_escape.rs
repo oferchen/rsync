@@ -1,26 +1,38 @@
-//! CF-P0a / CF-P0b: the path-based [`RealDeleteFs`] methods escape the tree.
+//! CF-P0a / CF-P0b: the path-based [`RealDeleteFs`] methods escape the tree
+//! when no confinement root has been installed.
 //!
-//! [`RealDeleteFs`]'s six path-based methods are bare `std::fs` calls
-//! (`fs.rs` `unlink_file` / `rmdir` / `unlink_symlink` / `unlink_device`
-//! / `unlink_special` / `remove_dir_all`). They are what the emitter
-//! issues whenever no [`fast_io::DirSandbox`] has been wired to it, so
-//! every intermediate component of the deletion path is resolved by the
-//! kernel with symlink following fully enabled.
+//! [`RealDeleteFs`]'s six path-based methods (`fs.rs` `unlink_file` /
+//! `rmdir` / `unlink_symlink` / `unlink_device` / `unlink_special` /
+//! `remove_dir_all`) now resolve through
+//! [`fast_io::ConfinedFallback`], but that resolution has two halves:
+//! an ownership walk and an outside-the-root test. `Activation::root()`
+//! is `None` until a session is installed, so the root half cannot fire,
+//! and the ownership half trusts a symlink owned by our own euid. A
+//! local `--delete` therefore still walks straight through a planted
+//! symlink.
 //!
-//! These tests are a RED baseline, not a regression guard: each one
-//! plants a symlink mid-path and then asserts that the entry the method
-//! actually destroyed lives OUTSIDE the deletion tree. They document the
-//! defect the confined-fallback work has to close, so that work cannot
-//! land vacuously.
+//! These tests assert that escape rather than hiding it. Each plants a
+//! symlink mid-path and then asserts that the entry the method actually
+//! destroyed lives OUTSIDE the deletion tree. They are deliberately NOT
+//! flipped to a refusal: the routing alone does not close the local
+//! path, and a test asserting otherwise would be describing a session
+//! install that has not happened. Installing one on the local path is
+//! task 1009's decision, not this module's.
+//!
+//! [`the_delete_routing_refuses_only_once_a_session_root_is_installed`]
+//! is the other half of the pair - the same fixture with a root
+//! installed, where the routing does refuse. See
+//! [`super::daemon_escape`] for the daemon shape, where a module root
+//! IS installed in production.
 //!
 //! Every escape test is paired with a non-vacuity companion that runs
 //! the same method against a genuine in-tree directory. Without the
 //! companion an escape assertion would also pass if the fixture were
 //! simply unable to remove anything at all.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:2896-2961` `ds_descend()` - upstream
-//! resolves a deletion path per component and refuses an absolute
-//! symlink target rather than walking through it.
+//! upstream: `rsync-3.5.0/syscall.c:2891` `ds_descend()` - upstream
+//! resolves a deletion path per component, and at `syscall.c:2953`
+//! refuses an absolute symlink target rather than walking through it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -109,7 +121,7 @@ fn assert_escaped(fixture: &Fixture, victim: &Path) {
 /// `unlink_file` walks `tree/hop` into `outside` and removes the file
 /// there. The emitter asked to delete something under `tree`.
 #[test]
-fn unlink_file_escapes_through_a_symlinked_parent() {
+fn unlink_file_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.plant_file(&fixture.outside, "victim");
 
@@ -145,7 +157,7 @@ fn unlink_file_without_a_symlink_stays_in_the_tree() {
 /// `rmdir` follows the same planted component and removes the empty
 /// directory in the out-of-tree sibling.
 #[test]
-fn rmdir_escapes_through_a_symlinked_parent() {
+fn rmdir_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.outside.join("victim");
     fs::create_dir(&victim).expect("plant victim dir");
@@ -180,7 +192,7 @@ fn rmdir_without_a_symlink_stays_in_the_tree() {
 /// `unlink_symlink` removes the out-of-tree symlink itself. The leaf is
 /// not followed - the escape is entirely in the walk to the parent.
 #[test]
-fn unlink_symlink_escapes_through_a_symlinked_parent() {
+fn unlink_symlink_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.outside.join("victim");
     plant_symlink(Path::new("/dev/null"), &victim);
@@ -202,7 +214,7 @@ fn unlink_symlink_escapes_through_a_symlinked_parent() {
 /// uses a regular file because `mknod(2)` needs privileges the test
 /// suite does not have.
 #[test]
-fn unlink_device_escapes_through_a_symlinked_parent() {
+fn unlink_device_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.plant_file(&fixture.outside, "victim");
 
@@ -216,7 +228,7 @@ fn unlink_device_escapes_through_a_symlinked_parent() {
 /// `unlink_special` escapes the same way, here against a real FIFO so
 /// at least one non-regular kind is exercised end to end.
 #[test]
-fn unlink_special_escapes_through_a_symlinked_parent() {
+fn unlink_special_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.outside.join("victim");
     mkfifo(&victim);
@@ -235,7 +247,7 @@ fn unlink_special_escapes_through_a_symlinked_parent() {
 /// this recursive fallback "is vulnerable to the symlink-swap class the
 /// carrier closes"; this is that concession made observable.
 #[test]
-fn remove_dir_all_escapes_through_a_symlinked_parent() {
+fn remove_dir_all_escapes_when_no_confinement_root_is_installed() {
     let fixture = Fixture::new();
     let victim = fixture.outside.join("victim");
     fs::create_dir(&victim).expect("plant victim dir");
@@ -292,5 +304,48 @@ fn mkfifo(path: &Path) {
         path.symlink_metadata().is_ok(),
         "mkfifo produced no node at {}",
         path.display()
+    );
+}
+
+/// The A/B that says WHY the escape above still happens after
+/// `RealDeleteFs` was routed onto `ConfinedFallback`.
+///
+/// `Activation::outside_root` is `self.root().is_some_and(..)`, so with no
+/// session installed it is unconditionally false and the root half of the
+/// ownership walk never fires. What remains is the ownership half, which
+/// trusts a symlink owned by our own euid and follows it - and the fixture
+/// plants exactly such a symlink. So the routed delete path resolves through
+/// arm 2 and still lands outside the tree.
+///
+/// This is the PRECONDITION, stated rather than hidden: the routing is a
+/// prerequisite that stays inert until a session is installed. Installing one
+/// is task 1009's job, deliberately NOT done here - a production delete path
+/// that installed its own session would be a policy decision, not a routing
+/// one.
+#[test]
+fn the_delete_routing_refuses_only_once_a_session_root_is_installed() {
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+
+    let fixture = Fixture::new();
+    let victim = fixture.plant_file(&fixture.outside, "victim");
+
+    install_session(&Activation {
+        role: Role::Receiver,
+        daemon: DaemonState::NotDaemon,
+        insecure_links: LocalInsecureLinks::default(),
+        confine_root: Some(fixture.tree.clone()),
+    });
+
+    let refused = RealDeleteFs.unlink_file(&fixture.through_symlink("victim"));
+
+    assert!(
+        refused.is_err(),
+        "with a confinement root installed the routed delete must refuse the escape"
+    );
+    assert!(
+        victim.exists(),
+        "the out-of-tree victim must survive a refused delete"
     );
 }
