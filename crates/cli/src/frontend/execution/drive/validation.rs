@@ -6,9 +6,6 @@ use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
 
-/// Error message when `--remote-option` is used without a remote connection.
-pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
-    "the --remote-option option may only be used with remote connections";
 /// Error message when a password option is used without a daemon connection.
 pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str = "the --password-file and --password-command options may only be used when accessing an rsync daemon";
 /// Error message when `--connect-program` is used without a daemon connection.
@@ -23,24 +20,24 @@ pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
 /// silently ignores it on local copies (options.c stores the value but only
 /// uses it when spawning a remote shell). The upstream testsuite relies on
 /// this behavior (e.g., the exclude test passes `--rsync-path` on local runs).
+///
+/// Note: `--remote-option` is likewise NOT rejected. Upstream appends its
+/// values to the argv of the server it starts (options.c:3175-3182), and a
+/// local copy still forks one, so `-M` reaches the receiving side there
+/// instead of being an error. oc reproduces that by folding the values into
+/// its own option stream when the transfer is local - see
+/// `local_remote_option_argv` in the argument parser - so by the time this runs
+/// they have already been applied.
 pub(super) fn validate_local_only_options<Err>(
     has_password_override: bool,
     has_password_option: bool,
     connect_program: Option<&OsString>,
     _rsync_path: Option<&OsString>,
-    remote_options: &[OsString],
     stderr: &mut MessageSink<Err>,
 ) -> Option<i32>
 where
     Err: Write,
 {
-    if !remote_options.is_empty() {
-        return Some(reject_local_only_option(
-            stderr,
-            REMOTE_OPTION_REMOTE_ONLY_MESSAGE,
-        ));
-    }
-
     // upstream imposes no daemon-only restriction on `--protocol`: setup_protocol
     // (compat.c) runs for local copies too, so `--protocol=N` (20..=32) is
     // accepted locally and simply ignored (this build never negotiates a

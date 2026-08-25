@@ -20,6 +20,7 @@ use crate::frontend::progress::{NameOutputLevel, ProgressSetting, StderrMode};
 use core::client::{
     AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
 };
+use engine::operand::operand_is_remote;
 
 use super::coerce::{parse_checksum_threads, parse_spill_threshold_bytes, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
@@ -143,6 +144,63 @@ fn check_remote_option_dashes(remote_options: &[OsString]) -> Result<(), clap::E
     Ok(())
 }
 
+/// Splices `-M` / `--remote-option` values into the option stream of a local
+/// transfer, returning the argv to re-parse, or `None` when the fold does not
+/// apply.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/options.c:1763-1771` - each `-M` value is accumulated into
+///   `remote_options[]`.
+/// - `rsync-3.5.0/options.c:3175-3182` - `server_options()` appends that whole
+///   array to the argv of the server the client starts.
+///
+/// A local copy is NOT an exception there: `do_cmd()` still forks a server
+/// child (`local_child` -> `child_main` -> `start_server`), so the child parses
+/// the `-M` values with the same option table as every other argument.
+/// Upstream has no local-transfer refusal for `-M` - the only "remote
+/// connections" string in the whole C tree is an unrelated comment in
+/// `socket.c`.
+///
+/// oc has no server child on a local copy: one process performs the whole
+/// transfer, and the options `-M` carries (`--fake-super` and friends) already
+/// act on the receiving side there. Re-parsing argv with each value spliced in
+/// therefore reproduces upstream's semantics through the SAME option table,
+/// which is exactly what upstream's child re-parse gets for free - and it
+/// avoids a hand-maintained per-option mapping that would silently omit
+/// whatever it failed to list.
+///
+/// The values are spliced immediately after the program name so they are
+/// parsed as ordinary options; [`check_remote_option_dashes`] has already
+/// guaranteed each begins with `-`, so none can be mistaken for an operand.
+///
+/// The transfer is judged local from clap's own operand split rather than a
+/// hand-rolled scan of the raw argv, so this cannot disagree with the option
+/// vs operand boundary the rest of the parse used.
+fn local_remote_option_argv(
+    matches: &clap::ArgMatches,
+    args: &[OsString],
+) -> Option<Vec<OsString>> {
+    let remote_options: Vec<OsString> = matches
+        .get_many::<OsString>("remote-option")?
+        .cloned()
+        .collect();
+    if remote_options.is_empty() {
+        return None;
+    }
+    let mut operands = matches.get_many::<OsString>("args")?.peekable();
+    operands.peek()?;
+    if operands.any(|operand| operand_is_remote(operand)) {
+        return None;
+    }
+    let (program, rest) = args.split_first()?;
+    let mut folded = Vec::with_capacity(args.len() + remote_options.len());
+    folded.push(program.clone());
+    folded.extend(remote_options);
+    folded.extend_from_slice(rest);
+    Some(folded)
+}
+
 /// Parses command-line arguments into a structured [`ParsedArgs`] representation.
 ///
 /// This function accepts an iterator of arguments (typically from `std::env::args_os()`)
@@ -168,6 +226,15 @@ where
     let args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;
 
+    // A local transfer applies its `-M` values to itself, exactly as upstream's
+    // forked server child does. Re-parsed here, before any check below, so every
+    // later validation sees the final option set.
+    if let Some(folded) = local_remote_option_argv(&matches, &args) {
+        let command = clap_command(program_name.as_str());
+        let folded = hoist_options_before_operands(&command, folded);
+        let folded = expand_short_options(&command, folded);
+        matches = command.try_get_matches_from(folded)?;
+    }
     check_basis_dir_limit(&matches)?;
     #[cfg(not(feature = "quic"))]
     check_quic_feature(&matches)?;
