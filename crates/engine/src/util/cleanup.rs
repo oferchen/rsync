@@ -86,6 +86,52 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
         std::fs::DirBuilder::new().recursive(true).create(dir)
     }
 }
+/// Removes a non-directory occupying the `--partial-dir` name so the staging
+/// directory can be created in its place.
+///
+/// A no-op when the name is absent or already a directory; the caller creates
+/// it in the first case and reuses it in the second.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/util1.c:1521-1528` `handle_partial_dir()` - `do_lstat_at`
+///   then, when the entry exists and is not a directory,
+///   `do_unlink_at(dir) < 0` aborts, otherwise `do_mkdir_at` runs against the
+///   cleared name. Without the unlink an obstruction is fatal, where upstream
+///   clears it and proceeds.
+///
+/// Only the FINAL component is cleared. Upstream's `handle_partial_dir` names
+/// exactly one directory, so an obstruction standing where an *ancestor*
+/// belongs is not something upstream removes and is not removed here either -
+/// it surfaces as the caller's create error.
+///
+/// The probe is `symlink_metadata`, so a symlink at the name is removed as the
+/// non-directory it is rather than being followed to whatever it points at
+/// (upstream's `do_lstat_at` makes the same choice).
+///
+/// # Errors
+///
+/// Surfaces the `lstat` error for anything other than "not found", and any
+/// `unlink` error.
+pub fn clear_partial_dir_obstruction(dir: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        // A SYMLINK is deliberately left in place, which upstream would unlink.
+        // Upstream can afford to because its unlink runs inside
+        // `operator_path_resolve`, so a link leading out of the served tree is
+        // refused rather than followed; oc cannot use that walk here (it
+        // resolves from `/` and the daemon's Landlock ruleset admits only the
+        // module root, measured). Removing the link unconfined would be worse
+        // than not removing it: it destroys an operator-visible symlink AND
+        // pre-empts the confined rename that currently refuses the escape.
+        // Leaving it means the staging open follows the link and the confined
+        // rename makes the refusal, which is upstream's outcome for that shape.
+        Ok(metadata) if metadata.is_symlink() => Ok(()),
+        Ok(_) => std::fs::remove_file(dir),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
 
 /// Removes an emptied `--partial-dir` once its staged file has been committed.
 ///

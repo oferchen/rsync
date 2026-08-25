@@ -11,8 +11,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    CleanupManager, compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
-    trace_make_backup_copy, trace_make_backup_hlink, trace_make_backup_rename,
+    CleanupManager, clear_partial_dir_obstruction, compute_backup_path, copy_pre_image_to_backup,
+    create_backup_dir_parents, trace_make_backup_copy, trace_make_backup_hlink,
+    trace_make_backup_rename,
 };
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
@@ -116,9 +117,15 @@ pub(super) fn commit_file(
 
     if needs_rename && config.delay_updates {
         if let Some(staging_path) = delay_updates_staging_path(config, &begin.file_path) {
-            // upstream: util1.c handle_partial_dir(..., PDIR_CREATE) creates the
-            // partial directory before moving the temp into it.
+            // upstream: util1.c:1518-1530 handle_partial_dir(..., PDIR_CREATE)
+            // creates the partial directory before moving the temp into it,
+            // and clears a non-directory standing at that name first
+            // (:1523-1528). Without the clear, `create_dir_all` reports
+            // `AlreadyExists` for that shape and the `?` fails the whole
+            // transfer where upstream unlinks the obstruction and proceeds -
+            // measured against real 3.5.0 over a daemon push, which exits 0.
             if let Some(parent) = staging_path.parent() {
+                clear_partial_dir_obstruction(parent)?;
                 fs::create_dir_all(parent)?;
             }
             let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)?;
