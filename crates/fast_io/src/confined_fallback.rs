@@ -29,8 +29,10 @@
 //! exists to make unspellable. It turns arm 3 into arm 1, so a refusal the walk
 //! issued *on purpose* (a foreign-owned parent symlink, a leaf outside the
 //! confinement root) is laundered into the very syscall the refusal was
-//! protecting against. Upstream names that test as wrong in its own words:
-//! arm 1 is chosen from configuration read before any I/O happens, never from a
+//! protecting against. Upstream names that test as wrong in its own
+//! words - a leaf swapped under it is a reason to "refuse rather than fall
+//! through" (`rsync-3.5.0/syscall.c:1695-1698` `do_fchmodat_nofollow()`). Arm 1
+//! is chosen from configuration read before any I/O happens, never from a
 //! runtime errno.
 //!
 //! Keeping the decision in one type means a new operation inherits the contract
@@ -167,9 +169,9 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:674` - arm 1, `return unlink(path)`.
+    /// - `rsync-3.5.0/syscall.c:675` - arm 1, `return unlink(path)`.
     /// - `rsync-3.5.0/syscall.c:676` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:680` - arm 2, `unlinkat(dfd, bname, 0)`.
+    /// - `rsync-3.5.0/syscall.c:679` - arm 2, `unlinkat(dfd, bname, 0)`.
     ///
     /// [`rmdir_at`]: Self::rmdir_at
     ///
@@ -238,7 +240,7 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:1892` - arm 1, `return do_rename(...)`.
+    /// - `rsync-3.5.0/syscall.c:1893` - arm 1, `return do_rename(...)`.
     /// - `rsync-3.5.0/syscall.c:1894` - the source-side walk.
     /// - `rsync-3.5.0/syscall.c:1904` - arm 2, `renameat` between both dirfds.
     ///
@@ -282,7 +284,7 @@ impl ConfinedFallback {
     /// On arm 2 the leaf carries `O_NOFOLLOW` in addition to `flags`, exactly
     /// as upstream does - "so the basename itself isn't followed if it happens
     /// to be a pre-planted symlink, which is what we want for `O_CREAT|O_EXCL`"
-    /// (`rsync-3.5.0/syscall.c:1493`). The walk defends the parent chain; the
+    /// (`rsync-3.5.0/syscall.c:1492-1495`). The walk defends the parent chain; the
     /// leaf is a separate decision and needs its own flag.
     ///
     /// On arm 1 the flags are passed verbatim: upstream's arm 1 is
@@ -292,9 +294,9 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:1514` - arm 1, `return do_open(...)`.
+    /// - `rsync-3.5.0/syscall.c:1515` - arm 1, `return do_open(...)`.
     /// - `rsync-3.5.0/syscall.c:1516` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:1518` - arm 2,
+    /// - `rsync-3.5.0/syscall.c:1519` - arm 2,
     ///   `openat(dfd, bname, flags | O_NOFOLLOW, mode)`.
     ///
     /// # Errors
@@ -310,6 +312,64 @@ impl ConfinedFallback {
                 flags | libc::O_NOFOLLOW,
                 mode,
             ),
+        }
+    }
+    /// Create a symlink at `link_path` whose contents are `target`.
+    ///
+    /// Only `link_path` takes an arm. `target` is the link's *contents*, not a
+    /// path this process resolves, so it is written verbatim - upstream passes
+    /// `lnk` straight through to `symlinkat` for the same reason.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:765` `do_symlink_at()`.
+    /// - `rsync-3.5.0/syscall.c:785` - arm 1, `return do_symlink(lnk, path)`.
+    /// - `rsync-3.5.0/syscall.c:786` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.0/syscall.c:848` - arm 2, `symlinkat(lnk, dfd, bname)`.
+    ///   Upstream's operator arm reaches it by falling *through* into a
+    ///   leaf-creation block shared with the beneath-walk tier rather than
+    ///   returning early like its siblings, "so fake-super emulation is
+    ///   preserved" (`rsync-3.5.0/syscall.c:781-783`). oc has no fake-super
+    ///   emulation in this helper, so the syscall pair is identical and the
+    ///   port is the siblings' early return.
+    ///
+    /// # Errors
+    ///
+    /// Arm 3's refusal, or the `symlink(2)` / `symlinkat(2)` errno.
+    pub fn symlink_at(&self, target: &Path, link_path: &Path) -> io::Result<()> {
+        match self.resolve(link_path)? {
+            Resolved::Unconfined => std::os::unix::fs::symlink(target, link_path),
+            Resolved::Confined { parent, leaf } => {
+                crate::symlinkat(target, parent.as_fd(), leaf.as_os_str())
+            }
+        }
+    }
+    /// Create the directory `path` with `mode`.
+    ///
+    /// An existing entry at the leaf is `EEXIST`, exactly as `mkdirat(2)`
+    /// reports it. This is deliberately NOT
+    /// [`operator_mkdir`](crate::operator_mkdir), which walks the same way but
+    /// treats an existing directory as success so a reserved `--partial-dir`
+    /// can be reused across runs. That idempotence belongs to that call site,
+    /// not to upstream's `do_mkdir_at()`; folding the two would swallow a
+    /// collision the receiver has to see.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2066` `do_mkdir_at()`.
+    /// - `rsync-3.5.0/syscall.c:2084` - arm 1, `return mkdir(path, mode)`.
+    /// - `rsync-3.5.0/syscall.c:2085` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.0/syscall.c:2088` - arm 2, `mkdirat(dfd, bname, mode)`.
+    ///
+    /// # Errors
+    ///
+    /// Arm 3's refusal, or the `mkdir(2)` / `mkdirat(2)` errno.
+    pub fn mkdir_at(&self, path: &Path, mode: u32) -> io::Result<()> {
+        match self.resolve(path)? {
+            Resolved::Unconfined => crate::mkdirat(rustix::fs::CWD, path.as_os_str(), mode),
+            Resolved::Confined { parent, leaf } => {
+                crate::mkdirat(parent.as_fd(), leaf.as_os_str(), mode)
+            }
         }
     }
 
@@ -492,7 +552,7 @@ mod tests {
     ///
     /// upstream: `operator_path_resolve` is per call site, and
     /// `abspath_outside_confinement()` returns 0 when it is clear
-    /// (`rsync-3.5.0/syscall.c:216`).
+    /// (`rsync-3.5.0/syscall.c:239`).
     #[test]
     fn an_ancillary_path_is_not_judged_against_the_root() {
         let fx = fixture();
@@ -613,7 +673,7 @@ mod tests {
     /// endpoint independently and returns -1 the moment either side fails, so
     /// an in-root source cannot license an escaping target.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1896-1903`.
+    /// upstream: `rsync-3.5.0/syscall.c:1895-1903`.
     #[test]
     fn rename_arm_three_refuses_when_only_the_destination_escapes() {
         let fx = fixture();
@@ -658,7 +718,7 @@ mod tests {
     /// here points at an in-root file, so nothing but the missing flag can
     /// refuse it.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1518` -
+    /// upstream: `rsync-3.5.0/syscall.c:1519` -
     /// `openat(dfd, bname, flags | O_NOFOLLOW, mode)`.
     #[test]
     fn open_arm_two_applies_o_nofollow_to_the_leaf() {
@@ -680,7 +740,7 @@ mod tests {
     /// opt-out restores the legacy symlink-following open verbatim, so the same
     /// leaf link opens.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1514` - arm 1 is `do_open(pathname,
+    /// upstream: `rsync-3.5.0/syscall.c:1515` - arm 1 is `do_open(pathname,
     /// flags, mode)`, with no added flag.
     #[test]
     fn open_arm_one_still_follows_a_leaf_symlink() {
@@ -706,5 +766,155 @@ mod tests {
         let mut body = String::new();
         std::io::Read::read_to_string(&mut opened, &mut body).expect("read");
         assert_eq!(body, "INSIDE");
+    }
+
+    // --- symlink ------------------------------------------------------------
+
+    /// The link is a CREATE, so arm 3 is proven by the absence of a new entry
+    /// outside the root - not merely by an `Err`, which an unwritable parent
+    /// would also produce.
+    #[test]
+    fn symlink_arm_three_refuses_and_no_link_appears_outside_the_root() {
+        let fx = fixture();
+        let planted = fx.root.join("esc").join("planted");
+        let landing = fx.victim.parent().expect("outside dir").join("planted");
+        confine_to(&fx.root);
+        let err = ConfinedFallback::confined()
+            .symlink_at(Path::new("/etc/passwd"), &planted)
+            .expect_err("arm 3 must refuse an escaping link name");
+        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+        assert!(
+            landing.symlink_metadata().is_err(),
+            "arm 3 must not plant a link outside the root"
+        );
+    }
+
+    /// One-variable flip of the cell above: same fixture, same path, opt-out
+    /// set. The link DOES appear outside the root, which is what arm 1 means.
+    #[test]
+    fn symlink_arm_one_still_plants_through_the_escape() {
+        let fx = fixture();
+        let planted = fx.root.join("esc").join("planted");
+        let landing = fx.victim.parent().expect("outside dir").join("planted");
+        confine_to_with_optout(&fx.root);
+        ConfinedFallback::confined()
+            .symlink_at(Path::new("/etc/passwd"), &planted)
+            .expect("arm 1 is the legacy unconfined create");
+        assert!(
+            landing.symlink_metadata().is_ok(),
+            "arm 1 must reach the same place the legacy syscall did"
+        );
+    }
+
+    #[test]
+    fn symlink_arm_two_creates_an_in_root_link() {
+        let fx = fixture();
+        let link = fx.root.join("link");
+        confine_to(&fx.root);
+        ConfinedFallback::confined()
+            .symlink_at(Path::new("payload"), &link)
+            .expect("an in-root link still works");
+        assert_eq!(
+            std::fs::read_link(&link).expect("read_link"),
+            Path::new("payload"),
+            "the target is written verbatim, not resolved"
+        );
+    }
+
+    // --- mkdir --------------------------------------------------------------
+
+    #[test]
+    fn mkdir_arm_three_refuses_and_no_directory_appears_outside_the_root() {
+        let fx = fixture();
+        let planted = fx.root.join("esc").join("planted-dir");
+        let landing = fx
+            .victim_dir
+            .parent()
+            .expect("outside dir")
+            .join("planted-dir");
+        confine_to(&fx.root);
+        let err = ConfinedFallback::confined()
+            .mkdir_at(&planted, 0o777)
+            .expect_err("arm 3 must refuse an escaping directory name");
+        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+        assert!(
+            !landing.exists(),
+            "arm 3 must not create a directory outside the root"
+        );
+    }
+
+    #[test]
+    fn mkdir_arm_two_creates_an_in_root_directory() {
+        let fx = fixture();
+        let dir = fx.root.join("fresh");
+        confine_to(&fx.root);
+        ConfinedFallback::confined()
+            .mkdir_at(&dir, 0o777)
+            .expect("an in-root mkdir still works");
+        assert!(dir.is_dir());
+    }
+
+    /// An existing leaf is `EEXIST`, NOT success. This is what separates
+    /// `mkdir_at` from `operator_mkdir`, and without the cell the two could be
+    /// collapsed without any test noticing.
+    #[test]
+    fn mkdir_arm_two_reports_an_existing_directory_as_eexist() {
+        let fx = fixture();
+        let dir = fx.root.join("fresh");
+        confine_to(&fx.root);
+        let cf = ConfinedFallback::confined();
+        cf.mkdir_at(&dir, 0o777).expect("first create");
+        let err = cf
+            .mkdir_at(&dir, 0o777)
+            .expect_err("second must not succeed");
+        assert_eq!(err.raw_os_error(), Some(libc::EEXIST));
+    }
+
+    // --- the precondition every routed call site inherits --------------------
+
+    /// MEASURED, and it is the reason every cell above calls `confine_to`
+    /// first: with no confinement session installed, `session_confinement_root`
+    /// is `None`, the root half of the predicate never fires, and only the
+    /// OWNERSHIP half of the walk runs - which FOLLOWS a euid-owned symlink,
+    /// because a symlink this uid planted is trusted by construction.
+    ///
+    /// ⚠ This is the LOCAL path only, and the distinction is the whole point.
+    /// Production installs one of two sessions, and they differ exactly here:
+    ///
+    /// - `install_local_session` sets `confine_root: None` + `NotDaemon`, so
+    ///   `root()` is `None`, the root half never fires, and only the ownership
+    ///   half runs - which follows a euid-owned symlink by design. That is the
+    ///   state this cell pins, and task 1009 is what flips it.
+    /// - `install_daemon_session` sets `Daemon(module)` with
+    ///   `module.root = Some(..)`, so `root()` is `Some` and the root half
+    ///   FIRES. Routing is fully live on that path today, with no dependency
+    ///   on task 1009.
+    ///
+    /// So the routing is not "unarmed" - it is unarmed on one of two paths.
+    /// `no_sandbox_tail::daemon_session_refuses_an_escaping_unlink` is the
+    /// companion that pins the armed one.
+    ///
+    /// Pinning it here means a future reader cannot mistake the suite's green
+    /// for proof that production refuses the escape, and the cell goes red the
+    /// moment a session IS installed by default - which is exactly when this
+    /// doc would otherwise go stale.
+    #[test]
+    fn an_escape_is_not_refused_until_a_confinement_session_installs_a_root() {
+        let fx = fixture();
+        // Deliberately NO install_session call.
+        assert_eq!(
+            ConfinedFallback::confined()
+                .arm_for(&fx.escape)
+                .expect("with no root installed the walk still resolves"),
+            FallbackArm::Confined,
+            "the ownership half follows our own symlink; only the root half refuses it"
+        );
+        ConfinedFallback::confined()
+            .unlink_at(&fx.escape, UnlinkFlags::File)
+            .expect("and the *at op therefore succeeds");
+        assert!(
+            !fx.victim.exists(),
+            "the out-of-root victim is removed - this is the gap task 1009 closes"
+        );
     }
 }
