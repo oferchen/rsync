@@ -1287,6 +1287,126 @@ mod tests {
 
     /// A failed output `mkstemp()` must surface as a `MSG_ERROR_XFER` warning,
     /// not `MSG_INFO`. The distinction is load-bearing: the peer's `rwrite()`
+    /// The NON-BLOCKING drain must report a failed metadata apply too.
+    ///
+    /// `drain_ready_results` and `drain_all_results` are two separate copies of
+    /// the collection loop, and the transfer driver calls BOTH: the pipelined
+    /// receiver polls the non-blocking one every iteration
+    /// (`receiver/transfer/pipeline.rs`) and blocks on the other only at the
+    /// end of a phase. A diagnostic present in one and absent from the other is
+    /// invisible for every file that completes mid-transfer - which is nearly
+    /// all of them.
+    ///
+    /// Its sibling
+    /// [`Self::metadata_apply_failure_drains_as_error_xfer_warning`] exercises
+    /// only the blocking arm, so the non-blocking emission was deletable with
+    /// the suite still green. Two drains, two cells, deliberately not one
+    /// parameterised cell: a shared cell that happens to reach one arm is how
+    /// that gap arose.
+    ///
+    /// The loop terminates on `pending_commits`, NOT on having collected a
+    /// warning. That is load-bearing: `pending_commits` is decremented by the
+    /// drain regardless of whether the emission is present, so removing the
+    /// push makes this cell FAIL rather than hang.
+    ///
+    /// upstream: rsync.c:814-816 `set_file_attrs()`.
+    #[cfg(unix)]
+    #[test]
+    fn metadata_apply_failure_drains_as_error_xfer_warning_when_polled() {
+        use std::time::{Duration, Instant};
+
+        let dir = test_support::create_tempdir();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let file_path = link.join("payload.dat");
+
+        let mut entry =
+            protocol::flist::FileEntry::new_file(PathBuf::from("payload.dat"), 9, 0o640);
+        entry.set_mtime(1_000_000_000, 0);
+
+        let config = DiskCommitConfig {
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_permissions(true)
+                    .preserve_times(true),
+            ),
+            ..DiskCommitConfig::default()
+        };
+        let mut pr = PipelinedReceiver::new(config).unwrap();
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                    xattr_basis: None,
+                    file_entry: Some(entry),
+                }),
+                data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            PathBuf::from("payload.dat"),
+            0,
+            false,
+        );
+
+        // Poll the way the transfer loop does: take whatever the disk thread has
+        // finished so far, until it has finished everything.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut errors = Vec::new();
+        while pr.pending_commits > 0 {
+            assert!(
+                Instant::now() < deadline,
+                "the disk thread never returned the commit; the non-blocking \
+                 drain could not be exercised"
+            );
+            let (_bytes, drained) = pr.drain_ready_results().unwrap();
+            errors.extend(drained);
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            errors.len(),
+            1,
+            "the fixture must actually fail the metadata apply on this arm too"
+        );
+
+        let warnings = pr.drain_warnings();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "the non-blocking drain must queue the diagnostic, not just count it"
+        );
+        assert_eq!(
+            warnings[0].0,
+            MessageCode::ErrorXfer,
+            "same log code as the blocking arm - one rule, two drains"
+        );
+        assert!(
+            warnings[0].1.starts_with("rsync: [receiver] failed to "),
+            "must carry upstream's `failed to ...` wording: {}",
+            warnings[0].1
+        );
+        assert!(
+            warnings[0].1.contains("payload.dat"),
+            "must name the file it could not apply to: {}",
+            warnings[0].1
+        );
+    }
+
     /// A metadata apply that fails must be REPORTED, not merely counted.
     ///
     /// Upstream's `set_file_attrs()` never swallows one: every arm calls
