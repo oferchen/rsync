@@ -321,8 +321,11 @@ impl<'a> CopyContext<'a> {
         // upstream: generator.c:1866 copy_file() - duplicate the pre-image; the
         // destination inode is left in place to be rewritten by the inplace
         // writer. A pre-existing backup is overwritten (upstream robust_unlinks
-        // it at generator.c:1901); fs::copy truncates to the same end state.
-        match fs::copy(destination, &backup_path) {
+        // it at generator.c:1901); the O_TRUNC create reaches the same end
+        // state. The backup path is operator-named, so it resolves through the
+        // ownership walk - generator.c:2283 raises `operator_path_resolve` for
+        // exactly this copy because it bypasses `make_backup()`.
+        match copy_pre_image_to_backup(destination, &backup_path) {
             Ok(_) => {}
             // A vanished destination has nothing to back up, mirroring the
             // NotFound arm of the rename path (backup.c:make_backup returns 3).

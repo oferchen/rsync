@@ -16,6 +16,51 @@ use crate::local_copy::create_symlink;
 #[cfg(unix)]
 use crate::local_copy::map_metadata_error;
 
+/// Duplicates a destination's pre-transfer bytes into the operator-named
+/// backup path, resolving that path with the ownership walk.
+///
+/// Used by the `--inplace --backup` paths, where the destination inode is
+/// rewritten in place rather than replaced, so the pre-image must be COPIED
+/// aside instead of renamed.
+///
+/// upstream: generator.c:2279-2300 and generator.c:2327-2350 - the in-place
+/// backup BYPASSES `make_backup()`, so the generator raises
+/// `operator_path_resolve` around `get_backup_name()` and the `copy_file()` /
+/// `do_open_at()` that follow, clearing it again on every exit path. Without
+/// it the open of `backupptr` resolves with libc and FOLLOWS a symlink planted
+/// at the `--backup-dir` leaf. `std::fs::copy` has exactly that behaviour,
+/// which is what upstream's `operator-path-inplace-backup-dir` cell observes as
+/// an escape out of the transfer tree.
+///
+/// Permissions are taken from the source and applied through the open
+/// descriptor, matching `fs::copy` (and upstream's
+/// `copy_file(..., back_file->mode)`) without ever re-resolving the path the
+/// walk has already vetted.
+///
+/// A vanished source surfaces as [`io::ErrorKind::NotFound`], exactly as
+/// `fs::copy` did, so callers keep their existing "nothing to back up" arm.
+pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result<()> {
+    let mut reader = fs::File::open(source)?;
+    let permissions = reader.metadata()?.permissions();
+
+    #[cfg(unix)]
+    let mut writer = {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        // Mask to the permission bits: `mode()` carries the file-type bits too,
+        // and only the low 12 are meaningful as an `O_CREAT` mode.
+        fast_io::operator_open_write_create(backup_path, permissions.mode() & 0o7777)?
+    };
+    // Non-Unix has no ownership walk to run; degrade to a plain create, as the
+    // other operator-path helpers do.
+    #[cfg(not(unix))]
+    let mut writer = fs::File::create(backup_path)?;
+
+    io::copy(&mut reader, &mut writer)?;
+    writer.set_permissions(permissions)?;
+    Ok(())
+}
+
 /// Computes the backup file path for a destination file.
 ///
 /// When `backup_dir` is `Some`, the backup is placed under that directory
@@ -347,6 +392,77 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
     use std::path::Path;
+
+    /// `copy_pre_image_to_backup` replaced a `std::fs::copy`, which carries the
+    /// permission bits as well as the bytes. Dropping that second half would
+    /// silently re-mode every `--inplace` backup.
+    ///
+    /// The backup is pre-created with a DIFFERENT mode on purpose: that is the
+    /// only shape that discriminates. `O_CREAT` applies its mode argument to a
+    /// NEW file only, so against a fresh path the open alone already produces
+    /// the right bits and the test would pass whether or not the permissions
+    /// are carried. The receiver path (`disk_commit`) has no metadata apply
+    /// after the copy, so on a re-run over an existing backup this is the only
+    /// thing setting its mode.
+    #[test]
+    fn copy_pre_image_to_backup_carries_content_and_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("dest");
+        let backup = dir.path().join("dest~");
+        fs::write(&source, b"PRE-IMAGE").expect("write source");
+        fs::write(&backup, b"stale").expect("write pre-existing backup");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).expect("chmod source");
+            fs::set_permissions(&backup, fs::Permissions::from_mode(0o600)).expect("chmod backup");
+        }
+
+        copy_pre_image_to_backup(&source, &backup).expect("copy the pre-image aside");
+
+        assert_eq!(fs::read(&backup).expect("read backup"), b"PRE-IMAGE");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let mode = fs::metadata(&backup)
+                .expect("stat backup")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o640, "backup must inherit the source mode");
+        }
+    }
+
+    /// upstream `robust_unlink`s an existing backup before writing the new one
+    /// (`generator.c:1901`); the `O_TRUNC` create has to reach the same end
+    /// state, or a shorter pre-image would leave the previous backup's tail
+    /// appended to it.
+    #[test]
+    fn copy_pre_image_to_backup_truncates_a_longer_pre_existing_backup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("dest");
+        let backup = dir.path().join("dest~");
+        fs::write(&source, b"short").expect("write source");
+        fs::write(&backup, b"a much longer previous backup").expect("write stale backup");
+
+        copy_pre_image_to_backup(&source, &backup).expect("copy the pre-image aside");
+
+        assert_eq!(fs::read(&backup).expect("read backup"), b"short");
+    }
+
+    /// Both call sites branch on this errno for their "nothing to back up" arm,
+    /// mirroring `backup.c:make_backup` returning 3 for a vanished entry. It is
+    /// the one part of `fs::copy`'s contract they actually depend on.
+    #[test]
+    fn copy_pre_image_to_backup_reports_notfound_for_a_vanished_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let error = copy_pre_image_to_backup(&dir.path().join("gone"), &dir.path().join("gone~"))
+            .expect_err("a missing source cannot be backed up");
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
 
     #[test]
     fn compute_backup_path_with_suffix_only() {
