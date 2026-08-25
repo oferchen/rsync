@@ -29,9 +29,9 @@
 //! target.
 //!
 //! Existing coverage:
-//! - `crates/transfer/src/receiver/transfer/setup.rs::symlink_race_tests`
-//!   unit-tests the private `open_sandbox_for_dest_strict` helper for
-//!   the daemon strict path.
+//! - `crates/transfer/src/receiver/transfer/setup/sandbox.rs::symlink_race_tests`
+//!   unit-tests the private `open_sandbox_for_dest_anchored` helper for
+//!   the daemon path.
 //! - `crates/transfer/tests/dir_sandbox_carrier.rs` exercises descent
 //!   shape on quiescent trees.
 //! - `crates/transfer/tests/sec_1_m_symlink_swap_attack.rs` covers the

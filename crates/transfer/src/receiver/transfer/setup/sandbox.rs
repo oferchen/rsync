@@ -1,29 +1,52 @@
 //! Destination-root sandbox carriers for the receiver transfer setup.
 //!
 //! Opens the destination root as a [`fast_io::DirSandbox`] so the per-entry
-//! `*at` syscall cutover sites can ride a sandboxed dirfd. The strict variant
-//! propagates symlink-class refusals as a transfer error for daemon receivers
-//! without chroot (the chdir-symlink-race defence).
+//! `*at` syscall cutover sites can ride a sandboxed dirfd. The split mirrors
+//! upstream's `am_daemon` gate: a daemon server takes the anchored variant,
+//! which confines the peer-supplied tail beneath the operator's module root
+//! (the chdir-symlink-race defence), and every other receiver takes the plain
+//! variant, which upstream leaves unconfined.
 
 #[cfg(unix)]
 use std::io;
 #[cfg(unix)]
 use std::sync::Arc;
 
-/// Open the destination root as a [`fast_io::DirSandbox`] carrier.
+/// Open the destination root as a [`fast_io::DirSandbox`] carrier for a
+/// receiver that applies no confinement.
 ///
 /// Returns `Some(Arc<DirSandbox>)` when the path exists and resolves to
 /// a non-symlink directory the receiver can open. Returns `None` for any
 /// other outcome (path does not exist yet, path is a symlink, EACCES,
-/// etc.) so the receiver can keep running on the existing path-based
+/// etc.) so the receiver keeps running on the existing path-based
 /// fall-backs while the SEC-1.f-j cutover lands site by site.
+///
+/// This is the arm for every receiver upstream leaves unconfined -
+/// local, SSH server, and the client half of an `rsync://` pull. There a
+/// failed sandbox open is not a degraded security posture but the normal
+/// state: `secure_basis_open()` takes its `if (!am_daemon || ...)` branch
+/// and does a plain `do_open`, so following a symlinked destination is the
+/// behaviour, not a fall-back from it. The daemon server takes
+/// [`open_sandbox_for_dest_anchored`] instead, which is where a failure
+/// does mean lost confinement and says so out loud.
 ///
 /// Failures are logged at `Debug` level only; they are expected on
 /// first-run transfers where the destination is created later in
-/// `ensure_relative_parents` / `create_directories`.
+/// `ensure_relative_parents` / `create_directories`. `--debug=recv2`
+/// reaches them, matching upstream, whose `-v` ladder likewise never
+/// raises RECV past 1 (`options.c:248` `debug_verbosity[3]`).
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:1093` - `use_secure_symlinks = am_daemon &&
+///   (!am_chrooted || module_dirlen)`
+/// - `receiver.c:152` - the `if (!am_daemon || ...)` plain-open arm of
+///   `secure_basis_open()`
+/// - `syscall.c:136` - `confinement_root()` is `module_dir` only for a daemon
 #[cfg(unix)]
-#[allow(dead_code)] // kept for tests; the strict variant is the active call site.
-fn open_sandbox_for_dest(dest_dir: &std::path::Path) -> Option<Arc<fast_io::DirSandbox>> {
+pub(super) fn open_sandbox_for_dest(
+    dest_dir: &std::path::Path,
+) -> Option<Arc<fast_io::DirSandbox>> {
     match fast_io::DirSandbox::open_root(dest_dir) {
         Ok(sandbox) => Some(Arc::new(sandbox)),
         Err(err) => {
@@ -34,66 +57,6 @@ fn open_sandbox_for_dest(dest_dir: &std::path::Path) -> Option<Arc<fast_io::DirS
                 dest_dir.display()
             );
             None
-        }
-    }
-}
-
-/// Open the destination root as a [`fast_io::DirSandbox`] carrier and, when
-/// `strict` is set, propagate symlink-class refusals as a transfer error.
-///
-/// When `strict` is `false` this is identical to [`open_sandbox_for_dest`]:
-/// every failure falls back to path-based syscalls.
-///
-/// When `strict` is `true` the failure mode splits by errno:
-/// - `ELOOP` / `ENOTDIR`: the destination resolves through a symlink, which
-///   is the chdir-symlink-race attack window. Convert to `io::Error` so the
-///   transfer fails before any data lands on disk and no path-relative
-///   syscall ever resolves through the attacker-planted symlink.
-/// - `ENOENT`: the destination does not exist yet (first-run push). Return
-///   `Ok(None)` so the receiver creates it through the existing
-///   `ensure_relative_parents` / `create_directories` path.
-/// - Any other error: keep the soft-fall-back so legitimate permission or
-///   I/O problems surface at a more specific call site downstream.
-///
-/// # Upstream Reference
-///
-/// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon &&
-///   !am_chrooted` gates the do_*_at wrappers in `syscall.c`.
-/// - `util1.c:1175-1216` - `change_dir()`'s
-///   `secure_relative_open()` + `fchdir()` branch refuses the symlink at the
-///   same level the chdir-symlink-race POC plants it.
-#[cfg(unix)]
-pub(super) fn open_sandbox_for_dest_strict(
-    dest_dir: &std::path::Path,
-    strict: bool,
-) -> io::Result<Option<Arc<fast_io::DirSandbox>>> {
-    match fast_io::DirSandbox::open_root(dest_dir) {
-        Ok(sandbox) => Ok(Some(Arc::new(sandbox))),
-        Err(err) => {
-            let code = err.raw_os_error();
-            let is_symlink_refusal = matches!(
-                code,
-                Some(libc::ELOOP) | Some(libc::ENOTDIR) | Some(libc::EXDEV)
-            );
-            if strict && is_symlink_refusal {
-                return Err(io::Error::new(
-                    err.kind(),
-                    format!(
-                        "refusing to open destination '{}' via a symlink: \
-                         {err} (errno={}) (would expose the \
-                         chdir-symlink-race attack window)",
-                        dest_dir.display(),
-                        code.unwrap_or(0),
-                    ),
-                ));
-            }
-            logging::debug_log!(
-                Recv,
-                2,
-                "DirSandbox::open_root({}) failed: {err}; falling back to path-based syscalls",
-                dest_dir.display()
-            );
-            Ok(None)
         }
     }
 }
@@ -185,12 +148,18 @@ pub(super) fn open_sandbox_for_dest_anchored(
             // dirfd and will fall back to path-based syscalls - it keeps
             // running, but without the per-component confinement its role
             // is supposed to have. Upstream confines exactly this role
-            // (`use_secure_symlinks = am_daemon && !am_chrooted`,
-            // clientserver.c:1018), so degrading is worth saying out loud.
+            // (`use_secure_symlinks = am_daemon && (!am_chrooted ||
+            // module_dirlen)`, clientserver.c:1093), so degrading is worth
+            // saying out loud.
             //
-            // Warning, not debug: `debug_log!` here is unreachable at every
-            // verbosity an operator can actually set, which made this
-            // condition unobservable in the field. upstream: FWARNING is
+            // Warning, not debug, because a daemon silently losing its
+            // confinement is an operator-facing condition, not a trace. Not
+            // because `debug_log!` would be unreachable: `--debug=recv2`
+            // reaches level 2 (measured). What the `-v` ladder alone cannot
+            // reach is upstream's own arrangement - `debug_verbosity[3]`
+            // (options.c:248) sets RECV to 1 and no later level raises it -
+            // so a debug channel here would be invisible to `-vvvvv`, which
+            // is what an operator actually reaches for. upstream: FWARNING is
             // dispatched by rwrite() (log.c:341) and is not verbosity-gated.
             logging::warn_log!(
                 "receiver: could not anchor destination '{}' under module \
@@ -203,10 +172,11 @@ pub(super) fn open_sandbox_for_dest_anchored(
     }
 }
 
-// upstream: clientserver.c:1018 - use_secure_symlinks gating that the
-// chdir-symlink-race fix mirrors. Tests below verify the strict daemon
-// branch refuses a leaf-symlink at the destination while the legacy
-// non-daemon branch preserves the existing soft-fail behaviour.
+// upstream: clientserver.c:1093 - `use_secure_symlinks = am_daemon &&
+// (!am_chrooted || module_dirlen)`, the gating the chdir-symlink-race fix
+// mirrors. Tests below verify the anchored daemon branch confines the
+// peer-supplied tail beneath the operator's module root, while the plain
+// branch - every receiver upstream leaves unconfined - keeps its soft-fail.
 #[cfg(all(test, unix))]
 mod symlink_race_tests {
     use super::*;
@@ -219,64 +189,40 @@ mod symlink_race_tests {
         (dir, canon)
     }
 
+    /// A symlinked destination root must never become a hard refusal on the
+    /// unconfined path. `DirSandbox::open_root` declines to open through the
+    /// link, so the receiver takes `None` and keeps running on the path-based
+    /// syscalls - which follow the link, exactly as upstream's
+    /// `secure_basis_open()` plain-open arm does for `am_daemon == 0`
+    /// (receiver.c:152).
+    ///
+    /// Returning `Err` here instead is what made `oc-rsync -a rsync://h/m/ DEST`
+    /// exit 23 on a symlinked `DEST` that real rsync 3.5.0 transfers into.
     #[test]
-    fn strict_mode_refuses_symlink_destination() {
+    fn unconfined_open_soft_fails_for_a_symlinked_destination() {
         let (_keep, root) = canonical_tempdir();
         let outside = root.join("outside");
         std::fs::create_dir(&outside).expect("create outside dir");
         let subdir = root.join("subdir");
         symlink(&outside, &subdir).expect("symlink subdir -> outside");
 
-        let err = open_sandbox_for_dest_strict(&subdir, true)
-            .expect_err("daemon receiver must refuse a symlink destination");
-        // The wrapped error embeds the underlying errno from
-        // `DirSandbox::open_root` (ELOOP on Linux + openat2; ENOTDIR on
-        // macOS/BSD where O_DIRECTORY is evaluated before O_NOFOLLOW).
-        // Both prove the symlink was refused at the syscall layer. The
-        // wrapped Display also carries the security-context message so
-        // operators see why the transfer aborted. Asserting on the embedded
-        // errno avoids the unstable `io::ErrorKind::FilesystemLoop` /
-        // `NotADirectory` variants (rust-lang/rust#86442).
-        let msg = err.to_string();
-        let expected_errno_a = format!("errno={}", libc::ELOOP);
-        let expected_errno_b = format!("errno={}", libc::ENOTDIR);
         assert!(
-            msg.contains(&expected_errno_a) || msg.contains(&expected_errno_b),
-            "expected ELOOP or ENOTDIR errno embedded in message, got: {err}"
-        );
-        assert!(
-            msg.contains("chdir-symlink-race"),
-            "expected chdir-symlink-race security context in message, got: {err}"
+            open_sandbox_for_dest(&subdir).is_none(),
+            "an unconfined receiver must soft-fail to the path-based syscalls, \
+             not refuse the transfer"
         );
     }
 
     #[test]
-    fn non_strict_mode_falls_back_for_symlink_destination() {
-        let (_keep, root) = canonical_tempdir();
-        let outside = root.join("outside");
-        std::fs::create_dir(&outside).expect("create outside dir");
-        let subdir = root.join("subdir");
-        symlink(&outside, &subdir).expect("symlink subdir -> outside");
-
-        let result = open_sandbox_for_dest_strict(&subdir, false)
-            .expect("non-daemon receiver keeps soft-fail behaviour");
-        // The sandbox open failed, but the receiver still gets None and
-        // falls through to the path-based syscall path (existing
-        // behaviour before the chdir-symlink-race fix).
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn strict_mode_accepts_real_directory_destination() {
+    fn unconfined_open_accepts_a_real_directory_destination() {
         let (_keep, root) = canonical_tempdir();
         let real = root.join("realdir");
         std::fs::create_dir(&real).expect("create real dir");
 
-        let result = open_sandbox_for_dest_strict(&real, true)
-            .expect("real directory must open under strict mode");
         assert!(
-            result.is_some(),
-            "strict mode must hand back a sandbox when the dest is a real dir"
+            open_sandbox_for_dest(&real).is_some(),
+            "the unconfined open must hand back a sandbox when the dest is a \
+             real dir; otherwise the *at cutover never engages"
         );
     }
 
@@ -323,11 +269,10 @@ mod symlink_race_tests {
         // for a reason unrelated to the fix.
         #[cfg(target_os = "linux")]
         {
-            let old = open_sandbox_for_dest_strict(&module_root, true);
             assert!(
-                old.is_err(),
-                "control failed: the pre-fix path accepted this layout, so \
-                 the assertion above cannot be evidence of the fix"
+                open_sandbox_for_dest(&module_root).is_none(),
+                "control failed: the fused single-policy open accepted this \
+                 layout, so the assertion above cannot be evidence of the fix"
             );
         }
     }
@@ -459,12 +404,13 @@ mod symlink_race_tests {
     }
 
     #[test]
-    fn strict_mode_soft_fails_when_destination_is_missing() {
+    fn unconfined_open_soft_fails_when_destination_is_missing() {
         let (_keep, root) = canonical_tempdir();
         let missing = root.join("not-yet-created");
 
-        let result = open_sandbox_for_dest_strict(&missing, true)
-            .expect("ENOENT must be a soft failure - first-run push will mkdir later");
-        assert!(result.is_none());
+        assert!(
+            open_sandbox_for_dest(&missing).is_none(),
+            "ENOENT must be a soft failure - first-run push will mkdir later"
+        );
     }
 }
