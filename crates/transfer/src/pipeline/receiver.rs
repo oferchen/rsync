@@ -309,6 +309,34 @@ impl PipelinedReceiver {
         )
     }
 
+    /// Formats a failed metadata apply the way upstream reports it.
+    ///
+    /// Upstream's `set_file_attrs()` does not swallow a failed chmod/chown/
+    /// utimes: each arm calls `rsyserr(FERROR_XFER, errno, "failed to set ...
+    /// on %s", full_fname(fname))` and then `goto cleanup`. The diagnostic is
+    /// not verbosity-gated, so an operator sees it at the default `-a`.
+    ///
+    /// `message` is [`metadata::MetadataError`]'s own rendering, which already
+    /// carries upstream's `failed to <op> <path>: <errno text>` shape and names
+    /// the failing attribute at the site that knows it. Re-deriving upstream's
+    /// per-attribute wording here would mean inventing a mapping the apply
+    /// chain does not report.
+    ///
+    /// Emitting this as `FERROR_XFER` (not `FINFO`) is what makes the peer's
+    /// `rwrite()` set `got_xfer_error`, matching the exit 23 the collected
+    /// error already forces through `IOERR_GENERAL` - so the code and the
+    /// diagnostic now come from one decision instead of the code alone.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:814-816` - `rsyserr(FERROR_XFER, errno, "failed to set
+    ///   permissions on %s", full_fname(fname))` in `set_file_attrs()`.
+    /// - `rsync.c:784` - the sibling `"failed to set times on %s"` arm.
+    /// - `log.c:311` - receipt of `FERROR_XFER` sets `got_xfer_error = 1`.
+    fn metadata_failure(message: &str) -> String {
+        format!("rsync: [receiver] {message}")
+    }
+
     /// Returns a reference to the channel sender for `FileMessage` items.
     ///
     /// Pass this to [`crate::transfer_ops::process_file_response_streaming`].
@@ -374,6 +402,8 @@ impl PipelinedReceiver {
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
+                        self.warnings
+                            .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
                         meta_errors.push(err);
                     }
                     self.pending_commits = self.pending_commits.saturating_sub(1);
@@ -435,6 +465,8 @@ impl PipelinedReceiver {
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
+                        self.warnings
+                            .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
                         meta_errors.push(err);
                     }
                     self.pending_commits -= 1;
@@ -1255,6 +1287,117 @@ mod tests {
 
     /// A failed output `mkstemp()` must surface as a `MSG_ERROR_XFER` warning,
     /// not `MSG_INFO`. The distinction is load-bearing: the peer's `rwrite()`
+    /// A metadata apply that fails must be REPORTED, not merely counted.
+    ///
+    /// Upstream's `set_file_attrs()` never swallows one: every arm calls
+    /// `rsyserr(FERROR_XFER, errno, "failed to set ... on %s", ...)` before
+    /// giving up (`rsync.c:784` for times, `rsync.c:814-816` for permissions).
+    /// The diagnostic is not verbosity-gated, so it prints at a plain `-a`.
+    ///
+    /// oc collected the failure into `metadata_errors`, which sets
+    /// `IOERR_GENERAL` and forces exit 23, and then rendered nothing anywhere -
+    /// `stats.metadata_errors` has no consumer outside this crate. The result
+    /// was a transfer that exits 23 with an unapplied mode and an empty stderr
+    /// even at `-vvv --debug=all`, which is unreportable in the field.
+    ///
+    /// The fixture is the live shape measured against real rsync 3.5.0: a
+    /// destination whose parent is a symlink. `fast_io::secure_chmod_at` walks
+    /// the parent with `openat2(RESOLVE_NO_SYMLINKS)` on Linux and a leaf-only
+    /// `openat(O_NOFOLLOW|O_DIRECTORY)` elsewhere; both refuse a symlinked
+    /// parent (`ELOOP` / `ENOTDIR`), so the apply fails on every Unix without
+    /// needing root or a contrived permission bit.
+    ///
+    /// The data still lands - only the metadata apply fails - which is exactly
+    /// the case that used to be invisible.
+    ///
+    /// upstream: rsync.c:814-816 `set_file_attrs()`; log.c:311 - `FERROR_XFER`
+    /// receipt sets `got_xfer_error = 1`, the exit-23 half this pairs with.
+    #[cfg(unix)]
+    #[test]
+    fn metadata_apply_failure_drains_as_error_xfer_warning() {
+        let dir = test_support::create_tempdir();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // The parent component is the symlink, so the confined walk refuses it
+        // on both the openat2 and the O_NOFOLLOW platform arm.
+        let file_path = link.join("payload.dat");
+
+        let mut entry =
+            protocol::flist::FileEntry::new_file(PathBuf::from("payload.dat"), 9, 0o640);
+        entry.set_mtime(1_000_000_000, 0);
+
+        let config = DiskCommitConfig {
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_permissions(true)
+                    .preserve_times(true),
+            ),
+            ..DiskCommitConfig::default()
+        };
+        let mut pr = PipelinedReceiver::new(config).unwrap();
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                    xattr_basis: None,
+                    file_entry: Some(entry),
+                }),
+                data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            PathBuf::from("payload.dat"),
+            0,
+            false,
+        );
+
+        let (_bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(
+            errors.len(),
+            1,
+            "the fixture must actually fail the metadata apply, or this test \
+             proves nothing"
+        );
+
+        let warnings = pr.drain_warnings();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "the failed metadata apply must queue exactly one diagnostic"
+        );
+        assert_eq!(
+            warnings[0].0,
+            MessageCode::ErrorXfer,
+            "upstream reports it on FERROR_XFER, which is what sets \
+             got_xfer_error and yields exit 23"
+        );
+        assert!(
+            warnings[0].1.starts_with("rsync: [receiver] failed to "),
+            "must carry upstream's `failed to ...` wording: {}",
+            warnings[0].1
+        );
+        assert!(
+            warnings[0].1.contains("payload.dat"),
+            "must name the file it could not apply to: {}",
+            warnings[0].1
+        );
+    }
+
     /// only sets `got_xfer_error` (yielding exit 23, `RERR_PARTIAL`) on
     /// `FERROR_XFER` receipt (upstream log.c:311). Routing this as `MSG_INFO`
     /// would let a client-sender push against a read-only destination exit 0,
