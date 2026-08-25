@@ -43,6 +43,7 @@ use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
+use super::operand_split::split_transfer_operands;
 
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
@@ -86,26 +87,12 @@ pub fn run_daemon_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: options.c:2194 - a single source with list_only set lists the
-    // module contents (`host::module` with no destination); only a genuinely
-    // empty operand list is an error.
-    if args.is_empty() || (args.len() < 2 && !config.list_only()) {
-        return Err(invalid_argument_error(
-            "need at least one source and one destination",
-            1,
-        ));
-    }
 
-    // For an implicit list-only transfer (single source, no dest) synthesize a
-    // dummy `.` destination; config.list_only() forces read-only/no-write so it
-    // is never materialized.
-    let dummy_dest = std::ffi::OsString::from(".");
-    let (sources, destination) = if args.len() < 2 {
-        (args, &dummy_dest)
-    } else {
-        let (sources, destination) = args.split_at(args.len() - 1);
-        (sources, &destination[0])
-    };
+    // upstream: main.c:1465-1466 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // has already inferred list-only from the operand count.
+    let fallback_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
@@ -336,26 +323,12 @@ pub fn run_daemon_over_remote_shell(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: options.c:2194 - a single source with list_only set lists the
-    // module contents (`host::module` with no destination); only a genuinely
-    // empty operand list is an error.
-    if args.is_empty() || (args.len() < 2 && !config.list_only()) {
-        return Err(invalid_argument_error(
-            "need at least one source and one destination",
-            1,
-        ));
-    }
 
-    // For an implicit list-only transfer (single source, no dest) synthesize a
-    // dummy `.` destination; config.list_only() forces read-only/no-write so it
-    // is never materialized.
-    let dummy_dest = std::ffi::OsString::from(".");
-    let (sources, destination) = if args.len() < 2 {
-        (args, &dummy_dest)
-    } else {
-        let (sources, destination) = args.split_at(args.len() - 1);
-        (sources, &destination[0])
-    };
+    // upstream: main.c:1465-1466 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // has already inferred list-only from the operand count.
+    let fallback_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();

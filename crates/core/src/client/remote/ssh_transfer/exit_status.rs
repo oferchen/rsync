@@ -9,7 +9,9 @@
 
 use std::time::Duration;
 
-use super::super::super::summary::ClientSummary;
+use super::super::super::summary::{
+    ClientEntryMetadata, ClientEvent, ClientSummary, ListOnlyEntryFields,
+};
 use crate::exit_code::ExitCode;
 
 /// Converts server-side statistics to a client summary.
@@ -26,6 +28,34 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
     use transfer::io_error_flags;
+
+    // upstream: generator.c:1249 - in list-only mode the receiver captures every
+    // flist entry's metadata instead of requesting file data; convert those into
+    // metadata-bearing events so the client can render the listing. The daemon
+    // transport does the same in `daemon_transfer/orchestration/stats.rs`;
+    // without this drain an SSH `--list-only` pull completes silently.
+    let list_only_events: Vec<ClientEvent> = match stats {
+        ServerStats::Receiver(ref transfer_stats) => transfer_stats
+            .list_only_entries
+            .iter()
+            .map(|entry| {
+                let metadata = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+                    mode: entry.mode,
+                    size: entry.size,
+                    mtime: entry.mtime,
+                    mtime_nsec: entry.mtime_nsec,
+                    atime: entry.atime,
+                    atime_nsec: entry.atime_nsec,
+                    crtime: entry.crtime,
+                    crtime_nsec: entry.crtime_nsec,
+                    symlink_target: entry.symlink_target.clone(),
+                    is_symlink: entry.is_symlink,
+                });
+                ClientEvent::from_list_only_entry(entry.path.clone(), metadata)
+            })
+            .collect(),
+        ServerStats::Generator(_) => Vec::new(),
+    };
 
     let (local_summary, io_error, got_xfer_error) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
@@ -79,6 +109,9 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     };
 
     let mut summary = ClientSummary::from_summary(local_summary);
+    if !list_only_events.is_empty() {
+        summary = summary.with_events(list_only_events);
+    }
 
     // upstream: cleanup.c:210-218 - convert io_error bitfield to RERR_* codes.
     // `log_exit()` only renders the chosen code; the selection rule lives in
@@ -192,6 +225,72 @@ mod windows_exit_status_tests {
         assert!(
             !matches!(mapped, ExitCode::Other(_)),
             "a known RERR_* code must keep its named variant, not fall to Other"
+        );
+    }
+}
+
+#[cfg(test)]
+mod list_only_conversion_tests {
+    use super::convert_server_stats_to_summary;
+    use crate::server::ServerStats;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use transfer::{ListOnlyEntry, TransferStats};
+
+    fn entry(path: &str) -> ListOnlyEntry {
+        ListOnlyEntry {
+            path: PathBuf::from(path),
+            mode: 0o100_644,
+            size: 6,
+            mtime: 1_700_000_000,
+            mtime_nsec: 0,
+            atime: 0,
+            atime_nsec: 0,
+            crtime: 0,
+            crtime_nsec: 0,
+            symlink_target: None,
+            is_symlink: false,
+        }
+    }
+
+    fn receiver_stats(entries: Vec<ListOnlyEntry>) -> ServerStats {
+        ServerStats::Receiver(TransferStats {
+            files_listed: entries.len(),
+            list_only_entries: entries,
+            ..TransferStats::default()
+        })
+    }
+
+    /// An SSH `--list-only` pull carries its listing in the receiver's
+    /// `list_only_entries`, never as transferred data. The converter is the only
+    /// place those entries can become client-visible events, so a summary built
+    /// without the drain completes silently with exit 0 - the failure mode this
+    /// pins. The daemon transport reaches the same result through
+    /// `daemon_transfer/orchestration/stats.rs`.
+    ///
+    /// upstream: generator.c:1249 `list_file_entry()`.
+    #[test]
+    fn receiver_list_only_entries_become_client_events() {
+        let summary =
+            convert_server_stats_to_summary(receiver_stats(vec![entry("f.txt")]), Duration::ZERO);
+
+        let paths: Vec<_> = summary
+            .events()
+            .iter()
+            .map(|event| event.relative_path().to_path_buf())
+            .collect();
+        assert_eq!(paths, vec![PathBuf::from("f.txt")]);
+    }
+
+    /// NON-VACUITY: an ordinary transfer captures no list-only entries, so the
+    /// drain must add nothing. Without this the first test would also pass if
+    /// the converter fabricated an event from any receiver stats.
+    #[test]
+    fn a_transfer_without_list_only_entries_produces_no_events() {
+        let summary = convert_server_stats_to_summary(receiver_stats(Vec::new()), Duration::ZERO);
+        assert!(
+            summary.events().is_empty(),
+            "a non-list-only receive must not synthesize events"
         );
     }
 }
