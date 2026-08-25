@@ -1002,6 +1002,126 @@ fn delay_updates_stages_to_partial_dir() {
     let _ = fs::remove_dir(dir.path().join(".~tmp~"));
 }
 
+/// A non-directory standing where the `--delay-updates` staging directory
+/// belongs must be cleared, not reported as a failure.
+///
+/// upstream: util1.c:1521-1528 `handle_partial_dir()` lstats the name and,
+/// when it exists and is not a directory, unlinks it before `do_mkdir_at`.
+/// oc's `create_dir_all` returns `AlreadyExists` for that shape, and the `?`
+/// turned an obstruction upstream clears into a failed transfer. Measured
+/// against real rsync 3.5.0 over a daemon push with a regular file planted at
+/// the staging name: upstream exits 0 and consumes the plant, oc exited 23.
+#[test]
+fn delay_updates_clears_a_non_directory_at_the_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("obstructed.dat");
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::write(&staging_dir, b"plant").unwrap();
+
+    let h = spawn_disk_thread(delay_updates_config()).unwrap();
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 13,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"delayed write".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result =
+        h.result_rx.recv().unwrap().expect(
+            "an obstructing non-directory must be cleared, not reported as a failed commit",
+        );
+    let staging_path = staging_dir.join("obstructed.dat");
+    assert_eq!(
+        result.delayed_path,
+        Some(staging_path.clone()),
+        "the entry must stage through the cleared partial dir"
+    );
+    assert!(
+        staging_dir.is_dir(),
+        "the planted file must be replaced by the staging directory"
+    );
+    assert_eq!(fs::read(&staging_path).unwrap(), b"delayed write");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+    let _ = fs::remove_file(&staging_path);
+    let _ = fs::remove_dir(&staging_dir);
+}
+/// Non-vacuity companion: clearing the obstruction must not clear a partial
+/// directory that is already a directory.
+///
+/// Without this the pin above would also hold for an over-broad fix that
+/// removed the name unconditionally (a `remove_dir_all`), which would destroy
+/// partials retained from an earlier interrupted run - upstream reuses an
+/// existing directory untouched (util1.c:1522, `S_ISDIR` skips the mkdir).
+#[test]
+fn delay_updates_reuses_an_existing_partial_dir_untouched() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("reuse.dat");
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+    let retained = staging_dir.join("retained-from-an-earlier-run.dat");
+    fs::write(&retained, b"keep me").unwrap();
+
+    let h = spawn_disk_thread(delay_updates_config()).unwrap();
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 13,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"delayed write".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    h.result_rx
+        .recv()
+        .unwrap()
+        .expect("an existing partial dir is reused");
+    assert_eq!(
+        fs::read(&retained).unwrap(),
+        b"keep me",
+        "an existing partial dir must be reused, never cleared"
+    );
+
+    let staging_path = staging_dir.join("reuse.dat");
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+    let _ = fs::remove_file(&staging_path);
+    let _ = fs::remove_file(&retained);
+    let _ = fs::remove_dir(&staging_dir);
+}
 /// Verifies that the coalesced WholeFile path also stages to `.~tmp~`
 /// when `delay_updates` is enabled.
 #[test]
