@@ -2033,6 +2033,93 @@ mod no_sandbox_tail {
     /// `install_local_session`, which leaves it `None`. Without this cell the
     /// suite would pin only the shape that a test fixture arranges, never the
     /// one production actually reaches first.
+    /// The open tail dropped `O_NOFOLLOW` silently, so a caller asking not to
+    /// follow the leaf got a FOLLOWING open and no error.
+    ///
+    /// The assertion is on WHAT WAS OPENED, not merely that the call failed:
+    /// the companion below opens the same link without `O_NOFOLLOW` and reads
+    /// the target, which proves the fixture really does have a followable
+    /// symlink. Without that pair, a broken fixture would satisfy the refusal
+    /// cell for the wrong reason.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:1519` - `openat(dfd, bname,
+    /// flags | O_NOFOLLOW, mode)`.
+    #[test]
+    fn open_tail_honours_o_nofollow_on_the_leaf() {
+        let (_keep, root) = canonical_tempdir();
+        std::fs::write(root.join("target"), b"TARGET").expect("write target");
+        symlink("target", root.join("leaf")).expect("symlink leaf");
+        let leaf = root.join("leaf");
+        assert_eq!(
+            std::fs::read_to_string(&leaf).expect("fixture link resolves"),
+            "TARGET",
+            "the fixture must be a followable symlink, or the refusal below \
+             would hold for the wrong reason"
+        );
+        let err = openat_via_sandbox_or_fallback(
+            None,
+            &root,
+            Path::new("leaf"),
+            &leaf,
+            libc::O_RDONLY | libc::O_NOFOLLOW,
+            0,
+        )
+        .expect_err("O_NOFOLLOW must reach the syscall, not be dropped");
+        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+    }
+
+    /// Non-vacuity companion, and the pin on the rest of the flag word:
+    /// `O_DIRECTORY` against a REGULAR file. The deleted translator dropped it
+    /// exactly as it dropped `O_NOFOLLOW`, so the open succeeded; a real
+    /// `openat(2)` reports `ENOTDIR`.
+    ///
+    /// This is the companion rather than "the same leaf without `O_NOFOLLOW`":
+    /// arm 2 adds `O_NOFOLLOW` on the caller's behalf whatever the caller
+    /// asked for (`rsync-3.5.0/syscall.c:1519`), so a follow could not be
+    /// observed here without contradicting upstream. `O_DIRECTORY` is not
+    /// added by either side, so it isolates the flag word itself.
+    #[test]
+    fn open_tail_honours_o_directory_on_a_regular_file() {
+        let (_keep, root) = canonical_tempdir();
+        let file = root.join("plain");
+        std::fs::write(&file, b"BODY").expect("write plain");
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("fixture readable"),
+            "BODY",
+            "the fixture must be an ordinarily openable regular file"
+        );
+        let err = openat_via_sandbox_or_fallback(
+            None,
+            &root,
+            Path::new("plain"),
+            &file,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )
+        .expect_err("O_DIRECTORY must reach the syscall, not be dropped");
+        assert_eq!(err.raw_os_error(), Some(libc::ENOTDIR));
+    }
+
+    /// And the same escape shape the other four tails pin, for the open tail.
+    #[test]
+    fn open_tail_refuses_an_escaping_path() {
+        let fx = fixture();
+        openat_via_sandbox_or_fallback(
+            None,
+            &fx.root,
+            Path::new("esc/secret"),
+            &fx.escape,
+            libc::O_RDONLY,
+            0,
+        )
+        .expect_err("the tail must refuse a path escaping the root");
+        assert_eq!(
+            std::fs::read_to_string(&fx.victim).expect("victim readable"),
+            "OUTSIDE",
+            "the out-of-root victim must be untouched"
+        );
+    }
+
     #[test]
     fn daemon_session_refuses_an_escaping_unlink() {
         let (keep, temp) = canonical_tempdir();
