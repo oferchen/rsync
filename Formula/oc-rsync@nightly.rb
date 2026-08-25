@@ -7,12 +7,12 @@ class OcRsyncATNightly < Formula
   on_macos do
     on_intel do
       url "https://github.com/oferchen/rsync/releases/download/v0.6.4/oc-rsync-0.6.4-darwin-x86_64-nightly.tar.gz"
-      sha256 "84e27fe6a2ca8da6af8c70949aa4cf6482c11d98c708c949ef744b6113f79022"
+      sha256 "604075f759bd43745823048f9894a9cda70b839a6935c34849fcbae0c8e1f2b8"
     end
 
     on_arm do
       url "https://github.com/oferchen/rsync/releases/download/v0.6.4/oc-rsync-0.6.4-darwin-aarch64-nightly.tar.gz"
-      sha256 "f17d1bfe5c81457d03257eb14cf06d095c0e7fcee6dfa9ed49a401bea6b61b28"
+      sha256 "c59bde7f7a1c44c9c358f361d6b18398e9c759c7da43c0b4741021a3156d71c0"
     end
   end
 
