@@ -155,7 +155,7 @@ fn filter_file_open_error(
 /// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the trust
 ///   rule is at `syscall.c:406`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
-    crate::frontend::operator_file::open_read(path)
+    crate::frontend::operator_file::open_read_confined(path)
 }
 
 /// Reads the raw pattern lines from a filter file, or from standard input when
