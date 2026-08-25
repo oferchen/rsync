@@ -86,8 +86,8 @@ deep-path pass
 delete-missing-args-files-from pass
 early-input-symlink pass
 exclude-implied-trailing-backslash skip
-files-from-leak fail
-filter-leak fail
+files-from-leak skip
+filter-leak skip
 inband-modname-leak skip
 insecure-links-admin-optout fail
 io-noop-flood-recursion skip
@@ -107,7 +107,7 @@ misc-coverage fail
 msg-io-timeout-zero pass
 nonroot-restrictive-perms fail
 operator-path-backup-dir-daemon pass
-operator-path-backup-dir-exclude-daemon fail
+operator-path-backup-dir-exclude-daemon pass
 operator-path-dir-daemon-inmodule pass
 operator-path-dir-daemon-leaf fail
 operator-path-dir-daemon-mkdir fail

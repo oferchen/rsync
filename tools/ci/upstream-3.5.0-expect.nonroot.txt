@@ -206,7 +206,7 @@ omit-times pass
 open-noatime pass
 operator-path-backup-dir pass
 operator-path-backup-dir-daemon pass
-operator-path-backup-dir-exclude-daemon fail
+operator-path-backup-dir-exclude-daemon pass
 operator-path-backup-rmdir skip
 operator-path-backup-symlink skip
 operator-path-compare-dest pass

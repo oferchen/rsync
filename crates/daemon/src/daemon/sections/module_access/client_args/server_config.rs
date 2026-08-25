@@ -326,6 +326,32 @@ fn build_server_config(
                 true
             });
 
+            // upstream: options.c:2402-2409 - the same `if (sanitize_paths)`
+            // block that sanitises the alt-dest dirs also runs `backup_dir`
+            // through `sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`.
+            // An ABSOLUTE --backup-dir therefore re-roots at `module_dir`
+            // (util1.c:1145-1152, the `if (!rootdir) rootdir = module_dir`
+            // arm), while a relative one stays relative to the destination -
+            // the same two arms `clamp_basis_to_module` already implements for
+            // a basis directory, so it is reused rather than reimplemented.
+            //
+            // Without this the daemon resolved `/backup/` against the
+            // filesystem root and the backup silently failed. That is not a
+            // cosmetic loss: `atomic_create()` makes the backup a PRECONDITION
+            // (generator.c:2477-2479 `if (!make_backup(...)) return 0`), so the
+            // failure SKIPPED the entry entirely, leaving the destination stale
+            // while still exiting 0.
+            if let Some(dir) = cfg.backup_dir.as_deref() {
+                let clamped = clamp_basis_to_module(
+                    std::path::Path::new(dir),
+                    &resolve_base,
+                    &module_root_canonical,
+                );
+                // Lossless: `dir` is a String, and the clamp only joins and
+                // drops whole components, so every retained byte stays UTF-8.
+                cfg.backup_dir = Some(clamped.to_string_lossy().into_owned());
+            }
+
             // upstream: loadparm.c - `temp dir` module parameter provides a
             // default temp directory. The client's --temp-dir takes precedence
             // if already set from apply_long_form_args.

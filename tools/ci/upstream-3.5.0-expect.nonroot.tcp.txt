@@ -107,7 +107,7 @@ misc-coverage fail
 msg-io-timeout-zero pass
 nonroot-restrictive-perms skip
 operator-path-backup-dir-daemon pass
-operator-path-backup-dir-exclude-daemon fail
+operator-path-backup-dir-exclude-daemon pass
 operator-path-dir-daemon-inmodule pass
 operator-path-dir-daemon-leaf fail
 operator-path-dir-daemon-mkdir fail
