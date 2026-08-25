@@ -567,15 +567,18 @@ impl GeneratorContext {
         path: &Path,
         base: &Path,
     ) -> io::Result<std::fs::Metadata> {
-        // upstream: flist.c:readlink_stat() operates on paths without trailing
-        // separators. On Linux, lstat("path/") follows symlinks because the
+        // upstream: flist.c:readlink_stat() operates on paths without the
+        // DOTDIR marker. On Linux, lstat("path/") follows symlinks because the
         // kernel resolves the trailing slash, making a symlink appear as its
-        // target directory. Strip trailing separators via Path::components()
-        // so symlink_metadata correctly returns symlink metadata.
+        // target directory - so the marker must be stripped before the stat to
+        // get a decision that is the same on every platform. Capture whether it
+        // was there FIRST: the marker is not noise to discard, it is upstream's
+        // `name_type`, and the follow decision below depends on it.
+        let is_dotdir = super::operand_has_dotdir_marker(path);
         let normalized: PathBuf;
         let path = {
             let bytes = path.as_os_str().as_encoded_bytes();
-            if bytes.len() > 1 && bytes.ends_with(b"/") {
+            if bytes.len() > 1 && (bytes.ends_with(b"/") || bytes.ends_with(b"/.")) {
                 normalized = path.components().collect();
                 normalized.as_path()
             } else {
@@ -589,14 +592,21 @@ impl GeneratorContext {
 
         let meta = std::fs::symlink_metadata(path)?;
 
-        // upstream: flist.c:1362-1370 link_stat() - with --copy-dirlinks
-        // (follow_dirlinks), a symlink whose target is a directory is
-        // transmitted as a real directory. Applied before the
-        // copy-unsafe-links check, mirroring upstream's link_stat()
-        // (dirlink follow) running before readlink_stat()'s S_ISLNK
-        // re-examination. Only symlinks to directories are followed;
-        // symlinks to files stay symlinks (distinct from --copy-links).
-        if self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
+        // upstream: flist.c:1362-1370 link_stat() - with follow_dirlinks a
+        // symlink whose target is a directory is transmitted as a real
+        // directory. Applied before the copy-unsafe-links check, mirroring
+        // upstream's link_stat() (dirlink follow) running before
+        // readlink_stat()'s S_ISLNK re-examination. Only symlinks to
+        // directories are followed; symlinks to files stay symlinks (distinct
+        // from --copy-links).
+        //
+        // follow_dirlinks has TWO disjuncts upstream, not one
+        // (flist.c:2697 `copy_dirlinks || name_type != NORMAL_NAME`). A DOTDIR
+        // operand follows unconditionally, because asking for the CONTENTS of
+        // `current/` is only meaningful once `current` has been resolved to the
+        // directory it points at. Gating on `--copy-dirlinks` alone made
+        // `oc-rsync -a host:current/ dest/` deliver nothing and exit 0.
+        if (self.config.flags.copy_dirlinks || is_dotdir) && meta.file_type().is_symlink() {
             if let Ok(followed) = std::fs::metadata(path) {
                 if followed.file_type().is_dir() {
                     return Ok(followed);
