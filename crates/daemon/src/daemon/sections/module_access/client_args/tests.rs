@@ -564,6 +564,33 @@ mod daemon_partial_dir_sanitize_tests {
         );
     }
 
+    /// `has_root()`, NOT `is_absolute()`: upstream's test is the literal byte
+    /// `*p == '/'` (`util1.c:1145`) applied to a PEER-SUPPLIED path.
+    ///
+    /// On Windows `Path::is_absolute()` is FALSE for `/pdir` because there is
+    /// no drive prefix, so an `is_absolute()` gate routes a peer-sent absolute
+    /// value down the RELATIVE arm and never re-roots it at the module root.
+    /// The sibling test above cannot see that: on Unix the two spellings
+    /// agree, so it passes either way. This one pins the predicate so the
+    /// divergence cannot be reintroduced by "simplifying" back.
+    #[test]
+    fn a_leading_slash_partial_dir_re_roots_on_every_platform() {
+        let module_root = Path::new("/srv/mod");
+        let dest = Path::new("/srv/mod/sub");
+
+        for given in ["/pdir", "/etc/pdir"] {
+            assert!(
+                Path::new(given).has_root(),
+                "{given:?} must be recognised as rooted on this platform"
+            );
+            let got = sanitize_partial_dir(Path::new(given), dest, module_root);
+            assert!(
+                got.starts_with(module_root),
+                "{given:?} must re-root under {module_root:?}, got {got:?}"
+            );
+        }
+    }
+
     /// The two consumers genuinely need different answers for a RELATIVE value:
     /// the basis clamp anchors once and returns an absolute path, the partial
     /// dir must not. Pinning the disagreement is what stops the two being

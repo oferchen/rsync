@@ -548,7 +548,13 @@ fn clamp_basis_to_module(
     resolve_base: &std::path::Path,
     module_root_canonical: &std::path::Path,
 ) -> std::path::PathBuf {
-    let tail = if ref_path.is_absolute() {
+    // upstream: `util1.c:1145` tests `*p == '/'` on the peer-supplied byte
+    // string, not a platform notion of absoluteness. `Path::is_absolute()` is
+    // FALSE on Windows for `/etc/foo` (no drive prefix), which would route a
+    // peer-sent absolute value down the relative arm and skip the re-root
+    // entirely. `has_root()` is true for a leading separator on both platforms
+    // and additionally true for a drive-absolute Windows path.
+    let tail = if ref_path.has_root() {
         ref_path.to_path_buf()
     } else {
         destination_below_root(resolve_base, module_root_canonical).join(ref_path)
@@ -643,8 +649,11 @@ fn sanitize_partial_dir(
     resolve_base: &std::path::Path,
     module_root_canonical: &std::path::Path,
 ) -> std::path::PathBuf {
-    if ref_path.is_absolute() {
-        // upstream: util1.c:1145-1151 - the rootdir replaces the leading slash
+    if ref_path.has_root() {
+        // upstream: util1.c:1145-1151 - the test is `*p == '/'` on the
+        // peer-supplied bytes, so `has_root()` not `is_absolute()`: the latter
+        // is FALSE on Windows for a leading-slash path and would skip the
+        // re-root. See `clamp_basis_to_module` for the same rule. - the rootdir replaces the leading slash
         // and `depth` is forced to 0, which is exactly the absolute arm of
         // `clamp_basis_to_module`.
         return clamp_basis_to_module(ref_path, resolve_base, module_root_canonical);
