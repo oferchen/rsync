@@ -351,6 +351,26 @@ fn build_server_config(
                 // drops whole components, so every retained byte stays UTF-8.
                 cfg.backup_dir = Some(clamped.to_string_lossy().into_owned());
             }
+            // upstream: main.c:1233-1240 - the server receiver runs the very
+            // same `if (sanitize_paths)` block over `partial_dir`
+            // (`sanitize_path(NULL, partial_dir, NULL, curr_dir_depth,
+            // SP_DEFAULT)`), and `clientserver.c` sets `sanitize_paths` for
+            // every daemon connection. An ABSOLUTE `--partial-dir` therefore
+            // re-roots at `module_dir` (util1.c:1145-1152) instead of naming a
+            // filesystem-absolute path, exactly as `--backup-dir` above -
+            // so the same clamp is reused rather than reimplemented.
+            //
+            // Without it an absolute `--partial-dir=/pdir` resolved against the
+            // filesystem root, where the daemon has no business writing: the
+            // staging `mkstemp` failed EACCES and the entry was reported as an
+            // I/O error rather than transferred.
+            if let Some(dir) = cfg.partial_dir.as_deref() {
+                cfg.partial_dir = Some(clamp_basis_to_module(
+                    dir,
+                    &resolve_base,
+                    &module_root_canonical,
+                ));
+            }
 
             // upstream: loadparm.c - `temp dir` module parameter provides a
             // default temp directory. The client's --temp-dir takes precedence

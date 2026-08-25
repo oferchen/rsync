@@ -213,6 +213,21 @@ fn apply_long_form_args(
                     i += 1;
                 }
             }
+            // upstream: options.c:3052-3056 - `if (partial_dir && am_sender)`
+            // emits `--partial-dir` and its value as two argv entries via
+            // `safe_arg("", partial_dir)`, then `--delay-updates` when that is
+            // also active. The receiving side stages each incoming temp file
+            // through this directory and looks there for a resume basis
+            // (`cleanup.c:handle_partial_dir`), so a daemon that consumes the
+            // adjacent `--delay-updates` but drops this value honours the
+            // staging request with nowhere to stage.
+            "--partial-dir" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.partial_dir = Some(std::path::PathBuf::from(dir));
+                    config.has_partial_dir = true;
+                    i += 1;
+                }
+            }
             // upstream: options.c:2818-2823 - --compress-choice, --new-compress, --old-compress
             "--new-compress" => {
                 config.flags.compress = true;
@@ -322,6 +337,9 @@ fn apply_long_form_args(
                     config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, std::path::PathBuf::from(dir)));
                 } else if let Some(dir) = arg.strip_prefix("--temp-dir=") {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
+                } else if let Some(dir) = arg.strip_prefix("--partial-dir=") {
+                    config.partial_dir = Some(std::path::PathBuf::from(dir));
+                    config.has_partial_dir = true;
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
                 // upstream: options.c:2912 / 2915 - --usermap=SPEC / --groupmap=SPEC.
