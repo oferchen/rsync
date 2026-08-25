@@ -512,6 +512,43 @@ pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs:
     )
 }
 
+/// Exclusively create an operator-supplied path through the ownership walk.
+///
+/// The `O_EXCL` twin of [`operator_open_write_create`], for the receiver's
+/// staging temp under an operator-supplied `--temp-dir`.
+///
+/// `O_EXCL` alone is NOT sufficient here. It refuses a symlink at the *final*
+/// component only, so it defeats a planted `.name.XXXXXX` but not a planted
+/// `--temp-dir` itself: the path resolves *through* the directory symlink
+/// before the leaf is ever considered, and the receiver's scratch file - and
+/// with it the transferred data - lands outside the tree.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/receiver.c:426-434` `open_tmpfile()` - for any non-chrooted
+///   receiver, `secure_mkstemp(fnametmp, mode, tmpdir != NULL)`. The third
+///   argument is the resolver selector, and upstream's own comment states the
+///   rule: "An operator-supplied --temp-dir (tmpdir) gets the ownership-walk
+///   resolver (it may legitimately point outside the tree); the deep-entry-dir
+///   fallback ... gets the strict transfer-path one."
+///
+/// Name generation stays the caller's: upstream's `mkstemp` is
+/// generate-then-`O_EXCL`-retry, which is what the caller's retry loop already
+/// implements. This supplies only the walked, exclusive open.
+///
+/// # Errors
+///
+/// See [`operator_open_with`]. `AlreadyExists` is the expected, retryable
+/// outcome when the generated name collides.
+pub fn operator_open_create_new(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_with(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+        // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
+        // it rather than naming either width here.
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+    )
+}
 /// Open an operator-supplied path as a receiver output through the ownership
 /// walk.
 ///
