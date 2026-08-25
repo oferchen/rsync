@@ -266,6 +266,114 @@ fn daemon_excluded_destination_honours_dir_only_rules() {
 }
 
 /// Builds a receiver whose module excludes `secret` and whose client asked for
+/// the given `--temp-dir` / `--backup-dir` values.
+///
+/// Both are given as the module-rooted paths oc stores, because that is what
+/// upstream matches: `options.c:2400-2407` sanitises both options IN PLACE
+/// (rootdir `NULL` = `module_dir`) BEFORE the filter block at `:2409-2436`
+/// re-cleans them for the check. Unlike a basis directory there is no
+/// "requested" form to preserve.
+fn ctx_with_staging(temp_dir: Option<&str>, backup_dir: Option<&str>) -> ReceiverContext {
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+    let handshake = test_handshake();
+    let mut config = test_config();
+    // ANCHORED, as a module `exclude = /secret` is.
+    config.daemon_filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: "secret".into(),
+        anchored: true,
+        ..FilterRuleWireFormat::default()
+    }];
+    config.connection.daemon_module_root = Some("/srv/mod".into());
+    config.temp_dir = temp_dir.map(std::path::PathBuf::from);
+    config.backup_dir = backup_dir.map(str::to_owned);
+    ReceiverContext::new_for_test(&handshake, config)
+}
+
+fn assert_options_rejected(err: std::io::Error) {
+    assert_eq!(
+        err.to_string(),
+        "Your options have been rejected by the server.",
+        "upstream's exact refusal text (clientserver.c:1267)"
+    );
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>()),
+        "the refusal must carry the RERR_SYNTAX marker, or the exit-code mapper's \
+         catch-all reports RERR_FILEIO (11) instead of upstream's 1"
+    );
+}
+
+/// upstream: `options.c:2427-2435` - a peer-supplied `--backup-dir` naming a
+/// directory the module excludes refuses the whole session.
+///
+/// Measured against a real 3.5.0 daemon before the fix: oc wrote the
+/// destination's pre-image INTO the excluded subtree and exited 0, where
+/// upstream exits 4 with this text.
+#[test]
+fn daemon_excluded_backup_dir_is_refused() {
+    let ctx = ctx_with_staging(None, Some("/srv/mod/secret"));
+    assert_options_rejected(
+        ctx.reject_daemon_excluded_staging_dirs()
+            .expect_err("an excluded --backup-dir must refuse the session"),
+    );
+}
+
+/// upstream: `options.c:2419-2425` - the SAME block applies the identical rule
+/// to `tmpdir`. Pinned separately because a fix that covered only `backup_dir`
+/// would leave this operand live, and both tests share one implementation.
+#[test]
+fn daemon_excluded_temp_dir_is_refused() {
+    let ctx = ctx_with_staging(Some("/srv/mod/secret"), None);
+    assert_options_rejected(
+        ctx.reject_daemon_excluded_staging_dirs()
+            .expect_err("an excluded --temp-dir must refuse the session"),
+    );
+}
+
+/// upstream: `options.c:2421` / `:2429` - `if (!*tmpdir)` / `if (!*backup_dir)`
+/// jumps straight to `options_rejected`. An empty value is refused OUTRIGHT,
+/// before any filter match, so it cannot slip through on a module whose rules
+/// happen not to match the empty name.
+#[test]
+fn daemon_empty_staging_dir_is_refused_without_matching() {
+    let ctx = ctx_with_staging(None, Some(""));
+    assert_options_rejected(
+        ctx.reject_daemon_excluded_staging_dirs()
+            .expect_err("an empty --backup-dir must refuse the session"),
+    );
+}
+
+/// Non-vacuity companion: with the SAME module filter, staging directories the
+/// rules do not exclude must pass. Without this, a refusal that fired
+/// unconditionally would look identical to a correct one.
+#[test]
+fn daemon_allows_staging_dirs_the_module_does_not_exclude() {
+    let ctx = ctx_with_staging(Some("/srv/mod/tmp"), Some("/srv/mod/backups"));
+    assert!(
+        ctx.reject_daemon_excluded_staging_dirs().is_ok(),
+        "allowed staging directories must not refuse the session"
+    );
+}
+
+/// upstream gates the whole block on `daemon_filter_list.head`
+/// (`options.c:2409`), so a receiver with no module filter list - every client
+/// and SSH-server receiver - must never refuse, even on a name that would
+/// otherwise match.
+#[test]
+fn receiver_without_a_daemon_filter_list_never_refuses_staging_dirs() {
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.connection.daemon_module_root = Some("/srv/mod".into());
+    config.backup_dir = Some("/srv/mod/secret".to_owned());
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    assert!(
+        ctx.reject_daemon_excluded_staging_dirs().is_ok(),
+        "with no daemon filter list the check must be inert"
+    );
+}
+
+/// Builds a receiver whose module excludes `secret` and whose client asked for
 /// `basis` as an alternate-basis directory.
 ///
 /// `requested` is what the peer wrote; `path` is set to the resolved shape the
