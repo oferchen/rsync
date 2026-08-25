@@ -505,11 +505,17 @@ pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
 }
 
 /// Returns `Unsupported` on platforms without xattr support.
+///
+/// Takes `_mode` so the signature matches the xattr arm above: the two are one
+/// API with two implementations, and a caller must not have to know which arm
+/// it compiled against. The mode is unused here only because this arm stores
+/// nothing.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn store_fake_super_acl(
     _path: &Path,
     _is_access_acl: bool,
     _acl: &protocol::acl::RsyncAcl,
+    _mode: u32,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
