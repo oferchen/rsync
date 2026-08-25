@@ -106,10 +106,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tempfile::{TempDir, tempdir};
-use test_support::{LSH_STUB_BIN, LshRunnerStub, require_binaries};
+use test_support::{Deadlined, LSH_STUB_BIN, LshRunnerStub, require_binaries};
 
 /// Authoritative source length. Spans many signature blocks so the redo resend
 /// is a real multi-block delta round-trip, not a single-token special case.
@@ -279,38 +279,31 @@ struct RunOutcome {
     stderr: String,
 }
 
-/// Drive one `oc-rsync` invocation under a deadline.
+/// Drive one `oc-rsync` invocation under [`CLIENT_DEADLINE`].
 ///
-/// The child is polled rather than waited on so a transport that deadlocks (the
-/// pre-fix remote-shell pull) is reported as a failure instead of hanging the
-/// test binary. Returns `Err` describing the timeout after killing the child.
+/// Delegates to the workspace's bounded drain-and-wait primitive: both pipes
+/// are read throughout, and the deadline bounds the output collection as well
+/// as the process wait. The remote-shell cells spawn a descendant chain
+/// (client -> `lsh-stub` -> `--server`) that can hold a pipe open after the
+/// client exits, which is exactly what an unbounded final read cannot survive.
 fn run_oc_rsync_deadlined(bin: &Path, args: &[&OsStr]) -> io::Result<RunOutcome> {
-    let mut child = Command::new(bin)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let deadline = Instant::now() + CLIENT_DEADLINE;
-    while child.try_wait()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("client did not finish within {CLIENT_DEADLINE:?}"),
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let mut command = Command::new(bin);
+    command.args(args);
+    match test_support::run_deadlined(&mut command, CLIENT_DEADLINE)? {
+        Deadlined::Finished {
+            status,
+            stdout,
+            stderr,
+        } => Ok(RunOutcome {
+            status,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        }),
+        Deadlined::Expired { budget, .. } => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("client did not finish within {budget:?}"),
+        )),
     }
-
-    let output = child.wait_with_output()?;
-    Ok(RunOutcome {
-        status: output.status,
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
 }
 
 /// Seeds the authoritative source and the wrong-prefix destination basis,
