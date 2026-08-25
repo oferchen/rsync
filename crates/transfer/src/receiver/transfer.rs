@@ -236,7 +236,11 @@ impl ReceiverContext {
             // sandbox without ACCESS_FS_REFER on kernels 5.13-5.18) sets
             // IOERR_GENERAL so the transfer exits 23 (RERR_PARTIAL) instead
             // of reporting success while the file was never updated.
-            self.flist_io_error |= handle_delayed_updates(all_delayed_updates, backup_cfg);
+            self.flist_io_error |= handle_delayed_updates(
+                all_delayed_updates,
+                backup_cfg,
+                self.config.partial_dir.as_deref(),
+            );
         }
 
         #[cfg(unix)]
@@ -439,12 +443,16 @@ pub(in crate::receiver) enum DeletePassPhase {
     Late,
 }
 
-/// Renames all delayed-update files from their `.~tmp~` staging paths to
-/// their final destinations, then removes the empty `.~tmp~` directories.
+/// Renames all delayed-update files from their staging paths to their final
+/// destinations, removing each emptied staging directory as it goes.
 ///
-/// Mirrors upstream `receiver.c:529-557 handle_delayed_updates()` which
+/// Mirrors upstream `receiver.c:688-717 handle_delayed_updates()` which
 /// iterates `delayed_bits`, renames each file from its `partial_dir_fname()`
 /// path to the final destination, and calls `handle_partial_dir(PDIR_DELETE)`.
+///
+/// `partial_dir` is the configured `--partial-dir` and decides whether that
+/// last step does anything at all: upstream skips the rmdir entirely for an
+/// absolute value. [`engine::remove_partial_dir`] owns the rule.
 ///
 /// When `backup_config` is `Some`, backs up the existing destination file
 /// before the rename (upstream: `receiver.c:538 make_backup(fname, False)`).
@@ -467,13 +475,12 @@ pub(in crate::receiver) enum DeletePassPhase {
 pub(in crate::receiver) fn handle_delayed_updates(
     delayed: &[(PathBuf, PathBuf)],
     backup_config: Option<crate::disk_commit::BackupConfig>,
+    partial_dir: Option<&Path>,
 ) -> i32 {
-    use std::collections::HashSet;
     use std::fs;
 
     use crate::generator::io_error_flags::IOERR_GENERAL;
 
-    let mut staging_dirs: HashSet<PathBuf> = HashSet::new();
     // Mirrors upstream's got_xfer_error: any rename/backup failure here is a
     // transfer error that must yield exit 23 (RERR_PARTIAL), not a silent 0.
     let mut io_error = 0;
@@ -555,16 +562,13 @@ pub(in crate::receiver) fn handle_delayed_updates(
             continue;
         }
 
-        // Track parent staging directories for cleanup.
-        if let Some(parent) = staging_path.parent() {
-            staging_dirs.insert(parent.to_path_buf());
-        }
-    }
-
-    // upstream: receiver.c:553 - handle_partial_dir(partialptr, PDIR_DELETE)
-    // Remove empty .~tmp~ staging directories.
-    for dir in &staging_dirs {
-        let _ = fs::remove_dir(dir);
+        // upstream: receiver.c:716 - handle_partial_dir(partialptr, PDIR_DELETE)
+        // fires per file on the rename's success branch rather than as a
+        // deferred sweep over the distinct parents. That ordering is what makes
+        // the unchecked rmdir correct when two entries stage in one directory:
+        // the first call fails harmlessly on the still-occupied directory and
+        // the second succeeds.
+        engine::remove_partial_dir(partial_dir, staging_path);
     }
 
     io_error
@@ -846,7 +850,7 @@ mod tests {
             (staged_b.clone(), final_b.clone()),
         ];
 
-        handle_delayed_updates(&delayed, None);
+        handle_delayed_updates(&delayed, None, None);
 
         // Files should be at final paths.
         assert_eq!(fs::read_to_string(&final_a).unwrap(), "content-a");
@@ -889,7 +893,7 @@ mod tests {
             (staged2.clone(), final2.clone()),
         ];
 
-        handle_delayed_updates(&delayed, None);
+        handle_delayed_updates(&delayed, None, None);
 
         assert_eq!(fs::read_to_string(&final1).unwrap(), "one");
         assert_eq!(fs::read_to_string(&final2).unwrap(), "two");
@@ -897,6 +901,66 @@ mod tests {
         assert!(!tmp2.exists());
     }
 
+    /// An ABSOLUTE `--partial-dir` must survive the sweep.
+    ///
+    /// upstream: `util1.c:1506-1507` - `handle_partial_dir(fname, PDIR_DELETE)`
+    /// returns immediately when `*partial_dir == '/'`, so `receiver.c:716` never
+    /// rmdir's an operator-named absolute staging directory. Measured against
+    /// real rsync 3.5.0 over a daemon push with `-a --delay-updates
+    /// --partial-dir=/pdir`: upstream leaves a pre-existing `/pdir` in place,
+    /// while oc removed it. The directory is reserved across runs and generally
+    /// exists before the transfer starts, so removing it destroys operator
+    /// state that is not ours to touch.
+    #[test]
+    fn absolute_partial_dir_survives_the_delayed_update_sweep() {
+        let dir = test_support::create_tempdir();
+        // An absolute --partial-dir is one path for the whole transfer, not one
+        // per destination directory - so the configured value and the staging
+        // directory are the same thing.
+        let partial_dir = dir.path().join("pdir");
+        fs::create_dir(&partial_dir).unwrap();
+        let staged = partial_dir.join("f.txt");
+        fs::write(&staged, b"payload").unwrap();
+        let final_path = dir.path().join("f.txt");
+        handle_delayed_updates(
+            &[(staged, final_path.clone())],
+            None,
+            Some(partial_dir.as_path()),
+        );
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
+        assert!(
+            partial_dir.is_dir(),
+            "an absolute --partial-dir must outlive the transfer (util1.c:1507)"
+        );
+    }
+    /// Non-vacuity companion for
+    /// [`absolute_partial_dir_survives_the_delayed_update_sweep`]: the same
+    /// fixture with a RELATIVE `--partial-dir` must still be swept away.
+    ///
+    /// Without this the pin would also hold if the sweep had simply stopped
+    /// removing anything at all, which is a different bug in the other
+    /// direction - upstream does rmdir a relative partial-dir, because it is
+    /// created beside each destination file and belongs to that file's
+    /// transfer.
+    #[test]
+    fn relative_partial_dir_is_removed_by_the_delayed_update_sweep() {
+        let dir = test_support::create_tempdir();
+        let partial_dir = dir.path().join("pdir");
+        fs::create_dir(&partial_dir).unwrap();
+        let staged = partial_dir.join("f.txt");
+        fs::write(&staged, b"payload").unwrap();
+        let final_path = dir.path().join("f.txt");
+        handle_delayed_updates(
+            &[(staged, final_path.clone())],
+            None,
+            Some(Path::new("pdir")),
+        );
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
+        assert!(
+            !partial_dir.exists(),
+            "an emptied relative --partial-dir is rmdir'd (util1.c:1531)"
+        );
+    }
     /// Verifies the sweep continues past a rename failure (matching upstream
     /// which logs the error but does not abort) AND flags the failure so the
     /// transfer exits 23 rather than silently reporting success.
@@ -928,7 +992,7 @@ mod tests {
         ];
 
         // Should not panic or abort, but must report the failed rename.
-        let io_error = handle_delayed_updates(&delayed, None);
+        let io_error = handle_delayed_updates(&delayed, None, None);
 
         assert_eq!(
             io_error & IOERR_GENERAL,
@@ -954,7 +1018,7 @@ mod tests {
         fs::write(&staged, b"content").unwrap();
         let final_path = dir.path().join("a.txt");
 
-        let io_error = handle_delayed_updates(&[(staged, final_path)], None);
+        let io_error = handle_delayed_updates(&[(staged, final_path)], None, None);
 
         assert_eq!(
             io_error, 0,
@@ -966,7 +1030,7 @@ mod tests {
     /// reports no error.
     #[test]
     fn handle_delayed_updates_empty_is_noop() {
-        assert_eq!(handle_delayed_updates(&[], None), 0);
+        assert_eq!(handle_delayed_updates(&[], None, None), 0);
     }
 
     /// Verifies that `handle_delayed_updates` backs up a pre-existing
@@ -1004,7 +1068,11 @@ mod tests {
             suffix: OsString::from("~"),
         };
 
-        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+        handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            None,
+        );
 
         assert_eq!(
             fs::read_to_string(&final_path).unwrap(),
@@ -1055,7 +1123,11 @@ mod tests {
             suffix: OsString::from("~"),
         };
 
-        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+        handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            None,
+        );
 
         assert_eq!(fs::read_to_string(&final_path).unwrap(), "only-content");
         assert!(
@@ -1091,7 +1163,11 @@ mod tests {
             suffix: OsString::from("~"),
         };
 
-        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+        handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            None,
+        );
 
         assert_eq!(
             fs::read_to_string(&final_path).unwrap(),
@@ -1139,7 +1215,11 @@ mod tests {
             suffix: OsString::from("~"),
         };
 
-        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+        handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            None,
+        );
 
         let backup_path = backup_root.join("deep").join("name1~");
         assert!(
@@ -1189,7 +1269,11 @@ mod tests {
             suffix: OsString::from(""),
         };
 
-        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+        handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            None,
+        );
 
         let suffixed = backup_root.join("name1~");
         assert!(
@@ -1245,6 +1329,7 @@ mod tests {
                 (staged_b.clone(), final_b.clone()),
             ],
             Some(backup_config),
+            None,
         );
 
         assert_eq!(fs::read_to_string(&final_a).unwrap(), "new-a");
@@ -1302,7 +1387,7 @@ mod tests {
             (staged_a.clone(), final_a.clone()),
             (staged_b.clone(), final_b.clone()),
         ];
-        handle_delayed_updates(&delayed, None);
+        handle_delayed_updates(&delayed, None, None);
 
         assert!(final_a.exists());
         assert!(final_b.exists());

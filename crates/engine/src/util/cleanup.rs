@@ -87,6 +87,39 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Removes an emptied `--partial-dir` once its staged file has been committed.
+///
+/// upstream: `util1.c:1501-1535 handle_partial_dir(fname, PDIR_DELETE)`, whose
+/// delete half opens with `if (!create && *partial_dir == '/') return 1;`. An
+/// ABSOLUTE `--partial-dir` is therefore never rmdir'd: it is operator-named,
+/// it is reserved across runs, and it generally exists before the transfer
+/// starts. Only a relative one - created beside each destination file and
+/// belonging to that file's transfer - is swept away once emptied. Upstream
+/// keeps both halves of the rule in one function, which is why this sits beside
+/// [`create_partial_dir`] instead of being open-coded at each call site: the
+/// rule had been written at one of oc's two removal sites and forgotten at the
+/// other, and the forgotten one destroyed a pre-existing absolute partial-dir.
+///
+/// `partial_dir` is the configured option value - the string upstream tests
+/// with `*partial_dir == '/'`. `None` means no `--partial-dir` was given, in
+/// which case `--delay-updates` stages through upstream's implicit
+/// `.~tmp~` (`options.c:347,2564` assign the literal `tmp_partialdir`), which is
+/// relative and so always removable.
+///
+/// `staged_file` is the entry inside the directory; its parent is what gets
+/// removed, exactly as upstream derives the directory by truncating
+/// `partial_fname` at its last `'/'`.
+///
+/// Best-effort, like upstream's unchecked `do_rmdir_at`: a partial-dir that
+/// still holds another file stays put.
+pub fn remove_partial_dir(partial_dir: Option<&Path>, staged_file: &Path) {
+    if partial_dir.is_some_and(Path::is_absolute) {
+        return;
+    }
+    if let Some(dir) = staged_file.parent() {
+        let _ = std::fs::remove_dir(dir);
+    }
+}
 /// Moves an interrupted temp file to its partial destination, or removes it.
 ///
 /// upstream: `cleanup.c:exit_cleanup()` calls `finish_transfer()` to rename the

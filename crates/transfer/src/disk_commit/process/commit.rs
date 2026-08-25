@@ -180,8 +180,9 @@ pub(super) fn commit_file(
 /// `--partial-dir`, mirroring upstream `handle_partial_dir(PDIR_DELETE)`.
 ///
 /// Best-effort: a missing partial file or a non-empty partial-dir leaves the
-/// filesystem untouched. Absolute `--partial-dir` values are never rmdir'd,
-/// matching upstream `util1.c:1507` (`if (!create && *partial_dir == '/')`).
+/// filesystem untouched. The absolute-`--partial-dir` exemption belongs to
+/// [`engine::remove_partial_dir`], which owns upstream `util1.c:1506-1507` for
+/// both of oc's removal sites.
 fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
     let PartialMode::PartialDir(ref dir) = config.partial_mode else {
         return;
@@ -190,12 +191,7 @@ fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
         return;
     };
     let _ = fs::remove_file(&partial);
-    // upstream: handle_partial_dir() only rmdir's a relative partial-dir.
-    if !dir.is_absolute() {
-        if let Some(parent) = partial.parent() {
-            let _ = fs::remove_dir(parent);
-        }
-    }
+    engine::remove_partial_dir(Some(dir), &partial);
 }
 
 /// Resolves the `--delay-updates` staging path for a destination file.

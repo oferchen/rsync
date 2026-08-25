@@ -110,7 +110,7 @@ operator-path-backup-dir-daemon pass
 operator-path-backup-dir-exclude-daemon pass
 operator-path-dir-daemon-inmodule pass
 operator-path-dir-daemon-leaf pass
-operator-path-dir-daemon-mkdir fail
+operator-path-dir-daemon-mkdir pass
 operator-path-dir-daemon-outside pass
 operator-path-insecure-links-daemon pass
 operator-path-insecure-links-refused pass
