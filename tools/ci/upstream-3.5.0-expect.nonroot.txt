@@ -225,7 +225,7 @@ operator-path-partial-dir pass
 operator-path-partial-dir-daemon fail
 operator-path-partial-dir-exclude-daemon fail
 operator-path-temp-dir pass
-operator-path-traversal-backup-dir-daemon fail
+operator-path-traversal-backup-dir-daemon pass
 operator-path-traversal-dest-dir-daemon pass
 operator-path-traversal-partial-dir-daemon pass
 operator-path-write-batch pass
