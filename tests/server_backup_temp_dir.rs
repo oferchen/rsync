@@ -170,7 +170,15 @@ fn temp_dir_is_honoured_so_an_unwritable_one_fails_the_file() {
         return;
     }
     let fx = fixture();
-    let tmp = fx.root.join("staging");
+    // Staging lives INSIDE the destination tree. oc confines the staging
+    // family (--temp-dir/--partial-dir/--backup-dir) against the destination
+    // root, so an absolute --temp-dir outside it is refused before the mode
+    // bits are ever consulted - which would make the permission bit a
+    // non-discriminator and this pair vacuous. Measured on Linux: outside the
+    // tree BOTH the writable and unwritable cases return 23 (mkstemp EACCES);
+    // inside it, writable returns 0 and unwritable returns 23, which is the
+    // contrast these two cells exist to draw.
+    let tmp = fx.root.join("dst").join("staging");
     fs::create_dir_all(&tmp).expect("create staging");
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o500)).expect("chmod staging");
 
@@ -194,7 +202,15 @@ fn a_writable_temp_dir_still_completes_the_transfer() {
         return;
     }
     let fx = fixture();
-    let tmp = fx.root.join("staging");
+    // Staging lives INSIDE the destination tree. oc confines the staging
+    // family (--temp-dir/--partial-dir/--backup-dir) against the destination
+    // root, so an absolute --temp-dir outside it is refused before the mode
+    // bits are ever consulted - which would make the permission bit a
+    // non-discriminator and this pair vacuous. Measured on Linux: outside the
+    // tree BOTH the writable and unwritable cases return 23 (mkstemp EACCES);
+    // inside it, writable returns 0 and unwritable returns 23, which is the
+    // contrast these two cells exist to draw.
+    let tmp = fx.root.join("dst").join("staging");
     fs::create_dir_all(&tmp).expect("create staging");
 
     let (status, entries) = push(&fx, &[format!("--temp-dir={}", tmp.display())]);
