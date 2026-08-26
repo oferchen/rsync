@@ -507,14 +507,30 @@ fn backup_rename_or_copy(old_path: &Path, new_path: &Path) -> io::Result<bool> {
     }
 }
 
-/// Issues the backup rename. In production this is a bare [`fs::rename`]; under
-/// `cfg(test)` a fault-injection guard can force a cross-device (`EXDEV`) error
-/// so the copy fallback in [`backup_rename_or_copy`] can be exercised
+/// Issues the backup rename through the operator-path ownership walk, bound to
+/// the session's confinement root.
+///
+/// This is the tier that runs for every `--backup-dir`, because the SEC-1.j
+/// dirfd anchoring above only covers a backup name that is a single component
+/// directly under the destination root. A bare `fs::rename` here follows a
+/// directory symlink standing at the `--backup-dir`, and a non-chrooted daemon
+/// owns everything it creates, so such a symlink is TRUSTED-owned by
+/// construction: the destination's pre-transfer bytes are then MOVED out of the
+/// module and the client still exits 0.
+///
+/// upstream: `backup.c:443-449` `make_backup()` sets `operator_path_resolve`
+/// around the whole backup, and `syscall.c:1891` `do_rename_at()` walks each
+/// side with `owner_walk_parent()` while it is set. A session with no
+/// confinement root - every plain local or remote-shell client - has nothing to
+/// be outside of, so only the ownership half applies there.
+///
+/// Under `cfg(test)` a fault-injection guard can force a cross-device (`EXDEV`)
+/// error so the copy fallback in [`backup_rename_or_copy`] can be exercised
 /// deterministically on filesystems that would otherwise complete the rename.
 #[cfg(not(test))]
 #[inline]
 fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
-    fs::rename(old_path, new_path)
+    backup_rename_confined(old_path, new_path)
 }
 
 #[cfg(test)]
@@ -522,6 +538,18 @@ fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
     if force_exdev_active() {
         return Err(simulated_cross_device_error());
     }
+    backup_rename_confined(old_path, new_path)
+}
+
+#[cfg(unix)]
+#[inline]
+fn backup_rename_confined(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fast_io::operator_rename_confined(old_path, new_path, true)
+}
+
+#[cfg(not(unix))]
+#[inline]
+fn backup_rename_confined(old_path: &Path, new_path: &Path) -> io::Result<()> {
     fs::rename(old_path, new_path)
 }
 
@@ -632,9 +660,21 @@ fn backup_rename_sandboxed(
 /// receiver's destination sandbox when the backup name is a single component
 /// under `dest_dir` (SEC-1.h shape, same as the hardlink-follower create).
 ///
+/// Every other shape - which is every `--backup-dir`, whose backup name carries
+/// the directory as a second component - takes the operator-path ownership walk
+/// bound to the session's confinement root, the same resolver
+/// [`backup_rename_syscall`] uses one tier down. The two tiers have to agree:
+/// upstream raises `operator_path_resolve` around `link_or_rename()` as a
+/// whole, and the link tier runs FIRST, so confining only the rename leaves the
+/// escape wide open on any platform where the link succeeds.
+///
 /// Under `cfg(test)` the `ForceExdev` guard makes this report a cross-device
 /// error, matching a real `--backup-dir` on another mount where `link(2)` fails
 /// with `EXDEV` before `rename(2)` does.
+///
+/// upstream: `backup.c:443-449` `make_backup()`; `backup.c:200-207`
+/// `link_or_rename()`; `syscall.c:676` `do_link_at()` under
+/// `operator_path_resolve`.
 fn backup_hardlink_syscall(
     config: &DiskCommitConfig,
     old_path: &Path,
@@ -645,20 +685,26 @@ fn backup_hardlink_syscall(
         return Err(simulated_cross_device_error());
     }
     #[cfg(unix)]
-    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref()) {
-        return fast_io::linkat_via_sandbox_or_fallback(
-            Some(sandbox.as_ref()),
-            old_path,
-            dest_dir,
-            new_path.strip_prefix(dest_dir).unwrap_or(new_path),
-            new_path,
-        );
+    {
+        if let (Some(sandbox), Some(dest_dir)) =
+            (config.sandbox.as_ref(), config.dest_dir.as_deref())
+            && new_path.parent() == Some(dest_dir)
+        {
+            return fast_io::linkat_via_sandbox_or_fallback(
+                Some(sandbox.as_ref()),
+                old_path,
+                dest_dir,
+                new_path.strip_prefix(dest_dir).unwrap_or(new_path),
+                new_path,
+            );
+        }
+        fast_io::operator_link_confined(old_path, new_path)
     }
     #[cfg(not(unix))]
     {
         let _ = config;
+        fast_io::hard_link(old_path, new_path)
     }
-    fast_io::hard_link(old_path, new_path)
 }
 
 /// Upstream's hard-link tier of `link_or_rename()` with `prefer_rename = 0`.

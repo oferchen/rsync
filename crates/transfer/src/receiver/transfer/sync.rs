@@ -459,20 +459,36 @@ impl ReceiverContext {
                 // `std::fs::rename` for multi-component / cross-tree cases.
                 #[cfg(unix)]
                 {
-                    let backup_rel = backup_path
-                        .strip_prefix(&dest_dir)
-                        .map(std::path::Path::to_path_buf)
-                        .unwrap_or_else(|_| backup_path.clone());
-                    fast_io::renameat_via_sandbox_or_fallback(
-                        sandbox.as_deref(),
-                        &dest_dir,
-                        relative_path,
-                        &file_path,
-                        &dest_dir,
-                        &backup_rel,
-                        &backup_path,
-                        true,
-                    )?;
+                    if backup_path.parent() == Some(dest_dir.as_path()) {
+                        let backup_rel = backup_path
+                            .strip_prefix(&dest_dir)
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_else(|_| backup_path.clone());
+                        fast_io::renameat_via_sandbox_or_fallback(
+                            sandbox.as_deref(),
+                            &dest_dir,
+                            relative_path,
+                            &file_path,
+                            &dest_dir,
+                            &backup_rel,
+                            &backup_path,
+                            true,
+                        )?;
+                    } else {
+                        // Every `--backup-dir` lands here: the backup name
+                        // carries the directory as a second component, so the
+                        // sandbox dirfd is not the right anchor for it. Upstream
+                        // resolves it with the operator-path ownership walk
+                        // bound to the module root instead - a trusted-owned
+                        // directory symlink standing at the `--backup-dir` is
+                        // followed by design, so only the root can refuse the
+                        // landing site.
+                        //
+                        // upstream: backup.c:443-449 `make_backup()`;
+                        // syscall.c:1891 `do_rename_at()` under
+                        // `operator_path_resolve`.
+                        fast_io::operator_rename_confined(&file_path, &backup_path, true)?;
+                    }
                 }
                 #[cfg(not(unix))]
                 {
