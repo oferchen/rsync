@@ -49,7 +49,6 @@ use protocol::ProtocolVersion;
 
 use crate::reader::ServerReader;
 use crate::receiver::SumHead;
-use crate::receiver::ndx_stream::StreamRole;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
@@ -277,6 +276,7 @@ fn read_response_header<R: Read>(
     ndx_codec: &mut impl protocol::codec::NdxCodec,
     pending: crate::pipeline::PendingTransfer,
     ctx: &ResponseContext<'_>,
+    flist_sink: &mut impl crate::receiver::ndx_stream::FlistMarkerSink,
 ) -> io::Result<ResponseHeader> {
     let expected_ndx = pending.ndx();
 
@@ -288,17 +288,17 @@ fn read_response_header<R: Read>(
     // `read_exact` for two `iflags` bytes the peer never sends - see the note on
     // `SenderAttrs::read_attrs_after_ndx`, which was split out for exactly this.
     //
-    // `NoLazyFlist` keeps the previous semantics rather than widening them: its
-    // `inc_recurse()` is false, so every file-list marker stays a protocol
-    // violation via `rsync.c:343`, which is what this driver already did - it
-    // cannot consume sub-lists. `last_file_ndx` is diagnostic context for that
-    // error only; it is not a classification input.
-    let mut flist_sink =
-        crate::receiver::ndx_stream::NoLazyFlist::new(StreamRole::Receiver, expected_ndx);
+    // The sink is the receiver's own context, which owns `file_list`,
+    // `ndx_segments` and `flist_eof`, so a sub-list marker arriving mid-response
+    // is receivable rather than fatal. Nothing widens on its own: the sink's
+    // `inc_recurse()` reads the negotiated compatibility flags, so a peer that
+    // never negotiated INC_RECURSE still trips the `rsync.c:343` gate on every
+    // marker, exactly as this driver behaved before. `last_file_ndx` is
+    // diagnostic context for that error only; it is not a classification input.
     let (echoed_ndx, sender_attrs) = crate::receiver::ndx_stream::read_ndx_and_attrs(
         reader,
         ndx_codec,
-        &mut flist_sink,
+        flist_sink,
         ctx.config.preserve_xattrs,
         ctx.config.want_xattr_optim,
     )?

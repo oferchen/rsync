@@ -702,6 +702,7 @@ impl ReceiverContext {
                     &mut *ndx_read_codec,
                     pending,
                     &response_ctx,
+                    self,
                     &mut checksum_verifier,
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),

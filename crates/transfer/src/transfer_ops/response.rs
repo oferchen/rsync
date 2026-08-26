@@ -47,6 +47,9 @@ use super::{ResponseContext, read_response_header};
 /// * `ndx_codec` - NDX decoder (maintains delta decoding state)
 /// * `pending` - The pending transfer to process
 /// * `ctx` - Response processing context
+/// * `receiver` - The receiver context, supplied as the file-list marker sink
+///   so an INC_RECURSE sub-list arriving between responses is received into its
+///   own file list instead of aborting the transfer
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
 /// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
 /// * `token_reader` - Reusable token reader, shared across files in a session.
@@ -68,11 +71,12 @@ pub fn process_file_response<R: Read>(
     ndx_codec: &mut impl NdxCodec,
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
+    receiver: &mut crate::receiver::ReceiverContext,
     checksum_verifier: &mut ChecksumVerifier,
     token_buffer: &mut TokenBuffer,
     token_reader: &mut TokenReader,
 ) -> io::Result<u64> {
-    let header = read_response_header(reader, ndx_codec, pending, ctx)?;
+    let header = read_response_header(reader, ndx_codec, pending, ctx, receiver)?;
     let file_path = header.file_path;
     let basis_path = header.basis_path;
     let signature = header.signature;
