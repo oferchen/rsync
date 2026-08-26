@@ -516,12 +516,10 @@ fn process_approved_module(
     // upstream: clientserver.c:847-864 - `module_dir` after the `/./` split.
     let effective_module;
     let config_module = if privilege_outcome.chroot_applied {
-        let mut adjusted = module.definition.clone();
-        adjusted.path = privilege_outcome
-            .inner_module_path
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("/"));
-        effective_module = ModuleRuntime::from(adjusted);
+        effective_module = ModuleRuntime::from(chroot_adjusted_definition(
+            &module.definition,
+            privilege_outcome.inner_module_path.as_deref(),
+        ));
         &effective_module
     } else {
         module
@@ -979,4 +977,94 @@ fn process_approved_module(
         .map_err(transition_error)?;
 
     Ok(())
+}
+
+/// Rebuild a module definition as the chrooted process sees it.
+///
+/// The path becomes the post-chroot inner directory: `/` unless the configured
+/// path carried a `/./` marker, in which case it is the normalized remainder
+/// after it. upstream: clientserver.c:847-864 - `module_dir` after the split.
+///
+/// Any decision that reads the *pre-chroot* path must be resolved here, before
+/// the rewrite consumes its input. `munge symlinks` is such a decision: upstream
+/// captures `module_dirlen` while normalising the configured path
+/// (clientserver.c:897-923), rewrites `module_chdir` only afterwards (:1056),
+/// and defaults munging from the captured length (:1070-1071,
+/// `munge_symlinks = !use_chroot || module_dirlen`). oc re-derives that quantity
+/// textually from the `/./` marker, so evaluating it after the rewrite reports
+/// "no inside-chroot split" for every partial-chroot module - turning munging
+/// off exactly where upstream turns it on.
+fn chroot_adjusted_definition(
+    definition: &ModuleDefinition,
+    inner_module_path: Option<&Path>,
+) -> ModuleDefinition {
+    let mut adjusted = definition.clone();
+    adjusted.munge_symlinks = Some(definition.effective_munge_symlinks());
+    adjusted.path = inner_module_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/"));
+    adjusted
+}
+
+#[cfg(test)]
+mod chroot_adjusted_definition_tests {
+    use super::{ModuleDefinition, chroot_adjusted_definition};
+    use std::path::{Path, PathBuf};
+
+    /// Build a chrooted module at `path`, leaving `munge symlinks` unset so the
+    /// auto default is what the assertions observe.
+    fn chrooted_module(path: &str) -> ModuleDefinition {
+        ModuleDefinition {
+            name: "m".to_owned(),
+            path: PathBuf::from(path),
+            use_chroot: true,
+            munge_symlinks: None,
+            ..ModuleDefinition::default()
+        }
+    }
+
+    /// A module served at its own root chroots to `/`, so `module_dirlen`
+    /// collapses to 0 and munging defaults OFF.
+    ///
+    /// upstream: clientserver.c:911-923 then :1070-1071.
+    #[test]
+    fn whole_module_chroot_keeps_munging_off() {
+        let adjusted = chroot_adjusted_definition(&chrooted_module("/srv/mod"), None);
+
+        assert_eq!(adjusted.path, Path::new("/"));
+        assert!(!adjusted.effective_munge_symlinks());
+    }
+
+    /// A `/./` module still exposes a sanitized inner path, so `module_dirlen`
+    /// is non-zero and munging defaults ON - and it must stay ON after the
+    /// rewrite has consumed the marker that says so.
+    ///
+    /// This is the pin: reading the default off the rewritten `/sub` path finds
+    /// no marker and answers OFF, which is the defect.
+    ///
+    /// upstream: clientserver.c:903-907 then :1070-1071.
+    #[test]
+    fn inside_chroot_split_keeps_munging_on_after_the_rewrite() {
+        let adjusted = chroot_adjusted_definition(
+            &chrooted_module("/srv/base/./sub"),
+            Some(Path::new("/sub")),
+        );
+
+        assert_eq!(adjusted.path, Path::new("/sub"));
+        assert!(adjusted.effective_munge_symlinks());
+    }
+
+    /// An explicit directive is not a default, so the rewrite must not disturb
+    /// it in either direction.
+    #[test]
+    fn an_explicit_directive_survives_the_rewrite() {
+        for explicit in [false, true] {
+            let mut definition = chrooted_module("/srv/base/./sub");
+            definition.munge_symlinks = Some(explicit);
+
+            let adjusted = chroot_adjusted_definition(&definition, Some(Path::new("/sub")));
+
+            assert_eq!(adjusted.effective_munge_symlinks(), explicit);
+        }
+    }
 }
