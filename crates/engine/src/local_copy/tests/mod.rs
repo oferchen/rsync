@@ -1050,6 +1050,7 @@ include!("execute_block_size.rs");
 include!("execute_super.rs");
 include!("execute_archive.rs");
 include!("execute_ignore_errors.rs");
+include!("unreadable_source_directory.rs");
 include!("execute_checksum_seed.rs");
 include!("timeout_handling.rs");
 include!("execute_contimeout.rs");

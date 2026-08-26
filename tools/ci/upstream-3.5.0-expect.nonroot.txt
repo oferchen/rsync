@@ -7,7 +7,7 @@ acl-symlink-race pass
 acls pass
 acls-default pass
 acls-depth pass
-acls-unpinnable fail
+acls-unpinnable pass
 alt-dest pass
 alt-dest-deep pass
 alt-dest-symlink-race pass
