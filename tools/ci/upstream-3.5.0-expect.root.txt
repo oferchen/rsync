@@ -283,7 +283,7 @@ rrsync-no-overwrite-backup-collision pass
 rrsync-no-overwrite-delay-updates pass
 rrsync-no-overwrite-logfile pass
 rrsync-no-overwrite-partial-dir pass
-rrsync-pull-arg-shapes fail
+rrsync-pull-arg-shapes pass
 rrsync-pull-delivers-content pass
 rrsync-sender-leaf-flip pass
 rrsync-sender-parent-pin pass

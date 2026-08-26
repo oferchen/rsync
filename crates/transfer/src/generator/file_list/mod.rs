@@ -589,8 +589,14 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
         } else {
             PathBuf::from(head)
         };
+        // upstream: flist.c:2670-2673 - an empty remainder is forced to "."
+        // with `name_type = DOTDIR_NAME`. Joining "." rather than reusing
+        // `base` keeps the DOTDIR marker on the walked path, and that marker is
+        // what drives the follow decision at flist.c:2697
+        // (`copy_dirlinks || name_type != NORMAL_NAME`). Dropping it makes
+        // `<dir>/./` lstat a symlinked operand and send it under its basename.
         let full = if rest.is_empty() {
-            base.clone()
+            base.join(".")
         } else {
             base.join(rest)
         };
