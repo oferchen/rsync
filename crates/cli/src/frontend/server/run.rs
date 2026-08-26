@@ -244,6 +244,7 @@ where
     // upstream: receiver.c:320 - a server receiver that was passed --preallocate
     // fallocate()s each destination file to its eventual length before writing.
     config.flags.preallocate = long_flags.preallocate;
+    apply_fake_super(&mut config, long_flags.fake_super);
     config.file_selection.size_only = long_flags.size_only;
     // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
     // it opens source files with O_NOATIME (do_open), leaving atime untouched.
@@ -696,6 +697,29 @@ fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path:
                 stack.push((path, depth + 1));
             }
         }
+    }
+}
+
+/// Applies `--fake-super` / `--no-fake-super` to the server config.
+///
+/// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
+/// 0}` - the option sets `am_root = -1` on whichever side was given it and is
+/// never sent over the wire ("only affects the side where the option is used",
+/// rsync.1). `server_options()` therefore never emits it, and a server sees it
+/// only because the operator put it on the server command line:
+/// `--rsync-path='rsync --fake-super'`, or a wrapper's rsync-path shim.
+///
+/// It matters for both roles: a receiver records ownership and rdev into the
+/// `user.rsync.%stat` xattr instead of the inode (rsync.c `set_file_attrs()`),
+/// and a sender reads that xattr back so an unprivileged tree still presents
+/// devices and specials in the file list.
+///
+/// `None` (the flag absent) leaves the value alone, so a daemon module's
+/// `fake super = yes` (clientserver.c:1120-1121) is never cleared by a server
+/// argv that simply did not mention it.
+pub(super) fn apply_fake_super(config: &mut core::server::ServerConfig, fake_super: Option<bool>) {
+    if let Some(fake_super) = fake_super {
+        config.fake_super = fake_super;
     }
 }
 
