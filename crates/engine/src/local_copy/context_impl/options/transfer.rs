@@ -90,10 +90,6 @@ impl<'a> CopyContext<'a> {
         self.options.fsync_enabled()
     }
 
-    pub(super) const fn devices_enabled(&self) -> bool {
-        self.options.devices_enabled()
-    }
-
     pub(super) const fn copy_devices_as_files_enabled(&self) -> bool {
         self.options.copy_devices_as_files_enabled()
     }
