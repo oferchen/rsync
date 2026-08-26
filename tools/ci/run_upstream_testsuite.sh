@@ -127,6 +127,24 @@ oc_rsync_bin="$(absolutize_under_workspace \
     "${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}")"
 known_failures_conf="${workspace_root}/tools/ci/upstream_testsuite_known_failures.conf"
 log_root="${workspace_root}/target/interop/upstream-testsuite"
+
+# Identity for THIS invocation. Every artefact this script writes OUTSIDE the
+# workspace is named from it, so two concurrent runs on one host cannot clobber
+# each other. $$ is unique among live processes; the epoch suffix keeps a stale
+# directory from a dead run with a recycled pid from being mistaken for ours.
+#
+# WHY the parent computes this rather than the publishing helper:
+# publish_oc_rsync_bin() is called in a `$(...)` command substitution, so it runs
+# in a SUBSHELL and any variable it assigns is discarded before the caller can
+# read it. Deriving both the publish path and the cleanup path from an id the
+# parent already holds keeps the two in agreement without threading state out of
+# a subshell.
+uts_run_id="$$-$(date +%s)"
+# Install dirs searched for a world-traversable home for the published binary,
+# in preference order. Shared by publish_oc_rsync_bin() and its cleanup so the
+# two can never disagree about where to look.
+published_bin_dirs=(/usr/local/bin /usr/bin)
+published_bin_prefix="oc-rsync-uts."
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
 
 # State for the xattr-capable loop-mounted scratch filesystem (see
@@ -625,18 +643,44 @@ path_world_traversable() {
 publish_oc_rsync_bin() {
     local src=$1
     local dir
-    for dir in /usr/local/bin /usr/bin; do
+    for dir in "${published_bin_dirs[@]}"; do
         [[ -d "$dir" && -w "$dir" ]] || continue
         path_world_traversable "$dir" || continue
-        local dst="${dir}/oc-rsync"
-        if cp -f "$src" "$dst" 2>/dev/null && chmod 0755 "$dst" 2>/dev/null; then
+        # A per-RUN directory, not a fixed filename: two concurrent runs on one
+        # host would otherwise publish over each other and each would test the
+        # other's binary. The directory is 0755 so it stays traversable for the
+        # cap-dropped root leg, and the binary keeps the basename `oc-rsync`
+        # because argv[0] is load-bearing for mode dispatch.
+        local run_dir="${dir}/${published_bin_prefix}${uts_run_id}"
+        local dst="${run_dir}/oc-rsync"
+        if mkdir -p "$run_dir" 2>/dev/null \
+            && chmod 0755 "$run_dir" 2>/dev/null \
+            && cp -f "$src" "$dst" 2>/dev/null \
+            && chmod 0755 "$dst" 2>/dev/null; then
             echo "$dst"
             return 0
         fi
+        # Partial failure leaves the directory for cleanup_published_bin(),
+        # which resolves the same deterministic path.
     done
     # No writable world-traversable dir: keep the original path.
     echo "$src"
     return 0
+}
+
+# Remove this run's published-binary directory from every candidate dir.
+#
+# Guarded on a non-empty run id and built from a fixed prefix, so the path can
+# never widen to the install dir itself. Runs from the EXIT trap, so it also
+# collects the partial-failure case above.
+cleanup_published_bin() {
+    [[ -n "${uts_run_id:-}" ]] || return 0
+    local dir run_dir
+    for dir in "${published_bin_dirs[@]}"; do
+        run_dir="${dir}/${published_bin_prefix}${uts_run_id}"
+        [[ -d "$run_dir" ]] || continue
+        rm -rf -- "$run_dir"
+    done
 }
 
 # Echo a world-traversable base dir to host the runtests.py scratch tree, or
@@ -1113,6 +1157,11 @@ main() {
 # Ensure the loop-ext4 scratch image is always unmounted and removed, even on
 # an early exit or failure. No-op when no image was mounted (git-ref mode,
 # fallback path, or local dev).
-trap cleanup_scratch_fs EXIT
+cleanup_run() {
+    cleanup_scratch_fs
+    cleanup_published_bin
+}
+
+trap cleanup_run EXIT
 
 main "$@"
