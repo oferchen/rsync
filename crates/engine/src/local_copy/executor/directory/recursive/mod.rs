@@ -201,7 +201,54 @@ fn copy_directory_recursive_inner(
 
     let list_start = Instant::now();
     let (readdir_buf, source_anchor) = context.readdir_buf_with_confined_anchor();
-    let mut entries = read_directory_entries_sorted_reuse(source, readdir_buf, source_anchor)?;
+    // Seeded here rather than at the entry loop so a failed enumeration can
+    // carry its error to the same end-of-frame re-raise the per-entry failures
+    // use.
+    let mut first_entry_io_error: Option<LocalCopyError> = None;
+    // upstream: flist.c:2129-2140 - `send_directory()` emits this directory's
+    // own entry and ACL (flist.c:1847-1858) BEFORE it opens the directory, so a
+    // failed `opendir()` is an enumeration-only failure: upstream `return`s
+    // without descending and the entry it already sent still reaches the
+    // receiver, which mkdir's the destination directory and applies its
+    // metadata and ACLs. The three arms are:
+    //   ENOENT -> `interpret_stat_error()` (flist.c:2003-2013) warns
+    //             `directory <name> has vanished` and sets IOERR_VANISHED (24);
+    //   ENOTDIR with FLAG_PERHAPS_DIR -> silent return. No counterpart here:
+    //             this frame is only entered for a source already stat'd as a
+    //             directory, so the "perhaps" flag is never set and ENOTDIR
+    //             falls through to the general arm exactly as upstream does
+    //             when the flag is clear;
+    //   otherwise -> IOERR_GENERAL (23) plus rsyserr `opendir %s failed`.
+    // Abandoning the frame here instead would skip `ensure_directory` and
+    // `apply_final_directory_metadata`, leaving an unreadable source
+    // directory's own permissions/ACLs unapplied and a stale destination ACL
+    // entry unrevoked. Continue with no children; the tail re-raises.
+    let mut enumeration_failed = false;
+    let mut entries = match read_directory_entries_sorted_reuse(source, readdir_buf, source_anchor)
+    {
+        Ok(entries) => entries,
+        Err(error) => {
+            if error.is_vanished_error() {
+                // full_fname() wraps the path in double quotes (util1.c:1228).
+                eprintln!("directory has vanished: \"{}\"", source.display());
+            } else {
+                let detail = match error.kind() {
+                    crate::local_copy::LocalCopyErrorKind::Io { source, .. } => {
+                        crate::local_copy::upstream_io_error(source)
+                    }
+                    _ => error.to_string(),
+                };
+                eprintln!(
+                    "rsync: [sender] opendir \"{}\" failed: {detail}",
+                    source.display()
+                );
+            }
+            context.record_io_error();
+            first_entry_io_error = Some(error);
+            enumeration_failed = true;
+            Vec::new()
+        }
+    };
     // upstream: the file list is built once before the receiver mkdir's the
     // destination root, so a destination created inside the source tree (e.g.
     // `rsync -a src src/child`) never appears in the list. oc reads each source
@@ -466,10 +513,19 @@ fn copy_directory_recursive_inner(
                 preserve_acls,
             )?;
         }
+        // A failed enumeration still has to reach the caller as an I/O error
+        // even on this early return, or the run would report success.
+        if let Some(error) = first_entry_io_error {
+            return Err(error);
+        }
         return Ok(true);
     }
 
-    if !directory_ready.get() && !prune_enabled {
+    // A directory whose contents could not be enumerated is not known to be
+    // empty, so `--prune-empty-dirs` must not withhold its creation: create it
+    // now, exactly as it would be created without `-m`, so the metadata/ACL
+    // apply at the end of this frame has a destination to write to.
+    if !directory_ready.get() && (!prune_enabled || enumeration_failed) {
         ensure_directory(context)?;
     }
 
@@ -546,7 +602,6 @@ fn copy_directory_recursive_inner(
     // a per-entry PathBuf allocation from Path::join.
     let mut target_buf = destination.to_path_buf();
 
-    let mut first_entry_io_error: Option<LocalCopyError> = None;
     for planned in &plan.planned_entries {
         let result = process_planned_entry(
             context,
@@ -604,7 +659,12 @@ fn copy_directory_recursive_inner(
         &plan.keep_names,
     )?;
 
-    if prune_enabled && !kept_any {
+    // `kept_any` is false after a failed enumeration only because there was no
+    // list to keep anything from - not because the directory is empty. Pruning
+    // it would both destroy a directory whose contents were merely unreadable
+    // and skip the metadata/ACL apply below, which is the whole point of
+    // continuing the frame.
+    if prune_enabled && !kept_any && !enumeration_failed {
         handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;
         // upstream: the --max-delete limit (exit 25) outranks a partial/IO error
         // (exit 23/24); raise it first, mirroring the old post-loop ordering.
