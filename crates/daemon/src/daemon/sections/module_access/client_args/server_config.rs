@@ -168,20 +168,24 @@ fn build_server_config(
     // rejection to represent. Upstream has no such daemon error either - a
     // traversing tail is rewritten and served (util1.c:1183).
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
-        let dest = resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name);
+        let dest = resolve_receiver_dest(
+            std::path::Path::new(&module.path),
+            client_args,
+            &module.name,
+        );
         vec![OsString::from(dest.as_os_str())]
     } else {
-        resolve_sender_sources(std::path::Path::new(&module.path), client_args, &module.name)
-            .into_iter()
-            .map(|p| OsString::from(p.as_os_str()))
-            .collect()
+        resolve_sender_sources(
+            std::path::Path::new(&module.path),
+            client_args,
+            &module.name,
+        )
+        .into_iter()
+        .map(|p| OsString::from(p.as_os_str()))
+        .collect()
     };
 
-    match ServerConfig::from_flag_string_and_args(
-        role,
-        flag_string,
-        positional_args,
-    ) {
+    match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
         Ok(mut cfg) => {
             // upstream: clientserver.c:1141 `limit_output_verbosity(lp_max_verbosity(i))`
             // caps the per-connection log verbosity once the module is selected.

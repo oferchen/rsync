@@ -364,8 +364,7 @@ fn execute_transfer(
                     let pid = std::process::id();
                     // upstream: log.c:664 `%t` renders timestring(time(NULL)) -
                     // the same localtime formatter that stamps log-file lines.
-                    let timestamp =
-                        logging_sink::logfile::format_log_timestamp(SystemTime::now());
+                    let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
 
                     let log_ctx = LogFormatContext {
                         operation,
@@ -396,9 +395,11 @@ fn execute_transfer(
                     ServerStats::Generator(stats) => {
                         (stats.bytes_sent, stats.bytes_read, stats.total_size)
                     }
-                    ServerStats::Receiver(stats) => {
-                        (stats.bytes_sent, stats.bytes_received, stats.total_source_bytes)
-                    }
+                    ServerStats::Receiver(stats) => (
+                        stats.bytes_sent,
+                        stats.bytes_received,
+                        stats.total_source_bytes,
+                    ),
                 };
                 let text = format!(
                     "sent {sent} bytes  received {received} bytes  total size {total_size}"

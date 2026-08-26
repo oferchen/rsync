@@ -14,4 +14,3 @@ fn run_daemon_rejects_invalid_port() {
             .contains("invalid value for --port")
     );
 }
-

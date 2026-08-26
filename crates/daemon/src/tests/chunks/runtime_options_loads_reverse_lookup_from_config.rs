@@ -15,4 +15,3 @@ fn runtime_options_loads_reverse_lookup_from_config() {
     let options = RuntimeOptions::parse(&args).expect("parse config");
     assert!(!options.reverse_lookup());
 }
-

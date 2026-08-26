@@ -36,7 +36,10 @@ fn run_daemon_rejects_push_to_read_only_module() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
@@ -93,7 +96,9 @@ fn assert_read_only_multiplexed_rejection(reader: &mut BufReader<TcpStream>) {
         "daemon must advertise at least one compat flag, got {compat_flags}",
     );
     let mut seed_buf = [0u8; 4];
-    reader.read_exact(&mut seed_buf).expect("read checksum seed");
+    reader
+        .read_exact(&mut seed_buf)
+        .expect("read checksum seed");
 
     // MSG_ERROR_XFER frame with the plain `ERROR:` text (no `@ERROR:` prefix).
     let mut err_header = [0u8; 4];

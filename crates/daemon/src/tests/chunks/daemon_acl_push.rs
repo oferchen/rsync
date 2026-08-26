@@ -87,9 +87,7 @@ fn daemon_acl_push_preserves_acls() {
     });
 
     if !has_extended_entry {
-        eprintln!(
-            "skipping daemon_acl_push: extended ACL entry not preserved on this filesystem"
-        );
+        eprintln!("skipping daemon_acl_push: extended ACL entry not preserved on this filesystem");
         return;
     }
 
@@ -159,7 +157,8 @@ fn daemon_acl_push_preserves_acls() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -206,8 +205,7 @@ fn daemon_acl_push_preserves_acls() {
 
     let dest_alpha_acl =
         getfacl(&dest_alpha, acl_option).expect("getfacl on destination alpha.txt");
-    let dest_beta_acl =
-        getfacl(&dest_beta, acl_option).expect("getfacl on destination beta.txt");
+    let dest_beta_acl = getfacl(&dest_beta, acl_option).expect("getfacl on destination beta.txt");
 
     // Check that the extended user ACL entry (uid 65534 with read+execute) is present.
     let check_acl = |entries: &[AclEntry], file_name: &str| {

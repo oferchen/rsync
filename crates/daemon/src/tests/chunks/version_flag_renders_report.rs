@@ -8,4 +8,3 @@ fn version_flag_renders_report() {
     let expected = VersionInfoReport::for_daemon_brand(Brand::Upstream).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
-

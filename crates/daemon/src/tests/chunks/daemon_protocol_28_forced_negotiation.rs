@@ -220,7 +220,8 @@ fn daemon_protocol_28_forced_client_api_push() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -319,14 +320,18 @@ fn daemon_protocol_28_forced_client_api_pull() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
 
     // Force protocol 28 via client config; client is the receiver.
     let client_config = core::client::ClientConfig::builder()
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .protocol_version(Some(ProtocolVersion::V28))
         .build();
 
@@ -385,10 +390,12 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
 
     fs::write(source_dir.join("readme.txt"), b"protocol 28 readme\n").expect("write readme");
-    fs::write(source_dir.join("blob.bin"), b"\xde\xad\xbe\xef\x00\x11\x22\x33")
-        .expect("write blob");
-    fs::write(source_subdir.join("nested.txt"), b"nested under proto 28\n")
-        .expect("write nested");
+    fs::write(
+        source_dir.join("blob.bin"),
+        b"\xde\xad\xbe\xef\x00\x11\x22\x33",
+    )
+    .expect("write blob");
+    fs::write(source_subdir.join("nested.txt"), b"nested under proto 28\n").expect("write nested");
 
     let module_dir = temp.path().join("module");
     fs::create_dir(&module_dir).expect("create module dir");
@@ -420,7 +427,8 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Push at forced protocol 28
@@ -471,7 +479,10 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle28/");
 
         let client_config = core::client::ClientConfig::builder()
-            .transfer_args([OsString::from(&rsync_url), OsString::from(pull_dest.as_os_str())])
+            .transfer_args([
+                OsString::from(&rsync_url),
+                OsString::from(pull_dest.as_os_str()),
+            ])
             .protocol_version(Some(ProtocolVersion::V28))
             .build();
 

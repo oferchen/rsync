@@ -54,9 +54,7 @@ fn run_daemon_post_ok_bad_option_value_uses_multiplexed_error() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    stream
-        .write_all(b"sizemod\n")
-        .expect("send module request");
+    stream.write_all(b"sizemod\n").expect("send module request");
     stream.flush().expect("flush module request");
 
     loop {

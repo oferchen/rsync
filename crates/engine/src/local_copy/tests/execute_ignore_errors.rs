@@ -1,4 +1,3 @@
-
 //
 // Upstream rsync behavior:
 // - Without --ignore-errors: if I/O errors occurred during transfer,
@@ -6,7 +5,6 @@
 //   couldn't read all files)
 // - With --ignore-errors: --delete proceeds with deletions even when
 //   I/O errors occurred during the transfer
-
 
 #[test]
 fn ignore_errors_option_defaults_to_false() {
@@ -39,9 +37,7 @@ fn ignore_errors_option_can_be_disabled_after_enabling() {
 
 #[test]
 fn ignore_errors_builder_defaults_to_false() {
-    let opts = LocalCopyOptions::builder()
-        .build()
-        .expect("valid options");
+    let opts = LocalCopyOptions::builder().build().expect("valid options");
     assert!(
         !opts.ignore_errors_enabled(),
         "builder should default ignore_errors to false"
@@ -156,7 +152,10 @@ fn delete_works_normally_without_io_errors() {
         .expect("copy succeeds");
 
     assert!(dest.join("keep.txt").exists(), "kept file should remain");
-    assert!(!dest.join("extra.txt").exists(), "extra file should be deleted");
+    assert!(
+        !dest.join("extra.txt").exists(),
+        "extra file should be deleted"
+    );
     assert!(summary.items_deleted() >= 1, "should report deletion");
 }
 
@@ -179,16 +178,17 @@ fn delete_with_ignore_errors_works_normally_without_io_errors() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .delete(true)
-        .ignore_errors(true);
+    let options = LocalCopyOptions::default().delete(true).ignore_errors(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
     assert!(dest.join("keep.txt").exists(), "kept file should remain");
-    assert!(!dest.join("extra.txt").exists(), "extra file should be deleted");
+    assert!(
+        !dest.join("extra.txt").exists(),
+        "extra file should be deleted"
+    );
     assert!(summary.items_deleted() >= 1, "should report deletion");
 }
 
@@ -213,8 +213,12 @@ fn ignore_errors_option_independent_of_delete_timing() {
 
         let options = match timing_setup {
             "delete" => LocalCopyOptions::default().delete(true).ignore_errors(true),
-            "delete_after" => LocalCopyOptions::default().delete_after(true).ignore_errors(true),
-            "delete_before" => LocalCopyOptions::default().delete_before(true).ignore_errors(true),
+            "delete_after" => LocalCopyOptions::default()
+                .delete_after(true)
+                .ignore_errors(true),
+            "delete_before" => LocalCopyOptions::default()
+                .delete_before(true)
+                .ignore_errors(true),
             _ => unreachable!(),
         };
 
@@ -376,7 +380,7 @@ fn ignore_errors_suppresses_io_error_skip_notice() {
     // notice must NOT appear and the extraneous file must be deleted. The
     // flag both silences the warning and re-enables deletion upstream.
     // upstream: generator.c:304 `io_error & IOERR_GENERAL && !ignore_errors`.
-    use logging::{DiagnosticEvent, drain_events, init, VerbosityConfig};
+    use logging::{DiagnosticEvent, VerbosityConfig, drain_events, init};
     use std::os::unix::fs::PermissionsExt;
 
     init(VerbosityConfig::from_verbose_level(0));
@@ -416,13 +420,10 @@ fn ignore_errors_suppresses_io_error_skip_notice() {
     );
 
     let notice = "IO error encountered -- skipping file deletion";
-    let saw_notice = drain_events().into_iter().any(|event| {
-        matches!(event, DiagnosticEvent::Info { ref message, .. } if message == notice)
-    });
-    assert!(
-        !saw_notice,
-        "--ignore-errors must suppress the skip notice"
+    let saw_notice = drain_events().into_iter().any(
+        |event| matches!(event, DiagnosticEvent::Info { ref message, .. } if message == notice),
     );
+    assert!(!saw_notice, "--ignore-errors must suppress the skip notice");
 }
 
 #[cfg(unix)]
@@ -441,11 +442,8 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     fs::write(source.join("good.txt"), b"good").expect("write good");
     // Create an unreadable source file to trigger I/O error
     fs::write(source.join("bad.txt"), b"bad").expect("write bad");
-    fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o000),
-    )
-    .expect("make unreadable");
+    fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o000))
+        .expect("make unreadable");
 
     fs::write(dest.join("good.txt"), b"old good").expect("write old good");
     fs::write(dest.join("extra.txt"), b"should be deleted").expect("write extra");
@@ -455,17 +453,12 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .delete(true)
-        .ignore_errors(true);
+    let options = LocalCopyOptions::default().delete(true).ignore_errors(true);
 
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
     // Restore permissions for cleanup
-    let _ = fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o644),
-    );
+    let _ = fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o644));
 
     assert!(
         !dest.join("extra.txt").exists(),
@@ -488,11 +481,8 @@ fn ignore_errors_with_delete_after_timing() {
 
     fs::write(source.join("good.txt"), b"good").expect("write good");
     fs::write(source.join("bad.txt"), b"bad").expect("write bad");
-    fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o000),
-    )
-    .expect("make unreadable");
+    fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o000))
+        .expect("make unreadable");
 
     fs::write(dest.join("good.txt"), b"old good").expect("write old good");
     fs::write(dest.join("extra.txt"), b"should be deleted").expect("write extra");
@@ -508,10 +498,7 @@ fn ignore_errors_with_delete_after_timing() {
 
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    let _ = fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o644),
-    );
+    let _ = fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o644));
 
     assert!(
         !dest.join("extra.txt").exists(),
@@ -533,11 +520,8 @@ fn no_ignore_errors_with_delete_after_suppresses_deletions() {
 
     fs::write(source.join("good.txt"), b"good").expect("write good");
     fs::write(source.join("bad.txt"), b"bad").expect("write bad");
-    fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o000),
-    )
-    .expect("make unreadable");
+    fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o000))
+        .expect("make unreadable");
 
     fs::write(dest.join("good.txt"), b"old good").expect("write old good");
     fs::write(dest.join("extra.txt"), b"should survive").expect("write extra");
@@ -551,10 +535,7 @@ fn no_ignore_errors_with_delete_after_suppresses_deletions() {
 
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    let _ = fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o644),
-    );
+    let _ = fs::set_permissions(source.join("bad.txt"), fs::Permissions::from_mode(0o644));
 
     assert!(
         dest.join("extra.txt").exists(),
@@ -562,7 +543,6 @@ fn no_ignore_errors_with_delete_after_suppresses_deletions() {
     );
     assert!(result.is_err(), "copy should report I/O error");
 }
-
 
 #[test]
 fn ignore_errors_with_dry_run_reports_deletions() {
@@ -593,9 +573,16 @@ fn ignore_errors_with_dry_run_reports_deletions() {
 
     let summary = report.summary();
 
-    assert!(dest.join("extra.txt").exists(), "file should exist in dry-run");
+    assert!(
+        dest.join("extra.txt").exists(),
+        "file should exist in dry-run"
+    );
 
-    assert_eq!(summary.items_deleted(), 1, "should report 1 deletion in dry-run");
+    assert_eq!(
+        summary.items_deleted(),
+        1,
+        "should report 1 deletion in dry-run"
+    );
 }
 
 #[test]
@@ -617,9 +604,7 @@ fn ignore_errors_preserves_good_files_during_transfer() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .delete(true)
-        .ignore_errors(true);
+    let options = LocalCopyOptions::default().delete(true).ignore_errors(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -652,9 +637,7 @@ fn ignore_errors_with_nested_directories() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .delete(true)
-        .ignore_errors(true);
+    let options = LocalCopyOptions::default().delete(true).ignore_errors(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -662,8 +645,14 @@ fn ignore_errors_with_nested_directories() {
 
     assert!(dest.join("root.txt").exists());
     assert!(dest.join("subdir/nested.txt").exists());
-    assert!(!dest.join("subdir/extra.txt").exists(), "nested extra should be deleted");
-    assert!(!dest.join("root_extra.txt").exists(), "root extra should be deleted");
+    assert!(
+        !dest.join("subdir/extra.txt").exists(),
+        "nested extra should be deleted"
+    );
+    assert!(
+        !dest.join("root_extra.txt").exists(),
+        "root extra should be deleted"
+    );
     assert!(summary.items_deleted() >= 2);
 }
 
@@ -716,8 +705,8 @@ fn ignore_errors_combined_with_delete_excluded() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filter_set = FilterSet::from_rules([FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filter_set =
+        FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -729,7 +718,10 @@ fn ignore_errors_combined_with_delete_excluded() {
         .expect("copy succeeds");
 
     assert!(dest.join("keep.txt").exists());
-    assert!(!dest.join("skip.tmp").exists(), "excluded file should be deleted");
+    assert!(
+        !dest.join("skip.tmp").exists(),
+        "excluded file should be deleted"
+    );
     assert_eq!(summary.items_deleted(), 1);
 }
 
@@ -756,8 +748,15 @@ fn ignore_errors_without_delete_no_deletions() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(dest.join("extra.txt").exists(), "extra file should remain without --delete");
-    assert_eq!(summary.items_deleted(), 0, "no deletions should occur without --delete");
+    assert!(
+        dest.join("extra.txt").exists(),
+        "extra file should remain without --delete"
+    );
+    assert_eq!(
+        summary.items_deleted(),
+        0,
+        "no deletions should occur without --delete"
+    );
 }
 
 #[test]

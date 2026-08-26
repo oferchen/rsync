@@ -535,26 +535,14 @@ fn fluent_archive_options_match_builder_archive() {
         from_builder.recursive_enabled(),
         from_fluent.recursive_enabled()
     );
-    assert_eq!(
-        from_builder.links_enabled(),
-        from_fluent.links_enabled()
-    );
+    assert_eq!(from_builder.links_enabled(), from_fluent.links_enabled());
     assert_eq!(
         from_builder.preserve_permissions(),
         from_fluent.preserve_permissions()
     );
-    assert_eq!(
-        from_builder.preserve_times(),
-        from_fluent.preserve_times()
-    );
-    assert_eq!(
-        from_builder.preserve_group(),
-        from_fluent.preserve_group()
-    );
-    assert_eq!(
-        from_builder.preserve_owner(),
-        from_fluent.preserve_owner()
-    );
+    assert_eq!(from_builder.preserve_times(), from_fluent.preserve_times());
+    assert_eq!(from_builder.preserve_group(), from_fluent.preserve_group());
+    assert_eq!(from_builder.preserve_owner(), from_fluent.preserve_owner());
     assert_eq!(
         from_builder.devices_enabled(),
         from_fluent.devices_enabled()
@@ -586,10 +574,7 @@ fn archive_copies_single_file_content() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy");
 
-    test_helpers::assert_file_content(
-        &ctx.dest.join("hello.txt"),
-        b"archive content",
-    );
+    test_helpers::assert_file_content(&ctx.dest.join("hello.txt"), b"archive content");
 }
 
 #[test]
@@ -607,10 +592,7 @@ fn archive_copies_directory_recursively() {
 
     test_helpers::assert_file_content(&ctx.dest.join("top.txt"), b"top");
     test_helpers::assert_file_content(&ctx.dest.join("dir1/file1.txt"), b"file1");
-    test_helpers::assert_file_content(
-        &ctx.dest.join("dir1/dir2/file2.txt"),
-        b"file2",
-    );
+    test_helpers::assert_file_content(&ctx.dest.join("dir1/dir2/file2.txt"), b"file2");
 }
 
 #[test]
@@ -669,10 +651,7 @@ fn archive_preserves_symlinks_as_links() {
         .expect("copy");
 
     test_helpers::assert_is_symlink(&ctx.dest.join("link.txt"));
-    test_helpers::assert_symlink_target(
-        &ctx.dest.join("link.txt"),
-        Path::new("target.txt"),
-    );
+    test_helpers::assert_symlink_target(&ctx.dest.join("link.txt"), Path::new("target.txt"));
 }
 
 #[cfg(unix)]
@@ -791,10 +770,7 @@ fn archive_no_recursive_disables_recursion_in_options() {
     // The engine with recursive(false) skips subdirectory traversal entirely,
     // which is tested separately in execute_directories tests.
     let options = test_helpers::presets::archive_options().recursive(false);
-    assert!(
-        !options.recursive_enabled(),
-        "recursion should be disabled"
-    );
+    assert!(!options.recursive_enabled(), "recursion should be disabled");
     // All other archive components should remain
     assert!(options.links_enabled());
     assert!(options.preserve_permissions());
@@ -1020,14 +996,8 @@ fn archive_preserves_multiple_symlinks_and_targets() {
 
     test_helpers::assert_is_symlink(&ctx.dest.join("link1.txt"));
     test_helpers::assert_is_symlink(&ctx.dest.join("link2.txt"));
-    test_helpers::assert_symlink_target(
-        &ctx.dest.join("link1.txt"),
-        Path::new("target1.txt"),
-    );
-    test_helpers::assert_symlink_target(
-        &ctx.dest.join("link2.txt"),
-        Path::new("target2.txt"),
-    );
+    test_helpers::assert_symlink_target(&ctx.dest.join("link1.txt"), Path::new("target1.txt"));
+    test_helpers::assert_symlink_target(&ctx.dest.join("link2.txt"), Path::new("target2.txt"));
 }
 
 #[cfg(unix)]

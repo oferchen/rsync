@@ -20,9 +20,5 @@ fn runtime_options_loads_secrets_from_legacy_environment_variable() {
     )
     .expect("parse env secrets");
 
-    assert_eq!(
-        options.global_secrets_file(),
-        Some(secrets_path.as_path()),
-    );
+    assert_eq!(options.global_secrets_file(), Some(secrets_path.as_path()),);
 }
-

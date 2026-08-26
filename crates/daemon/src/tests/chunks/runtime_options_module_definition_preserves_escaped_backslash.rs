@@ -12,4 +12,3 @@ fn runtime_options_module_definition_preserves_escaped_backslash() {
     assert_eq!(modules[0].comment.as_deref(), Some("Log share"));
     assert!(modules[0].read_only());
 }
-

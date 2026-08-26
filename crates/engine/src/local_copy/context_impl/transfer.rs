@@ -125,7 +125,13 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(destination, relative_dir, false, true, &self.delete_dir_merge)
+        self.enter_directory_for_path(
+            destination,
+            relative_dir,
+            false,
+            true,
+            &self.delete_dir_merge,
+        )
     }
 
     /// Advances the persistent destination delete-filter chain to `destination`.
@@ -208,21 +214,23 @@ impl<'a> CopyContext<'a> {
         // descendants. Seed the new frame's active rules AND inheritable loaded
         // segments from the parent frame, then look each active rule up in this
         // directory. Non-inheritable (`n`-modifier) segments are dropped.
-        let (inherited_active, inherited_segments): (Vec<NestedDirMerge>, Vec<LoadedDynamicSegment>) =
-            stacks
-                .dynamic
-                .borrow()
-                .last()
-                .map(|frame| {
-                    let segments = frame
-                        .loaded_segments
-                        .iter()
-                        .filter(|loaded| loaded.inherit)
-                        .cloned()
-                        .collect();
-                    (frame.active_rules.clone(), segments)
-                })
-                .unwrap_or_default();
+        let (inherited_active, inherited_segments): (
+            Vec<NestedDirMerge>,
+            Vec<LoadedDynamicSegment>,
+        ) = stacks
+            .dynamic
+            .borrow()
+            .last()
+            .map(|frame| {
+                let segments = frame
+                    .loaded_segments
+                    .iter()
+                    .filter(|loaded| loaded.inherit)
+                    .cloned()
+                    .collect();
+                (frame.active_rules.clone(), segments)
+            })
+            .unwrap_or_default();
         let mut new_frame = DynamicDirMergeFrame {
             active_rules: inherited_active,
             loaded_segments: inherited_segments,
@@ -253,11 +261,7 @@ impl<'a> CopyContext<'a> {
                 Err(error) => {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
-                    return Err(LocalCopyError::io(
-                        "inspect filter file",
-                        candidate,
-                        error,
-                    ));
+                    return Err(LocalCopyError::io("inspect filter file", candidate, error));
                 }
             };
 
@@ -329,10 +333,8 @@ impl<'a> CopyContext<'a> {
             // Append them to the dynamic frame's active set; the growing while
             // loop below picks them up so `dir-merge .filt2` in `bar/.filt` loads
             // `bar/.filt2` here as well as in descendants.
-            registry.retain_unregistered(
-                &mut new_frame.active_rules,
-                &mut entries.nested_dir_merges,
-            );
+            registry
+                .retain_unregistered(&mut new_frame.active_rules, &mut entries.nested_dir_merges);
 
             // If the filter file had a clear directive, we should clear inherited rules
             // from parent directories before adding any new rules from this directory.
@@ -375,9 +377,7 @@ impl<'a> CopyContext<'a> {
                     marker_counts.push((index, count));
                 }
             } else {
-                if has_segment
-                    && let Some(current) = ephemeral_stack.last_mut()
-                {
+                if has_segment && let Some(current) = ephemeral_stack.last_mut() {
                     current.push((index, segment));
                 }
                 if !markers.is_empty()
@@ -747,8 +747,18 @@ impl<'a> CopyContext<'a> {
 
         if sparse {
             return self.copy_file_contents_sparse(
-                reader, writer, buffer, compress, source, destination, relative,
-                total_size, initial_bytes, expected_remaining, preallocated_len, start,
+                reader,
+                writer,
+                buffer,
+                compress,
+                source,
+                destination,
+                relative,
+                total_size,
+                initial_bytes,
+                expected_remaining,
+                preallocated_len,
+                start,
             );
         }
 
@@ -796,17 +806,17 @@ impl<'a> CopyContext<'a> {
                 break;
             }
 
-            writer.write_all(&buffer[..read]).map_err(|error| {
-                LocalCopyError::io("copy file", destination, error)
-            })?;
+            writer
+                .write_all(&buffer[..read])
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
 
             self.register_progress();
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
-                encoder.write(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("compress file", source, error)
-                })?;
+                encoder
+                    .write(&buffer[..read])
+                    .map_err(|error| LocalCopyError::io("compress file", source, error))?;
                 let total = encoder.bytes_written();
                 let delta = total.saturating_sub(compressed_progress);
                 compressed_progress = total;
@@ -834,9 +844,9 @@ impl<'a> CopyContext<'a> {
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder.finish().map_err(|error| {
-                LocalCopyError::io("compress file", source, error)
-            })?;
+            let compressed_total = encoder
+                .finish()
+                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
             self.register_progress();
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
@@ -923,9 +933,9 @@ impl<'a> CopyContext<'a> {
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
-                encoder.write(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("compress file", source, error)
-                })?;
+                encoder
+                    .write(&buffer[..read])
+                    .map_err(|error| LocalCopyError::io("compress file", source, error))?;
                 let total = encoder.bytes_written();
                 let delta = total.saturating_sub(compressed_progress);
                 compressed_progress = total;
@@ -962,9 +972,9 @@ impl<'a> CopyContext<'a> {
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder.finish().map_err(|error| {
-                LocalCopyError::io("compress file", source, error)
-            })?;
+            let compressed_total = encoder
+                .finish()
+                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
             self.register_progress();
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
@@ -976,5 +986,4 @@ impl<'a> CopyContext<'a> {
 
         Ok(outcome)
     }
-
 }

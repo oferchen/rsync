@@ -11,7 +11,6 @@
 // 2. No `.~tmp~` staging artifacts remain after the transfer.
 // 3. The summary correctly reports both transferred and deleted counts.
 
-
 /// Verifies that when --delay-updates and --delete (During timing) are both
 /// active, the extraneous destination file C is not removed until AFTER files
 /// A and B have been renamed from staging into their final locations.
@@ -47,9 +46,7 @@ fn delay_updates_delete_during_deletes_after_rename() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .delete(true)
-                .delay_updates(true),
+            LocalCopyOptions::default().delete(true).delay_updates(true),
         )
         .expect("copy succeeds");
 
@@ -111,9 +108,7 @@ fn delay_updates_delete_during_removes_extraneous_in_subdirs() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .delete(true)
-                .delay_updates(true),
+            LocalCopyOptions::default().delete(true).delay_updates(true),
         )
         .expect("copy succeeds");
 

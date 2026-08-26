@@ -11,7 +11,6 @@
 // 8. Transfers work with log_file set (verify file is created)
 // 9. Combination with other options
 
-
 #[test]
 fn log_file_default_is_none() {
     let opts = LocalCopyOptions::new();
@@ -24,14 +23,10 @@ fn log_file_format_default_is_none() {
     assert!(opts.log_file_format().is_none());
 }
 
-
 #[test]
 fn log_file_with_log_file_sets_path() {
     let opts = LocalCopyOptions::new().with_log_file(Some("/var/log/rsync.log"));
-    assert_eq!(
-        opts.log_file_path(),
-        Some(Path::new("/var/log/rsync.log"))
-    );
+    assert_eq!(opts.log_file_path(), Some(Path::new("/var/log/rsync.log")));
 }
 
 #[test]
@@ -46,10 +41,7 @@ fn log_file_with_log_file_none_clears_path() {
 fn log_file_with_log_file_accepts_pathbuf() {
     let path = PathBuf::from("/tmp/transfer.log");
     let opts = LocalCopyOptions::new().with_log_file(Some(path));
-    assert_eq!(
-        opts.log_file_path(),
-        Some(Path::new("/tmp/transfer.log"))
-    );
+    assert_eq!(opts.log_file_path(), Some(Path::new("/tmp/transfer.log")));
 }
 
 #[test]
@@ -73,7 +65,6 @@ fn log_file_format_with_log_file_format_accepts_string() {
     assert_eq!(opts.log_file_format(), Some("%o %n"));
 }
 
-
 #[test]
 fn log_file_effective_format_returns_default_when_not_set() {
     let opts = LocalCopyOptions::new();
@@ -93,7 +84,6 @@ fn log_file_effective_format_after_clear_returns_default() {
         .with_log_file_format::<String>(None);
     assert_eq!(opts.effective_log_file_format(), "%i %n%L");
 }
-
 
 #[test]
 fn log_file_builder_sets_log_file() {
@@ -120,10 +110,7 @@ fn log_file_builder_both_options() {
         .log_file_format(Some("%t %f %b"))
         .build()
         .expect("valid options");
-    assert_eq!(
-        opts.log_file_path(),
-        Some(Path::new("/var/log/rsync.log"))
-    );
+    assert_eq!(opts.log_file_path(), Some(Path::new("/var/log/rsync.log")));
     assert_eq!(opts.log_file_format(), Some("%t %f %b"));
     assert_eq!(opts.effective_log_file_format(), "%t %f %b");
 }
@@ -158,7 +145,6 @@ fn log_file_builder_unchecked_sets_values() {
     assert_eq!(opts.log_file_format(), Some("%o %n"));
 }
 
-
 #[test]
 fn log_file_round_trip_via_builder() {
     let opts = LocalCopyOptions::builder()
@@ -182,7 +168,6 @@ fn log_file_round_trip_via_setters() {
     assert_eq!(opts.log_file_format(), Some("%o %n %b"));
     assert_eq!(opts.effective_log_file_format(), "%o %n %b");
 }
-
 
 #[test]
 fn log_file_transfer_works_with_log_file_set() {
@@ -283,7 +268,6 @@ fn log_file_transfer_multiple_files_with_log_file() {
         b"content3"
     );
 }
-
 
 #[test]
 fn log_file_combined_with_delete() {
@@ -448,7 +432,6 @@ fn log_file_combined_with_builder_archive() {
     );
 }
 
-
 #[test]
 fn log_file_dry_run_does_not_fail() {
     let temp = tempdir().expect("tempdir");
@@ -478,7 +461,6 @@ fn log_file_dry_run_does_not_fail() {
     );
 }
 
-
 #[test]
 fn log_file_builder_defaults_match_options_defaults() {
     let from_builder = LocalCopyOptions::builder().build().expect("valid");
@@ -494,7 +476,6 @@ fn log_file_builder_defaults_match_options_defaults() {
         from_default.effective_log_file_format()
     );
 }
-
 
 #[test]
 fn log_file_config_propagation_setter_and_builder_agree() {
@@ -531,7 +512,6 @@ fn log_file_effective_format_uses_default_percent_i_n_l() {
     let opts = LocalCopyOptions::new().with_log_file(Some("/tmp/test.log"));
     assert_eq!(opts.effective_log_file_format(), "%i %n%L");
 }
-
 
 #[test]
 fn log_file_empty_format_string_is_stored() {

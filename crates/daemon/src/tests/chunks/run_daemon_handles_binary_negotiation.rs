@@ -29,17 +29,13 @@ fn run_daemon_handles_binary_negotiation() {
 
     // Even if client sends binary data, daemon sends @RSYNCD greeting
     let binary_data = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
-    stream
-        .write_all(&binary_data)
-        .expect("send binary data");
+    stream.write_all(&binary_data).expect("send binary data");
     stream.flush().expect("flush");
 
     // Daemon should send @RSYNCD greeting (text protocol)
     let mut greeting = String::new();
     let mut reader = BufReader::new(&mut stream);
-    reader
-        .read_line(&mut greeting)
-        .expect("read greeting");
+    reader.read_line(&mut greeting).expect("read greeting");
     assert!(
         greeting.starts_with("@RSYNCD:"),
         "Expected @RSYNCD greeting, got: {greeting}"
@@ -62,4 +58,3 @@ fn run_daemon_handles_binary_negotiation() {
     let _ = finish_daemon(handle);
     // Don't assert on result - daemon rightfully fails when client sends invalid data
 }
-

@@ -16,4 +16,3 @@ fn runtime_options_require_secrets_file_with_auth_users() {
             .contains("missing the required 'secrets file' directive")
     );
 }
-

@@ -56,7 +56,8 @@ fn daemon_exclude_overrides_client_include() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -65,7 +66,10 @@ fn daemon_exclude_overrides_client_include() {
     // (server filter list is consulted first, so this MUST NOT win).
     let client_config = core::client::ClientConfig::builder()
         .recursive(true)
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .add_filter_rule(core::client::FilterRuleSpec::include("*.log"))
         .build();
 
@@ -140,13 +144,17 @@ fn daemon_exclude_directory_blocks_subtree() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
     let client_config = core::client::ClientConfig::builder()
         .recursive(true)
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .build();
 
     let result = core::client::run_client(client_config);
@@ -223,13 +231,17 @@ fn daemon_include_then_exclude_all_keeps_only_included() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
     let client_config = core::client::ClientConfig::builder()
         .recursive(true)
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .build();
 
     let result = core::client::run_client(client_config);
@@ -307,7 +319,8 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -316,7 +329,10 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
     // win and exclude both *.tmp and *.bak.
     let client_config = core::client::ClientConfig::builder()
         .recursive(true)
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .add_filter_rule(core::client::FilterRuleSpec::include("*.tmp"))
         .build();
 

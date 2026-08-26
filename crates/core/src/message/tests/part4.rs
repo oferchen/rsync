@@ -457,4 +457,3 @@ fn segments_into_iter_collects_bytes() {
 
     assert_eq!(flattened, message.to_line_bytes().unwrap());
 }
-

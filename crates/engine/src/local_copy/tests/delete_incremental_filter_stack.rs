@@ -97,10 +97,7 @@ fn incremental_stack_preserves_source_state_with_nested_rsync_filter() {
         .enter_directory(&root.join("dir"), Some(std::path::Path::new("dir")))
         .expect("enter dir");
     let _g_sub = context
-        .enter_directory(
-            &root.join("dir/sub"),
-            Some(std::path::Path::new("dir/sub")),
-        )
+        .enter_directory(&root.join("dir/sub"), Some(std::path::Path::new("dir/sub")))
         .expect("enter dir/sub");
 
     // Sanity: the child-only rule is live at dir/sub.

@@ -41,7 +41,8 @@ fn daemon_negotiation_error_unknown_module() {
     line.clear();
     reader.read_line(&mut line).expect("error response");
     assert!(
-        line.contains("@ERROR:") && (line.contains("unknown module") || line.contains("Unknown module")),
+        line.contains("@ERROR:")
+            && (line.contains("unknown module") || line.contains("Unknown module")),
         "Expected unknown module error, got: {line}"
     );
 
@@ -50,7 +51,10 @@ fn daemon_negotiation_error_unknown_module() {
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -308,8 +312,8 @@ fn daemon_negotiation_error_max_connections_exceeded() {
     );
 
     // Keep first connection open and try second connection
-    let mut stream2 = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
-        .expect("connect second stream");
+    let mut stream2 =
+        TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).expect("connect second stream");
     let mut reader2 = BufReader::new(stream2.try_clone().expect("clone2"));
 
     line.clear();

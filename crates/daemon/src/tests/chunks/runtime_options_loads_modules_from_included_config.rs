@@ -26,4 +26,3 @@ fn runtime_options_loads_modules_from_included_config() {
     assert_eq!(options.modules().len(), 1);
     assert_eq!(options.modules()[0].name(), "docs");
 }
-

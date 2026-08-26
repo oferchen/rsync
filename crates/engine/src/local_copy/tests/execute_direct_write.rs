@@ -14,7 +14,6 @@
 // 6. Zero-length files use the direct write path
 // 7. Large files use the direct write path correctly
 
-
 #[test]
 fn direct_write_creates_file_at_final_destination() {
     let temp = tempdir().expect("tempdir");
@@ -69,10 +68,7 @@ fn direct_write_does_not_create_temp_files() {
         entries.len(),
         1,
         "only the destination file should exist, found: {:?}",
-        entries
-            .iter()
-            .map(|e| e.file_name())
-            .collect::<Vec<_>>()
+        entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
     );
     assert_eq!(entries[0].file_name(), "file.txt");
 }
@@ -132,7 +128,6 @@ fn direct_write_preserves_file_content_exactly() {
     );
 }
 
-
 #[test]
 fn direct_write_handles_multiple_files_in_directory() {
     let temp = tempdir().expect("tempdir");
@@ -182,7 +177,6 @@ fn direct_write_handles_multiple_files_in_directory() {
     );
 }
 
-
 #[test]
 fn direct_write_zero_length_file() {
     let temp = tempdir().expect("tempdir");
@@ -231,7 +225,6 @@ fn direct_write_large_file_content_intact() {
         "large file content must match"
     );
 }
-
 
 #[test]
 fn existing_destination_does_not_use_direct_write() {

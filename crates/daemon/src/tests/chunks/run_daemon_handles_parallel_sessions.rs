@@ -50,7 +50,10 @@ fn run_daemon_handles_parallel_sessions() {
             // follows the refusal; the socket just closes (next read is EOF).
             line.clear();
             let read = reader.read_line(&mut line).expect("eof after error");
-            assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+            assert_eq!(
+                read, 0,
+                "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+            );
         }));
     }
 
@@ -61,4 +64,3 @@ fn run_daemon_handles_parallel_sessions() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

@@ -105,7 +105,10 @@ fn drain_until_peer_eof<S: PeerDrainStream + ?Sized>(stream: &mut S, timeout: Du
             // Idle-socket per-read timeout / EAGAIN: retry until the total budget
             // is spent, then stop so the close can proceed - upstream io.c:797.
             Err(ref e)
-                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
             {
                 if std::time::Instant::now() >= deadline {
                     break;
@@ -128,7 +131,7 @@ mod graceful_close_tests {
     //! final `close()` emits a clean FIN instead of an abortive RST. These tests
     //! pin that invariant without depending on timing luck.
 
-    use super::{drain_until_peer_eof, PeerDrainStream};
+    use super::{PeerDrainStream, drain_until_peer_eof};
     use std::collections::VecDeque;
     use std::io::{self, Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -245,7 +248,9 @@ mod graceful_close_tests {
         let peer = thread::spawn(move || {
             let (mut server, _) = listener.accept().expect("accept");
             // Trailing bytes larger than one drain chunk, then FIN via drop.
-            server.write_all(&vec![0x5Au8; 20_000]).expect("write trailing");
+            server
+                .write_all(&vec![0x5Au8; 20_000])
+                .expect("write trailing");
             server.flush().expect("flush trailing");
             // Drop -> FIN -> EOF on the drain side.
         });

@@ -21,9 +21,9 @@ fn resolve_uid(value: &str) -> Result<u32, String> {
 /// On non-Unix platforms, only numeric IDs are accepted.
 #[cfg(not(unix))]
 fn resolve_uid(value: &str) -> Result<u32, String> {
-    value.parse::<u32>().map_err(|_| {
-        format!("invalid uid '{value}' (only numeric IDs supported on this platform)")
-    })
+    value
+        .parse::<u32>()
+        .map_err(|_| format!("invalid uid '{value}' (only numeric IDs supported on this platform)"))
 }
 
 /// Resolves a gid string to a numeric gid.
@@ -49,9 +49,9 @@ fn resolve_gid(value: &str) -> Result<u32, String> {
 /// On non-Unix platforms, only numeric IDs are accepted.
 #[cfg(not(unix))]
 fn resolve_gid(value: &str) -> Result<u32, String> {
-    value.parse::<u32>().map_err(|_| {
-        format!("invalid gid '{value}' (only numeric IDs supported on this platform)")
-    })
+    value
+        .parse::<u32>()
+        .map_err(|_| format!("invalid gid '{value}' (only numeric IDs supported on this platform)"))
 }
 
 fn validate_cli_secrets_file(path: PathBuf) -> Result<PathBuf, DaemonError> {

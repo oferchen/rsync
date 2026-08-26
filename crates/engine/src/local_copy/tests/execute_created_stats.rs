@@ -78,7 +78,10 @@ fn updated_entries_are_not_counted_as_created() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::builder().archive().build().expect("options"),
+        LocalCopyOptions::builder()
+            .archive()
+            .build()
+            .expect("options"),
     )
     .expect("initial copy succeeds");
 
@@ -92,7 +95,10 @@ fn updated_entries_are_not_counted_as_created() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::builder().archive().build().expect("options"),
+            LocalCopyOptions::builder()
+                .archive()
+                .build()
+                .expect("options"),
         )
         .expect("second copy succeeds");
 
@@ -132,7 +138,10 @@ fn dry_run_counts_created_entries_like_a_real_run() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::builder().archive().build().expect("options"),
+            LocalCopyOptions::builder()
+                .archive()
+                .build()
+                .expect("options"),
         )
         .expect("dry run succeeds");
 

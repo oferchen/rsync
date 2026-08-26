@@ -21,4 +21,3 @@ fn parse_config_modules_detects_recursive_include() {
     let error = parse_config_modules(&first).expect_err("recursive include should fail");
     assert!(error.message().to_string().contains("recursive include"));
 }
-

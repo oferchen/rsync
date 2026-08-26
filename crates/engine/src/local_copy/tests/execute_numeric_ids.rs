@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn numeric_ids_preserves_uid_without_name_lookup() {
@@ -31,9 +30,7 @@ fn numeric_ids_preserves_uid_without_name_lookup() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .owner(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().owner(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -76,9 +73,7 @@ fn numeric_ids_preserves_gid_without_name_lookup() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .group(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().group(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -168,9 +163,7 @@ fn numeric_ids_handles_non_existent_uid() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .owner(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().owner(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -213,9 +206,7 @@ fn numeric_ids_handles_non_existent_gid() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .group(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().group(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -309,9 +300,7 @@ fn numeric_ids_with_owner_flag_only() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Only preserve owner, not group
-    let options = LocalCopyOptions::default()
-        .owner(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().owner(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -359,9 +348,7 @@ fn numeric_ids_with_group_flag_only() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Only preserve group, not owner
-    let options = LocalCopyOptions::default()
-        .group(true)
-        .numeric_ids(true);
+    let options = LocalCopyOptions::default().group(true).numeric_ids(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -407,9 +394,7 @@ fn numeric_ids_disabled_attempts_name_lookup() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // numeric_ids is false, so it will attempt name lookup
-    let options = LocalCopyOptions::default()
-        .owner(true)
-        .numeric_ids(false);
+    let options = LocalCopyOptions::default().owner(true).numeric_ids(false);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)

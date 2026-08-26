@@ -11,4 +11,3 @@ fn first_existing_config_path_prefers_primary_candidate() {
 
     assert_eq!(result, Some(expected));
 }
-

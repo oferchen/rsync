@@ -14,7 +14,6 @@
 // 6. Hard links work correctly with delayed updates
 // 7. Metadata is applied after rename
 
-
 #[test]
 fn delay_updates_writes_to_temp_names_during_transfer() {
     let temp = create_tempdir();
@@ -109,8 +108,11 @@ fn delay_updates_no_temp_files_remain_after_success() {
 
     // Create multiple files to ensure all temp files are cleaned up
     for i in 0..10 {
-        fs::write(source_root.join(format!("file{i}.txt")), format!("content{i}"))
-            .expect("write source file");
+        fs::write(
+            source_root.join(format!("file{i}.txt")),
+            format!("content{i}"),
+        )
+        .expect("write source file");
     }
 
     let mut source_operand = source_root.into_os_string();
@@ -147,7 +149,6 @@ fn delay_updates_no_temp_files_remain_after_success() {
         "temp files should not remain after successful copy: {temp_files:?}"
     );
 }
-
 
 #[test]
 fn delay_updates_works_with_temp_dir() {
@@ -236,7 +237,6 @@ fn delay_updates_with_temp_dir_multiple_files() {
     assert!(staging_files.is_empty());
 }
 
-
 #[cfg(unix)]
 #[test]
 fn delay_updates_preserves_permissions() {
@@ -247,7 +247,9 @@ fn delay_updates_preserves_permissions() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"perms test").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o640);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -297,12 +299,10 @@ fn delay_updates_preserves_modification_time() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
-
 
 #[test]
 fn delay_updates_handles_nested_directories() {
@@ -313,11 +313,7 @@ fn delay_updates_handles_nested_directories() {
     fs::create_dir_all(source_root.join("a").join("b").join("c")).expect("nested dirs");
 
     fs::write(source_root.join("a").join("file1.txt"), b"level1").expect("write level1");
-    fs::write(
-        source_root.join("a").join("b").join("file2.txt"),
-        b"level2",
-    )
-    .expect("write level2");
+    fs::write(source_root.join("a").join("b").join("file2.txt"), b"level2").expect("write level2");
     fs::write(
         source_root.join("a").join("b").join("c").join("file3.txt"),
         b"level3",
@@ -343,15 +339,29 @@ fn delay_updates_handles_nested_directories() {
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("file2.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("file2.txt")
+        )
+        .expect("read"),
         b"level2"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("c").join("file3.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("c")
+                .join("file3.txt")
+        )
+        .expect("read"),
         b"level3"
     );
 }
-
 
 #[test]
 fn delay_updates_replaces_existing_files_atomically() {
@@ -377,7 +387,10 @@ fn delay_updates_replaces_existing_files_atomically() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"new content here");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"new content here"
+    );
 }
 
 #[test]
@@ -425,7 +438,6 @@ fn delay_updates_with_multiple_existing_files() {
         b"new content c"
     );
 }
-
 
 #[test]
 fn delay_updates_handles_empty_file() {
@@ -480,7 +492,6 @@ fn delay_updates_handles_large_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-
 #[test]
 fn delay_updates_dry_run_does_not_create_files() {
     let temp = create_tempdir();
@@ -502,7 +513,10 @@ fn delay_updates_dry_run_does_not_create_files() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(!destination.exists(), "destination should not exist in dry run");
+    assert!(
+        !destination.exists(),
+        "destination should not exist in dry run"
+    );
 }
 
 #[test]
@@ -529,7 +543,6 @@ fn delay_updates_dry_run_does_not_modify_existing() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
-
 
 /// Asserts the `--delay-updates` staging contract survives a deletion sweep.
 ///
@@ -568,8 +581,7 @@ fn assert_delay_updates_finalizes_under_deletion(
     fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
     fs::write(dest_root.join("keep.txt"), b"stale keep").expect("write stale keep");
     fs::write(source_nested.join("keep.txt"), b"nested keep").expect("write nested keep");
-    fs::write(dest_nested.join("keep.txt"), b"stale nested keep")
-        .expect("write stale nested keep");
+    fs::write(dest_nested.join("keep.txt"), b"stale nested keep").expect("write stale nested keep");
 
     fs::write(dest_root.join("delete_me.txt"), b"extraneous").expect("write extraneous");
     fs::write(dest_nested.join("delete_me.txt"), b"extraneous nested")
@@ -636,7 +648,10 @@ fn delay_updates_with_delete_before_removes_extraneous() {
 
 #[test]
 fn delay_updates_with_delete_during_removes_extraneous() {
-    assert_delay_updates_finalizes_under_deletion("--delete-during", LocalCopyOptions::delete_during);
+    assert_delay_updates_finalizes_under_deletion(
+        "--delete-during",
+        LocalCopyOptions::delete_during,
+    );
 }
 
 #[test]
@@ -687,7 +702,6 @@ fn delay_updates_with_update_flag_skips_older_files() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
-
 
 #[test]
 fn delay_updates_handles_files_with_spaces_in_name() {
@@ -740,7 +754,6 @@ fn delay_updates_handles_files_with_special_characters() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"special chars");
 }
 
-
 #[test]
 fn delay_updates_provides_atomic_directory_update() {
     // This test verifies that the destination directory transitions atomically
@@ -787,7 +800,6 @@ fn delay_updates_provides_atomic_directory_update() {
     assert_eq!(content3, b"new content 3");
 }
 
-
 #[test]
 fn delay_updates_differs_from_immediate_mode() {
     // This test documents the difference between delay_updates and normal mode.
@@ -833,14 +845,19 @@ fn delay_updates_differs_from_immediate_mode() {
     );
 }
 
-
 #[test]
 fn delay_updates_setting_enables_partial() {
     let opts = LocalCopyOptions::default().delay_updates(true);
 
-    assert!(opts.delay_updates_enabled(), "delay_updates should be enabled");
+    assert!(
+        opts.delay_updates_enabled(),
+        "delay_updates should be enabled"
+    );
     // delay_updates typically implies partial mode
-    assert!(opts.partial_enabled(), "partial should be enabled with delay_updates");
+    assert!(
+        opts.partial_enabled(),
+        "partial should be enabled with delay_updates"
+    );
 }
 
 #[test]
@@ -849,9 +866,11 @@ fn delay_updates_can_be_disabled() {
         .delay_updates(true)
         .delay_updates(false);
 
-    assert!(!opts.delay_updates_enabled(), "delay_updates should be disabled");
+    assert!(
+        !opts.delay_updates_enabled(),
+        "delay_updates should be disabled"
+    );
 }
-
 
 #[test]
 fn delay_updates_handles_mix_of_new_and_existing_files() {
@@ -897,7 +916,6 @@ fn delay_updates_handles_mix_of_new_and_existing_files() {
     );
 }
 
-
 /// Verify that delay_updates uses .~tmp~ prefix for staging files,
 /// matching upstream rsync behavior. We check this by running a transfer
 /// and verifying no .~tmp~ files remain afterward (they would be renamed).
@@ -909,8 +927,11 @@ fn delay_updates_temp_files_use_upstream_rsync_prefix() {
     fs::create_dir_all(&source_root).expect("create source");
 
     for i in 0..5 {
-        fs::write(source_root.join(format!("file{i}.txt")), format!("data {i}"))
-            .expect("write source");
+        fs::write(
+            source_root.join(format!("file{i}.txt")),
+            format!("data {i}"),
+        )
+        .expect("write source");
     }
 
     let mut source_operand = source_root.into_os_string();
@@ -953,7 +974,6 @@ fn delay_updates_temp_files_use_upstream_rsync_prefix() {
         );
     }
 }
-
 
 #[test]
 fn delay_updates_handles_multiple_subdirectories() {
@@ -1025,7 +1045,6 @@ fn delay_updates_handles_multiple_subdirectories() {
     assert_no_staging(&dest_root);
 }
 
-
 #[test]
 fn delay_updates_with_backup_creates_backup_files() {
     let temp = create_tempdir();
@@ -1049,9 +1068,7 @@ fn delay_updates_with_backup_creates_backup_files() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .delay_updates(true)
-                .backup(true),
+            LocalCopyOptions::default().delay_updates(true).backup(true),
         )
         .expect("copy succeeds");
 
@@ -1065,10 +1082,7 @@ fn delay_updates_with_backup_creates_backup_files() {
     // Backup should exist with old content
     let backup = dest_root.join("file.txt~");
     assert!(backup.exists(), "backup file should exist");
-    assert_eq!(
-        fs::read(&backup).expect("read backup"),
-        b"old"
-    );
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old");
 }
 
 #[test]
@@ -1104,10 +1118,12 @@ fn delay_updates_with_backup_suffix() {
     );
 
     let backup = dest_root.join("data.txt.bak");
-    assert!(backup.exists(), "backup file with custom suffix should exist");
+    assert!(
+        backup.exists(),
+        "backup file with custom suffix should exist"
+    );
     assert_eq!(fs::read(&backup).expect("read backup"), b"old");
 }
-
 
 #[test]
 fn delay_updates_with_checksum_comparison() {
@@ -1188,7 +1204,6 @@ fn delay_updates_with_checksum_skips_identical_files() {
     );
 }
 
-
 #[cfg(unix)]
 #[test]
 fn delay_updates_preserves_symlinks() {
@@ -1198,8 +1213,7 @@ fn delay_updates_preserves_symlinks() {
     fs::create_dir_all(&source_root).expect("create source");
 
     fs::write(source_root.join("target.txt"), b"target content").expect("write target");
-    std::os::unix::fs::symlink("target.txt", source_root.join("link.txt"))
-        .expect("create symlink");
+    std::os::unix::fs::symlink("target.txt", source_root.join("link.txt")).expect("create symlink");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1210,9 +1224,7 @@ fn delay_updates_preserves_symlinks() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .delay_updates(true)
-                .links(true),
+            LocalCopyOptions::default().delay_updates(true).links(true),
         )
         .expect("copy succeeds");
 
@@ -1232,7 +1244,6 @@ fn delay_updates_preserves_symlinks() {
         std::path::Path::new("target.txt")
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1299,7 +1310,6 @@ fn delay_updates_preserves_multiple_hard_link_groups() {
     assert!(summary.hard_links_created() >= 3);
 }
 
-
 #[test]
 fn delay_updates_with_ignore_existing_skips_existing_files() {
     let temp = create_tempdir();
@@ -1340,7 +1350,6 @@ fn delay_updates_with_ignore_existing_skips_existing_files() {
     );
 }
 
-
 #[test]
 fn delay_updates_with_existing_only_skips_new_files() {
     let temp = create_tempdir();
@@ -1379,7 +1388,6 @@ fn delay_updates_with_existing_only_skips_new_files() {
         "new file should not be created in existing-only mode"
     );
 }
-
 
 #[test]
 fn delay_updates_handles_unicode_filenames() {
@@ -1425,7 +1433,6 @@ fn delay_updates_handles_unicode_filenames() {
     );
 }
 
-
 #[test]
 fn delay_updates_with_size_only_skips_same_size_files() {
     let temp = create_tempdir();
@@ -1460,7 +1467,6 @@ fn delay_updates_with_size_only_skips_same_size_files() {
         b"BBBB"
     );
 }
-
 
 #[test]
 fn delay_updates_with_ignore_times_always_transfers() {
@@ -1497,7 +1503,6 @@ fn delay_updates_with_ignore_times_always_transfers() {
     // Should always transfer when --ignore-times is set
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn delay_updates_handles_many_files() {
@@ -1550,7 +1555,6 @@ fn delay_updates_handles_many_files() {
     assert!(leftovers.is_empty(), "staging files remain: {leftovers:?}");
 }
 
-
 #[test]
 fn delay_updates_handles_deeply_nested_structure() {
     let temp = create_tempdir();
@@ -1589,7 +1593,6 @@ fn delay_updates_handles_deeply_nested_structure() {
     }
 }
 
-
 #[test]
 fn builder_rejects_inplace_with_delay_updates() {
     let result = LocalCopyOptions::builder()
@@ -1602,16 +1605,13 @@ fn builder_rejects_inplace_with_delay_updates() {
 
 #[test]
 fn builder_accepts_delay_updates_without_inplace() {
-    let result = LocalCopyOptions::builder()
-        .delay_updates(true)
-        .build();
+    let result = LocalCopyOptions::builder().delay_updates(true).build();
 
     assert!(result.is_ok());
     let opts = result.unwrap();
     assert!(opts.delay_updates_enabled());
     assert!(opts.partial_enabled());
 }
-
 
 #[test]
 fn delay_updates_is_idempotent_on_second_run() {
@@ -1660,7 +1660,6 @@ fn delay_updates_is_idempotent_on_second_run() {
         b"content b"
     );
 }
-
 
 #[test]
 fn delay_updates_only_transfers_changed_files() {
@@ -1711,7 +1710,6 @@ fn delay_updates_only_transfers_changed_files() {
     );
 }
 
-
 #[test]
 fn delay_updates_with_remove_source_files() {
     let temp = create_tempdir();
@@ -1748,7 +1746,6 @@ fn delay_updates_with_remove_source_files() {
         "source file should be removed after transfer"
     );
 }
-
 
 #[test]
 fn delay_updates_preserves_times_across_multiple_files() {
@@ -1796,7 +1793,6 @@ fn delay_updates_preserves_times_across_multiple_files() {
         );
     }
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1852,7 +1848,6 @@ fn delay_updates_preserves_permissions_across_multiple_files() {
     }
 }
 
-
 #[test]
 fn delay_updates_handles_binary_content() {
     let temp = create_tempdir();
@@ -1876,10 +1871,7 @@ fn delay_updates_handles_binary_content() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        binary_content
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), binary_content);
 }
 
 #[test]
@@ -1911,7 +1903,6 @@ fn delay_updates_handles_file_with_null_bytes() {
     );
 }
 
-
 #[test]
 fn delay_updates_option_is_false_by_default() {
     let opts = LocalCopyOptions::default();
@@ -1941,7 +1932,6 @@ fn delay_updates_disabled_does_not_set_partial() {
     assert!(!opts.delay_updates_enabled());
 }
 
-
 #[test]
 fn delay_updates_dry_run_with_nested_tree_no_changes() {
     let temp = create_tempdir();
@@ -1951,7 +1941,11 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
     fs::create_dir_all(source_root.join("a").join("b")).expect("create dirs");
     fs::write(source_root.join("top.txt"), b"top").expect("write");
     fs::write(source_root.join("a").join("mid.txt"), b"mid").expect("write");
-    fs::write(source_root.join("a").join("b").join("bottom.txt"), b"bottom").expect("write");
+    fs::write(
+        source_root.join("a").join("b").join("bottom.txt"),
+        b"bottom",
+    )
+    .expect("write");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1970,7 +1964,6 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
 
     assert!(!dest_root.exists(), "dest should not be created in dry run");
 }
-
 
 #[test]
 fn delay_updates_replaces_smaller_file_with_larger() {
@@ -2024,12 +2017,8 @@ fn delay_updates_replaces_larger_file_with_smaller() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"sm"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"sm");
 }
-
 
 #[test]
 fn delay_updates_creates_destination_directories_as_needed() {
@@ -2044,8 +2033,7 @@ fn delay_updates_creates_destination_directories_as_needed() {
         b"deeply nested",
     )
     .expect("write");
-    fs::write(source_root.join("new_dir").join("sibling.txt"), b"sibling")
-        .expect("write");
+    fs::write(source_root.join("new_dir").join("sibling.txt"), b"sibling").expect("write");
 
     let operands = vec![
         source_root.into_os_string(),
@@ -2061,9 +2049,22 @@ fn delay_updates_creates_destination_directories_as_needed() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("source").join("new_dir").join("nested").is_dir());
+    assert!(
+        dest_root
+            .join("source")
+            .join("new_dir")
+            .join("nested")
+            .is_dir()
+    );
     assert_eq!(
-        fs::read(dest_root.join("source").join("new_dir").join("nested").join("file.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("new_dir")
+                .join("nested")
+                .join("file.txt")
+        )
+        .expect("read"),
         b"deeply nested"
     );
     assert_eq!(
@@ -2071,7 +2072,6 @@ fn delay_updates_creates_destination_directories_as_needed() {
         b"sibling"
     );
 }
-
 
 /// Verifies that `--delay-updates` automatically sets the partial directory
 /// to `.~tmp~` (matching upstream rsync's `tmp_partialdir`).
@@ -2287,8 +2287,9 @@ fn delay_updates_restores_root_directory_mtime_after_rename() {
         .expect("copy succeeds");
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dest dir metadata"));
+    let dest_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("dest dir metadata"),
+    );
     assert_eq!(
         dest_dir_mtime, past,
         "the delayed-update rename bumps the dir mtime apply_final_directory_metadata \
@@ -2467,7 +2468,10 @@ fn delay_updates_removes_a_relative_partial_dir_after_the_rename() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(fs::read(dest_root.join("f0")).expect("read dest"), b"PAYLOAD-DATA");
+    assert_eq!(
+        fs::read(dest_root.join("f0")).expect("read dest"),
+        b"PAYLOAD-DATA"
+    );
     assert!(
         !dest_root.join(".pd").exists(),
         "a relative --partial-dir must be rmdir'd once emptied"
@@ -2504,5 +2508,8 @@ fn delay_updates_creates_the_partial_dir_private() {
         .permissions()
         .mode()
         & 0o777;
-    assert_eq!(mode, 0o700, "the partial dir must be created private (0700)");
+    assert_eq!(
+        mode, 0o700,
+        "the partial dir must be created private (0700)"
+    );
 }

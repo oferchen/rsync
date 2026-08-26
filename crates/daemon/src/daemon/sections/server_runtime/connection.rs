@@ -40,9 +40,8 @@ fn check_signals_and_maintain(
 
     if state.signal_flags.shutdown.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
-            let message =
-                rsync_info!("received shutdown signal, stopping accept loop")
-                    .with_role(Role::Daemon);
+            let message = rsync_info!("received shutdown signal, stopping accept loop")
+                .with_role(Role::Daemon);
             log_message(log, &message);
         }
         return Ok(Some(true));
@@ -59,17 +58,20 @@ fn check_signals_and_maintain(
             let message = rsync_info!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
-        if let Err(error) = state.notifier.status("Graceful exit: draining active transfers") {
-            log_sd_notify_failure(
-                state.log_sink.as_ref(),
-                "graceful exit status",
-                &error,
-            );
+        if let Err(error) = state
+            .notifier
+            .status("Graceful exit: draining active transfers")
+        {
+            log_sd_notify_failure(state.log_sink.as_ref(), "graceful exit status", &error);
         }
         return Ok(Some(true));
     }
 
-    if state.signal_flags.reload_config.swap(false, Ordering::Relaxed) {
+    if state
+        .signal_flags
+        .reload_config
+        .swap(false, Ordering::Relaxed)
+    {
         reload_daemon_config(
             state.config_path.as_deref(),
             state.connection_limiter,
@@ -81,7 +83,11 @@ fn check_signals_and_maintain(
     }
 
     // upstream: main.c - SIGUSR2 outputs transfer statistics.
-    if state.signal_flags.progress_dump.swap(false, Ordering::Relaxed) {
+    if state
+        .signal_flags
+        .progress_dump
+        .swap(false, Ordering::Relaxed)
+    {
         log_progress_summary(
             state.log_sink.as_ref(),
             state.workers.len(),
@@ -139,8 +145,7 @@ fn refuse_if_at_capacity(
     if let Err(error) = stream.write_all(&payload)
         && let Some(log) = state.log_sink.as_ref()
     {
-        let text =
-            format!("failed to deliver max-connections refusal to {peer_addr}: {error}");
+        let text = format!("failed to deliver max-connections refusal to {peer_addr}: {error}");
         let message = rsync_warning!(text).with_role(Role::Daemon);
         log_message(log, &message);
     }
@@ -249,11 +254,7 @@ fn update_connection_status_after_accept(state: &mut AcceptLoopState<'_>) {
     if current_active != state.active_connections {
         let status = format_connection_status(current_active);
         if let Err(error) = state.notifier.status(&status) {
-            log_sd_notify_failure(
-                state.log_sink.as_ref(),
-                "connection status update",
-                &error,
-            );
+            log_sd_notify_failure(state.log_sink.as_ref(), "connection status update", &error);
         }
         state.active_connections = current_active;
     }
@@ -281,7 +282,11 @@ fn handle_accepted_connection(
         return false;
     };
 
-    apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
+    apply_client_options(
+        &stream,
+        &state.client_socket_options,
+        state.log_sink.as_ref(),
+    );
 
     if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
         drop(stream);

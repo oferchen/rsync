@@ -63,7 +63,10 @@ fn run_daemon_runs_post_xfer_exec_on_read_only_refuse() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")

@@ -10,4 +10,3 @@ fn runtime_options_ipv6_accepts_ipv6_bind_address() {
     assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
     assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
 }
-

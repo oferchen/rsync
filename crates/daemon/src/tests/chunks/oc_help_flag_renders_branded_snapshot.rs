@@ -8,4 +8,3 @@ fn oc_help_flag_renders_branded_snapshot() {
     let expected = render_help(ProgramName::OcRsyncd);
     assert_eq!(stdout, expected.into_bytes());
 }
-

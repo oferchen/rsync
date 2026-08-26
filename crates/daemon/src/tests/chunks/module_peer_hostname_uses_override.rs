@@ -13,4 +13,3 @@ fn module_peer_hostname_uses_override() {
     assert!(module.permits(peer, PeerHost::new(resolved, true)));
     clear_test_hostname_overrides();
 }
-

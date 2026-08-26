@@ -171,7 +171,6 @@ mod log_format_tests {
         }
     }
 
-
     #[test]
     fn transfer_operation_send_str() {
         assert_eq!(TransferOperation::Send.as_str(), "send");
@@ -214,12 +213,10 @@ mod log_format_tests {
         assert!(debug.contains("Send"));
     }
 
-
     #[test]
     fn default_log_format_matches_upstream() {
         assert_eq!(DEFAULT_LOG_FORMAT, "%o %h [%a] %m (%u) %f %l");
     }
-
 
     #[test]
     fn expand_operation() {
@@ -305,7 +302,6 @@ mod log_format_tests {
         assert_eq!(expand_log_format("%%", &ctx), "%");
     }
 
-
     #[test]
     fn expand_default_format() {
         let ctx = sample_context();
@@ -316,7 +312,6 @@ mod log_format_tests {
         );
     }
 
-
     #[test]
     fn expand_recv_operation() {
         let mut ctx = sample_context();
@@ -324,7 +319,6 @@ mod log_format_tests {
         let result = expand_log_format("%o", &ctx);
         assert_eq!(result, "recv");
     }
-
 
     #[test]
     fn expand_empty_format() {
@@ -335,10 +329,7 @@ mod log_format_tests {
     #[test]
     fn expand_no_escapes() {
         let ctx = sample_context();
-        assert_eq!(
-            expand_log_format("plain text", &ctx),
-            "plain text"
-        );
+        assert_eq!(expand_log_format("plain text", &ctx), "plain text");
     }
 
     #[test]
@@ -385,10 +376,7 @@ mod log_format_tests {
     fn expand_large_file_length() {
         let mut ctx = sample_context();
         ctx.file_length = u64::MAX;
-        assert_eq!(
-            expand_log_format("%l", &ctx),
-            u64::MAX.to_string()
-        );
+        assert_eq!(expand_log_format("%l", &ctx), u64::MAX.to_string());
     }
 
     #[test]
@@ -405,7 +393,6 @@ mod log_format_tests {
         let result = expand_log_format("%i %o %f %l %b", &ctx);
         assert_eq!(result, ">f+++++++++ send docs/report.pdf 1048576 524288");
     }
-
 
     #[test]
     fn effective_log_format_uses_module_setting() {
@@ -426,7 +413,6 @@ mod log_format_tests {
         };
         assert_eq!(effective_log_format(&module), DEFAULT_LOG_FORMAT);
     }
-
 
     #[test]
     fn push_u64_zero() {

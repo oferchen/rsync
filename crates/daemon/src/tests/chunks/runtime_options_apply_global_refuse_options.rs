@@ -19,4 +19,3 @@ fn runtime_options_apply_global_refuse_options() {
     );
     assert_eq!(options.modules()[1].refused_options(), ["stats"]);
 }
-

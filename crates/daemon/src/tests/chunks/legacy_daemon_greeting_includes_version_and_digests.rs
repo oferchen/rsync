@@ -17,7 +17,10 @@ fn legacy_daemon_greeting_includes_version_and_digests() {
     // Second part is the version number (format: "31.0" or similar)
     let version_str = parts[1];
     // Version may be "31.0" or "31" - extract the major version
-    let major_str = version_str.split('.').next().expect("version must have major part");
+    let major_str = version_str
+        .split('.')
+        .next()
+        .expect("version must have major part");
     let major: u8 = major_str.parse().expect("valid protocol version number");
     assert!(major >= 28, "protocol version should be at least 28");
 

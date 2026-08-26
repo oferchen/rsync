@@ -17,4 +17,3 @@ fn runtime_options_loads_lock_file_from_config() {
     let expected = dir.path().join("daemon.lock");
     assert_eq!(options.lock_file(), Some(expected.as_path()));
 }
-

@@ -37,7 +37,10 @@ fn daemon_pre_xfer_exec_rejects_on_nonzero_exit() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
@@ -63,10 +66,7 @@ fn daemon_pre_xfer_exec_rejects_on_nonzero_exit() {
     // Pre-xfer exec fails - daemon sends @ERROR with the stderr content
     line.clear();
     reader.read_line(&mut line).expect("error message");
-    assert!(
-        line.starts_with("@ERROR:"),
-        "expected @ERROR, got: {line}"
-    );
+    assert!(line.starts_with("@ERROR:"), "expected @ERROR, got: {line}");
     assert!(
         line.contains("denied by hook"),
         "expected stderr content in error, got: {line}"
@@ -77,7 +77,10 @@ fn daemon_pre_xfer_exec_rejects_on_nonzero_exit() {
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");

@@ -10,4 +10,3 @@ fn runtime_options_reject_whitespace_wrapped_bwlimit_argument() {
             .contains("--bwlimit= 8M \n is invalid")
     );
 }
-

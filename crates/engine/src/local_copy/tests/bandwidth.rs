@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_with_bandwidth_limit_records_sleep() {
     let mut recorder = bandwidth::recorded_sleep_session();

@@ -3,7 +3,8 @@ fn log_module_limit_logs_cap_reached() {
     let dir = tempdir().expect("log dir");
     let path = dir.path().join("daemon.log");
     let log = open_log_sink(&path, Brand::Oc).expect("open log");
-    let limit = MaxConnections::Limited(NonZeroU32::new(4).expect("non-zero limit")).display_value();
+    let limit =
+        MaxConnections::Limited(NonZeroU32::new(4).expect("non-zero limit")).display_value();
 
     log_module_limit(
         &log,
@@ -19,7 +20,9 @@ fn log_module_limit_logs_cap_reached() {
     let contents = fs::read_to_string(&path).expect("read log");
     // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` ahead
     // of the rendered warning body.
-    let body = contents.split_once("] ").map_or(contents.as_str(), |(_, body)| body);
+    let body = contents
+        .split_once("] ")
+        .map_or(contents.as_str(), |(_, body)| body);
     assert!(
         body.starts_with("oc-rsync warning:"),
         "expected warning-level message, got: {contents}"

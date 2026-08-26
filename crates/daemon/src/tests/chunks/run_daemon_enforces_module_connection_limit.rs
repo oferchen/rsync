@@ -96,10 +96,11 @@ fn run_daemon_enforces_module_connection_limit() {
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();
-    let read = second_reader
-        .read_line(&mut line)
-        .expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    let read = second_reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     first_stream
         .write_all(b"\n")
@@ -118,10 +119,11 @@ fn run_daemon_enforces_module_connection_limit() {
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();
-    let read = first_reader
-        .read_line(&mut line)
-        .expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    let read = first_reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(second_reader);
     drop(second_stream);
@@ -131,4 +133,3 @@ fn run_daemon_enforces_module_connection_limit() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

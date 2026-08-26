@@ -91,7 +91,10 @@ impl<'a> CopyContext<'a> {
                 2
             };
 
-            if best.as_ref().is_none_or(|(_, best_level)| level > *best_level) {
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_level)| level > *best_level)
+            {
                 best = Some((candidate, level));
             }
             // upstream: generator.c:979 - an exact match ends the scan.
@@ -244,7 +247,6 @@ impl<'a> CopyContext<'a> {
     ) -> Result<Option<PathBuf>, LocalCopyError> {
         Ok(None)
     }
-
 }
 
 /// Returns `true` when two nodes' modification times are equal within

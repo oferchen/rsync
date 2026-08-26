@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn execute_with_copy_unsafe_links_materialises_file_target() {
@@ -312,7 +311,10 @@ fn keep_dirlinks_replaces_symlink_to_file_without_force() {
     .expect("symlink-to-file is an obstruction, not a dirlink");
 
     let meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
-    assert!(meta.file_type().is_dir(), "symlink replaced by a real directory");
+    assert!(
+        meta.file_type().is_dir(),
+        "symlink replaced by a real directory"
+    );
     assert_eq!(
         fs::read(dest_root.join("subdir").join("child.txt")).expect("read copied child"),
         b"data"
@@ -494,9 +496,7 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .keep_dirlinks(true)
-                .delete(true),
+            LocalCopyOptions::default().keep_dirlinks(true).delete(true),
         )
         .expect("copy with -K and --delete succeeds");
 
@@ -516,7 +516,10 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
         !real_target.join("extra.txt").exists(),
         "extraneous file should be deleted"
     );
-    assert!(summary.items_deleted() >= 1, "should report at least one deletion");
+    assert!(
+        summary.items_deleted() >= 1,
+        "should report at least one deletion"
+    );
 }
 
 #[cfg(unix)]
@@ -633,7 +636,10 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
         b"file-content"
     );
 
-    assert!(real_dir.join("inside.txt").exists(), "target contents should be preserved");
+    assert!(
+        real_dir.join("inside.txt").exists(),
+        "target contents should be preserved"
+    );
 }
 
 /// Regression test for upstream rsync 3.4.3 fix: `-K` (copy-dirlinks) must not
@@ -715,15 +721,10 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     modified_content.extend_from_slice(&modified_suffix);
 
     fs::write(&source_file, &modified_content).expect("write modified source file");
-    set_file_mtime(
-        &source_file,
-        FileTime::from_unix_time(2_000_000, 0),
-    )
-    .expect("set source mtime");
+    set_file_mtime(&source_file, FileTime::from_unix_time(2_000_000, 0)).expect("set source mtime");
 
     // Backdate the destination file so quick-check does not skip it
-    set_file_mtime(&dest_file, FileTime::from_unix_time(1_000_000, 0))
-        .expect("set dest mtime");
+    set_file_mtime(&dest_file, FileTime::from_unix_time(1_000_000, 0)).expect("set dest mtime");
 
     // Step 3: second sync with -K and whole_file(false) to force a delta transfer.
     // This is the critical path - the receiver must resolve the temp file and

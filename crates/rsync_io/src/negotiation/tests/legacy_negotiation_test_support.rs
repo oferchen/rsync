@@ -1,4 +1,3 @@
-
 #[test]
 fn map_line_reserve_error_for_io_marks_out_of_memory() {
     let mut buf = Vec::<u8>::new();
@@ -573,4 +572,3 @@ fn negotiation_buffered_slices_into_iter_consumes_segments() {
 
     assert_eq!(lengths, vec![prefix.len(), remainder.len()]);
 }
-

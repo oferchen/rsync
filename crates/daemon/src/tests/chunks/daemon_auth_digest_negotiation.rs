@@ -3,7 +3,12 @@
 /// connected client socket plus the daemon thread handle.
 ///
 /// The caller has already consumed nothing: the server greeting is still queued.
-fn start_auth_digest_daemon(dir: &Path) -> (TcpStream, thread::JoinHandle<Result<(), crate::DaemonError>>) {
+fn start_auth_digest_daemon(
+    dir: &Path,
+) -> (
+    TcpStream,
+    thread::JoinHandle<Result<(), crate::DaemonError>>,
+) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
     let secrets_path = dir.join("secrets.txt");
@@ -55,12 +60,17 @@ fn negotiate_protected_module(
 ) -> String {
     let mut line = String::new();
     reader.read_line(&mut line).expect("server greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(greeting.as_bytes())
         .expect("send client greeting");
-    stream.write_all(b"protected\n").expect("send module request");
+    stream
+        .write_all(b"protected\n")
+        .expect("send module request");
     stream.flush().expect("flush handshake");
 
     line.clear();
@@ -98,8 +108,11 @@ fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
         "challenge must come from the negotiated MD5, not SHA-512"
     );
 
-    let response =
-        core::auth::compute_daemon_auth_response(b"correctpassword", challenge, DaemonAuthDigest::Md5);
+    let response = core::auth::compute_daemon_auth_response(
+        b"correctpassword",
+        challenge,
+        DaemonAuthDigest::Md5,
+    );
     stream
         .write_all(format!("alice {response}\n").as_bytes())
         .expect("send response");
@@ -144,8 +157,11 @@ fn daemon_auth_rejects_a_response_computed_with_a_non_negotiated_digest() {
     assert_eq!(challenge.len(), DaemonAuthDigest::Sha512.base64_len());
 
     // Answer with the correct password but the *wrong* (shorter) digest.
-    let short_response =
-        core::auth::compute_daemon_auth_response(b"correctpassword", challenge, DaemonAuthDigest::Md5);
+    let short_response = core::auth::compute_daemon_auth_response(
+        b"correctpassword",
+        challenge,
+        DaemonAuthDigest::Md5,
+    );
     assert_eq!(short_response.len(), DaemonAuthDigest::Md5.base64_len());
     stream
         .write_all(format!("alice {short_response}\n").as_bytes())
@@ -197,14 +213,20 @@ fn daemon_auth_refuses_a_client_with_no_mutual_digest() {
     // The refusal replaces the challenge: nothing else reaches the client.
     let mut line = String::new();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no challenge may follow the refusal, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no challenge may follow the refusal, got: {line:?}"
+    );
 
     drop(reader);
     drop(stream);
     // Bounded join: an unconditional join() can wedge on Windows, where a
     // blocking accept on a re-bound listener may linger (see finish_daemon).
     if let Some(result) = finish_daemon(handle) {
-        assert!(result.is_ok(), "the listener survives a refused client: {result:?}");
+        assert!(
+            result.is_ok(),
+            "the listener survives a refused client: {result:?}"
+        );
     }
 }
 
@@ -328,7 +350,10 @@ fn assert_empty_digest_list_refused(greeting: &str) {
     // No challenge may follow: upstream refuses before `gen_challenge()`.
     let mut line = String::new();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no challenge may follow the refusal, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no challenge may follow the refusal, got: {line:?}"
+    );
 
     drop(reader);
     drop(stream);

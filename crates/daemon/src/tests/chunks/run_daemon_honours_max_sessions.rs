@@ -48,10 +48,12 @@ fn run_daemon_honours_max_sessions() {
         // refusal; the socket just closes (next read is EOF).
         line.clear();
         let read = reader.read_line(&mut line).expect("eof after error");
-        assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+        assert_eq!(
+            read, 0,
+            "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+        );
     }
 
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

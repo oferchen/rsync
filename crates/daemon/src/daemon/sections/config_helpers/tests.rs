@@ -367,7 +367,9 @@ mod config_helpers_tests {
         // value is a slot count.
         assert_eq!(
             parse_max_connections_directive("10"),
-            Some(MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")))
+            Some(MaxConnections::Limited(
+                NonZeroU32::new(10).expect("non-zero")
+            ))
         );
     }
 
@@ -402,7 +404,9 @@ mod config_helpers_tests {
         );
         assert_eq!(
             parse_max_connections_directive("10x"),
-            Some(MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")))
+            Some(MaxConnections::Limited(
+                NonZeroU32::new(10).expect("non-zero")
+            ))
         );
         assert_eq!(
             parse_max_connections_directive("-7 trailing"),
@@ -536,9 +540,8 @@ mod config_helpers_tests {
     /// production uses.
     #[test]
     fn hostname_glob_star_and_question_mark() {
-        let matches = |pattern: &str, host: &str| {
-            HostnamePattern::parse(pattern).unwrap().matches(host)
-        };
+        let matches =
+            |pattern: &str, host: &str| HostnamePattern::parse(pattern).unwrap().matches(host);
 
         assert!(matches("h?llo", "hello"));
         assert!(matches("h?llo", "hallo"));
@@ -589,7 +592,10 @@ mod config_helpers_tests {
             } else {
                 "www.example.com"
             };
-            assert!(pattern.matches(host), "token {token} failed to match {host}");
+            assert!(
+                pattern.matches(host),
+                "token {token} failed to match {host}"
+            );
         }
     }
 

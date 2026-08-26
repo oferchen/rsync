@@ -203,8 +203,7 @@ fn transfer_works_with_contimeout_set() {
     let ctx = test_helpers::setup_copy_test();
     ctx.write_source("file.txt", b"hello contimeout");
 
-    let options = LocalCopyOptions::default()
-        .with_contimeout(Some(Duration::from_secs(30)));
+    let options = LocalCopyOptions::default().with_contimeout(Some(Duration::from_secs(30)));
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -242,8 +241,7 @@ fn transfer_works_with_zero_contimeout() {
     let ctx = test_helpers::setup_copy_test();
     ctx.write_source("file.txt", b"zero contimeout");
 
-    let options = LocalCopyOptions::default()
-        .with_contimeout(Some(Duration::ZERO));
+    let options = LocalCopyOptions::default().with_contimeout(Some(Duration::ZERO));
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

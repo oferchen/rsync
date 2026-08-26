@@ -36,7 +36,9 @@ impl<'a> CopyContext<'a> {
         // upstream: receiver.c:718 handle_partial_dir(partialptr, PDIR_DELETE)
         // after the delayed rename succeeds.
         if let Some(dir) = update.guard.partial_dir_to_remove() {
-            self.deferred_ops.delay_staging_dirs.insert(dir.to_path_buf());
+            self.deferred_ops
+                .delay_staging_dirs
+                .insert(dir.to_path_buf());
         }
         let metadata = update.metadata.clone();
         let destination = update.destination.clone();

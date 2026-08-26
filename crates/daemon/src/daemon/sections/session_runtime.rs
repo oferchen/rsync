@@ -340,11 +340,12 @@ fn handle_legacy_session(
                 // the rest of it. `None` here is upstream's NULL and `Some("")`
                 // its non-NULL empty `strdup`; the two negotiate differently, so
                 // the empty case must survive the round trip through `String`.
-                client_digests = parse_legacy_daemon_greeting_details(&line)
-                    .ok()
-                    .and_then(|greeting| {
-                        greeting.advertised_digests().names().map(ToOwned::to_owned)
-                    });
+                client_digests =
+                    parse_legacy_daemon_greeting_details(&line)
+                        .ok()
+                        .and_then(|greeting| {
+                            greeting.advertised_digests().names().map(ToOwned::to_owned)
+                        });
                 // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
                 // The OK is only sent after the module is selected and approved, not after
                 // the version exchange. Sending OK here causes the client to misinterpret

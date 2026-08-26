@@ -19,7 +19,9 @@ fn runtime_options_module_definition_parses_inline_options() {
     assert!(module.numeric_ids());
     assert!(!module.use_chroot());
     assert!(module.permits(
-        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)), PeerHost::new(Some("host.example"), true)));
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)),
+        PeerHost::new(Some("host.example"), true)
+    ));
     assert_eq!(module.auth_users().len(), 2);
     assert_eq!(module.auth_users()[0].username, "alice");
     assert_eq!(module.auth_users()[1].username, "bob");
@@ -38,4 +40,3 @@ fn runtime_options_module_definition_parses_inline_options() {
         MaxConnections::Limited(NonZeroU32::new(5).expect("non-zero"))
     );
 }
-

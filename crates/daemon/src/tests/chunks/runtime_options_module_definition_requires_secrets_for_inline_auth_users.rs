@@ -13,4 +13,3 @@ fn runtime_options_module_definition_requires_secrets_for_inline_auth_users() {
             .contains("did not supply a secrets file")
     );
 }
-

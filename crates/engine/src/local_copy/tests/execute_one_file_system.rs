@@ -38,9 +38,29 @@ fn one_file_system_traverses_same_filesystem_directories() {
 
     // All files should be copied since they're on the same filesystem
     assert_eq!(summary.files_copied(), 3);
-    assert!(dest_root.join("source").join("dir1").join("file1.txt").exists());
-    assert!(dest_root.join("source").join("dir1").join("nested").join("deep").join("file2.txt").exists());
-    assert!(dest_root.join("source").join("dir2").join("file3.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir1")
+            .join("file1.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir1")
+            .join("nested")
+            .join("deep")
+            .join("file2.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir2")
+            .join("file3.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -69,7 +89,10 @@ fn one_file_system_skips_mount_point_directories() {
     let report = with_device_id_override(
         |path, _metadata| {
             // Simulate mount_point being on device 2, everything else on device 1
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point"))
+            {
                 Some(2)
             } else {
                 Some(1)
@@ -87,15 +110,30 @@ fn one_file_system_skips_mount_point_directories() {
     .expect("copy executes");
 
     // Only the file from same filesystem should be copied
-    assert!(dest_root.join("source").join("same_fs").join("local.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("same_fs")
+            .join("local.txt")
+            .exists()
+    );
     assert!(!dest_root.join("source").join("mount_point").exists());
-    assert!(!dest_root.join("source").join("mount_point").join("mount_root.txt").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("mount_point")
+            .join("mount_root.txt")
+            .exists()
+    );
 
     // Verify that mount point was recorded as skipped
     let records = report.records();
     let skipped_mount = records.iter().any(|record| {
         record.action() == &LocalCopyAction::SkippedMountPoint
-            && record.relative_path().to_string_lossy().contains("mount_point")
+            && record
+                .relative_path()
+                .to_string_lossy()
+                .contains("mount_point")
     });
     assert!(skipped_mount, "mount point should be recorded as skipped");
 }
@@ -136,10 +174,37 @@ fn one_file_system_transfers_files_on_same_filesystem() {
     .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 4);
-    assert_eq!(fs::read(dest_root.join("source").join("root.txt")).expect("read root"), b"root");
-    assert_eq!(fs::read(dest_root.join("source").join("level1").join("l1.txt")).expect("read l1"), b"level1");
-    assert_eq!(fs::read(dest_root.join("source").join("level1").join("level2").join("l2.txt")).expect("read l2"), b"level2");
-    assert_eq!(fs::read(dest_root.join("source").join("level1").join("level2").join("level3").join("l3.txt")).expect("read l3"), b"level3");
+    assert_eq!(
+        fs::read(dest_root.join("source").join("root.txt")).expect("read root"),
+        b"root"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("source").join("level1").join("l1.txt")).expect("read l1"),
+        b"level1"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("source")
+                .join("level1")
+                .join("level2")
+                .join("l2.txt")
+        )
+        .expect("read l2"),
+        b"level2"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("source")
+                .join("level1")
+                .join("level2")
+                .join("level3")
+                .join("l3.txt")
+        )
+        .expect("read l3"),
+        b"level3"
+    );
 }
 
 #[test]
@@ -177,9 +242,15 @@ fn one_file_system_respects_flag_during_directory_walking() {
     let report = with_device_id_override(
         |path, _metadata| {
             // mount1 is device 2, mount2 is device 3, everything else is device 1
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount1")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount1"))
+            {
                 Some(2)
-            } else if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount2")) {
+            } else if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount2"))
+            {
                 Some(3)
             } else {
                 Some(1)
@@ -197,14 +268,54 @@ fn one_file_system_respects_flag_during_directory_walking() {
     .expect("copy executes");
 
     // Files on device 1 should be copied
-    assert!(dest_root.join("source").join("dir_a").join("file_a.txt").exists());
-    assert!(dest_root.join("source").join("dir_a").join("regular").join("reg_a.txt").exists());
-    assert!(dest_root.join("source").join("dir_b").join("file_b.txt").exists());
-    assert!(dest_root.join("source").join("dir_b").join("regular").join("reg_b.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_a")
+            .join("file_a.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_a")
+            .join("regular")
+            .join("reg_a.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_b")
+            .join("file_b.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_b")
+            .join("regular")
+            .join("reg_b.txt")
+            .exists()
+    );
 
     // Files on other devices should be skipped
-    assert!(!dest_root.join("source").join("dir_a").join("mount1").join("mount1_file.txt").exists());
-    assert!(!dest_root.join("source").join("dir_b").join("mount2").join("mount2_file.txt").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("dir_a")
+            .join("mount1")
+            .join("mount1_file.txt")
+            .exists()
+    );
+    assert!(
+        !dest_root
+            .join("source")
+            .join("dir_b")
+            .join("mount2")
+            .join("mount2_file.txt")
+            .exists()
+    );
 
     // Verify both mount points were skipped
     let records = report.records();
@@ -213,7 +324,11 @@ fn one_file_system_respects_flag_during_directory_walking() {
         .filter(|r| r.action() == &LocalCopyAction::SkippedMountPoint)
         .collect();
 
-    assert_eq!(mount_skips.len(), 2, "should have skipped exactly 2 mount points");
+    assert_eq!(
+        mount_skips.len(),
+        2,
+        "should have skipped exactly 2 mount points"
+    );
 }
 
 #[test]
@@ -240,7 +355,10 @@ fn one_file_system_disabled_crosses_filesystem_boundaries() {
     let summary = with_device_id_override(
         |path, _metadata| {
             // other_fs is on device 2, everything else on device 1
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("other_fs")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("other_fs"))
+            {
                 Some(2)
             } else {
                 Some(1)
@@ -257,8 +375,20 @@ fn one_file_system_disabled_crosses_filesystem_boundaries() {
 
     // Both files should be copied when flag is disabled
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("source").join("same_fs").join("file1.txt").exists());
-    assert!(dest_root.join("source").join("other_fs").join("file2.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("same_fs")
+            .join("file1.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("other_fs")
+            .join("file2.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -315,13 +445,43 @@ fn one_file_system_handles_multiple_mount_points_in_single_directory() {
     .expect("copy executes");
 
     // Local files should be copied
-    assert!(dest_root.join("source").join("local1").join("f1.txt").exists());
-    assert!(dest_root.join("source").join("local2").join("f2.txt").exists());
-    assert!(dest_root.join("source").join("local3").join("f3.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("local1")
+            .join("f1.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("local2")
+            .join("f2.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("local3")
+            .join("f3.txt")
+            .exists()
+    );
 
     // Mount point files should not be copied
-    assert!(!dest_root.join("source").join("mount1").join("m1.txt").exists());
-    assert!(!dest_root.join("source").join("mount2").join("m2.txt").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("mount1")
+            .join("m1.txt")
+            .exists()
+    );
+    assert!(
+        !dest_root
+            .join("source")
+            .join("mount2")
+            .join("m2.txt")
+            .exists()
+    );
 
     // Verify skip events
     let records = report.records();
@@ -366,8 +526,20 @@ fn one_file_system_with_empty_directories_on_same_fs() {
     .expect("copy succeeds");
 
     assert!(dest_root.join("source").join("empty1").is_dir());
-    assert!(dest_root.join("source").join("subdir").join("empty2").is_dir());
-    assert!(dest_root.join("source").join("with_file").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("subdir")
+            .join("empty2")
+            .is_dir()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("with_file")
+            .join("file.txt")
+            .exists()
+    );
     assert!(summary.directories_created() >= 3);
 }
 
@@ -393,7 +565,10 @@ fn one_file_system_dry_run_reports_would_skip_mount() {
 
     let report = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount"))
+            {
                 Some(2)
             } else {
                 Some(1)
@@ -419,7 +594,10 @@ fn one_file_system_dry_run_reports_would_skip_mount() {
         r.action() == &LocalCopyAction::SkippedMountPoint
             && r.relative_path().to_string_lossy().contains("mount")
     });
-    assert!(would_skip, "dry run should report mount point would be skipped");
+    assert!(
+        would_skip,
+        "dry run should report mount point would be skipped"
+    );
 }
 
 #[test]
@@ -441,14 +619,15 @@ fn one_file_system_with_filters_skips_mount_first() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Include filter that would match files in mount
-    let program = FilterProgram::new([
-        FilterProgramEntry::Rule(FilterRule::include("*.txt")),
-    ])
-    .expect("compile program");
+    let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::include("*.txt"))])
+        .expect("compile program");
 
     let report = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount"))
+            {
                 Some(2)
             } else {
                 Some(1)
@@ -517,11 +696,22 @@ fn one_file_system_with_symlinks_follows_on_same_fs() {
     .expect("copy succeeds");
 
     // Both the file and symlink should be copied
-    assert!(dest_root.join("source").join("target").join("file.txt").exists());
-    assert!(dest_root.join("source").join("linkdir").join("link").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("target")
+            .join("file.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("linkdir")
+            .join("link")
+            .exists()
+    );
     assert!(summary.files_copied() >= 1);
 }
-
 
 #[test]
 fn double_one_file_system_skips_root_source_that_is_mount_point() {
@@ -547,8 +737,12 @@ fn double_one_file_system_skips_root_source_that_is_mount_point() {
     // Parent directory is on device 1, source directory is on device 2 (mount point)
     let report = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src"))
-                || path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("sub"))
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src"))
+                || path
+                    .components()
+                    .any(|c| c.as_os_str() == std::ffi::OsStr::new("sub"))
             {
                 Some(2) // mount point
             } else {
@@ -575,7 +769,10 @@ fn double_one_file_system_skips_root_source_that_is_mount_point() {
     let skipped = records
         .iter()
         .any(|r| r.action() == &LocalCopyAction::SkippedMountPoint);
-    assert!(skipped, "root mount point should be recorded as skipped with -xx");
+    assert!(
+        skipped,
+        "root mount point should be recorded as skipped with -xx"
+    );
 }
 
 #[test]
@@ -612,7 +809,13 @@ fn double_one_file_system_allows_source_on_same_device_as_parent() {
     // All files should be copied since source is on same device as parent
     assert_eq!(summary.files_copied(), 2);
     assert!(dest_root.join("source").join("file.txt").exists());
-    assert!(dest_root.join("source").join("sub").join("nested.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("sub")
+            .join("nested.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -637,7 +840,10 @@ fn single_x_does_not_skip_root_mount_point() {
     // but with single -x, root mount points are NOT skipped.
     let summary = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src"))
+            {
                 Some(2) // mount point
             } else {
                 Some(1) // parent
@@ -681,7 +887,10 @@ fn double_one_file_system_still_skips_subdirectory_mount_points() {
 
     let report = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point"))
+            {
                 Some(2) // different device
             } else {
                 Some(1) // same device
@@ -699,16 +908,31 @@ fn double_one_file_system_still_skips_subdirectory_mount_points() {
     .expect("copy executes");
 
     // File on same filesystem should be copied
-    assert!(dest_root.join("source").join("same_fs").join("local.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("same_fs")
+            .join("local.txt")
+            .exists()
+    );
     // Mount point subdirectory should be skipped
-    assert!(!dest_root.join("source").join("mount_point").join("other.txt").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("mount_point")
+            .join("other.txt")
+            .exists()
+    );
 
     // Verify skip was recorded
     let records = report.records();
     let mount_skipped = records
         .iter()
         .any(|r| r.action() == &LocalCopyAction::SkippedMountPoint);
-    assert!(mount_skipped, "subdirectory mount point should still be skipped with -xx");
+    assert!(
+        mount_skipped,
+        "subdirectory mount point should still be skipped with -xx"
+    );
 }
 
 #[test]
@@ -731,7 +955,10 @@ fn level_zero_does_not_skip_any_mount_points() {
 
     let summary = with_device_id_override(
         |path, _metadata| {
-            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount")) {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount"))
+            {
                 Some(2)
             } else {
                 Some(1)
@@ -749,7 +976,13 @@ fn level_zero_does_not_skip_any_mount_points() {
     // Everything should be copied
     assert_eq!(summary.files_copied(), 2);
     assert!(dest_root.join("source").join("local.txt").exists());
-    assert!(dest_root.join("source").join("mount").join("other.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("mount")
+            .join("other.txt")
+            .exists()
+    );
 }
 
 /// Verifies that pruning a cross-device child directory emits the upstream
@@ -854,10 +1087,7 @@ fn one_file_system_default_verbosity_suppresses_info_mount_notice() {
     fs::write(mount_point.join("mount_root.txt"), b"other fs").expect("write mount_root");
 
     let dest_root = temp.path().join("dest");
-    let operands = vec![
-        source_root.into_os_string(),
-        dest_root.into_os_string(),
-    ];
+    let operands = vec![source_root.into_os_string(), dest_root.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     with_device_id_override(
@@ -970,7 +1200,10 @@ fn one_file_system_delete_preserves_mount_nested_in_doomed_dir() {
     .expect("copy succeeds");
 
     // The source file was copied and kept.
-    assert!(dest_tree.join("keep.txt").exists(), "kept source file survives");
+    assert!(
+        dest_tree.join("keep.txt").exists(),
+        "kept source file survives"
+    );
 
     // The nested mount and its contents are preserved: had `remove_dir_all` run
     // across the boundary, `mnt/data.txt` would be gone.
@@ -998,7 +1231,10 @@ fn one_file_system_delete_preserves_mount_nested_in_doomed_dir() {
 
     // Deletions were counted (regular.txt, purge/gone.txt, purge/); the mount
     // and its contents were not.
-    assert!(summary.items_deleted() >= 2, "same-device extras were deleted");
+    assert!(
+        summary.items_deleted() >= 2,
+        "same-device extras were deleted"
+    );
 }
 
 /// On Windows, `--one-file-system` cannot consult a POSIX `st_dev` (Windows has

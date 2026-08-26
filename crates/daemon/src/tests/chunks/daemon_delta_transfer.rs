@@ -67,7 +67,8 @@ fn daemon_delta_transfer_updates_modified_files() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push (whole-file, seeds the destination)
@@ -112,8 +113,7 @@ fn daemon_delta_transfer_updates_modified_files() {
     // Backdate destination files so quick-check detects them as stale after
     // the source is modified (different mtime triggers re-transfer).
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(dest_dir.join("data.txt"), old_time)
-        .expect("backdate dest data.txt");
+    filetime::set_file_mtime(dest_dir.join("data.txt"), old_time).expect("backdate dest data.txt");
     filetime::set_file_mtime(dest_dir.join("other.txt"), old_time)
         .expect("backdate dest other.txt");
 
@@ -159,8 +159,7 @@ fn daemon_delta_transfer_updates_modified_files() {
         "data.txt must match modified source after delta push"
     );
 
-    let dest_other =
-        fs::read(dest_dir.join("other.txt")).expect("read dest other.txt after delta");
+    let dest_other = fs::read(dest_dir.join("other.txt")).expect("read dest other.txt after delta");
     assert_eq!(
         dest_other, modified_content,
         "other.txt must match modified source after delta push"

@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_with_trailing_separator_copies_contents() {
     let temp = create_tempdir();
@@ -768,9 +767,26 @@ fn execute_nested_directory_preserves_permissions() {
     let dest_nested = dest_root.join("source").join("nested");
     let dest_deep = dest_nested.join("deep");
 
-    assert_eq!(fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777, 0o755);
-    assert_eq!(fs::metadata(&dest_nested).expect("nested").permissions().mode() & 0o777, 0o750);
-    assert_eq!(fs::metadata(&dest_deep).expect("deep").permissions().mode() & 0o777, 0o700);
+    assert_eq!(
+        fs::metadata(dest_root.join("source"))
+            .expect("root")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(&dest_nested)
+            .expect("nested")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750
+    );
+    assert_eq!(
+        fs::metadata(&dest_deep).expect("deep").permissions().mode() & 0o777,
+        0o700
+    );
 }
 
 #[cfg(unix)]
@@ -781,7 +797,8 @@ fn execute_directory_without_preserve_permissions_uses_default() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
-    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700)).expect("set restrictive perms");
+    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700))
+        .expect("set restrictive perms");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
 
     let dest_root = temp.path().join("dest");
@@ -813,7 +830,12 @@ fn execute_recursive_copies_deep_hierarchy() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
 
-    let deep_path = source_root.join("a").join("b").join("c").join("d").join("e");
+    let deep_path = source_root
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("d")
+        .join("e");
     fs::create_dir_all(&deep_path).expect("create deep hierarchy");
     fs::write(deep_path.join("deep.txt"), b"deep content").expect("write deep file");
     fs::write(source_root.join("a").join("shallow.txt"), b"shallow").expect("write shallow");
@@ -827,11 +849,36 @@ fn execute_recursive_copies_deep_hierarchy() {
 
     let summary = plan.execute().expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("a").join("b").join("c").join("d").join("e").join("deep.txt").exists());
-    assert!(dest_root.join("source").join("a").join("shallow.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("deep.txt")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("a")
+            .join("shallow.txt")
+            .exists()
+    );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("c").join("d").join("e").join("deep.txt"))
-            .expect("read deep"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("c")
+                .join("d")
+                .join("e")
+                .join("deep.txt")
+        )
+        .expect("read deep"),
         b"deep content"
     );
     assert!(summary.directories_created() >= 5);
@@ -859,7 +906,10 @@ fn execute_recursive_copies_wide_hierarchy() {
     let summary = plan.execute().expect("copy succeeds");
 
     for i in 0..10 {
-        let dest_file = dest_root.join("source").join(format!("dir{i:02}")).join("file.txt");
+        let dest_file = dest_root
+            .join("source")
+            .join(format!("dir{i:02}"))
+            .join("file.txt");
         assert!(dest_file.exists(), "file in dir{i:02} should exist");
         assert_eq!(
             fs::read(&dest_file).expect("read file"),
@@ -891,7 +941,13 @@ fn execute_recursive_handles_empty_directories() {
     let summary = plan.execute().expect("copy succeeds");
 
     assert!(dest_root.join("source").join("empty").is_dir());
-    assert!(dest_root.join("source").join("nonempty").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("nonempty")
+            .join("file.txt")
+            .exists()
+    );
     assert!(summary.directories_created() >= 2);
 }
 
@@ -916,8 +972,17 @@ fn execute_recursive_with_prune_empty_dirs_removes_empty_directories() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!dest_root.join("source").join("empty").exists(), "empty dir should be pruned");
-    assert!(dest_root.join("source").join("nonempty").join("file.txt").exists());
+    assert!(
+        !dest_root.join("source").join("empty").exists(),
+        "empty dir should be pruned"
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("nonempty")
+            .join("file.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -943,8 +1008,14 @@ fn execute_recursive_disabled_only_copies_single_level() {
         .expect("copy succeeds");
 
     assert!(dest_root.join("source").is_dir());
-    assert!(!dest_root.join("source").join("nested").exists(), "nested dir should not be copied");
-    assert!(!dest_root.join("source").join("root.txt").exists(), "files should not be copied without recursion");
+    assert!(
+        !dest_root.join("source").join("nested").exists(),
+        "nested dir should not be copied"
+    );
+    assert!(
+        !dest_root.join("source").join("root.txt").exists(),
+        "files should not be copied without recursion"
+    );
 }
 
 #[cfg(unix)]
@@ -1030,8 +1101,14 @@ fn execute_directory_nested_already_exists_merges_content() {
 
     assert!(dest_nested.join("new.txt").exists());
     assert!(dest_nested.join("existing.txt").exists());
-    assert_eq!(fs::read(dest_nested.join("new.txt")).expect("read new"), b"new content");
-    assert_eq!(fs::read(dest_nested.join("existing.txt")).expect("read existing"), b"existing content");
+    assert_eq!(
+        fs::read(dest_nested.join("new.txt")).expect("read new"),
+        b"new content"
+    );
+    assert_eq!(
+        fs::read(dest_nested.join("existing.txt")).expect("read existing"),
+        b"existing content"
+    );
 }
 
 /// upstream: `generator.c:1839-1842` `recv_generator()` clears a non-directory
@@ -1054,9 +1131,13 @@ fn execute_directory_replaces_destination_file_without_force() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    plan.execute().expect("obstructing file is cleared, not refused");
+    plan.execute()
+        .expect("obstructing file is cleared, not refused");
 
-    assert!(destination.is_dir(), "destination file replaced by a directory");
+    assert!(
+        destination.is_dir(),
+        "destination file replaced by a directory"
+    );
     assert_eq!(
         fs::read(destination.join("source").join("child.txt")).expect("read copied child"),
         b"content"
@@ -1082,8 +1163,14 @@ fn execute_dry_run_does_not_create_directory() {
         .execute_with(LocalCopyExecution::DryRun)
         .expect("dry-run succeeds");
 
-    assert!(!dest_root.exists(), "destination should not be created in dry-run");
-    assert!(summary.directories_created() >= 1, "should report would-be created directories");
+    assert!(
+        !dest_root.exists(),
+        "destination should not be created in dry-run"
+    );
+    assert!(
+        summary.directories_created() >= 1,
+        "should report would-be created directories"
+    );
 }
 
 #[test]
@@ -1138,7 +1225,10 @@ fn execute_dry_run_with_existing_destination_reports_no_creation() {
         .execute_with(LocalCopyExecution::DryRun)
         .expect("dry-run succeeds");
 
-    assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"old content");
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"old content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -1169,7 +1259,10 @@ fn execute_dry_run_with_collect_events_records_directory_creation() {
         .filter(|r| r.action() == &LocalCopyAction::DirectoryCreated)
         .count();
 
-    assert!(dir_created_count >= 2, "should record directory creations, got {dir_created_count}");
+    assert!(
+        dir_created_count >= 2,
+        "should record directory creations, got {dir_created_count}"
+    );
     assert!(!dest_root.exists());
 }
 
@@ -1286,7 +1379,13 @@ fn execute_directory_with_special_characters_in_name() {
 
     plan.execute().expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("dir with spaces & special-chars_123").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir with spaces & special-chars_123")
+            .join("file.txt")
+            .exists()
+    );
 }
 
 #[cfg(unix)]
@@ -1307,7 +1406,13 @@ fn execute_directory_with_unicode_name() {
 
     plan.execute().expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("dir_with_unicode_\u{1F600}_\u{4E2D}\u{6587}").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_with_unicode_\u{1F600}_\u{4E2D}\u{6587}")
+            .join("file.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -1331,7 +1436,13 @@ fn execute_directory_one_file_system_stays_on_same_device() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("nested").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("nested")
+            .join("file.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -1456,7 +1567,12 @@ fn execute_multi_source_merge_dir_wins_over_colliding_file() {
     let mut from3_op = from3.into_os_string();
     from3_op.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let operands = vec![from1_op, from2_op, from3_op, dest_root.clone().into_os_string()];
+    let operands = vec![
+        from1_op,
+        from2_op,
+        from3_op,
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with(LocalCopyExecution::Apply)
@@ -1508,7 +1624,10 @@ fn execute_directory_update_only_copies_newer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"new content");
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"new content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -1542,15 +1661,18 @@ fn execute_directory_update_skips_older_files() {
         .expect("copy succeeds");
 
     // Dest should keep its newer content
-    assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"new content");
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"new content"
+    );
     assert_eq!(summary.files_copied(), 0);
 }
 
 #[cfg(unix)]
 #[test]
 fn execute_directory_archive_mode_preserves_all() {
-    use std::os::unix::fs::PermissionsExt;
     use filetime::{FileTime, set_file_mtime};
+    use std::os::unix::fs::PermissionsExt;
 
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
@@ -1588,11 +1710,28 @@ fn execute_directory_archive_mode_preserves_all() {
 
     let dest_nested = dest_root.join("source").join("nested");
 
-    assert_eq!(fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777, 0o755);
-    assert_eq!(fs::metadata(&dest_nested).expect("nested").permissions().mode() & 0o777, 0o750);
+    assert_eq!(
+        fs::metadata(dest_root.join("source"))
+            .expect("root")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(&dest_nested)
+            .expect("nested")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750
+    );
 
-    let root_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root"));
-    let nested_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_nested).expect("nested"));
+    let root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source")).expect("root"),
+    );
+    let nested_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_nested).expect("nested"));
     assert_eq!(root_mtime, fixed_mtime);
     assert_eq!(nested_mtime, fixed_mtime);
 }
@@ -1626,7 +1765,10 @@ fn execute_dry_run_with_delete_and_force_reports_all_actions() {
 
     let summary = report.summary();
 
-    assert_eq!(fs::read(dest_nested.join("keep.txt")).expect("read keep"), b"old");
+    assert_eq!(
+        fs::read(dest_nested.join("keep.txt")).expect("read keep"),
+        b"old"
+    );
     assert!(dest_nested.join("extra.txt").exists());
 
     assert_eq!(summary.files_copied(), 1);
@@ -1668,7 +1810,8 @@ fn execute_recursive_creates_mixed_content_hierarchy() {
     );
     assert_eq!(
         fs::read(
-            dest_root.join("source")
+            dest_root
+                .join("source")
                 .join("a")
                 .join("b")
                 .join("c")
@@ -1678,10 +1821,23 @@ fn execute_recursive_creates_mixed_content_hierarchy() {
         b"deep"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("x").join("y").join("leaf.txt")).expect("read leaf"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("x")
+                .join("y")
+                .join("leaf.txt")
+        )
+        .expect("read leaf"),
         b"leaf"
     );
-    assert!(dest_root.join("source").join("a").join("empty_sibling").is_dir());
+    assert!(
+        dest_root
+            .join("source")
+            .join("a")
+            .join("empty_sibling")
+            .is_dir()
+    );
     assert_eq!(summary.files_copied(), 4);
     // source + a + b + c + empty_sibling + x + y = 7
     assert!(summary.directories_created() >= 7);
@@ -1707,7 +1863,14 @@ fn execute_recursive_creates_only_subdirs_no_files() {
 
     assert!(dest_root.join("source").join("a").join("b").is_dir());
     assert!(dest_root.join("source").join("c").is_dir());
-    assert!(dest_root.join("source").join("d").join("e").join("f").is_dir());
+    assert!(
+        dest_root
+            .join("source")
+            .join("d")
+            .join("e")
+            .join("f")
+            .is_dir()
+    );
     assert_eq!(summary.files_copied(), 0);
     // source + a + b + c + d + e + f = 7
     assert!(summary.directories_created() >= 7);
@@ -1721,11 +1884,7 @@ fn execute_recursive_files_at_every_level() {
     fs::create_dir_all(source_root.join("l1").join("l2").join("l3")).expect("create dirs");
     fs::write(source_root.join("f0.txt"), b"level0").expect("write f0");
     fs::write(source_root.join("l1").join("f1.txt"), b"level1").expect("write f1");
-    fs::write(
-        source_root.join("l1").join("l2").join("f2.txt"),
-        b"level2",
-    )
-    .expect("write f2");
+    fs::write(source_root.join("l1").join("l2").join("f2.txt"), b"level2").expect("write f2");
     fs::write(
         source_root.join("l1").join("l2").join("l3").join("f3.txt"),
         b"level3",
@@ -1750,12 +1909,20 @@ fn execute_recursive_files_at_every_level() {
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("l1").join("l2").join("f2.txt")).expect("read f2"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("l1")
+                .join("l2")
+                .join("f2.txt")
+        )
+        .expect("read f2"),
         b"level2"
     );
     assert_eq!(
         fs::read(
-            dest_root.join("source")
+            dest_root
+                .join("source")
                 .join("l1")
                 .join("l2")
                 .join("l3")
@@ -1804,7 +1971,8 @@ fn execute_trailing_separator_with_nested_empty_dirs() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("empty1")).expect("create empty1");
-    fs::create_dir_all(source_root.join("empty2").join("nested_empty")).expect("create nested empty");
+    fs::create_dir_all(source_root.join("empty2").join("nested_empty"))
+        .expect("create nested empty");
     fs::write(source_root.join("file.txt"), b"root file").expect("write root file");
 
     let dest_root = temp.path().join("dest");
@@ -1822,7 +1990,10 @@ fn execute_trailing_separator_with_nested_empty_dirs() {
         fs::read(dest_root.join("file.txt")).expect("read"),
         b"root file"
     );
-    assert!(!dest_root.join("source").exists(), "should not contain source dir itself");
+    assert!(
+        !dest_root.join("source").exists(),
+        "should not contain source dir itself"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -1915,7 +2086,10 @@ fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
-    assert!(!missing_prefix.exists(), "no ancestor chain must be created");
+    assert!(
+        !missing_prefix.exists(),
+        "no ancestor chain must be created"
+    );
     assert!(!dest_root.exists());
 }
 
@@ -2013,9 +2187,22 @@ fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("a").join("b").join("c").join("d").join("bottom.txt").exists());
     assert!(
-        !dest_root.join("source").join("a").join("empty_branch").exists(),
+        dest_root
+            .join("source")
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("bottom.txt")
+            .exists()
+    );
+    assert!(
+        !dest_root
+            .join("source")
+            .join("a")
+            .join("empty_branch")
+            .exists(),
         "empty branch should be pruned"
     );
 }
@@ -2043,7 +2230,13 @@ fn execute_prune_empty_dirs_with_trailing_separator_and_nested() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(dest_root.join("populated").join("sub").join("data.txt").exists());
+    assert!(
+        dest_root
+            .join("populated")
+            .join("sub")
+            .join("data.txt")
+            .exists()
+    );
     assert!(
         !dest_root.join("barren").exists(),
         "barren directory tree should be pruned"
@@ -2077,7 +2270,14 @@ fn execute_prune_empty_dirs_preserves_dir_with_only_subdirs_containing_files() {
         dest_root.join("source").join("parent").is_dir(),
         "parent should be kept because grandchild has files"
     );
-    assert!(dest_root.join("source").join("parent").join("child").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("parent")
+            .join("child")
+            .join("file.txt")
+            .exists()
+    );
 }
 
 #[cfg(unix)]
@@ -2125,11 +2325,18 @@ fn execute_omit_dir_times_nested_dirs_preserves_file_times_at_all_levels() {
         &fs::metadata(dest_root.join("source").join("f_root.txt")).expect("root file metadata"),
     );
     let dest_sub1_file_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(dest_root.join("source").join("sub1").join("f_sub1.txt")).expect("sub1 file metadata"),
+        &fs::metadata(dest_root.join("source").join("sub1").join("f_sub1.txt"))
+            .expect("sub1 file metadata"),
     );
     let dest_sub2_file_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(dest_root.join("source").join("sub1").join("sub2").join("f_sub2.txt"))
-            .expect("sub2 file metadata"),
+        &fs::metadata(
+            dest_root
+                .join("source")
+                .join("sub1")
+                .join("sub2")
+                .join("f_sub2.txt"),
+        )
+        .expect("sub2 file metadata"),
     );
     assert_eq!(dest_root_file_mtime, root_file_mtime);
     assert_eq!(dest_sub1_file_mtime, sub1_file_mtime);
@@ -2143,7 +2350,8 @@ fn execute_omit_dir_times_nested_dirs_preserves_file_times_at_all_levels() {
         &fs::metadata(dest_root.join("source").join("sub1")).expect("sub1 dir metadata"),
     );
     let dest_sub2_dir_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(dest_root.join("source").join("sub1").join("sub2")).expect("sub2 dir metadata"),
+        &fs::metadata(dest_root.join("source").join("sub1").join("sub2"))
+            .expect("sub2 dir metadata"),
     );
     assert_ne!(dest_root_dir_mtime, dir_mtime);
     assert_ne!(dest_sub1_dir_mtime, dir_mtime);
@@ -2201,8 +2409,11 @@ fn execute_directory_permissions_with_chmod_nested_applies_to_all_dirs() {
     let nested = source_root.join("a").join("b");
     fs::create_dir_all(&nested).expect("create nested");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o777)).expect("set root perms");
-    fs::set_permissions(source_root.join("a").as_path(), PermissionsExt::from_mode(0o777))
-        .expect("set a perms");
+    fs::set_permissions(
+        source_root.join("a").as_path(),
+        PermissionsExt::from_mode(0o777),
+    )
+    .expect("set a perms");
     fs::set_permissions(&nested, PermissionsExt::from_mode(0o777)).expect("set b perms");
     fs::write(nested.join("file.txt"), b"content").expect("write file");
 
@@ -2223,11 +2434,19 @@ fn execute_directory_permissions_with_chmod_nested_applies_to_all_dirs() {
         .expect("copy succeeds");
 
     assert_eq!(
-        fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777,
+        fs::metadata(dest_root.join("source"))
+            .expect("root")
+            .permissions()
+            .mode()
+            & 0o777,
         0o755
     );
     assert_eq!(
-        fs::metadata(dest_root.join("source").join("a")).expect("a").permissions().mode() & 0o777,
+        fs::metadata(dest_root.join("source").join("a"))
+            .expect("a")
+            .permissions()
+            .mode()
+            & 0o777,
         0o755
     );
     assert_eq!(
@@ -2275,7 +2494,11 @@ fn execute_directory_preserves_mixed_permissions_in_hierarchy() {
         .expect("copy succeeds");
 
     assert_eq!(
-        fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777,
+        fs::metadata(dest_root.join("source"))
+            .expect("root")
+            .permissions()
+            .mode()
+            & 0o777,
         0o755
     );
     assert_eq!(
@@ -2327,7 +2550,10 @@ fn execute_directory_permissions_with_dry_run_does_not_set() {
         .execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("dry-run succeeds");
 
-    assert!(!dest_root.exists(), "destination should not be created in dry-run");
+    assert!(
+        !dest_root.exists(),
+        "destination should not be created in dry-run"
+    );
     assert!(summary.directories_created() >= 1);
 }
 
@@ -2336,7 +2562,8 @@ fn execute_nested_hierarchy_with_overlapping_names() {
     // Test directories with similar names at different levels
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
-    fs::create_dir_all(source_root.join("dir").join("dir").join("dir")).expect("create same-name dirs");
+    fs::create_dir_all(source_root.join("dir").join("dir").join("dir"))
+        .expect("create same-name dirs");
     fs::write(source_root.join("dir").join("file.txt"), b"level1").expect("write level1");
     fs::write(
         source_root.join("dir").join("dir").join("file.txt"),
@@ -2367,12 +2594,20 @@ fn execute_nested_hierarchy_with_overlapping_names() {
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("dir").join("dir").join("file.txt")).expect("l2"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("dir")
+                .join("dir")
+                .join("file.txt")
+        )
+        .expect("l2"),
         b"level2"
     );
     assert_eq!(
         fs::read(
-            dest_root.join("source")
+            dest_root
+                .join("source")
                 .join("dir")
                 .join("dir")
                 .join("dir")
@@ -2393,7 +2628,11 @@ fn execute_nested_hierarchy_mixed_empty_and_populated() {
     fs::create_dir_all(source_root.join("top").join("empty").join("bottom")).expect("create dirs");
     fs::write(source_root.join("top").join("top.txt"), b"top").expect("write top");
     fs::write(
-        source_root.join("top").join("empty").join("bottom").join("bottom.txt"),
+        source_root
+            .join("top")
+            .join("empty")
+            .join("bottom")
+            .join("bottom.txt"),
         b"bottom",
     )
     .expect("write bottom");
@@ -2417,7 +2656,8 @@ fn execute_nested_hierarchy_mixed_empty_and_populated() {
     );
     assert_eq!(
         fs::read(
-            dest_root.join("source")
+            dest_root
+                .join("source")
                 .join("top")
                 .join("empty")
                 .join("bottom")
@@ -2453,7 +2693,10 @@ fn execute_directory_with_many_siblings() {
     let summary = plan.execute().expect("copy succeeds");
 
     for i in 0..count {
-        let dest_file = dest_root.join("source").join(format!("dir_{i:04}")).join("f.txt");
+        let dest_file = dest_root
+            .join("source")
+            .join(format!("dir_{i:04}"))
+            .join("f.txt");
         assert!(dest_file.exists(), "dir_{i:04}/f.txt should exist");
         assert_eq!(
             fs::read(&dest_file).expect("read"),
@@ -2571,7 +2814,13 @@ fn execute_directory_mkpath_with_prune_empty_dirs() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(dest_root.join("source").join("kept").join("file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("kept")
+            .join("file.txt")
+            .exists()
+    );
     assert!(
         !dest_root.join("source").join("empty").exists(),
         "empty dir should be pruned even with mkpath"
@@ -2688,7 +2937,11 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
         .expect("copy succeeds");
 
     assert_eq!(
-        fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777,
+        fs::metadata(dest_root.join("source"))
+            .expect("root")
+            .permissions()
+            .mode()
+            & 0o777,
         0o755
     );
     assert_eq!(
@@ -2708,10 +2961,12 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
         0o700
     );
 
-    let dest_root_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root"));
-    let dest_a_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("a")).expect("a"));
+    let dest_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source")).expect("root"),
+    );
+    let dest_a_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source").join("a")).expect("a"),
+    );
     let dest_b_mtime = FileTime::from_last_modification_time(
         &fs::metadata(dest_root.join("source").join("a").join("b")).expect("b"),
     );
@@ -2739,8 +2994,14 @@ fn execute_single_nonempty_dir_without_trailing_slash_keeps_source_name() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     plan.execute().expect("copy single dir succeeds");
 
-    assert_eq!(fs::read(dest.join("a").join("b")).expect("read n/a/b"), b"b");
-    assert_eq!(fs::read(dest.join("a").join("c")).expect("read n/a/c"), b"c");
+    assert_eq!(
+        fs::read(dest.join("a").join("b")).expect("read n/a/b"),
+        b"b"
+    );
+    assert_eq!(
+        fs::read(dest.join("a").join("c")).expect("read n/a/c"),
+        b"c"
+    );
     assert!(
         !dest.join("b").exists(),
         "source directory name was dropped: found n/b instead of n/a/b"

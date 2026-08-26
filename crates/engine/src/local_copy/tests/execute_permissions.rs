@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
@@ -191,7 +190,10 @@ fn mode_0000_dry_run() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(!destination.exists(), "destination should not be created in dry run");
+    assert!(
+        !destination.exists(),
+        "destination should not be created in dry run"
+    );
 }
 
 #[cfg(unix)]
@@ -219,9 +221,7 @@ fn mode_0000_with_sparse_file() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .permissions(true)
-        .sparse(true);
+    let options = LocalCopyOptions::default().permissions(true).sparse(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -277,10 +277,26 @@ fn mode_0000_nested_directory_structure() {
     assert_eq!(summary.files_copied(), 4);
 
     let dest_files = [
-        (dest_root.join("source").join("source/root.txt"), b"root" as &[u8]),
-        (dest_root.join("source").join("source/level1/one.txt"), b"level1"),
-        (dest_root.join("source").join("source/level1/level2/two.txt"), b"level2"),
-        (dest_root.join("source").join("source/level1/level2/level3/three.txt"), b"level3"),
+        (
+            dest_root.join("source").join("source/root.txt"),
+            b"root" as &[u8],
+        ),
+        (
+            dest_root.join("source").join("source/level1/one.txt"),
+            b"level1",
+        ),
+        (
+            dest_root
+                .join("source")
+                .join("source/level1/level2/two.txt"),
+            b"level2",
+        ),
+        (
+            dest_root
+                .join("source")
+                .join("source/level1/level2/level3/three.txt"),
+            b"level3",
+        ),
     ];
 
     for (path, expected_content) in &dest_files {
@@ -548,7 +564,10 @@ fn dir_setgid_inheritance_preserved_without_perms() {
     // Probe whether the filesystem supports directory setgid inheritance.
     let probe = parent.join("probe");
     fs::create_dir(&probe).expect("create probe");
-    let probe_mode = fs::metadata(&probe).expect("probe meta").permissions().mode();
+    let probe_mode = fs::metadata(&probe)
+        .expect("probe meta")
+        .permissions()
+        .mode();
     if probe_mode & 0o2000 == 0 {
         // Filesystem does not propagate setgid - skip gracefully.
         return;

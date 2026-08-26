@@ -8,7 +8,10 @@
 fn start_auth_digest_floor_daemon(
     dir: &Path,
     floor: &str,
-) -> (TcpStream, thread::JoinHandle<Result<(), crate::DaemonError>>) {
+) -> (
+    TcpStream,
+    thread::JoinHandle<Result<(), crate::DaemonError>>,
+) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
     let secrets_path = dir.join("secrets.txt");
@@ -17,7 +20,8 @@ fn start_auth_digest_floor_daemon(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600)).expect("chmod secrets");
+        fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+            .expect("chmod secrets");
     }
 
     let config_path = dir.join("rsyncd.conf");

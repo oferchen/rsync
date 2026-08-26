@@ -15,4 +15,3 @@ fn runtime_options_rejects_ipv4_ipv6_combo() {
         "dual_stack must be set when both family flags are given"
     );
 }
-

@@ -6,7 +6,10 @@ fn run_daemon_lists_modules_on_request() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -50,4 +53,3 @@ fn run_daemon_lists_modules_on_request() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

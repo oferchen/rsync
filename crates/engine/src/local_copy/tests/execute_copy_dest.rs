@@ -1,5 +1,3 @@
-
-
 #[test]
 fn copy_dest_identical_file_is_copied_not_linked() {
     let temp = tempdir().expect("tempdir");
@@ -37,8 +35,14 @@ fn copy_dest_identical_file_is_copied_not_linked() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(destination_file.exists(), "destination file should be created");
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"identical content");
+    assert!(
+        destination_file.exists(),
+        "destination file should be created"
+    );
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"identical content"
+    );
     assert_eq!(summary.files_copied(), 1);
 
     #[cfg(unix)]
@@ -46,7 +50,11 @@ fn copy_dest_identical_file_is_copied_not_linked() {
         use std::os::unix::fs::MetadataExt;
         let dest_meta = fs::metadata(&destination_file).expect("dest metadata");
         let copy_dest_meta = fs::metadata(&copy_dest_file).expect("copy_dest metadata");
-        assert_ne!(dest_meta.ino(), copy_dest_meta.ino(), "should be different files, not hard linked");
+        assert_ne!(
+            dest_meta.ino(),
+            copy_dest_meta.ino(),
+            "should be different files, not hard linked"
+        );
     }
 }
 
@@ -91,8 +99,14 @@ fn copy_dest_different_file_uses_delta_transfer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(destination_file.exists(), "destination file should be created");
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"updated content here");
+    assert!(
+        destination_file.exists(),
+        "destination file should be created"
+    );
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"updated content here"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -118,8 +132,8 @@ fn copy_dest_missing_file_transfers_normally() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .extend_reference_directories([ReferenceDirectory::new(
+    let options =
+        LocalCopyOptions::default().extend_reference_directories([ReferenceDirectory::new(
             ReferenceDirectoryKind::Copy,
             &copy_dest_dir,
         )]);
@@ -128,11 +142,16 @@ fn copy_dest_missing_file_transfers_normally() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(destination_file.exists(), "destination file should be created");
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"new file content");
+    assert!(
+        destination_file.exists(),
+        "destination file should be created"
+    );
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"new file content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn copy_dest_multiple_directories_checks_in_order() {
@@ -176,8 +195,14 @@ fn copy_dest_multiple_directories_checks_in_order() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(destination_file.exists(), "destination file should be created");
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"source content");
+    assert!(
+        destination_file.exists(),
+        "destination file should be created"
+    );
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"source content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -223,8 +248,14 @@ fn copy_dest_multiple_directories_uses_first_match() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(destination_file.exists(), "destination file should be created");
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"matching content");
+    assert!(
+        destination_file.exists(),
+        "destination file should be created"
+    );
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"matching content"
+    );
     assert_eq!(summary.files_copied(), 1);
 
     // Both directories had matching files, but first one should be used
@@ -239,7 +270,6 @@ fn copy_dest_multiple_directories_uses_first_match() {
         assert_ne!(dest_meta.ino(), copy_dest2_meta.ino());
     }
 }
-
 
 #[test]
 fn copy_dest_creates_file_while_compare_dest_skips() {
@@ -280,7 +310,10 @@ fn copy_dest_creates_file_while_compare_dest_skips() {
         .execute_with_options(LocalCopyExecution::Apply, options_compare)
         .expect("compare succeeds");
 
-    assert!(!dest_compare_file.exists(), "compare-dest should skip file creation");
+    assert!(
+        !dest_compare_file.exists(),
+        "compare-dest should skip file creation"
+    );
     assert_eq!(summary_compare.files_copied(), 0);
     assert_eq!(summary_compare.regular_files_matched(), 1);
 
@@ -307,7 +340,6 @@ fn copy_dest_creates_file_while_compare_dest_skips() {
     assert_eq!(summary_copy.files_copied(), 1);
 }
 
-
 #[test]
 fn copy_dest_works_with_directory_trees() {
     let temp = tempdir().expect("tempdir");
@@ -321,13 +353,17 @@ fn copy_dest_works_with_directory_trees() {
 
     fs::create_dir_all(copy_dest_root.join("dir1/subdir")).expect("create copy_dest tree");
     fs::write(copy_dest_root.join("dir1/file1.txt"), b"file1").expect("write copy_dest file1");
-    fs::write(copy_dest_root.join("dir1/subdir/file2.txt"), b"file2").expect("write copy_dest file2");
+    fs::write(copy_dest_root.join("dir1/subdir/file2.txt"), b"file2")
+        .expect("write copy_dest file2");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(source_root.join("dir1/file1.txt"), timestamp).expect("source file1 mtime");
-    set_file_mtime(source_root.join("dir1/subdir/file2.txt"), timestamp).expect("source file2 mtime");
-    set_file_mtime(copy_dest_root.join("dir1/file1.txt"), timestamp).expect("copy_dest file1 mtime");
-    set_file_mtime(copy_dest_root.join("dir1/subdir/file2.txt"), timestamp).expect("copy_dest file2 mtime");
+    set_file_mtime(source_root.join("dir1/subdir/file2.txt"), timestamp)
+        .expect("source file2 mtime");
+    set_file_mtime(copy_dest_root.join("dir1/file1.txt"), timestamp)
+        .expect("copy_dest file1 mtime");
+    set_file_mtime(copy_dest_root.join("dir1/subdir/file2.txt"), timestamp)
+        .expect("copy_dest file2 mtime");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -348,8 +384,14 @@ fn copy_dest_works_with_directory_trees() {
 
     assert!(destination_root.join("dir1/file1.txt").exists());
     assert!(destination_root.join("dir1/subdir/file2.txt").exists());
-    assert_eq!(fs::read(destination_root.join("dir1/file1.txt")).expect("read"), b"file1");
-    assert_eq!(fs::read(destination_root.join("dir1/subdir/file2.txt")).expect("read"), b"file2");
+    assert_eq!(
+        fs::read(destination_root.join("dir1/file1.txt")).expect("read"),
+        b"file1"
+    );
+    assert_eq!(
+        fs::read(destination_root.join("dir1/subdir/file2.txt")).expect("read"),
+        b"file2"
+    );
     assert_eq!(summary.files_copied(), 2);
 }
 
@@ -399,12 +441,20 @@ fn copy_dest_mixed_existing_and_new_files() {
     assert!(destination_root.join("file1.txt").exists());
     assert!(destination_root.join("file2.txt").exists());
     assert!(destination_root.join("file3.txt").exists());
-    assert_eq!(fs::read(destination_root.join("file1.txt")).expect("read"), b"content1");
-    assert_eq!(fs::read(destination_root.join("file2.txt")).expect("read"), b"content2");
-    assert_eq!(fs::read(destination_root.join("file3.txt")).expect("read"), b"content3");
+    assert_eq!(
+        fs::read(destination_root.join("file1.txt")).expect("read"),
+        b"content1"
+    );
+    assert_eq!(
+        fs::read(destination_root.join("file2.txt")).expect("read"),
+        b"content2"
+    );
+    assert_eq!(
+        fs::read(destination_root.join("file3.txt")).expect("read"),
+        b"content3"
+    );
     assert_eq!(summary.files_copied(), 3);
 }
-
 
 #[test]
 fn copy_dest_with_checksum_validates_content() {
@@ -456,7 +506,6 @@ fn copy_dest_with_checksum_validates_content() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-
 #[test]
 fn copy_dest_ignores_non_regular_files() {
     let temp = tempdir().expect("tempdir");
@@ -481,8 +530,8 @@ fn copy_dest_ignores_non_regular_files() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .extend_reference_directories([ReferenceDirectory::new(
+    let options =
+        LocalCopyOptions::default().extend_reference_directories([ReferenceDirectory::new(
             ReferenceDirectoryKind::Copy,
             &copy_dest_dir,
         )]);
@@ -494,7 +543,10 @@ fn copy_dest_ignores_non_regular_files() {
     // Should transfer normally since copy_dest has a directory, not a file
     assert!(destination_file.exists());
     assert!(destination_file.is_file());
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"regular file");
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"regular file"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -516,7 +568,8 @@ fn copy_dest_with_size_only_mode() {
     fs::write(&copy_dest_file, b"abcde").expect("write copy_dest");
 
     set_file_mtime(&source_file, FileTime::from_unix_time(1_700_000_000, 0)).expect("source mtime");
-    set_file_mtime(&copy_dest_file, FileTime::from_unix_time(1_600_000_000, 0)).expect("copy_dest mtime");
+    set_file_mtime(&copy_dest_file, FileTime::from_unix_time(1_600_000_000, 0))
+        .expect("copy_dest mtime");
 
     let destination_file = destination_dir.join("file.txt");
     let operands = vec![
@@ -561,8 +614,8 @@ fn copy_dest_empty_reference_directory() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .extend_reference_directories([ReferenceDirectory::new(
+    let options =
+        LocalCopyOptions::default().extend_reference_directories([ReferenceDirectory::new(
             ReferenceDirectoryKind::Copy,
             &copy_dest_dir,
         )]);
@@ -575,7 +628,6 @@ fn copy_dest_empty_reference_directory() {
     assert_eq!(fs::read(&destination_file).expect("read dest"), b"content");
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn copy_dest_with_inplace_mode_still_copies() {
@@ -618,10 +670,12 @@ fn copy_dest_with_inplace_mode_still_copies() {
 
     // With --inplace, copy-dest should still create the file
     assert!(destination_file.exists());
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"inplace content");
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"inplace content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn copy_dest_nonexistent_directory_transfers_normally() {
@@ -643,8 +697,8 @@ fn copy_dest_nonexistent_directory_transfers_normally() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .extend_reference_directories([ReferenceDirectory::new(
+    let options =
+        LocalCopyOptions::default().extend_reference_directories([ReferenceDirectory::new(
             ReferenceDirectoryKind::Copy,
             &copy_dest_dir,
         )]);
@@ -654,10 +708,12 @@ fn copy_dest_nonexistent_directory_transfers_normally() {
         .expect("copy succeeds");
 
     assert!(destination_file.exists());
-    assert_eq!(fs::read(&destination_file).expect("read dest"), b"orphan content");
+    assert_eq!(
+        fs::read(&destination_file).expect("read dest"),
+        b"orphan content"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn copy_dest_copies_zero_length_file() {

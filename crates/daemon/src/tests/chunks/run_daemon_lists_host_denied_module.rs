@@ -8,7 +8,10 @@ fn run_daemon_lists_host_denied_module() {
 
     // env::temp_dir() so the path exists on Windows; forward-slash normalised
     // so the daemon module-arg parser doesn't swallow escapes (see PR #4560).
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     // `private` restricts access to 10.0.0.0/8, so the loopback client is
     // denied on connect. It is still `list = yes` (the default), so it MUST
@@ -51,7 +54,9 @@ fn run_daemon_lists_host_denied_module() {
     assert_eq!(line, "public         \t\n");
 
     line.clear();
-    reader.read_line(&mut line).expect("host-denied private module");
+    reader
+        .read_line(&mut line)
+        .expect("host-denied private module");
     assert_eq!(line, "private        \t\n");
 
     line.clear();

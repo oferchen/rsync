@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_with_remove_source_files_deletes_source() {
     let temp = create_tempdir();
@@ -82,8 +81,14 @@ fn execute_file_replaces_directory_when_force_enabled() {
         )
         .expect("forced replacement succeeds");
 
-    assert!(destination.is_file(), "directory should be replaced by file");
-    assert_eq!(fs::read(&destination).expect("read destination"), b"replacement");
+    assert!(
+        destination.is_file(),
+        "directory should be replaced by file"
+    );
+    assert_eq!(
+        fs::read(&destination).expect("read destination"),
+        b"replacement"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -249,8 +254,7 @@ fn execute_copies_file_with_acls() {
     assert_eq!(summary.files_copied(), 1);
 
     // On Linux and other non-Apple Unix, ACLs are actually copied and visible.
-    let copied =
-        acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS).expect("dest acl");
+    let copied = acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS).expect("dest acl");
     assert!(copied.contains("user::rw-"));
 }
 
@@ -316,7 +320,6 @@ fn execute_copies_directory_tree() {
     assert!(summary.directories_created() >= 1);
 }
 
-
 #[test]
 fn execute_copies_empty_file() {
     let temp = create_tempdir();
@@ -363,7 +366,6 @@ fn execute_copies_empty_file_over_existing() {
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
-
 #[test]
 fn execute_copies_large_file() {
     let temp = create_tempdir();
@@ -389,7 +391,6 @@ fn execute_copies_large_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-
 #[test]
 fn execute_copies_multiple_files_to_directory() {
     let temp = create_tempdir();
@@ -411,11 +412,19 @@ fn execute_copies_multiple_files_to_directory() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 3);
-    assert_eq!(fs::read(dest_root.join("file1.txt")).expect("read"), b"content1");
-    assert_eq!(fs::read(dest_root.join("file2.txt")).expect("read"), b"content2");
-    assert_eq!(fs::read(dest_root.join("file3.txt")).expect("read"), b"content3");
+    assert_eq!(
+        fs::read(dest_root.join("file1.txt")).expect("read"),
+        b"content1"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("file2.txt")).expect("read"),
+        b"content2"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("file3.txt")).expect("read"),
+        b"content3"
+    );
 }
-
 
 #[test]
 fn execute_dry_run_does_not_create_destination() {
@@ -435,7 +444,10 @@ fn execute_dry_run_does_not_create_destination() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(!destination.exists(), "dry run should not create destination");
+    assert!(
+        !destination.exists(),
+        "dry run should not create destination"
+    );
 }
 
 #[test]
@@ -460,7 +472,6 @@ fn execute_dry_run_does_not_modify_existing_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
 
-
 #[test]
 fn execute_with_inplace_updates_existing_file() {
     let temp = create_tempdir();
@@ -483,9 +494,11 @@ fn execute_with_inplace_updates_existing_file() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"updated content");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"updated content"
+    );
 }
-
 
 #[test]
 fn execute_with_partial_enabled_creates_partial_file_on_success() {
@@ -511,7 +524,6 @@ fn execute_with_partial_enabled_creates_partial_file_on_success() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"partial test");
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_preserves_permissions_when_enabled() {
@@ -522,7 +534,9 @@ fn execute_preserves_permissions_when_enabled() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"perms").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o600);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -540,10 +554,11 @@ fn execute_preserves_permissions_when_enabled() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o600);
 }
-
 
 #[test]
 fn execute_preserves_modification_time_when_enabled() {
@@ -569,12 +584,10 @@ fn execute_preserves_modification_time_when_enabled() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
-
 
 #[test]
 fn execute_with_whole_file_always_copies() {
@@ -586,9 +599,8 @@ fn execute_with_whole_file_always_copies() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write identical dest");
 
-    let source_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&source).expect("source metadata"),
-    );
+    let source_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&source).expect("source metadata"));
     set_file_mtime(&destination, source_mtime).expect("set dest mtime");
 
     let operands = vec![
@@ -600,13 +612,14 @@ fn execute_with_whole_file_always_copies() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().whole_file(true).ignore_times(true),
+            LocalCopyOptions::default()
+                .whole_file(true)
+                .ignore_times(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn execute_copies_deeply_nested_directory() {
@@ -628,10 +641,18 @@ fn execute_copies_deeply_nested_directory() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_file = dest_root.join("source").join("a").join("b").join("c").join("d").join("deep.txt");
-    assert_eq!(fs::read(&dest_file).expect("read deep file"), b"deep content");
+    let dest_file = dest_root
+        .join("source")
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("d")
+        .join("deep.txt");
+    assert_eq!(
+        fs::read(&dest_file).expect("read deep file"),
+        b"deep content"
+    );
 }
-
 
 #[test]
 fn execute_file_copy_to_directory_places_file_inside() {
@@ -657,7 +678,6 @@ fn execute_file_copy_to_directory_places_file_inside() {
     assert!(target_file.exists());
     assert_eq!(fs::read(&target_file).expect("read"), b"content");
 }
-
 
 #[test]
 fn execute_summary_tracks_total_source_bytes() {
@@ -688,7 +708,11 @@ fn execute_summary_tracks_directories_created() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("dir1").join("subdir")).expect("create dirs");
     fs::create_dir_all(source_root.join("dir2")).expect("create dir2");
-    fs::write(source_root.join("dir1").join("subdir").join("file.txt"), b"f").expect("write");
+    fs::write(
+        source_root.join("dir1").join("subdir").join("file.txt"),
+        b"f",
+    )
+    .expect("write");
 
     let dest_root = temp.path().join("dest");
     let operands = vec![
@@ -702,10 +726,15 @@ fn execute_summary_tracks_directories_created() {
         .expect("copy succeeds");
 
     assert!(summary.directories_created() >= 3);
-    assert!(dest_root.join("source").join("dir1").join("subdir").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir1")
+            .join("subdir")
+            .exists()
+    );
     assert!(dest_root.join("source").join("dir2").exists());
 }
-
 
 #[test]
 fn execute_basic_single_file_copy() {
@@ -726,7 +755,10 @@ fn execute_basic_single_file_copy() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"basic copy test");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"basic copy test"
+    );
 }
 
 #[test]
@@ -756,7 +788,10 @@ fn execute_overwrites_existing_file_with_different_content() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"new content here");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"new content here"
+    );
 }
 
 #[test]
@@ -812,7 +847,6 @@ fn execute_creates_intermediate_directories_with_mkpath() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"nested");
 }
 
-
 #[test]
 fn execute_copies_empty_directory() {
     let temp = create_tempdir();
@@ -856,8 +890,14 @@ fn execute_copies_directory_with_files() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert_eq!(fs::read(dest_root.join("source").join("file1.txt")).expect("read"), b"content1");
-    assert_eq!(fs::read(dest_root.join("source").join("file2.txt")).expect("read"), b"content2");
+    assert_eq!(
+        fs::read(dest_root.join("source").join("file1.txt")).expect("read"),
+        b"content1"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("source").join("file2.txt")).expect("read"),
+        b"content2"
+    );
 }
 
 #[test]
@@ -881,10 +921,15 @@ fn execute_copies_nested_directories() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert_eq!(fs::read(dest_root.join("source").join("root.txt")).expect("read"), b"root");
-    assert_eq!(fs::read(dest_root.join("source").join("subdir").join("nested.txt")).expect("read"), b"nested");
+    assert_eq!(
+        fs::read(dest_root.join("source").join("root.txt")).expect("read"),
+        b"root"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("source").join("subdir").join("nested.txt")).expect("read"),
+        b"nested"
+    );
 }
-
 
 // Gated to unix until the Windows local-copy executor honours
 // `times(false)` after `CopyFileExW` preserves the source timestamps.
@@ -915,9 +960,8 @@ fn execute_does_not_preserve_timestamps_by_default() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
 
     assert_ne!(dest_mtime, past_time);
 }
@@ -958,12 +1002,10 @@ fn execute_preserves_timestamps_across_multiple_files() {
     let dest_file1 = dest_root.join("source").join("file1.txt");
     let dest_file2 = dest_root.join("source").join("file2.txt");
 
-    let dest_mtime1 = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_file1).expect("file1 metadata"),
-    );
-    let dest_mtime2 = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_file2).expect("file2 metadata"),
-    );
+    let dest_mtime1 =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 metadata"));
+    let dest_mtime2 =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 metadata"));
 
     assert_eq!(dest_mtime1, time1);
     assert_eq!(dest_mtime2, time2);
@@ -996,12 +1038,10 @@ fn execute_preserves_very_old_timestamps() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, very_old);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1014,7 +1054,9 @@ fn execute_does_not_preserve_permissions_by_default() {
 
     fs::write(&source, b"perms").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     // 0o777 makes every umask bit observable in the destination mode.
     perms.set_mode(0o777);
     fs::set_permissions(&source, perms).expect("set source perms");
@@ -1031,7 +1073,9 @@ fn execute_does_not_preserve_permissions_by_default() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     // Without --perms a new destination takes `flist_mode & (~CHMOD_BITS |
     // dflt_perms)` where dflt_perms is `ACCESSPERMS & ~orig_umask`
     // (upstream: rsync.c dest_mode(), exists == 0) - i.e. the source mode with
@@ -1039,7 +1083,10 @@ fn execute_does_not_preserve_permissions_by_default() {
     // also fails at umask 000, where the old inequality could not distinguish
     // "not preserved" from "preserved".
     // `::` because `local_copy::test_support` shadows the crate name here.
-    assert_eq!(dest_perms.mode() & 0o777, ::test_support::umask_masked(0o777));
+    assert_eq!(
+        dest_perms.mode() & 0o777,
+        ::test_support::umask_masked(0o777)
+    );
 }
 
 #[cfg(unix)]
@@ -1053,7 +1100,9 @@ fn execute_preserves_executable_bit() {
 
     fs::write(&source, b"#!/bin/bash\necho test").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -1072,7 +1121,9 @@ fn execute_preserves_executable_bit() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o755);
 }
 
@@ -1087,7 +1138,9 @@ fn execute_preserves_read_only_permissions() {
 
     fs::write(&source, b"readonly").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o444);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -1106,7 +1159,9 @@ fn execute_preserves_read_only_permissions() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o444);
 }
 
@@ -1148,15 +1203,22 @@ fn execute_preserves_permissions_across_directory_tree() {
     let dest_file2 = dest_root.join("source").join("private.txt");
 
     assert_eq!(
-        fs::metadata(&dest_file1).expect("file1 metadata").permissions().mode() & 0o777,
+        fs::metadata(&dest_file1)
+            .expect("file1 metadata")
+            .permissions()
+            .mode()
+            & 0o777,
         0o644
     );
     assert_eq!(
-        fs::metadata(&dest_file2).expect("file2 metadata").permissions().mode() & 0o777,
+        fs::metadata(&dest_file2)
+            .expect("file2 metadata")
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
 }
-
 
 #[test]
 fn execute_preserves_both_times_and_permissions() {
@@ -1171,7 +1233,9 @@ fn execute_preserves_both_times_and_permissions() {
 
     #[cfg(unix)]
     {
-        let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+        let mut perms = fs::metadata(&source)
+            .expect("source metadata")
+            .permissions();
         perms.set_mode(0o640);
         fs::set_permissions(&source, perms).expect("set source perms");
     }
@@ -1203,7 +1267,6 @@ fn execute_preserves_both_times_and_permissions() {
         assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o640);
     }
 }
-
 
 #[test]
 fn execute_handles_various_file_sizes() {
@@ -1271,7 +1334,6 @@ fn execute_copies_file_exactly_one_block_size() {
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
-
 #[test]
 fn execute_copies_binary_data_correctly() {
     let temp = create_tempdir();
@@ -1323,7 +1385,6 @@ fn execute_copies_file_with_null_bytes() {
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
-
 #[test]
 fn execute_summary_counts_bytes_correctly() {
     let temp = create_tempdir();
@@ -1359,9 +1420,8 @@ fn execute_summary_reports_zero_for_no_changes() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    let source_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&source).expect("source metadata"),
-    );
+    let source_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&source).expect("source metadata"));
     set_file_mtime(&destination, source_mtime).expect("set dest mtime");
 
     let operands = vec![
@@ -1380,7 +1440,6 @@ fn execute_summary_reports_zero_for_no_changes() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.bytes_copied(), 0);
 }
-
 
 #[test]
 fn execute_handles_filename_with_spaces() {
@@ -1458,7 +1517,10 @@ fn execute_handles_deep_directory_nesting() {
     }
     expected_path = expected_path.join("deep.txt");
     assert!(expected_path.exists());
-    assert_eq!(fs::read(&expected_path).expect("read deep file"), b"very deep");
+    assert_eq!(
+        fs::read(&expected_path).expect("read deep file"),
+        b"very deep"
+    );
 }
 
 #[test]
@@ -1485,7 +1547,6 @@ fn execute_copies_multiple_empty_directories() {
     assert!(dest_root.join("source").join("empty2").is_dir());
     assert!(dest_root.join("source").join("empty3").is_dir());
 }
-
 
 #[test]
 fn execute_dry_run_reports_correct_statistics() {

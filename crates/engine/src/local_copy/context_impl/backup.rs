@@ -154,54 +154,54 @@ impl<'a> CopyContext<'a> {
             strategy
         } else {
             match backup_rename(destination, &backup_path) {
-            Ok(()) => BackupStrategy::Rename,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
-            // EISDIR is recoverable: lstat the target and call delete_item with
-            // DEL_RECURSE, then retry. EISDIR fires when the backup-dir already
-            // contains a directory at the path we need (e.g. user pre-created
-            // it, or a previous backup left a tree there); without this arm,
-            // backup test 4 from upstream backup.test fails as exit-23 fatal.
-            // Windows reports renaming a file onto an existing directory as
-            // ERROR_ACCESS_DENIED (PermissionDenied) rather than EEXIST/EISDIR,
-            // so it must enter the same recovery arm; the inner symlink_metadata
-            // re-stat below still gates removal on the target actually existing,
-            // so a genuine permission error falls through to the retry-and-fail
-            // path unchanged.
-            Err(error) if is_stale_backup_conflict(&error) => {
-                remove_stale_backup_entry(&backup_path)?;
-                fs::rename(destination, &backup_path).map_err(|rename_error| {
-                    LocalCopyError::io("create backup", backup_path.clone(), rename_error)
-                })?;
-                BackupStrategy::Rename
-            }
-            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                // upstream: backup.c:368-375 - the copy fallback re-checks
-                // --safe-links before recreating the symlink. Upstream keeps
-                // this alongside the fast-path check above; both go through the
-                // one predicate so they cannot implement different rules.
-                if self.backup_refused_by_safe_links(destination, file_type) {
-                    return Ok(());
+                Ok(()) => BackupStrategy::Rename,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
+                // EISDIR is recoverable: lstat the target and call delete_item with
+                // DEL_RECURSE, then retry. EISDIR fires when the backup-dir already
+                // contains a directory at the path we need (e.g. user pre-created
+                // it, or a previous backup left a tree there); without this arm,
+                // backup test 4 from upstream backup.test fails as exit-23 fatal.
+                // Windows reports renaming a file onto an existing directory as
+                // ERROR_ACCESS_DENIED (PermissionDenied) rather than EEXIST/EISDIR,
+                // so it must enter the same recovery arm; the inner symlink_metadata
+                // re-stat below still gates removal on the target actually existing,
+                // so a genuine permission error falls through to the retry-and-fail
+                // path unchanged.
+                Err(error) if is_stale_backup_conflict(&error) => {
+                    remove_stale_backup_entry(&backup_path)?;
+                    fs::rename(destination, &backup_path).map_err(|rename_error| {
+                        LocalCopyError::io("create backup", backup_path.clone(), rename_error)
+                    })?;
+                    BackupStrategy::Rename
                 }
-                match copy_entry_to_backup(
-                    destination,
-                    &backup_path,
-                    file_type,
-                    self.options.devices_enabled(),
-                    self.options.specials_enabled(),
-                    self.options.fake_super_enabled(),
-                )? {
-                    Some(strategy) => strategy,
-                    // upstream: backup.c:306-317 - a non-regular file that is
-                    // neither backed up as a device/special (gates off) nor a
-                    // symlink is skipped; make_backup returns 3 and leaves no
-                    // backup, so emit no trace and no "backed up" notice.
-                    None => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                    // upstream: backup.c:368-375 - the copy fallback re-checks
+                    // --safe-links before recreating the symlink. Upstream keeps
+                    // this alongside the fast-path check above; both go through the
+                    // one predicate so they cannot implement different rules.
+                    if self.backup_refused_by_safe_links(destination, file_type) {
+                        return Ok(());
+                    }
+                    match copy_entry_to_backup(
+                        destination,
+                        &backup_path,
+                        file_type,
+                        self.options.devices_enabled(),
+                        self.options.specials_enabled(),
+                        self.options.fake_super_enabled(),
+                    )? {
+                        Some(strategy) => strategy,
+                        // upstream: backup.c:306-317 - a non-regular file that is
+                        // neither backed up as a device/special (gates off) nor a
+                        // symlink is skipped; make_backup returns 3 and leaves no
+                        // backup, so emit no trace and no "backed up" notice.
+                        None => return Ok(()),
+                    }
                 }
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io("create backup", backup_path, error));
-            }
+                Err(error) => {
+                    return Err(LocalCopyError::io("create backup", backup_path, error));
+                }
             }
         };
 
@@ -458,7 +458,6 @@ impl<'a> CopyContext<'a> {
         });
         record_directory_subtree(self, &mut subtree_path, &mut subtree_relative)
     }
-
 }
 
 /// Returns `true` when a hard-link or rename attempt into the backup area
@@ -474,7 +473,9 @@ impl<'a> CopyContext<'a> {
 fn is_stale_backup_conflict(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::AlreadyExists | io::ErrorKind::IsADirectory | io::ErrorKind::PermissionDenied
+        io::ErrorKind::AlreadyExists
+            | io::ErrorKind::IsADirectory
+            | io::ErrorKind::PermissionDenied
     )
 }
 
@@ -487,7 +488,11 @@ fn is_stale_backup_conflict(error: &io::Error) -> bool {
 fn remove_stale_backup_entry(backup_path: &Path) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(backup_path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(backup_path).map_err(|remove_error| {
-            LocalCopyError::io("remove existing backup directory", backup_path, remove_error)
+            LocalCopyError::io(
+                "remove existing backup directory",
+                backup_path,
+                remove_error,
+            )
         }),
         Ok(_) => {
             if let Err(remove_error) = fs::remove_file(backup_path)

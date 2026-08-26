@@ -37,4 +37,3 @@ fn runtime_options_inherits_global_secrets_file_from_config() {
     assert_eq!(module.auth_users()[0].username, "alice");
     assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
 }
-

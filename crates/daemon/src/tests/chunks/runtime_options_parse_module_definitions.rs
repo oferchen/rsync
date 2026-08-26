@@ -21,4 +21,3 @@ fn runtime_options_parse_module_definitions() {
     assert!(modules[1].refused_options().is_empty());
     assert!(modules[1].read_only());
 }
-

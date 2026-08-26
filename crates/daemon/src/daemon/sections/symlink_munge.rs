@@ -6,13 +6,13 @@
 // When enabled, symlink targets are prefixed with `/rsyncd-munged/` on send
 // and the prefix is stripped on receive, preventing symlinks from escaping
 // the module root on non-chrooted modules.
-#[allow(unused_imports)] // REASON: re-export for daemon file list processing; currently used in tests
+#[allow(unused_imports)]
+// REASON: re-export for daemon file list processing; currently used in tests
 pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
 
 #[cfg(test)]
 mod symlink_munge_tests {
     use super::*;
-
 
     #[test]
     fn munge_prepends_prefix_to_absolute_path() {
@@ -43,7 +43,6 @@ mod symlink_munge_tests {
         let result = munge_symlink(".");
         assert_eq!(result, "/rsyncd-munged/.");
     }
-
 
     #[test]
     fn unmunge_strips_prefix() {
@@ -81,7 +80,6 @@ mod symlink_munge_tests {
         assert_eq!(result, Some(String::new()));
     }
 
-
     #[test]
     fn roundtrip_absolute_path() {
         let original = "/usr/local/bin/tool";
@@ -113,7 +111,6 @@ mod symlink_munge_tests {
         let restored = unmunge_symlink(&munged);
         assert_eq!(restored, Some(original.to_owned()));
     }
-
 
     #[test]
     fn effective_munge_auto_chroot_on() {

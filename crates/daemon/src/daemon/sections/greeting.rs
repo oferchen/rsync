@@ -159,8 +159,8 @@ mod greeting_validation_tests {
         ] {
             assert_eq!(
                 reject_malformed_client_greeting(not_a_banner)
-                .map(|e| e.to_string())
-                .as_deref(),
+                    .map(|e| e.to_string())
+                    .as_deref(),
                 Some("@ERROR: protocol startup error"),
                 "not a version banner: {not_a_banner:?}"
             );

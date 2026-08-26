@@ -24,7 +24,6 @@ mod xattr_tests {
         }
     }
 
-
     #[test]
     fn execute_copies_file_with_single_xattr() {
         let temp = tempdir().expect("tempdir");
@@ -87,9 +86,11 @@ mod xattr_tests {
         assert_eq!(fs::read(&destination).expect("read dest"), b"no xattr copy");
 
         let dest_xattr = xattr::get(&destination, "user.test_attr").expect("read xattr");
-        assert!(dest_xattr.is_none(), "xattr should not be copied without --xattrs");
+        assert!(
+            dest_xattr.is_none(),
+            "xattr should not be copied without --xattrs"
+        );
     }
-
 
     #[test]
     fn execute_copies_multiple_xattrs_on_same_file() {
@@ -125,23 +126,33 @@ mod xattr_tests {
         assert_eq!(summary.files_copied(), 1);
 
         assert_eq!(
-            xattr::get(&destination, "user.attr1").expect("read").expect("present"),
+            xattr::get(&destination, "user.attr1")
+                .expect("read")
+                .expect("present"),
             b"value1"
         );
         assert_eq!(
-            xattr::get(&destination, "user.attr2").expect("read").expect("present"),
+            xattr::get(&destination, "user.attr2")
+                .expect("read")
+                .expect("present"),
             b"value2"
         );
         assert_eq!(
-            xattr::get(&destination, "user.attr3").expect("read").expect("present"),
+            xattr::get(&destination, "user.attr3")
+                .expect("read")
+                .expect("present"),
             b"value3"
         );
         assert_eq!(
-            xattr::get(&destination, "user.metadata.author").expect("read").expect("present"),
+            xattr::get(&destination, "user.metadata.author")
+                .expect("read")
+                .expect("present"),
             b"test_user"
         );
         assert_eq!(
-            xattr::get(&destination, "user.metadata.version").expect("read").expect("present"),
+            xattr::get(&destination, "user.metadata.version")
+                .expect("read")
+                .expect("present"),
             b"1.0"
         );
     }
@@ -188,7 +199,6 @@ mod xattr_tests {
             assert_eq!(copied, expected_value.as_bytes());
         }
     }
-
 
     #[test]
     fn execute_copies_large_xattr_value() {
@@ -301,7 +311,6 @@ mod xattr_tests {
         assert!(copied.is_empty());
     }
 
-
     #[test]
     fn execute_copies_xattr_on_directory() {
         let temp = tempdir().expect("tempdir");
@@ -351,7 +360,8 @@ mod xattr_tests {
         }
 
         xattr::set(&source_root, "user.root_attr", b"root").expect("set root xattr");
-        xattr::set(source_root.join("level1"), "user.level1_attr", b"level1").expect("set level1 xattr");
+        xattr::set(source_root.join("level1"), "user.level1_attr", b"level1")
+            .expect("set level1 xattr");
         xattr::set(&nested, "user.level2_attr", b"level2").expect("set level2 xattr");
 
         let dest_root = temp.path().join("dest");
@@ -384,9 +394,12 @@ mod xattr_tests {
             b"level1"
         );
         assert_eq!(
-            xattr::get(dest_root.join("source").join("level1").join("level2"), "user.level2_attr")
-                .expect("read")
-                .expect("present"),
+            xattr::get(
+                dest_root.join("source").join("level1").join("level2"),
+                "user.level2_attr"
+            )
+            .expect("read")
+            .expect("present"),
             b"level2"
         );
     }
@@ -404,8 +417,12 @@ mod xattr_tests {
         }
 
         xattr::set(&source_root, "user.dir_metadata", b"dir_value").expect("set dir xattr");
-        xattr::set(source_root.join("file.txt"), "user.file_metadata", b"file_value")
-            .expect("set file xattr");
+        xattr::set(
+            source_root.join("file.txt"),
+            "user.file_metadata",
+            b"file_value",
+        )
+        .expect("set file xattr");
 
         let dest_root = temp.path().join("dest");
         let operands = vec![
@@ -430,13 +447,15 @@ mod xattr_tests {
             b"dir_value"
         );
         assert_eq!(
-            xattr::get(dest_root.join("source").join("file.txt"), "user.file_metadata")
-                .expect("read")
-                .expect("present"),
+            xattr::get(
+                dest_root.join("source").join("file.txt"),
+                "user.file_metadata"
+            )
+            .expect("read")
+            .expect("present"),
             b"file_value"
         );
     }
-
 
     #[test]
     fn execute_updates_existing_xattr_value() {
@@ -567,7 +586,6 @@ mod xattr_tests {
         );
     }
 
-
     #[test]
     fn execute_xattr_filter_excludes_specific_attrs() {
         let temp = tempdir().expect("tempdir");
@@ -678,7 +696,6 @@ mod xattr_tests {
         );
     }
 
-
     #[test]
     fn execute_dry_run_does_not_copy_xattrs() {
         let temp = tempdir().expect("tempdir");
@@ -709,7 +726,6 @@ mod xattr_tests {
         assert_eq!(summary.files_copied(), 1);
         assert!(!destination.exists(), "dry run should not create file");
     }
-
 
     #[test]
     fn execute_handles_special_characters_in_xattr_name() {
@@ -825,7 +841,10 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 1);
 
-        assert_eq!(fs::read(&destination).expect("read dest"), b"updated content");
+        assert_eq!(
+            fs::read(&destination).expect("read dest"),
+            b"updated content"
+        );
         let copied = xattr::get(&destination, "user.preserved")
             .expect("read xattr")
             .expect("xattr present");
@@ -890,7 +909,6 @@ mod xattr_tests {
         );
     }
 
-
     #[cfg(unix)]
     #[test]
     fn execute_preserves_xattrs_with_symlinks() {
@@ -920,9 +938,7 @@ mod xattr_tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let options = LocalCopyOptions::default()
-            .xattrs(true)
-            .links(true);
+        let options = LocalCopyOptions::default().xattrs(true).links(true);
 
         let summary = plan
             .execute_with_options(LocalCopyExecution::Apply, options)

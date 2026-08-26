@@ -16,4 +16,3 @@ fn runtime_options_rejects_config_missing_path() {
             .contains("missing required 'path' directive")
     );
 }
-

@@ -221,7 +221,11 @@ impl<'a> CopyContext<'a> {
             .find(|entry| entry.destination == destination)
         {
             for name in keep {
-                if !existing.keep.iter().any(|existing_name| existing_name == &name) {
+                if !existing
+                    .keep
+                    .iter()
+                    .any(|existing_name| existing_name == &name)
+                {
                     existing.keep.push(name);
                 }
             }
@@ -327,7 +331,12 @@ impl<'a> CopyContext<'a> {
         // Deepest-first, mirroring upstream's reverse flist walk, so a child's
         // perm/mtime change cannot re-clobber a parent handled earlier.
         // upstream: generator.c:2083 for (i = dir_flist->used - 1; i >= 0; i--).
-        dirs.sort_by(|a, b| b.path.components().count().cmp(&a.path.components().count()));
+        dirs.sort_by(|a, b| {
+            b.path
+                .components()
+                .count()
+                .cmp(&a.path.components().count())
+        });
         for dir in dirs {
             // Reinstate the real (restricted) directory mode last, after every
             // deferred deletion/update ran while the directory was kept
@@ -398,8 +407,7 @@ impl<'a> CopyContext<'a> {
         // moved. oc's decision-time gate lives at
         // `decide_and_defer_delayed_deletions`, which is the analogue of
         // `delete_in_dir` and is where the check belongs.
-        let preserve_times = self.metadata_options().times()
-            && !self.omit_dir_times_enabled();
+        let preserve_times = self.metadata_options().times() && !self.omit_dir_times_enabled();
         let mut pending = std::mem::take(&mut self.deferred_ops.deletions);
         // Deferred entries are queued in post-order (a directory defers its own
         // sweep AFTER recursing into and deferring its children). Upstream's
@@ -414,9 +422,9 @@ impl<'a> CopyContext<'a> {
             self.enforce_timeout()?;
             // Capture directory mtime before deletion modifies it.
             let saved_times = if preserve_times {
-                fs::metadata(&entry.destination).ok().map(|m| {
-                    filetime::FileTime::from_last_modification_time(&m)
-                })
+                fs::metadata(&entry.destination)
+                    .ok()
+                    .map(|m| filetime::FileTime::from_last_modification_time(&m))
             } else {
                 None
             };
@@ -543,7 +551,6 @@ fn encoded_path_len(path: &Path) -> usize {
     }
 }
 
-
 #[cfg(test)]
 mod source_root_covers_tests {
     use super::source_root_covers;
@@ -588,7 +595,10 @@ mod source_root_covers_tests {
         let root = Path::new("a/b");
         assert!(!source_root_covers(root, Path::new("a/bc")));
         assert!(!source_root_covers(root, Path::new("a/bcd/e")));
-        assert!(!source_root_covers(root, Path::new("a")), "ancestor is not covered");
+        assert!(
+            !source_root_covers(root, Path::new("a")),
+            "ancestor is not covered"
+        );
         assert!(!source_root_covers(root, Path::new("x/y")), "unrelated");
     }
 }

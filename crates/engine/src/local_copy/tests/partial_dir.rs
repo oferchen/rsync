@@ -12,7 +12,6 @@
 // 5. Works correctly with nested directory structures
 // 6. Behavior matches upstream rsync
 
-
 #[test]
 fn partial_dir_places_partial_file_in_specified_directory() {
     let temp = tempdir().expect("tempdir");
@@ -116,12 +115,15 @@ fn partial_dir_moves_file_to_destination_on_commit() {
     guard.commit().expect("commit");
 
     // After commit: file should be at destination, not in partial dir
-    assert!(!staging_path.exists(), "staging path should be removed after commit");
-    assert!(destination.exists(), "destination should exist after commit");
-    assert_eq!(
-        fs::read(&destination).expect("read"),
-        b"content to commit"
+    assert!(
+        !staging_path.exists(),
+        "staging path should be removed after commit"
     );
+    assert!(
+        destination.exists(),
+        "destination should exist after commit"
+    );
+    assert_eq!(fs::read(&destination).expect("read"), b"content to commit");
 }
 
 #[test]
@@ -144,7 +146,8 @@ fn partial_dir_preserves_partial_file_on_discard() {
     .expect("guard");
 
     let staging_path = guard.staging_path().to_path_buf();
-    file.write_all(b"partial content before interrupt").expect("write");
+    file.write_all(b"partial content before interrupt")
+        .expect("write");
     drop(file);
 
     // Discard simulates an interrupted transfer
@@ -153,15 +156,23 @@ fn partial_dir_preserves_partial_file_on_discard() {
     // upstream: on interrupt the temp is moved into the (created) partial dir
     // by basename; the destination is left untouched.
     let partial_entry = partial_dir.join("interrupted.txt");
-    assert!(!staging_path.exists(), "temp consumed by the move into the partial dir");
-    assert!(partial_entry.exists(), "partial preserved inside the partial dir");
-    assert!(!destination.exists(), "destination should not exist after discard");
+    assert!(
+        !staging_path.exists(),
+        "temp consumed by the move into the partial dir"
+    );
+    assert!(
+        partial_entry.exists(),
+        "partial preserved inside the partial dir"
+    );
+    assert!(
+        !destination.exists(),
+        "destination should not exist after discard"
+    );
     assert_eq!(
         fs::read(&partial_entry).expect("read partial"),
         b"partial content before interrupt"
     );
 }
-
 
 #[test]
 fn partial_dir_works_with_nested_source_directories() {
@@ -194,9 +205,21 @@ fn partial_dir_works_with_nested_source_directories() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join("source/level1").join("level2").join("deep.txt").exists());
+    assert!(
+        dest_root
+            .join("source/level1")
+            .join("level2")
+            .join("deep.txt")
+            .exists()
+    );
     assert_eq!(
-        fs::read(dest_root.join("source/level1").join("level2").join("deep.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source/level1")
+                .join("level2")
+                .join("deep.txt")
+        )
+        .expect("read"),
         b"deep nested content"
     );
 }
@@ -246,7 +269,13 @@ fn partial_dir_handles_multiple_files_in_nested_directories() {
         b"middle level"
     );
     assert_eq!(
-        fs::read(dest_root.join("source/dir1").join("subdir").join("deep.txt")).expect("read deep"),
+        fs::read(
+            dest_root
+                .join("source/dir1")
+                .join("subdir")
+                .join("deep.txt")
+        )
+        .expect("read deep"),
         b"deep level"
     );
     assert_eq!(
@@ -254,7 +283,6 @@ fn partial_dir_handles_multiple_files_in_nested_directories() {
         b"sibling dir"
     );
 }
-
 
 #[test]
 fn partial_dir_supports_absolute_path() {
@@ -319,13 +347,15 @@ fn partial_dir_absolute_path_preserves_partial_on_discard() {
     // basename.
     let partial_entry = partial_dir.join("file.txt");
     assert!(!staging_path.exists(), "temp consumed by the move");
-    assert!(partial_entry.exists(), "partial moved into absolute partial dir");
+    assert!(
+        partial_entry.exists(),
+        "partial moved into absolute partial dir"
+    );
     assert_eq!(
         fs::read(&partial_entry).expect("read"),
         b"absolute path partial"
     );
 }
-
 
 #[test]
 fn partial_dir_relative_to_destination_directory() {
@@ -359,7 +389,6 @@ fn partial_dir_relative_to_destination_directory() {
     guard.commit().expect("commit");
     assert!(destination.exists());
 }
-
 
 #[test]
 fn partial_dir_handles_empty_file() {
@@ -458,7 +487,6 @@ fn partial_dir_overwrites_existing_partial_file() {
     guard.discard();
 }
 
-
 #[test]
 fn partial_dir_differs_from_non_partial_behavior() {
     let temp = tempdir().expect("tempdir");
@@ -496,10 +524,12 @@ fn partial_dir_differs_from_non_partial_behavior() {
         !staging1.exists(),
         "partial temp consumed by move into partial dir"
     );
-    assert!(partial_entry.exists(), "partial preserved in the partial dir");
+    assert!(
+        partial_entry.exists(),
+        "partial preserved in the partial dir"
+    );
     assert!(!staging2.exists(), "non-partial mode should remove file");
 }
-
 
 #[test]
 fn partial_dir_handles_special_characters_in_filename() {
@@ -533,7 +563,6 @@ fn partial_dir_handles_special_characters_in_filename() {
         b"special chars content"
     );
 }
-
 
 #[test]
 fn partial_dir_with_times_preservation() {
@@ -584,7 +613,9 @@ fn partial_dir_with_permissions_preservation() {
     fs::create_dir_all(&dest_dir).expect("create dest dir");
     fs::write(&source, b"perms test").expect("write source");
 
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o640);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -606,10 +637,11 @@ fn partial_dir_with_permissions_preservation() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o640);
 }
-
 
 #[test]
 fn partial_dir_dry_run_does_not_create_directory() {
@@ -639,21 +671,23 @@ fn partial_dir_dry_run_does_not_create_directory() {
 
     assert_eq!(summary.files_copied(), 1);
     // In dry run mode, no actual changes should be made
-    assert!(!destination.exists(), "destination should not be created in dry run");
+    assert!(
+        !destination.exists(),
+        "destination should not be created in dry run"
+    );
     // Note: The partial dir creation behavior in dry run depends on implementation
     // The test documents expected behavior - partial dir should NOT be created
 }
-
 
 #[test]
 fn partial_dir_setting_enables_partial_flag() {
     let opts = LocalCopyOptions::default().with_partial_directory(Some(".partial"));
 
-    assert!(opts.partial_enabled(), "setting partial_dir should enable partial");
-    assert_eq!(
-        opts.partial_directory_path(),
-        Some(Path::new(".partial"))
+    assert!(
+        opts.partial_enabled(),
+        "setting partial_dir should enable partial"
     );
+    assert_eq!(opts.partial_directory_path(), Some(Path::new(".partial")));
 }
 
 #[test]
@@ -797,8 +831,11 @@ fn partial_dir_delete_only_removes_non_partial_entries() {
 
     let partial_dir = target_root.join(".rsync-partial");
     fs::create_dir_all(&partial_dir).expect("create partial dir");
-    fs::write(partial_dir.join("in-progress.dat"), b"partial transfer data")
-        .expect("write partial file");
+    fs::write(
+        partial_dir.join("in-progress.dat"),
+        b"partial transfer data",
+    )
+    .expect("write partial file");
 
     let operands = ctx.operands();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -861,8 +898,7 @@ fn partial_dir_without_delete_does_not_affect_extraneous_files() {
 
     let operands = ctx.operands();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let options = LocalCopyOptions::default()
-        .with_partial_directory(Some(".rsync-partial"));
+    let options = LocalCopyOptions::default().with_partial_directory(Some(".rsync-partial"));
 
     let _summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -971,16 +1007,12 @@ fn partial_dir_delete_with_dry_run_does_not_modify_anything() {
         target_root.join("extra.txt").exists(),
         "dry run should not delete extraneous files"
     );
-    assert!(
-        partial_dir.exists(),
-        "dry run should not touch partial dir"
-    );
+    assert!(partial_dir.exists(), "dry run should not touch partial dir");
     assert!(
         partial_dir.join("partial.dat").exists(),
         "dry run should not touch partial files"
     );
 }
-
 
 #[test]
 fn partial_dir_find_basis_locates_existing_partial_for_resume() {
@@ -994,9 +1026,7 @@ fn partial_dir_find_basis_locates_existing_partial_for_resume() {
     let partial = partial_dir.join("target.txt");
     fs::write(&partial, b"previously interrupted content").expect("write partial");
 
-    let manager = PartialFileManager::new(PartialMode::PartialDir(
-        PathBuf::from(".rsync-partial"),
-    ));
+    let manager = PartialFileManager::new(PartialMode::PartialDir(PathBuf::from(".rsync-partial")));
     let basis = manager.find_basis(&dest).expect("find_basis");
     assert_eq!(basis, Some(partial));
 }
@@ -1006,9 +1036,7 @@ fn partial_dir_find_basis_returns_none_when_no_partial_exists() {
     let dir = tempdir().expect("tempdir");
     let dest = dir.path().join("target.txt");
 
-    let manager = PartialFileManager::new(PartialMode::PartialDir(
-        PathBuf::from(".rsync-partial"),
-    ));
+    let manager = PartialFileManager::new(PartialMode::PartialDir(PathBuf::from(".rsync-partial")));
     let basis = manager.find_basis(&dest).expect("find_basis");
     assert_eq!(basis, None);
 }
@@ -1032,7 +1060,10 @@ fn partial_dir_cleanup_removes_partial_after_successful_transfer() {
     manager.cleanup_partial(&dest).expect("cleanup");
 
     // After cleanup, partial file should be gone
-    assert!(!partial.exists(), "partial file should be removed after cleanup");
+    assert!(
+        !partial.exists(),
+        "partial file should be removed after cleanup"
+    );
     // But the partial directory itself should remain
     assert!(
         partial_dir.exists(),
@@ -1072,14 +1103,16 @@ fn partial_dir_full_resume_workflow() {
 
     // Step 4: Clean up partial file
     manager.cleanup_partial(&dest).expect("cleanup");
-    assert!(!partial.exists(), "partial should be cleaned up after success");
+    assert!(
+        !partial.exists(),
+        "partial should be cleaned up after success"
+    );
     assert!(dest.exists(), "destination should exist after completion");
     assert_eq!(
         fs::read(&dest).expect("read dest"),
         b"complete final content"
     );
 }
-
 
 #[test]
 fn partial_dir_relative_path_independent_per_directory() {
@@ -1103,25 +1136,15 @@ fn partial_dir_relative_path_independent_per_directory() {
 
     let manager = PartialFileManager::new(PartialMode::PartialDir(PathBuf::from(".partial")));
 
-    let basis_a = manager
-        .find_basis(&dir_a.join("data.txt"))
-        .expect("find A");
-    let basis_b = manager
-        .find_basis(&dir_b.join("data.txt"))
-        .expect("find B");
+    let basis_a = manager.find_basis(&dir_a.join("data.txt")).expect("find A");
+    let basis_b = manager.find_basis(&dir_b.join("data.txt")).expect("find B");
 
     assert_eq!(basis_a, Some(partial_a.join("data.txt")));
     assert_eq!(basis_b, Some(partial_b.join("data.txt")));
 
     // Verify content independence
-    assert_eq!(
-        fs::read(basis_a.unwrap()).expect("read A"),
-        b"partial A"
-    );
-    assert_eq!(
-        fs::read(basis_b.unwrap()).expect("read B"),
-        b"partial B"
-    );
+    assert_eq!(fs::read(basis_a.unwrap()).expect("read A"), b"partial A");
+    assert_eq!(fs::read(basis_b.unwrap()).expect("read B"), b"partial B");
 }
 
 #[test]
@@ -1141,8 +1164,7 @@ fn partial_dir_absolute_path_shared_across_directories() {
     fs::write(shared_partial.join("common.txt"), b"shared partial data")
         .expect("write shared partial");
 
-    let manager =
-        PartialFileManager::new(PartialMode::PartialDir(shared_partial.clone()));
+    let manager = PartialFileManager::new(PartialMode::PartialDir(shared_partial.clone()));
 
     // Both destinations should find the same partial file
     let basis_a = manager
@@ -1155,7 +1177,6 @@ fn partial_dir_absolute_path_shared_across_directories() {
     assert_eq!(basis_a, Some(shared_partial.join("common.txt")));
     assert_eq!(basis_b, Some(shared_partial.join("common.txt")));
 }
-
 
 #[test]
 fn partial_dir_guard_staging_path_is_inside_partial_dir() {
@@ -1269,7 +1290,6 @@ fn partial_dir_guard_discard_preserves_for_later_resume() {
     );
 }
 
-
 #[test]
 fn partial_dir_with_deeply_nested_relative_path() {
     // Test that partial-dir can be a multi-component relative path
@@ -1288,7 +1308,8 @@ fn partial_dir_with_deeply_nested_relative_path() {
     )
     .expect("guard");
 
-    file.write_all(b"nested partial dir content").expect("write");
+    file.write_all(b"nested partial dir content")
+        .expect("write");
     drop(file);
 
     // upstream: the temp stages beside the destination regardless of how deep
@@ -1416,7 +1437,6 @@ fn partial_dir_empty_partial_dir_survives_delete() {
         "empty partial dir should survive --delete"
     );
 }
-
 
 #[test]
 fn partial_dir_successful_copy_creates_and_uses_partial_dir() {

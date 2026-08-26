@@ -10,4 +10,3 @@ fn module_peer_hostname_skips_lookup_when_disabled() {
     assert!(!module.permits(peer, PeerHost::new(resolved, true)));
     clear_test_hostname_overrides();
 }
-

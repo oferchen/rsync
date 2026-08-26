@@ -6,7 +6,10 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
@@ -53,4 +56,3 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

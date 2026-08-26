@@ -1,4 +1,3 @@
-
 #[test]
 fn delete_respects_exclude_filters() {
     let ctx = test_helpers::setup_copy_test();
@@ -15,8 +14,8 @@ fn delete_respects_exclude_filters() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .filters(Some(filters));
@@ -50,8 +49,8 @@ fn delete_excluded_removes_excluded_entries() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -81,13 +80,10 @@ fn delete_excluded_removes_matching_source_files() {
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -105,8 +101,8 @@ fn delete_excluded_removes_matching_source_files() {
 
 #[test]
 fn delete_after_files_present_during_transfer() {
-    use std::sync::{Arc, Mutex};
     use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
@@ -150,10 +146,16 @@ fn delete_after_files_present_during_transfer() {
                 self.checked = true;
                 // At this point, files marked for deletion should still exist
                 if self.dest.join("delete_me.txt").exists() {
-                    self.files_seen.lock().unwrap().insert("delete_me.txt".to_string());
+                    self.files_seen
+                        .lock()
+                        .unwrap()
+                        .insert("delete_me.txt".to_string());
                 }
                 if self.dest.join("also_delete.txt").exists() {
-                    self.files_seen.lock().unwrap().insert("also_delete.txt".to_string());
+                    self.files_seen
+                        .lock()
+                        .unwrap()
+                        .insert("also_delete.txt".to_string());
                 }
             }
         }
@@ -173,15 +175,27 @@ fn delete_after_files_present_during_transfer() {
         .execute_with_options_and_handler(LocalCopyExecution::Apply, options, Some(&mut observer))
         .expect("copy succeeds");
 
-    assert!(!dest.join("delete_me.txt").exists(), "delete_me.txt should be deleted");
-    assert!(!dest.join("also_delete.txt").exists(), "also_delete.txt should be deleted");
+    assert!(
+        !dest.join("delete_me.txt").exists(),
+        "delete_me.txt should be deleted"
+    );
+    assert!(
+        !dest.join("also_delete.txt").exists(),
+        "also_delete.txt should be deleted"
+    );
     assert!(dest.join("keep.txt").exists(), "keep.txt should exist");
     assert!(dest.join("update.txt").exists(), "update.txt should exist");
     assert_eq!(summary.items_deleted(), 2);
 
     let seen = files_during_copy.lock().unwrap();
-    assert!(seen.contains("delete_me.txt"), "delete_me.txt should have existed during transfer");
-    assert!(seen.contains("also_delete.txt"), "also_delete.txt should have existed during transfer");
+    assert!(
+        seen.contains("delete_me.txt"),
+        "delete_me.txt should have existed during transfer"
+    );
+    assert!(
+        seen.contains("also_delete.txt"),
+        "also_delete.txt should have existed during transfer"
+    );
 }
 
 #[test]
@@ -369,7 +383,8 @@ fn delete_after_timing_differs_from_delete_during() {
     fs::write(dest_after.join("root_extra.txt"), b"root extra").expect("write root_extra");
     let dest_after_subdir = dest_after.join("subdir");
     fs::create_dir_all(&dest_after_subdir).expect("create dest_after subdir");
-    fs::write(dest_after_subdir.join("nested_extra.txt"), b"nested extra").expect("write nested_extra");
+    fs::write(dest_after_subdir.join("nested_extra.txt"), b"nested extra")
+        .expect("write nested_extra");
 
     let mut source_operand_after = source.clone().into_os_string();
     source_operand_after.push(std::path::MAIN_SEPARATOR.to_string());
@@ -389,7 +404,8 @@ fn delete_after_timing_differs_from_delete_during() {
     fs::write(dest_during.join("root_extra.txt"), b"root extra").expect("write root_extra");
     let dest_during_subdir = dest_during.join("subdir");
     fs::create_dir_all(&dest_during_subdir).expect("create dest_during subdir");
-    fs::write(dest_during_subdir.join("nested_extra.txt"), b"nested extra").expect("write nested_extra");
+    fs::write(dest_during_subdir.join("nested_extra.txt"), b"nested extra")
+        .expect("write nested_extra");
 
     let mut source_operand_during = source.into_os_string();
     source_operand_during.push(std::path::MAIN_SEPARATOR.to_string());
@@ -397,7 +413,7 @@ fn delete_after_timing_differs_from_delete_during() {
     let plan_during = LocalCopyPlan::from_operands(&operands_during).expect("plan during");
 
     let options_during = LocalCopyOptions::default()
-        .delete(true)  // delete-during is the default
+        .delete(true) // delete-during is the default
         .collect_events(true);
 
     let report_during = plan_during
@@ -436,7 +452,9 @@ fn delete_after_timing_differs_from_delete_during() {
     }
 
     // Verify delete-after: all copies before all deletes
-    if let (Some(&last_copy), Some(&first_delete)) = (after_copy_indices.last(), after_delete_indices.first()) {
+    if let (Some(&last_copy), Some(&first_delete)) =
+        (after_copy_indices.last(), after_delete_indices.first())
+    {
         assert!(
             last_copy < first_delete,
             "delete-after: all copies should complete before any deletes"
@@ -546,7 +564,10 @@ fn delete_after_works_with_dry_run() {
     let summary = report.summary();
 
     assert_eq!(fs::read(dest.join("keep.txt")).expect("read"), b"old keep");
-    assert!(dest.join("delete_me.txt").exists(), "file should still exist in dry-run");
+    assert!(
+        dest.join("delete_me.txt").exists(),
+        "file should still exist in dry-run"
+    );
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
@@ -648,7 +669,6 @@ fn delete_during_deletes_directory_before_transferring_its_children() {
     );
 }
 
-
 #[test]
 fn delete_before_keeps_in_source_file() {
     // upstream: generator.c:286-358 delete_in_dir() / do_delete_pass() - a
@@ -726,7 +746,9 @@ fn delete_during_itemizes_deletion_before_directory_row() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let options = LocalCopyOptions::default().delete_during().collect_events(true);
+    let options = LocalCopyOptions::default()
+        .delete_during()
+        .collect_events(true);
 
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)

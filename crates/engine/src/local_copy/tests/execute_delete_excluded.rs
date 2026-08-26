@@ -35,8 +35,7 @@ fn delete_preserves_excluded_log_files_at_dest() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters =
-        FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .filters(Some(filters));
@@ -93,8 +92,7 @@ fn delete_excluded_removes_log_files_matching_exclude_pattern() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters =
-        FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -143,7 +141,8 @@ fn delete_excluded_with_filter_exclude_rule_removes_tmp_files() {
     // Dest has the same files plus .tmp files that should be swept away.
     // Use different content sizes to avoid quick-check mtime+size skips.
     fs::write(dest.join("data.txt"), b"old data with more bytes here").expect("write old data.txt");
-    fs::write(dest.join("notes.txt"), b"old notes with more bytes here").expect("write old notes.txt");
+    fs::write(dest.join("notes.txt"), b"old notes with more bytes here")
+        .expect("write old notes.txt");
     fs::write(dest.join("cache.tmp"), b"temporary cache data").expect("write cache.tmp");
     fs::write(dest.join("scratch.tmp"), b"scratch file data").expect("write scratch.tmp");
 
@@ -153,8 +152,7 @@ fn delete_excluded_with_filter_exclude_rule_removes_tmp_files() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Simulate --filter='exclude *.tmp' via FilterSet.
-    let filters =
-        FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -200,7 +198,8 @@ fn delete_without_delete_excluded_preserves_filtered_tmp_files() {
 
     // Dest has both regular and .tmp files.
     // Use different content sizes to avoid quick-check mtime+size skips.
-    fs::write(dest.join("data.txt"), b"old data with extra bytes here").expect("write old data.txt");
+    fs::write(dest.join("data.txt"), b"old data with extra bytes here")
+        .expect("write old data.txt");
     fs::write(dest.join("extra.txt"), b"extraneous non-excluded file").expect("write extra.txt");
     fs::write(dest.join("keep.tmp"), b"preserved tmp file content").expect("write keep.tmp");
 
@@ -209,8 +208,7 @@ fn delete_without_delete_excluded_preserves_filtered_tmp_files() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters =
-        FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     // No delete_excluded: excluded files are protected from deletion.
     let options = LocalCopyOptions::default()
         .delete(true)
@@ -222,7 +220,10 @@ fn delete_without_delete_excluded_preserves_filtered_tmp_files() {
 
     // data.txt copied from source; extra.txt is extraneous and not excluded, so deleted.
     assert!(dest.join("data.txt").exists(), "data.txt must exist");
-    assert!(!dest.join("extra.txt").exists(), "extra.txt must be deleted");
+    assert!(
+        !dest.join("extra.txt").exists(),
+        "extra.txt must be deleted"
+    );
     // keep.tmp matches exclude rule and --delete-excluded is not set: must be preserved.
     assert!(
         dest.join("keep.tmp").exists(),

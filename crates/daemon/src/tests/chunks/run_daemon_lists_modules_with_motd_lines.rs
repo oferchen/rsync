@@ -14,7 +14,10 @@ fn run_daemon_lists_modules_with_motd_lines() {
     )
     .expect("write motd");
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -77,4 +80,3 @@ fn run_daemon_lists_modules_with_motd_lines() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-
