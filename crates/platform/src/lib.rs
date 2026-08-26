@@ -42,6 +42,8 @@ pub mod name_resolution;
 pub mod privilege;
 /// Secrets file permission validation.
 pub mod secrets;
+/// Per-connection process splitting for the daemon (Unix only).
+pub mod session_fork;
 /// Signal handler registration and shared atomic flags.
 pub mod signal;
 /// Windows Service Control Manager (SCM) integration.
