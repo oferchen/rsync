@@ -183,6 +183,24 @@ impl AbsPathTracker {
         }
     }
 
+    /// The absolute path the walk has resolved, or `None` when the tracker is
+    /// disabled.
+    ///
+    /// The parent-walk entry point needs the value and not just the verdict:
+    /// upstream judges `<resolved parent>/<leaf>`, not the parent alone, so a
+    /// backup landing in an ANCESTOR of the root - which the parent-only test
+    /// reads as "still descending" - is still refused.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:284-286` - `ona_open()`'s `out_abs`
+    /// out-parameter, which is what `owner_walk_parent()` builds `leafabs`
+    /// from.
+    fn resolved(&self) -> Option<&Path> {
+        match self {
+            Self::Disabled => None,
+            Self::Tracking { abspath } => Some(abspath),
+        }
+    }
+
     /// Refuse with `ELOOP` when the resolved path has left the confinement
     /// root.
     ///
@@ -344,6 +362,26 @@ fn owner_walk_open(
     mode: Mode,
     kind: crate::confinement::PathKind,
 ) -> io::Result<OwnedFd> {
+    let mut discarded = None;
+    owner_walk_open_tracked(path, flags, mode, kind, &mut discarded)
+}
+
+/// [`owner_walk_open`], additionally reporting where the walk actually landed.
+///
+/// `resolved` receives the physical absolute path of the opened component, and
+/// only while the tracker is live - a [`Confined`](crate::confinement::PathKind::Confined)
+/// walk in a session that has a confinement root. Every other walk leaves it
+/// `None`, which is upstream's `pabs[0] == '\0'` and means "nothing to judge".
+///
+/// upstream: `rsync-3.5.0/syscall.c:286` `ona_open()` with its `out_abs` /
+/// `out_cap` pair.
+fn owner_walk_open_tracked(
+    path: &Path,
+    flags: OFlags,
+    mode: Mode,
+    kind: crate::confinement::PathKind,
+    resolved: &mut Option<PathBuf>,
+) -> io::Result<OwnedFd> {
     // upstream: syscall.c:300-302 - "Opted out (local --insecure-links, or a
     // daemon module with `insecure links = yes`): restore the legacy
     // symlink-following open." The test sits at the top of ona_open(), so it
@@ -393,6 +431,7 @@ fn owner_walk_open(
                     // `--partial-dir`/`--temp-dir` shapes unconfined.
                     tracker.step(&name);
                     tracker.refuse_if_outside()?;
+                    *resolved = tracker.resolved().map(Path::to_path_buf);
                     return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
                 }
                 Err(errno) => return Err(io::Error::from_raw_os_error(errno.raw_os_error())),
@@ -430,6 +469,7 @@ fn owner_walk_open(
             // than diverged.
             tracker.step(&name);
             tracker.refuse_if_outside()?;
+            *resolved = tracker.resolved().map(Path::to_path_buf);
             return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
         }
         tracker.step(&name);
@@ -451,6 +491,7 @@ fn owner_walk_open(
     // `O_PATH`, which names a location and is not a working descriptor. The
     // reopen is the same open the caller would have got before, and it is
     // subject to the sandbox exactly as that one was.
+    *resolved = tracker.resolved().map(Path::to_path_buf);
     if by_location {
         return rustix::fs::openat(dirfd.as_fd(), ".", flags | OFlags::CLOEXEC, mode)
             .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
@@ -474,16 +515,55 @@ fn owner_walk_open(
 ///   which no operator path being renamed onto can have.
 /// - Otherwise see `owner_walk_open`.
 pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
+    owner_trusted_parent_kind(path, crate::confinement::PathKind::Ancillary)
+}
+
+/// [`owner_trusted_parent`] with the caller's
+/// [`PathKind`](crate::confinement::PathKind).
+///
+/// A [`Confined`](crate::confinement::PathKind::Confined) parent walk carries
+/// upstream's SECOND check: after the parent has been resolved, the LEAF's
+/// would-be absolute path is judged against the confinement root. Judging the
+/// parent alone is not the same rule - an absolute walk is allowed to pass
+/// through the root's own ancestors on the way down, so a parent that resolves
+/// to `/srv` under a root of `/srv/mod` reads as "still descending" while
+/// `/srv/<leaf>` has plainly diverged.
+///
+/// upstream: `rsync-3.5.0/syscall.c:581-596` `owner_walk_parent()` - the
+/// `snprintf(leafabs, "%s/%s", pabs, *bname)` and the
+/// `abspath_outside_confinement(leafabs)` that follows it, both gated on
+/// `operator_path_resolve`.
+///
+/// # Errors
+///
+/// - `ELOOP` when the walk refuses an untrusted-owner symlink, or when the
+///   resolved leaf lands outside the confinement root.
+/// - Otherwise see [`owner_trusted_parent`].
+fn owner_trusted_parent_kind(
+    path: &Path,
+    kind: crate::confinement::PathKind,
+) -> io::Result<(OwnedFd, OsString)> {
     let Some(leaf) = path.file_name().map(OsStr::to_os_string) else {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     };
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
-    let dirfd = owner_walk_open(
+    let mut parent_abs = None;
+    let dirfd = owner_walk_open_tracked(
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY,
         Mode::empty(),
-        crate::confinement::PathKind::Ancillary,
+        kind,
+        &mut parent_abs,
     )?;
+    // upstream: `if (pabs[0])` - an untracked walk has nothing to judge.
+    if let Some(abs) = parent_abs
+        && crate::confinement::outside_session_root(
+            &abs.join(&leaf),
+            crate::confinement::PathKind::Confined,
+        )
+    {
+        return Err(io::Error::from_raw_os_error(libc::ELOOP));
+    }
     Ok((dirfd, leaf))
 }
 
@@ -532,7 +612,7 @@ pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:1894` `do_rename_at()` under `operator_path_resolve`
+/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under `operator_path_resolve`
 ///   - `owner_walk_parent` on each side, then `renameat`.
 /// - `rsync-3.5.0/backup.c:200-219` `make_backup()` - the caller that sets the
 ///   operator-path mode around the backup rename.
@@ -552,6 +632,43 @@ pub fn operator_rename(old_path: &Path, new_path: &Path, replace: bool) -> io::R
     )
 }
 
+/// [`operator_rename`] additionally bound to the session's confinement root.
+///
+/// The rename tier of the same `--backup-dir` backup as
+/// [`operator_link_confined`], and the tier that actually runs wherever the
+/// link tier cannot: a `--backup-dir` on another mount, a non-regular
+/// pre-image, or a receiver whose nested-path link is refused by its own
+/// beneath-confinement. A trusted-owned directory symlink standing at the
+/// backup dir sends the destination's pre-transfer bytes out of the module
+/// wholesale, since the rename MOVES the inode rather than copying it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+///   1` around the whole backup.
+/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under
+///   `operator_path_resolve`.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when either
+///   resolved endpoint lands outside the confinement root. Deliberately not
+///   `EXDEV`: callers treat that as cross-device and fall back to copy+remove,
+///   which would launder the refusal.
+/// - Otherwise the `renameat(2)` errno.
+pub fn operator_rename_confined(old_path: &Path, new_path: &Path, replace: bool) -> io::Result<()> {
+    let kind = crate::confinement::PathKind::Confined;
+    let (old_dirfd, old_leaf) = owner_trusted_parent_kind(old_path, kind)?;
+    let (new_dirfd, new_leaf) = owner_trusted_parent_kind(new_path, kind)?;
+    crate::renameat(
+        old_dirfd.as_fd(),
+        &old_leaf,
+        new_dirfd.as_fd(),
+        &new_leaf,
+        replace,
+    )
+}
+
 /// Hard-link `old_path` to `new_path` with both endpoints resolved by the
 /// ownership walk.
 ///
@@ -561,9 +678,9 @@ pub fn operator_rename(old_path: &Path, new_path: &Path, replace: bool) -> io::R
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:200-207` `link_or_rename()` - `do_link_at` first,
+/// - `rsync-3.5.0/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
 ///   `do_rename_at` on failure.
-/// - `rsync-3.5.0/syscall.c:676` `do_link_at()` under `operator_path_resolve` -
+/// - `rsync-3.5.0/syscall.c:961` `do_link_at()` under `operator_path_resolve` -
 ///   `owner_walk_parent` on each side, then `linkat`.
 ///
 /// # Errors
@@ -574,6 +691,38 @@ pub fn operator_rename(old_path: &Path, new_path: &Path, replace: bool) -> io::R
 pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
     let (old_dirfd, old_leaf) = owner_trusted_parent(old_path)?;
     let (new_dirfd, new_leaf) = owner_trusted_parent(new_path)?;
+    crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
+}
+
+/// [`operator_link`] additionally bound to the session's confinement root.
+///
+/// The `--backup-dir` link tier. Ownership alone cannot bound this: a
+/// non-chrooted daemon writes everything it creates as its own uid, so a
+/// directory symlink standing where the operator named `--backup-dir` is
+/// TRUSTED-owned by construction and the walk follows it by design. The link
+/// then deposits a second name for the destination's pre-transfer inode outside
+/// the module, and the temp-to-destination rename that follows leaves that name
+/// holding the only copy of the pre-image. Ownership decides whether to follow;
+/// the root decides whether the landing site is acceptable.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+///   1` around the WHOLE backup, so it covers `link_or_rename()`'s link tier
+///   and not only the rename it falls back to.
+/// - `rsync-3.5.0/backup.c:226-247` `link_or_rename()` - `do_link_at` first.
+/// - `rsync-3.5.0/syscall.c:961` `do_link_at()` under `operator_path_resolve`.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when either
+///   resolved endpoint lands outside the confinement root.
+/// - Otherwise the `linkat(2)` errno - notably `EXDEV`, which the caller treats
+///   as its signal to fall through to the rename tier.
+pub fn operator_link_confined(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    let kind = crate::confinement::PathKind::Confined;
+    let (old_dirfd, old_leaf) = owner_trusted_parent_kind(old_path, kind)?;
+    let (new_dirfd, new_leaf) = owner_trusted_parent_kind(new_path, kind)?;
     crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
 }
 
