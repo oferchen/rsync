@@ -35,6 +35,7 @@
 //! refuses an absolute symlink target rather than walking through it.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -324,28 +325,206 @@ fn mkfifo(path: &Path) {
 /// one.
 #[test]
 fn the_delete_routing_refuses_only_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.plant_file(&fixture.outside, "victim");
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.unlink_file(&fixture.through_symlink("victim"));
+
+    assert_refused(&refused, victim.exists(), "unlink_file");
+}
+
+/// Install a confinement session rooted at `root`.
+///
+/// Extracted so the six session-installed cells cannot drift apart in how they
+/// activate confinement. The activation IS the fixture for those cells, and one
+/// that built a subtly different shape would measure a different thing while
+/// reading identically.
+///
+/// `install_session` writes process-global state, so these cells rely on
+/// nextest's process-per-test execution to stay independent.
+fn install_confinement_root(root: &Path) {
     use fast_io::confinement::{
         Activation, DaemonState, LocalInsecureLinks, Role, install_session,
     };
-
-    let fixture = Fixture::new();
-    let victim = fixture.plant_file(&fixture.outside, "victim");
 
     install_session(&Activation {
         role: Role::Receiver,
         daemon: DaemonState::NotDaemon,
         insecure_links: LocalInsecureLinks::default(),
-        confine_root: Some(fixture.tree.clone()),
+        confine_root: Some(root.to_path_buf()),
     });
+}
 
-    let refused = RealDeleteFs.unlink_file(&fixture.through_symlink("victim"));
-
+/// Assert a routed method refused the escape and left the victim in place.
+///
+/// `survived` is supplied by the caller rather than computed from a path here:
+/// the symlink cell must probe with `symlink_metadata`, because an `exists()`
+/// on a link pointing at `/dev/null` follows it and answers about the target
+/// instead of about the link.
+fn assert_refused(result: &io::Result<()>, survived: bool, what: &str) {
     assert!(
-        refused.is_err(),
-        "with a confinement root installed the routed delete must refuse the escape"
+        result.is_err(),
+        "with a confinement root installed the routed {what} must refuse the escape"
     );
     assert!(
-        victim.exists(),
-        "the out-of-tree victim must survive a refused delete"
+        survived,
+        "the out-of-tree victim must survive a refused {what}"
     );
+}
+
+/// `rmdir` refuses the escape once a session root is installed.
+#[test]
+fn rmdir_refuses_the_escape_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.outside.join("victim");
+    fs::create_dir(&victim).expect("plant victim dir");
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.rmdir(&fixture.through_symlink("victim"));
+
+    assert_refused(&refused, victim.is_dir(), "rmdir");
+}
+
+/// `unlink_symlink` refuses the escape once a session root is installed.
+#[test]
+fn unlink_symlink_refuses_the_escape_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.outside.join("victim");
+    plant_symlink(Path::new("/dev/null"), &victim);
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.unlink_symlink(&fixture.through_symlink("victim"));
+
+    assert_refused(
+        &refused,
+        victim.symlink_metadata().is_ok(),
+        "unlink_symlink",
+    );
+}
+
+/// `unlink_device` refuses the escape once a session root is installed.
+///
+/// The victim is a regular file for the reason given on the escape cell:
+/// `RealDeleteFs` routes every file-like kind to the same unlink, so the
+/// inode type is irrelevant to what is being measured.
+#[test]
+fn unlink_device_refuses_the_escape_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.plant_file(&fixture.outside, "victim");
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.unlink_device(&fixture.through_symlink("victim"));
+
+    assert_refused(&refused, victim.exists(), "unlink_device");
+}
+
+/// `unlink_special` refuses the escape once a session root is installed.
+#[test]
+fn unlink_special_refuses_the_escape_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.outside.join("victim");
+    mkfifo(&victim);
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.unlink_special(&fixture.through_symlink("victim"));
+
+    assert_refused(
+        &refused,
+        victim.symlink_metadata().is_ok(),
+        "unlink_special",
+    );
+}
+
+/// `remove_dir_all` refuses the escape once a session root is installed.
+///
+/// The sharpest of the five: unrefused, this one destroys a whole out-of-tree
+/// subtree rather than a single entry, so the payload is asserted separately
+/// from the directory.
+#[test]
+fn remove_dir_all_refuses_the_escape_once_a_session_root_is_installed() {
+    let fixture = Fixture::new();
+    let victim = fixture.outside.join("victim");
+    fs::create_dir(&victim).expect("plant victim dir");
+    fs::create_dir(victim.join("nested")).expect("plant nested dir");
+    let payload = victim.join("nested").join("payload");
+    fs::write(&payload, b"irreplaceable").expect("plant payload");
+
+    install_confinement_root(&fixture.tree);
+
+    let refused = RealDeleteFs.remove_dir_all(&fixture.through_symlink("victim"));
+
+    assert_refused(&refused, victim.is_dir(), "remove_dir_all");
+    assert!(
+        payload.exists(),
+        "the out-of-tree payload must survive a refused remove_dir_all"
+    );
+}
+
+/// Non-vacuity companion for the four cells routing through `unlink_at` with
+/// [`UnlinkFlags::File`] - `unlink_file`, `unlink_symlink`, `unlink_device`
+/// and `unlink_special`, which share one method body.
+///
+/// Without it a mutation that made the resolver refuse EVERY path would
+/// satisfy all four refusal assertions. Three companions cover the three
+/// distinct confined success paths (`unlinkat` file, `unlinkat` dir, and the
+/// recursive peel); one per refusal cell would restate the same evidence.
+#[test]
+fn an_in_tree_unlink_still_succeeds_with_a_session_root_installed() {
+    let fixture = Fixture::new();
+    let bystander = fixture.plant_file(&fixture.outside, "victim");
+    let target = fixture.plant_file(&fixture.tree.join("real"), "victim");
+
+    install_confinement_root(&fixture.tree);
+
+    RealDeleteFs
+        .unlink_file(&fixture.in_tree("victim"))
+        .expect("a confined in-tree unlink must still succeed");
+
+    assert!(
+        !target.exists(),
+        "the in-tree file should have been removed"
+    );
+    assert!(
+        bystander.exists(),
+        "nothing outside the tree may be touched"
+    );
+}
+
+/// Non-vacuity companion for the confined `unlinkat` directory path.
+#[test]
+fn an_in_tree_rmdir_still_succeeds_with_a_session_root_installed() {
+    let fixture = Fixture::new();
+    let target = fixture.tree.join("real").join("victim");
+    fs::create_dir(&target).expect("plant target dir");
+
+    install_confinement_root(&fixture.tree);
+
+    RealDeleteFs
+        .rmdir(&fixture.in_tree("victim"))
+        .expect("a confined in-tree rmdir must still succeed");
+
+    assert!(!target.exists(), "the in-tree dir should have been removed");
+}
+
+/// Non-vacuity companion for the confined recursive peel.
+#[test]
+fn an_in_tree_remove_dir_all_still_succeeds_with_a_session_root_installed() {
+    let fixture = Fixture::new();
+    let target = fixture.tree.join("real").join("victim");
+    fs::create_dir(&target).expect("plant target dir");
+    fs::write(target.join("payload"), b"expendable").expect("plant payload");
+
+    install_confinement_root(&fixture.tree);
+
+    RealDeleteFs
+        .remove_dir_all(&fixture.in_tree("victim"))
+        .expect("a confined in-tree recursive delete must still succeed");
+
+    assert!(!target.exists(), "the in-tree dir should have been removed");
 }
