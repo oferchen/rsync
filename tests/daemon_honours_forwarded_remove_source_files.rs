@@ -22,6 +22,21 @@
 //! split, because both parsers can be "correct" about a field nothing reads;
 //! this test asserts the files are GONE from the module after a real transfer.
 //!
+//! WHY THIS WAITS INSTEAD OF STATTING IMMEDIATELY. The unlink is DEFERRED, not
+//! done inline at send time: the sender marks the entry pending and only
+//! removes the file once the receiver confirms the commit with `MSG_SUCCESS`
+//! (`sender.c:131-182 successful_send()`, mirrored at
+//! `generator/transfer/transfer_loop.rs:1145-1157`). The client process can
+//! therefore exit before the daemon's removal has landed, so reading the
+//! filesystem the instant `status()` returns is an UNSYNCHRONISED read of a
+//! peer's work - it measures which process won a race, not what the daemon
+//! did. Measured: it passed on macOS and on the musl cell and failed on the
+//! Linux `--all-features` cell, where the client exits sooner.
+//!
+//! The bounded wait below is a synchronisation barrier, not a retry: nothing is
+//! re-attempted, and a daemon that never removes the file still fails the test
+//! when the deadline expires.
+//!
 //! Skip conditions (the test passes with a printed reason):
 //! - Loopback TCP is unavailable.
 
@@ -111,14 +126,36 @@ fn pull_removing_sources(spelling: &str) -> Option<(bool, bool, bool)> {
         ])
         .status()
         .expect("run client");
+    // Observe BEFORE killing the daemon: it is the daemon that performs the
+    // removal, so tearing it down first would guarantee the very absence of
+    // work this test is trying to detect.
+    let source_remains = source_still_present_after_settling(&module.join("f.txt"));
+
     let _ = daemon.kill();
     let _ = daemon.wait();
 
     Some((
         status.success(),
-        module.join("f.txt").exists(),
+        source_remains,
         dest.join("f.txt").exists(),
     ))
+}
+
+/// Waits for the daemon's deferred source removal to land, and reports whether
+/// the file is STILL there once the wait is over.
+///
+/// The deadline is generous because it bounds a failure, not a success: a
+/// daemon that removes the file returns as soon as it has, and a daemon that
+/// never removes it pays the full wait exactly once and then fails the test.
+fn source_still_present_after_settling(source: &Path) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if !source.exists() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    source.exists()
 }
 
 /// Both spellings name the same option in `parse_arguments()`;
