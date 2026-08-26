@@ -82,6 +82,30 @@ impl ReceiverContext {
                 if !self.config.flags.devices {
                     continue;
                 }
+                // upstream: generator.c:2032 - the device arm is
+                // `am_root && preserve_devices && ftype == FT_DEVICE`. Without
+                // the privilege term an unprivileged receiver enters the
+                // creation branch, unlinks whatever occupies the destination,
+                // and only then fails the `mknod` it was never able to
+                // perform - destroying an existing file. Upstream instead
+                // falls through to the non-regular skip at generator.c:2109,
+                // leaving the destination untouched.
+                //
+                // The term is `am_root != 0`, so `--fake-super` qualifies: it
+                // is the -1 arm of the tri-state and still writes the 0600
+                // placeholder (`syscall.c:do_mknod()`).
+                if !metadata::am_root() && !self.config.fake_super {
+                    // upstream: generator.c:2109-2114 - INFO_GTE(NONREG, 1),
+                    // which is info_verbosity[0] and so prints at default
+                    // verbosity.
+                    info_log!(
+                        Nonreg,
+                        1,
+                        "skipping non-regular file \"{}\"",
+                        entry.path().display()
+                    );
+                    continue;
+                }
             } else if is_special {
                 if !self.config.flags.specials {
                     continue;

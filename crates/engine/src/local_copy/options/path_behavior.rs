@@ -424,10 +424,31 @@ impl LocalCopyOptions {
 
     /// Reports whether a device node may actually be created.
     ///
-    /// upstream: generator.c:2031 `!drop_devices && ... preserve_devices`.
+    /// Upstream additionally requires `am_root` to be non-zero, so an
+    /// unprivileged receiver skips the entry outright instead of removing any
+    /// obstruction and then failing the `mknod` it was never able to perform.
+    ///
+    /// The privilege term is `am_root != 0` - root, `--super` *or*
+    /// `--fake-super` - which is deliberately NOT
+    /// [`Self::am_root`](super::super::types::LocalCopyOptions::am_root): that
+    /// accessor answers `am_root > 0` for the ownership rules and reports
+    /// false under `--fake-super`, where upstream still writes the `0600`
+    /// placeholder (`syscall.c:do_mknod()`, the `am_root < 0` branch).
+    ///
+    /// upstream: generator.c:2031-2033 `!drop_devices && ((am_root &&
+    /// preserve_devices && ftype == FT_DEVICE) || ...)`.
     #[must_use]
-    pub const fn may_create_devices(&self) -> bool {
-        self.devices && !self.drop_devices
+    pub fn may_create_devices(&self) -> bool {
+        self.devices && !self.drop_devices && self.may_attempt_node_creation()
+    }
+
+    /// Upstream's `am_root != 0` test, as used to gate device-node creation.
+    ///
+    /// upstream: options.c:95 `am_root` tri-state - 0 normal, 1 root,
+    /// 2 `--super`, -1 `--fake-super`; every non-zero value permits the
+    /// `mknod` attempt.
+    fn may_attempt_node_creation(&self) -> bool {
+        self.fake_super || self.super_mode.unwrap_or_else(::metadata::am_root)
     }
 
     /// Reports whether a FIFO or socket may actually be created.
