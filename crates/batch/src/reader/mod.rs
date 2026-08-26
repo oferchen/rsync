@@ -141,7 +141,33 @@ impl BatchReader {
                     format!("Failed to open batch file '{}': {}", path.display(), e),
                 ))
             })?;
+            Self::reject_non_regular(&file, path)?;
             Ok(BatchSource::File(file))
+        }
+    }
+
+    /// Refuse a read-batch path that resolved to a non-regular file.
+    ///
+    /// The batch bytes drive the protocol parser, so a FIFO, device or socket
+    /// planted at the batch path lets whoever planted it stream arbitrary
+    /// protocol data into the replay. The ownership walk in
+    /// [`crate::operator_file::open_read`] refuses a foreign-owned *symlink*
+    /// but has nothing to say about a node the attacker created directly, so
+    /// upstream pairs the safe open with this check.
+    ///
+    /// The stat is taken from the opened descriptor, not the path, so it
+    /// describes the file the reader actually holds and cannot be raced. A
+    /// failing `fstat` is not itself a refusal - upstream only rejects when the
+    /// stat succeeds and reports a non-regular mode.
+    ///
+    /// upstream: batch.c:275-281
+    fn reject_non_regular(file: &File, path: &Path) -> BatchResult<()> {
+        match file.metadata() {
+            Ok(meta) if !meta.file_type().is_file() => Err(BatchError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Batch file \"{}\" is not a regular file", path.display()),
+            ))),
+            _ => Ok(()),
         }
     }
 

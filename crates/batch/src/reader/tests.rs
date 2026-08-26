@@ -36,6 +36,35 @@ mod reader_creation_tests {
         assert!(reader.is_ok());
     }
 
+    /// A character device at the read-batch path must be refused.
+    ///
+    /// `/dev/null` is the fixture upstream's own testsuite clones with
+    /// `mknod` (`batch-file-symlink_test.py`): it is openable by anyone, so
+    /// the safe open succeeds and the refusal has to come from the mode check
+    /// on the opened descriptor. Without that check the reader consumes zero
+    /// bytes from the device and reports a generic header failure, treating
+    /// attacker-streamable protocol data as a batch file.
+    ///
+    /// `create_with_valid_file` above is the non-vacuity companion: it proves
+    /// this same open path accepts a regular file, so a refusal here cannot be
+    /// the open failing for an unrelated reason.
+    ///
+    /// upstream: batch.c:275-281
+    #[test]
+    #[cfg(unix)]
+    fn read_batch_refuses_a_character_device() {
+        let config = BatchConfig::new(BatchMode::Read, "/dev/null".to_owned(), 30);
+
+        let Err(err) = BatchReader::new(config) else {
+            panic!("a character device was accepted as a batch file");
+        };
+
+        assert!(
+            err.to_string().contains("is not a regular file"),
+            "expected the non-regular refusal, got: {err}"
+        );
+    }
+
     #[test]
     fn create_with_nonexistent_file() {
         let config = BatchConfig::new(
