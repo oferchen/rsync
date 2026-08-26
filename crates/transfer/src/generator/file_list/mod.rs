@@ -542,6 +542,27 @@ impl GeneratorContext {
     }
 }
 
+/// Whether an operand carries upstream's DOTDIR marker.
+///
+/// The marker is a trailing `/`, a trailing `/.`, or the bare `.` itself. It
+/// means "transfer the CONTENTS of this directory" rather than the directory
+/// entry, and it carries a second consequence that is easy to miss: it makes
+/// `link_stat()` follow a symlink-to-directory *unconditionally*, with no
+/// `--copy-dirlinks` required. Without that, `host:current/` where
+/// `current -> releases/2026-08-25` is `lstat`ed as a symlink, the walk never
+/// descends, and the transfer silently delivers nothing.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:2589-2594` - a trailing slash sets `DOTDIR_NAME`.
+/// - `rsync-3.5.0/flist.c:2604` - a trailing `/.` sets it too.
+/// - `rsync-3.5.0/flist.c:2697` - `link_stat(fbuf, &st, copy_dirlinks ||
+///   name_type != NORMAL_NAME)`; the second disjunct is this marker.
+pub(super) fn operand_has_dotdir_marker(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    bytes == b"." || bytes.ends_with(b"/") || bytes.ends_with(b"/.")
+}
+
 /// Splits a source path for `--relative` mode into (base, full path).
 ///
 /// Mirrors upstream rsync's `--relative` handling in `flist.c:2316-2350`:
@@ -633,13 +654,14 @@ fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
 ///   * `/`             -> base=`/`,         path=`/`             (dotdir)
 ///   * `foo`           -> base=`.`,         path=`foo`
 fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
-    // Upstream's DOTDIR_NAME branch (flist.c:2312-2322) preserves a
-    // trailing slash to signal "transfer the contents only". Preserve
-    // base == path so `walk_path_with_metadata`'s `relative.is_empty()`
-    // branch still emits `.` for the source root.
-    let s = path.as_os_str();
-    let bytes = s.as_encoded_bytes();
-    if bytes.last() == Some(&b'/') {
+    // Upstream's DOTDIR_NAME branch (flist.c:2312-2322) preserves the marker
+    // to signal "transfer the contents only". Preserve base == path so
+    // `walk_path_with_metadata`'s `relative.is_empty()` branch still emits `.`
+    // for the source root. Both spellings of the marker take this branch: a
+    // trailing `/.` is DOTDIR just as much as a trailing `/`, and routing it
+    // through `Path::parent()` instead would name the entries under the
+    // operand's own basename rather than transferring its contents.
+    if operand_has_dotdir_marker(path) {
         return (path.to_path_buf(), path.to_path_buf());
     }
     // `Path::parent()` returns the parent directory or `None` for a path
