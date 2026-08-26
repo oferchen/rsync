@@ -68,7 +68,7 @@ daemon-auth-group pass
 daemon-auth-users-comma-only pass
 daemon-chroot skip
 daemon-chroot-acl skip
-daemon-chroot-munge-default fail
+daemon-chroot-munge-default pass
 daemon-config pass
 daemon-config-symlink pass
 daemon-copy-links-symlink pass
