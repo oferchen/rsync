@@ -69,7 +69,7 @@ impl Fixture {
 ///
 /// The assertion is load-bearing: a mutation sweep that replaced the
 /// planted symlinks with regular files left
-/// [`open_fallback_drops_o_nofollow_at_the_leaf`] still passing, because
+/// [`open_fallback_honours_o_nofollow_at_the_leaf`] still passing, because
 /// reading the expected bytes back does not by itself say the leaf was
 /// followed. Pinning the fixture shape is what makes that test
 /// falsifiable.
@@ -207,20 +207,24 @@ fn open_fallback_without_a_symlink_stays_in_the_tree() {
     assert_eq!(read_to_string(&mut opened), "in-tree");
 }
 
-/// The second, independent defect: the fallback rebuilds the open from
-/// `OpenOptions`, which cannot express `O_NOFOLLOW`, so the caller's
-/// refusal to follow the TERMINAL component is discarded. The leaf here
-/// is itself a symlink out of the tree; a call that honoured the flag
-/// would fail with `ELOOP`, and instead it succeeds and reads the
-/// out-of-tree bytes.
+/// The second, independent defect, now CLOSED: the fallback rebuilt the
+/// open from `OpenOptions`, which cannot express `O_NOFOLLOW`, so the
+/// caller's refusal to follow the TERMINAL component was discarded and
+/// the symlinked leaf resolved out of the tree. The fallback now honours
+/// the whole flag word and refuses with `ELOOP`.
+///
+/// Paired with [`the_sandbox_branch_honours_o_nofollow_on_the_same_leaf`],
+/// which asserts the SAME refusal through the confined branch. The pair
+/// began as a DIVERGENCE pin - the two branches disagreed, and that
+/// disagreement is what identified the dropped flag. It is now a PARITY
+/// pin: the fallback must not drift away from the confined branch again.
 #[test]
-fn open_fallback_drops_o_nofollow_at_the_leaf() {
+fn open_fallback_honours_o_nofollow_at_the_leaf() {
     let fixture = Fixture::new();
     fs::write(fixture.outside.join("secret"), b"out-of-tree").expect("plant the secret");
     let leaf = fixture.root.join("leaflink");
     plant_symlink(&fixture.outside.join("secret"), &leaf);
-
-    let mut opened = fast_io::openat_via_sandbox_or_fallback(
+    let err = fast_io::openat_via_sandbox_or_fallback(
         None,
         &fixture.root,
         Path::new("leaflink"),
@@ -228,20 +232,44 @@ fn open_fallback_drops_o_nofollow_at_the_leaf() {
         libc::O_RDONLY | libc::O_NOFOLLOW,
         0,
     )
-    .expect("O_NOFOLLOW is dropped, so the symlinked leaf is followed");
-
+    .expect_err("the fallback must refuse the symlinked leaf under O_NOFOLLOW");
     assert_eq!(
-        read_to_string(&mut opened),
-        "out-of-tree",
-        "no escape: the followed leaf did not resolve out of the tree"
+        err.raw_os_error(),
+        Some(libc::ELOOP),
+        "expected O_NOFOLLOW to refuse the leaf, got {err}"
     );
 }
 
-/// Paired control for [`open_fallback_drops_o_nofollow_at_the_leaf`]:
+/// Non-vacuity companion for [`open_fallback_honours_o_nofollow_at_the_leaf`].
+///
+/// The sandbox branch already had one; the fallback branch did not, because
+/// while its pin asserted a SUCCESS the success was itself the evidence.
+/// Now that it asserts a refusal, the pin would pass just as well if the
+/// fallback refused every input - so a regular in-tree leaf under the same
+/// `O_NOFOLLOW` must still open.
+#[test]
+fn open_fallback_opens_a_regular_leaf_under_o_nofollow() {
+    let fixture = Fixture::new();
+    let leaf = fixture.root.join("real").join("secret");
+    fs::write(&leaf, b"in-tree").expect("plant the in-tree leaf");
+    let mut opened = fast_io::openat_via_sandbox_or_fallback(
+        None,
+        &fixture.root,
+        Path::new("real/secret"),
+        &leaf,
+        libc::O_RDONLY | libc::O_NOFOLLOW,
+        0,
+    )
+    .expect("a regular in-tree leaf still opens under O_NOFOLLOW");
+    assert_eq!(read_to_string(&mut opened), "in-tree");
+}
+
+/// Paired control for [`open_fallback_honours_o_nofollow_at_the_leaf`]:
 /// the SAME leaf, the SAME flags, routed through a real `DirSandbox` so
-/// the confined `openat` branch runs instead. It fails with `ELOOP`,
-/// which is what identifies the flag as dropped by the fallback rather
-/// than ignored by the kernel.
+/// the confined `openat` branch runs instead. Both branches must now
+/// refuse with `ELOOP`. This cell is what proved the kernel was not
+/// simply ignoring the flag: it refused here even while the fallback
+/// still followed.
 #[test]
 fn the_sandbox_branch_honours_o_nofollow_on_the_same_leaf() {
     let fixture = Fixture::new();
