@@ -19,6 +19,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 # `include!("path")`, allowing the newlines rustfmt itself inserts when the
@@ -27,7 +28,9 @@ from pathlib import Path
 # the source tree and are deliberately not matched.
 INCLUDE_RE = re.compile(r"""include!\s*\(\s*"([^"]+)"\s*,?\s*\)""")
 
-EDITION = "2024"
+
+class EditionError(Exception):
+    """The workspace Rust edition could not be resolved."""
 
 
 def repo_root() -> Path:
@@ -38,6 +41,35 @@ def repo_root() -> Path:
         text=True,
     )
     return Path(out.stdout.strip())
+
+
+def workspace_edition(root: Path) -> str:
+    """Read `edition` from `[workspace.package]` in the workspace manifest.
+
+    rustfmt has no notion of a workspace and defaults to edition 2015, so the
+    edition has to be handed to it explicitly. Restating the value here would
+    let it drift from the manifest unnoticed - formatting against a stale
+    edition either reports spurious diffs or masks real ones - so it is read at
+    runtime and a missing value is a hard error, never a silent default.
+    """
+    manifest = root / "Cargo.toml"
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise EditionError(f"cannot read {manifest}: {error}") from error
+    except tomllib.TOMLDecodeError as error:
+        raise EditionError(f"cannot parse {manifest}: {error}") from error
+
+    section = data.get("workspace")
+    package = section.get("package") if isinstance(section, dict) else None
+    edition = package.get("edition") if isinstance(package, dict) else None
+    if not isinstance(edition, str) or not edition:
+        raise EditionError(
+            f"{manifest} declares no [workspace.package] edition; rustfmt would\n"
+            "fall back to edition 2015 and format every include!()d file against\n"
+            "the wrong edition"
+        )
+    return edition
 
 
 def tracked_rust_sources(root: Path) -> list[Path]:
@@ -78,6 +110,14 @@ def main() -> int:
     args = parser.parse_args()
 
     root = repo_root()
+
+    try:
+        edition = workspace_edition(root)
+    except EditionError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(f"rustfmt edition {edition} (from [workspace.package] in Cargo.toml)")
+
     targets, missing = included_files(root)
 
     if missing:
@@ -90,7 +130,7 @@ def main() -> int:
         print("no include!() targets found - the enumerator matched nothing", file=sys.stderr)
         return 1
 
-    cmd = ["rustfmt", "--edition", EDITION]
+    cmd = ["rustfmt", "--edition", edition]
     if not args.write:
         cmd.append("--check")
     cmd += [str(path) for path in targets]
@@ -107,7 +147,7 @@ def main() -> int:
         return result.returncode
 
     verb = "reformatted" if args.write else "checked"
-    print(f"{verb} {len(targets)} include!()d file(s)")
+    print(f"{verb} {len(targets)} include!()d file(s) at edition {edition}")
     return 0
 
 
