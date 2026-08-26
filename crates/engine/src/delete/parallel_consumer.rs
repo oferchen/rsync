@@ -802,10 +802,26 @@ mod tests {
     /// DFD.3.b (end-to-end): with an ancestor component already swapped to an
     /// outside-pointing symlink before `run()`, the consumer's per-cohort
     /// `open_dir_at` component walk refuses the symlink (`O_NOFOLLOW`), so
-    /// `parent_fd` falls back to `None` and the path-based unlink also
-    /// traverses the planted symlink and fails. Either way no deletion lands
-    /// on the outside sentinel; the failure surfaces as a non-fatal io error
-    /// and zero files removed.
+    /// `parent_fd` falls back to `None` and each op takes the path-based
+    /// method. That fallback is `RealDeleteFs::unlink_file`, which resolves
+    /// through `ConfinedFallback::confined()`, and the ownership walk refuses
+    /// the out-of-root symlink component with `ELOOP`. No deletion lands on
+    /// the outside sentinel; the refusal surfaces as a non-fatal io error and
+    /// zero files removed.
+    ///
+    /// The fixture needs three things, and with any one missing the cell
+    /// asserts nothing:
+    ///
+    /// 1. `outside/cohort` must EXIST, or the fallback `ENOENT`s before it can
+    ///    reach a confinement decision.
+    /// 2. The sentinel must sit at `outside/cohort/victim`, the path a followed
+    ///    ancestor symlink actually resolves to - not `outside/victim`.
+    /// 3. A confinement session must be installed, or the walk has no root to
+    ///    judge against: it resolves the components, reports `Confined`, and
+    ///    the `unlinkat` then lands outside the tree. Measured both ways -
+    ///    with no session the out-of-root file is deleted and counted as a
+    ///    successful unlink with no io error; with one the walk returns
+    ///    `ELOOP`.
     #[cfg(unix)]
     #[test]
     fn consumer_refuses_ancestor_symlink_and_spares_outside_sentinel() {
@@ -817,15 +833,29 @@ mod tests {
         let root = tmp.path().join("root");
         std::fs::create_dir_all(root.join("ancestor").join("cohort")).expect("mk tree");
         let outside = tmp.path().join("outside");
-        std::fs::create_dir(&outside).expect("mk outside");
-        // Same leaf name as the op makes any redirect maximally detectable.
-        let sentinel = outside.join("victim");
+        // The redirect target must EXIST, and the sentinel must sit ON it.
+        // `op.path` is `root/ancestor/cohort/victim`, so a followed ancestor
+        // symlink resolves to `outside/cohort/victim` - not `outside/victim`.
+        // With the sentinel anywhere else, or with `outside/cohort` absent,
+        // the fallback ENOENTs before reaching any confinement decision and
+        // every assertion below holds against a wholly unconfined unlink.
+        std::fs::create_dir_all(outside.join("cohort")).expect("mk redirect target");
+        let sentinel = outside.join("cohort").join("victim");
         std::fs::write(&sentinel, b"do-not-touch").expect("write sentinel");
 
         // Pre-stage the ancestor-symlink swap.
         std::fs::rename(root.join("ancestor"), root.join("ancestor.bak")).expect("aside");
         symlink(&outside, root.join("ancestor")).expect("plant symlink");
 
+        // The session the production daemon installs. Without it the walk has
+        // no confinement root, permits the out-of-root resolution, and this
+        // cell measures nothing - see the third fixture requirement above.
+        fast_io::confinement::install_daemon_session(fast_io::confinement::ModuleState {
+            root: Some(root.clone()),
+            chrooted: false,
+            selected: true,
+            insecure_links: fast_io::confinement::ModuleInsecureLinks::default(),
+        });
         let sandbox = Arc::new(DirSandbox::open_root(&root).expect("open root"));
         let emitter = ParallelDeleteEmitter::new(RealDeleteFs).with_sandbox(sandbox);
 
