@@ -158,6 +158,27 @@ pub(super) struct ServerLongFlags {
     /// is forwarded to a server receiver, which `fallocate()`s each destination
     /// file to its eventual length before writing to reduce fragmentation.
     pub(super) preallocate: bool,
+    /// `--fake-super` / `--no-fake-super` - record privileged metadata in the
+    /// `user.rsync.%stat` xattr instead of applying it to the inode.
+    ///
+    /// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1,
+    /// 0, 0}` - an ordinary popt entry in the one table both the client and
+    /// the server parse, so it binds wherever it appears in argv. It is
+    /// deliberately NOT emitted by `server_options()` ("only affects the side
+    /// where the option is used", rsync.1), which is exactly why an operator
+    /// injects it into the server command line - via `--rsync-path='rsync
+    /// --fake-super'` or a wrapper's rsync-path shim (upstream's own
+    /// `testsuite/rrsync-specials-denied_test.py` uses `#!/bin/sh\nexec
+    /// <RSYNC> --fake-super "$@"`). It therefore arrives BEFORE `--server`,
+    /// ahead of the compact flag string. `None` leaves the value the
+    /// transport/daemon already decided (`fake super = yes`) untouched.
+    ///
+    /// upstream has no `--no-fake-super` popt entry (options.c:670-672 defines
+    /// `super` / `no-super` / `fake-super` only); oc's own client table does
+    /// (command_builder/.../privileges.rs), so it can reach a server through
+    /// `-M--no-fake-super` and must be recognised rather than leak into the
+    /// positional path list.
+    pub(super) fake_super: Option<bool>,
     /// Re-verify the existing prefix under append (upstream: `--append-verify`,
     /// wire-encoded as a doubled `--append`, `append_mode == 2`).
     ///
@@ -490,6 +511,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         inplace: false,
         append: false,
         preallocate: false,
+        fake_super: None,
         append_verify: false,
         size_only: false,
         modify_window: None,
@@ -608,6 +630,19 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // results; the flag is carried onto the receiver config to reserve
             // extents up front.
             "--preallocate" => flags.preallocate = true,
+            // upstream: options.c:672 - `{"fake-super", 0, POPT_ARG_VAL,
+            // &am_root, -1, 0, 0}`. server_options() never emits it, so it can
+            // only reach a server the way an operator injects it:
+            // `--rsync-path='rsync --fake-super'` or an rsync-path shim. That
+            // places it ahead of `--server`, where the operand scan would
+            // otherwise mistake the first `-`-leading token for the compact
+            // flag string and strand the real `-rlptgoDe.<caps>` in the
+            // positional list. MEASURED before this arm existed: a push through
+            // such a shim delivered nothing at all and exited 0.
+            "--fake-super" => flags.fake_super = Some(true),
+            // oc-only negation (see the field doc); upstream's table has
+            // `no-super` but no `no-fake-super`.
+            "--no-fake-super" => flags.fake_super = Some(false),
             // upstream: options.c:696 / 2976-2977 - `--no-implied-dirs` is
             // forwarded to the sender on a pull. The server-side sender must omit
             // implied parent dirs from the flist at protocol < 30.
@@ -978,6 +1013,15 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--force"
             // upstream: options.c:2852-2853 - `--super` (am_root > 1).
             | "--super"
+            // upstream: options.c:672 - `--fake-super` (am_root == -1). An
+            // ordinary popt entry, so the server table binds it wherever it
+            // appears; server_options() never emits it, so it arrives only
+            // because an operator injected it (`--rsync-path='rsync
+            // --fake-super'` / an rsync-path shim) - i.e. BEFORE `--server`,
+            // where an unrecognised `-`-leading token is taken for the compact
+            // flag string. `--no-fake-super` is oc's own negation.
+            | "--fake-super"
+            | "--no-fake-super"
             // upstream: options.c:2990-2991 - `--preallocate` (preallocate_files).
             | "--preallocate"
             // upstream: options.c:2868-2871 - missing-args cooperation flags.
