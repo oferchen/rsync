@@ -356,7 +356,10 @@ mod module_access_tests {
         let path = std::path::Path::new("/tmp/test.log");
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test error");
         let err = log_file_error(path, io_err);
-        assert_eq!(err.exit_code(), core::exit_code::ExitCode::MessageIo.as_i32());
+        assert_eq!(
+            err.exit_code(),
+            core::exit_code::ExitCode::MessageIo.as_i32()
+        );
     }
 
     #[test]
@@ -425,7 +428,10 @@ mod module_access_tests {
     #[test]
     fn peer_host_display_reports_undetermined_when_no_lookup_ran() {
         assert_eq!(peer_host_display(None, false), "UNDETERMINED");
-        assert_ne!(peer_host_display(None, false), peer_host_display(None, true));
+        assert_ne!(
+            peer_host_display(None, false),
+            peer_host_display(None, true)
+        );
     }
 
     /// The sentinels must never be an address: the daemon log renders
@@ -529,7 +535,6 @@ mod module_access_tests {
         assert!(!line.ends_with("\n\n"), "line must not have double newline");
     }
 
-
     #[cfg(unix)]
     #[test]
     fn check_permissions_accepts_owner_only_file() {
@@ -582,7 +587,6 @@ mod module_access_tests {
         assert!(check_secrets_file_permissions(&secrets).is_ok());
     }
 
-
     #[cfg(unix)]
     #[test]
     fn verify_secret_rejects_other_accessible_when_strict_modes_enabled() {
@@ -602,8 +606,15 @@ mod module_access_tests {
         // violation is an auth denial, not a fatal error: verify returns
         // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
         // rather than dropping the socket mid-handshake.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
-            .expect("strict-modes violation must be a denial, not an io error");
+        let result = verify_secret_response(
+            &module,
+            "alice",
+            None,
+            "challenge",
+            "response",
+            DaemonAuthDigest::Md5,
+        )
+        .expect("strict-modes violation must be a denial, not an io error");
         assert!(
             !result,
             "other-accessible secrets under strict modes must deny auth"
@@ -627,8 +638,15 @@ mod module_access_tests {
 
         // With strict_modes disabled, the file is read even though it's world-readable.
         // Authentication will fail (wrong response), but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
-            .expect("should not error on permissions");
+        let result = verify_secret_response(
+            &module,
+            "alice",
+            None,
+            "challenge",
+            "response",
+            DaemonAuthDigest::Md5,
+        )
+        .expect("should not error on permissions");
         assert!(
             !result,
             "auth should fail due to wrong response, not permissions"
@@ -652,8 +670,15 @@ mod module_access_tests {
 
         // Permissions are fine, so the file is read. Auth will fail (wrong response)
         // but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
-            .expect("should not error on permissions");
+        let result = verify_secret_response(
+            &module,
+            "alice",
+            None,
+            "challenge",
+            "response",
+            DaemonAuthDigest::Md5,
+        )
+        .expect("should not error on permissions");
         assert!(!result, "auth should fail due to wrong response");
     }
 
@@ -692,15 +717,31 @@ mod module_access_tests {
         let response = client_digest("groupsecret", challenge);
 
         // Authorized via the `@devs` token: the group line is the credential.
-        let granted =
-            verify_secret_response(&module, "alice", Some("devs"), challenge, &response, DaemonAuthDigest::Md5)
-                .expect("no io error");
-        assert!(granted, "group member must authenticate via @devs shared secret");
+        let granted = verify_secret_response(
+            &module,
+            "alice",
+            Some("devs"),
+            challenge,
+            &response,
+            DaemonAuthDigest::Md5,
+        )
+        .expect("no io error");
+        assert!(
+            granted,
+            "group member must authenticate via @devs shared secret"
+        );
 
         // upstream: authenticate.c:318 - a plain-username authorization passes a
         // NULL group, so `@group:` lines are never consulted. Denied here.
-        let denied = verify_secret_response(&module, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
-            .expect("no io error");
+        let denied = verify_secret_response(
+            &module,
+            "alice",
+            None,
+            challenge,
+            &response,
+            DaemonAuthDigest::Md5,
+        )
+        .expect("no io error");
         assert!(
             !denied,
             "a @group secret must not match when the user was not authorized via that group"
@@ -731,8 +772,15 @@ mod module_access_tests {
 
         // The first `alice:` line mismatches, retiring the username; the later
         // `alice:rightpass` duplicate must NOT authenticate.
-        let denied = verify_secret_response(&module, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
-            .expect("no io error");
+        let denied = verify_secret_response(
+            &module,
+            "alice",
+            None,
+            challenge,
+            &response,
+            DaemonAuthDigest::Md5,
+        )
+        .expect("no io error");
         assert!(
             !denied,
             "an earlier wrong-password line must retire the username and deny"
@@ -746,9 +794,15 @@ mod module_access_tests {
             strict_modes: false,
             ..Default::default()
         };
-        let granted =
-            verify_secret_response(&module_ok, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
-                .expect("no io error");
+        let granted = verify_secret_response(
+            &module_ok,
+            "alice",
+            None,
+            challenge,
+            &response,
+            DaemonAuthDigest::Md5,
+        )
+        .expect("no io error");
         assert!(granted, "a correct first line must authenticate");
     }
 
@@ -810,7 +864,6 @@ mod module_access_tests {
         );
     }
 
-
     #[test]
     fn apply_long_form_args_parses_temp_dir_separate_args() {
         let args = vec![
@@ -849,7 +902,6 @@ mod module_access_tests {
         let _ = apply_long_form_args(&args, &mut config);
         assert!(config.temp_dir.is_none());
     }
-
 
     #[test]
     fn apply_long_form_args_parses_compare_dest_equals_format() {
@@ -988,7 +1040,11 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_parses_log_format_with_itemize() {
-        let args = vec!["--server".to_owned(), "--log-format=%i".to_owned(), ".".to_owned()];
+        let args = vec![
+            "--server".to_owned(),
+            "--log-format=%i".to_owned(),
+            ".".to_owned(),
+        ];
         let mut config = ServerConfig::default();
         let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
@@ -996,7 +1052,11 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_parses_log_format_with_itemize_and_upper_i() {
-        let args = vec!["--server".to_owned(), "--log-format=%i%I".to_owned(), ".".to_owned()];
+        let args = vec![
+            "--server".to_owned(),
+            "--log-format=%i%I".to_owned(),
+            ".".to_owned(),
+        ];
         let mut config = ServerConfig::default();
         let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
@@ -1004,7 +1064,11 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_parses_out_format_with_itemize() {
-        let args = vec!["--server".to_owned(), "--out-format=%i".to_owned(), ".".to_owned()];
+        let args = vec![
+            "--server".to_owned(),
+            "--out-format=%i".to_owned(),
+            ".".to_owned(),
+        ];
         let mut config = ServerConfig::default();
         let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
@@ -1012,7 +1076,11 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_log_format_without_itemize() {
-        let args = vec!["--server".to_owned(), "--log-format=%o".to_owned(), ".".to_owned()];
+        let args = vec![
+            "--server".to_owned(),
+            "--log-format=%o".to_owned(),
+            ".".to_owned(),
+        ];
         let mut config = ServerConfig::default();
         let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
@@ -1020,7 +1088,11 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_log_format_x_no_itemize() {
-        let args = vec!["--server".to_owned(), "--log-format=X".to_owned(), ".".to_owned()];
+        let args = vec![
+            "--server".to_owned(),
+            "--log-format=X".to_owned(),
+            ".".to_owned(),
+        ];
         let mut config = ServerConfig::default();
         let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
@@ -1159,7 +1231,9 @@ mod module_access_tests {
         let offender = apply_long_form_args(&args, &mut config);
         assert_eq!(
             offender,
-            Some(ClientArgRejection::Unrecognized("--write-batch=/tmp/bad.batch".to_owned()))
+            Some(ClientArgRejection::Unrecognized(
+                "--write-batch=/tmp/bad.batch".to_owned()
+            ))
         );
     }
 
@@ -1174,7 +1248,9 @@ mod module_access_tests {
         let offender = apply_long_form_args(&args, &mut config);
         assert_eq!(
             offender,
-            Some(ClientArgRejection::Unrecognized("--read-batch=/tmp/in.batch".to_owned()))
+            Some(ClientArgRejection::Unrecognized(
+                "--read-batch=/tmp/in.batch".to_owned()
+            ))
         );
     }
 
@@ -1189,7 +1265,9 @@ mod module_access_tests {
         let offender = apply_long_form_args(&args, &mut config);
         assert_eq!(
             offender,
-            Some(ClientArgRejection::Unrecognized("--only-write-batch=/tmp/dry.batch".to_owned()))
+            Some(ClientArgRejection::Unrecognized(
+                "--only-write-batch=/tmp/dry.batch".to_owned()
+            ))
         );
     }
 
@@ -1332,7 +1410,10 @@ mod module_access_tests {
         ];
         let mut config = ServerConfig::default();
         let offender = apply_long_form_args(&args, &mut config);
-        assert!(offender.is_none(), "no unknown should be reported: {offender:?}");
+        assert!(
+            offender.is_none(),
+            "no unknown should be reported: {offender:?}"
+        );
     }
 
     // Positional path arguments past the `.` separator must not be
@@ -1348,7 +1429,10 @@ mod module_access_tests {
         ];
         let mut config = ServerConfig::default();
         let offender = apply_long_form_args(&args, &mut config);
-        assert!(offender.is_none(), "positional paths must not flag: {offender:?}");
+        assert!(
+            offender.is_none(),
+            "positional paths must not flag: {offender:?}"
+        );
     }
 
     // WHY: upstream token.c:206-211 treats a bare `*` in the dont-compress match
@@ -1418,7 +1502,6 @@ mod module_access_tests {
         assert!(!dont_compress_is_match_all(DEFAULT_DONT_COMPRESS));
     }
 
-
     fn test_module_with_defaults() -> ModuleRuntime {
         ModuleRuntime::from(ModuleDefinition::default())
     }
@@ -1448,6 +1531,51 @@ mod module_access_tests {
     /// Non-vacuity companion for the pin above: with the directive absent the
     /// confinement stays engaged, so that test measures the directive and not a
     /// predicate that is unconditionally true.
+    /// The SAME directive must also release the Landlock sandbox. Without this
+    /// the ownership walk opts out while the kernel allowlist - pinned to
+    /// `module.path` - still refuses the read, so `insecure links = yes` is
+    /// accepted, logged, and silently inoperative. Measured on CI before the
+    /// fix: both modules sent identical byte counts and the daemon logged
+    /// "landlock fully enforced over 1 root(s)" for the opted-out module.
+    #[test]
+    fn insecure_links_also_releases_the_landlock_sandbox() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            insecure_links: true,
+            ..Default::default()
+        });
+        assert!(
+            landlock_skip_reason(&module).is_some(),
+            "`insecure links = yes` must skip Landlock; leaving it engaged makes the directive inoperative"
+        );
+    }
+
+    /// Non-vacuity companion: a default module must still be sandboxed. Without
+    /// this the test above also passes if the skip were made unconditional.
+    #[test]
+    fn a_default_module_is_still_landlock_sandboxed() {
+        let module = test_module_with_defaults();
+        assert_eq!(
+            landlock_skip_reason(&module),
+            None,
+            "a module with no opt-out and no exec hook must keep Landlock engaged"
+        );
+    }
+
+    /// The pre-existing arm must survive the extraction - it is a separate
+    /// operator decision with a different reason, not a duplicate of the above.
+    #[test]
+    fn a_configured_exec_hook_still_skips_landlock() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            pre_xfer_exec: Some("/usr/local/bin/notify.sh".into()),
+            ..Default::default()
+        });
+        let reason = landlock_skip_reason(&module).expect("exec hook must skip landlock");
+        assert!(
+            reason.contains("xfer-exec"),
+            "the hook arm must report its own reason, got: {reason}"
+        );
+    }
+
     #[test]
     fn absent_insecure_links_leaves_the_confinement_engaged() {
         let module = test_module_with_defaults();
@@ -1692,7 +1820,6 @@ mod module_access_tests {
         assert_eq!(rules[1].pattern, "*.bak");
     }
 
-
     #[test]
     fn build_pattern_rule_exclude() {
         let rule = build_pattern_rule("*.tmp", false);
@@ -1826,7 +1953,6 @@ mod module_access_tests {
         assert!(parse_daemon_filter_token("+").is_none());
     }
 
-
     #[test]
     fn parse_daemon_filter_token_exclude_keyword() {
         let rule = parse_daemon_filter_token("exclude *.bak").unwrap();
@@ -1910,15 +2036,20 @@ mod module_access_tests {
         assert!(parse_daemon_filter_token("include ").is_none());
     }
 
-
     #[test]
     fn strip_keyword_prefix_space_separator() {
-        assert_eq!(strip_keyword_prefix("exclude *.tmp", "exclude"), Some("*.tmp"));
+        assert_eq!(
+            strip_keyword_prefix("exclude *.tmp", "exclude"),
+            Some("*.tmp")
+        );
     }
 
     #[test]
     fn strip_keyword_prefix_comma_separator() {
-        assert_eq!(strip_keyword_prefix("exclude,*.tmp", "exclude"), Some("*.tmp"));
+        assert_eq!(
+            strip_keyword_prefix("exclude,*.tmp", "exclude"),
+            Some("*.tmp")
+        );
     }
 
     #[test]
@@ -1936,7 +2067,6 @@ mod module_access_tests {
     fn strip_keyword_prefix_no_match() {
         assert_eq!(strip_keyword_prefix("include *.tmp", "exclude"), None);
     }
-
 
     #[test]
     fn read_patterns_from_file_basic() {
@@ -2058,7 +2188,6 @@ mod module_access_tests {
             .collect();
         assert!(has_secluded_args_flag(&args));
     }
-
 
     #[test]
     fn apply_long_form_args_parses_backup_dir_two_arg() {
@@ -2308,7 +2437,10 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
         let dest = resolve_receiver_dest(module_path, &args, "upload");
-        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/realdir/"));
+        assert_eq!(
+            dest.as_os_str(),
+            std::ffi::OsStr::new("/srv/upload/realdir/")
+        );
     }
 
     // Non-vacuity companion: the SAME tail without the slash must NOT gain one,
@@ -2525,7 +2657,10 @@ mod module_access_tests {
             clamped.starts_with(&module_root),
             "absolute out-of-module basis must be clamped under the module, got {clamped:?}",
         );
-        assert!(!clamped.exists(), "the clamped basis must not resolve to a real out-of-tree dir");
+        assert!(
+            !clamped.exists(),
+            "the clamped basis must not resolve to a real out-of-tree dir"
+        );
     }
 
     #[test]
@@ -2744,9 +2879,11 @@ mod module_access_tests {
         // separate symlink-resolution rule is what refuses it. Asserting both
         // halves keeps a future simplification from collapsing them: a clamp
         // alone would admit the escape.
-        let clamped =
-            clamp_basis_to_module(std::path::Path::new("cd"), &module_root, &module_root);
-        assert_eq!(clamped, trap, "the lexical clamp alone does NOT refuse this");
+        let clamped = clamp_basis_to_module(std::path::Path::new("cd"), &module_root, &module_root);
+        assert_eq!(
+            clamped, trap,
+            "the lexical clamp alone does NOT refuse this"
+        );
         assert!(
             basis_resolves_outside_module(&clamped, &module_root),
             "in-module symlink whose target escapes the module must be dropped \
@@ -2780,7 +2917,10 @@ mod module_access_tests {
             clamped.starts_with(&module_root),
             "absolute --link-dest pointing outside the module root must be clamped, got {clamped:?}",
         );
-        assert!(!clamped.exists(), "the clamped basis must not name the real outside file");
+        assert!(
+            !clamped.exists(),
+            "the clamped basis must not name the real outside file"
+        );
     }
 
     #[test]
@@ -2795,8 +2935,7 @@ mod module_access_tests {
         // instead of `./...`.
         let module_path = std::path::Path::new("/srv/upload");
         let args: Vec<String> = vec![];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
     }
 
@@ -2808,8 +2947,7 @@ mod module_access_tests {
         // engine-side `DOTDIR_NAME` signal (see the bare-module test).
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
     }
 
@@ -2820,8 +2958,7 @@ mod module_access_tests {
         // and the per-positional dir/fn split emits the basename.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
@@ -2835,8 +2972,7 @@ mod module_access_tests {
         // emits "." with FLAG_TOP_DIR for the sub-directory's contents.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -2852,7 +2988,10 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/../etc/passwd".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload");
-        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/etc/passwd")]);
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from("/srv/upload/etc/passwd")]
+        );
     }
 
     #[test]
@@ -2862,7 +3001,10 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/../../secret".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload");
-        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/secret")]);
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from("/srv/upload/secret")]
+        );
     }
 
     #[test]
@@ -2892,8 +3034,7 @@ mod module_access_tests {
     fn resolve_sender_sources_strips_leading_slash_before_join() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload//d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
@@ -2919,8 +3060,7 @@ mod module_access_tests {
         std::fs::write(module_path.join("foo").join("one"), b"one\n").expect("foo/one");
 
         let args = vec![".".to_owned(), "mod/f*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "mod");
         assert_eq!(sources, vec![module_path.join("foo")]);
     }
 
@@ -2934,8 +3074,7 @@ mod module_access_tests {
         std::fs::create_dir(module_path.join("bar")).expect("bar dir");
 
         let args = vec![".".to_owned(), "mod/z*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "mod");
         assert_eq!(sources, vec![module_path.join("z*")]);
     }
 
@@ -2949,8 +3088,7 @@ mod module_access_tests {
 
         // `?` matches exactly one character; `?b` must match only `ab`.
         let args = vec![".".to_owned(), "mod/?b".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "mod");
         assert_eq!(sources, vec![module_path.join("ab")]);
     }
 
@@ -2964,8 +3102,7 @@ mod module_access_tests {
 
         // `[ab]` matches `a` or `b` but not `c`.
         let args = vec![".".to_owned(), "mod/[ab]".to_owned()];
-        let mut sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let mut sources = resolve_sender_sources(module_path, &args, "mod");
         sources.sort();
         assert_eq!(sources, vec![module_path.join("a"), module_path.join("b")]);
     }
@@ -2980,8 +3117,7 @@ mod module_access_tests {
         std::fs::write(module_path.join("visible"), b"visible").expect("visible");
 
         let args = vec![".".to_owned(), "mod/*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "mod");
         assert_eq!(sources, vec![module_path.join("visible")]);
     }
 
@@ -2994,8 +3130,7 @@ mod module_access_tests {
         let module_path = tmp.path();
 
         let args = vec![".".to_owned(), "mod/missing/file".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "mod");
         assert_eq!(sources, vec![module_path.join("missing/file")]);
     }
 
@@ -3031,8 +3166,7 @@ mod module_access_tests {
         // correctly without per-host separator translation.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from(r"C:\srv\upload/d1/d2/f2")]
@@ -3049,8 +3183,7 @@ mod module_access_tests {
         // `rsync://h/mod/d1/d2/` round-trips with the slash intact.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3069,8 +3202,7 @@ mod module_access_tests {
         // to the no-trailing-slash form rather than producing `C:\srv\upload\\d1`.
         let module_path = std::path::Path::new(r"C:\srv\upload\");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload")
-            ;
+        let sources = resolve_sender_sources(module_path, &args, "upload");
         // The exact emitted bytes are `C:\srv\upload\` + `d1/d2/f2` because
         // the resolver detects the trailing `\` as an existing separator and
         // suppresses its own `/` insertion. The result is still a valid
@@ -3252,10 +3384,7 @@ mod module_access_tests {
     #[test]
     fn auth_ro_suffix_forces_read_only_for_session() {
         // `read only = no` module, but the user is pinned to `:ro`.
-        assert!(access_effective_read_only(
-            false,
-            UserAccessLevel::ReadOnly
-        ));
+        assert!(access_effective_read_only(false, UserAccessLevel::ReadOnly));
     }
 
     #[test]
@@ -3271,10 +3400,7 @@ mod module_access_tests {
     fn auth_default_access_preserves_module_read_only() {
         // No suffix: the module's own `read only` setting stands unchanged.
         assert!(access_effective_read_only(true, UserAccessLevel::Default));
-        assert!(!access_effective_read_only(
-            false,
-            UserAccessLevel::Default
-        ));
+        assert!(!access_effective_read_only(false, UserAccessLevel::Default));
     }
 
     #[test]

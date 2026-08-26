@@ -163,7 +163,7 @@ hashtable-overflow pass
 highfd-hang pass
 inband-modname-leak skip
 inplace pass
-insecure-links-admin-optout fail
+insecure-links-admin-optout pass
 io-noop-flood-recursion skip
 io-nosend-flood-recursion skip
 io-readargs-argv-nullwrite skip

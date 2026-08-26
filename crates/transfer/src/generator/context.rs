@@ -689,11 +689,7 @@ impl GeneratorContext {
     ///   peer-supplied argv where honouring it could only WIDEN the module
     ///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
     pub(crate) fn confine_root(&self) -> Option<PathBuf> {
-        if self.config.connection.is_daemon_connection {
-            self.config.connection.daemon_module_root.clone()
-        } else {
-            self.config.connection.confine_root.clone()
-        }
+        confinement_root(&self.config.connection)
     }
 
     /// Reads a source symlink's target with the parent components resolved
@@ -1578,5 +1574,138 @@ mod device_guard_tests {
             let ft = self.file_type();
             ft.is_block_device() || ft.is_char_device()
         }
+    }
+}
+
+/// The root an operator- or peer-supplied source path must stay under, or
+/// `None` when this session confines nothing.
+///
+/// Upstream's opt-out is not a relaxation of the *ownership* rule inside the
+/// walk - it replaces the confined walk with a legacy `open()` outright, before
+/// any root is consulted. Answering it here rather than at each gate is what
+/// keeps [`GeneratorContext::source_open`] and
+/// [`GeneratorContext::read_source_link`] agreeing on the boundary.
+///
+/// For a daemon the opt-out is the served module's `insecure links = yes`; a
+/// peer-supplied `--insecure-links` is structurally unable to reach it.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:301-303` - `ona_open()` returns `open(path, flags, mode)` when
+///   `symlink_optout_allowed()`, above every use of `confinement_root()`.
+/// - `syscall.c:136-146` - `confinement_root()` - `am_daemon ? module_dir :
+///   confine_root`. The daemon arm wins unconditionally: its module directory
+///   is already the boundary, and `--confine-root` arrives in a peer-supplied
+///   argv where honouring it could only WIDEN the module
+///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
+/// - `syscall.c:123-127` - `symlink_optout_allowed()`.
+fn confinement_root(connection: &crate::config::ConnectionConfig) -> Option<PathBuf> {
+    if fast_io::confinement::session_optout_allowed() {
+        return None;
+    }
+    if connection.is_daemon_connection {
+        connection.daemon_module_root.clone()
+    } else {
+        connection.confine_root.clone()
+    }
+}
+
+#[cfg(test)]
+mod confinement_root_tests {
+    use super::confinement_root;
+    use crate::config::ConnectionConfig;
+    use fast_io::confinement::{
+        LocalInsecureLinks, ModuleInsecureLinks, ModuleState, install_daemon_session,
+        install_local_session,
+    };
+    use std::path::PathBuf;
+
+    /// Safe against the process-global session opt-out because this workspace
+    /// runs under cargo-nextest, which executes each test in its own process.
+    fn daemon_serving(root: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            is_daemon_connection: true,
+            daemon_module_root: Some(PathBuf::from(root)),
+            ..Default::default()
+        }
+    }
+
+    fn serve_module(insecure_links: bool) {
+        install_daemon_session(ModuleState {
+            root: Some(PathBuf::from("/srv/mod")),
+            chrooted: false,
+            // Upstream's `module_id >= 0`: the opt-out is unreachable before a
+            // module has been selected.
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(insecure_links),
+        });
+    }
+
+    /// `insecure links = yes` must reach the SENDER's confinement root, not
+    /// only the ownership walk inside it. Upstream short-circuits `ona_open()`
+    /// before `confinement_root()` is ever consulted, so an admin opting a
+    /// module out gets the legacy follow-any-symlink open back.
+    #[test]
+    fn module_optout_releases_the_daemon_confinement_root() {
+        serve_module(true);
+        assert_eq!(
+            confinement_root(&daemon_serving("/srv/mod")),
+            None,
+            "`insecure links = yes` must release the sender's confinement root"
+        );
+    }
+
+    /// Non-vacuity companion: without the directive the same fixture keeps the
+    /// module root. Without this the test above would also pass if
+    /// `confinement_root` had simply been made to always return `None`.
+    #[test]
+    fn a_module_without_the_optout_keeps_its_confinement_root() {
+        serve_module(false);
+        assert_eq!(
+            confinement_root(&daemon_serving("/srv/mod")),
+            Some(PathBuf::from("/srv/mod")),
+            "a default module must stay confined to its own root"
+        );
+    }
+
+    /// The non-daemon arm takes the same short-circuit, driven by the local
+    /// `--insecure-links` instead of a module directive.
+    #[test]
+    fn local_optout_releases_the_confine_root() {
+        install_local_session(LocalInsecureLinks::from_local_flag(true));
+        let connection = ConnectionConfig {
+            confine_root: Some(PathBuf::from("/restricted")),
+            ..Default::default()
+        };
+        assert_eq!(confinement_root(&connection), None);
+    }
+
+    /// Non-vacuity companion for the non-daemon arm.
+    #[test]
+    fn a_local_session_without_the_optout_keeps_its_confine_root() {
+        install_local_session(LocalInsecureLinks::from_local_flag(false));
+        let connection = ConnectionConfig {
+            confine_root: Some(PathBuf::from("/restricted")),
+            ..Default::default()
+        };
+        assert_eq!(
+            confinement_root(&connection),
+            Some(PathBuf::from("/restricted"))
+        );
+    }
+
+    /// The daemon arm ignores a peer-supplied `--confine-root`: obeying it
+    /// could only widen the module. Pins that the opt-out gate did not turn the
+    /// two arms into a fallback chain.
+    #[test]
+    fn a_daemon_never_falls_back_to_a_peer_supplied_confine_root() {
+        serve_module(false);
+        let connection = ConnectionConfig {
+            is_daemon_connection: true,
+            daemon_module_root: None,
+            confine_root: Some(PathBuf::from("/attacker-chosen")),
+            ..Default::default()
+        };
+        assert_eq!(confinement_root(&connection), None);
     }
 }

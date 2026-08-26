@@ -382,6 +382,38 @@ fn validate_client_paths_in_module(
     }))
 }
 
+/// Why this module's Landlock sandbox is skipped, or `None` to engage it.
+///
+/// Both arms are per-module operator configuration, and both are skips rather
+/// than downgrades because a Landlock ruleset cannot be relaxed once applied -
+/// it is inherited by children and only ever narrows.
+///
+/// - **exec hooks**: rulesets are inherited across `exec()`, so an allowlist
+///   pinned to the module path would block hook scripts that live outside it
+///   (the common case, e.g. `/usr/local/bin/notify.sh`).
+/// - **`insecure links = yes`**: the directive exists to restore the legacy
+///   follow-any-symlink behaviour for a module, which necessarily means reading
+///   through an in-module symlink that leaves the module tree. A kernel
+///   allowlist pinned to `module.path` refuses exactly that, so leaving
+///   Landlock engaged does not harden the module - it makes the directive
+///   silently inoperative while the daemon still logs that it accepted it.
+///   The ownership walk consults the same opt-out
+///   (`fast_io::confinement::session_optout_allowed`), so this keeps the two
+///   confinement layers agreeing on one operator decision.
+///
+/// upstream: rsync has no Landlock layer; `syscall.c:123-127`
+/// `symlink_optout_allowed()` is the whole of its daemon-side rule, and it is
+/// read as `module_id >= 0 && lp_insecure_links(module_id)`.
+fn landlock_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
+    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
+        return Some("pre-xfer-exec or post-xfer-exec configured (would block hook exec)");
+    }
+    if module.insecure_links {
+        return Some("insecure links = yes (operator opted this module out of path confinement)");
+    }
+    None
+}
+
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
 ///
 /// Called immediately after `apply_module_privilege_restrictions` has
@@ -422,12 +454,9 @@ fn engage_landlock_sandbox(
         restrict_to_module_paths,
     };
 
-    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
+    if let Some(reason) = landlock_skip_reason(module) {
         if let Some(log) = ctx.log_sink {
-            let text = format!(
-                "module '{}': landlock=skipped reason=pre-xfer-exec or post-xfer-exec configured (would block hook exec)",
-                ctx.request,
-            );
+            let text = format!("module '{}': landlock=skipped reason={reason}", ctx.request);
             let message = rsync_info!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
