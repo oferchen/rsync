@@ -94,6 +94,45 @@ enum Plant {
     DirSymlinkInsideModule,
 }
 
+/// Whether the spawned daemon worker installs oc's kernel sandbox layers.
+///
+/// oc wraps a daemon worker in two layers upstream does not have: a Landlock
+/// path allowlist and a seccomp syscall allowlist. Landlock refuses this
+/// escape on its own, BEFORE oc's operator-path resolution is consulted.
+/// Measured on master, where the confinement fix is absent: with both layers
+/// engaged all five cells pass, and with both opted out exactly the two
+/// escape cells fail and deposit the pre-image outside the module root.
+///
+/// So an escape cell run under the sandbox measures the KERNEL's refusal, not
+/// oc's, and stays green whether or not this crate resolves the path
+/// correctly. The escape cells therefore opt the layers out, which is what
+/// makes them pins for the code under change. The availability cells keep
+/// them on, so the layered defence stays pinned by the same file.
+///
+/// ⚠ Opting out is a TEST-ONLY narrowing of what the cell observes. It does
+/// not weaken the shipped daemon, which installs both layers by default.
+///
+/// The switch is oc's own operator-facing opt-out
+/// (`crates/daemon/src/daemon/sections/sandbox_optout.rs`); it exists
+/// precisely so a sandbox denial can be A/B-ed rather than guessed at.
+#[derive(Clone, Copy)]
+enum Sandbox {
+    /// Landlock and seccomp installed, as a production daemon runs them.
+    Enforced,
+    /// Both layers opted out, so any refusal observed must be oc's own.
+    OptedOut,
+}
+
+impl Sandbox {
+    /// Environment the daemon child inherits to express this choice.
+    fn daemon_env(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Enforced => &[],
+            Self::OptedOut => &[("OC_RSYNC_NO_LANDLOCK", "1"), ("OC_RSYNC_NO_SECCOMP", "1")],
+        }
+    }
+}
+
 /// The filesystem state the assertions are made against.
 struct Outcome {
     /// Contents of the seeded file in the out-of-module directory - the one an
@@ -148,10 +187,10 @@ fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> io::Resul
     )
 }
 
-fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> {
+fn spawn_daemon(oc_bin: &Path, config: &Path, sandbox: Sandbox) -> io::Result<(DaemonGuard, u16)> {
     let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
+        let mut cmd = Command::new(oc_bin);
+        cmd.arg("--daemon")
             .arg("--no-detach")
             .arg("--port")
             .arg(port.to_string())
@@ -159,8 +198,11 @@ fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> 
             .arg(config)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        for (key, value) in sandbox.daemon_env() {
+            cmd.env(key, value);
+        }
+        cmd.spawn()
     })?;
     Ok((DaemonGuard(child), port))
 }
@@ -171,7 +213,7 @@ fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> 
 ///
 /// Returns `None` when the daemon could not be started, so a harness failure is
 /// reported by the caller rather than passing vacuously.
-fn push_over_destination(plant: Plant, extra: &[&str]) -> Option<Outcome> {
+fn push_over_destination(plant: Plant, extra: &[&str], sandbox: Sandbox) -> Option<Outcome> {
     let oc_bin = test_support::oc_rsync_bin();
     let tmp = test_support::create_tempdir();
     let root = tmp.path();
@@ -219,7 +261,7 @@ fn push_over_destination(plant: Plant, extra: &[&str]) -> Option<Outcome> {
 
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, root).expect("write daemon config");
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config).ok()?;
+    let (_daemon, port) = spawn_daemon(&oc_bin, &config, sandbox).ok()?;
 
     let mut args: Vec<&OsStr> = vec![
         OsStr::new("--backup"),
@@ -252,14 +294,33 @@ fn push_over_destination(plant: Plant, extra: &[&str]) -> Option<Outcome> {
     })
 }
 
-fn measured(plant: Plant, extra: &[&str], what: &str) -> Outcome {
-    push_over_destination(plant, extra)
+fn measured(plant: Plant, extra: &[&str], sandbox: Sandbox, what: &str) -> Outcome {
+    push_over_destination(plant, extra, sandbox)
         .unwrap_or_else(|| panic!("{what}: could not start the daemon, so nothing was measured"))
 }
 
 /// Asserts the escape did not happen, and that the pre-image the backup exists
 /// to preserve was not destroyed instead.
 fn assert_confined(outcome: &Outcome, what: &str) {
+    // NON-VACUITY, and it must come first so a dead session reports its own
+    // cause rather than a misleading "the backup escaped" message.
+    //
+    // The three assertions below are EVERY one satisfied by a transfer that
+    // did nothing at all: an untouched out-of-module file, a destination
+    // still holding its pre-image, and a surviving symlink is exactly the
+    // state a session that died before reaching the backup would leave. So
+    // without this, a green cell cannot distinguish "the escape was refused"
+    // from "nothing happened" - and the second is not evidence of anything.
+    //
+    // The daemon logs `receiving file list` once the session is past the
+    // handshake and into the transfer, which is well before the backup tier
+    // this cell is about.
+    assert!(
+        outcome.daemon_log.contains("receiving file list"),
+        "{what}: the daemon never reached the transfer, so the assertions \
+         below would hold vacuously rather than describe a refusal{}",
+        outcome.diagnostics(),
+    );
     assert_eq!(
         outcome.outside,
         OUTSIDE_MARKER,
@@ -295,6 +356,7 @@ fn a_backup_dir_symlink_leaving_the_module_must_not_receive_the_pre_image() {
     let outcome = measured(
         Plant::DirSymlinkOutsideModule,
         &[],
+        Sandbox::OptedOut,
         "out-of-module backup dir plant",
     );
     assert_confined(&outcome, "plain --backup-dir");
@@ -310,6 +372,7 @@ fn a_delayed_update_backup_must_not_leave_the_module() {
     let outcome = measured(
         Plant::DirSymlinkOutsideModule,
         &["--delay-updates"],
+        Sandbox::OptedOut,
         "out-of-module backup dir plant, --delay-updates",
     );
     assert_confined(&outcome, "--delay-updates --backup-dir");
@@ -325,6 +388,7 @@ fn a_backup_dir_symlink_staying_inside_the_module_is_still_followed() {
     let outcome = measured(
         Plant::DirSymlinkInsideModule,
         &[],
+        Sandbox::Enforced,
         "in-module backup dir plant",
     );
 
@@ -361,7 +425,12 @@ fn a_backup_dir_symlink_staying_inside_the_module_is_still_followed() {
 /// ran.
 #[test]
 fn an_ordinary_backup_dir_gets_the_pre_transfer_bytes() {
-    let outcome = measured(Plant::RealDir, &[], "ordinary backup dir");
+    let outcome = measured(
+        Plant::RealDir,
+        &[],
+        Sandbox::Enforced,
+        "ordinary backup dir",
+    );
 
     assert_eq!(
         outcome.client_exit,
@@ -391,6 +460,7 @@ fn an_ordinary_backup_dir_works_under_delay_updates() {
     let outcome = measured(
         Plant::RealDir,
         &["--delay-updates"],
+        Sandbox::Enforced,
         "ordinary backup dir, --delay-updates",
     );
 
