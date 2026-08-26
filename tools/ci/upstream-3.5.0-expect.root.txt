@@ -94,7 +94,7 @@ daemon-gzip-download pass
 daemon-gzip-upload pass
 daemon-handshake-timeout skip
 daemon-http-proxy skip
-daemon-include-maxconn fail
+daemon-include-maxconn pass
 daemon-leaf-type-race-fchmod skip
 daemon-link-dest-escape pass
 daemon-max-alloc-zero skip

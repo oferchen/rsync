@@ -130,7 +130,7 @@ fn include_config_file(
 ///
 /// Used for `&merge` (and directory entries pulled in via `&merge`), where the
 /// included file shares the current scope.
-fn merge_included_globals(state: &mut GlobalParseState, included: ParsedConfigModules) {
+fn merge_included_globals(state: &mut GlobalParseState, included: GlobalParseState) {
     if !included.modules.is_empty() {
         state.modules.extend(included.modules);
     }
@@ -141,11 +141,11 @@ fn merge_included_globals(state: &mut GlobalParseState, included: ParsedConfigMo
         state.motd_lines = included.motd_lines;
     }
 
-    if !included.global_refuse_options.is_empty() {
-        state.global_refuse_directives = included.global_refuse_options;
+    if !included.global_refuse_directives.is_empty() {
+        state.global_refuse_directives = included.global_refuse_directives;
     }
 
-    merge_optional_directive(&mut state.global_bwlimit, included.global_bandwidth_limit);
+    merge_optional_directive(&mut state.global_bwlimit, included.global_bwlimit);
     merge_optional_directive(&mut state.global_secrets_file, included.global_secrets_file);
     merge_optional_directive(
         &mut state.global_incoming_chmod,
