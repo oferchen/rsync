@@ -19,7 +19,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, 3.4.4 and 3.5.0, with 2.6.9 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`: against the 3.4.4 corpus all tests pass and the known-failures roster is empty, and against the newer 3.5.0 corpus **31 of 349 tests currently diverge** (see below).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, 3.4.4 and 3.5.0, with 2.6.9 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`: against the 3.4.4 corpus all tests pass and the known-failures roster is empty, and against the newer 3.5.0 corpus **11 of 349 tests currently diverge** (see below).
 
 **Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
 
@@ -36,12 +36,12 @@ Current outcomes, as recorded in each leg's committed manifest:
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 239 | 21 | 85 | 349 |
-| root, pipe | 262 | 29 | 54 | 349 |
-| non-root, tcp | 93 | 29 | 33 | 158 |
-| root, tcp | 104 | 38 | 13 | 158 |
+| non-root, pipe | 251 | 9 | 89 | 349 |
+| root, pipe | 278 | 11 | 60 | 349 |
+| non-root, tcp | 100 | 22 | 36 | 158 |
+| root, tcp | 112 | 28 | 18 | 158 |
 
-**31 distinct tests** diverge across the two full-corpus legs, and 55 across all four. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts.
+**11 distinct tests** diverge across the two full-corpus legs, and 35 across all four. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts.
 
 Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml) is a **development** tracker, not a gate and not the 3.5.0 release: it builds RsyncProject git master (`version.h` == `3.5.0dev`), a moving target, and is deliberately non-blocking so an upstream-side break can never fail a PR here.
 
@@ -220,7 +220,7 @@ Three one-shot warnings may appear on stderr (sync path) or via `tracing` target
 oc-rsync is wire-compatible with upstream rsync 3.5.0, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
 
 - **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
-- **Two distinct buffer pools.** The **engine** `BufferPool` is the one the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables tune (`crates/engine/src/local_copy/buffer_pool/`). The **io_uring registered buffer pool** is separate, is sized statically, does not auto-adapt under sustained I/O pressure, and is *not* affected by those variables. Workloads with very high concurrent file fan-out may see throughput plateau before saturating the device.
+- **Two distinct buffer pools.** The **engine** `BufferPool` is the one the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables tune (`crates/engine/src/local_copy/buffer_pool/`). The **io_uring registered buffer pool** is separate, is sized statically, does not auto-adapt under sustained I/O pressure, and is *not* affected by those variables. Whether that static sizing costs anything in practice is **not yet measured**: a same-host comparison of the io_uring and standard-I/O backends came out within noise (+1.2% bulk, -1.2% fan-out on Linux 7.1.5/x86_64), which bounds the whole backend rather than this pool. Treat the fixed sizing as a documented limitation awaiting a fan-out-specific measurement, not as a known bottleneck.
 - **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace and the buffer-ring helpers cap at that bound, returning a typed error rather than wrapping. In practice IDs are recycled rather than accumulated - a measured run of 100,000 sessions consumed a single bgid - so exhaustion is not an expected operational condition.
 - **Delta computation is single-threaded per file by default.** The delta sender is sequential per file. Large-file delta scanning can be parallelised opt-in with `--parallel-delta-scan`, and basis-signature hashing with `--checksum-threads=N`; without those flags a large-file transfer uses one CPU for delta work.
 - **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync warns when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, and - with the default `ssh-config-parse` feature - when a `Compression yes` directive applies via `~/.ssh/config` / `-F` / `/etc/ssh/ssh_config`; it does not auto-disable either layer, so operators should pick one.

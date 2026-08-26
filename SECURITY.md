@@ -85,12 +85,12 @@ rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in pat
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 239 | 21 | 85 | 349 |
-| root, pipe | 262 | 29 | 54 | 349 |
-| non-root, tcp | 93 | 29 | 33 | 158 |
-| root, tcp | 104 | 38 | 13 | 158 |
+| non-root, pipe | 251 | 9 | 89 | 349 |
+| root, pipe | 278 | 11 | 60 | 349 |
+| non-root, tcp | 100 | 22 | 36 | 158 |
+| root, tcp | 112 | 28 | 18 | 158 |
 
-The two pipe legs run the whole corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 158 tests that can observe the transport. **31 distinct tests** diverge across the two full-corpus legs, and **55** across all four. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
+The two pipe legs run the whole corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 158 tests that can observe the transport. **11 distinct tests** diverge across the two full-corpus legs, and **35** across all four. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
 
 **Highest-severity items and their oc-rsync bearing:**
 

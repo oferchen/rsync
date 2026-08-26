@@ -50,6 +50,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   regressed the `--link-dest` / `--compare-dest` cells on the first attempt
 - Honour `--insecure-links` inside the operator-path walk, so the opt-out
   reaches the resolver instead of being consulted only by its callers (#7459)
+- Confine the `--partial-dir` reuse probe and discard the temp when the
+  directory create is refused; the probe alone was inert because the abort
+  path renamed regardless (#7483)
+- Resolve an absolute `--backup-dir` against the module root, and route the
+  `--inplace` backup copy and the `--temp-dir` staging temp through the
+  ownership walk (#7493, #7494, #7496)
+- Refuse a staging directory the module filter excludes, and confine the
+  filter-file open to the module root (#7495, #7512)
+- Honour the admin symlink opt-out at the sender confinement root, so an
+  operator who opted out is not refused anyway (#7517)
+- Stop confining a *client's* own destination on a daemon pull - the
+  confinement applies to the peer-supplied side, not the operator's (#7503)
 
 **Daemon**
 - Refuse shell metacharacters when expanding a hook variable, closing command
@@ -86,6 +98,7 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Name the user and the rule in auth-failure log lines (#7395)
 - Treat a backslash in a requested path as a filename byte, not a path separator
   (#7409)
+- Honour the per-module `insecure links` directive (#7484)
 
 **Peer-supplied input bounds**
 - Bound peer-supplied xattr bytes and the CONNECT host (#7297)
@@ -120,6 +133,8 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - A missing or non-directory `--compare-dest` / `--copy-dest` / `--link-dest`
   argument now warns instead of passing silently, on the local path (#7453) and
   on the network paths (#7454)
+- `--fake-super` is accepted in a server argv, and repeated via `-M` on a
+  local transfer without being rejected (#7520, #7497)
 
 ### Changed
 
@@ -192,6 +207,15 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   path, created at upstream's private 0700 (#7476)
 - TCP Fast Open must not defeat the multi-address connect fallback; deferring
   the SYN left a dead first address looking alive (#7447)
+- Recover a read-only in-place destination instead of failing the file
+  (#7485)
+- Keep an absolute `--partial-dir` through the delayed-updates sweep, and
+  clear a non-directory occupying the `--partial-dir` name (#7499, #7500)
+- Report a failed metadata apply instead of only counting it (#7506)
+- Gate device-node creation on upstream's `am_root` predicate (#7513)
+- Follow a symlinked directory named with the DOTDIR marker, and keep that
+  marker when the `/./` remainder is empty (#7510, #7516)
+- Refuse a non-regular `--read-batch` path (#7515)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -212,6 +236,13 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Follow an existing destination symlink under `--no-implied-dirs` (#7461)
 - Diagnose a local-copy source that ended before its declared length instead of
   committing the short result (#7472)
+- Itemize the `-R` implied dot-dir root against the basis (#7505)
+- Keep a directory's own metadata when `readdir` fails part-way (#7521)
+- Make `--no-zero-copy` reach the content path it documents (#7482)
+- Compare an alt-dest basis mtime the way `same_time` does, so a basis is
+  not wrongly demoted (#7479)
+- Degrade the anonymous commit to a named temp where anonymous is
+  unavailable (#7478)
 
 **Daemon**
 - Collapse `..` in client paths instead of refusing the request (#7343)
@@ -225,6 +256,10 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   bare close (#7466)
 - Route `--early-input` to the early-exec hook, not the pre-transfer one (#7471)
 - Mirror upstream's `daemon_usage` text in `--daemon --help` (#7444)
+- Honour a peer-supplied `--partial-dir` on the receiving side, and keep a
+  relative one relative as upstream does (#7498, #7501)
+- Resolve string module defaults at end of parse, so a global set *after* a
+  module section still applies to it (#7519)
 
 **CLI and output**
 - Honour the `--` end-of-options marker in server-mode argv (#7402)
@@ -246,11 +281,17 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Take the `rsync://` daemon host verbatim; three separate rewrites were being
   applied to it (#7431)
 - Honour `--port` on a daemon transfer, not only on a listing (#7456)
+- Accept `--log-file` as a server long flag instead of letting it leak into
+  the destination operand (#7507)
+- Honour `--drop-D` in the server argument decoder, and consume
+  `--backup-dir` / `--temp-dir` instead of discarding them (#7508, #7511)
+- List a remote source under `--list-only` (#7509)
 
 **Metadata**
 - An installed name converter must replace the host database (#7360)
 - Follow the operator's own symlinked destination root when applying metadata
   (#7462)
+- Condense the fake-super access ACL to upstream's stored form (#7502)
 
 ### Testing and CI
 
@@ -280,6 +321,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   gate (#7438)
 - The batched-writer threshold tests disarm the flush clock instead of racing
   it, which is what made the musl beta cell flake (#7469)
+- Default the upstream testsuite runner to 3.5.0 (#7486)
+- Publish the testsuite binary to a per-run path rather than a shared one,
+  so two concurrent runs cannot test each other's build (#7514)
+- Key the parallel receive-delta fuzz oracle on every registered file, and
+  let the caller name the upstream rsync the benchmark compares against
+  (#7480, #7481)
 
 ### Documentation
 
@@ -301,10 +348,16 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Upstream's `iobuf` / `perform_io` contract extracted into a design note, with
   every anchor verified by reading rather than assumed (#7428)
 - Retargeted the `check_alt_basis_dirs` citations at 3.5.0 (#7452)
+- Close rustdoc gaps, repair references that no longer resolve, and add a
+  comment-policy audit (#7488, #7489, #7522)
+- Refresh the changelog and re-measure the 3.5.0 outcome figures (#7477)
 
 ### Maintenance
 
 - Dependency and action updates (#7473, #7474)
+- Give the in-place open chain a single owner with the resolver injected,
+  and the bounded drain-and-wait helper a single owner (#7487, #7504)
+- Update the Homebrew formulas for v0.6.4 (#7492)
 
 ## [0.6.4] - 2026-07-18
 
