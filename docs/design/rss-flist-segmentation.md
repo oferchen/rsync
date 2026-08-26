@@ -148,8 +148,11 @@ Upstream stores the flist as a **circular doubly-linked list of separately
 allocated `file_list` objects**, each owning its own `file_struct` array.
 
 - `rsync.h:964-975` - `struct file_list { next, prev; files, sorted;
-  file_pool; used, malloced; low, high; ndx_start; flist_num; parent_ndx;
-  in_progress, to_redo; }`.
+  file_pool; pool_boundary; used, malloced; low, high; ndx_start; flist_num;
+  parent_ndx; in_progress, to_redo; }`. The declaration is unchanged between
+  3.4.4 and 3.5.0 - same twelve members in the same order, only the line
+  number moves (`:964-975` -> `:983-994`), so this anchor survives the
+  source-of-truth flip as a line retarget with no semantic re-reading.
 - Globals `flist.c:101-103` - `cur_flist, first_flist, dir_flist`,
   `flist_cnt`.
 - `flist.c:2960-2977` - `flist_new` appends to the list and assigns
@@ -174,6 +177,41 @@ Only the window between `first_flist` and `cur_flist` is ever live, so peak
 memory is bounded by the lookahead window (`MIN_FILECNT_LOOKAHEAD`), not by
 the total file count. Generation is lazy: `send_extra_file_list` produces the
 next sub-list on demand (`sender.c:230-232`).
+
+### 3.1 Field-by-field: upstream `struct file_list` vs oc today
+
+What oc stores, derives, or simply lacks. Read with §2.1 (storage) - the point
+is that oc has no type corresponding to `struct file_list` at all, so the
+members are scattered, recomputed, or absent rather than owned in one place.
+
+| upstream member | oc equivalent today | status |
+|---|---|---|
+| `next`, `prev` | none - `ndx_segments` is a `Vec`, an array not a chain | absent |
+| `files` | `file_list: Vec<FileEntry>` (`receiver/context.rs:48`) | **shared by every segment**, not per-segment |
+| `sorted` | none - no sorted-vs-files split | absent |
+| `file_pool` | none - entries come from the global allocator | absent |
+| `pool_boundary` | none | absent |
+| `used` | `ndx_segments[i+1].0 - ndx_segments[i].0` | derived, never stored |
+| `malloced` | n/a - `Vec` capacity | n/a |
+| `low`, `high` | none | absent |
+| `ndx_start` | the `i32` of `ndx_segments[i]` (`context.rs:67`) | stored, as a tuple element |
+| `flist_num` | the index into `ndx_segments` | derived |
+| `parent_ndx` | none | absent |
+| `in_progress`, `to_redo` | held on `ReceiverContext`, not per segment | not segment-scoped |
+| `first_flist` (global) | `first_segment_idx: usize` (`context.rs:78`) | stored |
+
+One member is stored as itself, two are derived, and eight are absent. The
+absent set is not arbitrary: `file_pool` + `pool_boundary` + `malloced` are
+the allocation machinery that makes upstream's `flist_free` release a
+segment's memory in one step, and `low`/`high`/`parent_ndx` are the
+per-segment bookkeeping that a shared flat buffer cannot express.
+
+That is the same gap §2.4 reaches from the other direction - oc's
+`reclaim_oldest_segment` cites `flist.c:2980 flist_free()` but walks
+`file_list[start..end]` calling `reclaim_heap_data()` on each entry, so the
+per-entry payloads drop while the `FileEntry` structs and the `Vec`'s backing
+allocation stay resident for the whole transfer. Restoring the upstream
+behaviour needs the pool, not a better loop.
 
 ## 4. Target Design
 
