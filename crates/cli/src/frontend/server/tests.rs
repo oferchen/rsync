@@ -2834,3 +2834,126 @@ mod end_of_options {
         assert_eq!(paths, vec![OsString::from("src/"), OsString::from("dest/")]);
     }
 }
+
+/// An operator-injected `--fake-super` must not be mistaken for the compact
+/// flag string.
+///
+/// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
+/// 0}` is an ordinary entry in the one popt table both ends parse, so it binds
+/// wherever it sits in argv. `server_options()` deliberately never emits it -
+/// which is precisely why an operator injects it, via
+/// `--rsync-path='rsync --fake-super'` or a wrapper's rsync-path shim
+/// (upstream's own `testsuite/rrsync-specials-denied_test.py` writes a
+/// `#!/bin/sh` shim that execs `<RSYNC> --fake-super "$@"`). That places it
+/// BEFORE `--server`, ahead of the compact flag string.
+///
+/// Unrecognised, it was taken for the compact flag string itself, so the real
+/// `-rlptgoDe.iLsfxC` fell through to the positional list and both `.` operands
+/// were then filtered out. MEASURED: no `-r`, nothing delivered, rc=0 - a
+/// silent no-op push.
+#[test]
+fn parse_server_args_does_not_mistake_fake_super_for_the_flag_string() {
+    let args = vec![
+        OsString::from("--fake-super"),
+        OsString::from("--server"),
+        OsString::from("-rlptgoDe.iLsfxC"),
+        OsString::from("--specials"),
+        OsString::from("--drop-D"),
+        OsString::from("--"),
+        OsString::from("."),
+        OsString::from("."),
+    ];
+    let (flag_string, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(
+        flag_string, "-rlptgoDe.iLsfxC",
+        "--fake-super must be recognised as a long flag, not consumed as the \
+         compact flag string"
+    );
+    assert!(
+        flag_string.contains('r'),
+        "the compact flag string must still carry recursion"
+    );
+    assert!(
+        pos_args.is_empty(),
+        "both `.` operands are the cwd placeholder"
+    );
+}
+
+/// Non-vacuity companion for the test above: the SAME argv without
+/// `--fake-super` already parsed to that flag string before the fix.
+///
+/// Without this pairing, the test above would also pass if the operand scan
+/// were changed to skip every unrecognised `--` token - which would reinstate
+/// the positional-path leak that `--confine-root=` and `--log-file=` were
+/// MEASURED to cause. The fix must be an allow-list entry, not a blanket skip.
+#[test]
+fn parse_server_args_flag_string_is_unchanged_without_fake_super() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-rlptgoDe.iLsfxC"),
+        OsString::from("--specials"),
+        OsString::from("--drop-D"),
+        OsString::from("--"),
+        OsString::from("."),
+        OsString::from("."),
+    ];
+    let (flag_string, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flag_string, "-rlptgoDe.iLsfxC");
+    assert!(pos_args.is_empty());
+}
+
+/// Recognising the flag is only half of it: it must also reach the config the
+/// receiver and sender actually consult.
+///
+/// `ServerConfig::fake_super` gates the `user.rsync.%stat` xattr path on both
+/// roles (`receiver/directory/special.rs`, `receiver/directory/links.rs`,
+/// `generator/file_list/entry/create.rs`). Recognise-without-apply would stop
+/// the flag-string theft while silently ignoring
+/// `--rsync-path='rsync --fake-super'`, so the two halves are tested together.
+#[test]
+fn fake_super_reaches_the_server_config() {
+    let mut config = core::server::ServerConfig::default();
+    assert!(!config.fake_super, "default must be off");
+
+    let flags = parse_server_long_flags(&[
+        OsString::from("--fake-super"),
+        OsString::from("--server"),
+        OsString::from("-rlptgoDe.iLsfxC"),
+    ]);
+    assert_eq!(flags.fake_super, Some(true));
+    super::run::apply_fake_super(&mut config, flags.fake_super);
+    assert!(config.fake_super);
+
+    // Absent: left alone, so a daemon module's `fake super = yes` survives an
+    // argv that never mentions it (upstream clientserver.c:1120-1121).
+    let mut untouched = core::server::ServerConfig {
+        fake_super: true,
+        ..core::server::ServerConfig::default()
+    };
+    let flags = parse_server_long_flags(&[
+        OsString::from("--server"),
+        OsString::from("-rlptgoDe.iLsfxC"),
+    ]);
+    assert_eq!(flags.fake_super, None);
+    super::run::apply_fake_super(&mut untouched, flags.fake_super);
+    assert!(untouched.fake_super);
+
+    // Explicit negation clears it (oc's own `--no-fake-super`, reachable as
+    // `-M--no-fake-super`; upstream's table has `no-super` but no
+    // `no-fake-super`).
+    let flags = parse_server_long_flags(&[
+        OsString::from("--no-fake-super"),
+        OsString::from("--server"),
+    ]);
+    assert_eq!(flags.fake_super, Some(false));
+    super::run::apply_fake_super(&mut untouched, flags.fake_super);
+    assert!(!untouched.fake_super);
+}
+
+/// The allow-list and the value capture are two different functions; a flag
+/// recognised by only one of them still leaks or is still dropped.
+#[test]
+fn fake_super_is_a_known_server_long_flag() {
+    assert!(is_known_server_long_flag("--fake-super"));
+    assert!(is_known_server_long_flag("--no-fake-super"));
+}

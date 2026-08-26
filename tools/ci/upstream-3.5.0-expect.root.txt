@@ -287,7 +287,7 @@ rrsync-pull-arg-shapes pass
 rrsync-pull-delivers-content pass
 rrsync-sender-leaf-flip pass
 rrsync-sender-parent-pin pass
-rrsync-specials-denied fail
+rrsync-specials-denied pass
 rrsync-symlink pass
 rrsync-write-only-files-from pass
 rsync-ssl-hostname-validation pass
