@@ -153,10 +153,18 @@ fn set_auth_users_rejects_empty() {
 fn set_auth_users_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder
-        .set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 5)
+        .set_auth_users(
+            vec![AuthUser::new("alice".to_owned())],
+            &test_config_path(),
+            5,
+        )
         .expect("first list accepted");
     builder
-        .set_auth_users(vec![AuthUser::new("bob".to_owned())], &test_config_path(), 10)
+        .set_auth_users(
+            vec![AuthUser::new("bob".to_owned())],
+            &test_config_path(),
+            10,
+        )
         .expect("repeat overwrites");
     assert_eq!(
         builder.auth_users,
@@ -479,7 +487,10 @@ fn set_strict_modes_last_assignment_wins() {
 fn set_exclude_from_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_exclude_from(PathBuf::from("/etc/excludes.txt"));
-    assert_eq!(builder.exclude_from, Some(PathBuf::from("/etc/excludes.txt")));
+    assert_eq!(
+        builder.exclude_from,
+        Some(PathBuf::from("/etc/excludes.txt"))
+    );
 }
 
 #[test]
@@ -494,7 +505,10 @@ fn set_exclude_from_last_assignment_wins() {
 fn set_include_from_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_include_from(PathBuf::from("/etc/includes.txt"));
-    assert_eq!(builder.include_from, Some(PathBuf::from("/etc/includes.txt")));
+    assert_eq!(
+        builder.include_from,
+        Some(PathBuf::from("/etc/includes.txt"))
+    );
 }
 
 #[test]
@@ -610,11 +624,22 @@ fn finish_applies_default_secrets_for_auth_users() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
     builder
-        .set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3)
+        .set_auth_users(
+            vec![AuthUser::new("alice".to_owned())],
+            &test_config_path(),
+            3,
+        )
         .expect("auth users accepted");
     let default_secrets = PathBuf::from("/etc/secrets");
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), Some(&default_secrets), None, None, None, &defaults);
+    let result = builder.finish(
+        &test_config_path(),
+        Some(&default_secrets),
+        None,
+        None,
+        None,
+        &defaults,
+    );
     assert!(result.is_ok());
     let def = result.unwrap();
     assert_eq!(def.secrets_file, Some(PathBuf::from("/etc/secrets")));
@@ -625,7 +650,11 @@ fn finish_fails_auth_users_without_secrets() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
     builder
-        .set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3)
+        .set_auth_users(
+            vec![AuthUser::new("alice".to_owned())],
+            &test_config_path(),
+            3,
+        )
         .expect("auth users accepted");
     let defaults = GlobalModuleDefaults::default();
     let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
@@ -688,7 +717,14 @@ fn finish_transfers_all_set_values() {
         NonZeroU32::new(5).expect("non-zero"),
     ));
 
-    let result = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default());
+    let result = builder.finish(
+        &test_config_path(),
+        None,
+        None,
+        None,
+        None,
+        &GlobalModuleDefaults::default(),
+    );
     assert!(result.is_ok());
     let def = result.unwrap();
 
@@ -713,7 +749,14 @@ fn finish_uses_default_values_for_unset_fields() {
     let mut builder = ModuleDefinitionBuilder::new("defaults".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
 
-    let result = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default());
+    let result = builder.finish(
+        &test_config_path(),
+        None,
+        None,
+        None,
+        None,
+        &GlobalModuleDefaults::default(),
+    );
     assert!(result.is_ok());
     let def = result.unwrap();
 
@@ -736,10 +779,7 @@ fn finish_uses_default_values_for_unset_fields() {
     assert!(!def.ignore_errors); // default false
     assert!(!def.ignore_nonreadable); // default false
     assert!(!def.transfer_logging); // default false
-    assert_eq!(
-        def.log_format.as_deref(),
-        Some("%o %h [%a] %m (%u) %f %l")
-    ); // default format
+    assert_eq!(def.log_format.as_deref(), Some("%o %h [%a] %m (%u) %f %l")); // default format
     // upstream: loadparm.c:46 - `dont compress` defaults to the built-in
     // DEFAULT_DONT_COMPRESS suffix list, so a resolved module inherits it when
     // neither the module nor the global section sets the directive.
@@ -763,7 +803,14 @@ fn finish_preserves_fake_super_when_set() {
     builder.set_path(PathBuf::from("/backup"));
     builder.set_fake_super(true);
 
-    let result = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default());
+    let result = builder.finish(
+        &test_config_path(),
+        None,
+        None,
+        None,
+        None,
+        &GlobalModuleDefaults::default(),
+    );
     assert!(result.is_ok());
     let def = result.unwrap();
     assert!(def.fake_super);
@@ -774,7 +821,16 @@ fn finish_munge_symlinks_default_none() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert!(def.munge_symlinks.is_none());
 }
 
@@ -784,7 +840,16 @@ fn finish_munge_symlinks_explicit_true() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_munge_symlinks(Some(true));
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert_eq!(def.munge_symlinks, Some(true));
 }
 
@@ -794,7 +859,16 @@ fn finish_munge_symlinks_explicit_false() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_munge_symlinks(Some(false));
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert_eq!(def.munge_symlinks, Some(false));
 }
 
@@ -804,7 +878,16 @@ fn finish_transfers_exclude_from() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_exclude_from(PathBuf::from("/etc/excludes.txt"));
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert_eq!(def.exclude_from, Some(PathBuf::from("/etc/excludes.txt")));
 }
 
@@ -814,7 +897,16 @@ fn finish_transfers_include_from() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_include_from(PathBuf::from("/etc/includes.txt"));
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert_eq!(def.include_from, Some(PathBuf::from("/etc/includes.txt")));
 }
 
@@ -824,6 +916,15 @@ fn finish_preserves_open_noatime_when_set() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_open_noatime(true);
 
-    let def = builder.finish(&test_config_path(), None, None, None, None, &GlobalModuleDefaults::default()).unwrap();
+    let def = builder
+        .finish(
+            &test_config_path(),
+            None,
+            None,
+            None,
+            None,
+            &GlobalModuleDefaults::default(),
+        )
+        .unwrap();
     assert!(def.open_noatime);
 }

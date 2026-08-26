@@ -147,11 +147,7 @@ fn copy_directory_with_spaces_in_name() {
 
     let dirname = "dir with spaces";
     fs::create_dir(source_root.join(dirname)).expect("create dir");
-    fs::write(
-        source_root.join(dirname).join("inner file.txt"),
-        b"inner",
-    )
-    .expect("write inner");
+    fs::write(source_root.join(dirname).join("inner file.txt"), b"inner").expect("write inner");
 
     let operands = vec![
         source_root.into_os_string(),
@@ -164,7 +160,13 @@ fn copy_directory_with_spaces_in_name() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join("source").join(dirname).join("inner file.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join(dirname)
+            .join("inner file.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -361,7 +363,10 @@ fn copy_file_with_escape_like_sequences() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
+        assert!(
+            dest_root.join("source").join(filename).exists(),
+            "should copy {filename}"
+        );
     }
 }
 
@@ -606,7 +611,10 @@ fn copy_file_with_redirection_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
+        assert!(
+            dest_root.join("source").join(filename).exists(),
+            "should copy {filename}"
+        );
     }
 }
 
@@ -827,7 +835,10 @@ fn copy_file_with_variable_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
+        assert!(
+            dest_root.join("source").join(filename).exists(),
+            "should copy {filename}"
+        );
     }
 }
 
@@ -925,7 +936,13 @@ fn copy_directory_with_newline() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join("source").join(dirname).join("inner.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join(dirname)
+            .join("inner.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -1216,7 +1233,12 @@ fn copy_file_with_del_character() {
     assert!(dest_root.join("source").join(filename).exists());
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[test]
 fn copy_file_with_high_ascii_128() {
     let temp = create_tempdir();
@@ -1241,7 +1263,12 @@ fn copy_file_with_high_ascii_128() {
     assert!(dest_root.join("source").join(filename).exists());
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[test]
 fn copy_file_with_high_ascii_255() {
     let temp = create_tempdir();
@@ -1266,7 +1293,12 @@ fn copy_file_with_high_ascii_255() {
     assert!(dest_root.join("source").join(filename).exists());
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[test]
 fn copy_files_with_various_high_ascii() {
     let temp = create_tempdir();
@@ -1278,8 +1310,11 @@ fn copy_files_with_various_high_ascii() {
     for byte in byte_values {
         let filename_bytes = [b'f', b'i', b'l', b'e', *byte, b'.', b't', b'x', b't'];
         let filename = OsStr::from_bytes(&filename_bytes);
-        fs::write(source_root.join(filename), format!("high {byte}").as_bytes())
-            .expect("write source");
+        fs::write(
+            source_root.join(filename),
+            format!("high {byte}").as_bytes(),
+        )
+        .expect("write source");
     }
 
     let operands = vec![
@@ -1295,7 +1330,12 @@ fn copy_files_with_various_high_ascii() {
     assert_eq!(summary.files_copied(), byte_values.len() as u64);
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[test]
 fn copy_file_with_non_utf8_sequence() {
     let temp = create_tempdir();
@@ -1402,7 +1442,10 @@ fn copy_file_with_shell_injection_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
+        assert!(
+            dest_root.join("source").join(filename).exists(),
+            "should copy {filename}"
+        );
     }
 }
 
@@ -1467,7 +1510,10 @@ fn copy_multiple_files_with_various_special_characters() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
+        assert!(
+            dest_root.join("source").join(filename).exists(),
+            "should copy {filename}"
+        );
     }
 }
 

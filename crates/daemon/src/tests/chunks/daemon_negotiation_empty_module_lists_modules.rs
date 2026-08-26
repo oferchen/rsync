@@ -15,7 +15,10 @@ fn daemon_negotiation_empty_module_lists_modules() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([

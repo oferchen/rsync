@@ -13,7 +13,6 @@
 // 5. Deferred deletions respect filter rules
 // 6. Works with max_deletions limit
 
-
 #[test]
 fn delete_delay_removes_extraneous_files_after_transfer() {
     let ctx = test_helpers::setup_copy_test();
@@ -84,7 +83,6 @@ fn delete_delay_defers_directory_deletions_until_end() {
     assert!(summary.items_deleted() >= 1);
 }
 
-
 #[test]
 fn delete_delay_differs_from_delete_during_timing() {
     // This test verifies that delete-delay and delete-during are semantically
@@ -140,7 +138,10 @@ fn delete_delay_differs_from_delete_during_timing() {
         .expect("copy succeeds with during");
 
     // Both should achieve the same end result
-    assert_eq!(summary_delay.items_deleted(), summary_during.items_deleted());
+    assert_eq!(
+        summary_delay.items_deleted(),
+        summary_during.items_deleted()
+    );
     assert!(!target_root.join("extra.txt").exists());
     assert!(!target_root2.join("extra.txt").exists());
 }
@@ -159,30 +160,35 @@ fn delete_during_option_enables_during_timing() {
     assert_eq!(options.delete_timing(), Some(DeleteTiming::During));
 }
 
-
 #[test]
 fn delete_delay_works_with_recursive_traversal() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("level1/level2/level3/file.txt", Some(b"deep")),
-        ("level1/keep.txt", Some(b"keep1")),
-        ("top.txt", Some(b"top")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("level1/level2/level3/file.txt", Some(b"deep")),
+            ("level1/keep.txt", Some(b"keep1")),
+            ("top.txt", Some(b"top")),
+        ],
+    );
 
     // Use shorter content than source to ensure different sizes, avoiding
     // quick-check (same mtime+size) skipping the transfer.
     let target_root = ctx.dest.join("source");
-    test_helpers::create_test_tree(&target_root, &[
-        ("level1/level2/level3/file.txt", Some(b"x")),
-        ("level1/level2/level3/extra_deep.txt", Some(b"extra")),
-        ("level1/level2/extra_mid.txt", Some(b"extra")),
-        ("level1/keep.txt", Some(b"x")),
-        ("level1/extra_shallow.txt", Some(b"extra")),
-        ("top.txt", Some(b"x")),
-        ("extra_top.txt", Some(b"extra")),
-    ]);
+    test_helpers::create_test_tree(
+        &target_root,
+        &[
+            ("level1/level2/level3/file.txt", Some(b"x")),
+            ("level1/level2/level3/extra_deep.txt", Some(b"extra")),
+            ("level1/level2/extra_mid.txt", Some(b"extra")),
+            ("level1/keep.txt", Some(b"x")),
+            ("level1/extra_shallow.txt", Some(b"extra")),
+            ("top.txt", Some(b"x")),
+            ("extra_top.txt", Some(b"extra")),
+        ],
+    );
 
     let operands = vec![
         ctx.source.clone().into_os_string(),
@@ -204,7 +210,11 @@ fn delete_delay_works_with_recursive_traversal() {
     assert!(!target_root.join("extra_top.txt").exists());
     assert!(!target_root.join("level1/extra_shallow.txt").exists());
     assert!(!target_root.join("level1/level2/extra_mid.txt").exists());
-    assert!(!target_root.join("level1/level2/level3/extra_deep.txt").exists());
+    assert!(
+        !target_root
+            .join("level1/level2/level3/extra_deep.txt")
+            .exists()
+    );
 
     assert_eq!(summary.files_copied(), 3);
     assert_eq!(summary.items_deleted(), 4);
@@ -224,8 +234,7 @@ fn delete_delay_handles_nested_empty_directories() {
     fs::create_dir_all(target_root.join("data")).expect("create data dir");
     fs::write(target_root.join("data/file.txt"), b"old").expect("write old file");
 
-    fs::create_dir_all(target_root.join("empty1/empty2/empty3"))
-        .expect("create nested empties");
+    fs::create_dir_all(target_root.join("empty1/empty2/empty3")).expect("create nested empties");
 
     let operands = vec![
         ctx.source.clone().into_os_string(),
@@ -245,7 +254,6 @@ fn delete_delay_handles_nested_empty_directories() {
     assert_eq!(summary.files_copied(), 1);
     assert!(summary.items_deleted() >= 1);
 }
-
 
 #[test]
 fn delete_delay_with_max_deletions_limit() {
@@ -383,7 +391,6 @@ fn delete_delay_batches_multiple_directory_deletions() {
     assert!(summary.items_deleted() >= 6);
 }
 
-
 #[test]
 fn delete_delay_respects_exclude_filters() {
     let ctx = test_helpers::setup_copy_test();
@@ -402,8 +409,7 @@ fn delete_delay_respects_exclude_filters() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete_delay(true)
         .filters(Some(filters));
@@ -447,8 +453,7 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete_delay(true)
         .delete_excluded(true)
@@ -466,7 +471,6 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
 }
-
 
 #[test]
 fn delete_delay_with_no_files_to_delete() {
@@ -584,8 +588,7 @@ fn delete_delay_preserves_symlinks_when_appropriate() {
         fs::write(target_root.join("file.txt"), b"old").expect("write old");
 
         // Create a symlink that points to something outside the transfer
-        unix_fs::symlink("/etc/hosts", target_root.join("external_link"))
-            .expect("create symlink");
+        unix_fs::symlink("/etc/hosts", target_root.join("external_link")).expect("create symlink");
 
         let operands = vec![
             ctx.source.clone().into_os_string(),

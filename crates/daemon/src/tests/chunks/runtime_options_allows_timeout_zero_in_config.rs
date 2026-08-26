@@ -14,4 +14,3 @@ fn runtime_options_allows_timeout_zero_in_config() {
     let module = &modules[0];
     assert!(module.timeout().is_none());
 }
-

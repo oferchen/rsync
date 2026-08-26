@@ -24,14 +24,10 @@ fn runtime_options_branded_secrets_env_overrides_legacy_env() {
     )
     .expect("parse env secrets");
 
-    assert_eq!(
-        options.global_secrets_file(),
-        Some(branded_path.as_path()),
-    );
+    assert_eq!(options.global_secrets_file(), Some(branded_path.as_path()),);
     assert_ne!(
         options.global_secrets_file(),
         Some(legacy_path.as_path()),
         "legacy secrets path should not override branded path"
     );
 }
-

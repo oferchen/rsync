@@ -1,7 +1,6 @@
 #[cfg(unix)]
 #[test]
 fn execute_with_sparse_enabled_creates_holes() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("sparse.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
@@ -100,11 +99,9 @@ fn execute_preallocate_sparse_punches_the_reserved_extent() {
     let apparent = fs::metadata(&source).expect("meta").len();
 
     let dest = temp.path().join("dst.bin");
-    let plan = LocalCopyPlan::from_operands(&[
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ])
-    .expect("plan");
+    let plan =
+        LocalCopyPlan::from_operands(&[source.into_os_string(), dest.clone().into_os_string()])
+            .expect("plan");
     plan.execute_with_options(
         LocalCopyExecution::Apply,
         LocalCopyOptions::default().preallocate(true).sparse(true),
@@ -143,12 +140,8 @@ fn execute_inplace_sparse_punches_hole() {
     source_file
         .seek(SeekFrom::Start(2 * 1024 * 1024))
         .expect("seek to create hole");
-    source_file
-        .write_all(&[0x22])
-        .expect("write trailing byte");
-    source_file
-        .set_len(4 * 1024 * 1024)
-        .expect("extend source");
+    source_file.write_all(&[0x22]).expect("write trailing byte");
+    source_file.set_len(4 * 1024 * 1024).expect("extend source");
     drop(source_file);
 
     let sparse_dest = temp.path().join("sparse-inplace.bin");
@@ -241,11 +234,9 @@ fn execute_inplace_sparse_whole_file_seeks_over_stale_basis() {
     // Backdate so rsync's quick-check treats the destination as stale.
     set_file_mtime(&dest, FileTime::from_unix_time(1_000_000, 0)).expect("destination mtime");
 
-    let plan = LocalCopyPlan::from_operands(&[
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ])
-    .expect("plan");
+    let plan =
+        LocalCopyPlan::from_operands(&[source.into_os_string(), dest.clone().into_os_string()])
+            .expect("plan");
     plan.execute_with_options(
         LocalCopyExecution::Apply,
         // whole_file defaults to true for local copies; set it explicitly to
@@ -259,15 +250,24 @@ fn execute_inplace_sparse_whole_file_seeks_over_stale_basis() {
 
     // Length matches the source: the larger pre-existing tail was discarded.
     let meta = fs::metadata(&dest).expect("dest metadata");
-    assert_eq!(meta.len(), src.len() as u64, "destination truncated to source length");
+    assert_eq!(
+        meta.len(),
+        src.len() as u64,
+        "destination truncated to source length"
+    );
 
     // Content is byte-for-byte the source. Critically the 2 MiB middle reads as
     // zeros, not the pre-existing 0xCC: the whole-file rewrite truncated to zero
     // so the seeked-over run is a genuine hole, not stale basis data.
     let readback = fs::read(&dest).expect("read destination");
-    assert_eq!(readback, src, "whole-file inplace sparse content must equal the source");
+    assert_eq!(
+        readback, src,
+        "whole-file inplace sparse content must equal the source"
+    );
     assert!(
-        readback[4096..4096 + 2 * 1024 * 1024].iter().all(|&b| b == 0),
+        readback[4096..4096 + 2 * 1024 * 1024]
+            .iter()
+            .all(|&b| b == 0),
         "seeked hole must read as zeros, proving the destination was truncated to zero first"
     );
 
@@ -295,10 +295,7 @@ fn execute_with_sparse_enabled_counts_literal_data() {
     file.set_len(1_048_576).expect("extend source");
 
     let destination = temp.path().join("dest.bin");
-    let operands = vec![
-        source.into_os_string(),
-        destination.into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), destination.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
@@ -351,9 +348,7 @@ fn execute_delta_with_sparse_counts_zero_literal_data() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .whole_file(false)
-                .sparse(true),
+            LocalCopyOptions::default().whole_file(false).sparse(true),
         )
         .expect("delta sparse copy succeeds");
 
@@ -366,7 +361,6 @@ fn execute_delta_with_sparse_counts_zero_literal_data() {
 #[cfg(unix)]
 #[test]
 fn execute_without_inplace_replaces_destination_file() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     fs::write(&source, b"updated").expect("write source");
@@ -407,7 +401,7 @@ fn execute_without_inplace_replaces_destination_file() {
 #[cfg(unix)]
 #[test]
 fn execute_inplace_succeeds_with_read_only_directory() {
-    use rustix::fs::{chmod, Mode};
+    use rustix::fs::{Mode, chmod};
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let temp = tempdir().expect("tempdir");
@@ -459,28 +453,33 @@ fn execute_inplace_succeeds_with_read_only_directory() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_multiple_hole_patterns() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("multi-pattern.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
 
     // Pattern: data-hole-data-hole-data (interleaved)
     let data_block = vec![0xAA; 10 * 1024];
-    source_file.write_all(&data_block).expect("write data block 1");
+    source_file
+        .write_all(&data_block)
+        .expect("write data block 1");
 
     source_file
         .seek(SeekFrom::Start(1024 * 1024))
         .expect("seek for hole 1");
 
     let data_block_2 = vec![0xBB; 20 * 1024];
-    source_file.write_all(&data_block_2).expect("write data block 2");
+    source_file
+        .write_all(&data_block_2)
+        .expect("write data block 2");
 
     source_file
         .seek(SeekFrom::Start(3 * 1024 * 1024))
         .expect("seek for hole 2");
 
     let data_block_3 = vec![0xCC; 10 * 1024];
-    source_file.write_all(&data_block_3).expect("write data block 3");
+    source_file
+        .write_all(&data_block_3)
+        .expect("write data block 3");
 
     source_file.set_len(5 * 1024 * 1024).expect("extend source");
     drop(source_file);
@@ -592,7 +591,9 @@ fn execute_sparse_verifies_hole_data_integrity() {
     dest_file.read_exact(&mut buffer_end).expect("read end");
     assert_eq!(&buffer_end, b"END");
 
-    dest_file.seek(SeekFrom::Start(5)).expect("seek after start");
+    dest_file
+        .seek(SeekFrom::Start(5))
+        .expect("seek after start");
     let mut hole_sample = vec![0xFF; 100];
     dest_file.read_exact(&mut hole_sample).expect("read hole");
     assert!(
@@ -606,7 +607,6 @@ fn execute_sparse_verifies_hole_data_integrity() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_small_holes() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("small-holes.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
@@ -664,7 +664,6 @@ fn execute_sparse_with_small_holes() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_aligned_holes() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("aligned.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
@@ -712,10 +711,7 @@ fn execute_sparse_with_aligned_holes() {
 
     assert!(content[1..16].iter().all(|&b| b == 0), "hole before B");
     assert!(content[17..1024].iter().all(|&b| b == 0), "hole before C");
-    assert!(
-        content[1025..2048].iter().all(|&b| b == 0),
-        "hole before D"
-    );
+    assert!(content[1025..2048].iter().all(|&b| b == 0), "hole before D");
 }
 
 /// Test: Zero regions exactly at threshold (32KB) are detected as holes.
@@ -729,7 +725,9 @@ fn execute_sparse_detects_zero_regions_at_threshold() {
     // SPARSE_WRITE_SIZE is 32KB - write exactly that amount of zeros
     let threshold = 32 * 1024;
     source_file.write_all(b"HEADER").expect("write header");
-    source_file.write_all(&vec![0u8; threshold]).expect("write zeros at threshold");
+    source_file
+        .write_all(&vec![0u8; threshold])
+        .expect("write zeros at threshold");
     source_file.write_all(b"FOOTER").expect("write footer");
     drop(source_file);
 
@@ -794,7 +792,9 @@ fn execute_sparse_skips_zero_regions_under_threshold() {
     // Write zeros just under the threshold - should be written densely
     let under_threshold = 32 * 1024 - 1;
     source_file.write_all(b"START").expect("write start");
-    source_file.write_all(&vec![0u8; under_threshold]).expect("write zeros under threshold");
+    source_file
+        .write_all(&vec![0u8; under_threshold])
+        .expect("write zeros under threshold");
     source_file.write_all(b"END").expect("write end");
     drop(source_file);
 
@@ -814,7 +814,10 @@ fn execute_sparse_skips_zero_regions_under_threshold() {
     let content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&content[0..5], b"START");
     assert!(content[5..5 + under_threshold].iter().all(|&b| b == 0));
-    assert_eq!(&content[5 + under_threshold..5 + under_threshold + 3], b"END");
+    assert_eq!(
+        &content[5 + under_threshold..5 + under_threshold + 3],
+        b"END"
+    );
 }
 
 /// Test: Zero regions just over threshold (32KB + 1) are treated as holes.
@@ -828,7 +831,9 @@ fn execute_sparse_detects_zero_regions_over_threshold() {
     // Write zeros just over the threshold - should create holes
     let over_threshold = 32 * 1024 + 1;
     source_file.write_all(b"BEGIN").expect("write begin");
-    source_file.write_all(&vec![0u8; over_threshold]).expect("write zeros over threshold");
+    source_file
+        .write_all(&vec![0u8; over_threshold])
+        .expect("write zeros over threshold");
     source_file.write_all(b"FINISH").expect("write finish");
     drop(source_file);
 
@@ -858,8 +863,15 @@ fn execute_sparse_detects_zero_regions_over_threshold() {
 
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&sparse_content[0..5], b"BEGIN");
-    assert!(sparse_content[5..5 + over_threshold].iter().all(|&b| b == 0));
-    assert_eq!(&sparse_content[5 + over_threshold..5 + over_threshold + 6], b"FINISH");
+    assert!(
+        sparse_content[5..5 + over_threshold]
+            .iter()
+            .all(|&b| b == 0)
+    );
+    assert_eq!(
+        &sparse_content[5 + over_threshold..5 + over_threshold + 6],
+        b"FINISH"
+    );
 
     // Verify sparse optimization occurred (platform-dependent)
     use std::os::unix::fs::MetadataExt;
@@ -887,9 +899,13 @@ fn execute_sparse_creates_actual_filesystem_holes() {
     let mut source_file = fs::File::create(&source).expect("create source");
 
     source_file.write_all(b"DATA1").expect("write data1");
-    source_file.write_all(&vec![0u8; 64 * 1024]).expect("write 64KB zeros");
+    source_file
+        .write_all(&vec![0u8; 64 * 1024])
+        .expect("write 64KB zeros");
     source_file.write_all(b"DATA2").expect("write data2");
-    source_file.write_all(&vec![0u8; 128 * 1024]).expect("write 128KB zeros");
+    source_file
+        .write_all(&vec![0u8; 128 * 1024])
+        .expect("write 128KB zeros");
     source_file.write_all(b"DATA3").expect("write data3");
     drop(source_file);
 
@@ -926,11 +942,17 @@ fn execute_sparse_creates_actual_filesystem_holes() {
         // Find first hole
         let first_hole = libc::lseek(fd, 0, SEEK_HOLE);
         assert!(first_hole > 0, "should find first hole after initial data");
-        assert!(first_hole < 64 * 1024 + 100, "first hole should be in first zero region");
+        assert!(
+            first_hole < 64 * 1024 + 100,
+            "first hole should be in first zero region"
+        );
 
         // Find second data region
         let second_data = libc::lseek(fd, first_hole, SEEK_DATA);
-        assert!(second_data > first_hole, "should find data after first hole");
+        assert!(
+            second_data > first_hole,
+            "should find data after first hole"
+        );
     }
 
     let content = fs::read(&sparse_dest).expect("read sparse");
@@ -950,11 +972,17 @@ fn execute_sparse_detects_multiple_threshold_zero_regions() {
 
     // Create pattern: data - zeros@threshold - data - zeros@threshold - data
     source_file.write_all(b"BLOCK1").expect("write block1");
-    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 1");
+    source_file
+        .write_all(&vec![0u8; threshold])
+        .expect("write zeros 1");
     source_file.write_all(b"BLOCK2").expect("write block2");
-    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 2");
+    source_file
+        .write_all(&vec![0u8; threshold])
+        .expect("write zeros 2");
     source_file.write_all(b"BLOCK3").expect("write block3");
-    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 3");
+    source_file
+        .write_all(&vec![0u8; threshold])
+        .expect("write zeros 3");
     source_file.write_all(b"BLOCK4").expect("write block4");
     drop(source_file);
 
@@ -1021,11 +1049,17 @@ fn execute_sparse_preserves_nonzero_data_integrity() {
     let pattern4: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
 
     source_file.write_all(&pattern1).expect("write pattern1");
-    source_file.write_all(&vec![0u8; 64 * 1024]).expect("write hole");
+    source_file
+        .write_all(&vec![0u8; 64 * 1024])
+        .expect("write hole");
     source_file.write_all(&pattern2).expect("write pattern2");
-    source_file.write_all(&vec![0u8; 32 * 1024]).expect("write hole");
+    source_file
+        .write_all(&vec![0u8; 32 * 1024])
+        .expect("write hole");
     source_file.write_all(&pattern3).expect("write pattern3");
-    source_file.write_all(&vec![0u8; 96 * 1024]).expect("write hole");
+    source_file
+        .write_all(&vec![0u8; 96 * 1024])
+        .expect("write hole");
     source_file.write_all(&pattern4).expect("write pattern4");
     drop(source_file);
 
@@ -1065,9 +1099,15 @@ fn execute_sparse_reduces_disk_allocation() {
 
     // Create 10MB file with only 100KB of data
     source_file.write_all(b"START").expect("write start");
-    source_file.write_all(&vec![0u8; 5 * 1024 * 1024]).expect("write 5MB zeros");
-    source_file.write_all(&vec![0xFF; 100 * 1024]).expect("write 100KB data");
-    source_file.write_all(&vec![0u8; 5 * 1024 * 1024 - 5]).expect("write remaining zeros");
+    source_file
+        .write_all(&vec![0u8; 5 * 1024 * 1024])
+        .expect("write 5MB zeros");
+    source_file
+        .write_all(&vec![0xFF; 100 * 1024])
+        .expect("write 100KB data");
+    source_file
+        .write_all(&vec![0u8; 5 * 1024 * 1024 - 5])
+        .expect("write remaining zeros");
     drop(source_file);
 
     let dense_dest = temp.path().join("dense-alloc.bin");
@@ -1137,7 +1177,9 @@ fn execute_sparse_handles_boundary_split_zeros() {
 
     // Write data, then zeros that span exactly 2x threshold
     source_file.write_all(b"PREFIX").expect("write prefix");
-    source_file.write_all(&vec![0u8; threshold * 2]).expect("write 2x threshold zeros");
+    source_file
+        .write_all(&vec![0u8; threshold * 2])
+        .expect("write 2x threshold zeros");
     source_file.write_all(b"SUFFIX").expect("write suffix");
     drop(source_file);
 
@@ -1157,14 +1199,16 @@ fn execute_sparse_handles_boundary_split_zeros() {
     let content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&content[0..6], b"PREFIX");
     assert!(content[6..6 + threshold * 2].iter().all(|&b| b == 0));
-    assert_eq!(&content[6 + threshold * 2..6 + threshold * 2 + 6], b"SUFFIX");
+    assert_eq!(
+        &content[6 + threshold * 2..6 + threshold * 2 + 6],
+        b"SUFFIX"
+    );
 }
 
 /// Phase 2 test: Large sparse file - verify handling of files >> RAM size.
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_large_file() {
-
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("large-sparse.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
@@ -1447,7 +1491,9 @@ fn execute_sparse_nonzero_file_written_normally() {
     // Block counts should be similar since there are no zeros to sparse-ify
     use std::os::unix::fs::MetadataExt;
     let dense_blocks = fs::metadata(&dense_dest).expect("dense metadata").blocks();
-    let sparse_blocks = fs::metadata(&sparse_dest).expect("sparse metadata").blocks();
+    let sparse_blocks = fs::metadata(&sparse_dest)
+        .expect("sparse metadata")
+        .blocks();
 
     // Non-zero file should use roughly the same number of blocks
     assert!(
@@ -1690,8 +1736,16 @@ fn execute_sparse_hole_in_middle() {
     let dense_content = fs::read(&dense_dest).expect("read dense");
     assert_eq!(sparse_content, dense_content);
     assert!(sparse_content[..4096].iter().all(|&b| b == 0xCC));
-    assert!(sparse_content[4096..4096 + 128 * 1024].iter().all(|&b| b == 0));
-    assert!(sparse_content[4096 + 128 * 1024..].iter().all(|&b| b == 0xDD));
+    assert!(
+        sparse_content[4096..4096 + 128 * 1024]
+            .iter()
+            .all(|&b| b == 0)
+    );
+    assert!(
+        sparse_content[4096 + 128 * 1024..]
+            .iter()
+            .all(|&b| b == 0xDD)
+    );
 
     // Verify sparse uses fewer blocks
     use std::os::unix::fs::MetadataExt;
@@ -1724,15 +1778,11 @@ fn execute_preallocate_disables_sparse_writes() {
     let mut source_file = fs::File::create(&source).expect("create source");
 
     // Create file with a large zero region that would normally be sparsified
-    source_file
-        .write_all(&[0x11])
-        .expect("write leading byte");
+    source_file.write_all(&[0x11]).expect("write leading byte");
     source_file
         .write_all(&vec![0u8; 256 * 1024])
         .expect("write 256KB zeros");
-    source_file
-        .write_all(&[0x22])
-        .expect("write trailing byte");
+    source_file.write_all(&[0x22]).expect("write trailing byte");
     drop(source_file);
 
     let sparse_only_dest = temp.path().join("sparse-only.bin");
@@ -1815,22 +1865,14 @@ fn execute_append_disables_sparse_writes() {
 
     // Create a partial destination for append mode
     fs::write(&dest, [0xFF]).expect("write partial dest");
-    filetime::set_file_mtime(
-        &dest,
-        filetime::FileTime::from_unix_time(1, 0),
-    )
-    .expect("set dest mtime");
-    filetime::set_file_mtime(
-        &source,
-        filetime::FileTime::from_unix_time(2, 0),
-    )
-    .expect("set source mtime");
+    filetime::set_file_mtime(&dest, filetime::FileTime::from_unix_time(1, 0))
+        .expect("set dest mtime");
+    filetime::set_file_mtime(&source, filetime::FileTime::from_unix_time(2, 0))
+        .expect("set source mtime");
 
-    let plan = LocalCopyPlan::from_operands(&[
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ])
-    .expect("plan");
+    let plan =
+        LocalCopyPlan::from_operands(&[source.into_os_string(), dest.clone().into_os_string()])
+            .expect("plan");
 
     // Even with sparse enabled, append should prevent hole creation
     let summary = plan
@@ -2026,7 +2068,6 @@ fn execute_with_sparse_enabled_marks_ntfs_sparse() {
         "sparse copy on NTFS must carry FILE_ATTRIBUTE_SPARSE_FILE"
     );
 }
-
 
 /// A `--sparse` transfer must write byte-identical DATA on Windows/NTFS. NTFS
 /// may not deallocate the hole the way Linux does (a dense fallback is allowed),

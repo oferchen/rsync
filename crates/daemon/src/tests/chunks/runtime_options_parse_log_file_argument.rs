@@ -11,4 +11,3 @@ fn runtime_options_parse_log_file_argument() {
         Some(&PathBuf::from("/var/log/rsyncd.log"))
     );
 }
-

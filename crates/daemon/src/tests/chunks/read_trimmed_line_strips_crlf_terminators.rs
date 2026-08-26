@@ -12,4 +12,3 @@ fn read_trimmed_line_strips_crlf_terminators() {
     let eof = read_trimmed_line(&mut reader).expect("eof read");
     assert!(eof.is_none());
 }
-

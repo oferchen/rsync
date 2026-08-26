@@ -19,4 +19,3 @@ fn runtime_options_config_pid_file_respects_cli_override() {
 
     assert_eq!(options.pid_file(), Some(cli_pid.as_path()));
 }
-

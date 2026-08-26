@@ -18,4 +18,3 @@ fn builder_collects_arguments() {
     assert!(config.has_runtime_request());
     assert_eq!(config.brand(), Brand::Oc);
 }
-

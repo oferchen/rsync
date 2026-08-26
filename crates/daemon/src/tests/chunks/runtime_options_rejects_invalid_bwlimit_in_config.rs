@@ -18,4 +18,3 @@ fn runtime_options_rejects_invalid_bwlimit_in_config() {
             .contains("invalid 'bwlimit' value 'nope'")
     );
 }
-

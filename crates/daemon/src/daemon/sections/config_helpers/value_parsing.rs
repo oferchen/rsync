@@ -130,10 +130,7 @@ pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String>
     // upstream: authenticate.c:356 iterates this value with conf_strtok(), so a
     // leading comma opts the whole list into comma-only splitting and an entry
     // may then contain spaces (e.g. a group name like `@domain admins`).
-    let raw_entries: Vec<String> = conf_split(value)
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let raw_entries: Vec<String> = conf_split(value).into_iter().map(str::to_owned).collect();
 
     if raw_entries.is_empty() {
         return Err("must specify at least one username".to_owned());
@@ -504,8 +501,7 @@ mod conf_strtok_tests {
 
     #[test]
     fn auth_users_honours_the_leading_comma_form() {
-        let users = parse_auth_user_list(",domain admins,alice")
-            .expect("comma-only list parses");
+        let users = parse_auth_user_list(",domain admins,alice").expect("comma-only list parses");
         let names: Vec<&str> = users.iter().map(|u| u.username.as_str()).collect();
         assert_eq!(names, ["domain admins", "alice"]);
     }

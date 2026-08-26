@@ -126,7 +126,9 @@ fn existing_recursive_skips_new_files() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -170,7 +172,9 @@ fn existing_recursive_skips_new_directories() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -204,8 +208,7 @@ fn existing_nested_directories_mixed_states() {
     fs::write(source_root.join("dir1/new.txt"), b"new").expect("write new source");
 
     // File at dir2 level: new directory (should skip)
-    fs::write(source_root.join("dir1/dir2/file.txt"), b"nested")
-        .expect("write nested source");
+    fs::write(source_root.join("dir1/dir2/file.txt"), b"nested").expect("write nested source");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -215,7 +218,9 @@ fn existing_nested_directories_mixed_states() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -224,8 +229,11 @@ fn existing_nested_directories_mixed_states() {
     assert_eq!(summary.files_copied(), 1);
     // Current implementation may count directory skip separately from file skip
     // Adjust to match actual behavior: may only count direct files, not files in skipped dirs
-    assert!(summary.regular_files_skipped_missing() >= 1,
-        "should skip at least new.txt, got {}", summary.regular_files_skipped_missing());
+    assert!(
+        summary.regular_files_skipped_missing() >= 1,
+        "should skip at least new.txt, got {}",
+        summary.regular_files_skipped_missing()
+    );
 
     assert_eq!(
         fs::read(dest_root.join("dir1/exists.txt")).expect("read exists"),
@@ -370,9 +378,7 @@ fn existing_combined_with_times_preserves_mtime() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .existing_only(true)
-                .times(true),
+            LocalCopyOptions::default().existing_only(true).times(true),
         )
         .expect("copy succeeds");
 
@@ -405,7 +411,9 @@ fn existing_dry_run_reports_skipped_files() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("dry run succeeds");
 
@@ -539,7 +547,9 @@ fn existing_with_empty_destination_directory() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -747,8 +757,7 @@ fn existing_matches_upstream_rsync_semantics() {
 
     // Case 3: Directory doesn't exist at destination -> skip
     fs::create_dir_all(source_root.join("new_dir")).expect("create new_dir");
-    fs::write(source_root.join("new_dir/file.txt"), b"in new dir")
-        .expect("write new_dir/file.txt");
+    fs::write(source_root.join("new_dir/file.txt"), b"in new dir").expect("write new_dir/file.txt");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -758,7 +767,9 @@ fn existing_matches_upstream_rsync_semantics() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().existing_only(true).recursive(true),
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -777,7 +788,10 @@ fn existing_matches_upstream_rsync_semantics() {
         b"updated_data",
         "existing file should be updated"
     );
-    assert!(!dest_root.join("new.txt").exists(), "new file should be skipped");
+    assert!(
+        !dest_root.join("new.txt").exists(),
+        "new file should be skipped"
+    );
     assert!(
         !dest_root.join("new_dir").exists(),
         "new directory should be skipped"
@@ -816,9 +830,15 @@ fn existing_combined_with_ignore_existing_skips_all_files() {
     assert_eq!(summary.regular_files_total(), 3);
     assert!(summary.regular_files_skipped_missing() >= 1);
     assert!(summary.regular_files_ignored_existing() >= 2);
-    assert_eq!(fs::read(dest_root.join("changed.txt")).expect("read"), b"old content");
+    assert_eq!(
+        fs::read(dest_root.join("changed.txt")).expect("read"),
+        b"old content"
+    );
     assert!(!dest_root.join("new.txt").exists());
-    assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
+    assert_eq!(
+        fs::read(dest_root.join("same.txt")).expect("read"),
+        b"identical"
+    );
 }
 
 #[test]
@@ -849,8 +869,14 @@ fn existing_combined_with_ignore_existing_and_delete_removes_extraneous() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 0, "no files should be transferred");
-    assert_eq!(fs::read(dest_root.join("keep.txt")).expect("read keep"), b"dest content");
-    assert!(!dest_root.join("extra.txt").exists(), "extraneous file should be deleted");
+    assert_eq!(
+        fs::read(dest_root.join("keep.txt")).expect("read keep"),
+        b"dest content"
+    );
+    assert!(
+        !dest_root.join("extra.txt").exists(),
+        "extraneous file should be deleted"
+    );
     assert!(summary.items_deleted() >= 1);
 }
 
@@ -884,7 +910,10 @@ fn existing_combined_with_ignore_existing_dry_run() {
     assert_eq!(summary.regular_files_total(), 2);
     assert!(summary.regular_files_skipped_missing() >= 1);
     assert!(summary.regular_files_ignored_existing() >= 1);
-    assert_eq!(fs::read(dest_root.join("present.txt")).expect("read"), b"old");
+    assert_eq!(
+        fs::read(dest_root.join("present.txt")).expect("read"),
+        b"old"
+    );
     assert!(!dest_root.join("missing.txt").exists());
 }
 
@@ -897,7 +926,10 @@ fn existing_combined_with_ignore_existing_single_file_existing() {
     fs::write(&source, b"updated content").expect("write source");
     fs::write(&destination, b"original content").expect("write dest");
 
-    let operands = vec![source.into_os_string(), destination.clone().into_os_string()];
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
@@ -912,7 +944,10 @@ fn existing_combined_with_ignore_existing_single_file_existing() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"original content");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"original content"
+    );
 }
 
 #[test]
@@ -923,7 +958,10 @@ fn existing_combined_with_ignore_existing_single_file_missing() {
 
     fs::write(&source, b"new content").expect("write source");
 
-    let operands = vec![source.into_os_string(), destination.clone().into_os_string()];
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
@@ -1021,8 +1059,14 @@ fn existing_combined_with_ignore_existing_recursive_nested() {
     assert_eq!(summary.regular_files_total(), 4);
     assert!(summary.regular_files_skipped_missing() >= 2);
     assert!(summary.regular_files_ignored_existing() >= 2);
-    assert_eq!(fs::read(dest_root.join("root_exists.txt")).expect("read"), b"original");
-    assert_eq!(fs::read(dest_root.join("subdir/sub_exists.txt")).expect("read"), b"original sub");
+    assert_eq!(
+        fs::read(dest_root.join("root_exists.txt")).expect("read"),
+        b"original"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("subdir/sub_exists.txt")).expect("read"),
+        b"original sub"
+    );
     assert!(!dest_root.join("root_new.txt").exists());
     assert!(!dest_root.join("subdir/sub_new.txt").exists());
 }
@@ -1056,6 +1100,9 @@ fn existing_combined_with_ignore_existing_and_update() {
 
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 2);
-    assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"older");
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"older"
+    );
     assert!(!dest_root.join("new.txt").exists());
 }

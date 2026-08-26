@@ -19,4 +19,3 @@ fn runtime_options_config_lock_file_respects_cli_override() {
 
     assert_eq!(options.lock_file(), Some(cli_lock.as_path()));
 }
-

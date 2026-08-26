@@ -6,11 +6,8 @@ fn runtime_options_detach_parsed_default_matches_platform() {
 
     // Parse with no detach-related flags to verify the parsed default
     // matches the struct default (platform-dependent).
-    let options = RuntimeOptions::parse(&[
-        OsString::from("--port"),
-        OsString::from("8873"),
-    ])
-    .expect("parse without detach flags");
+    let options = RuntimeOptions::parse(&[OsString::from("--port"), OsString::from("8873")])
+        .expect("parse without detach flags");
 
     let default_options = RuntimeOptions::default();
     assert_eq!(

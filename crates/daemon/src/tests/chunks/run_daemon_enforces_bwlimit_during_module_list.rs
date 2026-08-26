@@ -14,7 +14,10 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     // parser doesn't swallow the comma separator via backslash escapes on
     // Windows (see PR #4560), and so the paths actually exist on Windows
     // where /srv/docs and /var/log don't (see PR #4559).
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -81,4 +84,3 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
         "expected sleep around {expected:?}, got {total_sleep:?}"
     );
 }
-

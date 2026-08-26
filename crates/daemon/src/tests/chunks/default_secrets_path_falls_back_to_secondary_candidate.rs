@@ -11,4 +11,3 @@ fn default_secrets_path_falls_back_to_secondary_candidate() {
 
     assert_eq!(result, Some(fallback.into_os_string()));
 }
-

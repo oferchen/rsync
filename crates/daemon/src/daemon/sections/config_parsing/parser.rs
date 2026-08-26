@@ -201,9 +201,7 @@ fn parse_config_modules_inner(
             // them to the global-directive handler rather than the per-module
             // setter so the recursive include works after a `[name]` line.
             let is_amp_directive = key.starts_with('&');
-            if !is_amp_directive
-                && let Some(index) = current
-            {
+            if !is_amp_directive && let Some(index) = current {
                 apply_module_directive(
                     &mut pending[index].builder,
                     &key,
@@ -223,7 +221,15 @@ fn parse_config_modules_inner(
                 flush_pending_modules(&mut pending, &mut state);
             }
 
-            apply_global_directive(&mut state, &key, value, path, line_number, &canonical, stack)?;
+            apply_global_directive(
+                &mut state,
+                &key,
+                value,
+                path,
+                line_number,
+                &canonical,
+                stack,
+            )?;
         }
 
         flush_pending_modules(&mut pending, &mut state);

@@ -186,10 +186,7 @@ fn ignore_times_with_checksum_copies_different_content() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"source!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"source!");
 }
 
 #[test]
@@ -289,10 +286,7 @@ fn ignore_times_with_size_only_skips_same_size() {
     // size_only wins over ignore_times - file is NOT transferred
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest!!!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest!!!");
 }
 
 #[test]
@@ -377,10 +371,19 @@ fn ignore_times_allows_delta_transfer() {
 
     // Delta transfer should have matched most of the prefix
     // Note: Block boundaries may not align perfectly at 1000 bytes
-    assert!(summary.matched_bytes() >= 700, "should match at least 700 bytes of shared prefix");
-    assert!(summary.matched_bytes() <= 1000, "should not match more than the shared prefix");
+    assert!(
+        summary.matched_bytes() >= 700,
+        "should match at least 700 bytes of shared prefix"
+    );
+    assert!(
+        summary.matched_bytes() <= 1000,
+        "should not match more than the shared prefix"
+    );
 
-    assert!(summary.bytes_copied() >= 500, "should transfer at least the changed 500 bytes");
+    assert!(
+        summary.bytes_copied() >= 500,
+        "should transfer at least the changed 500 bytes"
+    );
 
     assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }
@@ -418,9 +421,15 @@ fn ignore_times_delta_transfer_with_matching_content() {
     assert_eq!(summary.regular_files_total(), 1);
 
     // Most bytes should be matched via delta (block alignment may not be perfect)
-    assert!(summary.matched_bytes() >= 1400, "should match most content via delta");
+    assert!(
+        summary.matched_bytes() >= 1400,
+        "should match most content via delta"
+    );
 
-    assert!(summary.bytes_copied() <= 600, "should transfer minimal bytes for identical content");
+    assert!(
+        summary.bytes_copied() <= 600,
+        "should transfer minimal bytes for identical content"
+    );
 
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
@@ -495,9 +504,7 @@ fn ignore_times_overrides_update_skip() {
     let summary_with = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .ignore_times(true)
-                .update(true),
+            LocalCopyOptions::default().ignore_times(true).update(true),
         )
         .expect("copy with flags");
 
@@ -505,10 +512,7 @@ fn ignore_times_overrides_update_skip() {
     // --ignore-times doesn't override --update's newer-dest logic
     assert_eq!(summary_with.files_copied(), 0);
     assert_eq!(summary_with.regular_files_skipped_newer(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
 
 #[test]
@@ -529,13 +533,10 @@ fn ignore_times_recursive_transfers_all_files() {
 
         fs::write(source_root.join(&filename), content_source.as_bytes())
             .expect("write source file");
-        fs::write(dest_root.join(&filename), content_dest.as_bytes())
-            .expect("write dest file");
+        fs::write(dest_root.join(&filename), content_dest.as_bytes()).expect("write dest file");
 
-        set_file_mtime(source_root.join(&filename), timestamp)
-            .expect("set source time");
-        set_file_mtime(dest_root.join(&filename), timestamp)
-            .expect("set dest time");
+        set_file_mtime(source_root.join(&filename), timestamp).expect("set source time");
+        set_file_mtime(dest_root.join(&filename), timestamp).expect("set dest time");
     }
 
     let mut source_operand = source_root.clone().into_os_string();
@@ -577,28 +578,19 @@ fn ignore_times_with_nested_directories() {
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    fs::write(source_root.join("root.txt"), b"root source")
-        .expect("write root source");
-    fs::write(dest_root.join("root.txt"), b"root dest!!")
-        .expect("write root dest");
-    set_file_mtime(source_root.join("root.txt"), timestamp)
-        .expect("set root source time");
-    set_file_mtime(dest_root.join("root.txt"), timestamp)
-        .expect("set root dest time");
+    fs::write(source_root.join("root.txt"), b"root source").expect("write root source");
+    fs::write(dest_root.join("root.txt"), b"root dest!!").expect("write root dest");
+    set_file_mtime(source_root.join("root.txt"), timestamp).expect("set root source time");
+    set_file_mtime(dest_root.join("root.txt"), timestamp).expect("set root dest time");
 
-    fs::write(source_root.join("dir1/level1.txt"), b"level1 source")
-        .expect("write level1 source");
-    fs::write(dest_root.join("dir1/level1.txt"), b"level1 dest!!")
-        .expect("write level1 dest");
-    set_file_mtime(source_root.join("dir1/level1.txt"), timestamp)
-        .expect("set level1 source time");
-    set_file_mtime(dest_root.join("dir1/level1.txt"), timestamp)
-        .expect("set level1 dest time");
+    fs::write(source_root.join("dir1/level1.txt"), b"level1 source").expect("write level1 source");
+    fs::write(dest_root.join("dir1/level1.txt"), b"level1 dest!!").expect("write level1 dest");
+    set_file_mtime(source_root.join("dir1/level1.txt"), timestamp).expect("set level1 source time");
+    set_file_mtime(dest_root.join("dir1/level1.txt"), timestamp).expect("set level1 dest time");
 
     fs::write(source_root.join("dir1/dir2/level2.txt"), b"level2 source")
         .expect("write level2 source");
-    fs::write(dest_root.join("dir1/dir2/level2.txt"), b"level2 dest!!")
-        .expect("write level2 dest");
+    fs::write(dest_root.join("dir1/dir2/level2.txt"), b"level2 dest!!").expect("write level2 dest");
     set_file_mtime(source_root.join("dir1/dir2/level2.txt"), timestamp)
         .expect("set level2 source time");
     set_file_mtime(dest_root.join("dir1/dir2/level2.txt"), timestamp)
@@ -726,10 +718,7 @@ fn ignore_times_with_large_files() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.bytes_copied(), 150_000);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        source_content
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }
 
 #[test]
@@ -761,10 +750,7 @@ fn ignore_times_dry_run_reports_correctly() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
 
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
 
 #[test]
@@ -782,7 +768,9 @@ fn ignore_times_with_permissions_and_times_preserves_metadata() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+        let mut perms = fs::metadata(&source)
+            .expect("source metadata")
+            .permissions();
         perms.set_mode(0o644);
         fs::set_permissions(&source, perms).expect("set source perms");
     }

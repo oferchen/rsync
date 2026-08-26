@@ -335,9 +335,10 @@ fn expand_sender_source_globs(
     let mut out = Vec::with_capacity(sources.len());
     for path in sources {
         match path.strip_prefix(module_path) {
-            Ok(rel) if rel.components().any(|c| {
-                matches!(c, std::path::Component::Normal(s) if path_has_glob_metachar(s))
-            }) =>
+            Ok(rel)
+                if rel.components().any(
+                    |c| matches!(c, std::path::Component::Normal(s) if path_has_glob_metachar(s)),
+                ) =>
             {
                 let matches = expand_relative_glob(module_path, rel);
                 if matches.is_empty() {

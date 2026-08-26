@@ -18,4 +18,3 @@ fn runtime_options_loads_timeout_from_config() {
     let module = &modules[0];
     assert_eq!(module.timeout().map(NonZeroU64::get), Some(120));
 }
-

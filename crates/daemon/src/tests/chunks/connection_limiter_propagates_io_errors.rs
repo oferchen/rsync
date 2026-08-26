@@ -7,10 +7,12 @@ fn connection_limiter_propagates_io_errors() {
     fs::remove_file(&lock_path).expect("remove original lock file");
     fs::create_dir(&lock_path).expect("replace lock file with directory");
 
-    match limiter.acquire("docs", MaxConnections::Limited(NonZeroU32::new(1).expect("non-zero"))) {
+    match limiter.acquire(
+        "docs",
+        MaxConnections::Limited(NonZeroU32::new(1).expect("non-zero")),
+    ) {
         Err(ModuleConnectionError::Io(_)) => {}
         Err(other) => panic!("expected io error, got {other:?}"),
         Ok(_) => panic!("expected io error, got success"),
     }
 }
-

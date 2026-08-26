@@ -471,4 +471,3 @@ fn negotiated_stream_copy_buffered_into_slice_copies_bytes() {
         .expect("buffered bytes remain available after slicing copy");
     assert_eq!(replay, expected);
 }
-

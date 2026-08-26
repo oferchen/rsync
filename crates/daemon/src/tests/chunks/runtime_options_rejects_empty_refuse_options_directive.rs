@@ -12,4 +12,3 @@ fn runtime_options_rejects_empty_refuse_options_directive() {
     let rendered = error.message().to_string();
     assert!(rendered.contains("must specify at least one option"));
 }
-

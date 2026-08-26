@@ -20,7 +20,9 @@ fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("open lock file"));
     let limit = NonZeroU32::new(1).expect("non-zero");
 
-    let held = limiter.acquire("docs", MaxConnections::Limited(limit)).expect("first slot claimed");
+    let held = limiter
+        .acquire("docs", MaxConnections::Limited(limit))
+        .expect("first slot claimed");
 
     // At capacity: the sole slot's byte range is locked.
     assert!(matches!(

@@ -7,4 +7,3 @@ fn advertised_capability_lines_report_modules_without_auth() {
         vec![String::from("modules")]
     );
 }
-

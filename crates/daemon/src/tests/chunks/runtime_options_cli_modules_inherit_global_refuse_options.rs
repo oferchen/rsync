@@ -13,4 +13,3 @@ fn runtime_options_cli_modules_inherit_global_refuse_options() {
 
     assert_eq!(options.modules()[0].refused_options(), ["compress"]);
 }
-

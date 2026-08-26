@@ -12,8 +12,8 @@
 #[cfg(unix)]
 #[test]
 fn usermap_remaps_numeric_uid() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root (cannot set arbitrary UIDs)
     if rustix::process::geteuid().as_raw() != 0 {
@@ -61,8 +61,8 @@ fn usermap_remaps_numeric_uid() {
 #[cfg(unix)]
 #[test]
 fn usermap_wildcard_maps_all_users() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -110,8 +110,8 @@ fn usermap_wildcard_maps_all_users() {
 #[cfg(unix)]
 #[test]
 fn usermap_multiple_rules_first_match_wins() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -161,8 +161,8 @@ fn usermap_multiple_rules_first_match_wins() {
 #[cfg(unix)]
 #[test]
 fn usermap_range_mapping() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -211,8 +211,8 @@ fn usermap_range_mapping() {
 #[cfg(unix)]
 #[test]
 fn usermap_no_match_preserves_original_uid() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -261,8 +261,8 @@ fn usermap_no_match_preserves_original_uid() {
 #[cfg(unix)]
 #[test]
 fn groupmap_remaps_numeric_gid() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -310,8 +310,8 @@ fn groupmap_remaps_numeric_gid() {
 #[cfg(unix)]
 #[test]
 fn groupmap_wildcard_maps_all_groups() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -359,8 +359,8 @@ fn groupmap_wildcard_maps_all_groups() {
 #[cfg(unix)]
 #[test]
 fn groupmap_multiple_rules() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -434,8 +434,8 @@ fn groupmap_multiple_rules() {
 #[cfg(unix)]
 #[test]
 fn groupmap_range_mapping() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -484,8 +484,8 @@ fn groupmap_range_mapping() {
 #[cfg(unix)]
 #[test]
 fn usermap_and_groupmap_work_together() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -536,8 +536,8 @@ fn usermap_and_groupmap_work_together() {
 #[cfg(unix)]
 #[test]
 fn usermap_and_groupmap_with_wildcards() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -589,8 +589,8 @@ fn usermap_and_groupmap_with_wildcards() {
 #[cfg(unix)]
 #[test]
 fn usermap_requires_owner_preservation_flag() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -641,8 +641,8 @@ fn usermap_requires_owner_preservation_flag() {
 #[cfg(unix)]
 #[test]
 fn groupmap_requires_group_preservation_flag() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -693,8 +693,8 @@ fn groupmap_requires_group_preservation_flag() {
 #[cfg(unix)]
 #[test]
 fn usermap_applies_to_directory_tree() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -748,16 +748,25 @@ fn usermap_applies_to_directory_tree() {
     let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
     let dest_subdir = dest_dir.join("source").join("subdir");
 
-    assert_eq!(fs::metadata(&dest_file1).expect("file1 metadata").uid(), 2000);
-    assert_eq!(fs::metadata(&dest_file2).expect("file2 metadata").uid(), 2000);
-    assert_eq!(fs::metadata(&dest_subdir).expect("subdir metadata").uid(), 2000);
+    assert_eq!(
+        fs::metadata(&dest_file1).expect("file1 metadata").uid(),
+        2000
+    );
+    assert_eq!(
+        fs::metadata(&dest_file2).expect("file2 metadata").uid(),
+        2000
+    );
+    assert_eq!(
+        fs::metadata(&dest_subdir).expect("subdir metadata").uid(),
+        2000
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn groupmap_applies_to_directory_tree() {
-    use std::os::unix::fs::MetadataExt;
     use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::MetadataExt;
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {
@@ -811,17 +820,26 @@ fn groupmap_applies_to_directory_tree() {
     let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
     let dest_subdir = dest_dir.join("source").join("subdir");
 
-    assert_eq!(fs::metadata(&dest_file1).expect("file1 metadata").gid(), 3000);
-    assert_eq!(fs::metadata(&dest_file2).expect("file2 metadata").gid(), 3000);
-    assert_eq!(fs::metadata(&dest_subdir).expect("subdir metadata").gid(), 3000);
+    assert_eq!(
+        fs::metadata(&dest_file1).expect("file1 metadata").gid(),
+        3000
+    );
+    assert_eq!(
+        fs::metadata(&dest_file2).expect("file2 metadata").gid(),
+        3000
+    );
+    assert_eq!(
+        fs::metadata(&dest_subdir).expect("subdir metadata").gid(),
+        3000
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn usermap_works_with_permissions_and_times() {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    use rustix::fs::{AtFlags, chownat};
     use filetime::{FileTime, set_file_times};
+    use rustix::fs::{AtFlags, chownat};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     // Skip test if not running as root
     if rustix::process::geteuid().as_raw() != 0 {

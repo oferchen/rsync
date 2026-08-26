@@ -32,4 +32,3 @@ fn runtime_options_inline_module_uses_default_secrets_file() {
     assert_eq!(module.name, "secure");
     assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
 }
-

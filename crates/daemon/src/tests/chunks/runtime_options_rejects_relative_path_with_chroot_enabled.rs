@@ -20,4 +20,3 @@ fn runtime_options_rejects_relative_path_with_chroot_enabled() {
             .contains("requires an absolute path when 'use chroot' is enabled")
     );
 }
-

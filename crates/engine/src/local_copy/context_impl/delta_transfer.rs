@@ -14,9 +14,7 @@ pub(super) struct SparseCopy<'state> {
 /// upstream: `generator.c:sum_sizes_sqroot()` fills `struct sum_struct`, whose
 /// four fields `io.c:write_sum_head()` serialises; `remainder` is the length of
 /// the trailing short block, or 0 when the basis divides evenly.
-fn batch_sum_head(
-    index: &DeltaSignatureIndex,
-) -> Result<protocol::wire::SumHead, LocalCopyError> {
+fn batch_sum_head(index: &DeltaSignatureIndex) -> Result<protocol::wire::SumHead, LocalCopyError> {
     let reject = |detail: String| {
         LocalCopyError::io(
             "derive batch sum_head",
@@ -25,7 +23,8 @@ fn batch_sum_head(
         )
     };
     let field = |value: usize, name: &str| {
-        u32::try_from(value).map_err(|_| reject(format!("basis {name} {value} exceeds the wire field")))
+        u32::try_from(value)
+            .map_err(|_| reject(format!("basis {name} {value} exceeds the wire field")))
     };
 
     let count = field(index.block_count(), "block count")?;
@@ -129,14 +128,13 @@ impl<'a> CopyContext<'a> {
             let _ = fast_io::mark_file_sparse(writer);
         }
 
-        let mut destination_reader =
-            Some(fs::File::open(destination).map_err(|error| {
-                LocalCopyError::io(
-                    "read existing destination",
-                    destination.to_path_buf(),
-                    error,
-                )
-            })?);
+        let mut destination_reader = Some(fs::File::open(destination).map_err(|error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        })?);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
@@ -180,9 +178,9 @@ impl<'a> CopyContext<'a> {
                 bytes_since_timeout_check = 0;
             }
             if buffer_pos == buffer_len {
-                buffer_len = reader.read(&mut read_buffer).map_err(|error| {
-                    LocalCopyError::io("copy file", source, error)
-                })?;
+                buffer_len = reader
+                    .read(&mut read_buffer)
+                    .map_err(|error| LocalCopyError::io("copy file", source, error))?;
                 buffer_pos = 0;
                 if buffer_len == 0 {
                     break;
@@ -196,13 +194,9 @@ impl<'a> CopyContext<'a> {
             window.push_back(byte);
             if let Some(outgoing_byte) = outgoing.take() {
                 debug_assert!(window.len() <= index.block_length());
-                rolling
-                    .roll_many(&[outgoing_byte], &[byte])
-                    .map_err(|_| {
-                        LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::UnsupportedFileType,
-                        )
-                    })?;
+                rolling.roll_many(&[outgoing_byte], &[byte]).map_err(|_| {
+                    LocalCopyError::invalid_argument(LocalCopyArgumentError::UnsupportedFileType)
+                })?;
             } else {
                 rolling.update(&[byte]);
             }
@@ -219,9 +213,15 @@ impl<'a> CopyContext<'a> {
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
                     if inplace_mode {
-                        writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
-                            LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
-                        })?;
+                        writer
+                            .seek(SeekFrom::Start(output_position))
+                            .map_err(|error| {
+                                LocalCopyError::io(
+                                    "seek destination file",
+                                    destination.to_path_buf(),
+                                    error,
+                                )
+                            })?;
                     }
                     let flushed = self.flush_literal_chunk(
                         writer,
@@ -242,12 +242,7 @@ impl<'a> CopyContext<'a> {
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
                     output_position = output_position.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
-                    self.notify_progress(
-                        relative,
-                        Some(total_size),
-                        progressed,
-                        start.elapsed(),
-                    );
+                    self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
                     pending_literals.clear();
                 }
 
@@ -298,9 +293,9 @@ impl<'a> CopyContext<'a> {
                             destination,
                         )?;
                     } else {
-                        writer.write_all(matched_bytes).map_err(|error| {
-                            LocalCopyError::io("copy file", destination, error)
-                        })?;
+                        writer
+                            .write_all(matched_bytes)
+                            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
                     }
                     self.write_batch_block_match_token(
                         matched.descriptor().index() as u32,
@@ -423,13 +418,15 @@ impl<'a> CopyContext<'a> {
             if !pending_literals.is_empty() {
                 let flushed_len = pending_literals.len();
                 if inplace_mode {
-                    writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
-                        LocalCopyError::io(
-                            "seek destination file",
-                            destination.to_path_buf(),
-                            error,
-                        )
-                    })?;
+                    writer
+                        .seek(SeekFrom::Start(output_position))
+                        .map_err(|error| {
+                            LocalCopyError::io(
+                                "seek destination file",
+                                destination.to_path_buf(),
+                                error,
+                            )
+                        })?;
                 }
                 let flushed = self.flush_literal_chunk(
                     writer,
@@ -467,25 +464,23 @@ impl<'a> CopyContext<'a> {
                 )?;
                 output_position = output_position.saturating_add(block_len as u64);
             } else if inplace_mode {
-                writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
-                    LocalCopyError::io(
-                        "seek destination file",
-                        destination.to_path_buf(),
-                        error,
-                    )
-                })?;
+                writer
+                    .seek(SeekFrom::Start(output_position))
+                    .map_err(|error| {
+                        LocalCopyError::io(
+                            "seek destination file",
+                            destination.to_path_buf(),
+                            error,
+                        )
+                    })?;
                 let matched_bytes = &scratch[..block_len];
                 if sparse {
-                    let _ = write_sparse_chunk(
-                        writer,
-                        &mut sparse_state,
-                        matched_bytes,
-                        destination,
-                    )?;
+                    let _ =
+                        write_sparse_chunk(writer, &mut sparse_state, matched_bytes, destination)?;
                 } else {
-                    writer.write_all(matched_bytes).map_err(|error| {
-                        LocalCopyError::io("copy file", destination, error)
-                    })?;
+                    writer
+                        .write_all(matched_bytes)
+                        .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
                 }
                 self.write_batch_block_match_token(
                     matched.descriptor().index() as u32,
@@ -523,9 +518,15 @@ impl<'a> CopyContext<'a> {
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
             if inplace_mode {
-                writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
-                    LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
-                })?;
+                writer
+                    .seek(SeekFrom::Start(output_position))
+                    .map_err(|error| {
+                        LocalCopyError::io(
+                            "seek destination file",
+                            destination.to_path_buf(),
+                            error,
+                        )
+                    })?;
             }
             let flushed = self.flush_literal_chunk(
                 writer,
@@ -587,9 +588,9 @@ impl<'a> CopyContext<'a> {
         self.summary.record_delta_probe(file_matches, probe);
 
         let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder.finish().map_err(|error| {
-                LocalCopyError::io("compress file", source, error)
-            })?;
+            let compressed_total = encoder
+                .finish()
+                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
             self.record_adaptive_compression(literal_bytes, compressed_total);
@@ -633,16 +634,16 @@ impl<'a> CopyContext<'a> {
         let written = if sparse {
             write_sparse_chunk(writer, state, chunk, destination)?
         } else {
-            writer.write_all(chunk).map_err(|error| {
-                LocalCopyError::io("copy file", destination, error)
-            })?;
+            writer
+                .write_all(chunk)
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
             chunk.len()
         };
 
         if let Some(encoder) = compressor {
-            encoder.write(chunk).map_err(|error| {
-                LocalCopyError::io("compress file", source, error)
-            })?;
+            encoder
+                .write(chunk)
+                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
             let total = encoder.bytes_written();
             let delta = total.saturating_sub(*compressed_progress);
             *compressed_progress = total;
@@ -726,7 +727,13 @@ impl<'a> CopyContext<'a> {
         // output either way - this is a local-only acceleration with no wire
         // impact.
         if !sparse.enabled
-            && self.try_reflink_matched_block(existing, writer, offset, block_length, destination)?
+            && self.try_reflink_matched_block(
+                existing,
+                writer,
+                offset,
+                block_length,
+                destination,
+            )?
         {
             return Ok(());
         }
@@ -763,12 +770,11 @@ impl<'a> CopyContext<'a> {
             }
 
             if sparse.enabled {
-                let _ =
-                    write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
+                let _ = write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
             } else {
-                writer.write_all(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("copy file", destination, error)
-                })?;
+                writer
+                    .write_all(&buffer[..read])
+                    .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
             }
 
             remaining -= read;

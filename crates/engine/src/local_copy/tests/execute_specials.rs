@@ -1,4 +1,3 @@
-
 // Tests for upstream rsync --specials behavior.
 //
 // In upstream rsync, IS_SPECIAL(mode) covers both S_ISSOCK and S_ISFIFO.
@@ -28,7 +27,6 @@ fn mksocket_for_tests(path: &Path) -> io::Result<()> {
     // Dropping the listener closes it, but the socket node on disk persists.
     Ok(())
 }
-
 
 #[cfg(all(
     unix,
@@ -141,7 +139,6 @@ fn execute_without_specials_records_socket_skip_event() {
     );
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -171,9 +168,7 @@ fn execute_copies_socket_preserving_permissions() {
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .specials(true)
-            .permissions(true),
+        LocalCopyOptions::default().specials(true).permissions(true),
     )
     .expect("socket copy succeeds");
 
@@ -223,15 +218,13 @@ fn execute_copies_socket_preserving_timestamps() {
     // socket may fail with ENXIO on the same kernels.
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .specials(true),
+        LocalCopyOptions::default().specials(true),
     )
     .expect("socket copy succeeds");
 
     let dest_metadata = fs::symlink_metadata(&dest_socket).expect("dest metadata");
     assert!(dest_metadata.file_type().is_socket());
 }
-
 
 #[cfg(all(
     unix,
@@ -275,7 +268,6 @@ fn execute_copies_socket_within_directory() {
     );
     assert_eq!(summary.fifos_created(), 1);
 }
-
 
 // Socket creation in temp dirs requires elevated privileges on macOS.
 #[cfg(all(
@@ -394,7 +386,6 @@ fn execute_without_specials_skips_both_fifos_and_sockets() {
         "both FIFO and socket should produce SkippedNonRegular events"
     );
 }
-
 
 #[cfg(all(
     unix,
@@ -527,8 +518,7 @@ fn execute_archive_mode_copies_fifo_preserving_mode_and_mtime() {
 
     let fifo = source_root.join("archive.pipe");
     mkfifo_for_tests(&fifo, 0o640).expect("mkfifo");
-    fs::set_permissions(&fifo, PermissionsExt::from_mode(0o640))
-        .expect("set fifo permissions");
+    fs::set_permissions(&fifo, PermissionsExt::from_mode(0o640)).expect("set fifo permissions");
 
     // Must be the NOFOLLOW setter. Plain set_file_times() open(2)s the path
     // first, and open(2) on a FIFO blocks until a peer opens the other end -
@@ -577,7 +567,6 @@ fn execute_archive_mode_copies_fifo_preserving_mode_and_mtime() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -612,9 +601,11 @@ fn execute_dry_run_does_not_create_socket() {
         1,
         "dry run should still count the socket"
     );
-    assert!(!dest_socket.exists(), "dry run should not create the socket");
+    assert!(
+        !dest_socket.exists(),
+        "dry run should not create the socket"
+    );
 }
-
 
 #[cfg(all(
     unix,
@@ -696,7 +687,6 @@ fn execute_socket_replaces_regular_file() {
     );
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -729,9 +719,7 @@ fn execute_preserves_socket_hard_links() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .hard_links(true)
-                .specials(true),
+            LocalCopyOptions::default().hard_links(true).specials(true),
         )
         .expect("copy succeeds");
 
@@ -751,7 +739,6 @@ fn execute_preserves_socket_hard_links() {
         "only one socket should be created; the other is a hard link"
     );
 }
-
 
 #[cfg(all(
     unix,
@@ -785,9 +772,7 @@ fn execute_delete_removes_extraneous_socket() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .specials(true)
-                .delete(true),
+            LocalCopyOptions::default().specials(true).delete(true),
         )
         .expect("delete copy succeeds");
 
@@ -795,10 +780,12 @@ fn execute_delete_removes_extraneous_socket() {
         !extraneous_socket.exists(),
         "extraneous socket should be deleted"
     );
-    assert!(dest_root.join("keep.txt").is_file(), "keep.txt should remain");
+    assert!(
+        dest_root.join("keep.txt").is_file(),
+        "keep.txt should remain"
+    );
     assert!(summary.items_deleted() >= 1);
 }
-
 
 #[cfg(all(
     unix,
@@ -846,7 +833,6 @@ fn execute_without_specials_with_delete_does_not_delete_socket_from_keep_list() 
     assert_eq!(summary.fifos_created(), 0);
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -880,13 +866,13 @@ fn execute_socket_produces_fifo_copied_event() {
 
     assert_eq!(report.summary().fifos_created(), 1);
     assert!(
-        report.records().iter().any(|record| {
-            record.action() == &LocalCopyAction::FifoCopied
-        }),
+        report
+            .records()
+            .iter()
+            .any(|record| { record.action() == &LocalCopyAction::FifoCopied }),
         "should record a FifoCopied event for the socket"
     );
 }
-
 
 #[cfg(all(
     unix,
@@ -927,7 +913,6 @@ fn execute_recopy_socket_replaces_existing_socket() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -962,9 +947,7 @@ fn execute_copies_socket_and_symlink_together() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .specials(true)
-                .links(true),
+            LocalCopyOptions::default().specials(true).links(true),
         )
         .expect("copy succeeds");
 
@@ -984,7 +967,6 @@ fn execute_copies_socket_and_symlink_together() {
     assert_eq!(summary.symlinks_copied(), 1);
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn options_specials_enabled_returns_false_by_default() {

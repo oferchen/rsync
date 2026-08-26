@@ -18,4 +18,3 @@ fn runtime_options_global_bwlimit_respects_cli_override() {
         Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
     );
 }
-

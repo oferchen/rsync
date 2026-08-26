@@ -6,4 +6,3 @@ fn module_definition_hostname_allow_matches_exact() {
     assert!(!module.permits(peer, PeerHost::new(Some("other.example.com"), true)));
     assert!(!module.permits(peer, PeerHost::new(None, true)));
 }
-

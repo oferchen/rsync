@@ -281,10 +281,7 @@ fn exit_code_table_text_matches_upstream_rerr_names() {
             23,
             "some files/attrs were not transferred (see previous errors)",
         ),
-        (
-            24,
-            "some files vanished before they could be transferred",
-        ),
+        (24, "some files vanished before they could be transferred"),
         (25, "the --max-delete limit stopped deletions"),
         (30, "timeout in data send/receive"),
         (35, "timeout waiting for daemon connection"),
@@ -295,8 +292,8 @@ fn exit_code_table_text_matches_upstream_rerr_names() {
     ];
 
     for (code, expected_text) in expected {
-        let template =
-            strings::exit_code_message(code).unwrap_or_else(|| panic!("exit code {code} must be in the table"));
+        let template = strings::exit_code_message(code)
+            .unwrap_or_else(|| panic!("exit code {code} must be in the table"));
         assert_eq!(
             template.text(),
             expected_text,
@@ -332,9 +329,12 @@ fn only_exit_code_24_produces_warning_matching_upstream() {
 fn permission_denied_error_includes_context_like_upstream() {
     // Upstream: rsync: [receiver] <filename>: Permission denied (13)
     // Our format: rsync error: <action description> (code N) [role=version]
-    let msg = Message::error(23, "send_files failed to open \"/test/file\": Permission denied (13)")
-        .with_role(Role::Sender)
-        .with_source(message_source!());
+    let msg = Message::error(
+        23,
+        "send_files failed to open \"/test/file\": Permission denied (13)",
+    )
+    .with_role(Role::Sender)
+    .with_source(message_source!());
     let rendered = msg.to_string();
 
     assert!(rendered.starts_with("rsync error: "));
@@ -373,14 +373,8 @@ fn message_segment_order_matches_upstream() {
     let at_pos = rendered.find(" at ").expect("source separator must exist");
     let trailer_pos = rendered.find("[sender=").expect("trailer must exist");
 
-    assert!(
-        prefix_pos < text_pos,
-        "Prefix must come before text"
-    );
-    assert!(
-        text_pos < code_pos,
-        "Text must come before code suffix"
-    );
+    assert!(prefix_pos < text_pos, "Prefix must come before text");
+    assert!(text_pos < code_pos, "Text must come before code suffix");
     assert!(
         code_pos < at_pos,
         "Code suffix must come before source location"
@@ -440,7 +434,9 @@ fn error_code_names_match_upstream_errcode_h() {
 #[test]
 fn from_exit_code_covers_all_documented_upstream_codes() {
     // All exit codes documented in the upstream rsync man page
-    let upstream_documented = [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 30, 35];
+    let upstream_documented = [
+        1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 30, 35,
+    ];
 
     for code in upstream_documented {
         let msg = Message::from_exit_code(code);
@@ -473,9 +469,12 @@ fn exit_code_message_with_detail_preserves_upstream_text_prefix() {
 #[test]
 fn error_message_is_parseable_by_regex() {
     // Tools often parse rsync output with regexes. Verify our format is parseable.
-    let msg = Message::error(23, "some files/attrs were not transferred (see previous errors)")
-        .with_role(Role::Sender)
-        .with_source(message_source!());
+    let msg = Message::error(
+        23,
+        "some files/attrs were not transferred (see previous errors)",
+    )
+    .with_role(Role::Sender)
+    .with_source(message_source!());
     let rendered = msg.to_string();
 
     // Pattern: rsync error: <text> (code <N>) at <basename>(<line>) [<role>=<version>]

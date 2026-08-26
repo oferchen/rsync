@@ -22,7 +22,9 @@ fn build_batch_delta_buffer(options: &LocalCopyOptions) -> Option<std::io::Curso
 /// Returns `None` when `--write-batch` is not in effect.
 fn build_batch_ndx_codec(options: &LocalCopyOptions) -> Option<protocol::codec::NdxCodecEnum> {
     options.get_batch_writer().map(|batch_writer_arc| {
-        let guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
+        let guard = batch_writer_arc
+            .lock()
+            .expect("batch writer mutex poisoned");
         let proto_version = guard.config().protocol_version;
         drop(guard);
         protocol::codec::NdxCodecEnum::new(proto_version as u8)
@@ -43,11 +45,11 @@ fn build_batch_ndx_codec(options: &LocalCopyOptions) -> Option<protocol::codec::
 /// header is what the reader configures itself from
 /// (`batch/src/reader/flist.rs`); deriving them from the live options instead
 /// lets the two sides drift into an undecodable batch.
-fn build_batch_flist_writer(
-    options: &LocalCopyOptions,
-) -> Option<protocol::flist::FileListWriter> {
+fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flist::FileListWriter> {
     options.get_batch_writer().map(|batch_writer_arc| {
-        let guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
+        let guard = batch_writer_arc
+            .lock()
+            .expect("batch writer mutex poisoned");
         let proto_version = guard.config().protocol_version;
         let compat_flags_val = guard.config().compat_flags;
         let checksum_seed = guard.config().checksum_seed;
@@ -158,13 +160,13 @@ fn build_adaptive_level_controller(
         CompressionLevel::PreciseSigned(v) => v,
     };
     match options.compression_algorithm() {
-        CompressionAlgorithm::Zlib => Some(
-            compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(level_i32),
-        ),
+        CompressionAlgorithm::Zlib => {
+            Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(level_i32))
+        }
         #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => Some(
-            compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(level_i32),
-        ),
+        CompressionAlgorithm::Zstd => {
+            Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(level_i32))
+        }
         _ => None,
     }
 }

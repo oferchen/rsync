@@ -7,7 +7,6 @@
 // 4. Atomic rename semantics
 // 5. Comparison with upstream rsync behavior
 
-
 #[test]
 fn execute_with_temp_dir_places_temp_files_in_specified_directory() {
     let temp = tempdir().expect("tempdir");
@@ -114,7 +113,6 @@ fn execute_with_temp_dir_same_filesystem_uses_atomic_rename() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_with_temp_dir_different_filesystem_falls_back_to_copy() {
@@ -155,7 +153,6 @@ fn execute_with_temp_dir_different_filesystem_falls_back_to_copy() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
-
 
 #[test]
 fn execute_with_temp_dir_handles_multiple_files() {
@@ -205,7 +202,6 @@ fn execute_with_temp_dir_handles_multiple_files() {
     assert!(staging_files.is_empty(), "no temp files should remain");
 }
 
-
 #[test]
 fn execute_with_temp_dir_handles_nested_directories() {
     let temp = tempdir().expect("tempdir");
@@ -242,11 +238,26 @@ fn execute_with_temp_dir_handles_nested_directories() {
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("file2.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("file2.txt")
+        )
+        .expect("read"),
         b"level2"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("c").join("file3.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("c")
+                .join("file3.txt")
+        )
+        .expect("read"),
         b"level3"
     );
 
@@ -257,7 +268,6 @@ fn execute_with_temp_dir_handles_nested_directories() {
         .collect();
     assert!(staging_files.is_empty());
 }
-
 
 #[test]
 fn execute_with_absolute_temp_dir_path() {
@@ -291,7 +301,6 @@ fn execute_with_absolute_temp_dir_path() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_replaces_existing_destination() {
     let temp = tempdir().expect("tempdir");
@@ -322,7 +331,6 @@ fn execute_with_temp_dir_replaces_existing_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"new content");
 }
 
-
 #[test]
 fn execute_with_temp_dir_handles_empty_file() {
     let temp = tempdir().expect("tempdir");
@@ -350,7 +358,6 @@ fn execute_with_temp_dir_handles_empty_file() {
     assert!(destination.exists());
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
-
 
 #[test]
 fn execute_with_temp_dir_handles_large_file() {
@@ -389,7 +396,6 @@ fn execute_with_temp_dir_handles_large_file() {
     assert!(staging_files.is_empty());
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_with_temp_dir_preserves_permissions() {
@@ -402,7 +408,9 @@ fn execute_with_temp_dir_preserves_permissions() {
     fs::create_dir_all(&temp_staging).expect("staging dir");
 
     fs::write(&source, b"perms test").expect("write source");
-    let mut perms = fs::metadata(&source).expect("source metadata").permissions();
+    let mut perms = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions();
     perms.set_mode(0o600);
     fs::set_permissions(&source, perms).expect("set source perms");
 
@@ -461,7 +469,6 @@ fn execute_with_temp_dir_preserves_modification_time() {
     assert_eq!(dest_mtime, past_time);
 }
 
-
 #[test]
 fn execute_with_nonexistent_temp_dir_fails() {
     let temp = tempdir().expect("tempdir");
@@ -491,7 +498,6 @@ fn execute_with_nonexistent_temp_dir_fails() {
         "destination should not be created on failure"
     );
 }
-
 
 #[test]
 fn execute_with_temp_dir_and_partial_mode() {
@@ -559,7 +565,6 @@ fn execute_with_temp_dir_and_delay_updates() {
     );
 }
 
-
 #[test]
 fn execute_dry_run_with_temp_dir_does_not_create_files() {
     let temp = tempdir().expect("tempdir");
@@ -584,7 +589,10 @@ fn execute_dry_run_with_temp_dir_does_not_create_files() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(!destination.exists(), "destination should not exist in dry run");
+    assert!(
+        !destination.exists(),
+        "destination should not exist in dry run"
+    );
 
     // Staging directory should also be empty
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
@@ -593,7 +601,6 @@ fn execute_dry_run_with_temp_dir_does_not_create_files() {
         .collect();
     assert!(staging_files.is_empty(), "no temp files in dry run");
 }
-
 
 #[test]
 fn execute_inplace_mode_ignores_temp_dir() {
@@ -635,7 +642,6 @@ fn execute_inplace_mode_ignores_temp_dir() {
         .collect();
     assert!(staging_files.is_empty());
 }
-
 
 #[test]
 fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
@@ -683,7 +689,6 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_containing_spaces() {
     let temp = tempdir().expect("tempdir");
@@ -714,7 +719,6 @@ fn execute_with_temp_dir_containing_spaces() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_containing_special_chars() {
     let temp = tempdir().expect("tempdir");
@@ -741,7 +745,6 @@ fn execute_with_temp_dir_containing_special_chars() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), b"special chars");
 }
-
 
 #[test]
 fn execute_with_temp_dir_provides_atomic_destination_update() {
@@ -777,7 +780,6 @@ fn execute_with_temp_dir_provides_atomic_destination_update() {
     let final_content = fs::read(&destination).expect("read dest");
     assert_eq!(final_content, new_content);
 }
-
 
 #[test]
 fn execute_with_temp_dir_and_delete_removes_extraneous() {
@@ -816,7 +818,6 @@ fn execute_with_temp_dir_and_delete_removes_extraneous() {
     );
 }
 
-
 #[test]
 fn execute_without_temp_dir_creates_temps_alongside_destination() {
     let temp = tempdir().expect("tempdir");
@@ -854,16 +855,12 @@ fn execute_without_temp_dir_creates_temps_alongside_destination() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_uses_upstream_temp_name() {
     // upstream get_tmpname(): beside the destination the temp is `.<name>.XXXXXX`
     // with a leading dot and a six-character suffix.
     let temp_path = temp_name_with_suffix(Path::new("/path/to/file.txt"), None, "ABCDEF");
-    let name = temp_path
-        .file_name()
-        .expect("file name")
-        .to_string_lossy();
+    let name = temp_path.file_name().expect("file name").to_string_lossy();
     assert_eq!(name, ".file.txt.ABCDEF", "got {name}");
     assert_eq!(
         temp_path.parent().unwrap(),
@@ -877,16 +874,16 @@ fn execute_with_temp_dir_format_in_custom_directory() {
     // When temp_dir is set, the temp goes into that directory with no leading
     // dot: upstream get_tmpname() only prepends a dot without --temp-dir.
     let temp_dir = Path::new("/my/temp");
-    let temp_path =
-        temp_name_with_suffix(Path::new("/destination/subdir/file.txt"), Some(temp_dir), "ABCDEF");
+    let temp_path = temp_name_with_suffix(
+        Path::new("/destination/subdir/file.txt"),
+        Some(temp_dir),
+        "ABCDEF",
+    );
     assert!(
         temp_path.starts_with(temp_dir),
         "temp file should be in custom temp directory"
     );
-    let name = temp_path
-        .file_name()
-        .expect("file name")
-        .to_string_lossy();
+    let name = temp_path.file_name().expect("file name").to_string_lossy();
     assert_eq!(
         name, "file.txt.ABCDEF",
         "temp file should use filename only, not full subpath"
@@ -897,7 +894,6 @@ fn execute_with_temp_dir_format_in_custom_directory() {
         "temp file should be directly in temp_dir, not nested"
     );
 }
-
 
 #[test]
 fn execute_with_temp_dir_and_whole_file_mode() {
@@ -938,7 +934,6 @@ fn execute_with_temp_dir_and_whole_file_mode() {
     assert!(staging_files.is_empty());
 }
 
-
 #[test]
 fn temp_dir_option_round_trip_via_builder() {
     let options = LocalCopyOptions::builder()
@@ -978,7 +973,6 @@ fn temp_dir_option_does_not_affect_partial_mode() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_preserves_binary_content_exactly() {
     let temp = tempdir().expect("tempdir");
@@ -1011,7 +1005,6 @@ fn execute_with_temp_dir_preserves_binary_content_exactly() {
         "binary content must be preserved exactly"
     );
 }
-
 
 #[test]
 fn execute_with_temp_dir_second_run_skips_identical_files() {
@@ -1053,11 +1046,11 @@ fn execute_with_temp_dir_second_run_skips_identical_files() {
         .expect("second copy succeeds");
 
     assert_eq!(
-        summary2.files_copied(), 0,
+        summary2.files_copied(),
+        0,
         "identical file should be skipped on second run"
     );
 }
-
 
 #[test]
 fn execute_with_temp_dir_and_checksum_mode() {
@@ -1091,7 +1084,6 @@ fn execute_with_temp_dir_and_checksum_mode() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_unique_temp_names_across_files() {
     // Verify that multiple files in the same temp dir get distinct temp names,
@@ -1124,7 +1116,6 @@ fn execute_with_temp_dir_unique_suffix_per_file() {
         "different suffixes should get different temp paths"
     );
 }
-
 
 #[test]
 fn execute_with_temp_dir_and_backup() {
@@ -1171,7 +1162,6 @@ fn execute_with_temp_dir_and_backup() {
     );
 }
 
-
 #[test]
 fn execute_with_temp_dir_nested_source_uses_flat_staging() {
     // When copying nested directory structures with --temp-dir,
@@ -1215,7 +1205,14 @@ fn execute_with_temp_dir_nested_source_uses_flat_staging() {
         b"mid level"
     );
     assert_eq!(
-        fs::read(dest_root.join("source").join("a").join("b").join("deep.txt")).expect("read"),
+        fs::read(
+            dest_root
+                .join("source")
+                .join("a")
+                .join("b")
+                .join("deep.txt")
+        )
+        .expect("read"),
         b"deep level"
     );
 

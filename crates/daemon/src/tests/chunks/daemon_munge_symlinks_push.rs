@@ -75,7 +75,8 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -110,8 +111,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
          disabled placeholder rather than a usable in-tree shortcut",
     );
 
-    let parent_link =
-        fs::read_link(dest_dir.join("parent_link")).expect("read parent_link target");
+    let parent_link = fs::read_link(dest_dir.join("parent_link")).expect("read parent_link target");
     assert_eq!(
         parent_link,
         std::path::Path::new("/rsyncd-munged/../escape"),

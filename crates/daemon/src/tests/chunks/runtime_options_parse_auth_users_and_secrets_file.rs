@@ -36,4 +36,3 @@ fn runtime_options_parse_auth_users_and_secrets_file() {
     assert_eq!(module.auth_users()[1].username, "bob");
     assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
 }
-

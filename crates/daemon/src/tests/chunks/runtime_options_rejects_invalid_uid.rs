@@ -11,4 +11,3 @@ fn runtime_options_rejects_invalid_uid() {
 
     assert!(error.message().to_string().contains("invalid uid"));
 }
-

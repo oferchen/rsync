@@ -14,4 +14,3 @@ fn runtime_options_rejects_missing_secrets_from_environment() {
         "no secrets override should be loaded when the environment path is missing"
     );
 }
-

@@ -626,10 +626,9 @@ fn super_mode_with_times_preserves_timestamps() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime =
-        filetime::FileTime::from_last_modification_time(
-            &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
-        );
+    let dest_mtime = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
+    );
     assert_eq!(dest_mtime, mtime);
 }
 
@@ -656,10 +655,9 @@ fn no_super_with_times_still_preserves_timestamps() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime =
-        filetime::FileTime::from_last_modification_time(
-            &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
-        );
+    let dest_mtime = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
+    );
     assert_eq!(dest_mtime, mtime);
 }
 
@@ -1034,9 +1032,7 @@ fn fake_super_with_empty_source_directory() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .fake_super(true)
-                .owner(true),
+            LocalCopyOptions::default().fake_super(true).owner(true),
         )
         .expect("copy succeeds");
 

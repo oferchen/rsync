@@ -19,4 +19,3 @@ fn runtime_options_loads_config_from_legacy_environment_variable() {
     assert_eq!(module.name, "legacy");
     assert_eq!(module.path, module_dir);
 }
-

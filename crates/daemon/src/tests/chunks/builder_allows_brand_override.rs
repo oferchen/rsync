@@ -9,4 +9,3 @@ fn builder_allows_brand_override() {
     assert_eq!(config.brand(), Brand::Upstream);
     assert_eq!(config.arguments(), &[OsString::from("--daemon")]);
 }
-

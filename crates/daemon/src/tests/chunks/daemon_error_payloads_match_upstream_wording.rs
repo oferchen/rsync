@@ -52,10 +52,7 @@ fn daemon_error_payloads_match_upstream_wording() {
     );
 
     // upstream: clientserver.c:694 - `@ERROR: chdir failed\n`
-    assert_eq!(
-        crate::daemon::CHDIR_FAILED_PAYLOAD,
-        "@ERROR: chdir failed",
-    );
+    assert_eq!(crate::daemon::CHDIR_FAILED_PAYLOAD, "@ERROR: chdir failed",);
 
     // upstream: clientserver.c:1129 - `@ERROR: setuid failed\n`
     assert_eq!(
@@ -128,7 +125,10 @@ fn send_error_framing_matches_upstream() {
     let expected_wire = format!("{payload}\n");
     assert!(expected_wire.starts_with("@ERROR: "));
     assert!(expected_wire.ends_with('\n'));
-    assert!(!expected_wire.ends_with("\n\n"), "must not double-terminate");
+    assert!(
+        !expected_wire.ends_with("\n\n"),
+        "must not double-terminate"
+    );
     assert!(
         !expected_wire.contains("@RSYNCD: EXIT"),
         "refusal wire must not contain a trailing EXIT marker"
@@ -147,8 +147,7 @@ fn deny_hidden_module_sends_unknown_module_error() {
 
     // When listable is false, the error should use the unknown module template
     // (masking the module's existence).
-    let hidden_payload =
-        UNKNOWN_MODULE_PAYLOAD.replace("{module}", "secret");
+    let hidden_payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", "secret");
     assert_eq!(hidden_payload, "@ERROR: Unknown module 'secret'");
     assert!(
         !hidden_payload.contains("access denied"),

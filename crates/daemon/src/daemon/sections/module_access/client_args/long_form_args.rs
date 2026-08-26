@@ -172,19 +172,28 @@ fn apply_long_form_args(
             // upstream: options.c:2933-2941 - reference directories
             "--compare-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Compare,
+                        std::path::PathBuf::from(dir),
+                    ));
                     i += 1;
                 }
             }
             "--copy-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Copy,
+                        std::path::PathBuf::from(dir),
+                    ));
                     i += 1;
                 }
             }
             "--link-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Link,
+                        std::path::PathBuf::from(dir),
+                    ));
                     i += 1;
                 }
             }
@@ -298,7 +307,8 @@ fn apply_long_form_args(
                 // files within the window are not needlessly re-transferred.
                 } else if let Some(val) = arg.strip_prefix("--modify-window=") {
                     if let Ok(n) = val.trim_start_matches('+').parse::<i64>() {
-                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
+                        config.file_selection.modify_window =
+                            ::metadata::ModifyWindow::from_secs(n);
                     }
                 // upstream: options.c:2953-2954 - the client forwards the block
                 // size as a standalone `-B%u` token, and options.c:1795-1805
@@ -318,7 +328,8 @@ fn apply_long_form_args(
                 // nanosecond-exact comparison (util1.c:1482).
                 } else if let Some(val) = arg.strip_prefix("-@") {
                     if let Ok(n) = val.parse::<i64>() {
-                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
+                        config.file_selection.modify_window =
+                            ::metadata::ModifyWindow::from_secs(n);
                     }
                 // Fallback: =value format for reference directories and backup options.
                 // Handles both upstream (two-arg) and legacy (=value) formats.
@@ -330,11 +341,20 @@ fn apply_long_form_args(
                 } else if let Some(suffix) = arg.strip_prefix("--backup-suffix=") {
                     config.backup_suffix = Some(suffix.to_owned());
                 } else if let Some(dir) = arg.strip_prefix("--link-dest=") {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Link,
+                        std::path::PathBuf::from(dir),
+                    ));
                 } else if let Some(dir) = arg.strip_prefix("--compare-dest=") {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Compare,
+                        std::path::PathBuf::from(dir),
+                    ));
                 } else if let Some(dir) = arg.strip_prefix("--copy-dest=") {
-                    config.reference_directories.push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, std::path::PathBuf::from(dir)));
+                    config.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Copy,
+                        std::path::PathBuf::from(dir),
+                    ));
                 } else if let Some(dir) = arg.strip_prefix("--temp-dir=") {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(dir) = arg.strip_prefix("--partial-dir=") {
@@ -456,8 +476,9 @@ fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String>
         Ok(parsed) if parsed.bytes as f64 >= SIZE_MAX_AS_DOUBLE => {
             Err(size_arg_error(opt_name, value, "too large"))
         }
-        Ok(parsed) => u64::try_from(parsed.bytes)
-            .map_err(|_| size_arg_error(opt_name, value, "too large")),
+        Ok(parsed) => {
+            u64::try_from(parsed.bytes).map_err(|_| size_arg_error(opt_name, value, "too large"))
+        }
         Err(::core::bandwidth::SizeArgError::Invalid) => {
             Err(size_arg_error(opt_name, value, "invalid"))
         }
@@ -500,5 +521,8 @@ fn size_arg_error(opt_name: &str, value: &str, reason: &str) -> String {
 /// - `options.c:1444-1449` - daemon-mode unknown option error path
 fn is_client_only_flag_reaching_daemon(arg: &str) -> bool {
     let bare = arg.split('=').next().unwrap_or(arg);
-    matches!(bare, "--write-batch" | "--only-write-batch" | "--read-batch")
+    matches!(
+        bare,
+        "--write-batch" | "--only-write-batch" | "--read-batch"
+    )
 }

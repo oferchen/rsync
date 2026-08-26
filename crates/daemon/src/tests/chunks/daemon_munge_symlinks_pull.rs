@@ -60,8 +60,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
     // upstream: flist.c:234 - targets that lack the prefix pass through
     // unchanged via the `llen > SYMLINK_PREFIX_LEN && strncmp(...) == 0`
     // guard. Cover that branch alongside the strip path.
-    unix_fs::symlink("already_unmunged", source_dir.join("bare_link"))
-        .expect("create bare_link");
+    unix_fs::symlink("already_unmunged", source_dir.join("bare_link")).expect("create bare_link");
 
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -91,13 +90,17 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mungemod/");
 
     let client_config = core::client::ClientConfig::builder()
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .links(true)
         .build();
 
@@ -124,8 +127,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
          client side link points at the actual file",
     );
 
-    let parent_link =
-        fs::read_link(dest_dir.join("parent_link")).expect("read parent_link target");
+    let parent_link = fs::read_link(dest_dir.join("parent_link")).expect("read parent_link target");
     assert_eq!(
         parent_link,
         std::path::Path::new("../escape"),

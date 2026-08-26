@@ -15,7 +15,6 @@
 // 6. Mismatch detection with verification
 // 7. Works correctly with various file sizes
 
-
 #[test]
 fn append_adds_remaining_data_to_partial_file() {
     let temp = tempdir().expect("tempdir");
@@ -70,9 +69,7 @@ fn append_skips_when_destination_equals_source_size() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .append(true)
-                .times(true),
+            LocalCopyOptions::default().append(true).times(true),
         )
         .expect("copy succeeds");
 
@@ -166,12 +163,8 @@ fn append_handles_empty_destination() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"full content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"full content");
 }
-
 
 #[test]
 fn append_correct_offset_with_small_partial() {
@@ -258,10 +251,7 @@ fn append_one_byte_partial() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"Hello World!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"Hello World!");
 }
 
 #[test]
@@ -291,7 +281,6 @@ fn append_almost_complete_file() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), full);
 }
-
 
 #[test]
 fn append_verify_succeeds_when_prefix_matches() {
@@ -393,7 +382,10 @@ fn append_verify_with_large_matching_prefix() {
         fs::read(&destination).expect("read dest").len(),
         full_content.len()
     );
-    assert_eq!(fs::read(&destination).expect("read dest"), full_content.as_bytes());
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        full_content.as_bytes()
+    );
 }
 
 #[test]
@@ -599,7 +591,6 @@ fn append_without_verify_blindly_appends() {
     assert_eq!(result, b"WRONG DATAABCDEFGHIJ");
 }
 
-
 #[test]
 fn append_combined_with_times_preserves_mtime() {
     let temp = tempdir().expect("tempdir");
@@ -621,17 +612,14 @@ fn append_combined_with_times_preserves_mtime() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .append(true)
-                .times(true),
+            LocalCopyOptions::default().append(true).times(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata")
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
 }
 
@@ -660,15 +648,15 @@ fn append_combined_with_permissions() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .append(true)
-                .permissions(true),
+            LocalCopyOptions::default().append(true).permissions(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o644);
 }
 
@@ -690,9 +678,7 @@ fn append_with_checksum_mode() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .append(true)
-                .checksum(true),
+            LocalCopyOptions::default().append(true).checksum(true),
         )
         .expect("copy succeeds");
 
@@ -702,7 +688,6 @@ fn append_with_checksum_mode() {
         b"content to append to file"
     );
 }
-
 
 #[test]
 fn append_recursive_directory_with_partial_files() {
@@ -716,18 +701,14 @@ fn append_recursive_directory_with_partial_files() {
     // File 1: Partial destination (should append)
     fs::write(source_root.join("file1.txt"), b"complete file one content")
         .expect("write file1 source");
-    fs::write(dest_root.join("file1.txt"), b"complete file")
-        .expect("write file1 partial");
+    fs::write(dest_root.join("file1.txt"), b"complete file").expect("write file1 partial");
 
     // File 2: Complete destination (should skip if mtime matches)
-    fs::write(source_root.join("file2.txt"), b"file two done")
-        .expect("write file2 source");
-    fs::write(dest_root.join("file2.txt"), b"file two done")
-        .expect("write file2 complete");
+    fs::write(source_root.join("file2.txt"), b"file two done").expect("write file2 source");
+    fs::write(dest_root.join("file2.txt"), b"file two done").expect("write file2 complete");
 
     // File 3: Missing destination (should create)
-    fs::write(source_root.join("file3.txt"), b"brand new file")
-        .expect("write file3 source");
+    fs::write(source_root.join("file3.txt"), b"brand new file").expect("write file3 source");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -770,8 +751,7 @@ fn append_nested_directory_structure() {
     // Root level file: partial
     fs::write(source_root.join("root.txt"), b"root file complete content")
         .expect("write root source");
-    fs::write(dest_root.join("root.txt"), b"root file")
-        .expect("write root partial");
+    fs::write(dest_root.join("root.txt"), b"root file").expect("write root partial");
 
     // Nested file: partial
     fs::write(
@@ -779,8 +759,11 @@ fn append_nested_directory_structure() {
         b"nested content in deep directory",
     )
     .expect("write nested source");
-    fs::write(dest_root.join("level1/level2/nested.txt"), b"nested content")
-        .expect("write nested partial");
+    fs::write(
+        dest_root.join("level1/level2/nested.txt"),
+        b"nested content",
+    )
+    .expect("write nested partial");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -805,7 +788,6 @@ fn append_nested_directory_structure() {
         b"nested content in deep directory"
     );
 }
-
 
 #[test]
 fn append_binary_data() {
@@ -864,7 +846,6 @@ fn append_verify_binary_data_with_matching_prefix() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), full_binary);
 }
-
 
 #[test]
 fn append_with_empty_source_skips_when_dest_has_content() {
@@ -954,7 +935,6 @@ fn append_verify_enabled_implies_append() {
     );
 }
 
-
 #[test]
 fn append_dry_run_reports_but_preserves_files() {
     let temp = tempdir().expect("tempdir");
@@ -982,7 +962,6 @@ fn append_dry_run_reports_but_preserves_files() {
     // But destination should remain unchanged
     assert_eq!(fs::read(&destination).expect("read dest"), b"complete");
 }
-
 
 #[test]
 fn append_matches_upstream_append_semantics() {
@@ -1053,7 +1032,6 @@ fn append_matches_upstream_append_semantics() {
         "case4: no dest -> created"
     );
 }
-
 
 #[test]
 fn append_skips_when_destination_exactly_equals_source_size() {
@@ -1224,8 +1202,7 @@ fn append_recursive_skips_completed_files() {
     // File 1: dest shorter -> append
     fs::write(source_root.join("partial.txt"), b"full content of file")
         .expect("write partial source");
-    fs::write(dest_root.join("partial.txt"), b"full content")
-        .expect("write partial dest");
+    fs::write(dest_root.join("partial.txt"), b"full content").expect("write partial dest");
 
     // File 2: dest equal size -> skip
     fs::write(source_root.join("equal.txt"), b"equal").expect("write equal source");

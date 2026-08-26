@@ -59,7 +59,10 @@ fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
@@ -85,7 +88,10 @@ fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
     // and the socket closes right after the error (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing line after the security error, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing line after the security error, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -136,7 +142,10 @@ fn daemon_munge_symlinks_without_munged_dir_proceeds_to_ok() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")

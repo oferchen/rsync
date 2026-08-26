@@ -98,18 +98,19 @@ fn include_config_file(
     // the parent's globals so modules declared in the included file inherit the
     // parent's P_LOCAL defaults (use chroot, hosts allow, secrets file, ...),
     // matching the shared `Vars` that `]push` copies (not resets).
-    let included = parse_config_modules_inner(include_path, stack, Some(state)).map_err(|error| {
-        // Wrap inner failures so the user sees both the directive site that
-        // triggered the include and the underlying parse error from the
-        // included file. Missing-file and recursive-include errors already
-        // name the offending path; this wrap adds the parent line context.
-        let display = include_path.display();
-        config_parse_error(
-            path,
-            line_number,
-            format!("failed to process '{directive} {display}': {error}"),
-        )
-    })?;
+    let included =
+        parse_config_modules_inner(include_path, stack, Some(state)).map_err(|error| {
+            // Wrap inner failures so the user sees both the directive site that
+            // triggered the include and the underlying parse error from the
+            // included file. Missing-file and recursive-include errors already
+            // name the offending path; this wrap adds the parent line context.
+            let display = include_path.display();
+            config_parse_error(
+                path,
+                line_number,
+                format!("failed to process '{directive} {display}': {error}"),
+            )
+        })?;
 
     if manage_globals {
         // `&include`: `]pop` restores the parent's globals afterwards, so the

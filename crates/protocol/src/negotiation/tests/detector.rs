@@ -1,4 +1,3 @@
-
 #[test]
 fn prologue_detector_caches_decision() {
     let mut detector = NegotiationPrologueDetector::new();
@@ -389,10 +388,7 @@ fn prologue_detector_observe_byte_matches_slice_behavior() {
             last
         };
 
-        assert_eq!(
-            byte_result, slice_result,
-            "decision mismatch for {data:?}"
-        );
+        assert_eq!(byte_result, slice_result, "decision mismatch for {data:?}");
         assert_eq!(
             byte_detector.decision(),
             slice_detector.decision(),
@@ -419,4 +415,3 @@ fn prologue_detector_observe_byte_matches_slice_behavior() {
     run_case(b"modern");
     run_case(&[0x00, 0x20, 0x00, 0x00]);
 }
-

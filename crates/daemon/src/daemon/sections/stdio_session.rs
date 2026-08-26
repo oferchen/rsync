@@ -24,10 +24,7 @@
 ///
 /// Returns a `DaemonError` if config loading fails or the session handler
 /// encounters an I/O error.
-pub fn run_stdio_session(
-    arguments: &[OsString],
-    is_rsh_daemon: bool,
-) -> Result<(), DaemonError> {
+pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<(), DaemonError> {
     let mut options = RuntimeOptions {
         brand: Brand::Oc,
         ..Default::default()
@@ -38,13 +35,15 @@ pub fn run_stdio_session(
     // Parse --config and --log-file from the provided arguments.
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
-        if let Some(value) = take_option_value(argument, &mut iter, "--config")
-            .map_err(|e| DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon)))?
-        {
+        if let Some(value) = take_option_value(argument, &mut iter, "--config").map_err(|e| {
+            DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon))
+        })? {
             options.load_config_modules(&value, &mut seen_modules)?;
             has_explicit_config = true;
-        } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")
-            .map_err(|e| DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon)))?
+        } else if let Some(value) =
+            take_option_value(argument, &mut iter, "--log-file").map_err(|e| {
+                DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon))
+            })?
         {
             options.set_log_file(PathBuf::from(value))?;
         }

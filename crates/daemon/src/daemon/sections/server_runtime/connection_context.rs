@@ -65,11 +65,7 @@ impl ConnectionContext {
     ///
     /// upstream: clientserver.c - `start_daemon()` forks a child per
     /// connection which runs `rsync_module()`.
-    fn serve_session(
-        &self,
-        stream: DaemonStream,
-        raw_peer_addr: SocketAddr,
-    ) -> io::Result<()> {
+    fn serve_session(&self, stream: DaemonStream, raw_peer_addr: SocketAddr) -> io::Result<()> {
         let peer_addr = normalize_peer_address(raw_peer_addr);
         let log_for_worker = self.log_sink.clone();
 
@@ -95,8 +91,7 @@ impl ConnectionContext {
                 if let Some(log) = log_for_worker.as_ref() {
                     let text =
                         format!("connection handler for {peer_addr} panicked: {description}");
-                    let message =
-                        rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
+                    let message = rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
                 Ok(())

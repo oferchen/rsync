@@ -7,10 +7,7 @@ fn runtime_options_detach_default_matches_platform() {
     let options = RuntimeOptions::default();
 
     #[cfg(unix)]
-    assert!(
-        options.detach(),
-        "detach should default to true on Unix"
-    );
+    assert!(options.detach(), "detach should default to true on Unix");
     #[cfg(not(unix))]
     assert!(
         !options.detach(),

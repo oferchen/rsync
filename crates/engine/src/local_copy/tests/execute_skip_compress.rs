@@ -117,7 +117,10 @@ fn skip_compress_no_compression_when_disabled() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(fs::read(&destination).expect("read dest"), content.as_slice());
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        content.as_slice()
+    );
     assert!(!summary.compression_used());
     assert_eq!(summary.compressed_bytes(), 0);
 }
@@ -264,17 +267,30 @@ fn skip_compress_mixed_directory_transfer() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(fs::read(dest_dir.join("archive.gz")).expect("read .gz"), gz_content);
-    assert_eq!(fs::read(dest_dir.join("image.png")).expect("read .png"), png_content);
-    assert_eq!(fs::read(dest_dir.join("readme.txt")).expect("read .txt"), txt_content);
-    assert_eq!(fs::read(dest_dir.join("main.rs")).expect("read .rs"), rs_content);
+    assert_eq!(
+        fs::read(dest_dir.join("archive.gz")).expect("read .gz"),
+        gz_content
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("image.png")).expect("read .png"),
+        png_content
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("readme.txt")).expect("read .txt"),
+        txt_content
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("main.rs")).expect("read .rs"),
+        rs_content
+    );
 
     // At least some compression was used (for .txt and .rs files).
     assert!(summary.compression_used());
     assert!(summary.compressed_bytes() > 0);
 
     // The total literal bytes should cover all four files.
-    let total_literal = (gz_content.len() + png_content.len() + txt_content.len() + rs_content.len()) as u64;
+    let total_literal =
+        (gz_content.len() + png_content.len() + txt_content.len() + rs_content.len()) as u64;
     assert_eq!(summary.bytes_copied(), total_literal);
 }
 

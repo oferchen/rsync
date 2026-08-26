@@ -8,7 +8,6 @@
 // providing a single, comprehensive test suite focused exclusively on dry-run
 // semantics as documented in the rsync(1) man page.
 
-
 #[test]
 fn dry_run_single_file_lists_but_does_not_copy() {
     let temp = tempdir().expect("tempdir");
@@ -32,7 +31,10 @@ fn dry_run_single_file_lists_but_does_not_copy() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 0);
     assert_eq!(summary.transferred_file_size(), 7); // "payload" is 7 bytes
-    assert!(!destination.exists(), "dry run must not create destination file");
+    assert!(
+        !destination.exists(),
+        "dry run must not create destination file"
+    );
 }
 
 #[test]
@@ -123,7 +125,6 @@ fn dry_run_preserves_existing_destination_unmodified() {
     );
 }
 
-
 #[test]
 fn dry_run_directory_tree_not_created() {
     let ctx = test_helpers::setup_copy_test();
@@ -169,7 +170,10 @@ fn dry_run_multiple_directories_reported_but_not_created() {
         "expected at least 3 directories_created, got {}",
         summary.directories_created()
     );
-    assert!(!ctx.dest.exists(), "no destination directories should exist");
+    assert!(
+        !ctx.dest.exists(),
+        "no destination directories should exist"
+    );
 }
 
 #[test]
@@ -188,7 +192,6 @@ fn dry_run_empty_directory_tree_reported() {
     assert!(summary.directories_created() >= 1);
     assert!(!ctx.dest.exists(), "no destination should be created");
 }
-
 
 #[test]
 fn dry_run_with_delete_reports_deletions_but_preserves_files() {
@@ -263,8 +266,14 @@ fn dry_run_with_delete_before_reports_deletions_without_side_effects() {
         "expected at least 2 items_deleted, got {}",
         summary.items_deleted()
     );
-    assert!(dest.join("orphan1.txt").exists(), "orphan1 must still exist");
-    assert!(dest.join("orphan2.txt").exists(), "orphan2 must still exist");
+    assert!(
+        dest.join("orphan1.txt").exists(),
+        "orphan1 must still exist"
+    );
+    assert!(
+        dest.join("orphan2.txt").exists(),
+        "orphan2 must still exist"
+    );
     assert_eq!(
         fs::read(dest.join("file.txt")).expect("read file"),
         b"old",
@@ -315,7 +324,6 @@ fn dry_run_with_delete_during_reports_interleaved_events() {
     assert_eq!(fs::read(dest.join("keep.txt")).expect("read"), b"old");
 }
 
-
 #[test]
 fn dry_run_with_exclude_filter_omits_excluded_files() {
     let ctx = test_helpers::setup_copy_test();
@@ -326,8 +334,7 @@ fn dry_run_with_exclude_filter_omits_excluded_files() {
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
 
     let options = LocalCopyOptions::default()
         .filters(Some(filters))
@@ -391,7 +398,6 @@ fn dry_run_with_include_exclude_filter_chain() {
         .collect();
     assert_eq!(paths, vec!["important.cfg"]);
 }
-
 
 #[test]
 fn dry_run_records_contain_file_metadata() {
@@ -487,7 +493,6 @@ fn dry_run_records_update_is_not_marked_as_created() {
     );
     assert_eq!(fs::read(&destination).expect("read"), b"old");
 }
-
 
 #[test]
 fn dry_run_statistics_match_apply_mode_statistics() {
@@ -592,7 +597,6 @@ fn dry_run_empty_files_reported() {
     assert_eq!(summary.bytes_copied(), 0);
     assert!(!ctx.dest.exists());
 }
-
 
 #[test]
 fn dry_run_with_times_does_not_set_timestamps() {
@@ -752,7 +756,6 @@ fn dry_run_with_checksum_mode_reports_correctly() {
     assert!(!destination.exists());
 }
 
-
 #[cfg(unix)]
 #[test]
 fn dry_run_does_not_create_symlinks() {
@@ -773,9 +776,11 @@ fn dry_run_does_not_create_symlinks() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.symlinks_copied(), 1);
-    assert!(!ctx.dest.exists(), "no destination should be created in dry run");
+    assert!(
+        !ctx.dest.exists(),
+        "no destination should be created in dry run"
+    );
 }
-
 
 #[test]
 fn dry_run_delete_respects_exclude_filters() {
@@ -796,8 +801,7 @@ fn dry_run_delete_respects_exclude_filters() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .filters(Some(filters));
@@ -813,7 +817,6 @@ fn dry_run_delete_respects_exclude_filters() {
     assert!(dest.join("extra.txt").exists());
     assert!(dest.join("keep.txt").exists());
 }
-
 
 #[test]
 fn dry_run_multiple_files_all_reported() {
@@ -853,7 +856,6 @@ fn dry_run_multiple_files_all_reported() {
     assert!(!ctx.dest.exists());
 }
 
-
 #[test]
 fn dry_run_is_idempotent() {
     // Running dry-run multiple times should produce the same result because
@@ -876,7 +878,6 @@ fn dry_run_is_idempotent() {
         assert!(!ctx.dest.exists());
     }
 }
-
 
 #[test]
 fn dry_run_large_file_reports_correct_byte_count() {
@@ -903,7 +904,6 @@ fn dry_run_large_file_reports_correct_byte_count() {
     assert_eq!(summary.transferred_file_size(), 256 * 1024);
     assert!(!destination.exists());
 }
-
 
 #[test]
 fn dry_run_reports_up_to_date_file_as_unchanged() {
@@ -946,7 +946,6 @@ fn dry_run_reports_up_to_date_file_as_unchanged() {
     );
 }
 
-
 #[test]
 fn dry_run_with_backup_does_not_create_backup_files() {
     let temp = tempdir().expect("tempdir");
@@ -981,7 +980,6 @@ fn dry_run_with_backup_does_not_create_backup_files() {
     assert_eq!(fs::read(&destination).expect("read"), b"old");
 }
 
-
 #[test]
 fn dry_run_deeply_nested_tree_all_reported() {
     let ctx = test_helpers::setup_copy_test();
@@ -1015,7 +1013,6 @@ fn dry_run_deeply_nested_tree_all_reported() {
     assert!(!ctx.dest.exists());
 }
 
-
 #[test]
 fn dry_run_whole_file_reports_transfer() {
     let temp = tempdir().expect("tempdir");
@@ -1042,7 +1039,6 @@ fn dry_run_whole_file_reports_transfer() {
     assert_eq!(summary.transferred_file_size(), 18);
     assert!(!destination.exists());
 }
-
 
 #[test]
 fn dry_run_with_inplace_does_not_modify_destination() {

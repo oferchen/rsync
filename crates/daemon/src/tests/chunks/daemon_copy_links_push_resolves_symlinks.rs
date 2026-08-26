@@ -73,7 +73,8 @@ fn daemon_copy_links_push_resolves_symlinks() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
@@ -106,9 +107,16 @@ fn daemon_copy_links_push_resolves_symlinks() {
 
     // Verify destination has regular files where source had symlinks
     let dest_link = dest_dir.join("link_to_file.txt");
-    assert!(dest_link.exists(), "link_to_file.txt must exist at destination");
     assert!(
-        !dest_link.symlink_metadata().expect("metadata").file_type().is_symlink(),
+        dest_link.exists(),
+        "link_to_file.txt must exist at destination"
+    );
+    assert!(
+        !dest_link
+            .symlink_metadata()
+            .expect("metadata")
+            .file_type()
+            .is_symlink(),
         "link_to_file.txt must be a regular file, not a symlink"
     );
     assert_eq!(
@@ -118,7 +126,10 @@ fn daemon_copy_links_push_resolves_symlinks() {
     );
 
     let dest_real = dest_dir.join("real_file.txt");
-    assert!(dest_real.exists(), "real_file.txt must exist at destination");
+    assert!(
+        dest_real.exists(),
+        "real_file.txt must exist at destination"
+    );
     assert_eq!(
         fs::read(&dest_real).expect("read real_file.txt"),
         b"real content\n",
@@ -145,7 +156,10 @@ fn daemon_copy_links_push_resolves_symlinks() {
     );
 
     let dest_nested = dest_dir.join("subdir/nested.txt");
-    assert!(dest_nested.exists(), "subdir/nested.txt must exist at destination");
+    assert!(
+        dest_nested.exists(),
+        "subdir/nested.txt must exist at destination"
+    );
     assert_eq!(
         fs::read(&dest_nested).expect("read nested.txt"),
         b"nested content\n",

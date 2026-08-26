@@ -46,8 +46,7 @@ fn daemon_inplace_push_preserves_destination_inodes() {
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
     filetime::set_file_mtime(dest_dir.join("alpha.txt"), old_time)
         .expect("backdate dest alpha.txt");
-    filetime::set_file_mtime(dest_dir.join("beta.txt"), old_time)
-        .expect("backdate dest beta.txt");
+    filetime::set_file_mtime(dest_dir.join("beta.txt"), old_time).expect("backdate dest beta.txt");
 
     // Record inode numbers before the push - these must be preserved by inplace.
     let inode_alpha_before = fs::metadata(dest_dir.join("alpha.txt"))
@@ -81,7 +80,8 @@ fn daemon_inplace_push_preserves_destination_inodes() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();

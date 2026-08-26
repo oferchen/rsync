@@ -20,4 +20,3 @@ fn runtime_options_loads_unlimited_max_connections_from_config() {
         MaxConnections::Unlimited
     );
 }
-

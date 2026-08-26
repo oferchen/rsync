@@ -13,7 +13,10 @@ fn run_daemon_records_log_file_entries() {
     let temp = tempdir().expect("log dir");
     let log_path = temp.path().join("rsyncd.log");
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -58,7 +61,10 @@ fn run_daemon_records_log_file_entries() {
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     // Bound the join: on Windows the daemon accept loop can linger past the
@@ -108,4 +114,3 @@ fn run_daemon_records_log_file_entries() {
         "log should record upstream module-access grant: {log_contents:?}"
     );
 }
-

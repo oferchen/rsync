@@ -71,7 +71,8 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push (seeds destination with original content)
@@ -119,10 +120,12 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
 
     // Read back the source mtime so we can stamp the destination with it -
     // this makes quick-check see identical mtime + size and skip the files.
-    let source_alpha_mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(source_dir.join("alpha.txt")).expect("stat source alpha"));
-    let source_beta_mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(source_dir.join("beta.txt")).expect("stat source beta"));
+    let source_alpha_mtime = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(source_dir.join("alpha.txt")).expect("stat source alpha"),
+    );
+    let source_beta_mtime = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(source_dir.join("beta.txt")).expect("stat source beta"),
+    );
 
     filetime::set_file_mtime(dest_dir.join("alpha.txt"), source_alpha_mtime)
         .expect("set dest alpha.txt mtime");
@@ -165,13 +168,15 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
     }
 
     // Verify destination now has the modified content
-    let dest_alpha = fs::read(dest_dir.join("alpha.txt")).expect("read dest alpha.txt after checksum push");
+    let dest_alpha =
+        fs::read(dest_dir.join("alpha.txt")).expect("read dest alpha.txt after checksum push");
     assert_eq!(
         dest_alpha, modified_content,
         "alpha.txt must match modified source after checksum push"
     );
 
-    let dest_beta = fs::read(dest_dir.join("beta.txt")).expect("read dest beta.txt after checksum push");
+    let dest_beta =
+        fs::read(dest_dir.join("beta.txt")).expect("read dest beta.txt after checksum push");
     assert_eq!(
         dest_beta, modified_content,
         "beta.txt must match modified source after checksum push"

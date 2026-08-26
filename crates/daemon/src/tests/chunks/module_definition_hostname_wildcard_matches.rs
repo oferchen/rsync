@@ -6,4 +6,3 @@ fn module_definition_hostname_wildcard_matches() {
     assert!(module.permits(peer, PeerHost::new(Some("builda.example.org"), true)));
     assert!(!module.permits(peer, PeerHost::new(Some("build12.example.net"), true)));
 }
-

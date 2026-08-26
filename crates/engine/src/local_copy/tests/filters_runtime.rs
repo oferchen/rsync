@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_respects_exclude_filter() {
     let temp = tempdir().expect("tempdir");
@@ -9,13 +8,10 @@ fn execute_respects_exclude_filter() {
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
     fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default().filters(Some(filters));
 
     let summary = plan
@@ -48,8 +44,8 @@ fn execute_prunes_empty_directories_when_enabled() {
         dest_without_prune.clone().into_os_string(),
     ];
     let plan_without = LocalCopyPlan::from_operands(&operands_without).expect("plan");
-    let filters_without = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters_without =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options_without = LocalCopyOptions::default().filters(Some(filters_without));
     let summary_without = plan_without
         .execute_with_options(LocalCopyExecution::Apply, options_without)
@@ -60,8 +56,8 @@ fn execute_prunes_empty_directories_when_enabled() {
         dest_with_prune.clone().into_os_string(),
     ];
     let plan_with = LocalCopyPlan::from_operands(&operands_with).expect("plan");
-    let filters_with = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters_with =
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options_with = LocalCopyOptions::default()
         .filters(Some(filters_with))
         .prune_empty_dirs(true);
@@ -125,10 +121,7 @@ fn execute_respects_include_filter_override() {
     fs::write(source.join("keep.tmp"), b"keep").expect("write keep");
     fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     // With first-match-wins, specific include must come before general exclude
     let filters = FilterSet::from_rules([

@@ -244,4 +244,3 @@ fn render_to_writer_matches_render_to() {
 
     assert_eq!(buffer, message.to_string().into_bytes());
 }
-

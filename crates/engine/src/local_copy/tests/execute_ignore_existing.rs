@@ -177,7 +177,9 @@ fn ignore_existing_recursive_mixed_scenarios() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().ignore_existing(true).recursive(true),
+            LocalCopyOptions::default()
+                .ignore_existing(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -222,15 +224,21 @@ fn ignore_existing_nested_directories() {
     fs::write(source_root.join("level1/new_l1.txt"), b"l1 new").expect("write l1 new");
 
     // Level 1: existing file (skip)
-    fs::write(source_root.join("level1/exists_l1.txt"), b"l1 source").expect("write l1 exists source");
+    fs::write(source_root.join("level1/exists_l1.txt"), b"l1 source")
+        .expect("write l1 exists source");
     fs::write(dest_root.join("level1/exists_l1.txt"), b"l1 dest").expect("write l1 exists dest");
 
     // Level 2: new file (copy)
     fs::write(source_root.join("level1/level2/l2.txt"), b"l2 content").expect("write l2 source");
 
     // Level 2: existing file (skip)
-    fs::write(source_root.join("level1/level2/exists_l2.txt"), b"l2 source").expect("write l2 exists source");
-    fs::write(dest_root.join("level1/level2/exists_l2.txt"), b"l2 dest").expect("write l2 exists dest");
+    fs::write(
+        source_root.join("level1/level2/exists_l2.txt"),
+        b"l2 source",
+    )
+    .expect("write l2 exists source");
+    fs::write(dest_root.join("level1/level2/exists_l2.txt"), b"l2 dest")
+        .expect("write l2 exists dest");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -240,7 +248,9 @@ fn ignore_existing_nested_directories() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().ignore_existing(true).recursive(true),
+            LocalCopyOptions::default()
+                .ignore_existing(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -292,7 +302,9 @@ fn ignore_existing_handles_directories_correctly() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().ignore_existing(true).recursive(true),
+            LocalCopyOptions::default()
+                .ignore_existing(true)
+                .recursive(true),
         )
         .expect("copy succeeds");
 
@@ -346,10 +358,7 @@ fn ignore_existing_with_update_skips_all_existing() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 0);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"older content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"older content");
 }
 
 #[test]
@@ -361,15 +370,18 @@ fn ignore_existing_with_update_copies_new_files() {
     fs::create_dir_all(&dest_root).expect("create dest root");
 
     // File 1: exists at dest, source is newer (skip due to ignore_existing)
-    fs::write(source_root.join("exists_newer.txt"), b"newer_content").expect("write exists_newer source");
-    fs::write(dest_root.join("exists_newer.txt"), b"older_content").expect("write exists_newer dest");
+    fs::write(source_root.join("exists_newer.txt"), b"newer_content")
+        .expect("write exists_newer source");
+    fs::write(dest_root.join("exists_newer.txt"), b"older_content")
+        .expect("write exists_newer dest");
     let newer_time = FileTime::from_unix_time(1_700_000_100, 0);
     let older_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(source_root.join("exists_newer.txt"), newer_time).expect("set source time");
     set_file_mtime(dest_root.join("exists_newer.txt"), older_time).expect("set dest time");
 
     // File 2: exists at dest, source is older (skip due to ignore_existing)
-    fs::write(source_root.join("exists_older.txt"), b"older_value").expect("write exists_older source");
+    fs::write(source_root.join("exists_older.txt"), b"older_value")
+        .expect("write exists_older source");
     fs::write(dest_root.join("exists_older.txt"), b"newer_value").expect("write exists_older dest");
     set_file_mtime(source_root.join("exists_older.txt"), older_time).expect("set source time");
     set_file_mtime(dest_root.join("exists_older.txt"), newer_time).expect("set dest time");
@@ -444,10 +456,7 @@ fn ignore_existing_with_checksum() {
     // File exists, so skip regardless of checksum difference
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
 
 #[test]
@@ -608,11 +617,15 @@ fn ignore_existing_with_permissions_difference() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut source_perms = fs::metadata(&source).expect("source metadata").permissions();
+        let mut source_perms = fs::metadata(&source)
+            .expect("source metadata")
+            .permissions();
         source_perms.set_mode(0o755);
         fs::set_permissions(&source, source_perms).expect("set source perms");
 
-        let mut dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+        let mut dest_perms = fs::metadata(&destination)
+            .expect("dest metadata")
+            .permissions();
         dest_perms.set_mode(0o644);
         fs::set_permissions(&destination, dest_perms).expect("set dest perms");
     }
@@ -640,7 +653,9 @@ fn ignore_existing_with_permissions_difference() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+        let dest_perms = fs::metadata(&destination)
+            .expect("dest metadata")
+            .permissions();
         assert_eq!(dest_perms.mode() & 0o777, 0o644);
     }
 }
@@ -666,7 +681,9 @@ fn ignore_existing_dry_run() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default().ignore_existing(true).recursive(true),
+            LocalCopyOptions::default()
+                .ignore_existing(true)
+                .recursive(true),
         )
         .expect("dry run succeeds");
 

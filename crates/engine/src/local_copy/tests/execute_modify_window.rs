@@ -46,10 +46,7 @@ fn modify_window_skips_files_within_one_second_window() {
     // File should be skipped because timestamps are within 1-second window and sizes match
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        content
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
 #[test]
@@ -189,10 +186,7 @@ fn modify_window_sixty_seconds_copies_when_outside() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"new content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"new content");
 }
 
 #[test]
@@ -388,10 +382,7 @@ fn modify_window_with_update_skips_when_dest_newer_outside_window() {
     // File should be skipped by --update (dest is newer)
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"newer dest"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"newer dest");
 }
 
 /// When --update and --modify-window are combined, dest is 0.5s newer
@@ -469,10 +460,7 @@ fn modify_window_with_update_skips_when_dest_newer_within_window_despite_size_di
 
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest");
 }
 
 #[test]
@@ -550,10 +538,7 @@ fn modify_window_with_update_skips_when_source_slightly_newer_within_window() {
 
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"old dest"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"old dest");
 }
 
 /// When source is newer than dest by exactly the window, `--update` does
@@ -618,7 +603,8 @@ fn modify_window_recursive_mixed_timestamps() {
     set_file_mtime(dest_root.join("within.txt"), within_window).expect("set within dest");
 
     // File 2: timestamps outside window (should copy) - different sizes to trigger copy
-    fs::write(source_root.join("outside.txt"), b"outside source content").expect("write outside source");
+    fs::write(source_root.join("outside.txt"), b"outside source content")
+        .expect("write outside source");
     fs::write(dest_root.join("outside.txt"), b"outside dest").expect("write outside dest");
     set_file_mtime(source_root.join("outside.txt"), outside_window).expect("set outside source");
     set_file_mtime(dest_root.join("outside.txt"), base_time).expect("set outside dest");
@@ -829,10 +815,7 @@ fn modify_window_dry_run_reports_correctly() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"old content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"old content");
 }
 
 /// A dry-run itemize must apply `--modify-window` to the quick check exactly
@@ -906,10 +889,7 @@ fn modify_window_dry_run_zero_window_itemizes_one_second_drift() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::DryRun,
-            LocalCopyOptions::default(),
-        )
+        .execute_with_options(LocalCopyExecution::DryRun, LocalCopyOptions::default())
         .expect("dry run succeeds");
 
     // Zero window: a whole-second mtime difference is reported as a transfer.

@@ -544,4 +544,3 @@ fn read_and_parse_legacy_daemon_message_routes_keywords() {
     }
     assert_eq!(line, b"@RSYNCD: AUTHREQD module\n");
 }
-

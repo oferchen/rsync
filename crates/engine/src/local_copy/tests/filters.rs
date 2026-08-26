@@ -1,4 +1,3 @@
-
 #[test]
 fn parse_filter_directive_show_is_sender_only() {
     let rule = match parse_filter_directive_line("show images/**").expect("parse") {
@@ -307,12 +306,7 @@ fn deferred_updates_flush_commits_pending_files() {
     let options = LocalCopyOptions::default()
         .partial(true)
         .delay_updates(true);
-    let mut context = CopyContext::new(
-        LocalCopyExecution::Apply,
-        options,
-        None,
-        destination_root,
-    );
+    let mut context = CopyContext::new(LocalCopyExecution::Apply, options, None, destination_root);
 
     let (guard, mut file) =
         DestinationWriteGuard::new(destination.as_path(), true, None, None).expect("guard");
@@ -373,8 +367,7 @@ fn dir_merge_modifiers_override_rule_side_overrides() {
     let receiver_only_options = DirMergeOptions::default().receiver_modifier();
 
     let rule = FilterRule::include("logs/**").with_receiver(false);
-    let sender_adjusted =
-        apply_dir_merge_rule_defaults(rule.clone(), &sender_only_options, false);
+    let sender_adjusted = apply_dir_merge_rule_defaults(rule.clone(), &sender_only_options, false);
     assert!(sender_adjusted.applies_to_sender());
     assert!(!sender_adjusted.applies_to_receiver());
 

@@ -1,4 +1,3 @@
-
 #[test]
 fn prologue_sniffer_take_buffered_remainder_into_reuses_destination() {
     let mut sniffer = NegotiationPrologueSniffer::new();

@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_whole_file_transfers_complete_file_without_delta() {
     let temp = tempdir().expect("tempdir");
@@ -28,7 +27,11 @@ fn execute_whole_file_transfers_complete_file_without_delta() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), source_content.len() as u64);
-    assert_eq!(summary.matched_bytes(), 0, "whole file should not match any blocks");
+    assert_eq!(
+        summary.matched_bytes(),
+        0,
+        "whole file should not match any blocks"
+    );
     assert_eq!(
         fs::read(&destination).expect("read destination"),
         source_content
@@ -107,7 +110,11 @@ fn execute_whole_file_transfers_large_file_completely() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 1024 * 1024);
-    assert_eq!(summary.matched_bytes(), 0, "large file should not use basis");
+    assert_eq!(
+        summary.matched_bytes(),
+        0,
+        "large file should not use basis"
+    );
     assert_eq!(
         fs::read(&destination).expect("read destination"),
         large_content
@@ -172,12 +179,18 @@ fn execute_whole_file_in_recursive_directory_copy() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().whole_file(true).ignore_times(true),
+            LocalCopyOptions::default()
+                .whole_file(true)
+                .ignore_times(true),
         )
         .expect("recursive whole file copy succeeds");
 
     assert!(summary.files_copied() >= 3);
-    assert_eq!(summary.matched_bytes(), 0, "recursive copy should not use delta");
+    assert_eq!(
+        summary.matched_bytes(),
+        0,
+        "recursive copy should not use delta"
+    );
 
     assert_eq!(
         fs::read(dest_root.join("source").join("file1.txt")).expect("read file1"),
@@ -313,10 +326,7 @@ fn execute_whole_file_with_compression() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), content.len() as u64);
     assert_eq!(summary.matched_bytes(), 0);
-    assert!(
-        summary.compression_used(),
-        "compression should be used"
-    );
+    assert!(summary.compression_used(), "compression should be used");
     assert_eq!(fs::read(&destination).expect("read destination"), content);
 }
 
@@ -341,9 +351,7 @@ fn execute_whole_file_preserves_timestamps() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .whole_file(true)
-                .times(true),
+            LocalCopyOptions::default().whole_file(true).times(true),
         )
         .expect("copy with times succeeds");
 
@@ -374,9 +382,7 @@ fn execute_whole_file_with_inplace() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .whole_file(true)
-                .inplace(true),
+            LocalCopyOptions::default().whole_file(true).inplace(true),
         )
         .expect("inplace whole file copy succeeds");
 
@@ -544,11 +550,25 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
         )
         .expect("delta copy succeeds");
 
-    assert_eq!(summary_whole.matched_bytes(), 0, "whole file should not match");
-    assert_eq!(summary_whole.bytes_copied(), source_len, "whole file copies everything");
+    assert_eq!(
+        summary_whole.matched_bytes(),
+        0,
+        "whole file should not match"
+    );
+    assert_eq!(
+        summary_whole.bytes_copied(),
+        source_len,
+        "whole file copies everything"
+    );
 
-    assert!(summary_delta.matched_bytes() > 0, "delta should match common blocks");
-    assert!(summary_delta.bytes_copied() < source_len, "delta copies less data");
+    assert!(
+        summary_delta.matched_bytes() > 0,
+        "delta should match common blocks"
+    );
+    assert!(
+        summary_delta.bytes_copied() < source_len,
+        "delta copies less data"
+    );
 
     assert_eq!(
         fs::read(&dest_whole).expect("read dest whole"),
@@ -622,7 +642,6 @@ fn delta_identical_basis_matches_trailing_partial_block() {
     );
 }
 
-
 #[test]
 fn whole_file_auto_defaults_to_whole_for_local_copy() {
     let temp = tempdir().expect("tempdir");
@@ -643,8 +662,14 @@ fn whole_file_auto_defaults_to_whole_for_local_copy() {
 
     // Default options: whole_file is None (auto-detect)
     let options = LocalCopyOptions::default();
-    assert!(options.whole_file_raw().is_none(), "default should be auto (None)");
-    assert!(options.whole_file_enabled(), "auto should resolve to true for local copy");
+    assert!(
+        options.whole_file_raw().is_none(),
+        "default should be auto (None)"
+    );
+    assert!(
+        options.whole_file_enabled(),
+        "auto should resolve to true for local copy"
+    );
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -652,7 +677,11 @@ fn whole_file_auto_defaults_to_whole_for_local_copy() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), content.len() as u64);
-    assert_eq!(summary.matched_bytes(), 0, "auto mode should use whole file for local");
+    assert_eq!(
+        summary.matched_bytes(),
+        0,
+        "auto mode should use whole file for local"
+    );
 }
 
 #[test]
@@ -748,9 +777,7 @@ fn whole_file_builder_sets_some_false() {
 
 #[test]
 fn whole_file_builder_default_is_none() {
-    let options = LocalCopyOptions::builder()
-        .build()
-        .expect("valid options");
+    let options = LocalCopyOptions::builder().build().expect("valid options");
     assert!(options.whole_file_raw().is_none());
     // Auto mode without batch writer defaults to whole-file
     assert!(options.whole_file_enabled());
@@ -808,8 +835,5 @@ fn execute_no_whole_file_explicit_forces_delta_even_for_local() {
         summary.bytes_copied() < source_len,
         "delta should transfer less than full size"
     );
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        source_content
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }

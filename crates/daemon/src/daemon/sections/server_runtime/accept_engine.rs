@@ -133,8 +133,7 @@ impl AcceptEngine for SingleListenerEngine {
             Ok((tcp_stream, raw_peer_addr)) => {
                 if let Err(error) = tcp_stream.set_nonblocking(false) {
                     if let Some(log) = self.log_sink.as_ref() {
-                        let text =
-                            format!("failed to set accepted socket to blocking: {error}");
+                        let text = format!("failed to set accepted socket to blocking: {error}");
                         let message = rsync_warning!(text).with_role(Role::Daemon);
                         log_message(log, &message);
                     }
@@ -245,8 +244,7 @@ impl MultiListenerEngine {
         let shutdown = Arc::clone(&state.signal_flags.shutdown);
         let graceful_exit = Arc::clone(&state.signal_flags.graceful_exit);
         let total_acceptors = listeners.len();
-        let mut acceptor_handles: Vec<thread::JoinHandle<()>> =
-            Vec::with_capacity(total_acceptors);
+        let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(total_acceptors);
         let log_sink = state.log_sink.clone();
 
         for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
@@ -263,9 +261,7 @@ impl MultiListenerEngine {
             }
 
             let handle = thread::spawn(move || {
-                while !shutdown.load(Ordering::Relaxed)
-                    && !graceful_exit.load(Ordering::Relaxed)
-                {
+                while !shutdown.load(Ordering::Relaxed) && !graceful_exit.load(Ordering::Relaxed) {
                     match wait_for_incoming(&listener, READINESS_WAIT_MILLIS) {
                         Ok(true) => {}
                         // Timeout or EINTR: re-check the shutdown flags.
@@ -274,11 +270,7 @@ impl MultiListenerEngine {
                             // Transient like an accept(2) failure: log, back
                             // off so a persistent error cannot hot-spin, keep
                             // accepting.
-                            warn_transient_accept_failure(
-                                log_sink.as_ref(),
-                                local_addr,
-                                &error,
-                            );
+                            warn_transient_accept_failure(log_sink.as_ref(), local_addr, &error);
                             thread::sleep(Duration::from_millis(50));
                             continue;
                         }
@@ -292,12 +284,20 @@ impl MultiListenerEngine {
                             // greeting. Reset to blocking so the worker thread
                             // sees the upstream-compatible synchronous I/O model.
                             if let Err(error) = stream.set_nonblocking(false) {
-                                let _ =
-                                    relay_accept_item(&tx, Err((local_addr, error)), &shutdown, &graceful_exit);
+                                let _ = relay_accept_item(
+                                    &tx,
+                                    Err((local_addr, error)),
+                                    &shutdown,
+                                    &graceful_exit,
+                                );
                                 break;
                             }
-                            if !relay_accept_item(&tx, Ok((stream, peer_addr)), &shutdown, &graceful_exit)
-                            {
+                            if !relay_accept_item(
+                                &tx,
+                                Ok((stream, peer_addr)),
+                                &shutdown,
+                                &graceful_exit,
+                            ) {
                                 break;
                             }
                         }
@@ -318,11 +318,7 @@ impl MultiListenerEngine {
                             // engine. The relay-and-escalate path below stays
                             // reserved for a genuinely unusable accepted
                             // socket (set_nonblocking failure above).
-                            warn_transient_accept_failure(
-                                log_sink.as_ref(),
-                                local_addr,
-                                &error,
-                            );
+                            warn_transient_accept_failure(log_sink.as_ref(), local_addr, &error);
                             thread::sleep(Duration::from_millis(50));
                             continue;
                         }

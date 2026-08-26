@@ -18,4 +18,3 @@ fn runtime_options_rejects_duplicate_module_across_config_and_cli() {
             .contains("duplicate module definition 'docs'")
     );
 }
-

@@ -38,7 +38,10 @@ fn times_flag_preserves_mtime_on_copied_file() {
 
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
-    assert_eq!(dest_mtime, mtime, "mtime should be preserved when --times is set");
+    assert_eq!(
+        dest_mtime, mtime,
+        "mtime should be preserved when --times is set"
+    );
 }
 
 #[test]
@@ -72,7 +75,10 @@ fn times_flag_disabled_does_not_preserve_mtime() {
 
     // Destination mtime should NOT match the old source mtime
     // It should be close to "now" (the copy time)
-    assert_ne!(dest_mtime, old_mtime, "mtime should not be preserved when --times is disabled");
+    assert_ne!(
+        dest_mtime, old_mtime,
+        "mtime should not be preserved when --times is disabled"
+    );
 }
 
 #[test]
@@ -114,9 +120,12 @@ fn times_flag_preserves_mtime_on_multiple_files() {
     let dest_file2 = dest_root.join("source").join("file2.txt");
     let dest_file3 = dest_root.join("source").join("file3.txt");
 
-    let dest_mtime1 = FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 meta"));
-    let dest_mtime2 = FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 meta"));
-    let dest_mtime3 = FileTime::from_last_modification_time(&fs::metadata(&dest_file3).expect("file3 meta"));
+    let dest_mtime1 =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 meta"));
+    let dest_mtime2 =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 meta"));
+    let dest_mtime3 =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file3).expect("file3 meta"));
 
     assert_eq!(dest_mtime1, mtime1, "file1 mtime should be preserved");
     assert_eq!(dest_mtime2, mtime2, "file2 mtime should be preserved");
@@ -202,8 +211,14 @@ fn atime_and_mtime_can_differ() {
         atime.unix_seconds(),
         "atime seconds should be preserved with --atimes"
     );
-    assert_eq!(dest_mtime, mtime, "mtime should be preserved as distinct value");
-    assert_ne!(dest_atime, dest_mtime, "atime and mtime should remain different");
+    assert_eq!(
+        dest_mtime, mtime,
+        "mtime should be preserved as distinct value"
+    );
+    assert_ne!(
+        dest_atime, dest_mtime,
+        "atime and mtime should remain different"
+    );
 }
 
 // Windows NTFS truncates nanoseconds to 100ns intervals.
@@ -234,8 +249,15 @@ fn subsecond_precision_is_preserved_full_nanoseconds() {
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
-    assert_eq!(dest_mtime, mtime, "nanosecond precision should be preserved");
-    assert_eq!(dest_mtime.nanoseconds(), 123_456_789, "nanoseconds component should match exactly");
+    assert_eq!(
+        dest_mtime, mtime,
+        "nanosecond precision should be preserved"
+    );
+    assert_eq!(
+        dest_mtime.nanoseconds(),
+        123_456_789,
+        "nanoseconds component should match exactly"
+    );
 }
 
 // Windows NTFS truncates nanoseconds to 100ns intervals.
@@ -300,10 +322,7 @@ fn subsecond_precision_round_trip() {
     let original_mtime = FileTime::from_unix_time(1_700_000_000, 987_654_321);
     set_file_mtime(&file1, original_mtime).expect("set file1 mtime");
 
-    let operands = vec![
-        file1.into_os_string(),
-        file2.clone().into_os_string(),
-    ];
+    let operands = vec![file1.into_os_string(), file2.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan1");
     plan.execute_with_options(
         LocalCopyExecution::Apply,
@@ -311,10 +330,7 @@ fn subsecond_precision_round_trip() {
     )
     .expect("first copy");
 
-    let operands = vec![
-        file2.into_os_string(),
-        file3.clone().into_os_string(),
-    ];
+    let operands = vec![file2.into_os_string(), file3.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan2");
     plan.execute_with_options(
         LocalCopyExecution::Apply,
@@ -322,7 +338,8 @@ fn subsecond_precision_round_trip() {
     )
     .expect("second copy");
 
-    let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&file3).expect("file3 meta"));
+    let final_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&file3).expect("file3 meta"));
     assert_eq!(
         final_mtime, original_mtime,
         "nanosecond precision should be preserved through round trip"
@@ -350,9 +367,7 @@ fn times_flag_with_archive_mode() {
     // Simulate archive mode: times + permissions
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .times(true)
-            .permissions(true),
+        LocalCopyOptions::default().times(true).permissions(true),
     )
     .expect("copy succeeds");
 
@@ -397,7 +412,10 @@ fn times_flag_on_directory() {
     let dest_metadata = fs::metadata(dest_dir.join("source_dir")).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
-    assert_eq!(dest_mtime, dir_mtime, "directory mtime should be preserved with --times");
+    assert_eq!(
+        dest_mtime, dir_mtime,
+        "directory mtime should be preserved with --times"
+    );
 }
 
 #[cfg(unix)]
@@ -463,7 +481,11 @@ fn skip_file_when_timestamps_match() {
         .expect("copy succeeds");
 
     // File should be skipped because size and mtime match
-    assert_eq!(summary.files_copied(), 0, "file should be skipped when timestamps match");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "file should be skipped when timestamps match"
+    );
     assert_eq!(summary.regular_files_total(), 1);
 }
 
@@ -496,9 +518,14 @@ fn copy_file_when_timestamps_differ() {
         .expect("copy succeeds");
 
     // File should be copied because timestamps differ
-    assert_eq!(summary.files_copied(), 1, "file should be copied when timestamps differ");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "file should be copied when timestamps differ"
+    );
 
-    let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    let final_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
     assert_eq!(final_mtime, source_mtime);
 }
 
@@ -579,7 +606,11 @@ fn modify_window_tolerates_small_differences() {
         .expect("copy succeeds");
 
     // File should be skipped because 0.5s difference is within 1s window
-    assert_eq!(summary.files_copied(), 0, "file should be skipped with modify_window tolerance");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "file should be skipped with modify_window tolerance"
+    );
 }
 
 #[test]
@@ -606,8 +637,12 @@ fn unix_epoch_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, epoch_time, "Unix epoch timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, epoch_time,
+        "Unix epoch timestamp should be preserved"
+    );
 }
 
 // Windows NTFS truncates nanoseconds to 100ns intervals.
@@ -636,8 +671,12 @@ fn far_future_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, future_time, "far future timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, future_time,
+        "far future timestamp should be preserved"
+    );
 }
 
 // Windows NTFS truncates nanoseconds to 100ns intervals.
@@ -666,8 +705,12 @@ fn year_2038_boundary_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, y2038_time, "Y2K38 boundary timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, y2038_time,
+        "Y2K38 boundary timestamp should be preserved"
+    );
 }
 
 #[test]
@@ -694,8 +737,12 @@ fn post_2038_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, post_2038_time, "post-Y2K38 timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, post_2038_time,
+        "post-Y2K38 timestamp should be preserved"
+    );
 }
 
 #[test]
@@ -722,8 +769,12 @@ fn empty_file_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, mtime, "empty file timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, mtime,
+        "empty file timestamp should be preserved"
+    );
 }
 
 #[test]
@@ -751,8 +802,12 @@ fn large_file_timestamp_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(dest_mtime, mtime, "large file timestamp should be preserved");
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        dest_mtime, mtime,
+        "large file timestamp should be preserved"
+    );
 }
 
 #[test]
@@ -778,9 +833,7 @@ fn times_with_checksum_and_matching_timestamps() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .times(true)
-                .checksum(true),
+            LocalCopyOptions::default().times(true).checksum(true),
         )
         .expect("copy succeeds");
 
@@ -813,9 +866,7 @@ fn times_with_update_flag() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .times(true)
-                .update(true),
+            LocalCopyOptions::default().times(true).update(true),
         )
         .expect("copy succeeds");
 
@@ -823,7 +874,8 @@ fn times_with_update_flag() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 
-    let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    let final_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
     assert_eq!(final_mtime, newer_mtime);
 }
 
@@ -856,8 +908,12 @@ fn times_flag_in_dry_run_mode() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
-    assert_eq!(final_mtime, original_dest_mtime, "dry run should not modify destination");
+    let final_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
+    assert_eq!(
+        final_mtime, original_dest_mtime,
+        "dry run should not modify destination"
+    );
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
 
@@ -890,13 +946,28 @@ fn nested_directory_timestamps_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_root_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root meta"));
-    let dest_level1_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1")).expect("level1 meta"));
-    let dest_level2_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1/level2")).expect("level2 meta"));
+    let dest_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source")).expect("root meta"),
+    );
+    let dest_level1_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source").join("level1")).expect("level1 meta"),
+    );
+    let dest_level2_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("source").join("level1/level2")).expect("level2 meta"),
+    );
 
-    assert_eq!(dest_root_mtime, root_mtime, "root directory mtime should be preserved");
-    assert_eq!(dest_level1_mtime, level1_mtime, "level1 directory mtime should be preserved");
-    assert_eq!(dest_level2_mtime, level2_mtime, "level2 directory mtime should be preserved");
+    assert_eq!(
+        dest_root_mtime, root_mtime,
+        "root directory mtime should be preserved"
+    );
+    assert_eq!(
+        dest_level1_mtime, level1_mtime,
+        "level1 directory mtime should be preserved"
+    );
+    assert_eq!(
+        dest_level2_mtime, level2_mtime,
+        "level2 directory mtime should be preserved"
+    );
 }
 
 #[test]
@@ -935,7 +1006,11 @@ fn incremental_sync_skips_unchanged_files() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 0, "unchanged files should be skipped");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "unchanged files should be skipped"
+    );
     assert_eq!(summary.regular_files_total(), 5);
 }
 
@@ -988,7 +1063,11 @@ fn incremental_sync_updates_changed_files_only() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 2, "only changed files should be copied");
+    assert_eq!(
+        summary.files_copied(),
+        2,
+        "only changed files should be copied"
+    );
     assert_eq!(summary.regular_files_total(), 5);
 
     for i in 1..=2 {
@@ -996,7 +1075,8 @@ fn incremental_sync_updates_changed_files_only() {
         let content = fs::read(&dest_file).expect("read changed file");
         assert_eq!(content, format!("new content {i}").as_bytes());
 
-        let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("meta"));
+        let final_mtime =
+            FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("meta"));
         assert_eq!(final_mtime, new_mtime);
     }
 }

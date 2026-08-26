@@ -25,4 +25,3 @@ fn runtime_options_load_modules_from_config_file() {
     assert!(modules[1].listable());
     assert!(modules.iter().all(ModuleDefinition::use_chroot));
 }
-

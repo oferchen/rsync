@@ -134,11 +134,7 @@ fn munge_links_unmunges_already_munged_source() {
 
     // Source symlink is already munged (simulating a previous munge operation)
     let link = source_root.join("munged_link");
-    symlink(
-        Path::new("/rsyncd-munged//etc/passwd"),
-        &link,
-    )
-    .expect("create pre-munged symlink");
+    symlink(Path::new("/rsyncd-munged//etc/passwd"), &link).expect("create pre-munged symlink");
 
     let dest_root = temp.path().join("dest");
     let operands = vec![

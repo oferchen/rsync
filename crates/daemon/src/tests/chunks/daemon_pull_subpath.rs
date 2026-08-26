@@ -63,8 +63,11 @@ fn build_subpath_module_tree(module_dir: &Path) {
     fs::write(d2.join("sibling.txt"), b"sibling under d2\n").expect("write sibling");
     // Add an unrelated file outside the requested sub-path so we can prove the
     // sender does NOT walk the whole module root for a sub-path request.
-    fs::write(module_dir.join("unrelated.txt"), b"should not be transferred\n")
-        .expect("write unrelated");
+    fs::write(
+        module_dir.join("unrelated.txt"),
+        b"should not be transferred\n",
+    )
+    .expect("write unrelated");
 }
 
 #[cfg(unix)]

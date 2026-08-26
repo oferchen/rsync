@@ -18,4 +18,3 @@ fn run_daemon_rejects_duplicate_session_limits() {
             .contains("duplicate daemon argument '--max-sessions'")
     );
 }
-

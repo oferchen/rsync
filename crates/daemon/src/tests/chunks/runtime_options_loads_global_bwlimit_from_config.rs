@@ -22,4 +22,3 @@ fn runtime_options_loads_global_bwlimit_from_config() {
     let modules = options.modules();
     assert_eq!(modules.len(), 1);
 }
-

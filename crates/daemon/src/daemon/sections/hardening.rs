@@ -54,9 +54,8 @@ fn apply_no_new_privs(log_sink: Option<&SharedLogSink>) {
         }
         Err(err) => {
             if let Some(log) = log_sink {
-                let text = format!(
-                    "PR_SET_NO_NEW_PRIVS prctl failed: {err}; continuing without it"
-                );
+                let text =
+                    format!("PR_SET_NO_NEW_PRIVS prctl failed: {err}; continuing without it");
                 let message = rsync_warning!(text).with_role(Role::Daemon);
                 log_message(log, &message);
             }
@@ -181,9 +180,8 @@ mod hardening_tests {
         let captured = drain_capture(reader);
 
         assert!(
-            captured.contains(
-                "active Linux Security Modules: lockdown,capability,landlock,yama,bpf"
-            ),
+            captured
+                .contains("active Linux Security Modules: lockdown,capability,landlock,yama,bpf"),
             "expected trimmed LSM list in log output, got: {captured:?}",
         );
     }

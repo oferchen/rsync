@@ -66,8 +66,7 @@ fn daemon_xattr_push_preserves_extended_attributes() {
     fs::create_dir(&subdir).expect("create subdir");
     let nested_path = subdir.join("nested.txt");
     fs::write(&nested_path, b"nested content\n").expect("write nested.txt");
-    xattr::set(&nested_path, "user.nested_attr", b"deep_value")
-        .expect("set xattr on nested.txt");
+    xattr::set(&nested_path, "user.nested_attr", b"deep_value").expect("set xattr on nested.txt");
 
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -96,7 +95,8 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -148,14 +148,12 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         b"nested content\n"
     );
 
-
     // alpha.txt: user.test_key = "test_value"
     let alpha_xattr = xattr::get(&dest_alpha, "user.test_key")
         .expect("read user.test_key from dest alpha.txt")
         .expect("user.test_key must exist on dest alpha.txt");
     assert_eq!(
-        alpha_xattr,
-        b"test_value",
+        alpha_xattr, b"test_value",
         "user.test_key value mismatch on alpha.txt"
     );
 
@@ -164,8 +162,7 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         .expect("read user.author from dest beta.txt")
         .expect("user.author must exist on dest beta.txt");
     assert_eq!(
-        beta_author,
-        b"oc-rsync",
+        beta_author, b"oc-rsync",
         "user.author value mismatch on beta.txt"
     );
 
@@ -182,8 +179,7 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         .expect("read user.nested_attr from dest nested.txt")
         .expect("user.nested_attr must exist on dest nested.txt");
     assert_eq!(
-        nested_xattr,
-        b"deep_value",
+        nested_xattr, b"deep_value",
         "user.nested_attr value mismatch on nested.txt"
     );
 

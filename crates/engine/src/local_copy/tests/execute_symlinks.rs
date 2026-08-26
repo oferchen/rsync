@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn execute_copies_symbolic_link() {
@@ -238,7 +237,7 @@ fn execute_with_safe_links_skips_unsafe_symlink() {
 #[cfg(unix)]
 #[test]
 fn execute_preserves_symlink_hard_links() {
-    use std::os::unix::fs::{symlink, MetadataExt};
+    use std::os::unix::fs::{MetadataExt, symlink};
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("src");
@@ -288,7 +287,6 @@ fn execute_preserves_symlink_hard_links() {
     assert_eq!(summary.symlinks_copied(), 2);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn safe_links_skips_symlink_pointing_outside_transfer_tree() {
@@ -329,13 +327,18 @@ fn safe_links_skips_symlink_pointing_outside_transfer_tree() {
 
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.symlinks_total(), 2);
-    assert!(!dest_root.join("source").join("unsafe_absolute_link").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("unsafe_absolute_link")
+            .exists()
+    );
     assert!(!dest_root.join("source").join("source/escape_link").exists());
 
     let skip_count = report
         .records()
         .iter()
-        .filter(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+        .filter(|record| matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink))
         .count();
     assert_eq!(skip_count, 2);
 }
@@ -383,21 +386,36 @@ fn safe_links_preserves_symlink_pointing_inside_transfer_tree() {
     assert_eq!(summary.symlinks_copied(), 3);
 
     let dest_link1 = dest_root.join("source").join("link_to_subdir");
-    assert!(fs::symlink_metadata(&dest_link1).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_link1)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         fs::read_link(&dest_link1).expect("read link"),
         Path::new("subdir/target.txt")
     );
 
     let dest_link2 = dest_root.join("source").join("subdir/link_to_sibling");
-    assert!(fs::symlink_metadata(&dest_link2).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_link2)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         fs::read_link(&dest_link2).expect("read link"),
         Path::new("target.txt")
     );
 
     let dest_link3 = dest_root.join("source").join("subdir/link_via_parent");
-    assert!(fs::symlink_metadata(&dest_link3).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_link3)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         fs::read_link(&dest_link3).expect("read link"),
         Path::new("../subdir/target.txt")
@@ -456,7 +474,12 @@ fn safe_links_evaluates_relative_symlinks_correctly() {
     assert_eq!(summary.symlinks_copied(), 2);
     assert_eq!(summary.symlinks_total(), 3);
 
-    assert!(dest_root.join("source").join("level1/level2/level3/link_to_level1").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("level1/level2/level3/link_to_level1")
+            .exists()
+    );
     assert!(dest_root.join("source").join("root_link").exists());
 
     assert!(!dest_root.join("source").join("level1/escape_link").exists());
@@ -464,7 +487,7 @@ fn safe_links_evaluates_relative_symlinks_correctly() {
     let skip_count = report
         .records()
         .iter()
-        .filter(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+        .filter(|record| matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink))
         .count();
     assert_eq!(skip_count, 1);
 }
@@ -525,7 +548,7 @@ fn safe_links_filters_absolute_symlinks_when_unsafe() {
     let skip_count = report
         .records()
         .iter()
-        .filter(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+        .filter(|record| matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink))
         .count();
     assert_eq!(skip_count, 3);
 }
@@ -587,10 +610,25 @@ fn safe_links_handles_complex_relative_paths() {
     assert_eq!(summary.symlinks_copied(), 2);
     assert_eq!(summary.symlinks_total(), 4);
 
-    assert!(dest_root.join("source").join("dir_a/link_to_sibling").exists());
-    assert!(dest_root.join("source").join("dir_a/link_with_dots").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_a/link_to_sibling")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("dir_a/link_with_dots")
+            .exists()
+    );
     assert!(!dest_root.join("source").join("dir_a/backdoor").exists());
-    assert!(!dest_root.join("source").join("dir_a/ending_parent").exists());
+    assert!(
+        !dest_root
+            .join("source")
+            .join("dir_a/ending_parent")
+            .exists()
+    );
 }
 
 #[cfg(unix)]
@@ -625,9 +663,13 @@ fn safe_links_preserves_symlink_to_directory_when_safe() {
         )
         .expect("copy succeeds");
 
-
     let dest_link = dest_root.join("source").join("link_to_dir");
-    assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_link)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         fs::read_link(&dest_link).expect("read link"),
         Path::new("subdir")
@@ -676,7 +718,7 @@ fn safe_links_skips_symlink_to_directory_when_unsafe() {
     let skip_count = report
         .records()
         .iter()
-        .filter(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+        .filter(|record| matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink))
         .count();
     assert_eq!(skip_count, 1);
 }
@@ -736,7 +778,12 @@ fn safe_links_with_multiple_depth_levels() {
     assert_eq!(summary.symlinks_copied(), 3);
     assert_eq!(summary.symlinks_total(), 4);
 
-    assert!(dest_root.join("source").join("a/b/c/d/link_to_root").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("a/b/c/d/link_to_root")
+            .exists()
+    );
     assert!(dest_root.join("source").join("a/b/c/d/link_to_a").exists());
     assert!(dest_root.join("source").join("a/b/c/d/link_to_b").exists());
     assert!(!dest_root.join("source").join("a/b/c/d/escape").exists());
@@ -801,10 +848,22 @@ fn safe_links_trailing_slash_vs_no_trailing_slash() {
     let summary1 = report1.summary();
     let summary2 = report2.summary();
 
-    assert_eq!(summary1.symlinks_copied(), 1, "no-trailing-slash: 1 safe link");
-    assert_eq!(summary1.symlinks_total(), 2, "no-trailing-slash: 2 total links");
+    assert_eq!(
+        summary1.symlinks_copied(),
+        1,
+        "no-trailing-slash: 1 safe link"
+    );
+    assert_eq!(
+        summary1.symlinks_total(),
+        2,
+        "no-trailing-slash: 2 total links"
+    );
     assert_eq!(summary2.symlinks_copied(), 1, "trailing-slash: 1 safe link");
-    assert_eq!(summary2.symlinks_total(), 2, "trailing-slash: 2 total links");
+    assert_eq!(
+        summary2.symlinks_total(),
+        2,
+        "trailing-slash: 2 total links"
+    );
 
     assert!(dest1.join("source").join("sub/safe").exists());
     assert!(!dest1.join("source").join("sub/unsafe").exists());
@@ -867,7 +926,6 @@ fn safe_links_disabled_allows_all_symlinks() {
     assert!(fs::symlink_metadata(dest_root.join("source").join("abs_link")).is_ok());
     assert!(fs::symlink_metadata(dest_root.join("source").join("escape_link")).is_ok());
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1221,10 +1279,7 @@ fn copy_unsafe_links_combined_with_safe_links_behavior() {
     let dest_path_2 = dest_dir.join("escape-link");
     let metadata = fs::symlink_metadata(&dest_path_2).expect("destination metadata");
     assert!(metadata.file_type().is_file());
-    assert_eq!(
-        fs::read(&dest_path_2).expect("read file"),
-        b"external"
-    );
+    assert_eq!(fs::read(&dest_path_2).expect("read file"), b"external");
     assert_eq!(summary_copy.files_copied(), 1);
     assert_eq!(summary_copy.symlinks_copied(), 0);
 }
@@ -1245,11 +1300,8 @@ fn copy_unsafe_links_deeply_nested_symlink() {
 
     // Symlink deep in the tree that escapes
     let link_path = nested_dir.join("deep-escape");
-    symlink(
-        Path::new("../../../../external.txt"),
-        &link_path,
-    )
-    .expect("create deep escaping symlink");
+    symlink(Path::new("../../../../external.txt"), &link_path)
+        .expect("create deep escaping symlink");
 
     let dest_root = temp.path().join("dest");
     let operands = vec![
@@ -1336,7 +1388,12 @@ fn copy_unsafe_links_with_mixed_safe_and_unsafe_in_tree() {
 
     // Verify safe link remains a symlink
     let dest_safe = dest_root.join("src").join("subdir/safe_link");
-    assert!(fs::symlink_metadata(&dest_safe).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_safe)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         fs::read_link(&dest_safe).expect("read link"),
         Path::new("../safe_target.txt")
@@ -1406,10 +1463,7 @@ fn copy_unsafe_links_dereferences_symlink_chain() {
     let dest_path = dest_dir.join("chain-link");
     let metadata = fs::symlink_metadata(&dest_path).expect("destination metadata");
     assert!(metadata.file_type().is_file());
-    assert_eq!(
-        fs::read(&dest_path).expect("read file"),
-        b"final content"
-    );
+    assert_eq!(fs::read(&dest_path).expect("read file"), b"final content");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.symlinks_copied(), 0);
 }

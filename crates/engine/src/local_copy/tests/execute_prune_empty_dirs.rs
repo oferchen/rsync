@@ -1,25 +1,30 @@
-
 #[test]
 fn prune_empty_dirs_does_not_create_empty_directories() {
     let ctx = test_helpers::setup_copy_test();
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("empty_dir", None),
-            ("file.txt", Some(b"content")),
-        ],
+        &[("empty_dir", None), ("file.txt", Some(b"content"))],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("empty_dir").exists(), "empty dir should not be created");
-    assert!(ctx.dest.join("source").join("file.txt").exists(), "file should be copied");
+    assert!(
+        !ctx.dest.join("source").join("empty_dir").exists(),
+        "empty dir should not be created"
+    );
+    assert!(
+        ctx.dest.join("source").join("file.txt").exists(),
+        "file should be copied"
+    );
 }
 
 #[test]
@@ -34,16 +39,32 @@ fn prune_empty_dirs_creates_directories_with_files() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("source").join("dir_with_files").is_dir(), "directory with files should be created");
-    assert!(ctx.dest.join("source").join("dir_with_files/file1.txt").exists());
-    assert!(ctx.dest.join("source").join("dir_with_files/file2.txt").exists());
+    assert!(
+        ctx.dest.join("source").join("dir_with_files").is_dir(),
+        "directory with files should be created"
+    );
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("dir_with_files/file1.txt")
+            .exists()
+    );
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("dir_with_files/file2.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -59,15 +80,24 @@ fn prune_empty_dirs_prunes_nested_empty_directories() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("level1").exists(), "nested empty dirs should be pruned");
-    assert!(ctx.dest.join("source").join("keep").is_dir(), "directory with file should be created");
+    assert!(
+        !ctx.dest.join("source").join("level1").exists(),
+        "nested empty dirs should be pruned"
+    );
+    assert!(
+        ctx.dest.join("source").join("keep").is_dir(),
+        "directory with file should be created"
+    );
     assert!(ctx.dest.join("source").join("keep/file.txt").exists());
 }
 
@@ -85,7 +115,10 @@ fn prune_empty_dirs_with_filter_excluding_all_files() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
@@ -103,8 +136,18 @@ fn prune_empty_dirs_with_filter_excluding_all_files() {
         ctx.dest.join("source").join("included_dir").is_dir(),
         "directory with non-excluded files should exist"
     );
-    assert!(ctx.dest.join("source").join("included_dir/keep.txt").exists());
-    assert!(!ctx.dest.join("source").join("included_dir/also_temp.tmp").exists());
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("included_dir/keep.txt")
+            .exists()
+    );
+    assert!(
+        !ctx.dest
+            .join("source")
+            .join("included_dir/also_temp.tmp")
+            .exists()
+    );
 }
 
 #[test]
@@ -119,16 +162,25 @@ fn prune_empty_dirs_preserves_non_empty_parent_of_empty_child() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("source").join("parent").is_dir(), "parent with file should exist");
+    assert!(
+        ctx.dest.join("source").join("parent").is_dir(),
+        "parent with file should exist"
+    );
     assert!(ctx.dest.join("source").join("parent/file.txt").exists());
-    assert!(!ctx.dest.join("source").join("parent/empty_child").exists(), "empty child should be pruned");
+    assert!(
+        !ctx.dest.join("source").join("parent/empty_child").exists(),
+        "empty child should be pruned"
+    );
 }
 
 #[test]
@@ -145,19 +197,39 @@ fn prune_empty_dirs_with_multiple_branches() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("branch1").exists(), "branch1 with only empty child should be pruned");
-    assert!(ctx.dest.join("source").join("branch2").is_dir(), "branch2 with file should exist");
+    assert!(
+        !ctx.dest.join("source").join("branch1").exists(),
+        "branch1 with only empty child should be pruned"
+    );
+    assert!(
+        ctx.dest.join("source").join("branch2").is_dir(),
+        "branch2 with file should exist"
+    );
     assert!(ctx.dest.join("source").join("branch2/full").is_dir());
-    assert!(ctx.dest.join("source").join("branch2/full/file.txt").exists());
-    assert!(!ctx.dest.join("source").join("branch3").exists(), "branch3 with nested empty should be pruned");
-    assert!(!ctx.dest.join("source").join("branch4").exists(), "empty branch4 should be pruned");
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("branch2/full/file.txt")
+            .exists()
+    );
+    assert!(
+        !ctx.dest.join("source").join("branch3").exists(),
+        "branch3 with nested empty should be pruned"
+    );
+    assert!(
+        !ctx.dest.join("source").join("branch4").exists(),
+        "empty branch4 should be pruned"
+    );
 }
 
 #[test]
@@ -166,13 +238,13 @@ fn prune_empty_dirs_respects_dry_run() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("empty", None),
-            ("nonempty/file.txt", Some(b"content")),
-        ],
+        &[("empty", None), ("nonempty/file.txt", Some(b"content"))],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
@@ -180,8 +252,14 @@ fn prune_empty_dirs_respects_dry_run() {
         .execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("dry-run succeeds");
 
-    assert!(!ctx.dest.exists(), "destination should not exist in dry-run");
-    assert!(summary.directories_created() >= 1, "should report non-empty dir creation");
+    assert!(
+        !ctx.dest.exists(),
+        "destination should not exist in dry-run"
+    );
+    assert!(
+        summary.directories_created() >= 1,
+        "should report non-empty dir creation"
+    );
 }
 
 #[test]
@@ -190,10 +268,7 @@ fn prune_empty_dirs_with_trailing_separator() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("empty", None),
-            ("nonempty/file.txt", Some(b"content")),
-        ],
+        &[("empty", None), ("nonempty/file.txt", Some(b"content"))],
     );
 
     let mut source_operand = ctx.source.into_os_string();
@@ -205,7 +280,10 @@ fn prune_empty_dirs_with_trailing_separator() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("empty").exists(), "empty dir should be pruned");
+    assert!(
+        !ctx.dest.join("empty").exists(),
+        "empty dir should be pruned"
+    );
     assert!(ctx.dest.join("nonempty").is_dir());
     assert!(ctx.dest.join("nonempty/file.txt").exists());
 }
@@ -224,7 +302,10 @@ fn prune_empty_dirs_with_min_size_filter() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .min_file_size(Some(10))
@@ -237,7 +318,10 @@ fn prune_empty_dirs_with_min_size_filter() {
         !ctx.dest.join("source").join("small_files_only").exists(),
         "directory with only small files should be pruned"
     );
-    assert!(ctx.dest.join("source").join("mixed_dir").is_dir(), "directory with large file should exist");
+    assert!(
+        ctx.dest.join("source").join("mixed_dir").is_dir(),
+        "directory with large file should exist"
+    );
     assert!(ctx.dest.join("source").join("mixed_dir/large.txt").exists());
     assert!(!ctx.dest.join("source").join("mixed_dir/tiny.txt").exists());
 }
@@ -249,14 +333,23 @@ fn prune_empty_dirs_with_max_size_filter() {
     test_helpers::create_test_tree(
         &ctx.source,
         &[
-            ("large_files_only/huge1.bin", Some(b"this is a very large file content here")),
-            ("large_files_only/huge2.bin", Some(b"another very large file content")),
+            (
+                "large_files_only/huge1.bin",
+                Some(b"this is a very large file content here"),
+            ),
+            (
+                "large_files_only/huge2.bin",
+                Some(b"another very large file content"),
+            ),
             ("mixed_dir/small.txt", Some(b"ok")),
             ("mixed_dir/huge.bin", Some(b"this is huge content file")),
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .max_file_size(Some(10))
@@ -269,7 +362,10 @@ fn prune_empty_dirs_with_max_size_filter() {
         !ctx.dest.join("source").join("large_files_only").exists(),
         "directory with only large files should be pruned"
     );
-    assert!(ctx.dest.join("source").join("mixed_dir").is_dir(), "directory with small file should exist");
+    assert!(
+        ctx.dest.join("source").join("mixed_dir").is_dir(),
+        "directory with small file should exist"
+    );
     assert!(ctx.dest.join("source").join("mixed_dir/small.txt").exists());
     assert!(!ctx.dest.join("source").join("mixed_dir/huge.bin").exists());
 }
@@ -287,16 +383,28 @@ fn prune_empty_dirs_disabled_creates_all_directories() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(false);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("source").join("empty1").is_dir(), "empty1 should be created");
-    assert!(ctx.dest.join("source").join("empty2").is_dir(), "empty2 should be created");
-    assert!(ctx.dest.join("source").join("empty2/nested").is_dir(), "nested empty should be created");
+    assert!(
+        ctx.dest.join("source").join("empty1").is_dir(),
+        "empty1 should be created"
+    );
+    assert!(
+        ctx.dest.join("source").join("empty2").is_dir(),
+        "empty2 should be created"
+    );
+    assert!(
+        ctx.dest.join("source").join("empty2/nested").is_dir(),
+        "nested empty should be created"
+    );
     assert!(ctx.dest.join("source").join("nonempty").is_dir());
     assert!(ctx.dest.join("source").join("nonempty/file.txt").exists());
 }
@@ -307,13 +415,13 @@ fn prune_empty_dirs_with_collect_events_reports_pruning() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("empty", None),
-            ("nonempty/file.txt", Some(b"content")),
-        ],
+        &[("empty", None), ("nonempty/file.txt", Some(b"content"))],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .prune_empty_dirs(true)
@@ -332,7 +440,10 @@ fn prune_empty_dirs_with_collect_events_reports_pruning() {
         .filter(|r| r.action() == &LocalCopyAction::DirectoryCreated)
         .count();
 
-    assert!(dir_created >= 1, "should report directory creation for non-empty dir");
+    assert!(
+        dir_created >= 1,
+        "should report directory creation for non-empty dir"
+    );
 }
 
 #[test]
@@ -368,7 +479,10 @@ fn prune_empty_dirs_with_symlink_in_directory() {
         .expect("create symlink");
     }
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .links(true)
@@ -377,7 +491,10 @@ fn prune_empty_dirs_with_symlink_in_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("empty").exists(), "empty dir should be pruned");
+    assert!(
+        !ctx.dest.join("source").join("empty").exists(),
+        "empty dir should be pruned"
+    );
     assert!(
         ctx.dest.join("source").join("dir_with_link").is_dir(),
         "directory with symlink should exist"
@@ -397,7 +514,10 @@ fn prune_empty_dirs_deep_hierarchy_partial_pruning() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
@@ -421,15 +541,15 @@ fn prune_empty_dirs_with_existing_only_option() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("new_dir/new_file.txt", Some(b"new")),
-            ("empty", None),
-        ],
+        &[("new_dir/new_file.txt", Some(b"new")), ("empty", None)],
     );
 
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .existing_only(true)
@@ -458,14 +578,14 @@ fn prune_empty_dirs_with_include_exclude_filters() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([
-        FilterRule::include("*.txt"),
-        FilterRule::exclude("*"),
-    ])
-    .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::include("*.txt"), FilterRule::exclude("*")])
+        .expect("compile filters");
 
     let options = LocalCopyOptions::default()
         .filters(Some(filters))
@@ -474,13 +594,19 @@ fn prune_empty_dirs_with_include_exclude_filters() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("source").join("docs").is_dir(), "docs has .txt files");
+    assert!(
+        ctx.dest.join("source").join("docs").is_dir(),
+        "docs has .txt files"
+    );
     assert!(ctx.dest.join("source").join("docs/readme.txt").exists());
     assert!(ctx.dest.join("source").join("docs/notes.txt").exists());
     assert!(!ctx.dest.join("source").join("docs/secret.doc").exists());
 
     // code directory should be pruned (only has .rs and .tmp)
-    assert!(!ctx.dest.join("source").join("code").exists(), "code has no .txt files");
+    assert!(
+        !ctx.dest.join("source").join("code").exists(),
+        "code has no .txt files"
+    );
 }
 
 #[test]
@@ -488,12 +614,12 @@ fn prune_empty_dirs_single_file_at_root_no_dirs() {
     // Verify that a source with only a file (no subdirs) works fine with prune
     let ctx = test_helpers::setup_copy_test();
 
-    test_helpers::create_test_tree(
-        &ctx.source,
-        &[("only_file.txt", Some(b"hello"))],
-    );
+    test_helpers::create_test_tree(&ctx.source, &[("only_file.txt", Some(b"hello"))]);
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
@@ -509,7 +635,10 @@ fn prune_empty_dirs_source_is_completely_empty() {
     let ctx = test_helpers::setup_copy_test();
     // source is already created but empty
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
@@ -536,21 +665,39 @@ fn prune_empty_dirs_mixed_empty_and_nonempty_siblings() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("alpha").exists(), "alpha is empty");
-    assert!(ctx.dest.join("source").join("bravo").is_dir(), "bravo has a file");
+    assert!(
+        !ctx.dest.join("source").join("alpha").exists(),
+        "alpha is empty"
+    );
+    assert!(
+        ctx.dest.join("source").join("bravo").is_dir(),
+        "bravo has a file"
+    );
     assert!(ctx.dest.join("source").join("bravo/file.txt").exists());
-    assert!(!ctx.dest.join("source").join("charlie").exists(), "charlie is empty");
-    assert!(ctx.dest.join("source").join("delta").is_dir(), "delta has nested file");
+    assert!(
+        !ctx.dest.join("source").join("charlie").exists(),
+        "charlie is empty"
+    );
+    assert!(
+        ctx.dest.join("source").join("delta").is_dir(),
+        "delta has nested file"
+    );
     assert!(ctx.dest.join("source").join("delta/sub").is_dir());
     assert!(ctx.dest.join("source").join("delta/sub/file.txt").exists());
-    assert!(!ctx.dest.join("source").join("echo").exists(), "echo is empty");
+    assert!(
+        !ctx.dest.join("source").join("echo").exists(),
+        "echo is empty"
+    );
 }
 
 #[test]
@@ -570,7 +717,10 @@ fn prune_empty_dirs_with_filter_partial_exclusion_preserves_dir() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([FilterRule::exclude("*.bak")]).expect("compile filters");
     let options = LocalCopyOptions::default()
@@ -584,12 +734,27 @@ fn prune_empty_dirs_with_filter_partial_exclusion_preserves_dir() {
     assert!(ctx.dest.join("source").join("project/src").is_dir());
     assert!(ctx.dest.join("source").join("project/src/main.rs").exists());
     assert!(ctx.dest.join("source").join("project/src/lib.rs").exists());
-    assert!(!ctx.dest.join("source").join("project/src/temp.bak").exists());
+    assert!(
+        !ctx.dest
+            .join("source")
+            .join("project/src/temp.bak")
+            .exists()
+    );
 
     // build/ should exist because output.o is included
     assert!(ctx.dest.join("source").join("project/build").is_dir());
-    assert!(ctx.dest.join("source").join("project/build/output.o").exists());
-    assert!(!ctx.dest.join("source").join("project/build/output.bak").exists());
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("project/build/output.o")
+            .exists()
+    );
+    assert!(
+        !ctx.dest
+            .join("source")
+            .join("project/build/output.bak")
+            .exists()
+    );
 }
 
 #[test]
@@ -599,12 +764,13 @@ fn prune_empty_dirs_deeply_nested_single_file() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("a/b/c/d/e/f/g/h/i/j/leaf.txt", Some(b"deep")),
-        ],
+        &[("a/b/c/d/e/f/g/h/i/j/leaf.txt", Some(b"deep"))],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().prune_empty_dirs(true);
 
@@ -612,7 +778,12 @@ fn prune_empty_dirs_deeply_nested_single_file() {
         .expect("copy succeeds");
 
     assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j").is_dir());
-    assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j/leaf.txt").exists());
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("a/b/c/d/e/f/g/h/i/j/leaf.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -624,12 +795,18 @@ fn prune_empty_dirs_min_and_max_size_combined() {
         &ctx.source,
         &[
             ("too_small/tiny.txt", Some(b"hi")),
-            ("too_large/huge.txt", Some(b"this is a very large file that exceeds max size limit")),
+            (
+                "too_large/huge.txt",
+                Some(b"this is a very large file that exceeds max size limit"),
+            ),
             ("just_right/medium.txt", Some(b"just right size")),
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .min_file_size(Some(5))
@@ -647,8 +824,16 @@ fn prune_empty_dirs_min_and_max_size_combined() {
         !ctx.dest.join("source").join("too_large").exists(),
         "directory with only too-large files should be pruned"
     );
-    assert!(ctx.dest.join("source").join("just_right").is_dir(), "directory with right-sized file should exist");
-    assert!(ctx.dest.join("source").join("just_right/medium.txt").exists());
+    assert!(
+        ctx.dest.join("source").join("just_right").is_dir(),
+        "directory with right-sized file should exist"
+    );
+    assert!(
+        ctx.dest
+            .join("source")
+            .join("just_right/medium.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -658,10 +843,7 @@ fn prune_empty_dirs_with_delete_option() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("kept/file.txt", Some(b"content")),
-            ("empty", None),
-        ],
+        &[("kept/file.txt", Some(b"content")), ("empty", None)],
     );
 
     // Pre-create destination with some extra content that should be deleted
@@ -682,9 +864,15 @@ fn prune_empty_dirs_with_delete_option() {
 
     assert!(ctx.dest.join("kept").is_dir());
     assert!(ctx.dest.join("kept/file.txt").exists());
-    assert!(!ctx.dest.join("empty").exists(), "empty dir should be pruned");
+    assert!(
+        !ctx.dest.join("empty").exists(),
+        "empty dir should be pruned"
+    );
     // extra_dir should be deleted by --delete since it's not in source
-    assert!(!ctx.dest.join("extra_dir").exists(), "extra dir should be deleted");
+    assert!(
+        !ctx.dest.join("extra_dir").exists(),
+        "extra dir should be deleted"
+    );
 }
 
 #[test]
@@ -693,10 +881,16 @@ fn prune_empty_dirs_option_setter_and_getter() {
     assert!(!opts.prune_empty_dirs_enabled(), "default should be false");
 
     let opts = opts.prune_empty_dirs(true);
-    assert!(opts.prune_empty_dirs_enabled(), "should be true after setting");
+    assert!(
+        opts.prune_empty_dirs_enabled(),
+        "should be true after setting"
+    );
 
     let opts = opts.prune_empty_dirs(false);
-    assert!(!opts.prune_empty_dirs_enabled(), "should be false after unsetting");
+    assert!(
+        !opts.prune_empty_dirs_enabled(),
+        "should be false after unsetting"
+    );
 }
 
 #[test]
@@ -706,10 +900,7 @@ fn prune_empty_dirs_idempotent_run() {
 
     test_helpers::create_test_tree(
         &ctx.source,
-        &[
-            ("empty", None),
-            ("kept/file.txt", Some(b"content")),
-        ],
+        &[("empty", None), ("kept/file.txt", Some(b"content"))],
     );
 
     let operands = vec![
@@ -755,7 +946,10 @@ fn prune_empty_dirs_cascading_after_filter_removes_all_files() {
         ],
     );
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
     let options = LocalCopyOptions::default()
@@ -769,7 +963,10 @@ fn prune_empty_dirs_cascading_after_filter_removes_all_files() {
     assert!(ctx.dest.join("source").join("root_dir").is_dir());
     assert!(ctx.dest.join("source").join("root_dir/keep.txt").exists());
     // sub1 should be pruned because after excluding .log files, it's empty
-    assert!(!ctx.dest.join("source").join("root_dir/sub1").exists(), "sub1 should be pruned (all .log files excluded)");
+    assert!(
+        !ctx.dest.join("source").join("root_dir/sub1").exists(),
+        "sub1 should be pruned (all .log files excluded)"
+    );
 }
 
 /// A directory whose only child is a non-regular file that is skipped because
@@ -790,7 +987,10 @@ fn prune_empty_dirs_keeps_dir_with_only_skipped_symlink() {
     std::os::unix::fs::symlink("nowhere", ctx.source.join("has_link").join("link"))
         .expect("create symlink");
 
-    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     // Symlinks are not preserved by default, so `link` is skipped as a
     // non-regular file; its parent directory must survive the prune pass.

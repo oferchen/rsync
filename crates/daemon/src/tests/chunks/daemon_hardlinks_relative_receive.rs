@@ -99,7 +99,8 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -139,10 +140,7 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
         dest_alpha_link.exists(),
         "x/alpha_link.txt must exist at destination"
     );
-    assert!(
-        dest_beta.exists(),
-        "a/b/beta.txt must exist at destination"
-    );
+    assert!(dest_beta.exists(), "a/b/beta.txt must exist at destination");
     assert!(
         dest_beta_link.exists(),
         "a/b/beta_link.txt must exist at destination"

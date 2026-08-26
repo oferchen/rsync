@@ -192,7 +192,10 @@ fn timeout_and_stop_at_are_distinct_kinds() {
     let stop_at_error = LocalCopyError::stop_at_reached(SystemTime::now());
 
     let timeout_kind_match = matches!(timeout_error.kind(), LocalCopyErrorKind::Timeout { .. });
-    let stop_at_kind_match = matches!(stop_at_error.kind(), LocalCopyErrorKind::StopAtReached { .. });
+    let stop_at_kind_match = matches!(
+        stop_at_error.kind(),
+        LocalCopyErrorKind::StopAtReached { .. }
+    );
 
     assert!(timeout_kind_match);
     assert!(stop_at_kind_match);
@@ -268,8 +271,8 @@ fn zero_duration_timeout_message_is_sensible() {
 #[test]
 fn connection_timeout_exit_code_documented() {
     // Document the expected exit codes
-    const RERR_TIMEOUT: i32 = 30;     // I/O timeout during transfer
-    const RERR_CONTIMEOUT: i32 = 35;  // Connection timeout during setup
+    const RERR_TIMEOUT: i32 = 30; // I/O timeout during transfer
+    const RERR_CONTIMEOUT: i32 = 35; // Connection timeout during setup
 
     assert_ne!(RERR_TIMEOUT, RERR_CONTIMEOUT);
 

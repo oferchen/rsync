@@ -9,4 +9,3 @@ fn runtime_options_bind_resolves_hostnames() {
         "unexpected resolved address {address}",
     );
 }
-

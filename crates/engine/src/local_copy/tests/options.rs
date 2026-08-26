@@ -1,4 +1,3 @@
-
 #[test]
 fn local_copy_options_numeric_ids_round_trip() {
     let options = LocalCopyOptions::default().numeric_ids(true);
@@ -32,7 +31,10 @@ fn local_copy_options_modify_window_round_trip() {
     let window = ModifyWindow::from_secs(5);
     let options = LocalCopyOptions::default().with_modify_window(window);
     assert_eq!(options.modify_window(), window);
-    assert_eq!(LocalCopyOptions::default().modify_window(), ModifyWindow::ZERO);
+    assert_eq!(
+        LocalCopyOptions::default().modify_window(),
+        ModifyWindow::ZERO
+    );
 }
 
 #[test]
@@ -445,7 +447,11 @@ fn preallocate_destination_skips_when_disabled() {
     maybe_preallocate_destination(&mut file, &path, 4096, 0, None).expect("should succeed");
 
     let metadata = fs::metadata(&path).expect("metadata");
-    assert_eq!(metadata.len(), 0, "disabled preallocate should not change file size");
+    assert_eq!(
+        metadata.len(),
+        0,
+        "disabled preallocate should not change file size"
+    );
 }
 
 #[test]
@@ -463,7 +469,11 @@ fn preallocate_destination_skips_zero_length() {
         .expect("should succeed");
 
     let metadata = fs::metadata(&path).expect("metadata");
-    assert_eq!(metadata.len(), 0, "zero-length preallocate should not change file");
+    assert_eq!(
+        metadata.len(),
+        0,
+        "zero-length preallocate should not change file"
+    );
 }
 
 #[test]

@@ -94,14 +94,15 @@ fn apply_global_directive(
             // `open_no_attacker_symlinks()`. The daemon is typically root here,
             // so a symlink planted at any component of an operator-named motd
             // path would otherwise splice an arbitrary file into the greeting.
-            let contents = crate::daemon::operator_file::read_to_string(&motd_path).map_err(|error| {
-                let motd_display = motd_path.display();
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("failed to read motd file '{motd_display}': {error}"),
-                )
-            })?;
+            let contents =
+                crate::daemon::operator_file::read_to_string(&motd_path).map_err(|error| {
+                    let motd_display = motd_path.display();
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("failed to read motd file '{motd_display}': {error}"),
+                    )
+                })?;
 
             // upstream: loadparm.c `motd_file` is a P_STRING slot written with
             // string_set(), so a second `motd file` directive replaces the
@@ -160,7 +161,12 @@ fn apply_global_directive(
             }
 
             let components = parse_config_bwlimit(value, path, line_number)?;
-            store_global_directive(&mut state.global_bwlimit, components, canonical, line_number);
+            store_global_directive(
+                &mut state.global_bwlimit,
+                components,
+                canonical,
+                line_number,
+            );
         }
         "secretsfile" => {
             let trimmed = value.trim();
@@ -325,7 +331,12 @@ fn apply_global_directive(
             // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
             // global-section value seeds every module's inherited default.
             state.module_defaults.syslog_tag = Some(value.to_owned());
-            store_global_directive(&mut state.syslog_tag, value.to_owned(), canonical, line_number);
+            store_global_directive(
+                &mut state.syslog_tag,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         // upstream: loadparm.c - `address` sets the bind address for
         // the daemon listener.
@@ -338,14 +349,9 @@ fn apply_global_directive(
                 ));
             }
 
-            let parsed_addr = parse_bind_address(&OsString::from(value))
-                .map_err(|_| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid bind address '{value}'"),
-                    )
-                })?;
+            let parsed_addr = parse_bind_address(&OsString::from(value)).map_err(|_| {
+                config_parse_error(path, line_number, format!("invalid bind address '{value}'"))
+            })?;
 
             store_global_directive(&mut state.bind_address, parsed_addr, canonical, line_number);
         }
@@ -380,7 +386,11 @@ fn apply_global_directive(
                 ));
             }
             let gid = parse_gid_setting(value).map_err(|reason| {
-                config_parse_error(path, line_number, format!("invalid gid '{value}': {reason}"))
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid gid '{value}': {reason}"),
+                )
             })?;
             state.module_defaults.gid = Some(gid);
         }
@@ -396,7 +406,12 @@ fn apply_global_directive(
                 ));
             }
 
-            store_global_directive(&mut state.daemon_uid, value.to_owned(), canonical, line_number);
+            store_global_directive(
+                &mut state.daemon_uid,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         // upstream: clientserver.c:1500 `lp_daemon_gid` - `daemon gid` sets the
         // process-wide gid the listener drops to before the accept loop.
@@ -409,7 +424,12 @@ fn apply_global_directive(
                 ));
             }
 
-            store_global_directive(&mut state.daemon_gid, value.to_owned(), canonical, line_number);
+            store_global_directive(
+                &mut state.daemon_gid,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
         // Controls the backlog argument passed to listen(2).
@@ -547,11 +567,7 @@ fn apply_global_directive(
         }
         "timeout" => {
             let timeout = parse_timeout_seconds(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid timeout '{value}'"),
-                )
+                config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
             })?;
             state.module_defaults.timeout = Some(timeout);
         }

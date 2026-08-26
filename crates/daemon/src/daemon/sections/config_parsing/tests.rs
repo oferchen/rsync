@@ -28,10 +28,10 @@ mod config_parsing_tests {
         }
     }
 
-
     #[test]
     fn resolve_config_relative_path_absolute() {
-        let result = resolve_config_relative_path(Path::new("/etc/rsyncd.conf"), "/var/run/rsync.pid");
+        let result =
+            resolve_config_relative_path(Path::new("/etc/rsyncd.conf"), "/var/run/rsync.pid");
         assert_eq!(result, PathBuf::from("/var/run/rsync.pid"));
     }
 
@@ -43,7 +43,8 @@ mod config_parsing_tests {
 
     #[test]
     fn resolve_config_relative_path_nested() {
-        let result = resolve_config_relative_path(Path::new("/etc/rsync/main.conf"), "sub/file.txt");
+        let result =
+            resolve_config_relative_path(Path::new("/etc/rsync/main.conf"), "sub/file.txt");
         assert_eq!(result, PathBuf::from("/etc/rsync/sub/file.txt"));
     }
 
@@ -52,7 +53,6 @@ mod config_parsing_tests {
         let result = resolve_config_relative_path(Path::new("config.conf"), "relative.txt");
         assert_eq!(result, PathBuf::from("relative.txt"));
     }
-
 
     #[test]
     fn parse_empty_config() {
@@ -118,7 +118,10 @@ mod config_parsing_tests {
         let dir = TempDir::new().expect("create temp dir");
         let mpath = dir.path().join("data");
         fs::create_dir(&mpath).expect("create module dir");
-        let config = format!("[Global]\ntimeout = 30\n[mod]\npath = {}\n", mpath.display());
+        let config = format!(
+            "[Global]\ntimeout = 30\n[mod]\npath = {}\n",
+            mpath.display()
+        );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules.len(), 1, "[global] must not create a module");
@@ -147,7 +150,10 @@ mod config_parsing_tests {
         let config = format!("[mod]\npath = {}/\n", mpath.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.modules[0].path, mpath, "trailing slash must be stripped");
+        assert_eq!(
+            result.modules[0].path, mpath,
+            "trailing slash must be stripped"
+        );
     }
 
     #[test]
@@ -157,10 +163,7 @@ mod config_parsing_tests {
         let dir = TempDir::new().expect("create temp dir");
         let mpath = dir.path().join("data");
         fs::create_dir(&mpath).expect("create module dir");
-        let config = format!(
-            "[mod]\npath = {}\nsyslog facility = 17\n",
-            mpath.display()
-        );
+        let config = format!("[mod]\npath = {}\nsyslog facility = 17\n", mpath.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules[0].syslog_facility.as_deref(), Some("17"));
@@ -222,7 +225,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
     }
 
-
     #[test]
     fn parse_missing_equals() {
         let file = write_config("[module]\npath /tmp\n");
@@ -237,7 +239,6 @@ mod config_parsing_tests {
         assert!(result.modules.is_empty());
     }
 
-
     #[test]
     fn parse_global_pid_file() {
         let file = write_config("pid file = /var/run/rsync.pid\n");
@@ -251,7 +252,16 @@ mod config_parsing_tests {
     fn parse_global_reverse_lookup_true() {
         let file = write_config("reverse lookup = yes\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.reverse_lookup, Some((true, ConfigDirectiveOrigin { path: file.path().canonicalize().unwrap(), line: 1 })));
+        assert_eq!(
+            result.reverse_lookup,
+            Some((
+                true,
+                ConfigDirectiveOrigin {
+                    path: file.path().canonicalize().unwrap(),
+                    line: 1
+                }
+            ))
+        );
     }
 
     #[test]
@@ -292,7 +302,6 @@ mod config_parsing_tests {
         assert_eq!(value, "a+r");
     }
 
-
     #[test]
     fn parse_inline_motd() {
         let file = write_config("motd = Welcome to rsync\n");
@@ -309,7 +318,6 @@ mod config_parsing_tests {
         assert_eq!(result.motd_lines.len(), 3);
         assert_eq!(result.motd_lines[0], "Line 1");
     }
-
 
     #[test]
     fn parse_module_read_only() {
@@ -435,7 +443,6 @@ mod config_parsing_tests {
         );
     }
 
-
     /// A bare global `include` is the P_LOCAL include-filter parameter
     /// (daemon-parm.txt Locals; loadparm.c via daemon-parm.h), NOT file
     /// inclusion - upstream reserves `&include` for pulling in another file
@@ -521,7 +528,10 @@ mod config_parsing_tests {
             2,
             "global hosts allow must propagate into included module",
         );
-        assert!(included_mod.read_only, "module's own read only must be honoured");
+        assert!(
+            included_mod.read_only,
+            "module's own read only must be honoured"
+        );
     }
 
     #[test]
@@ -819,7 +829,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("recursive include"));
     }
 
-
     #[test]
     fn parse_empty_path_errors() {
         let file = write_config("[mod]\npath = \n");
@@ -852,7 +861,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("must not be empty"));
     }
 
-
     /// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
     /// unconditionally, so a repeated global directive keeps its last value
     /// instead of aborting the load.
@@ -876,7 +884,6 @@ mod config_parsing_tests {
         assert!(!reverse_lookup);
     }
 
-
     #[test]
     fn parse_invalid_boolean_keeps_default() {
         // upstream: loadparm.c:418-423 - a badly formed boolean warns and
@@ -886,7 +893,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].read_only);
     }
-
 
     #[test]
     fn parse_keys_case_insensitive() {
@@ -900,7 +906,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert!(!result.modules[0].read_only);
     }
-
 
     #[test]
     fn parse_module_munge_symlinks_yes() {
@@ -958,13 +963,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_munge_symlinks_duplicate_last_wins() {
-        let file = write_config(
-            "[mod]\npath = /tmp\nmunge symlinks = yes\nmunge symlinks = no\n",
-        );
+        let file = write_config("[mod]\npath = /tmp\nmunge symlinks = yes\nmunge symlinks = no\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules[0].munge_symlinks, Some(false));
     }
-
 
     #[test]
     fn parse_module_max_verbosity() {
@@ -1036,10 +1038,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\ntransfer logging = yes\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\ntransfer logging = yes\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].transfer_logging);
@@ -1057,10 +1056,7 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(
-            result.modules[0].log_format.as_deref(),
-            Some("%o %h %f %l")
-        );
+        assert_eq!(result.modules[0].log_format.as_deref(), Some("%o %h %f %l"));
     }
 
     #[test]
@@ -1162,10 +1158,7 @@ mod config_parsing_tests {
         let config = format!("[mod]\npath = {}\ntemp dir = /tmp/rsync\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(
-            result.modules[0].temp_dir.as_deref(),
-            Some("/tmp/rsync")
-        );
+        assert_eq!(result.modules[0].temp_dir.as_deref(), Some("/tmp/rsync"));
     }
 
     #[test]
@@ -1186,10 +1179,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nforward lookup = no\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nforward lookup = no\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].forward_lookup);
@@ -1206,7 +1196,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].forward_lookup);
     }
-
 
     #[test]
     fn parse_module_insecure_links_yes() {
@@ -1263,10 +1252,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nstrict modes = yes\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nstrict modes = yes\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].strict_modes);
@@ -1278,10 +1264,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nstrict modes = no\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nstrict modes = no\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].strict_modes);
@@ -1305,10 +1288,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nstrict modes = false\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nstrict modes = false\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].strict_modes);
@@ -1326,13 +1306,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_strict_modes_duplicate_last_wins() {
-        let file = write_config(
-            "[mod]\npath = /tmp\nstrict modes = yes\nstrict modes = no\n",
-        );
+        let file = write_config("[mod]\npath = /tmp\nstrict modes = yes\nstrict modes = no\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].strict_modes);
     }
-
 
     #[test]
     fn parse_module_open_noatime_yes() {
@@ -1340,10 +1317,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nopen noatime = yes\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nopen noatime = yes\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].open_noatime);
@@ -1355,10 +1329,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nopen noatime = no\n",
-            path.display()
-        );
+        let config = format!("[mod]\npath = {}\nopen noatime = no\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].open_noatime);
@@ -1387,9 +1358,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_open_noatime_duplicate_last_wins() {
-        let file = write_config(
-            "[mod]\npath = /tmp\nopen noatime = yes\nopen noatime = no\n",
-        );
+        let file = write_config("[mod]\npath = /tmp\nopen noatime = yes\nopen noatime = no\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].open_noatime);
     }
@@ -1452,14 +1421,12 @@ mod config_parsing_tests {
         assert!(!module.forward_lookup);
     }
 
-
     #[test]
     fn parse_nonexistent_config() {
-        let err = parse_config_modules(Path::new("/nonexistent/config.conf"))
-            .expect_err("should fail");
+        let err =
+            parse_config_modules(Path::new("/nonexistent/config.conf")).expect_err("should fail");
         assert!(err.to_string().contains("failed to"));
     }
-
 
     #[test]
     fn global_directives_before_modules_apply_as_defaults() {
@@ -1491,18 +1458,12 @@ mod config_parsing_tests {
             result.modules[0].incoming_chmod.as_deref(),
             Some("Dg+s,ug+w")
         );
-        assert_eq!(
-            result.modules[0].outgoing_chmod.as_deref(),
-            Some("Fo-w,+X")
-        );
+        assert_eq!(result.modules[0].outgoing_chmod.as_deref(), Some("Fo-w,+X"));
         assert_eq!(
             result.modules[1].incoming_chmod.as_deref(),
             Some("Dg+s,ug+w")
         );
-        assert_eq!(
-            result.modules[1].outgoing_chmod.as_deref(),
-            Some("Fo-w,+X")
-        );
+        assert_eq!(result.modules[1].outgoing_chmod.as_deref(), Some("Fo-w,+X"));
     }
 
     #[test]
@@ -1960,7 +1921,7 @@ mod config_parsing_tests {
 
         assert_eq!(result.modules.len(), 2);
         assert!(!result.modules[0].use_chroot); // inherits global false
-        assert!(result.modules[1].use_chroot);  // overridden to true per-module
+        assert!(result.modules[1].use_chroot); // overridden to true per-module
     }
 
     #[test]
@@ -1976,7 +1937,6 @@ mod config_parsing_tests {
         // No global 'use chroot' directive - default is true
         assert!(result.modules[0].use_chroot);
     }
-
 
     #[test]
     fn exclude_from_and_include_from_default_to_none() {
@@ -2051,7 +2011,10 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
 
         assert_eq!(result.modules.len(), 1);
-        let exclude_from = result.modules[0].exclude_from.as_ref().expect("exclude_from set");
+        let exclude_from = result.modules[0]
+            .exclude_from
+            .as_ref()
+            .expect("exclude_from set");
         let config_dir = file.path().canonicalize().unwrap();
         let expected = config_dir.parent().unwrap().join("excludes.txt");
         assert_eq!(*exclude_from, expected);
@@ -2071,7 +2034,10 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
 
         assert_eq!(result.modules.len(), 1);
-        let include_from = result.modules[0].include_from.as_ref().expect("include_from set");
+        let include_from = result.modules[0]
+            .include_from
+            .as_ref()
+            .expect("include_from set");
         let config_dir = file.path().canonicalize().unwrap();
         let expected = config_dir.parent().unwrap().join("includes.txt");
         assert_eq!(*include_from, expected);
@@ -2111,10 +2077,7 @@ mod config_parsing_tests {
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\nexclude from =\n",
-            module_path.display()
-        );
+        let config = format!("[mod]\npath = {}\nexclude from =\n", module_path.display());
         let file = write_config(&config);
         let err = parse_config_modules(file.path()).expect_err("should fail on empty");
         assert!(err.to_string().contains("exclude from"));
@@ -2126,10 +2089,7 @@ mod config_parsing_tests {
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
-        let config = format!(
-            "[mod]\npath = {}\ninclude from =\n",
-            module_path.display()
-        );
+        let config = format!("[mod]\npath = {}\ninclude from =\n", module_path.display());
         let file = write_config(&config);
         let err = parse_config_modules(file.path()).expect_err("should fail on empty");
         assert!(err.to_string().contains("include from"));
@@ -2201,7 +2161,6 @@ mod config_parsing_tests {
         );
         assert!(result.modules[1].exclude_from.is_none());
     }
-
 
     #[test]
     fn parse_syslog_facility_global_directive() {
@@ -2289,7 +2248,10 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!("[mod]\npath = {}\nsyslog facility = bogus\n", path.display());
+        let config = format!(
+            "[mod]\npath = {}\nsyslog facility = bogus\n",
+            path.display()
+        );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let module = result
@@ -2388,7 +2350,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].syslog_facility.as_deref(), Some("local3"));
     }
 
-
     #[test]
     fn parse_syslog_tag_global_directive() {
         let file = write_config(&format!(
@@ -2474,7 +2435,6 @@ mod config_parsing_tests {
         assert_eq!(tag, "backup-daemon");
     }
 
-
     #[test]
     fn parse_address_ipv4() {
         let file = write_config("address = 192.168.1.100\n");
@@ -2503,7 +2463,10 @@ mod config_parsing_tests {
         let file = write_config("address =\n");
         let err = parse_config_modules(file.path()).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("'address' directive must not be empty"), "{msg}");
+        assert!(
+            msg.contains("'address' directive must not be empty"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -2529,7 +2492,6 @@ mod config_parsing_tests {
         let (addr, _) = result.bind_address.expect("should have bind_address");
         assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
     }
-
 
     #[test]
     fn parse_socket_options_single_option() {
@@ -2560,8 +2522,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_socket_options_duplicate_same_value_accepted() {
-        let file =
-            write_config("socket options = SO_KEEPALIVE\nsocket options = SO_KEEPALIVE\n");
+        let file = write_config("socket options = SO_KEEPALIVE\nsocket options = SO_KEEPALIVE\n");
         let result = parse_config_modules(file.path()).expect("identical duplicates accepted");
         let (opts, _) = result.socket_options.expect("should have socket_options");
         assert_eq!(opts, "SO_KEEPALIVE");
@@ -2569,8 +2530,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_socket_options_duplicate_different_value_last_wins() {
-        let file =
-            write_config("socket options = SO_KEEPALIVE\nsocket options = TCP_NODELAY\n");
+        let file = write_config("socket options = SO_KEEPALIVE\nsocket options = TCP_NODELAY\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (opts, _) = result.socket_options.expect("should have socket_options");
         assert_eq!(opts, "TCP_NODELAY");
@@ -2604,10 +2564,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "proxy protocol = yes\n[mod]\npath = {}\n",
-            path.display()
-        );
+        let config = format!("proxy protocol = yes\n[mod]\npath = {}\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (enabled, _) = result.proxy_protocol.expect("should have proxy_protocol");
@@ -2620,10 +2577,7 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!(
-            "proxy protocol = no\n[mod]\npath = {}\n",
-            path.display()
-        );
+        let config = format!("proxy protocol = no\n[mod]\npath = {}\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (enabled, _) = result.proxy_protocol.expect("should have proxy_protocol");
@@ -2648,7 +2602,10 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!("daemon chroot = /var/chroot\n[mod]\npath = {}\n", path.display());
+        let config = format!(
+            "daemon chroot = /var/chroot\n[mod]\npath = {}\n",
+            path.display()
+        );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (chroot_path, _) = result.daemon_chroot.expect("should have daemon_chroot");
@@ -2678,7 +2635,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path());
         assert!(result.is_err());
     }
-
 
     #[test]
     fn parse_module_filter_single_rule() {
@@ -2743,10 +2699,7 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(
-            result.modules[0].exclude,
-            vec!["*.log", "*.tmp", "/cache/"]
-        );
+        assert_eq!(result.modules[0].exclude, vec!["*.log", "*.tmp", "/cache/"]);
     }
 
     #[test]
@@ -2805,7 +2758,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].exclude, vec!["*.tmp"]);
         assert!(result.modules[1].exclude.is_empty());
     }
-
 
     #[test]
     fn parse_global_rsync_port() {
@@ -2961,7 +2913,10 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!("[mod]\npath = {}\nlog file = rsync-mod.log\n", path.display());
+        let config = format!(
+            "[mod]\npath = {}\nlog file = rsync-mod.log\n",
+            path.display()
+        );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).unwrap();
         let log_file = result.modules[0].log_file.as_ref().expect("log_file set");
@@ -3436,7 +3391,10 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
-        let config = format!("daemon uid = 0\ndaemon gid = 0\n[mod]\npath = {}\n", path.display());
+        let config = format!(
+            "daemon uid = 0\ndaemon gid = 0\n[mod]\npath = {}\n",
+            path.display()
+        );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
 
@@ -3444,7 +3402,10 @@ mod config_parsing_tests {
             result.modules[0].uid, None,
             "`daemon uid` is P_GLOBAL and must not seed the per-module uid default",
         );
-        assert_eq!(result.modules[0].gid, None, "`daemon gid` must not seed module gid");
+        assert_eq!(
+            result.modules[0].gid, None,
+            "`daemon gid` must not seed module gid"
+        );
         assert!(
             result.daemon_uid.is_some(),
             "`daemon uid` must arm the process-wide daemon drop",
@@ -3782,8 +3743,7 @@ mod config_parsing_tests {
     fn parse_quic_cert_file_resolves_relative_to_config_dir() {
         let dir = TempDir::new().expect("create temp dir");
         let config_path = dir.path().join("rsyncd.conf");
-        std::fs::write(&config_path, "quic cert file = quic/server.pem\n")
-            .expect("write config");
+        std::fs::write(&config_path, "quic cert file = quic/server.pem\n").expect("write config");
 
         let result = parse_config_modules(&config_path).expect("parse succeeds");
         let (cert, _) = result.quic_cert_file.expect("quic cert file stored");

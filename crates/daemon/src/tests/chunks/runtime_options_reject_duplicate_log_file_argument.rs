@@ -15,4 +15,3 @@ fn runtime_options_reject_duplicate_log_file_argument() {
             .contains("duplicate daemon argument '--log-file'")
     );
 }
-

@@ -14,4 +14,3 @@ fn run_daemon_rejects_invalid_max_sessions() {
             .contains("--max-sessions must be greater than zero")
     );
 }
-

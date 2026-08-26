@@ -8,4 +8,3 @@ fn runtime_options_parse_lock_file_argument() {
 
     assert_eq!(options.lock_file(), Some(Path::new("/var/run/rsyncd.lock")));
 }
-

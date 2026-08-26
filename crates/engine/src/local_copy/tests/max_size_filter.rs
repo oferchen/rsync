@@ -30,11 +30,27 @@ fn execute_excludes_files_larger_than_max_size() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 2, "should copy only small and medium files");
-    assert!(dest_root.join("small.txt").exists(), "small file should be copied");
-    assert!(dest_root.join("medium.txt").exists(), "medium file should be copied");
-    assert!(!dest_root.join("large.txt").exists(), "large file should be excluded");
-    assert!(!dest_root.join("huge.txt").exists(), "huge file should be excluded");
+    assert_eq!(
+        summary.files_copied(),
+        2,
+        "should copy only small and medium files"
+    );
+    assert!(
+        dest_root.join("small.txt").exists(),
+        "small file should be copied"
+    );
+    assert!(
+        dest_root.join("medium.txt").exists(),
+        "medium file should be copied"
+    );
+    assert!(
+        !dest_root.join("large.txt").exists(),
+        "large file should be excluded"
+    );
+    assert!(
+        !dest_root.join("huge.txt").exists(),
+        "huge file should be excluded"
+    );
 }
 
 #[test]
@@ -59,7 +75,11 @@ fn execute_includes_files_equal_to_max_size() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1, "file equal to max-size should be copied");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "file equal to max-size should be copied"
+    );
     assert!(destination.exists(), "destination should exist");
     assert_eq!(
         fs::read(&destination).expect("read destination"),
@@ -121,9 +141,18 @@ fn execute_max_size_with_kilobyte_suffix() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2, "files <= 1K should be copied");
-    assert!(dest_root.join("under.txt").exists(), "file under 1K should be copied");
-    assert!(dest_root.join("exact.txt").exists(), "file exactly 1K should be copied");
-    assert!(!dest_root.join("over.txt").exists(), "file over 1K should be excluded");
+    assert!(
+        dest_root.join("under.txt").exists(),
+        "file under 1K should be copied"
+    );
+    assert!(
+        dest_root.join("exact.txt").exists(),
+        "file exactly 1K should be copied"
+    );
+    assert!(
+        !dest_root.join("over.txt").exists(),
+        "file over 1K should be excluded"
+    );
 }
 
 #[test]
@@ -133,9 +162,17 @@ fn execute_max_size_with_megabyte_suffix() {
     fs::create_dir_all(&source_root).expect("create source");
 
     let one_mb: u64 = 1024 * 1024;
-    fs::write(source_root.join("under.txt"), vec![0u8; (one_mb - 1024) as usize]).expect("write under 1M");
+    fs::write(
+        source_root.join("under.txt"),
+        vec![0u8; (one_mb - 1024) as usize],
+    )
+    .expect("write under 1M");
     fs::write(source_root.join("exact.txt"), vec![0u8; one_mb as usize]).expect("write exactly 1M");
-    fs::write(source_root.join("over.txt"), vec![0u8; (one_mb + 1024) as usize]).expect("write over 1M");
+    fs::write(
+        source_root.join("over.txt"),
+        vec![0u8; (one_mb + 1024) as usize],
+    )
+    .expect("write over 1M");
 
     let dest_root = temp.path().join("dest");
     let mut source_operand = source_root.into_os_string();
@@ -151,9 +188,18 @@ fn execute_max_size_with_megabyte_suffix() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2, "files <= 1M should be copied");
-    assert!(dest_root.join("under.txt").exists(), "file under 1M should be copied");
-    assert!(dest_root.join("exact.txt").exists(), "file exactly 1M should be copied");
-    assert!(!dest_root.join("over.txt").exists(), "file over 1M should be excluded");
+    assert!(
+        dest_root.join("under.txt").exists(),
+        "file under 1M should be copied"
+    );
+    assert!(
+        dest_root.join("exact.txt").exists(),
+        "file exactly 1M should be copied"
+    );
+    assert!(
+        !dest_root.join("over.txt").exists(),
+        "file over 1M should be excluded"
+    );
 }
 
 #[test]
@@ -181,7 +227,11 @@ fn execute_max_size_with_gigabyte_suffix() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 2, "files much smaller than 1G should be copied");
+    assert_eq!(
+        summary.files_copied(),
+        2,
+        "files much smaller than 1G should be copied"
+    );
     assert!(dest_root.join("small.txt").exists());
     assert!(dest_root.join("medium.txt").exists());
 }
@@ -209,7 +259,11 @@ fn execute_max_size_excludes_very_large_files() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 0, "10MB file should be excluded by 5MB limit");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "10MB file should be excluded by 5MB limit"
+    );
     assert!(!destination.exists(), "destination should not be created");
 }
 
@@ -265,11 +319,27 @@ fn execute_max_size_combined_with_min_size() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 2, "only files in range should be copied");
-    assert!(!dest_root.join("too_small.txt").exists(), "file below min should be excluded");
-    assert!(dest_root.join("just_right1.txt").exists(), "file at min boundary should be copied");
-    assert!(dest_root.join("just_right2.txt").exists(), "file in range should be copied");
-    assert!(!dest_root.join("too_large.txt").exists(), "file above max should be excluded");
+    assert_eq!(
+        summary.files_copied(),
+        2,
+        "only files in range should be copied"
+    );
+    assert!(
+        !dest_root.join("too_small.txt").exists(),
+        "file below min should be excluded"
+    );
+    assert!(
+        dest_root.join("just_right1.txt").exists(),
+        "file at min boundary should be copied"
+    );
+    assert!(
+        dest_root.join("just_right2.txt").exists(),
+        "file in range should be copied"
+    );
+    assert!(
+        !dest_root.join("too_large.txt").exists(),
+        "file above max should be excluded"
+    );
 }
 
 #[test]
@@ -297,14 +367,30 @@ fn execute_max_size_does_not_affect_directories() {
         .expect("copy succeeds");
 
     // Directory should be created regardless of max-size
-    assert!(dest_root.join("nested").exists(), "directory should be created");
-    assert!(dest_root.join("nested").is_dir(), "nested should be a directory");
+    assert!(
+        dest_root.join("nested").exists(),
+        "directory should be created"
+    );
+    assert!(
+        dest_root.join("nested").is_dir(),
+        "nested should be a directory"
+    );
 
-    assert!(dest_root.join("nested").join("small.txt").exists(), "small file should be copied");
+    assert!(
+        dest_root.join("nested").join("small.txt").exists(),
+        "small file should be copied"
+    );
 
-    assert!(!dest_root.join("large.txt").exists(), "large file should be excluded");
+    assert!(
+        !dest_root.join("large.txt").exists(),
+        "large file should be excluded"
+    );
 
-    assert_eq!(summary.files_copied(), 1, "only the small file should be copied");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "only the small file should be copied"
+    );
 }
 
 #[test]
@@ -330,7 +416,11 @@ fn execute_max_size_with_dry_run() {
         .expect("dry run succeeds");
 
     // In dry run, files would be copied but destination doesn't exist
-    assert_eq!(summary.files_copied(), 1, "dry run should report small file would be copied");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "dry run should report small file would be copied"
+    );
     assert!(!dest_root.exists(), "dry run should not create destination");
 }
 
@@ -342,12 +432,17 @@ fn execute_max_size_boundary_off_by_one() {
 
     // Test exact boundaries: limit - 1, limit, limit + 1
     let limit = 1000u64;
-    fs::write(source_root.join("one_under.txt"), vec![0u8; (limit - 1) as usize])
-        .expect("write limit - 1");
-    fs::write(source_root.join("exact.txt"), vec![0u8; limit as usize])
-        .expect("write exact limit");
-    fs::write(source_root.join("one_over.txt"), vec![0u8; (limit + 1) as usize])
-        .expect("write limit + 1");
+    fs::write(
+        source_root.join("one_under.txt"),
+        vec![0u8; (limit - 1) as usize],
+    )
+    .expect("write limit - 1");
+    fs::write(source_root.join("exact.txt"), vec![0u8; limit as usize]).expect("write exact limit");
+    fs::write(
+        source_root.join("one_over.txt"),
+        vec![0u8; (limit + 1) as usize],
+    )
+    .expect("write limit + 1");
 
     let dest_root = temp.path().join("dest");
     let mut source_operand = source_root.into_os_string();
@@ -363,9 +458,18 @@ fn execute_max_size_boundary_off_by_one() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2, "files <= limit should be copied");
-    assert!(dest_root.join("one_under.txt").exists(), "file one byte under limit should be copied");
-    assert!(dest_root.join("exact.txt").exists(), "file exactly at limit should be copied");
-    assert!(!dest_root.join("one_over.txt").exists(), "file one byte over limit should be excluded");
+    assert!(
+        dest_root.join("one_under.txt").exists(),
+        "file one byte under limit should be copied"
+    );
+    assert!(
+        dest_root.join("exact.txt").exists(),
+        "file exactly at limit should be copied"
+    );
+    assert!(
+        !dest_root.join("one_over.txt").exists(),
+        "file one byte over limit should be excluded"
+    );
 }
 
 #[test]
@@ -399,7 +503,16 @@ fn execute_max_size_with_filter_rules() {
 
     // Only small.txt should be copied (small.bak excluded by filter, large.txt excluded by size)
     assert_eq!(summary.files_copied(), 1, "only small.txt should be copied");
-    assert!(dest_root.join("small.txt").exists(), "small.txt should be copied");
-    assert!(!dest_root.join("small.bak").exists(), "small.bak should be excluded by filter");
-    assert!(!dest_root.join("large.txt").exists(), "large.txt should be excluded by size");
+    assert!(
+        dest_root.join("small.txt").exists(),
+        "small.txt should be copied"
+    );
+    assert!(
+        !dest_root.join("small.bak").exists(),
+        "small.bak should be excluded by filter"
+    );
+    assert!(
+        !dest_root.join("large.txt").exists(),
+        "large.txt should be excluded by size"
+    );
 }

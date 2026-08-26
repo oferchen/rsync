@@ -15,4 +15,3 @@ fn runtime_options_reject_duplicate_bwlimit() {
             .contains("duplicate daemon argument '--bwlimit'")
     );
 }
-

@@ -1,4 +1,3 @@
-
 //
 // Upstream rsync behavior:
 // - Without --checksum-seed: the seed is negotiated automatically (typically
@@ -6,7 +5,6 @@
 // - With --checksum-seed=N: a fixed seed is used for all checksum computations,
 //   producing deterministic results across runs. This is useful for debugging,
 //   testing, and batch mode reproducibility.
-
 
 #[test]
 fn checksum_seed_defaults_to_none() {
@@ -92,12 +90,9 @@ fn checksum_seed_new_defaults_to_none() {
     );
 }
 
-
 #[test]
 fn checksum_seed_builder_defaults_to_none() {
-    let opts = LocalCopyOptions::builder()
-        .build()
-        .expect("valid options");
+    let opts = LocalCopyOptions::builder().build().expect("valid options");
     assert_eq!(
         opts.checksum_seed(),
         None,
@@ -183,7 +178,6 @@ fn checksum_seed_build_unchecked_works() {
         "build_unchecked should preserve checksum_seed"
     );
 }
-
 
 #[test]
 fn checksum_seed_compatible_with_checksum_mode() {
@@ -451,7 +445,6 @@ fn transfer_with_checksum_seed_and_delete() {
     );
     assert!(summary.items_deleted() >= 1, "should report deletion");
 }
-
 
 #[test]
 fn checksum_seed_round_trip_direct() {

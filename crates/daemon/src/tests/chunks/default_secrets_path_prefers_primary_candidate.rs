@@ -12,4 +12,3 @@ fn default_secrets_path_prefers_primary_candidate() {
 
     assert_eq!(result, Some(primary.into_os_string()));
 }
-

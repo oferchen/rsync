@@ -25,4 +25,3 @@ fn runtime_options_loads_motd_from_config_directives() {
 
     assert_eq!(options.motd_lines(), expected.as_slice());
 }
-

@@ -64,7 +64,8 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Push files to daemon module
@@ -116,7 +117,10 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle/");
 
         let client_config = core::client::ClientConfig::builder()
-            .transfer_args([OsString::from(&rsync_url), OsString::from(pull_dest.as_os_str())])
+            .transfer_args([
+                OsString::from(&rsync_url),
+                OsString::from(pull_dest.as_os_str()),
+            ])
             .build();
 
         let result = core::client::run_client(client_config);
@@ -212,7 +216,8 @@ fn daemon_push_incremental_update_lifecycle() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push
@@ -240,10 +245,8 @@ fn daemon_push_incremental_update_lifecycle() {
 
     // Backdate destination so quick-check detects the change
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(module_dir.join("config.txt"), old_time)
-        .expect("backdate config.txt");
-    filetime::set_file_mtime(module_dir.join("stable.txt"), old_time)
-        .expect("backdate stable.txt");
+    filetime::set_file_mtime(module_dir.join("config.txt"), old_time).expect("backdate config.txt");
+    filetime::set_file_mtime(module_dir.join("stable.txt"), old_time).expect("backdate stable.txt");
 
     // Modify source: update config.txt, add new file
     fs::write(source_dir.join("config.txt"), b"version=2\nupdated=true\n")
@@ -311,10 +314,12 @@ fn daemon_pull_lifecycle_copies_full_tree() {
     fs::create_dir_all(&module_deep).expect("create module/docs/api");
 
     fs::write(module_dir.join("index.html"), b"<html>root</html>\n").expect("write index");
-    fs::write(module_subdir.join("guide.md"), b"# User Guide\n\nIntro paragraph.\n")
-        .expect("write guide");
-    fs::write(module_deep.join("reference.json"), b"{\"version\": 1}\n")
-        .expect("write reference");
+    fs::write(
+        module_subdir.join("guide.md"),
+        b"# User Guide\n\nIntro paragraph.\n",
+    )
+    .expect("write guide");
+    fs::write(module_deep.join("reference.json"), b"{\"version\": 1}\n").expect("write reference");
     // Include an empty file to verify zero-length files transfer correctly
     fs::write(module_dir.join("empty.txt"), b"").expect("write empty file");
 
@@ -345,13 +350,17 @@ fn daemon_pull_lifecycle_copies_full_tree() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/docs/");
 
     let client_config = core::client::ClientConfig::builder()
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .build();
 
     let result = core::client::run_client(client_config);
@@ -423,8 +432,7 @@ fn daemon_push_lifecycle_preserves_permissions() {
 
     let script_path = source_dir.join("run.sh");
     fs::write(&script_path, b"#!/bin/sh\necho hello\n").expect("write script");
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
-        .expect("chmod script 755");
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).expect("chmod script 755");
 
     let config_path = source_dir.join("settings.conf");
     fs::write(&config_path, b"key=value\n").expect("write settings");
@@ -458,7 +466,8 @@ fn daemon_push_lifecycle_preserves_permissions() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -554,7 +563,8 @@ fn daemon_push_lifecycle_rejects_read_only_module() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();

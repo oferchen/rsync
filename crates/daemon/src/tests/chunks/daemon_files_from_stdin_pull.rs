@@ -83,7 +83,8 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
@@ -94,7 +95,10 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
 
     let client_config = core::client::ClientConfig::builder()
-        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .transfer_args([
+            OsString::from(&rsync_url),
+            OsString::from(dest_dir.as_os_str()),
+        ])
         .files_from(core::client::FilesFromSource::LocalFile(
             files_from_path.clone(),
         ))
@@ -126,7 +130,10 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
     );
 
     let dest_three = dest_dir.join("dir/three.txt");
-    assert!(dest_three.exists(), "dir/three.txt must exist at destination");
+    assert!(
+        dest_three.exists(),
+        "dir/three.txt must exist at destination"
+    );
     assert_eq!(
         fs::read(&dest_three).expect("read three.txt"),
         b"third content\n",

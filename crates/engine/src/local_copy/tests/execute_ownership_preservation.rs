@@ -51,7 +51,11 @@ fn owner_flag_preserves_source_uid() {
         .expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    assert_eq!(metadata.uid(), test_uid, "destination should have source UID");
+    assert_eq!(
+        metadata.uid(),
+        test_uid,
+        "destination should have source UID"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -95,7 +99,11 @@ fn owner_flag_disabled_does_not_preserve_uid() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     // Without owner flag, destination should have current user's UID (root = 0)
-    assert_ne!(metadata.uid(), test_uid, "destination should not preserve source UID");
+    assert_ne!(
+        metadata.uid(),
+        test_uid,
+        "destination should not preserve source UID"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -180,7 +188,11 @@ fn group_flag_preserves_source_gid() {
         .expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    assert_eq!(metadata.gid(), test_gid, "destination should have source GID");
+    assert_eq!(
+        metadata.gid(),
+        test_gid,
+        "destination should have source GID"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -223,7 +235,11 @@ fn group_flag_disabled_does_not_preserve_gid() {
         .expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    assert_ne!(metadata.gid(), test_gid, "destination should not preserve source GID");
+    assert_ne!(
+        metadata.gid(),
+        test_gid,
+        "destination should not preserve source GID"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -309,8 +325,16 @@ fn owner_and_group_flags_preserve_both() {
         .expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    assert_eq!(metadata.uid(), test_uid, "destination should have source UID");
-    assert_eq!(metadata.gid(), test_gid, "destination should have source GID");
+    assert_eq!(
+        metadata.uid(),
+        test_uid,
+        "destination should have source UID"
+    );
+    assert_eq!(
+        metadata.gid(),
+        test_gid,
+        "destination should have source GID"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -510,8 +534,14 @@ fn owner_preserved_recursively_in_directory_tree() {
     let dest_subdir = dest_dir.join("source").join("subdir");
     let dest_file2 = dest_subdir.join("file2.txt");
 
-    assert_eq!(fs::metadata(dest_dir.join("source")).expect("dir").uid(), test_uid);
-    assert_eq!(fs::metadata(dest_dir.join("source")).expect("dir").gid(), test_gid);
+    assert_eq!(
+        fs::metadata(dest_dir.join("source")).expect("dir").uid(),
+        test_uid
+    );
+    assert_eq!(
+        fs::metadata(dest_dir.join("source")).expect("dir").gid(),
+        test_gid
+    );
     assert_eq!(fs::metadata(&dest_file1).expect("file1").uid(), test_uid);
     assert_eq!(fs::metadata(&dest_file1).expect("file1").gid(), test_gid);
     assert_eq!(fs::metadata(&dest_subdir).expect("subdir").uid(), test_uid);

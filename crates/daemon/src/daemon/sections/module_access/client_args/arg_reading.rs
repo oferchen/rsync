@@ -29,9 +29,8 @@ fn unbackslash_arg(s: &str) -> String {
     // upstream: `unbackslash_arg` operates on a C string in place; we walk
     // the original UTF-8 bytes and only drop ASCII backslashes that precede
     // another byte, so the result remains valid UTF-8 whenever the input was.
-    String::from_utf8(out).unwrap_or_else(|err| {
-        String::from_utf8_lossy(err.as_bytes()).into_owned()
-    })
+    String::from_utf8(out)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
 /// Merges secluded-args phase 1 (cmdline) and phase 2 (stdin) arg lists.

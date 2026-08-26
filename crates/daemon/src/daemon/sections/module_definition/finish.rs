@@ -104,9 +104,7 @@ impl ModuleDefinitionBuilder {
         // upstream: daemon-parm.h:273 - `auth digest` is P_LOCAL, so a value in
         // the global section is the default for every module that does not set
         // its own, exactly like `auth users` above.
-        let auth_digest = self
-            .auth_digest
-            .or_else(|| defaults.auth_digest.clone());
+        let auth_digest = self.auth_digest.or_else(|| defaults.auth_digest.clone());
         let secrets_file = if auth_users.is_empty() {
             self.secrets_file
         } else if let Some(path) = self.secrets_file {
@@ -146,8 +144,14 @@ impl ModuleDefinitionBuilder {
 
         // upstream: loadparm.c - hosts_allow/hosts_deny are STRING P_LOCAL
         // parameters with global defaults.
-        let hosts_allow = self.hosts_allow.or_else(|| defaults.hosts_allow.clone()).unwrap_or_default();
-        let hosts_deny = self.hosts_deny.or_else(|| defaults.hosts_deny.clone()).unwrap_or_default();
+        let hosts_allow = self
+            .hosts_allow
+            .or_else(|| defaults.hosts_allow.clone())
+            .unwrap_or_default();
+        let hosts_deny = self
+            .hosts_deny
+            .or_else(|| defaults.hosts_deny.clone())
+            .unwrap_or_default();
 
         Ok(ModuleDefinition {
             name: self.name,
@@ -190,17 +194,29 @@ impl ModuleDefinitionBuilder {
                 .insecure_links
                 .or(defaults.insecure_links)
                 .unwrap_or(false),
-            munge_symlinks: self.munge_symlinks.or(defaults.munge_symlinks).unwrap_or(None),
+            munge_symlinks: self
+                .munge_symlinks
+                .or(defaults.munge_symlinks)
+                .unwrap_or(None),
             max_verbosity: self.max_verbosity.or(defaults.max_verbosity).unwrap_or(1),
-            ignore_errors: self.ignore_errors.or(defaults.ignore_errors).unwrap_or(false),
-            ignore_nonreadable: self.ignore_nonreadable.or(defaults.ignore_nonreadable).unwrap_or(false),
-            transfer_logging: self.transfer_logging.or(defaults.transfer_logging).unwrap_or(false),
-            log_format: self
-                .log_format
-                .unwrap_or_else(|| {
-                    defaults.log_format.clone()
-                        .or_else(|| Some("%o %h [%a] %m (%u) %f %l".to_owned()))
-                }),
+            ignore_errors: self
+                .ignore_errors
+                .or(defaults.ignore_errors)
+                .unwrap_or(false),
+            ignore_nonreadable: self
+                .ignore_nonreadable
+                .or(defaults.ignore_nonreadable)
+                .unwrap_or(false),
+            transfer_logging: self
+                .transfer_logging
+                .or(defaults.transfer_logging)
+                .unwrap_or(false),
+            log_format: self.log_format.unwrap_or_else(|| {
+                defaults
+                    .log_format
+                    .clone()
+                    .or_else(|| Some("%o %h [%a] %m (%u) %f %l".to_owned()))
+            }),
             log_file: self.log_file.or_else(|| defaults.log_file.clone()),
             // upstream: loadparm.c:46 seeds `dont compress` with the built-in
             // DEFAULT_DONT_COMPRESS list when neither the module nor the global
@@ -209,20 +225,34 @@ impl ModuleDefinitionBuilder {
                 .dont_compress
                 .unwrap_or_else(|| defaults.dont_compress.clone())
                 .or_else(|| Some(DEFAULT_DONT_COMPRESS.to_owned())),
-            early_exec: self.early_exec.unwrap_or_else(|| defaults.early_exec.clone()),
-            pre_xfer_exec: self.pre_xfer_exec.unwrap_or_else(|| defaults.pre_xfer_exec.clone()),
-            post_xfer_exec: self.post_xfer_exec.unwrap_or_else(|| defaults.post_xfer_exec.clone()),
-            name_converter: self.name_converter.unwrap_or_else(|| defaults.name_converter.clone()),
+            early_exec: self
+                .early_exec
+                .unwrap_or_else(|| defaults.early_exec.clone()),
+            pre_xfer_exec: self
+                .pre_xfer_exec
+                .unwrap_or_else(|| defaults.pre_xfer_exec.clone()),
+            post_xfer_exec: self
+                .post_xfer_exec
+                .unwrap_or_else(|| defaults.post_xfer_exec.clone()),
+            name_converter: self
+                .name_converter
+                .unwrap_or_else(|| defaults.name_converter.clone()),
             temp_dir: self.temp_dir.unwrap_or_else(|| defaults.temp_dir.clone()),
             charset: self.charset.unwrap_or_else(|| defaults.charset.clone()),
-            forward_lookup: self.forward_lookup.or(defaults.forward_lookup).unwrap_or(true),
+            forward_lookup: self
+                .forward_lookup
+                .or(defaults.forward_lookup)
+                .unwrap_or(true),
             strict_modes: self.strict_modes.or(defaults.strict_modes).unwrap_or(true),
             exclude_from: self.exclude_from.or_else(|| defaults.exclude_from.clone()),
             include_from: self.include_from.or_else(|| defaults.include_from.clone()),
             open_noatime: self.open_noatime.or(defaults.open_noatime).unwrap_or(false),
             // upstream: daemon-parm.h:78 default True; module value overrides the
             // global-section default (defaults.reverse_lookup), else built-in True.
-            reverse_lookup: self.reverse_lookup.or(defaults.reverse_lookup).unwrap_or(true),
+            reverse_lookup: self
+                .reverse_lookup
+                .or(defaults.reverse_lookup)
+                .unwrap_or(true),
             // upstream: daemon-parm.h:46 - a module `lock file` overrides the
             // daemon-wide lock file; `None` inherits it at connection setup.
             lock_file: self.lock_file,

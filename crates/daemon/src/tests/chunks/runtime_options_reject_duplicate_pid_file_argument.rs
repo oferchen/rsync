@@ -10,4 +10,3 @@ fn runtime_options_reject_duplicate_pid_file_argument() {
 
     assert!(error.message().to_string().contains("--pid-file"));
 }
-

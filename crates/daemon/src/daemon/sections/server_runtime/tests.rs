@@ -314,14 +314,7 @@ fn reload_config_with_no_config_path_is_noop() {
     let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
     let notifier = systemd::ServiceNotifier::new();
 
-    reload_daemon_config(
-        None,
-        &limiter,
-        &mut modules,
-        &mut motd,
-        None,
-        &notifier,
-    );
+    reload_daemon_config(None, &limiter, &mut modules, &mut motd, None, &notifier);
 
     assert!(modules.is_empty());
     assert!(motd.is_empty());
@@ -1333,7 +1326,10 @@ fn bind_listeners_per_family_replicates_acceptor_threads() {
     assert_eq!(bound_addresses.len(), 3);
     for addr in &bound_addresses {
         assert_eq!(addr.ip(), reachable, "every replica binds the same family");
-        assert!(addr.port() != 0, "each replica must get a real ephemeral port");
+        assert!(
+            addr.port() != 0,
+            "each replica must get a real ephemeral port"
+        );
     }
 }
 
@@ -1509,7 +1505,11 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
     )
     .expect("IPv4 fallback must bind when IPv6 is unreachable");
 
-    assert_eq!(listeners.len(), 1, "only the reachable IPv4 family should bind");
+    assert_eq!(
+        listeners.len(),
+        1,
+        "only the reachable IPv4 family should bind"
+    );
     assert_eq!(bound_addresses.len(), 1);
     assert!(
         bound_addresses[0].is_ipv4(),
@@ -1845,8 +1845,7 @@ fn accept_loop_stops_after_shutdown_signal_while_parked() {
 
     thread::scope(|scope| {
         let handle = scope.spawn(|| {
-            let mut engine =
-                SingleListenerEngine::new(listener, local, None).expect("engine");
+            let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
             let mut state = test_accept_loop_state(
                 &flags,
                 &config_path,
@@ -1903,8 +1902,7 @@ fn multi_listener_engine_shutdown_joins_parked_acceptors() {
         None,
     );
 
-    let mut engine =
-        MultiListenerEngine::new(vec![first, second], &addrs, &state).expect("engine");
+    let mut engine = MultiListenerEngine::new(vec![first, second], &addrs, &state).expect("engine");
     engine.shutdown();
 }
 
@@ -2165,7 +2163,10 @@ fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
             AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
         }
     }
-    assert_eq!(accepted, 3, "all queued connections must be delivered, not stranded");
+    assert_eq!(
+        accepted, 3,
+        "all queued connections must be delivered, not stranded"
+    );
 
     engine.shutdown();
     drop(clients);
@@ -2322,7 +2323,11 @@ fn bind_quic_listeners_binds_dual_stack_loopback() {
         bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
             .expect("dual-stack QUIC bind");
 
-    assert_eq!(acceptors.len(), 2, "both families must bind a QUIC listener");
+    assert_eq!(
+        acceptors.len(),
+        2,
+        "both families must bind a QUIC listener"
+    );
     let bound: Vec<SocketAddr> = acceptors
         .iter()
         .map(|a| a.local_addr().expect("local addr"))
@@ -2352,7 +2357,10 @@ fn bind_quic_listeners_falls_back_from_ipv6_to_ipv4() {
 
     assert_eq!(acceptors.len(), 1, "only the reachable IPv4 family binds");
     let bound = acceptors[0].local_addr().expect("local addr");
-    assert!(bound.is_ipv4(), "fallback acceptor must be IPv4, got {bound}");
+    assert!(
+        bound.is_ipv4(),
+        "fallback acceptor must be IPv4, got {bound}"
+    );
 }
 
 #[cfg(all(unix, feature = "quic"))]

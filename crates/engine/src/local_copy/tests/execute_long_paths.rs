@@ -300,10 +300,12 @@ fn execute_copies_symlink_to_deep_target() {
 
     // Symlink should be copied (not followed)
     assert_eq!(summary.symlinks_copied(), 1);
-    assert!(fs::symlink_metadata(dest.join("source").join("link_to_deep"))
-        .expect("metadata")
-        .file_type()
-        .is_symlink());
+    assert!(
+        fs::symlink_metadata(dest.join("source").join("link_to_deep"))
+            .expect("metadata")
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[cfg(unix)]
@@ -369,7 +371,12 @@ fn execute_follows_symlink_to_deep_directory() {
     // Destination should be a directory, not a symlink
     let dest_linked = dest.join("source").join("linked_dir");
     assert!(dest_linked.is_dir());
-    assert!(!fs::symlink_metadata(&dest_linked).expect("meta").file_type().is_symlink());
+    assert!(
+        !fs::symlink_metadata(&dest_linked)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[test]
@@ -426,11 +433,15 @@ fn execute_handles_very_deep_structure_gracefully() {
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
         // Should copy whatever was successfully created
-        let result = plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default());
+        let result =
+            plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default());
 
         match result {
             Ok(summary) => {
-                println!("Copied {} directories successfully", summary.directories_created());
+                println!(
+                    "Copied {} directories successfully",
+                    summary.directories_created()
+                );
                 assert!(summary.directories_created() > 0);
             }
             Err(e) => {
@@ -470,7 +481,8 @@ fn execute_preserves_mtime_for_files_with_long_paths() {
     }
     dest_file = dest_file.join("timed.txt");
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("meta"));
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("meta"));
     assert_eq!(dest_mtime, past_time);
 }
 

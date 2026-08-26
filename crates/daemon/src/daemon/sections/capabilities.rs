@@ -68,8 +68,7 @@ fn preflight_required_capabilities(modules: &[ModuleRuntime]) -> Result<(), Stri
         return Ok(());
     }
 
-    let has_cap = caps::has_cap(None, CapSet::Effective, Capability::CAP_CHOWN)
-        .unwrap_or(false);
+    let has_cap = caps::has_cap(None, CapSet::Effective, Capability::CAP_CHOWN).unwrap_or(false);
     if has_cap {
         return Ok(());
     }
@@ -150,8 +149,7 @@ fn drop_cap_net_bind_service(log_sink: Option<&SharedLogSink>) {
     use caps::{CapSet, Capability};
 
     let target = Capability::CAP_NET_BIND_SERVICE;
-    let already_absent =
-        !caps::has_cap(None, CapSet::Permitted, target).unwrap_or(false);
+    let already_absent = !caps::has_cap(None, CapSet::Permitted, target).unwrap_or(false);
     if already_absent {
         if let Some(log) = log_sink {
             let message = rsync_info!("CAP_NET_BIND_SERVICE already absent; nothing to drop")
@@ -172,8 +170,7 @@ fn drop_cap_net_bind_service(log_sink: Option<&SharedLogSink>) {
     }
 
     if let Some(log) = log_sink {
-        let message =
-            rsync_info!("dropped CAP_NET_BIND_SERVICE post-bind").with_role(Role::Daemon);
+        let message = rsync_info!("dropped CAP_NET_BIND_SERVICE post-bind").with_role(Role::Daemon);
         log_message(log, &message);
     }
 }
@@ -201,10 +198,7 @@ fn drop_cap_net_bind_service(_log_sink: Option<&SharedLogSink>) {}
 ///
 /// On non-Linux targets this is a no-op.
 #[cfg(target_os = "linux")]
-fn drop_worker_capabilities(
-    module: &ModuleRuntime,
-    log_sink: Option<&SharedLogSink>,
-) {
+fn drop_worker_capabilities(module: &ModuleRuntime, log_sink: Option<&SharedLogSink>) {
     use caps::{CapSet, Capability};
 
     // Skip the per-worker drop whenever the worker is still running as
@@ -287,11 +281,7 @@ fn drop_worker_capabilities(
 
 /// Stub for non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
-fn drop_worker_capabilities(
-    _module: &ModuleRuntime,
-    _log_sink: Option<&SharedLogSink>,
-) {
-}
+fn drop_worker_capabilities(_module: &ModuleRuntime, _log_sink: Option<&SharedLogSink>) {}
 
 /// Returns the set of capabilities the worker process needs to retain after
 /// the per-worker drop.
@@ -438,9 +428,8 @@ mod capabilities_tests {
             // Granted in the test environment (rare): skip the assertion.
             return;
         }
-        let err = preflight_required_capabilities(&modules).expect_err(
-            "expect missing CAP_CHOWN to surface a remediation message",
-        );
+        let err = preflight_required_capabilities(&modules)
+            .expect_err("expect missing CAP_CHOWN to surface a remediation message");
         assert!(err.contains("CAP_CHOWN"), "error must name the capability");
         assert!(err.contains("systemd: AmbientCapabilities=CAP_CHOWN"));
         assert!(err.contains("setcap:"));

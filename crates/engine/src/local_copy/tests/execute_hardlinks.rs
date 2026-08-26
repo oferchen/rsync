@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn execute_with_delay_updates_preserves_hard_links() {
@@ -147,9 +146,18 @@ fn execute_detects_hard_links_between_files() {
     assert_eq!(dest_metadata_b.nlink(), 2);
     assert_eq!(dest_metadata_c.nlink(), 1);
 
-    assert_eq!(fs::read(&dest_a).expect("read dest a"), b"hardlinked content");
-    assert_eq!(fs::read(&dest_b).expect("read dest b"), b"hardlinked content");
-    assert_eq!(fs::read(&dest_c).expect("read dest c"), b"independent content");
+    assert_eq!(
+        fs::read(&dest_a).expect("read dest a"),
+        b"hardlinked content"
+    );
+    assert_eq!(
+        fs::read(&dest_b).expect("read dest b"),
+        b"hardlinked content"
+    );
+    assert_eq!(
+        fs::read(&dest_c).expect("read dest c"),
+        b"independent content"
+    );
 
     assert!(summary.hard_links_created() >= 1);
 }
@@ -380,8 +388,14 @@ fn execute_hardlink_with_partial_and_delay_updates() {
     assert_eq!(metadata_b.nlink(), 2);
     assert_eq!(metadata_c.nlink(), 1);
 
-    assert_eq!(fs::read(&dest_a).expect("read dest a"), b"first hardlink set");
-    assert_eq!(fs::read(&dest_b).expect("read dest b"), b"first hardlink set");
+    assert_eq!(
+        fs::read(&dest_a).expect("read dest a"),
+        b"first hardlink set"
+    );
+    assert_eq!(
+        fs::read(&dest_b).expect("read dest b"),
+        b"first hardlink set"
+    );
     assert_eq!(fs::read(&dest_c).expect("read dest c"), b"independent");
 
     assert!(summary.hard_links_created() >= 1);
@@ -448,8 +462,16 @@ fn execute_hardlink_tracking_table_consistency() {
     let dest_meta3 = fs::metadata(&dest3).expect("dest meta3");
     let dest_meta4 = fs::metadata(&dest4).expect("dest meta4");
 
-    assert_eq!(dest_meta1.ino(), dest_meta2.ino(), "first group should share inode");
-    assert_eq!(dest_meta3.ino(), dest_meta4.ino(), "second group should share inode");
+    assert_eq!(
+        dest_meta1.ino(),
+        dest_meta2.ino(),
+        "first group should share inode"
+    );
+    assert_eq!(
+        dest_meta3.ino(),
+        dest_meta4.ino(),
+        "second group should share inode"
+    );
     assert_ne!(
         dest_meta1.ino(),
         dest_meta3.ino(),
@@ -499,7 +521,9 @@ fn execute_hardlink_with_existing_destination() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().hard_links(true).ignore_times(true);
+    let options = LocalCopyOptions::default()
+        .hard_links(true)
+        .ignore_times(true);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -514,8 +538,14 @@ fn execute_hardlink_with_existing_destination() {
     assert_eq!(dest_metadata_a.nlink(), 2);
     assert_eq!(dest_metadata_b.nlink(), 2);
 
-    assert_eq!(fs::read(&dest_a_actual).expect("read dest a"), b"new content");
-    assert_eq!(fs::read(&dest_b_actual).expect("read dest b"), b"new content");
+    assert_eq!(
+        fs::read(&dest_a_actual).expect("read dest a"),
+        b"new content"
+    );
+    assert_eq!(
+        fs::read(&dest_b_actual).expect("read dest b"),
+        b"new content"
+    );
 
     assert!(summary.hard_links_created() >= 1);
 }
@@ -619,9 +649,21 @@ fn execute_hardlink_detection_by_device_inode() {
         dest_meta_b.ino(),
         "files with same content but different source inodes should remain separate"
     );
-    assert_eq!(dest_meta_a.nlink(), 1, "standalone file should have nlink=1");
-    assert_eq!(dest_meta_b.nlink(), 1, "standalone file should have nlink=1");
-    assert_eq!(summary.hard_links_created(), 0, "no hardlinks should be created");
+    assert_eq!(
+        dest_meta_a.nlink(),
+        1,
+        "standalone file should have nlink=1"
+    );
+    assert_eq!(
+        dest_meta_b.nlink(),
+        1,
+        "standalone file should have nlink=1"
+    );
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "no hardlinks should be created"
+    );
 }
 
 /// Test hardlink detection with zero-length files.
@@ -663,7 +705,11 @@ fn execute_hardlink_zero_length_files() {
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
 
-    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "empty files should be hardlinked");
+    assert_eq!(
+        dest_meta_a.ino(),
+        dest_meta_b.ino(),
+        "empty files should be hardlinked"
+    );
     assert_eq!(dest_meta_a.nlink(), 2);
     assert!(summary.hard_links_created() >= 1);
 }
@@ -706,7 +752,11 @@ fn execute_hardlink_long_filenames() {
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
 
-    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "long-named files should be hardlinked");
+    assert_eq!(
+        dest_meta_a.ino(),
+        dest_meta_b.ino(),
+        "long-named files should be hardlinked"
+    );
     assert_eq!(dest_meta_a.nlink(), 2);
     assert!(summary.hard_links_created() >= 1);
 }
@@ -782,7 +832,10 @@ fn execute_hardlink_dry_run_mode() {
         .expect("dry run succeeds");
 
     // In dry-run mode, destination should not be created
-    assert!(!dest_root.exists(), "destination should not be created in dry-run");
+    assert!(
+        !dest_root.exists(),
+        "destination should not be created in dry-run"
+    );
 }
 
 /// Test that hardlink count tracking is accurate across operations.
@@ -879,7 +932,11 @@ fn execute_hardlink_nlink_changes_during_operation() {
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
 
-    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "files should share inode");
+    assert_eq!(
+        dest_meta_a.ino(),
+        dest_meta_b.ino(),
+        "files should share inode"
+    );
     assert_eq!(dest_meta_a.nlink(), 2);
     assert!(summary.hard_links_created() >= 1);
 }
@@ -960,9 +1017,7 @@ fn execute_hardlink_mixed_with_symlinks() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .hard_links(true)
-        .links(true);  // Also preserve symlinks
+    let options = LocalCopyOptions::default().hard_links(true).links(true); // Also preserve symlinks
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -973,11 +1028,18 @@ fn execute_hardlink_mixed_with_symlinks() {
 
     let dest_meta_regular = fs::metadata(&dest_regular).expect("dest meta regular");
     let dest_meta_hardlink = fs::metadata(&dest_hardlink).expect("dest meta hardlink");
-    assert_eq!(dest_meta_regular.ino(), dest_meta_hardlink.ino(), "hardlink should be preserved");
+    assert_eq!(
+        dest_meta_regular.ino(),
+        dest_meta_hardlink.ino(),
+        "hardlink should be preserved"
+    );
 
     // Verify symlink is preserved as symlink (not following target)
     let symlink_meta = fs::symlink_metadata(&dest_symlink).expect("symlink meta");
-    assert!(symlink_meta.is_symlink(), "symlink should be preserved as symlink");
+    assert!(
+        symlink_meta.is_symlink(),
+        "symlink should be preserved as symlink"
+    );
 
     assert!(summary.hard_links_created() >= 1);
 }

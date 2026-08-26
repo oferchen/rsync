@@ -10,4 +10,3 @@ fn runtime_options_reject_invalid_bwlimit() {
             .contains("--bwlimit=foo is invalid")
     );
 }
-

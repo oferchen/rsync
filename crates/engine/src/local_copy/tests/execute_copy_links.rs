@@ -54,9 +54,7 @@ fn copy_links_follows_directory_symlink_recursively() {
     let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -64,8 +62,14 @@ fn copy_links_follows_directory_symlink_recursively() {
     assert!(metadata.file_type().is_dir());
     assert!(!metadata.file_type().is_symlink());
 
-    assert_eq!(fs::read(dest.join("file1.txt")).expect("read file1"), b"content1");
-    assert_eq!(fs::read(dest.join("file2.txt")).expect("read file2"), b"content2");
+    assert_eq!(
+        fs::read(dest.join("file1.txt")).expect("read file1"),
+        b"content1"
+    );
+    assert_eq!(
+        fs::read(dest.join("file2.txt")).expect("read file2"),
+        b"content2"
+    );
     assert_eq!(
         fs::read(dest.join("subdir/file3.txt")).expect("read file3"),
         b"content3"
@@ -115,15 +119,10 @@ fn copy_links_skips_dangling_symlink_in_directory_tree() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
     assert!(result.is_err());
@@ -199,9 +198,7 @@ fn copy_links_detects_directory_loop_via_symlink() {
     let operands = vec![parent.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
     // When copy_links is enabled, the symlink should be followed, which creates
@@ -320,26 +317,28 @@ fn copy_links_with_mixed_files_and_symlinks() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let regular_meta = fs::symlink_metadata(dest.join("source").join("regular.txt")).expect("regular meta");
+    let regular_meta =
+        fs::symlink_metadata(dest.join("source").join("regular.txt")).expect("regular meta");
     assert!(regular_meta.file_type().is_file());
-    assert_eq!(fs::read(dest.join("source").join("regular.txt")).expect("read"), b"regular");
+    assert_eq!(
+        fs::read(dest.join("source").join("regular.txt")).expect("read"),
+        b"regular"
+    );
 
     let link_meta = fs::symlink_metadata(dest.join("source").join("link.txt")).expect("link meta");
     assert!(link_meta.file_type().is_file());
     assert!(!link_meta.file_type().is_symlink());
-    assert_eq!(fs::read(dest.join("source").join("link.txt")).expect("read"), b"linked");
+    assert_eq!(
+        fs::read(dest.join("source").join("link.txt")).expect("read"),
+        b"linked"
+    );
 
     assert_eq!(
         fs::read(dest.join("source").join("subdir/nested.txt")).expect("read"),
@@ -381,7 +380,7 @@ fn copy_links_without_recursive_follows_single_directory_symlink() {
 #[cfg(unix)]
 #[test]
 fn copy_links_preserves_file_permissions() {
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     let temp = tempdir().expect("tempdir");
 
@@ -429,10 +428,7 @@ fn copy_links_does_not_follow_symlinks_in_tree_when_disabled() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Without copy_links, symlinks should be preserved
@@ -466,9 +462,7 @@ fn copy_links_with_symlink_to_empty_directory() {
     let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -562,19 +556,15 @@ fn copy_links_nested_symlinks_in_directory_tree() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let inner_meta = fs::symlink_metadata(dest.join("source").join("inner_link")).expect("inner meta");
+    let inner_meta =
+        fs::symlink_metadata(dest.join("source").join("inner_link")).expect("inner meta");
     assert!(inner_meta.file_type().is_file());
     assert!(!inner_meta.file_type().is_symlink());
     assert_eq!(
@@ -612,9 +602,7 @@ fn copy_links_preserves_timestamps_from_referent() {
     let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .times(true);
+    let options = LocalCopyOptions::default().copy_links(true).times(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -654,10 +642,7 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -675,7 +660,10 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     // The symlink to the FIFO should be dereferenced: the destination should
     // be a FIFO (not a symlink).
     let fifo_meta = fs::symlink_metadata(dest.join("source").join("fifo_link")).expect("fifo meta");
-    assert!(!fifo_meta.file_type().is_symlink(), "should not be a symlink");
+    assert!(
+        !fifo_meta.file_type().is_symlink(),
+        "should not be a symlink"
+    );
     {
         use std::os::unix::fs::FileTypeExt;
         assert!(
@@ -714,10 +702,7 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -735,7 +720,10 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     // The symlink to the FIFO should be dereferenced: the destination should
     // be a FIFO (not a symlink).
     let fifo_meta = fs::symlink_metadata(dest.join("source").join("fifo_link")).expect("fifo meta");
-    assert!(!fifo_meta.file_type().is_symlink(), "should not be a symlink");
+    assert!(
+        !fifo_meta.file_type().is_symlink(),
+        "should not be a symlink"
+    );
     {
         use std::os::unix::fs::FileTypeExt;
         assert!(
@@ -774,10 +762,7 @@ fn copy_links_replaces_existing_symlink_with_file() {
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert!(!metadata.file_type().is_symlink());
-    assert_eq!(
-        fs::read(&dest).expect("read dest"),
-        b"replacement content"
-    );
+    assert_eq!(fs::read(&dest).expect("read dest"), b"replacement content");
 }
 
 #[cfg(unix)]
@@ -802,22 +787,23 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
 
     let dest = temp.path().join("dest");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .copy_links(true)
-        .recursive(true);
+    let options = LocalCopyOptions::default().copy_links(true).recursive(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
     for name in &["link_a", "link_b"] {
         let meta = fs::symlink_metadata(dest.join("source").join(name)).expect("meta");
-        assert!(meta.file_type().is_file(), "{name} should be a regular file");
-        assert!(!meta.file_type().is_symlink(), "{name} should not be a symlink");
+        assert!(
+            meta.file_type().is_file(),
+            "{name} should be a regular file"
+        );
+        assert!(
+            !meta.file_type().is_symlink(),
+            "{name} should not be a symlink"
+        );
         assert_eq!(
             fs::read(dest.join("source").join(name)).expect("read"),
             b"real data",

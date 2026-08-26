@@ -74,7 +74,8 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -109,8 +110,9 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
                 .to_string_lossy()
                 .contains(expected_substring)
         });
-        let matching =
-            matching.unwrap_or_else(|| panic!("no file containing '{expected_substring}' in {dir:?}; found: {entries:?}"));
+        let matching = matching.unwrap_or_else(|| {
+            panic!("no file containing '{expected_substring}' in {dir:?}; found: {entries:?}")
+        });
         let content = fs::read(matching.path())
             .unwrap_or_else(|e| panic!("read {}: {e}", matching.path().display()));
         assert_eq!(

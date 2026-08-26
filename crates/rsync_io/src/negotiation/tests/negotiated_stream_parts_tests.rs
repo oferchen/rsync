@@ -480,4 +480,3 @@ fn negotiated_stream_try_clone_with_clones_inner_reader() {
         .expect("original stream remains usable after clone");
     assert_eq!(original_replay, legacy);
 }
-

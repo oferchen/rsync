@@ -12,7 +12,10 @@ fn run_daemon_rejects_unknown_hash_command() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -37,9 +40,7 @@ fn run_daemon_rejects_unknown_hash_command() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    stream
-        .write_all(b"#bogus\n")
-        .expect("send unknown command");
+    stream.write_all(b"#bogus\n").expect("send unknown command");
     stream.flush().expect("flush unknown command");
 
     // upstream: clientserver.c:1563 - "@ERROR: Unknown command '%s'\n" keeps

@@ -8,4 +8,3 @@ fn parse_auth_user_list_trims_and_deduplicates_case_insensitively() {
     let err = parse_auth_user_list(" , ,  ").expect_err("blank list rejected");
     assert_eq!(err, "must specify at least one username");
 }
-

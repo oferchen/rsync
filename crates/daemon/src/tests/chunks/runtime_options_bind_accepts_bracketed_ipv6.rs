@@ -6,4 +6,3 @@ fn runtime_options_bind_accepts_bracketed_ipv6() {
     assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
     assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
 }
-

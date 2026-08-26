@@ -14,7 +14,6 @@
 // 5. File permissions preserved during update
 // 6. Inode preservation (unlike temp file replacement)
 
-
 #[test]
 fn execute_inplace_updates_file_directly() {
     let temp = tempdir().expect("tempdir");
@@ -38,7 +37,10 @@ fn execute_inplace_updates_file_directly() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"new content here");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"new content here"
+    );
 }
 
 #[test]
@@ -64,9 +66,11 @@ fn execute_inplace_creates_new_file_when_destination_missing() {
 
     assert_eq!(summary.files_copied(), 1);
     assert!(destination.exists());
-    assert_eq!(fs::read(&destination).expect("read dest"), b"brand new file");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"brand new file"
+    );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -153,7 +157,6 @@ fn execute_without_inplace_changes_inode() {
     );
 }
 
-
 #[test]
 fn execute_inplace_does_not_leave_temp_files() {
     let temp = tempdir().expect("tempdir");
@@ -184,12 +187,8 @@ fn execute_inplace_does_not_leave_temp_files() {
         .collect();
 
     assert_eq!(entries.len(), 1, "only destination file should exist");
-    assert_eq!(
-        entries[0].file_name().to_string_lossy(),
-        "target.txt"
-    );
+    assert_eq!(entries[0].file_name().to_string_lossy(), "target.txt");
 }
-
 
 #[test]
 fn execute_inplace_partial_update_small_to_large() {
@@ -217,10 +216,7 @@ fn execute_inplace_partial_update_small_to_large() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
-    assert_eq!(
-        fs::metadata(&destination).expect("metadata").len(),
-        10000
-    );
+    assert_eq!(fs::metadata(&destination).expect("metadata").len(), 10000);
 }
 
 #[test]
@@ -253,7 +249,6 @@ fn execute_inplace_partial_update_large_to_small() {
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 4);
 }
 
-
 #[test]
 fn execute_inplace_with_whole_file_transfer() {
     let temp = tempdir().expect("tempdir");
@@ -273,9 +268,7 @@ fn execute_inplace_with_whole_file_transfer() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .whole_file(true),
+            LocalCopyOptions::default().inplace(true).whole_file(true),
         )
         .expect("copy succeeds");
 
@@ -303,9 +296,7 @@ fn execute_inplace_with_whole_file_large_file() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .whole_file(true),
+            LocalCopyOptions::default().inplace(true).whole_file(true),
         )
         .expect("copy succeeds");
 
@@ -313,7 +304,6 @@ fn execute_inplace_with_whole_file_large_file() {
     assert_eq!(summary.bytes_copied(), 300 * 1024);
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -340,15 +330,15 @@ fn execute_inplace_preserves_permissions() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .permissions(true),
+            LocalCopyOptions::default().inplace(true).permissions(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o755);
 }
 
@@ -377,18 +367,17 @@ fn execute_inplace_preserves_restricted_permissions() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .permissions(true),
+            LocalCopyOptions::default().inplace(true).permissions(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
+    let dest_perms = fs::metadata(&destination)
+        .expect("dest metadata")
+        .permissions();
     assert_eq!(dest_perms.mode() & 0o777, 0o600);
 }
-
 
 #[test]
 fn execute_inplace_preserves_timestamps() {
@@ -411,20 +400,16 @@ fn execute_inplace_preserves_timestamps() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .times(true),
+            LocalCopyOptions::default().inplace(true).times(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
-
 
 #[test]
 fn execute_inplace_with_empty_source() {
@@ -476,7 +461,10 @@ fn execute_inplace_with_empty_destination() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"content to write");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"content to write"
+    );
 }
 
 #[test]
@@ -503,16 +491,13 @@ fn execute_inplace_identical_files_skips_copy() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .times(true),
+            LocalCopyOptions::default().inplace(true).times(true),
         )
         .expect("copy succeeds");
 
     // File should be skipped (size and mtime match)
     assert_eq!(summary.files_copied(), 0);
 }
-
 
 #[test]
 fn execute_inplace_recursive_directory() {
@@ -552,11 +537,10 @@ fn execute_inplace_recursive_directory() {
     );
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_inplace_in_read_only_directory() {
-    use rustix::fs::{chmod, Mode};
+    use rustix::fs::{Mode, chmod};
     use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
@@ -606,7 +590,7 @@ fn execute_inplace_in_read_only_directory() {
 #[cfg(unix)]
 #[test]
 fn execute_without_inplace_fails_in_read_only_directory() {
-    use rustix::fs::{chmod, Mode};
+    use rustix::fs::{Mode, chmod};
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
@@ -634,7 +618,10 @@ fn execute_without_inplace_fails_in_read_only_directory() {
     );
 
     // Expect failure due to permission denied creating temp file
-    assert!(result.is_err(), "should fail without inplace in read-only dir");
+    assert!(
+        result.is_err(),
+        "should fail without inplace in read-only dir"
+    );
 
     assert_eq!(fs::read(&destination).expect("read"), b"original");
 
@@ -642,7 +629,6 @@ fn execute_without_inplace_fails_in_read_only_directory() {
     let restore = Mode::from_bits_truncate(0o755);
     chmod(&dest_dir, restore).expect("restore directory");
 }
-
 
 #[test]
 fn execute_inplace_combined_with_checksum() {
@@ -663,9 +649,7 @@ fn execute_inplace_combined_with_checksum() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .checksum(true),
+            LocalCopyOptions::default().inplace(true).checksum(true),
         )
         .expect("copy succeeds");
 
@@ -692,9 +676,7 @@ fn execute_inplace_combined_with_size_only() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .size_only(true),
+            LocalCopyOptions::default().inplace(true).size_only(true),
         )
         .expect("copy succeeds");
 
@@ -727,16 +709,13 @@ fn execute_inplace_combined_with_ignore_times() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .ignore_times(true),
+            LocalCopyOptions::default().inplace(true).ignore_times(true),
         )
         .expect("copy succeeds");
 
     // With ignore_times, should copy even though size/mtime match
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[test]
 fn execute_inplace_with_binary_content() {
@@ -766,7 +745,6 @@ fn execute_inplace_with_binary_content() {
     assert_eq!(fs::read(&destination).expect("read dest"), binary_content);
 }
 
-
 #[test]
 fn execute_inplace_records_copy_event() {
     let temp = tempdir().expect("tempdir");
@@ -776,10 +754,7 @@ fn execute_inplace_records_copy_event() {
     fs::write(&source, b"event data").expect("write source");
     fs::write(&destination, b"old").expect("write destination");
 
-    let operands = vec![
-        source.into_os_string(),
-        destination.into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), destination.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -796,14 +771,14 @@ fn execute_inplace_records_copy_event() {
     assert_eq!(records[0].bytes_transferred(), 10);
 }
 
-
 #[test]
 fn execute_inplace_with_delta_transfer_skips_matched_blocks() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    let dest_content = b"Hello world! This is a test file with some content that will be partially reused.";
+    let dest_content =
+        b"Hello world! This is a test file with some content that will be partially reused.";
     fs::write(&destination, dest_content).expect("write destination");
 
     // Create a source file that reuses some blocks from destination
@@ -819,9 +794,7 @@ fn execute_inplace_with_delta_transfer_skips_matched_blocks() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .whole_file(false), // Enable delta transfer
+            LocalCopyOptions::default().inplace(true).whole_file(false), // Enable delta transfer
         )
         .expect("copy succeeds");
 
@@ -856,17 +829,17 @@ fn execute_inplace_with_delta_transfer_updates_existing_file() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .whole_file(false), // Enable delta transfer
+            LocalCopyOptions::default().inplace(true).whole_file(false), // Enable delta transfer
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1, "File should be copied");
 
     let final_content = fs::read(&destination).expect("read dest");
-    assert_eq!(final_content, source_content,
-        "Content should match after inplace delta transfer");
+    assert_eq!(
+        final_content, source_content,
+        "Content should match after inplace delta transfer"
+    );
 }
 
 #[test]
@@ -897,9 +870,7 @@ fn execute_inplace_with_delta_preserves_inode() {
 
         plan.execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .inplace(true)
-                .whole_file(false), // Enable delta transfer
+            LocalCopyOptions::default().inplace(true).whole_file(false), // Enable delta transfer
         )
         .expect("copy succeeds");
 
@@ -937,9 +908,7 @@ fn execute_inplace_with_delta_truncates_when_smaller() {
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .inplace(true)
-            .whole_file(false), // Enable delta transfer
+        LocalCopyOptions::default().inplace(true).whole_file(false), // Enable delta transfer
     )
     .expect("copy succeeds");
 
@@ -951,7 +920,6 @@ fn execute_inplace_with_delta_truncates_when_smaller() {
         "file should be truncated to new size"
     );
 }
-
 
 // Regression test for read-after-write basis corruption in `--inplace
 // --no-whole-file` when the source is shorter than the destination basis.
@@ -1005,9 +973,7 @@ fn execute_inplace_no_whole_file_shorter_source_matches_content() {
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .inplace(true)
-            .whole_file(false),
+        LocalCopyOptions::default().inplace(true).whole_file(false),
     )
     .expect("copy succeeds");
 
@@ -1058,9 +1024,7 @@ fn execute_inplace_no_whole_file_truncates_tail() {
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .inplace(true)
-            .whole_file(false),
+        LocalCopyOptions::default().inplace(true).whole_file(false),
     )
     .expect("copy succeeds");
 

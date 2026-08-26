@@ -114,9 +114,7 @@ impl AuthDenial {
     pub(crate) fn log_suffix(&self) -> Option<String> {
         match self {
             Self::Credentials => None,
-            Self::UserRule { user, rule } => {
-                Some(format!(" for {user}: {}", rule.reason()))
-            }
+            Self::UserRule { user, rule } => Some(format!(" for {user}: {}", rule.reason())),
             Self::DigestFloorUnsupported { configured } => Some(format!(
                 ": the configured 'auth digest = {configured}' is not a supported digest on this build"
             )),
@@ -270,7 +268,7 @@ fn perform_module_authentication(
     let auth_match = match module.get_auth_user(username) {
         Some(matched) => matched,
         None => {
-                // upstream: authenticate.c:412 - the rule scan ended with no token,
+            // upstream: authenticate.c:412 - the rule scan ended with no token,
             // so `err = "no matching rule"`.
             return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
                 user: username.to_owned(),
@@ -289,7 +287,14 @@ fn perform_module_authentication(
     // because upstream keys the `@group:` secrets lookup off the real group.
     let auth_group = auth_match.group.as_deref();
 
-    if !verify_secret_response(module, username, auth_group, &challenge, response_digest, digest)? {
+    if !verify_secret_response(
+        module,
+        username,
+        auth_group,
+        &challenge,
+        response_digest,
+        digest,
+    )? {
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
@@ -430,4 +435,3 @@ fn verify_secret_response(
 fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     platform::secrets::check_secrets_file_permissions(path)
 }
-

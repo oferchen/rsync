@@ -169,4 +169,3 @@ where
 pub(crate) fn render_help(program_name: ProgramName) -> String {
     help_text(program_name.brand())
 }
-

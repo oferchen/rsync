@@ -27,11 +27,13 @@ fn module_definition_hostname_deny_applies_without_allow_match() {
     clear_test_hostname_overrides();
     let module = module_with_host_patterns(&[], &["bad.example.com"]);
     let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    set_test_forward_override("bad.example.com", &[IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9))]);
+    set_test_forward_override(
+        "bad.example.com",
+        &[IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9))],
+    );
 
     assert!(!module.permits(peer, PeerHost::new(Some("bad.example.com"), true)));
     assert!(module.permits(peer, PeerHost::new(Some("good.example.com"), true)));
 
     clear_test_hostname_overrides();
 }
-

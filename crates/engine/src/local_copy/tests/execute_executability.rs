@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn execute_preserves_execute_bit_when_source_has_it() {
@@ -87,7 +86,8 @@ fn execute_executability_only_affects_regular_files() {
     fs::set_permissions(&source_file, PermissionsExt::from_mode(0o755)).expect("set source perms");
 
     // Set directory permissions explicitly
-    fs::set_permissions(&source_dir, PermissionsExt::from_mode(0o755)).expect("set source dir perms");
+    fs::set_permissions(&source_dir, PermissionsExt::from_mode(0o755))
+        .expect("set source dir perms");
     fs::set_permissions(&dest_dir, PermissionsExt::from_mode(0o700)).expect("set dest dir perms");
 
     let operands = vec![
@@ -106,7 +106,11 @@ fn execute_executability_only_affects_regular_files() {
     let dest_file = dest_dir.join("source").join("file.txt");
     let file_metadata = fs::metadata(&dest_file).expect("dest file metadata");
     let file_mode = file_metadata.permissions().mode();
-    assert_ne!(file_mode & 0o111, 0, "file execute bits should be preserved");
+    assert_ne!(
+        file_mode & 0o111,
+        0,
+        "file execute bits should be preserved"
+    );
 
     // Directory permissions should not be affected by executability flag
     // (directories need execute bits for traversal, so this test just ensures
@@ -192,7 +196,11 @@ fn execute_executability_without_permissions_preserves_only_execute_bits() {
         mode, 0o720,
         "expected upstream dest_mode() result 0o720 (rwx-w-----) for pre-transfer dest 0o620 + source 0o751"
     );
-    assert_eq!(mode & 0o111, 0o100, "only owner x is granted (dest had only owner-read)");
+    assert_eq!(
+        mode & 0o111,
+        0o100,
+        "only owner x is granted (dest had only owner-read)"
+    );
     assert_eq!(
         mode & 0o666,
         0o620,
@@ -375,12 +383,20 @@ fn execute_executability_multiple_files() {
     // Verify executable file has execute bits
     let dest_exec = dest_dir.join("source").join("executable.sh");
     let exec_metadata = fs::metadata(&dest_exec).expect("exec file metadata");
-    assert_ne!(exec_metadata.permissions().mode() & 0o111, 0, "executable file should have execute bits");
+    assert_ne!(
+        exec_metadata.permissions().mode() & 0o111,
+        0,
+        "executable file should have execute bits"
+    );
 
     // Verify non-executable file does not have execute bits
     let dest_noexec = dest_dir.join("source").join("data.txt");
     let noexec_metadata = fs::metadata(&dest_noexec).expect("noexec file metadata");
-    assert_eq!(noexec_metadata.permissions().mode() & 0o111, 0, "data file should not have execute bits");
+    assert_eq!(
+        noexec_metadata.permissions().mode() & 0o111,
+        0,
+        "data file should not have execute bits"
+    );
 
     assert_eq!(summary.files_copied(), 2);
 }

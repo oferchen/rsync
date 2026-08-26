@@ -13,12 +13,7 @@ pub(crate) fn log_list_request(log: &SharedLogSink, host: &str, peer_addr: Socke
     log_message(log, &message);
 }
 
-pub(crate) fn log_module_request(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: IpAddr,
-    module: &str,
-) {
+pub(crate) fn log_module_request(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
     let module_display = sanitize_module_identifier(module);
     // upstream: clientserver.c:787 - `rsync allowed access on module %s from %s (%s)`
     let text = format!("rsync allowed access on module {module_display} from {host} ({peer_ip})");
@@ -106,12 +101,7 @@ pub(crate) fn log_module_auth_failure(
     log_message(log, &message);
 }
 
-pub(crate) fn log_module_denied(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: IpAddr,
-    module: &str,
-) {
+pub(crate) fn log_module_denied(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
     let module_display = sanitize_module_identifier(module);
     // upstream: clientserver.c:774 - `rsync denied on module %s from %s (%s)`
     let text = format!("rsync denied on module {module_display} from {host} ({peer_ip})");
@@ -119,16 +109,10 @@ pub(crate) fn log_module_denied(
     log_message(log, &message);
 }
 
-pub(crate) fn log_unknown_module(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: IpAddr,
-    module: &str,
-) {
+pub(crate) fn log_unknown_module(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
     let module_display = sanitize_module_identifier(module);
     // upstream: clientserver.c:1568 - `unknown module '%s' tried from %s (%s)`
     let text = format!("unknown module '{module_display}' tried from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
-

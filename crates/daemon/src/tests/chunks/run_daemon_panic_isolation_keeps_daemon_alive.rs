@@ -108,7 +108,10 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
         let read = good_reader
             .read_line(&mut line)
             .expect("eof after error from good connection");
-        assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+        assert_eq!(
+            read, 0,
+            "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+        );
     } // good stream dropped here
 
     let result = daemon_handle.join().expect("daemon thread");

@@ -1,4 +1,3 @@
-
 #[test]
 fn compare_dest_skips_identical_file() {
     let temp = tempdir().expect("tempdir");
@@ -38,7 +37,10 @@ fn compare_dest_skips_identical_file() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "file should not be created when identical to compare-dest");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when identical to compare-dest"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -195,7 +197,10 @@ fn compare_dest_transfers_different_file() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when different from compare-dest");
+    assert!(
+        dest_file.exists(),
+        "file should be created when different from compare-dest"
+    );
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"source content");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -241,8 +246,14 @@ fn compare_dest_transfers_when_mtime_differs() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when mtime differs");
-    assert_eq!(fs::read(&dest_file).expect("read dest"), b"identical content");
+    assert!(
+        dest_file.exists(),
+        "file should be created when mtime differs"
+    );
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"identical content"
+    );
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
@@ -283,7 +294,10 @@ fn compare_dest_transfers_file_not_in_compare() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when not in compare-dest");
+    assert!(
+        dest_file.exists(),
+        "file should be created when not in compare-dest"
+    );
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"new file");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -333,7 +347,10 @@ fn compare_dest_multiple_directories_first_match_wins() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "file should not be created when first compare-dest matches");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when first compare-dest matches"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -382,7 +399,10 @@ fn compare_dest_multiple_directories_checks_all_until_match() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "file should not be created when second compare-dest matches");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when second compare-dest matches"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -431,7 +451,10 @@ fn compare_dest_multiple_directories_transfers_when_none_match() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when no compare-dest matches");
+    assert!(
+        dest_file.exists(),
+        "file should be created when no compare-dest matches"
+    );
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"source content");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -473,10 +496,7 @@ fn compare_dest_with_recursive_transfer() {
     let mut source_operand = source_dir.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let operands = vec![
-        source_operand,
-        dest_dir.clone().into_os_string(),
-    ];
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -494,8 +514,14 @@ fn compare_dest_with_recursive_transfer() {
     let dest_file1 = dest_dir.join("file1.txt");
     let dest_file2 = dest_dir.join("subdir/file2.txt");
 
-    assert!(!dest_file1.exists(), "file1 should not be created when identical");
-    assert!(dest_file2.exists(), "file2 should be created when different");
+    assert!(
+        !dest_file1.exists(),
+        "file1 should not be created when identical"
+    );
+    assert!(
+        dest_file2.exists(),
+        "file2 should be created when different"
+    );
     assert_eq!(fs::read(&dest_file2).expect("read dest file2"), b"content2");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 1);
@@ -542,7 +568,10 @@ fn compare_dest_with_size_only_option() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "file should not be created when size matches with --size-only");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when size matches with --size-only"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -588,7 +617,10 @@ fn compare_dest_with_checksum_option() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "file should not be created when checksum matches even with different mtime");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when checksum matches even with different mtime"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -638,7 +670,10 @@ fn compare_dest_relative_path_resolution() {
         .expect("execution succeeds");
 
     let dest_file = dest_dir.join("sub/file.txt");
-    assert!(!dest_file.exists(), "file should not be created when identical to compare-dest");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when identical to compare-dest"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -688,7 +723,10 @@ fn compare_dest_mixed_with_copy_dest() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created via copy-dest when compare-dest doesn't match");
+    assert!(
+        dest_file.exists(),
+        "file should be created via copy-dest when compare-dest doesn't match"
+    );
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"content");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -730,8 +768,14 @@ fn compare_dest_empty_reference_directory_transfers_file() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when compare-dest is empty");
-    assert_eq!(fs::read(&dest_file).expect("read dest"), b"empty ref content");
+    assert!(
+        dest_file.exists(),
+        "file should be created when compare-dest is empty"
+    );
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"empty ref content"
+    );
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
@@ -777,7 +821,10 @@ fn compare_dest_with_inplace_mode() {
         .expect("execution succeeds");
 
     // With --inplace and compare-dest matching, the file should still be skipped
-    assert!(!dest_file.exists(), "file should not be created when identical to compare-dest even with --inplace");
+    assert!(
+        !dest_file.exists(),
+        "file should not be created when identical to compare-dest even with --inplace"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -818,7 +865,10 @@ fn compare_dest_with_nonexistent_directory() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(dest_file.exists(), "file should be created when compare-dest doesn't exist");
+    assert!(
+        dest_file.exists(),
+        "file should be created when compare-dest doesn't exist"
+    );
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"content");
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -863,7 +913,10 @@ fn compare_dest_skips_identical_empty_file() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("execution succeeds");
 
-    assert!(!dest_file.exists(), "empty identical file should be skipped");
+    assert!(
+        !dest_file.exists(),
+        "empty identical file should be skipped"
+    );
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 }
@@ -922,11 +975,27 @@ fn compare_dest_content_match_attrs_differ_copies() {
         dest_file.exists(),
         "a level-2 compare-dest basis must be copied into the destination"
     );
-    assert_eq!(fs::read(&dest_file).expect("read dest"), b"identical content");
-    assert_eq!(dest_file.metadata().expect("dest meta").permissions().mode() & 0o777, 0o644);
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"identical content"
+    );
+    assert_eq!(
+        dest_file
+            .metadata()
+            .expect("dest meta")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
     // The compare basis inode is untouched.
     assert_eq!(
-        compare_file.metadata().expect("compare meta").permissions().mode() & 0o777,
+        compare_file
+            .metadata()
+            .expect("compare meta")
+            .permissions()
+            .mode()
+            & 0o777,
         0o600,
     );
 }

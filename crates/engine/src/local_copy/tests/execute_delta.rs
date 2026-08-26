@@ -1,4 +1,3 @@
-
 #[test]
 fn execute_delta_copy_reuses_existing_blocks() {
     let temp = tempdir().expect("tempdir");
@@ -56,10 +55,7 @@ fn execute_with_report_dry_run_records_file_event() {
     fs::write(&source, b"dry-run").expect("write source");
     let destination = temp.path().join("dest.txt");
 
-    let operands = vec![
-        source.into_os_string(),
-        destination.into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), destination.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().collect_events(true);
     let report = plan
@@ -84,10 +80,7 @@ fn execute_with_report_dry_run_records_directory_event() {
     fs::write(source_dir.join("file.txt"), b"data").expect("write nested file");
     let destination = temp.path().join("target");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        destination.into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), destination.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().collect_events(true);
     let report = plan
@@ -108,10 +101,7 @@ fn execute_with_report_records_min_size_skip_notice_without_copying() {
     fs::write(&source, b"abc").expect("write source");
     let destination = temp.path().join("dest.txt");
 
-    let operands = vec![
-        source.into_os_string(),
-        destination.into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), destination.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
         .collect_events(true)

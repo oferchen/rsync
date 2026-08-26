@@ -1,5 +1,5 @@
 use crate::local_copy::{
-    test_support::take_fsync_call_count, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
+    LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, test_support::take_fsync_call_count,
 };
 
 /// Tests that fsync-enabled transfers complete successfully.
@@ -25,8 +25,7 @@ fn execute_succeeds_with_fsync_enabled() {
     take_fsync_call_count();
 
     let options = LocalCopyOptions::default().fsync(true);
-    plan
-        .execute_with_options(LocalCopyExecution::Apply, options)
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
     // Immediate fsync count is 0 because DeferredSync handles batched syncing.
@@ -50,8 +49,7 @@ fn execute_skips_fsync_when_not_requested() {
 
     take_fsync_call_count();
 
-    plan
-        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+    plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("copy succeeds");
 
     assert_eq!(take_fsync_call_count(), 0);

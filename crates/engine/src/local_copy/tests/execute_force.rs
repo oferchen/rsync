@@ -28,7 +28,10 @@ fn force_file_replaces_non_empty_directory() {
         )
         .expect("forced replacement succeeds");
 
-    assert!(destination.is_file(), "directory should be replaced by file");
+    assert!(
+        destination.is_file(),
+        "directory should be replaced by file"
+    );
     assert_eq!(
         fs::read(&destination).expect("read destination"),
         b"file-content"
@@ -93,7 +96,10 @@ fn force_file_replaces_deeply_nested_directory() {
     )
     .expect("forced replacement succeeds");
 
-    assert!(destination.is_file(), "deeply nested directory replaced by file");
+    assert!(
+        destination.is_file(),
+        "deeply nested directory replaced by file"
+    );
     assert_eq!(fs::read(&destination).expect("read"), b"flat");
 }
 
@@ -186,7 +192,10 @@ fn force_replaces_directory_entry_with_file_during_recursive_copy() {
     .expect("forced replacement succeeds");
 
     let item_path = dest_root.join("item");
-    assert!(item_path.is_file(), "directory entry should be replaced by file");
+    assert!(
+        item_path.is_file(),
+        "directory entry should be replaced by file"
+    );
     assert_eq!(fs::read(&item_path).expect("read"), b"file-data");
 }
 
@@ -216,7 +225,10 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
     .expect("forced replacement succeeds");
 
     let item_path = dest_root.join("item");
-    assert!(item_path.is_dir(), "file entry should be replaced by directory");
+    assert!(
+        item_path.is_dir(),
+        "file entry should be replaced by directory"
+    );
     assert_eq!(
         fs::read(item_path.join("child.txt")).expect("read child"),
         b"child"
@@ -276,7 +288,10 @@ fn force_dry_run_does_not_modify_directory() {
     )
     .expect("dry-run succeeds");
 
-    assert!(destination.is_dir(), "directory should not be modified in dry-run");
+    assert!(
+        destination.is_dir(),
+        "directory should not be modified in dry-run"
+    );
     assert_eq!(
         fs::read(destination.join("inner/keep.txt")).expect("read"),
         b"keep"
@@ -353,10 +368,7 @@ fn force_symlink_replaces_non_empty_directory() {
         metadata.file_type().is_symlink(),
         "directory should be replaced by symlink"
     );
-    assert_eq!(
-        fs::read_link(&destination).expect("read link"),
-        link_target
-    );
+    assert_eq!(fs::read_link(&destination).expect("read link"), link_target);
 }
 
 #[cfg(unix)]
@@ -392,10 +404,7 @@ fn force_disabled_symlink_cannot_replace_directory_in_recursive_copy() {
 
     match error.kind() {
         LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(
-                *reason,
-                LocalCopyArgumentError::ReplaceDirectoryWithSymlink
-            );
+            assert_eq!(*reason, LocalCopyArgumentError::ReplaceDirectoryWithSymlink);
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
@@ -618,10 +627,11 @@ fn force_overwrite_file_with_file_is_normal_copy() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(
-        fs::read(&destination).expect("read"),
-        b"new-content"
-    );
+    assert_eq!(fs::read(&destination).expect("read"), b"new-content");
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.items_deleted(), 0, "no force deletion needed for same-type overwrite");
+    assert_eq!(
+        summary.items_deleted(),
+        0,
+        "no force deletion needed for same-type overwrite"
+    );
 }

@@ -334,10 +334,7 @@ mod runtime_options_tests {
             OsString::from("/var/run/rsyncd.lock"),
         ];
         let options = RuntimeOptions::parse(&args).expect("parse");
-        assert_eq!(
-            options.lock_file(),
-            Some(Path::new("/var/run/rsyncd.lock"))
-        );
+        assert_eq!(options.lock_file(), Some(Path::new("/var/run/rsyncd.lock")));
     }
 
     #[test]
@@ -359,10 +356,7 @@ mod runtime_options_tests {
             OsString::from("/var/run/rsyncd.pid"),
         ];
         let options = RuntimeOptions::parse(&args).expect("parse");
-        assert_eq!(
-            options.pid_file(),
-            Some(Path::new("/var/run/rsyncd.pid"))
-        );
+        assert_eq!(options.pid_file(), Some(Path::new("/var/run/rsyncd.pid")));
     }
 
     #[test]
@@ -403,10 +397,7 @@ mod runtime_options_tests {
 
     #[test]
     fn last_detach_flag_wins() {
-        let args = vec![
-            OsString::from("--no-detach"),
-            OsString::from("--detach"),
-        ];
+        let args = vec![OsString::from("--no-detach"), OsString::from("--detach")];
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert!(options.detach());
     }
@@ -505,8 +496,7 @@ mod runtime_options_tests {
         // a configured `listen backlog` must reach RuntimeOptions intact or
         // the directive is cosmetic and the accept queue silently stays at 5.
         let mut file = NamedTempFile::new().expect("config file");
-        writeln!(file, "listen backlog = 128\n[share]\npath = /srv/share\n")
-            .expect("write config");
+        writeln!(file, "listen backlog = 128\n[share]\npath = /srv/share\n").expect("write config");
 
         let args = vec![
             OsString::from("--config"),
@@ -525,8 +515,7 @@ mod runtime_options_tests {
 
     #[test]
     fn parses_short_verbose_stack() {
-        let options =
-            RuntimeOptions::parse(&[OsString::from("-vvv")]).expect("parse -vvv");
+        let options = RuntimeOptions::parse(&[OsString::from("-vvv")]).expect("parse -vvv");
         assert_eq!(options.verbosity(), 3);
     }
 
@@ -540,11 +529,8 @@ mod runtime_options_tests {
         .expect("parse stacked verbose");
         assert_eq!(options.verbosity(), 3);
 
-        let reset = RuntimeOptions::parse(&[
-            OsString::from("-vv"),
-            OsString::from("--no-verbose"),
-        ])
-        .expect("parse with reset");
+        let reset = RuntimeOptions::parse(&[OsString::from("-vv"), OsString::from("--no-verbose")])
+            .expect("parse with reset");
         assert_eq!(reset.verbosity(), 0);
     }
 
@@ -599,10 +585,7 @@ mod runtime_options_tests {
             OsString::from("--secrets-file"),
             secrets.path().as_os_str().to_os_string(),
             OsString::from("--module"),
-            OsString::from(format!(
-                "docs={};auth users=alice",
-                module_path.display()
-            )),
+            OsString::from(format!("docs={};auth users=alice", module_path.display())),
         ];
 
         let options = RuntimeOptions::parse(&args).expect("parse");

@@ -383,4 +383,3 @@ fn render_line_to_appends_newline() {
 
     assert_eq!(rendered, format!("{message}\n"));
 }
-

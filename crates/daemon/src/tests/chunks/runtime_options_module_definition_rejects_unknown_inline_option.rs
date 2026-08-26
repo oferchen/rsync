@@ -13,4 +13,3 @@ fn runtime_options_module_definition_rejects_unknown_inline_option() {
             .contains("unsupported module option")
     );
 }
-

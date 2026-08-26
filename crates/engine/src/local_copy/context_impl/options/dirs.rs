@@ -57,23 +57,23 @@ impl<'a> CopyContext<'a> {
             .filter(|path| !path.as_os_str().is_empty())
     }
 
-/// Is this symlink the operator's own, and therefore followable as a
-/// destination root?
-///
-/// Unix delegates to the single owner of the trust rule in `fast_io`. On other
-/// platforms there is no uid to consult, so the answer is `false` and the
-/// destination-root symlink keeps the pre-existing `--keep-dirlinks`-only
-/// behaviour rather than being followed on no evidence.
-#[cfg(unix)]
-fn operator_owns_symlink(metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    fast_io::symlink_owner_is_trusted(metadata.uid())
-}
+    /// Is this symlink the operator's own, and therefore followable as a
+    /// destination root?
+    ///
+    /// Unix delegates to the single owner of the trust rule in `fast_io`. On other
+    /// platforms there is no uid to consult, so the answer is `false` and the
+    /// destination-root symlink keeps the pre-existing `--keep-dirlinks`-only
+    /// behaviour rather than being followed on no evidence.
+    #[cfg(unix)]
+    fn operator_owns_symlink(metadata: &fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        fast_io::symlink_owner_is_trusted(metadata.uid())
+    }
 
-#[cfg(not(unix))]
-fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
-    false
-}
+    #[cfg(not(unix))]
+    fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
+        false
+    }
 
     /// Whether a symlink occupying one destination path level is followed
     /// rather than deleted and recreated as a real directory.
@@ -309,10 +309,7 @@ fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
                 // the destination arg's leading prefix, which still needs
                 // --mkpath (or --relative) exactly as a real run would.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if allow_creation
-                        || parent_within_root
-                        || self.relative_paths_enabled()
-                    {
+                    if allow_creation || parent_within_root || self.relative_paths_enabled() {
                         Ok(())
                     } else {
                         Err(LocalCopyError::io(
