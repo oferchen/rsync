@@ -267,7 +267,10 @@ pub(crate) fn copy_symlink(
             }
 
             if is_device(target_type) {
-                if !context.devices_enabled() {
+                // upstream: generator.c:2031-2033 - the same creation
+                // predicate as every other device site; `--copy-links`
+                // resolving to a device does not relax it.
+                if !context.may_create_devices() {
                     context.record_skipped_non_regular(record_path.as_deref());
                     context.register_progress();
                     return Ok(());

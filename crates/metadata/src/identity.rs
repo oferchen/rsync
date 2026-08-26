@@ -106,3 +106,27 @@ pub fn set_process_identity(uid: u32, gid: u32) {
     OVERRIDE_UID.store(i64::from(uid), Ordering::Release);
     OVERRIDE_GID.store(i64::from(gid), Ordering::Release);
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::is_root;
+
+    /// `am_root` must agree with the **libc** `geteuid`, never a raw syscall.
+    ///
+    /// The two disagree under `fakeroot`, which intercepts the libc symbol and
+    /// reports uid 0 while the raw syscall still reports the real unprivileged
+    /// uid. Upstream reads libc (`main.c:1764 our_uid = MY_UID()`), so a
+    /// raw-syscall `am_root` refuses device creation and ownership changes in
+    /// exactly the runs where upstream performs them - which is how the 3.5.0
+    /// `devices` testsuite cell, whose non-root leg re-execs under fakeroot,
+    /// observes the difference.
+    #[test]
+    #[allow(unsafe_code)]
+    fn am_root_tracks_the_libc_effective_uid() {
+        // SAFETY: `geteuid` is a POSIX accessor taking no arguments, with no
+        // side effects and no failure mode.
+        let libc_euid = unsafe { libc::geteuid() };
+        assert_eq!(crate::am_root(), libc_euid == 0);
+        assert_eq!(is_root(), libc_euid == 0);
+    }
+}

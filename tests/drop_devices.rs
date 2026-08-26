@@ -453,3 +453,115 @@ fn the_same_remote_push_creates_specials_without_drop_d() {
     );
     assert!(regular_arrived, "the ordinary transfer must still happen");
 }
+
+/// Probes whether this process can actually create a device node.
+///
+/// Upstream's gate is `am_root != 0`, and the honest way to ask that here is to
+/// attempt the syscall rather than read a uid: the root CI leg and the nonroot
+/// CI leg then each assert the arm that actually applies to them, so neither
+/// leg is vacuous.
+fn can_create_device_nodes(scratch: &Path) -> bool {
+    let probe = scratch.join("probe-dev");
+    let created = Command::new("mknod")
+        .arg(&probe)
+        .arg("c")
+        .arg("1")
+        .arg("3")
+        .status()
+        .is_ok_and(|status| status.success());
+    created && is_special(&probe)
+}
+
+fn rendered_output(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+/// A device entry must never cost an occupied destination its contents.
+///
+/// upstream: generator.c:2031-2033 - the `FT_DEVICE` arm is
+/// `am_root && preserve_devices && ftype == FT_DEVICE`, so an unprivileged
+/// receiver never enters the creation branch and falls through to the
+/// non-regular skip at generator.c:2109. oc ported the `!drop_devices` and
+/// `preserve_devices` conjuncts but not the privilege term, so it entered the
+/// branch, unlinked whatever occupied the destination, and only then failed the
+/// `mknod` it was never able to perform - destroying an existing file.
+///
+/// Measured against real upstream 3.5.0, non-root, `/dev/null` onto an existing
+/// file: `skipping non-regular file "null"`, exit 0, contents intact.
+#[test]
+fn a_device_entry_never_destroys_an_occupied_destination() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let privileged = can_create_device_nodes(temp.path());
+
+    let dest = temp.path().join("null");
+    fs::write(&dest, b"PRECIOUS").expect("seed destination");
+    let dest_arg = dest.display().to_string();
+
+    let output = run(&[
+        OsStr::new("-a"),
+        OsStr::new("-D"),
+        OsStr::new("/dev/null"),
+        OsStr::new(&dest_arg),
+    ]);
+    let rendered = rendered_output(&output);
+
+    assert!(
+        output.status.success(),
+        "upstream skips the entry and continues; it is not an error. output:\n{rendered}"
+    );
+
+    if privileged {
+        assert!(
+            is_special(&dest),
+            "a privileged receiver materialises the node. output:\n{rendered}"
+        );
+    } else {
+        assert_eq!(
+            fs::read(&dest).expect("destination must still exist"),
+            b"PRECIOUS",
+            "an unprivileged receiver must leave the destination untouched. output:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("skipping non-regular file \"null\""),
+            "expected upstream's non-regular skip line. output:\n{rendered}"
+        );
+    }
+}
+
+/// `--fake-super` is upstream's `am_root = -1`, which is NON-ZERO and so still
+/// enters the creation branch - `syscall.c:do_mknod()` writes a `0600`
+/// placeholder instead of calling `mknod(2)`.
+///
+/// This is the arm that separates upstream's `am_root != 0` from the ownership
+/// rules' `am_root > 0`. A gate written with the latter predicate - which oc
+/// already has, as `LocalCopyOptions::am_root` - would skip here and silently
+/// drop the placeholder, so this is the companion that makes the test above
+/// non-vacuous rather than merely "oc creates nothing".
+#[test]
+fn fake_super_still_materialises_a_device_placeholder() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dest = temp.path().join("null");
+    let dest_arg = dest.display().to_string();
+
+    let output = run(&[
+        OsStr::new("-a"),
+        OsStr::new("-D"),
+        OsStr::new("--fake-super"),
+        OsStr::new("/dev/null"),
+        OsStr::new(&dest_arg),
+    ]);
+    let rendered = rendered_output(&output);
+
+    assert!(
+        output.status.success(),
+        "--fake-super records the node rather than failing. output:\n{rendered}"
+    );
+    assert!(
+        dest.exists(),
+        "--fake-super must leave a placeholder behind. output:\n{rendered}"
+    );
+}

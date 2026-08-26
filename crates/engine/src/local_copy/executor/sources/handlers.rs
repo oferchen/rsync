@@ -327,10 +327,16 @@ pub(super) fn handle_device_copy(
 
     if context.copy_devices_as_files_enabled() {
         let _ = copy_file(context, source_path, &target, metadata, record_path)?;
-    } else if !context.devices_enabled() && !context.list_only_enabled() {
+    } else if !context.may_create_devices() && !context.list_only_enabled() {
         // upstream: generator.c:1155 list_file_entry() lists devices in
         // `--list-only` output regardless of `--devices`; a real transfer
         // without `--devices` still skips them.
+        //
+        // The creation predicate - not the bare `--devices` flag - because
+        // upstream also requires `!drop_devices` and a non-zero `am_root`
+        // before it will attempt the mknod (generator.c:2031-2033). Skipping
+        // here leaves the destination untouched; entering the branch would
+        // remove any obstruction first and only then fail.
         context.record_skipped_non_regular(record_path);
         return Ok(true);
     } else {
