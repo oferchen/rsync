@@ -198,11 +198,22 @@ pub mod windows;
 /// which gates ownership-change attempts and the `ITEM_REPORT_OWNER` itemize
 /// flag (`generator.c:546`). Always `false` on Windows, matching upstream's
 /// `am_root = 0` on platforms without POSIX uid semantics.
+///
+/// Delegates to [`identity::is_root`] rather than issuing a fresh `geteuid`, so
+/// this answers the same question upstream's `am_root` does. Upstream computes
+/// it once from `our_uid = MY_UID()` (`main.c:1764-1766`), the libc `geteuid`,
+/// which gives two properties a raw syscall cannot:
+///
+/// - under `fakeroot` the *faked* root identity is observed, because fakeroot
+///   intercepts the libc symbol and not the syscall;
+/// - after the permanent `--copy-as` privilege drop
+///   ([`copy_as::become_copy_as_user`]) the dropped identity is observed,
+///   because that installs an override the accessor consults first.
 #[must_use]
 pub fn am_root() -> bool {
     #[cfg(unix)]
     {
-        rustix::process::geteuid().is_root()
+        identity::is_root()
     }
     #[cfg(not(unix))]
     {
