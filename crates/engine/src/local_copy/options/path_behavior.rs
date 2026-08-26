@@ -429,8 +429,7 @@ impl LocalCopyOptions {
     /// obstruction and then failing the `mknod` it was never able to perform.
     ///
     /// The privilege term is `am_root != 0` - root, `--super` *or*
-    /// `--fake-super` - which is deliberately NOT
-    /// [`Self::am_root`](super::super::types::LocalCopyOptions::am_root): that
+    /// `--fake-super` - which is deliberately NOT [`Self::am_root`]: that
     /// accessor answers `am_root > 0` for the ownership rules and reports
     /// false under `--fake-super`, where upstream still writes the `0600`
     /// placeholder (`syscall.c:do_mknod()`, the `am_root < 0` branch).
