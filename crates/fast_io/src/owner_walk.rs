@@ -71,19 +71,18 @@ pub fn symlink_owner_is_trusted(uid: u32) -> bool {
     uid == 0 || uid == trusted_uid()
 }
 
-/// Open a directory component beneath `dirfd`, refusing a symlink at the leaf.
+/// Open an interior directory component beneath `dirfd`, refusing a symlink at
+/// the leaf.
 ///
 /// The caller has already `statat`'d the component and found it is not a
 /// symlink; `O_NOFOLLOW` closes the window between that check and this open, so
 /// a component flipped to a symlink in between fails rather than resolves.
-fn open_dir_component(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<OwnedFd> {
-    rustix::fs::openat(
-        dirfd,
-        name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+///
+/// `flags` comes from [`traversal_dir_flags`] - this descriptor is a step, not
+/// the answer.
+fn open_dir_component(dirfd: BorrowedFd<'_>, name: &OsStr, flags: OFlags) -> io::Result<OwnedFd> {
+    rustix::fs::openat(dirfd, name, flags | OFlags::NOFOLLOW, Mode::empty())
+        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
 /// The components a walk must step through, in order.
@@ -204,14 +203,69 @@ impl AbsPathTracker {
     }
 }
 
+/// Flags for a dirfd the walk only *steps through*, never hands back.
+///
+/// # The divergence, and why it is not a policy change
+///
+/// Upstream opens intermediates `O_RDONLY|O_DIRECTORY` (`syscall.c:493`). oc
+/// opens them `O_PATH` on Linux. That is a deliberate divergence, forced by a
+/// difference in the CONFINEMENT MECHANISM, not by a difference in policy:
+///
+/// - Upstream confines a daemon with **chroot**, which RELOCATES `/`. Its walk
+///   therefore starts inside the jail and every component it opens is reachable
+///   by construction.
+/// - oc confines with **Landlock**, which does NOT relocate `/`. The identical
+///   walk from `/` must open `/`, `/tmp`, `/tmp/.tmpXXXX`, ... - none of which
+///   the ruleset grants. In Landlock's model `openat(O_RDONLY|O_DIRECTORY)` is
+///   an ACCESS and needs `LANDLOCK_ACCESS_FS_READ_DIR`; `O_PATH` names a
+///   location and needs nothing. So the walk cannot TRAVERSE, and dies before
+///   reaching a leaf that is plainly inside the granted tree.
+///
+/// `O_PATH` is the minimum privilege traversal actually requires - POSIX
+/// traversal needs `x`, not `r`. The collision is between two oc-side
+/// mechanisms, not between oc and upstream.
+///
+/// # What is preserved
+///
+/// EVERY CHECK is byte-identical; only the intermediate open MODE changes:
+/// the per-component `statat(AT_SYMLINK_NOFOLLOW)`, the
+/// [`symlink_owner_is_trusted`] test and its `ELOOP`, the hop budget, the
+/// interior-non-directory `ENOTDIR`, the confinement predicate at the leaf, and
+/// the leaf itself opened with the CALLER's flags. Pinned by
+/// `every_check_survives_the_o_path_traversal`.
+///
+/// ⚠ `O_PATH`'s exemption is a kernel property, not a promise - measured
+/// permissive on Linux 7.1.5. A kernel that began governing `O_PATH` opens
+/// under Landlock would refuse these exactly as it refuses `O_RDONLY` today,
+/// which fails CLOSED: the walk stops and nothing escapes.
+#[cfg(target_os = "linux")]
+fn traversal_dir_flags() -> OFlags {
+    OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC
+}
+
+/// Non-Linux has no Landlock, so the walk keeps upstream's own flags.
+///
+/// upstream: `rsync-3.5.0/syscall.c:493`.
+#[cfg(not(target_os = "linux"))]
+fn traversal_dir_flags() -> OFlags {
+    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
+}
+
+/// Whether the walk's anchor must be reopened before it is handed back.
+///
+/// True exactly where [`traversal_dir_flags`] returns an `O_PATH` descriptor,
+/// which names a location rather than being a working directory handle.
+const fn traversal_is_by_location() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Open the walk's starting directory: `/` for an absolute path, `.` otherwise.
-fn open_start_dir(absolute: bool) -> io::Result<OwnedFd> {
-    rustix::fs::open(
-        if absolute { "/" } else { "." },
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+///
+/// `flags` comes from [`traversal_dir_flags`]; upstream opens the same two
+/// directories with the same meaning at `syscall.c:349-351`.
+fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
+    rustix::fs::open(if absolute { "/" } else { "." }, flags, Mode::empty())
+        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
 /// Open the walk's final component with the caller's flags.
@@ -303,7 +357,9 @@ fn owner_walk_open(
     }
 
     let mut pending = walk_components(path);
-    let mut dirfd = open_start_dir(path.is_absolute())?;
+    let by_location = traversal_is_by_location();
+    let traverse = traversal_dir_flags();
+    let mut dirfd = open_start_dir(path.is_absolute(), traverse)?;
     let mut hops = MAX_SYMLINK_HOPS;
     let mut tracker = AbsPathTracker::start(path, kind)?;
 
@@ -349,7 +405,7 @@ fn owner_walk_open(
             let target = PathBuf::from(OsStr::from_bytes(target.as_bytes()));
             if target.is_absolute() {
                 // upstream: syscall.c:445 "followed an absolute target: restart from /".
-                dirfd = open_start_dir(true)?;
+                dirfd = open_start_dir(true, traverse)?;
                 tracker.restart_at_root();
             }
             prepend_components(&mut pending, &target);
@@ -373,12 +429,22 @@ fn owner_walk_open(
         if FileType::from_raw_mode(stat.st_mode as _) != FileType::Directory {
             return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
         }
-        dirfd = open_dir_component(dirfd.as_fd(), name.as_os_str())?;
+        dirfd = open_dir_component(dirfd.as_fd(), name.as_os_str(), traverse)?;
     }
 
     // No components at all (`/`, `.`, or empty): the start directory is itself
     // the answer. Reached via `owner_trusted_parent` for a bare relative leaf
     // such as `rsync.log`, whose parent is "" and whose anchor is therefore ".".
+    //
+    // The anchor is the RESULT on this arm rather than a step, so it has to
+    // carry the caller's flags: `traversal_dir_flags` may have opened it
+    // `O_PATH`, which names a location and is not a working descriptor. The
+    // reopen is the same open the caller would have got before, and it is
+    // subject to the sandbox exactly as that one was.
+    if by_location {
+        return rustix::fs::openat(dirfd.as_fd(), ".", flags | OFlags::CLOEXEC, mode)
+            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
+    }
     Ok(dirfd)
 }
 
@@ -1048,6 +1114,265 @@ mod tests {
             .expect("write");
 
         assert_eq!(std::fs::read(&log).expect("log"), b"one\ntwo\n");
+    }
+
+    use super::{
+        MAX_SYMLINK_HOPS, operator_open_read_confined, operator_open_write_create,
+        traversal_dir_flags, traversal_is_by_location,
+    };
+    use crate::confinement::{Activation, DaemonState, LocalInsecureLinks, Role, install_session};
+    use rustix::fs::OFlags;
+    use std::path::{Path, PathBuf};
+
+    /// Install a confinement root for the duration of one test.
+    ///
+    /// The session root is process-global, exactly as upstream's
+    /// `confinement_root()` reads process globals. Every test that installs one
+    /// therefore relies on nextest's process-per-test model, which the
+    /// repository mandates.
+    fn confine_to(root: &Path) {
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(root.to_path_buf()),
+        });
+    }
+
+    /// A temp tree with a confinement root, an in-root payload and an
+    /// out-of-root one.
+    fn confined_fixture() -> (TempDir, PathBuf, PathBuf, PathBuf) {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("module");
+        std::fs::create_dir(&root).expect("mkdir module");
+        let inside = root.join("payload");
+        std::fs::write(&inside, b"INSIDE").expect("write inside");
+        let outside_dir = temp.path().join("outside");
+        std::fs::create_dir(&outside_dir).expect("mkdir outside");
+        let outside = outside_dir.join("secret");
+        std::fs::write(&outside, b"OUTSIDE").expect("write outside");
+        (temp, root, inside, outside)
+    }
+
+    /// Constraint 1, as an assertion rather than an argument: EVERY CHECK the
+    /// walk makes is byte-identical, and only the intermediate open MODE
+    /// changes.
+    ///
+    /// The gate this replaces asserted the weaker "no confinement root =>
+    /// traversal flags unchanged". That was conservatism, not security: it
+    /// scoped the change by WHO installed a session instead of by WHAT the
+    /// change can affect. `O_PATH` governs one thing - how a dirfd the walk
+    /// only steps through is opened - and every decision the walk makes is
+    /// taken from `statat`/`readlinkat` against that dirfd, none of which
+    /// consult it.
+    ///
+    /// So the invariant is pinned here with NO root installed, where the
+    /// tracker is `Disabled` and the confinement check is inert: each of the
+    /// remaining checks must still fire, from the same place, for the same
+    /// reason.
+    #[test]
+    fn every_check_survives_the_o_path_traversal() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = temp.path().join("d");
+        std::fs::create_dir(&dir).expect("mkdir");
+
+        // The leaf takes the CALLER's flags, not the traversal flags - an
+        // `O_PATH` leaf could not be read at all, so a correct read is the
+        // whole assertion.
+        let plain = dir.join("plain");
+        std::fs::write(&plain, b"PLAIN").expect("write");
+        assert_eq!(
+            operator_read_to_string(&plain).expect("a plain absolute path still resolves"),
+            "PLAIN",
+            "the leaf must still be opened with the caller's flags"
+        );
+
+        // syscall.c:479 - an interior component that is not a directory.
+        assert_eq!(
+            operator_read_to_string(&plain.join("below"))
+                .expect_err("an interior regular file is not traversable")
+                .raw_os_error(),
+            Some(libc::ENOTDIR),
+            "the interior-non-directory check must still fire"
+        );
+
+        // syscall.c:406 and the hop budget. Every link here is self-owned, so
+        // the owner test passes them and only the budget can refuse.
+        let mut chain = dir.join("hop0");
+        std::os::unix::fs::symlink(&plain, &chain).expect("symlink base");
+        for hop in 1..=MAX_SYMLINK_HOPS {
+            let next = dir.join(format!("hop{hop}"));
+            std::os::unix::fs::symlink(&chain, &next).expect("symlink hop");
+            chain = next;
+        }
+        assert_eq!(
+            operator_read_to_string(&chain)
+                .expect_err("a chain longer than the budget is refused")
+                .raw_os_error(),
+            Some(libc::ELOOP),
+            "the symlink hop budget must still fire"
+        );
+
+        // syscall.c:445 - following an ABSOLUTE target restarts the walk at
+        // `/`. This is the arm the per-arm mutation identified as the
+        // discriminating one, so it is pinned explicitly rather than left to
+        // the general case.
+        let via_absolute = dir.join("via_absolute");
+        std::os::unix::fs::symlink(&plain, &via_absolute).expect("symlink absolute");
+        assert!(
+            std::fs::read_link(&via_absolute)
+                .expect("readlink")
+                .is_absolute(),
+            "the fixture must exercise the absolute-restart arm"
+        );
+        assert_eq!(
+            operator_read_to_string(&via_absolute).expect("the restart arm still resolves"),
+            "PLAIN"
+        );
+
+        // syscall.c:381-396 - a missing leaf under O_CREAT is still created.
+        let created = dir.join("created");
+        operator_open_write_create(&created, 0o600)
+            .expect("O_CREAT leaf")
+            .write_all(b"NEW")
+            .expect("write");
+        assert_eq!(std::fs::read(&created).expect("read"), b"NEW");
+    }
+
+    /// The one thing that DOES change: an intermediate dirfd is opened by
+    /// location on Linux, and with upstream's own flags everywhere else.
+    ///
+    /// Unconditional - there is no gate to assert around. Landlock does not
+    /// relocate `/` the way upstream's chroot does, so a walk from `/` must
+    /// step through components no ruleset grants; `O_PATH` needs no access
+    /// right, `O_RDONLY|O_DIRECTORY` needs `READ_DIR`.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:493` - the deliberate divergence.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_intermediate_dirfd_is_opened_by_location_on_linux() {
+        let flags = traversal_dir_flags();
+        assert!(
+            flags.contains(OFlags::PATH),
+            "Landlock governs READ_DIR, so a step must not request read access"
+        );
+        // `O_RDONLY` is 0 on Linux, so `contains(RDONLY)` is vacuously true
+        // and cannot express "does not request read access". Compare the raw
+        // bits instead - this is the assertion that a mutation back to
+        // upstream's flags has to fail.
+        assert_eq!(
+            flags,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            "the traversal flags are exactly O_PATH|O_DIRECTORY|O_CLOEXEC"
+        );
+        assert!(
+            flags.contains(OFlags::DIRECTORY) && flags.contains(OFlags::CLOEXEC),
+            "the traversal is still directory-only and close-on-exec"
+        );
+        assert!(
+            traversal_is_by_location(),
+            "an O_PATH anchor is a location and must be reopened before it is returned"
+        );
+    }
+
+    /// The mirror half: no Landlock exists off Linux, so the walk keeps
+    /// upstream's own flags and there is no anchor to reopen.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:493`.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn an_intermediate_dirfd_keeps_upstreams_flags_off_linux() {
+        assert_eq!(
+            traversal_dir_flags(),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            "platforms without Landlock keep upstream's own flags"
+        );
+        assert!(!traversal_is_by_location());
+    }
+
+    /// Constraint 2: a leaf outside the confinement root is refused as a
+    /// CONFINEMENT decision - `ELOOP` - and never as an incidental `EACCES`.
+    ///
+    /// This is what makes the traversal change safe to make: the walk now
+    /// reaches the leaf, so the refusal has to come from the root check rather
+    /// than from a sandbox that happened to stop the walk earlier. An `EACCES`
+    /// here would mean the refusal is still accidental.
+    ///
+    /// upstream: `syscall.c:464-466` - `abspath_outside_confinement()` fails
+    /// the open with `ELOOP`.
+    #[test]
+    fn a_leaf_outside_the_root_is_refused_with_eloop_not_eacces() {
+        let (_temp, root, _inside, outside) = confined_fixture();
+        confine_to(&root);
+
+        let error = operator_open_read_confined(&outside)
+            .expect_err("a leaf outside the confinement root must be refused");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::ELOOP),
+            "the refusal must be the confinement decision, not a traversal failure"
+        );
+    }
+
+    /// Constraint 3: a `..` in the remainder is spent as movement against the
+    /// directory the walk actually reached, so a path that climbs back out of
+    /// the root is still refused.
+    ///
+    /// The companion to the cell above: that one escapes by naming an outside
+    /// path directly, this one escapes by walking. Both must land on the same
+    /// refusal, which is what shows the tracker judges where the open would
+    /// REALLY land rather than how the path was spelled.
+    #[test]
+    fn a_dot_dot_that_climbs_out_of_the_root_is_still_refused() {
+        let (_temp, root, _inside, _outside) = confined_fixture();
+        confine_to(&root);
+
+        let escape = root.join("..").join("outside").join("secret");
+        let error =
+            operator_open_read_confined(&escape).expect_err("`..` above the root must be refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
+
+    /// The in-root control for both refusal cells: a leaf plainly inside the
+    /// root still resolves.
+    ///
+    /// Without it the two cells above would also pass if the walk refused
+    /// everything, which is the failure mode this whole change exists to
+    /// remove.
+    #[test]
+    fn a_leaf_inside_the_root_still_resolves() {
+        let (_temp, root, inside, _outside) = confined_fixture();
+        confine_to(&root);
+
+        let mut opened = operator_open_read_confined(&inside).expect("an in-root leaf resolves");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "INSIDE");
+    }
+
+    /// Constraint 4, the ancestor pin: an absolute path that is an ANCESTOR of
+    /// the confinement root must keep resolving.
+    ///
+    /// An absolute walk passes through `/`, `/tmp`, `/tmp/xxx`, ... on its way
+    /// down to the root, and those components are not-yet-arrived rather than
+    /// diverged. Refusing them would refuse every absolute operator path a
+    /// confined session ever names - the walk would be unable to reach its own
+    /// root. That is precisely why the confinement test is applied at the LEAF
+    /// and not per component, and why stepping by location does not need a
+    /// beneath-ness test to be safe.
+    ///
+    /// upstream: `syscall.c:197` `abspath_outside_confinement()` - an ancestor
+    /// of the root is not outside it.
+    #[test]
+    fn an_ancestor_of_the_confinement_root_still_resolves() {
+        let temp = TempDir::new().expect("tempdir");
+        let parent = temp.path().join("parent");
+        let root = parent.join("module");
+        std::fs::create_dir_all(&root).expect("mkdir root");
+        confine_to(&root);
+
+        operator_open_read_confined(&parent)
+            .expect("an ancestor of the root is descending, not escaping");
     }
 
     /// The non-vacuity companion to [`follows_a_self_owned_symlink_at_the_leaf`].
