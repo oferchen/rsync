@@ -89,7 +89,7 @@ exclude-implied-trailing-backslash skip
 files-from-leak skip
 filter-leak skip
 inband-modname-leak skip
-insecure-links-admin-optout fail
+insecure-links-admin-optout pass
 io-noop-flood-recursion skip
 io-nosend-flood-recursion skip
 io-readargs-argv-nullwrite skip
