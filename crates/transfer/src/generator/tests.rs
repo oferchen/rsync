@@ -4950,6 +4950,133 @@ fn segment_scheduler_many_files_deadlock_scenario() {
 }
 
 #[test]
+fn segment_scheduler_idle_growth_stops_at_the_ceiling() {
+    // upstream io.c:836-843 - while `file_total - file_old_total` is under
+    // MAX_FILECNT_LOOKAHEAD the sender keeps the poll timeout at zero and keeps
+    // topping the window up on idle turns; at or above it, it clears
+    // extra_flist_sending_enabled and stops. Without this ceiling the idle path
+    // has no bound at all and would queue the entire remaining tree ahead of a
+    // receiver that has not asked for it.
+    use super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
+
+    // 40 sub-lists of 1000 -> 40 000 entries, four times the ceiling, so the
+    // bound is what stops the drain rather than running out of segments.
+    let mut scheduler = scheduler_with(40, MIN_FILECNT_LOOKAHEAD);
+
+    let mut admitted = 0;
+    while scheduler.next_when_idle().is_some() {
+        admitted += 1;
+    }
+
+    assert_eq!(
+        admitted,
+        MAX_FILECNT_LOOKAHEAD / MIN_FILECNT_LOOKAHEAD,
+        "idle growth must stop at MAX_FILECNT_LOOKAHEAD queued entries"
+    );
+    assert_eq!(scheduler.lookahead_total(), MAX_FILECNT_LOOKAHEAD);
+    assert!(
+        !scheduler.is_exhausted(),
+        "the ceiling, not exhaustion, must be what stopped the growth"
+    );
+}
+
+#[test]
+fn segment_scheduler_admits_a_directory_larger_than_the_whole_ceiling() {
+    // upstream flist.c:2411 tests the backlog BEFORE send1extra() runs, and
+    // send1extra() emits one entire directory (flist.c:2417-2430). A directory
+    // with more children than the whole ceiling is therefore still sent whole
+    // the moment the backlog is under the bound - upstream has the same
+    // property and lives with it.
+    //
+    // This is the test that says the ceiling was implemented as "stop admitting
+    // the NEXT sub-list", not as "truncate this one". Splitting a sub-list would
+    // change the wire framing the receiver rebuilds its dir_flist from, so it
+    // must stay impossible: set MAX_FILECNT_LOOKAHEAD to 1 and this still holds.
+    use super::segments::MAX_FILECNT_LOOKAHEAD;
+
+    let oversized = MAX_FILECNT_LOOKAHEAD * 5;
+    let mut scheduler = scheduler_with(2, oversized);
+
+    let seg = scheduler
+        .next_when_idle()
+        .expect("an empty backlog must admit the directory however large it is");
+    assert_eq!(
+        seg.count, oversized,
+        "the sub-list must be handed over whole, never truncated to fit"
+    );
+    assert_eq!(scheduler.lookahead_total(), oversized);
+
+    // Overshooting the ceiling stops the *next* sub-list, which is the only
+    // lever the bound is allowed to pull.
+    assert!(
+        scheduler.next_when_idle().is_none(),
+        "an overshot backlog must stop the following sub-list"
+    );
+    assert_eq!(scheduler.dispatched_count(), 1);
+}
+
+#[test]
+fn segment_scheduler_idle_growth_resumes_as_the_receiver_retires_sub_lists() {
+    // The ceiling is a window, not a latch: each sub-list the receiver finishes
+    // drops out of the backlog (upstream sender.c:531-535) and makes room for
+    // one more. A bound that failed to reopen would stall a transfer whose tree
+    // is larger than the ceiling.
+    use super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
+
+    let mut scheduler = scheduler_with(40, MIN_FILECNT_LOOKAHEAD);
+    while scheduler.next_when_idle().is_some() {}
+    let filled = scheduler.dispatched_count();
+    assert_eq!(scheduler.lookahead_total(), MAX_FILECNT_LOOKAHEAD);
+
+    assert!(
+        scheduler.next_when_idle().is_none(),
+        "window is full before the receiver retires anything"
+    );
+
+    scheduler.retire_current_flist();
+    assert!(
+        scheduler.next_when_idle().is_some(),
+        "retiring one sub-list must reopen the window by exactly one"
+    );
+    assert!(scheduler.next_when_idle().is_none(), "and only by one");
+    assert_eq!(scheduler.dispatched_count(), filled + 1);
+}
+
+#[test]
+fn segment_scheduler_floor_is_unchanged_by_the_ceiling() {
+    // Negative control for the ceiling: a backlog that never approaches
+    // MAX_FILECNT_LOOKAHEAD must dispatch exactly the sub-lists it did before
+    // the bound existed. Without this, a mutation that throttles everything -
+    // or one that lowers the effective bound onto the floor's territory - would
+    // still pass the tests above.
+    use super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
+
+    let per_segment = 100;
+    // 20 sub-lists of 100 -> 2000 entries: enough that the floor, not
+    // exhaustion, is what ends the burst, and far enough below 10 000 that the
+    // ceiling is out of reach.
+    let mut scheduler = scheduler_with(20, per_segment);
+
+    let mut floor_burst = 0;
+    while scheduler.next_to_send().is_some() {
+        floor_burst += 1;
+    }
+    assert_eq!(
+        floor_burst,
+        MIN_FILECNT_LOOKAHEAD / per_segment,
+        "the floor must still stop the burst at MIN_FILECNT_LOOKAHEAD entries"
+    );
+    assert!(
+        !scheduler.is_exhausted(),
+        "the floor, not exhaustion, must be what ended the burst"
+    );
+    assert!(
+        scheduler.lookahead_total() < MAX_FILECNT_LOOKAHEAD,
+        "fixture must stay clear of the ceiling for this to be a control"
+    );
+}
+
+#[test]
 fn segment_scheduler_forced_drain_ignores_the_backlog() {
     // The end-of-transfer flush must land every sub-list before NDX_FLIST_EOF:
     // the receiver will not send its final NDX_DONE until it sees EOF, so no

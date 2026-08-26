@@ -253,6 +253,65 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Emits `NDX_FLIST_EOF` once the scheduler has handed out every sub-list.
+    ///
+    /// Must run at every point inside the send loop that can exhaust the
+    /// scheduler, not just after the floor top-up: the receiver will not send
+    /// its final `NDX_DONE` until it has seen `NDX_FLIST_EOF`, so a dispatch
+    /// that empties the queue and then parks on a read would deadlock.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2848-2849` - `write_ndx(f, NDX_FLIST_EOF); flist_eof = 1`
+    fn send_flist_eof_if_exhausted<W: Write>(
+        &mut self,
+        writer: &mut W,
+        scheduler: &SegmentScheduler,
+        ndx_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<()> {
+        if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
+            self.send_flist_eof(writer, ndx_codec, scheduler.dispatched_count())?;
+        }
+        Ok(())
+    }
+
+    /// Queues one further sub-list at the moment the sender is about to block
+    /// for receiver input, growing the lookahead window past
+    /// `MIN_FILECNT_LOOKAHEAD` towards `MAX_FILECNT_LOOKAHEAD`.
+    ///
+    /// [`Self::send_extra_file_lists`] only tops the backlog *up to* the floor,
+    /// which leaves the window pinned there for the whole transfer. Upstream
+    /// does not stop at the floor: while the backlog is under the ceiling it
+    /// polls with a zero timeout (`io.c:836-843`), and on a poll that finds no
+    /// input ready it sends exactly one more sub-list (`io.c:855`,
+    /// `at_least = -1` resolving to `backlog + 1` at `flist.c:2407`). oc has no
+    /// poll loop, but `has_buffered_input()` marks the same instant - the read
+    /// that is genuinely about to block - so the top-up hangs off that instead.
+    ///
+    /// One segment per idle turn, matching upstream's `backlog + 1`: this is a
+    /// use of time the sender was going to spend waiting, not a spin. The
+    /// caller is already committed to blocking on the receiver immediately
+    /// afterwards, so nothing here polls, retries, or busy-waits.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:836-843` - the `MAX_FILECNT_LOOKAHEAD` ceiling on this path
+    /// - `io.c:851-857` - the idle poll result that triggers the top-up
+    fn grow_lookahead_while_idle<W: Write>(
+        &mut self,
+        writer: &mut super::super::super::writer::ServerWriter<W>,
+        scheduler: &mut SegmentScheduler,
+        flist_writer: &mut protocol::flist::FileListWriter,
+        ndx_codec: &mut MonotonicNdxWriter,
+        flist_done_remaining: &mut usize,
+    ) -> io::Result<()> {
+        if let Some(seg) = scheduler.next_when_idle() {
+            self.encode_and_send_segment(&mut *writer, seg, flist_writer, ndx_codec.inner_mut())?;
+            *flist_done_remaining += 1;
+        }
+        Ok(())
+    }
+
     /// Runs the main file transfer loop, reading NDX requests from receiver.
     ///
     /// This method processes file transfer requests in phases until all phases complete.
@@ -415,16 +474,11 @@ impl GeneratorContext {
                     &mut flist_done_remaining,
                 )?;
 
-                // upstream: flist.c:2534-2545 - send NDX_FLIST_EOF when all sub-lists
-                // have been dispatched. Must happen inside the loop (not after) because
-                // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
-                if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
-                    self.send_flist_eof(
-                        &mut *writer,
-                        ndx_write_codec.inner_mut(),
-                        scheduler.dispatched_count(),
-                    )?;
-                }
+                self.send_flist_eof_if_exhausted(
+                    &mut *writer,
+                    &scheduler,
+                    ndx_write_codec.inner_mut(),
+                )?;
             }
 
             // upstream: io.c:640-724 perform_io() flushes buffered output only
@@ -439,6 +493,25 @@ impl GeneratorContext {
             // - ~24 files per socket write, matching upstream's iobuf.out
             // batching instead of one write() per file.
             if !reader.has_buffered_input() {
+                // upstream: io.c:851-857 - a poll that finds nothing to read is
+                // the sender's cue to queue one more sub-list before it parks,
+                // which is what grows the lookahead past the floor. Emitting it
+                // here rather than after the flush keeps it in the same socket
+                // write as the deltas already buffered.
+                if inc_recurse {
+                    self.grow_lookahead_while_idle(
+                        &mut *writer,
+                        &mut scheduler,
+                        &mut flist_writer,
+                        &mut ndx_write_codec,
+                        &mut flist_done_remaining,
+                    )?;
+                    self.send_flist_eof_if_exhausted(
+                        &mut *writer,
+                        &scheduler,
+                        ndx_write_codec.inner_mut(),
+                    )?;
+                }
                 flush_with_count(writer)?;
             }
 
@@ -2223,6 +2296,16 @@ mod inc_recurse_lookahead_tests {
     struct FirstReadProbe {
         wire: Cursor<Vec<u8>>,
         dispatched_at_first_read: Rc<Cell<Option<u64>>>,
+        /// What the probe answers to `has_buffered_input()`, i.e. whether the
+        /// sender believes its next read can be served without blocking.
+        ///
+        /// This is the signal the sender reads as "am I idle?" (upstream's
+        /// `poll()` returning 0, io.c:851). Setting it decides which of the two
+        /// lookahead mechanisms the fixture exercises: `true` models a receiver
+        /// keeping pace, so only the `MIN_FILECNT_LOOKAHEAD` floor runs and the
+        /// burst is the floor's alone; `false` models a sender with time on its
+        /// hands, which is when upstream grows the window past the floor.
+        buffered_input: bool,
     }
 
     impl Read for FirstReadProbe {
@@ -2235,11 +2318,46 @@ mod inc_recurse_lookahead_tests {
         }
     }
 
-    // The probe models a peer whose NDXs the sender must genuinely block for,
-    // so it keeps the conservative pre-read flush (the trait default). The
-    // pacing assertion measures dispatch-before-first-block, which the flush
-    // gate does not affect.
-    impl crate::reader::BufferedInputHint for FirstReadProbe {}
+    impl crate::reader::BufferedInputHint for FirstReadProbe {
+        fn has_buffered_input(&self) -> bool {
+            self.buffered_input
+        }
+    }
+
+    /// Runs the sender over the fixture tree and reports
+    /// `(sub-lists dispatched before the first receiver read, total dispatched)`.
+    fn run_and_count_first_burst(buffered_input: bool) -> (usize, usize) {
+        // The receiver acknowledges each completed file-list and then closes out
+        // the three phases; it never requests a transfer, so every read the
+        // sender performs is a genuine block on receiver progress.
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        for _ in 0..(DIRS + 3) {
+            ndx.write_ndx_done(&mut wire).unwrap();
+        }
+
+        let dispatched_at_first_read = Rc::new(Cell::new(None));
+        let mut reader = FirstReadProbe {
+            wire: Cursor::new(wire),
+            dispatched_at_first_read: Rc::clone(&dispatched_at_first_read),
+            buffered_input,
+        };
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+
+        let mut ctx = generator_with_segmented_tree();
+        let before = segment_dispatch_totals().0;
+        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .expect("sender loop must run to completion");
+        let after = segment_dispatch_totals().0;
+
+        let first_burst = dispatched_at_first_read
+            .get()
+            .expect("sender must block for a receiver NDX")
+            - before;
+        ((first_burst) as usize, (after - before) as usize)
+    }
 
     /// Builds an INC_RECURSE generator over a `DIRS * FILES_PER_DIR` tree.
     ///
@@ -2303,47 +2421,55 @@ mod inc_recurse_lookahead_tests {
 
     #[test]
     fn sub_lists_are_paced_against_receiver_progress() {
-        // The receiver acknowledges each completed file-list and then closes out
-        // the three phases; it never requests a transfer, so every read the
-        // sender performs is a genuine block on receiver progress.
-        let mut ndx = MonotonicNdxWriter::new(32);
-        let mut wire = Vec::new();
-        for _ in 0..(DIRS + 3) {
-            ndx.write_ndx_done(&mut wire).unwrap();
-        }
-
-        let dispatched_at_first_read = Rc::new(Cell::new(None));
-        let mut reader = FirstReadProbe {
-            wire: Cursor::new(wire),
-            dispatched_at_first_read: Rc::clone(&dispatched_at_first_read),
-        };
-        let mut writer = ServerWriter::new_plain(Vec::new());
-        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
-        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
-
-        let mut ctx = generator_with_segmented_tree();
-        let before = segment_dispatch_totals().0;
-        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
-            .expect("sender loop must run to completion");
-        let after = segment_dispatch_totals().0;
-
-        let first_burst = dispatched_at_first_read
-            .get()
-            .expect("sender must block for a receiver NDX")
-            - before;
+        // Receiver keeping pace: its NDXs are already buffered, so the sender is
+        // never idle and the MIN_FILECNT_LOOKAHEAD floor is the only mechanism
+        // that runs. This isolates the floor, which is what the burst count
+        // below measures.
+        let (first_burst, total) = run_and_count_first_burst(true);
 
         // Pre-fix, the lookahead was computed once outside the dispatch loop, so
         // the very first `while` drained all DIRS sub-lists before the sender
         // ever read a byte back. Upstream re-tests the condition each iteration
         // and stops at MIN_FILECNT_LOOKAHEAD queued entries.
         assert_eq!(
-            first_burst as usize, EXPECTED_FIRST_BURST,
+            first_burst, EXPECTED_FIRST_BURST,
             "sender must queue {MIN_FILECNT_LOOKAHEAD} entries ahead and then wait, \
              not push all {DIRS} sub-lists up front"
         );
         assert_eq!(
-            (after - before) as usize,
-            DIRS,
+            total, DIRS,
+            "every sub-list must still reach the receiver by end of transfer"
+        );
+    }
+
+    #[test]
+    fn an_idle_sender_grows_the_lookahead_past_the_floor() {
+        // upstream io.c:851-857 - when the poll ahead of a read finds nothing
+        // ready, the sender spends the wait queueing one more sub-list
+        // (`at_least = -1` resolves to `backlog + 1` at flist.c:2407) instead of
+        // parking with the window pinned at the floor.
+        //
+        // The WHY: the floor is a floor, not a target. Stopping at it leaves the
+        // sender idle with sub-lists in hand and the receiver with only
+        // MIN_FILECNT_LOOKAHEAD entries to work through, however much slack the
+        // link has. Measured on a 20 000-file push into an upstream 3.5.0
+        // receiver, holding the window at the floor costs ~6-9% wall clock
+        // against a window allowed to grow.
+        //
+        // This asserts the growth is exactly one sub-list per idle turn, which
+        // is what upstream's `backlog + 1` buys: a mechanism that drained to the
+        // ceiling in a single turn would also push past the floor and must not
+        // pass.
+        let (first_burst, total) = run_and_count_first_burst(false);
+
+        assert_eq!(
+            first_burst,
+            EXPECTED_FIRST_BURST + 1,
+            "an idle sender must add exactly one sub-list beyond the floor's \
+             {EXPECTED_FIRST_BURST} before it parks on the receiver"
+        );
+        assert_eq!(
+            total, DIRS,
             "every sub-list must still reach the receiver by end of transfer"
         );
     }

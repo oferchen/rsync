@@ -1,16 +1,18 @@
 //! Segment scheduling and incremental recursion state for the generator.
 //!
 //! Defines the per-directory sub-list types (`PendingSegment`, `DirSegment`,
-//! `TaggedIndex`), the cursor-based `SegmentScheduler` that throttles segment
-//! dispatch via `MIN_FILECNT_LOOKAHEAD`, and the `IncrementalState` mutable
-//! state carried by `GeneratorContext` for INC_RECURSE segmented file list
-//! sending.
+//! `TaggedIndex`), the cursor-based `SegmentScheduler` that sizes the segment
+//! lookahead window between `MIN_FILECNT_LOOKAHEAD` and
+//! `MAX_FILECNT_LOOKAHEAD`, and the `IncrementalState` mutable state carried by
+//! `GeneratorContext` for INC_RECURSE segmented file list sending.
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-//! - `flist.c:2124-2139` - `send_extra_file_list()` lookahead throttling
-//! - `sender.c:231,265` - send loop calls into segment scheduling at top/bottom
+//! - `rsync.h:151-152` - `MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`
+//! - `flist.c:2396-2411` - `send_extra_file_list()` lookahead loop head
+//! - `sender.c:515,549` - send loop tops the window up to the minimum
+//! - `io.c:836-857` - `perform_io()` grows the window towards the maximum
+//!   whenever the sender would otherwise idle
 
 /// Entries the sender keeps queued in sub-lists beyond the one the receiver is
 /// currently working through. Once the backlog reaches this many entries the
@@ -20,8 +22,26 @@
 /// # Upstream Reference
 ///
 /// - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-/// - `sender.c:231,265` - `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
+/// - `sender.c:515,549` - `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
 pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+
+/// Ceiling on the lookahead backlog the sender will grow to while it is idle.
+///
+/// [`MIN_FILECNT_LOOKAHEAD`] is a floor, not a target: upstream's send loop
+/// only ever tops the backlog *up to* it. The window past that floor is grown
+/// opportunistically, one sub-list at a time, at moments the sender would
+/// otherwise sit blocked on receiver input - and this constant is what stops
+/// that growth, so the sender never queues the whole remaining tree ahead of a
+/// receiver that has not asked for it.
+///
+/// # Upstream Reference
+///
+/// - `rsync.h:152` - `#define MAX_FILECNT_LOOKAHEAD 10000`
+/// - `io.c:836-843` - `perform_io()` keeps `extra_flist_sending_enabled` set,
+///   and the poll timeout at zero, only while
+///   `file_total - file_old_total < MAX_FILECNT_LOOKAHEAD`; at or above the
+///   ceiling it clears the flag and reverts to the blocking poll timeout.
+pub const MAX_FILECNT_LOOKAHEAD: usize = 10000;
 
 /// A pending file list sub-segment for incremental recursion sending.
 ///
@@ -30,7 +50,8 @@ pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:send_extra_file_list()` - sends one directory's entries as a sub-list
+/// - `flist.c:2396` - `send_extra_file_list()` sends one directory's entries
+///   as a sub-list
 /// - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
 #[derive(Debug)]
 pub(crate) struct PendingSegment {
@@ -82,16 +103,18 @@ pub(crate) struct DirSegment {
 
 /// Cursor-based scheduler that yields pending segments on demand.
 ///
-/// Owns the whole of upstream's `send_extra_file_list()` throttling rule: both
-/// the `MIN_FILECNT_LOOKAHEAD` threshold and the `file_total - file_old_total`
-/// backlog it is compared against. The transfer loop drives it at the top and
-/// bottom of each iteration (upstream `sender.c:231,265`) and tells it when the
-/// receiver has finished a sub-list, but never re-derives the condition itself.
+/// Sole owner of upstream's lookahead sizing rule: the `MIN_FILECNT_LOOKAHEAD`
+/// floor, the `MAX_FILECNT_LOOKAHEAD` ceiling, and the
+/// `file_total - file_old_total` backlog both are compared against. The
+/// transfer loop drives it at the top of each iteration (upstream
+/// `sender.c:515,549`), again at the point it is about to block for receiver
+/// input (upstream `io.c:855`), and tells it when the receiver has finished a
+/// sub-list - but never re-derives either bound itself.
 ///
 /// # Lookahead accounting
 ///
 /// Upstream's loop condition is `file_total - file_old_total < at_least`
-/// (`flist.c:2139`), where `file_total` counts entries in every live file-list
+/// (`flist.c:2411`), where `file_total` counts entries in every live file-list
 /// and `file_old_total` counts entries in the lists from `first_flist` through
 /// `cur_flist`. The difference is therefore the number of entries queued in
 /// sub-lists *beyond the one the receiver is currently working through* - a
@@ -99,16 +122,17 @@ pub(crate) struct DirSegment {
 /// whole sub-lists, at `flist_free()` time, never per transferred file.
 ///
 /// [`Self::lookahead_total`] reproduces that difference directly: dispatching a
-/// sub-list adds its entry count (`flist.c:2195` `file_total += flist->used`,
+/// sub-list adds its entry count (`flist.c:2467` `file_total += flist->used`,
 /// with `file_old_total` untouched), and retiring the current sub-list on the
 /// receiver's `NDX_DONE` subtracts the count of the sub-list promoted in its
-/// place (`sender.c:247-251`).
+/// place (`sender.c:531-535`).
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:231,265` - checks `inc_recurse` at top/bottom of send loop
-/// - `flist.c:2124-2139` - `send_extra_file_list()` re-tests the lookahead
+/// - `sender.c:515,549` - checks `inc_recurse` at top/bottom of send loop
+/// - `flist.c:2411` - `send_extra_file_list()` re-tests the lookahead
 ///   condition on every iteration
+/// - `io.c:836-857` - the idle-time growth path and its ceiling
 #[derive(Debug)]
 pub(crate) struct SegmentScheduler {
     segments: Vec<PendingSegment>,
@@ -152,6 +176,34 @@ impl SegmentScheduler {
         self.advance()
     }
 
+    /// Returns one further segment when the sender is about to block for
+    /// receiver input and the backlog is still under
+    /// [`MAX_FILECNT_LOOKAHEAD`], growing the window past the floor.
+    ///
+    /// Upstream reaches the same effect through its poll loop rather than a
+    /// second call site: `perform_io()` drops the poll timeout to zero while
+    /// the backlog is under the ceiling (`io.c:836-843`), and when that poll
+    /// finds no input ready it calls `send_extra_file_list(sock_f_out, -1)`
+    /// (`io.c:855`), whose `at_least` resolves to `backlog + 1` - exactly one
+    /// more sub-list per idle turn. oc has no poll loop to hang that off, so
+    /// the caller signals the same "about to block" moment directly and this
+    /// method supplies the one-segment step and the ceiling.
+    ///
+    /// Like the floor gate - and like upstream's loop head - the bound is
+    /// tested against the backlog *before* the segment is folded in, never
+    /// against the segment's own count. A directory larger than the whole
+    /// ceiling is therefore still admitted whole the moment the backlog is
+    /// under it. Sub-lists are never split to fit: `send1extra()` emits one
+    /// entire directory per iteration (`flist.c:2427`), and truncating a
+    /// sub-list would change the wire framing the receiver reconstructs its
+    /// `dir_flist` from.
+    pub(crate) fn next_when_idle(&mut self) -> Option<&PendingSegment> {
+        if self.lookahead_total >= MAX_FILECNT_LOOKAHEAD {
+            return None;
+        }
+        self.advance()
+    }
+
     /// Returns the next segment unconditionally, ignoring the lookahead.
     ///
     /// Used for the end-of-transfer flush, where every sub-list must reach the
@@ -174,7 +226,7 @@ impl SegmentScheduler {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:247-251` - `file_old_total -= first_flist->used` followed by
+    /// - `sender.c:531-535` - `file_old_total -= first_flist->used` followed by
     ///   `flist_free()` and `file_old_total = cur_flist->used`
     pub(crate) fn retire_current_flist(&mut self) {
         if self.promoted < self.cursor {
