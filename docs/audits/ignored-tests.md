@@ -25,9 +25,16 @@ leave it as-is.
   - **DEBUG-HELPER** - not a real test; a scratch printer kept around for
     diagnosis. Candidate for deletion.
 
-Total `#[ignore]` annotations: **154** (across 27 files; the additional 7
-matches in the raw grep are file-level `//!` / `///` doc comments referencing
-the attribute, not attributes themselves).
+Total `#[ignore]` annotations: **145** (across 35 files). Counted with
+
+```sh
+git ls-files -z '*.rs' | xargs -0 grep -h '^\s*#\[ignore' | wc -l
+```
+
+which excludes the `//!` / `///` doc comments that merely mention the
+attribute - a raw `grep '#\[ignore'` reports 177 because of those. The
+earlier figure of 154 across 27 files predates several test additions; use
+the command above rather than trusting a transcribed number.
 
 ## Stale Ignores
 
@@ -62,10 +69,6 @@ CLI surface area for no implementation cost.
 | `crates/daemon/tests/connection_scaling_stress.rs::thread_per_connection_scaling_100` | STRESS | Multi-second runtime; benchmark. | Leave (opt-in). |
 | `crates/daemon/tests/connection_scaling_stress.rs::thread_per_connection_scaling_1000` | STRESS | Multi-second runtime; benchmark. | Leave (opt-in). |
 | `crates/daemon/tests/connection_scaling_stress.rs::thread_per_connection_scaling_10000` | STRESS | Requires high `RLIMIT_NOFILE`; benchmark. | Leave (opt-in). |
-| `crates/core/tests/inc_recurse_stress.rs::deep_nesting_50_levels` | STRESS | Manual stress test. | Leave (opt-in). |
-| `crates/core/tests/inc_recurse_stress.rs::wide_directory_1000_files` | STRESS | Manual stress test. | Leave (opt-in). |
-| `crates/core/tests/inc_recurse_stress.rs::mixed_deep_and_wide` | STRESS | Manual stress test. | Leave (opt-in). |
-| `crates/core/tests/inc_recurse_stress.rs::incremental_update_add_remove_modify` | STRESS | Manual stress test. | Leave (opt-in). |
 | `crates/matching/src/index/sparse_match_tests.rs::sparse_match_100mib_single_overlap` | SLOW | 100 MiB allocations and full-buffer scans. | Leave (opt-in). |
 | `crates/matching/tests/sparse_match_fixture.rs::sparse_match_16mb_block1024` | SLOW | Sparse fixture, skipped by default. | Leave (opt-in). |
 | `crates/matching/tests/sparse_match_fixture.rs::sparse_match_16mb_block4096` | SLOW | Sparse fixture, skipped by default. | Leave (opt-in). |
@@ -247,7 +250,7 @@ fails first, so the test cannot reach the metadata-preservation assertion.
 
 ## Summary
 
-- 154 `#[ignore]` annotations in total.
+- 145 `#[ignore]` annotations in total (see the counting command above).
 - 14 of those are stale (the asserted blocker has shipped) and should be
   re-enabled in a follow-up patch series.
 - 3 are obsolete or debug-only and should be rewritten or deleted.

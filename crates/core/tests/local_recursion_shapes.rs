@@ -1,21 +1,18 @@
-//! Stress tests for incremental recursion (INC_RECURSE) with large file counts
-//! and deep directory nesting.
+//! Local recursive transfers over trees of varying shape - deep nesting, wide
+//! fan-out, a mix of both, and a re-run that adds, removes and modifies files.
 //!
-//! These tests exercise the file list batching, sorting, and progressive
-//! discovery logic under load. They are gated with `#[ignore]` to avoid
-//! slowing CI - run manually with:
-//!
-//! ```sh
-//! cargo nextest run -p core --all-features -E 'test(inc_recurse_stress)' -- --ignored
-//! ```
-//!
-//! Reference: upstream rsync 3.4.1 flist.c, io.c (INC_RECURSE)
+//! These cover the local-copy executor's directory walk, entry ordering and
+//! quick-check behaviour as tree shape varies. They deliberately do NOT cover
+//! incremental recursion (INC_RECURSE): `transfer()` runs a local copy, which
+//! has no wire, no file-list segments and no sub-list dispatch, so nothing
+//! here can reach that machinery. Multi-segment coverage needs a wire test
+//! whose tree exceeds `MIN_FILECNT_LOOKAHEAD`.
 
 #[cfg(unix)]
 mod test_timeout;
 
 #[cfg(unix)]
-mod stress {
+mod local_recursion {
     use std::fs;
     use std::path::Path;
     use std::time::Duration;
@@ -25,8 +22,9 @@ mod stress {
 
     use super::test_timeout::run_with_timeout;
 
-    /// Generous timeout for stress tests that create thousands of files.
-    const STRESS_TIMEOUT: Duration = Duration::from_secs(120);
+    /// Deadlock guard, not a runtime budget - the whole file runs in well
+    /// under a second, so any expiry means the walk has wedged.
+    const HANG_GUARD: Duration = Duration::from_secs(120);
 
     /// Creates a file with the given content, building parent directories as needed.
     fn touch(path: &Path, contents: &[u8]) {
@@ -86,15 +84,14 @@ mod stress {
         run_client(config).expect("transfer with delete succeeds")
     }
 
-    /// Deep nesting (depth=50): 50 levels of nested directories, each with 2 files.
-    /// Total: 100 files across 50 directory levels.
+    /// Deep nesting (depth=50): 50 levels of nested directories, each with 2
+    /// files. Total: 100 files across 50 directory levels.
     ///
-    /// Exercises incremental recursion's progressive directory discovery at extreme
-    /// depth. Each level must be discovered and its entries sorted independently.
+    /// Pins that the local walk descends to a depth well past any single-level
+    /// assumption, creating every intermediate directory in the destination.
     #[test]
-    #[ignore = "stress test - run manually"]
     fn deep_nesting_50_levels() {
-        run_with_timeout(STRESS_TIMEOUT, || {
+        run_with_timeout(HANG_GUARD, || {
             let temp = tempdir().expect("tempdir");
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
@@ -145,12 +142,11 @@ mod stress {
     /// Wide directory (1000 files): single directory containing 1000 files of
     /// varying sizes (1B to ~256B).
     ///
-    /// Exercises the file list sorting and batching when a single directory yields
-    /// a large number of entries under incremental recursion.
+    /// Pins that a single directory yielding a large entry count transfers
+    /// completely - the fan-out counterpart to the depth case above.
     #[test]
-    #[ignore = "stress test - run manually"]
     fn wide_directory_1000_files() {
-        run_with_timeout(STRESS_TIMEOUT, || {
+        run_with_timeout(HANG_GUARD, || {
             let temp = tempdir().expect("tempdir");
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
@@ -189,12 +185,11 @@ mod stress {
     /// directory containing 20 files. Total: 10 * 20 = 200 leaf files, plus
     /// intermediate levels.
     ///
-    /// Exercises incremental recursion's handling of multiple concurrent subtree
-    /// discoveries with non-trivial fan-out at the leaf level.
+    /// Pins depth and fan-out together, so a fix that handles either shape
+    /// alone cannot pass.
     #[test]
-    #[ignore = "stress test - run manually"]
     fn mixed_deep_and_wide() {
-        run_with_timeout(STRESS_TIMEOUT, || {
+        run_with_timeout(HANG_GUARD, || {
             let temp = tempdir().expect("tempdir");
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
@@ -265,16 +260,14 @@ mod stress {
         });
     }
 
-    /// Incremental update: transfers a tree, then adds, removes, and modifies
-    /// files before transferring again with `--delete`. Verifies that only the
-    /// changes are applied and deletions are propagated.
+    /// Re-run after edits: transfers a tree, then adds, removes and modifies
+    /// files before transferring again with `--delete`.
     ///
-    /// This tests incremental recursion's interaction with quick-check and
-    /// deletion logic across multiple transfer passes.
+    /// Pins that a second pass applies only the changes and propagates the
+    /// deletions - the quick-check and delete paths across two passes.
     #[test]
-    #[ignore = "stress test - run manually"]
     fn incremental_update_add_remove_modify() {
-        run_with_timeout(STRESS_TIMEOUT, || {
+        run_with_timeout(HANG_GUARD, || {
             let temp = tempdir().expect("tempdir");
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
