@@ -579,6 +579,108 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn global_uid_declared_after_a_module_section_still_applies_to_it() {
+        // upstream: loadparm.c:347-348 - `uid` is P_LOCAL and reached through
+        // FN_LOCAL_STRING, whose else-branch reads the live `Vars.l.uid`.
+        // clientserver.c:781-783 performs that read when a client selects the
+        // module, long after lp_load() returned, so a global declared *below*
+        // the section still supplies its default. Resolving the default at the
+        // `[name]` header instead left the module at `uid = None`, which
+        // drops a root daemon to `nobody`.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let file = write_config(&format!(
+            "use chroot = no\n[late]\npath = {}\n[global]\nuid = 0\ngid = 0\n",
+            path.display()
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].uid,
+            Some(0),
+            "a global uid below the section must still be its default"
+        );
+    }
+
+    #[test]
+    fn global_uid_declared_after_a_merge_still_applies_to_the_merged_module() {
+        // upstream: params.c:include_config(val, 0) - `&merge` shares the
+        // caller's `Vars`, and the section it adds is looked up through the
+        // same FN_LOCAL_STRING fallback (loadparm.c:347-348) once the whole
+        // file has been read. The upstream testsuite's write_daemon_conf()
+        // emits `&merge` among the leading globals and appends the root-only
+        // `uid = 0` last, so the merged module has nothing but this fallback.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("merged");
+        fs::create_dir(&path).expect("create dir");
+
+        let merged = write_config(&format!("[merged]\npath = {}\n", path.display()));
+        let file = write_config(&format!(
+            "use chroot = no\n&merge = {}\nuid = 0\ngid = 0\n",
+            merged.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "merged");
+        assert_eq!(
+            result.modules[0].uid,
+            Some(0),
+            "a global uid below the `&merge` must still reach the merged module"
+        );
+    }
+
+    #[test]
+    fn module_uid_wins_over_a_global_uid_declared_after_it() {
+        // upstream: loadparm.c:347 - the then-branch `if (LP_SNUM_OK(i) &&
+        // iSECTION(i).uid)` short-circuits before the `Vars.l` fallback is ever
+        // consulted, so a value the section set itself is never reconsidered.
+        // Guards the fallback above from inverting into an override.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let file = write_config(&format!(
+            "use chroot = no\n[explicit]\npath = {}\nuid = 1\n[global]\nuid = 0\n",
+            path.display()
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].uid,
+            Some(1),
+            "an explicit module uid must outrank a later global"
+        );
+    }
+
+    #[test]
+    fn global_read_only_declared_after_a_module_section_does_not_apply_to_it() {
+        // upstream: loadparm.c:351 - `read only` is reached through
+        // FN_LOCAL_BOOL, which returns `iSECTION(i).read_only` with no
+        // `Vars.l` fallback. That field was filled by init_section() from
+        // `Vars.l` when the `[name]` header created the section, so a bool- or
+        // integer-typed P_LOCAL global below the section is invisible to it -
+        // the opposite of the string-typed `uid` above. Pins the half of
+        // `GlobalModuleDefaults::resolve` that must stay creation-time.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let file = write_config(&format!(
+            "use chroot = no\n[late_bool]\npath = {}\n[global]\nread only = no\n",
+            path.display()
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert!(
+            result.modules[0].read_only,
+            "a global `read only` below the section must not reach it"
+        );
+    }
+
+    #[test]
     fn backslash_continuation_joins_directive_value() {
         // upstream: params.c:Continuation() - a line ending in a backslash is
         // joined with the next physical line into one logical directive. Split
