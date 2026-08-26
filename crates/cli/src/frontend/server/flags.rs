@@ -410,6 +410,18 @@ pub(super) struct ServerLongFlags {
     /// honours it; without recognising the flag the value leaked into the
     /// positional list and became a stray destination path.
     pub(super) backup_suffix: Option<String>,
+    /// The `--backup-dir` value the client forwarded.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/options.c:2807-2808` - `safe_arg("--backup-dir", backup_dir)`.
+    pub(super) backup_dir: Option<String>,
+    /// The `--temp-dir` value the client forwarded.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/options.c:2926-2927` - `safe_arg("--temp-dir", tmpdir)`.
+    pub(super) temp_dir: Option<String>,
 
     /// User id/name map spec forwarded by the client (upstream: `--usermap=SPEC`).
     ///
@@ -513,6 +525,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delete_missing_args: false,
         ignore_missing_args: false,
         backup_suffix: None,
+        backup_dir: None,
+        temp_dir: None,
         usermap: None,
         groupmap: None,
         skip_compress: None,
@@ -782,12 +796,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
 /// Stores the value of a two-arg long flag (`--flag VALUE`) into the
 /// matching field of [`ServerLongFlags`].
 ///
-/// `--backup-dir` and `--temp-dir` are recognised so the value slot does
-/// not leak into the positional argument list, but the corresponding
-/// fields are not currently consumed by `ServerLongFlags`. Recognising
-/// them here is the smallest defence that keeps the alt-dest interop
-/// scenario (`--copy-dest /path . dest/`) from mis-mapping the value to
-/// the destination root.
+/// Recognising a flag here also keeps its value slot out of the positional
+/// argument list, which is what stops the alt-dest interop scenario
+/// (`--copy-dest /path . dest/`) mis-mapping the value to the destination
+/// root. That is necessary but NOT sufficient: a flag can be recognised,
+/// allow-listed, and still have its value discarded, which is how
+/// `-b --backup-dir=DIR` silently degraded to suffix backups.
 ///
 /// # Upstream Reference
 ///
@@ -811,9 +825,8 @@ fn apply_two_arg_long_flag(flag: &str, value: &str, flags: &mut ServerLongFlags)
             PathBuf::from(value),
         )),
         "--files-from" => flags.files_from = Some(value.to_owned()),
-        // Values are drained but not currently consumed; recognising the
-        // flag here keeps the value out of the positional list.
-        "--backup-dir" | "--temp-dir" => {}
+        "--backup-dir" => flags.backup_dir = Some(value.to_owned()),
+        "--temp-dir" => flags.temp_dir = Some(value.to_owned()),
         _ => {}
     }
 }
@@ -846,6 +859,15 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.confine_root = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-delete=") {
         flags.max_delete = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--backup-dir=") {
+        // upstream: options.c:2807-2808 - safe_arg("--backup-dir", backup_dir).
+        // The joined spelling is the one a restricted wrapper sends, and it
+        // reaches here rather than apply_two_arg_long_flag - so BOTH forms
+        // need an arm or the fix is half a fix.
+        flags.backup_dir = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--temp-dir=") {
+        // upstream: options.c:2926-2927 - safe_arg("--temp-dir", tmpdir).
+        flags.temp_dir = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--suffix=") {
         // upstream: options.c:2812-2813 - safe_arg("--suffix", backup_suffix).
         flags.backup_suffix = Some(value.to_owned());

@@ -361,6 +361,18 @@ where
     if let Some(suffix) = &long_flags.backup_suffix {
         config.backup_suffix = Some(suffix.clone());
     }
+    // upstream: options.c:2807-2808 - `safe_arg("--backup-dir", backup_dir)`.
+    // The receiver must place backups UNDER this directory; without it `-b`
+    // silently degrades to in-place suffix backups, which is a different
+    // on-disk layout, not a cosmetic difference.
+    if let Some(dir) = &long_flags.backup_dir {
+        config.backup_dir = Some(dir.clone());
+    }
+    // upstream: options.c:2926-2927 - `safe_arg("--temp-dir", tmpdir)`. Shares
+    // the same decode site as `--backup-dir`, so it shared the same defect.
+    if let Some(dir) = &long_flags.temp_dir {
+        config.temp_dir = Some(std::path::PathBuf::from(dir));
+    }
     // upstream: options.c:2912-2913 / 2915-2916 - `--usermap=SPEC` / `--groupmap=SPEC`
     // are emitted in the am_sender block so the server receiver maps ownership.
     // A malformed spec leaves the field unset (mirroring the daemon path,
