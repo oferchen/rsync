@@ -43,7 +43,7 @@ mod token_loop;
 
 use std::io::{self, Read};
 use std::num::NonZeroU8;
-use std::path::Path;
+use std::path::PathBuf;
 
 use protocol::ProtocolVersion;
 
@@ -61,7 +61,7 @@ pub use crate::token_reader::TokenReader;
 /// Groups protocol version, checksum parameters, and write options into a
 /// single struct shared between [`send_file_request`] and [`process_file_response`].
 #[derive(Debug)]
-pub struct RequestConfig<'a> {
+pub struct RequestConfig {
     /// Protocol version for encoding.
     pub protocol: ProtocolVersion,
     /// Whether to write iflags (protocol >= 29).
@@ -70,10 +70,10 @@ pub struct RequestConfig<'a> {
     pub checksum_length: NonZeroU8,
     /// Checksum algorithm for verification.
     pub checksum_algorithm: engine::signature::SignatureAlgorithm,
-    /// Reference to negotiated algorithms for checksum verification.
-    pub negotiated_algorithms: Option<&'a protocol::NegotiationResult>,
+    /// Negotiated algorithms for checksum verification.
+    pub negotiated_algorithms: Option<protocol::NegotiationResult>,
     /// Compatibility flags.
-    pub compat_flags: Option<&'a protocol::CompatibilityFlags>,
+    pub compat_flags: Option<protocol::CompatibilityFlags>,
     /// Checksum seed from protocol setup.
     pub checksum_seed: i32,
     /// Whether to use sparse file writing.
@@ -81,7 +81,7 @@ pub struct RequestConfig<'a> {
     /// Whether to fsync after write.
     pub do_fsync: bool,
     /// Temporary directory for staging received files before final placement.
-    pub temp_dir: Option<&'a Path>,
+    pub temp_dir: Option<PathBuf>,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
@@ -157,7 +157,7 @@ pub struct RequestConfig<'a> {
     pub append_verify: bool,
 }
 
-impl RequestConfig<'_> {
+impl RequestConfig {
     /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
     ///
     /// Returns a compressed token reader when the negotiated algorithms include
@@ -190,7 +190,7 @@ impl RequestConfig<'_> {
 /// without requiring them as individual function arguments.
 pub struct ResponseContext<'a> {
     /// Protocol and checksum configuration shared with the request phase.
-    pub config: &'a RequestConfig<'a>,
+    pub config: &'a RequestConfig,
     /// SEC-1.e parent-dirfd carrier rooted at the destination tree.
     ///
     /// Threaded through to the per-entry response processing so the
@@ -459,7 +459,7 @@ mod tests {
     }
 
     /// Builds a minimal protocol-31 `RequestConfig` with iflags enabled.
-    fn iflags_request_config() -> RequestConfig<'static> {
+    fn iflags_request_config() -> RequestConfig {
         RequestConfig {
             protocol: ProtocolVersion::from_supported(31).expect("31 is supported"),
             write_iflags: true,

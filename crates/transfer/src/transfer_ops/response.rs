@@ -98,10 +98,14 @@ pub fn process_file_response<R: Read>(
         // the temp leaf reduce to a single component beneath `ctx.dest_dir`.
         // --temp-dir or multi-component paths take the path-based fallback.
         #[cfg(unix)]
-        let (f, guard) =
-            open_tmpfile_sandboxed(&file_path, ctx.config.temp_dir, ctx.sandbox, ctx.dest_dir)?;
+        let (f, guard) = open_tmpfile_sandboxed(
+            &file_path,
+            ctx.config.temp_dir.as_deref(),
+            ctx.sandbox,
+            ctx.dest_dir,
+        )?;
         #[cfg(not(unix))]
-        let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir)?;
+        let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir.as_deref())?;
         (f, guard, true)
     };
 
