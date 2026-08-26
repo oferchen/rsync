@@ -457,21 +457,26 @@ pub(in crate::receiver) enum DeletePassPhase {
 /// When `backup_config` is `Some`, backs up the existing destination file
 /// before the rename (upstream: `receiver.c:538 make_backup(fname, False)`).
 ///
-/// A failed rename (or backup) is logged and does not abort the sweep -
-/// remaining files are still renamed, matching upstream which calls
-/// `rsyserr(FERROR_XFER, ...)` and continues. The failure is NOT silently
-/// swallowed, though: this returns the accumulated `io_error` bitfield
-/// (`IOERR_GENERAL` when any rename/backup failed, else 0) so the caller can
-/// fold it into the transfer's `io_error` and surface exit code 23
-/// (`RERR_PARTIAL`). Upstream achieves the same via the
-/// `FERROR_XFER -> got_xfer_error -> RERR_PARTIAL` side channel
-/// (log.c:309-316, cleanup.c:210-218, main.c:1630-1631).
+/// A failure does not abort the sweep - remaining files are still renamed -
+/// but the two failure kinds part company, exactly as upstream's do:
 ///
-/// This matters on Linux kernels 5.13-5.18: those have Landlock but lack
-/// `LANDLOCK_ACCESS_FS_REFER` (added in 5.19), so the cross-directory rename
-/// out of the `.~tmp~` staging dir is denied with `EACCES` under a sandbox.
-/// Without the returned io_error bit the file would silently not be updated
-/// while the process still exited 0 - silent data loss.
+/// - A failed BACKUP skips the staged rename for that file
+///   (`receiver.c:694` - `if (make_backups > 0 && !make_backup(fname, False))
+///   continue;`). Renaming anyway would overwrite the very pre-image the
+///   backup was meant to preserve, leaving no copy of it anywhere. The
+///   diagnostic `make_backup()` prints is `FERROR`, which carries no
+///   exit-code bit (log.c:336-341), so the run's status is unchanged -
+///   measured against rsync 3.5.0.
+/// - A failed RENAME is `rsyserr(FERROR_XFER, ...)` (`receiver.c:709-712`),
+///   which sets `got_xfer_error` and forces exit 23 (`RERR_PARTIAL`). That is
+///   what the returned `IOERR_GENERAL` bit stands in for
+///   (log.c:309-316, cleanup.c:210-218, main.c:1630-1631).
+///
+/// The rename half matters on Linux kernels 5.13-5.18: those have Landlock but
+/// lack `LANDLOCK_ACCESS_FS_REFER` (added in 5.19), so the cross-directory
+/// rename out of the `.~tmp~` staging dir is denied with `EACCES` under a
+/// sandbox. Without the returned io_error bit the file would silently not be
+/// updated while the process still exited 0 - silent data loss.
 pub(in crate::receiver) fn handle_delayed_updates(
     delayed: &[(PathBuf, PathBuf)],
     backup_config: Option<crate::disk_commit::BackupConfig>,
@@ -481,58 +486,74 @@ pub(in crate::receiver) fn handle_delayed_updates(
 
     use crate::generator::io_error_flags::IOERR_GENERAL;
 
-    // Mirrors upstream's got_xfer_error: any rename/backup failure here is a
-    // transfer error that must yield exit 23 (RERR_PARTIAL), not a silent 0.
+    // Mirrors upstream's got_xfer_error: a failed rename here is a transfer
+    // error that must yield exit 23 (RERR_PARTIAL), not a silent 0. A failed
+    // backup is upstream's FERROR-only path and contributes no bit.
     let mut io_error = 0;
 
     for (staging_path, final_path) in delayed {
-        // upstream: receiver.c:538-539 - make_backup(fname, False)
-        if let Some(ref bc) = backup_config {
-            if final_path.exists() {
-                let backup_path = engine::compute_backup_path(
-                    &bc.dest_dir,
-                    final_path,
-                    None,
-                    bc.backup_dir.as_deref(),
-                    &bc.suffix,
-                );
-                if let Some(parent) = backup_path.parent() {
-                    if !parent.exists() {
-                        let _ = fs::create_dir_all(parent);
-                    }
+        // upstream: receiver.c:694 - make_backup(fname, False)
+        if let Some(ref bc) = backup_config
+            && final_path.exists()
+        {
+            let backup_path = engine::compute_backup_path(
+                &bc.dest_dir,
+                final_path,
+                None,
+                bc.backup_dir.as_deref(),
+                &bc.suffix,
+            );
+            // upstream: backup.c:128-139 copy_valid_path() - the backup parent
+            // tree is built inside get_backup_name(), and a `backup mkdir %s
+            // failed` there makes make_backup() return 0. Discarding this
+            // error hid the real errno: the sweep went on to rename into a
+            // directory that was never created, so the reported failure was
+            // the derived `ENOENT` from the rename rather than the `EACCES`
+            // that actually stopped the backup.
+            let placed = match backup_path.parent() {
+                Some(parent) if !parent.exists() => fs::create_dir_all(parent),
+                _ => Ok(()),
+            }
+            .and_then(|()| fs::rename(final_path, &backup_path));
+
+            match placed {
+                Ok(()) => {
+                    // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1)
+                    // RENAME success notice. The delayed-updates sweep is
+                    // the third backup site (alongside disk-commit and
+                    // local-copy); upstream emits this from
+                    // backup.c:make_backup() regardless of caller.
+                    engine::trace_make_backup_rename(&final_path.display().to_string());
+                    // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1)
+                    // rprintf(FINFO, "backed up %s to %s\n", fname, buf)
+                    // fires on success label of make_backup() after the
+                    // rename completes. Paths are displayed relative to
+                    // the destination root to match the upstream test
+                    // assertions (testsuite/backup.test:29,43,56).
+                    let final_rel = final_path.strip_prefix(&bc.dest_dir).unwrap_or(final_path);
+                    let backup_rel = backup_path
+                        .strip_prefix(&bc.dest_dir)
+                        .unwrap_or(&backup_path);
+                    info_log!(
+                        Backup,
+                        1,
+                        "backed up {} to {}",
+                        final_rel.display(),
+                        backup_rel.display()
+                    );
                 }
-                match fs::rename(final_path, &backup_path) {
-                    Ok(()) => {
-                        // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1)
-                        // RENAME success notice. The delayed-updates sweep is
-                        // the third backup site (alongside disk-commit and
-                        // local-copy); upstream emits this from
-                        // backup.c:make_backup() regardless of caller.
-                        engine::trace_make_backup_rename(&final_path.display().to_string());
-                        // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1)
-                        // rprintf(FINFO, "backed up %s to %s\n", fname, buf)
-                        // fires on success label of make_backup() after the
-                        // rename completes. Paths are displayed relative to
-                        // the destination root to match the upstream test
-                        // assertions (testsuite/backup.test:29,43,56).
-                        let final_rel = final_path.strip_prefix(&bc.dest_dir).unwrap_or(final_path);
-                        let backup_rel = backup_path
-                            .strip_prefix(&bc.dest_dir)
-                            .unwrap_or(&backup_path);
-                        info_log!(
-                            Backup,
-                            1,
-                            "backed up {} to {}",
-                            final_rel.display(),
-                            backup_rel.display()
-                        );
-                    }
-                    Err(e) => {
-                        // upstream: make_backup() -> rsyserr(FERROR_XFER, ...)
-                        // sets got_xfer_error -> RERR_PARTIAL.
-                        eprintln!("rsync: backup failed for {}: {e}", final_path.display());
-                        io_error |= IOERR_GENERAL;
-                    }
+                Err(e) => {
+                    // upstream: receiver.c:694 - `!make_backup(...)` skips
+                    // straight to the next delayed entry. The staged file
+                    // stays in the partial dir and the destination keeps its
+                    // pre-transfer contents, so the pre-image the backup
+                    // could not preserve is not destroyed instead.
+                    //
+                    // No io_error bit: make_backup() reports through FERROR,
+                    // which log.c:336-341 routes to stderr without setting
+                    // got_xfer_error, so upstream still exits 0 here.
+                    eprintln!("rsync: backup failed for {}: {e}", final_path.display());
+                    continue;
                 }
             }
         }
