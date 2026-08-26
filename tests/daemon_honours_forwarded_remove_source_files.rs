@@ -22,20 +22,30 @@
 //! split, because both parsers can be "correct" about a field nothing reads;
 //! this test asserts the files are GONE from the module after a real transfer.
 //!
-//! WHY THIS WAITS INSTEAD OF STATTING IMMEDIATELY. The unlink is DEFERRED, not
-//! done inline at send time: the sender marks the entry pending and only
-//! removes the file once the receiver confirms the commit with `MSG_SUCCESS`
-//! (`sender.c:131-182 successful_send()`, mirrored at
-//! `generator/transfer/transfer_loop.rs:1145-1157`). The client process can
-//! therefore exit before the daemon's removal has landed, so reading the
-//! filesystem the instant `status()` returns is an UNSYNCHRONISED read of a
-//! peer's work - it measures which process won a race, not what the daemon
-//! did. Measured: it passed on macOS and on the musl cell and failed on the
-//! Linux `--all-features` cell, where the client exits sooner.
+//! WHY THIS CELL IS FEATURE-SENSITIVE, AND WHAT A RED HERE MEANS.
 //!
-//! The bounded wait below is a synchronisation barrier, not a retry: nothing is
-//! re-attempted, and a daemon that never removes the file still fails the test
-//! when the deadline expires.
+//! The daemon worker runs behind a seccomp filter whose allowlist is built by
+//! `worker_seccomp_allowlist()` (`daemon/sections/seccomp.rs:152`). That list
+//! carries `SYS_unlinkat` and has no `SYS_unlink`. `std::fs::remove_file` calls
+//! glibc `unlink()`, which is `__NR_unlink` on x86_64, so the kernel refuses
+//! the removal outright:
+//!
+//! ```text
+//! unlink(".../mod/f.txt") = -1 EPERM (Operation not permitted)
+//! rsync: [sender] sender failed to remove <path>: Operation not permitted (1)
+//! ```
+//!
+//! The filter is gated `cfg(all(target_os = "linux", feature =
+//! "daemon-seccomp"))`, which is why the cell splits by FEATURE SET and not by
+//! platform or by speed: a `--no-default-features` build never compiles the
+//! filter in and the unlink succeeds, while `--all-features` engages it and the
+//! unlink is refused. On a non-Linux host the filter does not exist at all, so
+//! a green run there says nothing about CI.
+//!
+//! A red here is therefore a REFUSED SYSCALL, not a lost race, and it is
+//! permanent - no amount of waiting changes it. Verify any green with the
+//! filter provably engaged (the daemon log line `seccomp BPF filter engaged`),
+//! using `OC_RSYNC_NO_SECCOMP=1` as the control leg.
 //!
 //! Skip conditions (the test passes with a printed reason):
 //! - Loopback TCP is unavailable.
@@ -129,7 +139,12 @@ fn pull_removing_sources(spelling: &str) -> Option<(bool, bool, bool)> {
     // Observe BEFORE killing the daemon: it is the daemon that performs the
     // removal, so tearing it down first would guarantee the very absence of
     // work this test is trying to detect.
-    let source_remains = source_still_present_after_settling(&module.join("f.txt"));
+    //
+    // Observed, not waited for. A bounded wait here would be a waiver: the
+    // removal either happens or is refused outright, and a wait cannot turn a
+    // refusal into a pass - it can only spend the deadline and report the same
+    // failure later, while hiding the shape of it from anyone reading the test.
+    let source_remains = module.join("f.txt").exists();
 
     let _ = daemon.kill();
     let _ = daemon.wait();
@@ -139,23 +154,6 @@ fn pull_removing_sources(spelling: &str) -> Option<(bool, bool, bool)> {
         source_remains,
         dest.join("f.txt").exists(),
     ))
-}
-
-/// Waits for the daemon's deferred source removal to land, and reports whether
-/// the file is STILL there once the wait is over.
-///
-/// The deadline is generous because it bounds a failure, not a success: a
-/// daemon that removes the file returns as soon as it has, and a daemon that
-/// never removes it pays the full wait exactly once and then fails the test.
-fn source_still_present_after_settling(source: &Path) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if !source.exists() {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    source.exists()
 }
 
 /// Both spellings name the same option in `parse_arguments()`;
