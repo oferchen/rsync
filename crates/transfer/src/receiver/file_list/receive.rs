@@ -399,6 +399,20 @@ impl ReceiverContext {
         // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
 
+        // Counterpart to `reclaim_oldest_segment`'s "reclaiming segment" line:
+        // the receiver logged segment RELEASE but never segment ARRIVAL, so
+        // `ndx_segments.len()` - which is `pub(in crate::receiver)` - had no
+        // observable surface outside this crate. Without it a harness driving the
+        // real binary cannot tell one segment from many, which is what makes an
+        // end-to-end multi-segment assertion vacuous.
+        debug_log!(
+            Flist,
+            2,
+            "received segment {} entries [{flat_start}..{}) ndx_start {seg_ndx_start}",
+            self.ndx_segments.len() - 1,
+            self.file_list.len()
+        );
+
         // Restore the cached reader so the next segment continues the same
         // compression state (upstream's static recv_file_entry() variables).
         self.flist_reader_cache = Some(flist_reader);

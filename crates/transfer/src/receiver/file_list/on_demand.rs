@@ -429,6 +429,18 @@ mod tests {
             "4 level-1 dirs + 6 files across 3 per-directory sub-lists"
         );
 
+        // The SEGMENT COUNT is the point, and nothing above checks it: every
+        // other assertion in this test holds identically if all six files
+        // arrived in ONE segment, so "across 3 per-directory sub-lists" was a
+        // claim in a message rather than a checked fact. This is also what makes
+        // the "received segment" debug line non-vacuous - that line reports
+        // `ndx_segments.len()`, so pinning the count here pins what it prints.
+        assert_eq!(
+            ctx.ndx_segments.len(),
+            4,
+            "initial level-1 list plus one segment per sub-list (a, b, c)"
+        );
+
         let names: std::collections::BTreeSet<String> = ctx
             .file_list()
             .iter()
