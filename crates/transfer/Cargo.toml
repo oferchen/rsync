@@ -147,7 +147,7 @@ tracing = ["dep:tracing"]
 tempfile = { workspace = true }
 filetime = { workspace = true }
 test-support = { path = "../test-support" }
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "stdio"] }
 platform = { path = "../platform" }
 criterion = { workspace = true }
 proptest = { workspace = true }
