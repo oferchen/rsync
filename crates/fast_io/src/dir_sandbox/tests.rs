@@ -1144,3 +1144,165 @@ fn real_fd_exhaustion_warns_once_and_surfaces_emfile_to_the_caller() {
         "the caller must still see EMFILE, not an error re-derived after the hint"
     );
 }
+
+/// The lowest descriptor number the kernel would hand out right now.
+///
+/// `open(2)` always returns the lowest free number, so opening and closing
+/// one probe file names the number the *next* allocation will take. Setting
+/// `RLIMIT_NOFILE` to that number plus one therefore admits exactly one
+/// further descriptor.
+fn next_free_fd() -> u64 {
+    let probe = tempfile::tempfile().expect("probe descriptor");
+    let raw = probe.as_raw_fd();
+    assert!(raw >= 0, "probe descriptor must be valid");
+    raw as u64
+}
+
+/// The *confined* peer-tail walk must emit the descriptor-exhaustion hint
+/// too, and must stay silent when the same open fails for an ordinary
+/// reason.
+///
+/// `ConfinedWalk::descend` is the walk that can genuinely exhaust the
+/// descriptor table: it holds one dirfd per live path component, so a deep
+/// peer tail costs a descriptor per level where a single path-based
+/// `open()` costs one in total. Upstream warns from exactly that function -
+/// the `EMFILE`/`ENFILE` arm sits inside `ds_descend()`, not at the anchor
+/// open - so a silent `descend` was the divergence, while the pre-existing
+/// emit in `openat_dir` covers only the unconfined sibling walk.
+///
+/// Three cells, each failing for a different reason:
+///
+/// 1. A walk that resolves proves the fixture is a *working* confined walk
+///    rather than one failing for an unrelated reason, and warms any
+///    one-shot capability probe before the ceiling drops.
+/// 2. A walk refused with `ENOENT` is the negative control. It leaves
+///    `descend` through the *same* `Err(err)` arm the hint now hangs off,
+///    so widening [`should_warn_fd_exhaustion`](super::should_warn_fd_exhaustion)
+///    to fire on any error - the mutation a positives-only suite cannot
+///    see - turns this leg red.
+/// 3. The measured run pins both halves of the emit: the hint appears
+///    exactly once, and the caller still observes `EMFILE` rather than an
+///    errno re-derived after the warning was printed.
+///
+/// Both the `RLIMIT_NOFILE` change and the stderr redirect are
+/// process-global. That is safe only because nextest runs each test in its
+/// own process. Every descriptor the measured run needs is allocated
+/// *before* the limit drops, and both globals are restored before any
+/// assertion runs so a failing assert can still allocate for its output.
+///
+/// upstream: syscall.c:2924-2936, inside `ds_descend()` (`syscall.c:2891`).
+#[test]
+fn confined_walk_warns_on_fd_exhaustion_and_stays_silent_on_enoent() {
+    use rustix::io::{Errno, dup};
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    use rustix::stdio::{dup2_stderr, stderr};
+    use std::io::{Read, Seek, SeekFrom};
+    use std::path::Path;
+
+    let (_keep, anchor) = canonical_tempdir();
+    let peer_tail = Path::new("archive/2026/hosts");
+    std::fs::create_dir_all(anchor.join(peer_tail)).expect("build peer tail");
+
+    // Controls, both under the ambient limit, both required to be silent.
+    let mut control_capture = tempfile::tempfile().expect("control capture file");
+    let saved_stderr = dup(stderr()).expect("save stderr");
+    dup2_stderr(&control_capture).expect("redirect stderr");
+    let resolved = DirSandbox::open_dest_anchor_confined(
+        &anchor,
+        peer_tail,
+        super::ConfinePolicy::confined(ExcludeNothing),
+    );
+    let missing = DirSandbox::open_dest_anchor_confined(
+        &anchor,
+        Path::new("archive/absent"),
+        super::ConfinePolicy::confined(ExcludeNothing),
+    );
+    dup2_stderr(&saved_stderr).expect("restore stderr");
+
+    let mut control_stderr = String::new();
+    control_capture
+        .seek(SeekFrom::Start(0))
+        .expect("rewind control capture");
+    control_capture
+        .read_to_string(&mut control_stderr)
+        .expect("read control stderr");
+
+    resolved.expect("the confined walk must resolve an existing tail under the ambient limit");
+    let missing = missing.expect_err("a peer tail component that does not exist must fail");
+    assert_eq!(
+        missing.raw_os_error(),
+        Some(Errno::NOENT.raw_os_error()),
+        "the negative control must leave `descend` with ENOENT, not some other errno"
+    );
+    assert_eq!(
+        control_stderr, "",
+        "neither a resolving walk nor an ordinary ENOENT may print the \
+         descriptor-exhaustion hint; got: {control_stderr:?}"
+    );
+
+    // Every descriptor the measured run needs is allocated here, before the
+    // ceiling drops.
+    let mut captured = tempfile::tempfile().expect("stderr capture file");
+    let saved_stderr = dup(stderr()).expect("save stderr");
+    let original = getrlimit(Resource::Nofile);
+
+    // One descriptor of headroom: `open_trusted_dir` is a single `open()`
+    // and takes it, so the first `descend` component is the allocation the
+    // kernel refuses.
+    let ceiling = next_free_fd() + 1;
+
+    dup2_stderr(&captured).expect("redirect stderr");
+    let lowered = setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(ceiling),
+            maximum: original.maximum,
+        },
+    );
+    let observed = getrlimit(Resource::Nofile).current;
+
+    // Gate the measurement on the drop actually landing. `setrlimit` refuses
+    // a request above `rlim_max`, and running the walk regardless would turn
+    // a failed drop into a silent pass.
+    let outcome = (lowered.is_ok() && observed == Some(ceiling)).then(|| {
+        DirSandbox::open_dest_anchor_confined(
+            &anchor,
+            peer_tail,
+            super::ConfinePolicy::confined(ExcludeNothing),
+        )
+    });
+
+    setrlimit(Resource::Nofile, original).expect("restore RLIMIT_NOFILE");
+    dup2_stderr(&saved_stderr).expect("restore stderr");
+
+    let mut emitted = String::new();
+    captured.seek(SeekFrom::Start(0)).expect("rewind capture");
+    captured
+        .read_to_string(&mut emitted)
+        .expect("read captured stderr");
+
+    assert_eq!(
+        observed,
+        Some(ceiling),
+        "the harness could not lower RLIMIT_NOFILE to {ceiling} \
+         (setrlimit: {lowered:?}, original: {original:?}); nothing below this \
+         point would have been exercised"
+    );
+    let outcome = outcome.expect("the measurement is gated on the drop above");
+
+    let err = outcome.expect_err(
+        "the confined walk completed with one descriptor of headroom; no \
+         descriptor pressure was applied, so this cell asserted nothing",
+    );
+    assert_eq!(
+        err.raw_os_error(),
+        Some(Errno::MFILE.raw_os_error()),
+        "the caller must still see EMFILE, not an error re-derived after the hint"
+    );
+    assert_eq!(
+        emitted.matches(super::FD_EXHAUSTION_HINT).count(),
+        1,
+        "the confined walk must print the hint exactly once under \
+         RLIMIT_NOFILE={ceiling}; got: {emitted:?}"
+    );
+}

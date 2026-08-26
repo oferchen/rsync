@@ -476,23 +476,34 @@ fn should_warn_fd_exhaustion(err: &io::Error, warned: &AtomicBool) -> bool {
 /// would not. Upstream prints a one-shot hint on `EMFILE`/`ENFILE` for
 /// exactly this reason (upstream: syscall.c:2924-2936); without it the
 /// bare "Too many open files" is opaque about which limit to raise.
-///
-/// Upstream brackets its `rprintf` with `int e = errno; ... errno = e;`
-/// because `rprintf` can itself clobber the global `errno`. Rust has no
-/// such hazard here: the failure is an owned [`io::Error`] moved through
-/// this function, so nothing the emit does can alter what the caller
-/// observes. The guarantee is pinned by test rather than by copying a
-/// save/restore dance that would be a no-op.
+/// [`warn_once_on_fd_exhaustion`] owns that decision for both walks.
 fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     let result = openat_dir_strict(parent_fd, child_name);
 
-    if let Err(err) = &result
-        && should_warn_fd_exhaustion(err, &FD_EXHAUSTION_WARNED)
-    {
-        eprintln!("{FD_EXHAUSTION_HINT}");
+    if let Err(err) = &result {
+        warn_once_on_fd_exhaustion(err);
     }
 
     result
+}
+
+/// Print the descriptor-exhaustion hint if `err` is the first `EMFILE` or
+/// `ENFILE` this process has seen from a component open.
+///
+/// The sole owner of the text, the gate and the channel. Both walks that
+/// hold a dirfd per path component route their failures here - the
+/// unconfined [`openat_dir`] and the confined
+/// [`ConfinedWalk::descend`] - so there is one latch, and therefore one
+/// line per process however many walks hit the ceiling.
+///
+/// `err` is borrowed and the return is `()`: the emit cannot touch what the
+/// caller propagates. That is the port's answer to upstream's
+/// `int e = errno; ... errno = e;` bracket, which exists only because
+/// `rprintf` can clobber the global `errno`.
+fn warn_once_on_fd_exhaustion(err: &io::Error) {
+    if should_warn_fd_exhaustion(err, &FD_EXHAUSTION_WARNED) {
+        eprintln!("{FD_EXHAUSTION_HINT}");
+    }
 }
 
 /// The resolution itself, with no diagnostics attached.
@@ -793,9 +804,23 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
 
     /// Descend one component, following an in-tree directory symlink.
     ///
+    /// # Descriptor exhaustion
+    ///
+    /// This walk pushes one dirfd per path component and holds them all for
+    /// the duration, so a deep peer tail can exhaust the open-file limit
+    /// where a single path-based `open()` would not. A hard open failure is
+    /// therefore offered to [`warn_once_on_fd_exhaustion`], which prints the
+    /// one-shot hint for `EMFILE`/`ENFILE` and stays silent otherwise.
+    ///
+    /// The call sits on the hard-error arm alone, mirroring upstream: its
+    /// `EMFILE`/`ENFILE` test is nested inside
+    /// `if (errno != ENOTDIR && !NOFOLLOW_HIT_SYMLINK(errno))`, so the two
+    /// errnos that fall through to the `readlink` probe never reach it.
+    ///
     /// # Upstream Reference
     ///
     /// - `rsync-3.5.0/syscall.c:2891-2965` `ds_descend()`
+    /// - `rsync-3.5.0/syscall.c:2924-2936` - the hint itself
     fn descend(&mut self, part: &std::ffi::OsStr) -> io::Result<()> {
         if part == "." {
             return Ok(());
@@ -818,7 +843,10 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
             Err(err) if nofollow_hit_symlink(&err) || err.raw_os_error() == Some(libc::ENOTDIR) => {
                 self.follow_symlink(part, err)
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                warn_once_on_fd_exhaustion(&err);
+                Err(err)
+            }
         }
     }
 
