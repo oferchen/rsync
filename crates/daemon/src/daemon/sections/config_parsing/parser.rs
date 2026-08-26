@@ -55,14 +55,20 @@ fn collapse_section_name(name: &str) -> String {
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
-    parse_config_modules_inner(path, &mut stack, None)
+    parse_config_modules_inner(path, &mut stack, None)?.into_result()
 }
 
+/// Parses one config file, returning the raw parse state with its module
+/// sections still unfinalized.
+///
+/// Only the top-level [`parse_config_modules`] finalizes them, because a
+/// string-typed P_LOCAL parameter resolves its default against the global state
+/// left standing at the end of the whole parse (upstream: loadparm.c:347-348).
 fn parse_config_modules_inner(
     path: &Path,
     stack: &mut Vec<PathBuf>,
     inherited: Option<&GlobalParseState>,
-) -> Result<ParsedConfigModules, DaemonError> {
+) -> Result<GlobalParseState, DaemonError> {
     let canonical = path
         .canonicalize()
         .map_err(|error| config_io_error("read", path, error))?;
@@ -96,7 +102,7 @@ fn parse_config_modules_inner(
     let mut pending: Vec<PendingModule> = Vec::new();
     let mut current: Option<usize> = None;
 
-    let result = (|| -> Result<ParsedConfigModules, DaemonError> {
+    let result = (|| -> Result<(), DaemonError> {
         for (line_number, logical_line) in logical_config_lines(&contents) {
             let line = logical_line.trim();
 
@@ -153,6 +159,7 @@ fn parse_config_modules_inner(
                     &mut pending,
                     name,
                     line_number,
+                    path,
                     &state,
                 ));
                 continue;
@@ -213,19 +220,19 @@ fn parse_config_modules_inner(
             // `&include`/`&merge`, matching upstream's declaration order.
             if is_amp_directive {
                 current = None;
-                flush_pending_modules(&mut pending, &mut state, path)?;
+                flush_pending_modules(&mut pending, &mut state);
             }
 
             apply_global_directive(&mut state, &key, value, path, line_number, &canonical, stack)?;
         }
 
-        flush_pending_modules(&mut pending, &mut state, path)?;
+        flush_pending_modules(&mut pending, &mut state);
 
-        Ok(state.into_result())
+        Ok(())
     })();
 
     stack.pop();
-    result
+    result.map(|()| state)
 }
 
 /// A module section that has been opened but not yet finalized, together with
@@ -233,11 +240,17 @@ fn parse_config_modules_inner(
 ///
 /// upstream: loadparm.c:add_a_section:329 - a new section is initialized from
 /// `sDefault`, the running snapshot of the P_LOCAL defaults set in the global
-/// section. Later global directives (after a `[global]` header, say) update
-/// `sDefault` for sections created afterwards but never rewrite a section that
-/// already exists, so the defaults must be captured at creation time.
+/// section. Later global directives never rewrite a section that already
+/// exists, so bool- and integer-typed P_LOCAL defaults are pinned here at
+/// creation time. String-typed ones are not: they fall back to the live
+/// `Vars.l` at access time, so they are resolved from the final global state
+/// instead - see `GlobalModuleDefaults::resolve`.
 struct PendingModule {
     builder: ModuleDefinitionBuilder,
+    /// The config file the `[name]` header was read from, so a validation
+    /// failure still names the file that declared the module even though the
+    /// section is finalized once the whole config tree has been parsed.
+    config_path: PathBuf,
     defaults: CapturedModuleDefaults,
 }
 
@@ -248,6 +261,12 @@ struct PendingModule {
 /// parent file (set when the parse state is the body of an `&include`/`&merge`
 /// target), matching upstream's shared-`Vars` semantics where the includer's
 /// defaults serve as fallbacks until the included file overrides them.
+///
+/// `module_defaults` supplies only the bool- and integer-typed P_LOCAL
+/// defaults; the string-typed ones in that bag are read from the final global
+/// state instead, via `GlobalModuleDefaults::resolve`. The four slots below are
+/// the directives the parser tracks separately from that bag (each carries a
+/// `ConfigDirectiveOrigin` for diagnostics) and stay creation-time here.
 struct CapturedModuleDefaults {
     secrets_file: Option<PathBuf>,
     incoming_chmod: Option<String>,
@@ -295,6 +314,7 @@ fn open_module_section(
     pending: &mut Vec<PendingModule>,
     name: &str,
     line_number: usize,
+    config_path: &Path,
     state: &GlobalParseState,
 ) -> usize {
     if let Some(index) = pending
@@ -306,32 +326,20 @@ fn open_module_section(
 
     pending.push(PendingModule {
         builder: ModuleDefinitionBuilder::new(name.to_owned(), line_number),
+        config_path: config_path.to_path_buf(),
         defaults: CapturedModuleDefaults::capture(state),
     });
     pending.len() - 1
 }
 
-/// Finalizes every open module section in declaration order and appends the
-/// resulting definitions to the parse state.
-fn flush_pending_modules(
-    pending: &mut Vec<PendingModule>,
-    state: &mut GlobalParseState,
-    path: &Path,
-) -> Result<(), DaemonError> {
-    for module in pending.drain(..) {
-        let defaults = module.defaults;
-        let definition = module.builder.finish(
-            path,
-            defaults.secrets_file.as_deref(),
-            defaults.incoming_chmod.as_deref(),
-            defaults.outgoing_chmod.as_deref(),
-            defaults.use_chroot,
-            &defaults.module_defaults,
-        )?;
-        state.modules.push(definition);
-    }
-
-    Ok(())
+/// Closes every open module section in declaration order and records it on the
+/// parse state.
+///
+/// The sections are not finalized here: a string-typed P_LOCAL default is only
+/// looked up once the whole config tree has been read, so finalization happens
+/// in [`GlobalParseState::into_result`] at the top level of the parse.
+fn flush_pending_modules(pending: &mut Vec<PendingModule>, state: &mut GlobalParseState) {
+    state.modules.append(pending);
 }
 
 /// Splits `contents` into logical config lines, joining backslash-continued

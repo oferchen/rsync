@@ -65,3 +65,67 @@ struct GlobalModuleDefaults {
     // route as `auth users` above.
     auth_digest: Option<String>,
 }
+
+impl GlobalModuleDefaults {
+    /// Builds the P_LOCAL defaults a module section finalizes against, given
+    /// the globals in force when its `[name]` header was read (`snapshot`) and
+    /// the globals in force once the whole config has been parsed (`latest`).
+    ///
+    /// upstream: loadparm.c:347-348 - `FN_LOCAL_STRING(fn, val)` expands to
+    /// `if (LP_SNUM_OK(i) && iSECTION(i).val) RETURN_EXPANDED(iSECTION(i).val)
+    /// else RETURN_EXPANDED(Vars.l.val)`, and clientserver.c:781-783 calls
+    /// `lp_uid(i)` only when a client selects the module - long after
+    /// `lp_load()` finished. A string-typed P_LOCAL parameter therefore
+    /// resolves its default at ACCESS time, so a global set *after* a section
+    /// (or after the `&include`/`&merge` that declared it) still applies to
+    /// that section. `FN_LOCAL_BOOL`/`FN_LOCAL_INTEGER` (loadparm.c:351-356)
+    /// carry no such fallback: they read `iSECTION(i).val`, which
+    /// `init_section()` filled from `Vars.l` when the section was created, so
+    /// those keep creation-time semantics.
+    fn resolve(snapshot: &Self, latest: &Self) -> Self {
+        Self {
+            // Access-time (FN_LOCAL_STRING / FN_LOCAL_STRING_SHELL).
+            exclude: latest.exclude.clone(),
+            include: latest.include.clone(),
+            filter: latest.filter.clone(),
+            log_format: latest.log_format.clone(),
+            log_file: latest.log_file.clone(),
+            hosts_allow: latest.hosts_allow.clone(),
+            hosts_deny: latest.hosts_deny.clone(),
+            dont_compress: latest.dont_compress.clone(),
+            syslog_tag: latest.syslog_tag.clone(),
+            exclude_from: latest.exclude_from.clone(),
+            include_from: latest.include_from.clone(),
+            comment: latest.comment.clone(),
+            early_exec: latest.early_exec.clone(),
+            pre_xfer_exec: latest.pre_xfer_exec.clone(),
+            post_xfer_exec: latest.post_xfer_exec.clone(),
+            name_converter: latest.name_converter.clone(),
+            temp_dir: latest.temp_dir.clone(),
+            charset: latest.charset.clone(),
+            uid: latest.uid,
+            gid: latest.gid.clone(),
+            auth_users: latest.auth_users.clone(),
+            auth_digest: latest.auth_digest.clone(),
+            // Creation-time (FN_LOCAL_BOOL / FN_LOCAL_INTEGER).
+            max_verbosity: snapshot.max_verbosity,
+            transfer_logging: snapshot.transfer_logging,
+            timeout: snapshot.timeout,
+            read_only: snapshot.read_only,
+            write_only: snapshot.write_only,
+            listable: snapshot.listable,
+            munge_symlinks: snapshot.munge_symlinks,
+            numeric_ids: snapshot.numeric_ids,
+            fake_super: snapshot.fake_super,
+            insecure_links: snapshot.insecure_links,
+            max_connections: snapshot.max_connections,
+            ignore_errors: snapshot.ignore_errors,
+            ignore_nonreadable: snapshot.ignore_nonreadable,
+            strict_modes: snapshot.strict_modes,
+            forward_lookup: snapshot.forward_lookup,
+            reverse_lookup: snapshot.reverse_lookup,
+            syslog_facility: snapshot.syslog_facility.clone(),
+            open_noatime: snapshot.open_noatime,
+        }
+    }
+}

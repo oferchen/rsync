@@ -41,7 +41,9 @@ struct GlobalParseState {
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
     daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)>,
-    modules: Vec<ModuleDefinition>,
+    /// Module sections read so far, still unfinalized: a string-typed P_LOCAL
+    /// default is not resolved until the whole config tree has been parsed.
+    modules: Vec<PendingModule>,
     /// P_LOCAL parameter defaults from the global section.
     ///
     /// upstream: loadparm.c - P_LOCAL parameters in the global section set
@@ -138,10 +140,33 @@ impl GlobalParseState {
         state
     }
 
-    /// Converts the accumulated global state into the final parsed result.
-    fn into_result(self) -> ParsedConfigModules {
-        ParsedConfigModules {
-            modules: self.modules,
+    /// Converts the accumulated global state into the final parsed result,
+    /// finalizing every module section against the globals left standing at the
+    /// end of the parse.
+    ///
+    /// upstream: loadparm.c:347-348 - `FN_LOCAL_STRING` falls back to
+    /// `Vars.l.<param>` when the section itself never set the parameter, and
+    /// clientserver.c:781-783 performs that lookup when a client picks the
+    /// module, i.e. after `lp_load()` has read the whole file. A global
+    /// declared below a `[section]` - or below the `&include`/`&merge` that
+    /// declared it - therefore still supplies that section's default.
+    fn into_result(self) -> Result<ParsedConfigModules, DaemonError> {
+        let latest = self.module_defaults;
+        let mut modules = Vec::with_capacity(self.modules.len());
+        for module in self.modules {
+            let defaults = module.defaults;
+            modules.push(module.builder.finish(
+                &module.config_path,
+                defaults.secrets_file.as_deref(),
+                defaults.incoming_chmod.as_deref(),
+                defaults.outgoing_chmod.as_deref(),
+                defaults.use_chroot,
+                &GlobalModuleDefaults::resolve(&defaults.module_defaults, &latest),
+            )?);
+        }
+
+        Ok(ParsedConfigModules {
+            modules,
             global_refuse_options: self.global_refuse_directives,
             motd_lines: self.motd_lines,
             pid_file: self.pid_file,
@@ -168,6 +193,6 @@ impl GlobalParseState {
             proxy_protocol: self.proxy_protocol,
             rsync_port: self.rsync_port,
             daemon_chroot: self.daemon_chroot,
-        }
+        })
     }
 }
