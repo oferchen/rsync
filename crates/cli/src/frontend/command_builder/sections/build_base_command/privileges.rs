@@ -26,7 +26,13 @@ pub(super) fn add_privilege_args(command: ClapCommand) -> ClapCommand {
                 .long("fake-super")
                 .help("Store/restore privileged attrs using xattrs instead of real permissions.")
                 .action(ArgAction::SetTrue)
-                .overrides_with("no-fake-super"),
+                // Self-override makes a repeated flag idempotent instead of an
+                // error. A local transfer splices its -M values back into argv
+                // (local_remote_option_argv), so passing --fake-super together
+                // with -M--fake-super legitimately presents it twice; upstream parses
+                // the same pair with POPT_ARG_VAL, which just re-sets the value.
+                // upstream: options.c:672 {"fake-super", 0, POPT_ARG_VAL, ...}
+                .overrides_with_all(["no-fake-super", "fake-super"]),
         )
         .arg(
             Arg::new("no-fake-super")
