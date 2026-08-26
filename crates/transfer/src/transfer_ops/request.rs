@@ -63,7 +63,7 @@ pub fn send_file_request<W: Write + ?Sized>(
     xname: Option<&[u8]>,
     target_size: u64,
     base_iflags: u32,
-    config: &RequestConfig<'_>,
+    config: &RequestConfig,
 ) -> io::Result<PendingTransfer> {
     send_file_request_xattr(
         writer,
@@ -103,7 +103,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     xname: Option<&[u8]>,
     target_size: u64,
     base_iflags: u32,
-    config: &RequestConfig<'_>,
+    config: &RequestConfig,
     xattr_list: Option<&XattrList>,
 ) -> io::Result<PendingTransfer> {
     ndx_codec.write_ndx(writer, ndx)?;

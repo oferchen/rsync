@@ -464,3 +464,38 @@ fn receiver_last_file_ndx_matches_upstream_span() {
     }
     assert_eq!(FlistMarkerSink::last_file_ndx(&ctx), 3);
 }
+
+/// A `ReceiverContext` whose handshake carried no INC_RECURSE flag rejects a
+/// sub-list marker by the same `!inc_recurse` term.
+///
+/// WHY: the pipelined response driver hands its own `ReceiverContext` to
+/// [`read_ndx_and_attrs`], so the `rsync.c:343` gate is data-driven there rather
+/// than hardcoded by the sink type. Should `inc_recurse()` ever stop consulting
+/// the negotiated flags, a peer that never advertised INC_RECURSE could grow the
+/// receiver's file list from the transfer stream. This is the negative half of
+/// `segment_between_file_echoes_is_consumed_and_never_surfaces`.
+#[test]
+fn receiver_without_negotiated_inc_recurse_rejects_markers() {
+    let mut wire = Vec::new();
+    let mut codec = create_ndx_codec(PROTOCOL);
+    codec.write_ndx(&mut wire, NDX_FLIST_OFFSET).unwrap();
+
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(None), test_config());
+    assert!(
+        !FlistMarkerSink::inc_recurse(&ctx),
+        "no INC_RECURSE flag was negotiated"
+    );
+
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTOCOL);
+    let err = read_ndx_step(&mut reader, &mut read_codec, &mut ctx)
+        .expect_err("a receiver outside the INC_RECURSE window must reject markers");
+
+    assert!(
+        err.to_string()
+            .starts_with(&format!("Invalid file index: {NDX_FLIST_OFFSET} (-1 - ")),
+        "unexpected message: {err}"
+    );
+    assert!(err.to_string().contains("[receiver="), "message: {err}");
+    assert!(ctx.file_list().is_empty(), "no segment may be absorbed");
+}

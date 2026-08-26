@@ -66,6 +66,9 @@ pub struct StreamingResult {
 /// * `ndx_codec` - NDX decoder (maintains delta decoding state)
 /// * `pending` - The pending transfer to process
 /// * `ctx` - Response processing context
+/// * `receiver` - The receiver context, supplied as the file-list marker sink
+///   so an INC_RECURSE sub-list arriving between responses is received into its
+///   own file list instead of aborting the transfer
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
 /// * `file_tx` - Channel sender to the disk commit thread
 /// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
@@ -85,6 +88,7 @@ pub fn process_file_response_streaming<R: Read>(
     ndx_codec: &mut impl NdxCodec,
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
+    receiver: &mut crate::receiver::ReceiverContext,
     checksum_verifier: &mut ChecksumVerifier,
     file_tx: &spsc::Sender<FileMessage>,
     buf_return_rx: &spsc::Receiver<Vec<u8>>,
@@ -94,7 +98,7 @@ pub fn process_file_response_streaming<R: Read>(
     xattr_list: Option<protocol::xattr::XattrList>,
     token_reader: &mut TokenReader,
 ) -> io::Result<StreamingResult> {
-    let header = read_response_header(reader, ndx_codec, pending, ctx)?;
+    let header = read_response_header(reader, ndx_codec, pending, ctx, receiver)?;
 
     // upstream: receiver.c:911-912 - updating_basis_or_equiv is set when the
     // basis file IS the destination being updated in place (fnamecmp == fname).

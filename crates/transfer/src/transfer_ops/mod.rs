@@ -43,13 +43,12 @@ mod token_loop;
 
 use std::io::{self, Read};
 use std::num::NonZeroU8;
-use std::path::Path;
+use std::path::PathBuf;
 
 use protocol::ProtocolVersion;
 
 use crate::reader::ServerReader;
 use crate::receiver::SumHead;
-use crate::receiver::ndx_stream::StreamRole;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
@@ -61,7 +60,7 @@ pub use crate::token_reader::TokenReader;
 /// Groups protocol version, checksum parameters, and write options into a
 /// single struct shared between [`send_file_request`] and [`process_file_response`].
 #[derive(Debug)]
-pub struct RequestConfig<'a> {
+pub struct RequestConfig {
     /// Protocol version for encoding.
     pub protocol: ProtocolVersion,
     /// Whether to write iflags (protocol >= 29).
@@ -70,10 +69,10 @@ pub struct RequestConfig<'a> {
     pub checksum_length: NonZeroU8,
     /// Checksum algorithm for verification.
     pub checksum_algorithm: engine::signature::SignatureAlgorithm,
-    /// Reference to negotiated algorithms for checksum verification.
-    pub negotiated_algorithms: Option<&'a protocol::NegotiationResult>,
+    /// Negotiated algorithms for checksum verification.
+    pub negotiated_algorithms: Option<protocol::NegotiationResult>,
     /// Compatibility flags.
-    pub compat_flags: Option<&'a protocol::CompatibilityFlags>,
+    pub compat_flags: Option<protocol::CompatibilityFlags>,
     /// Checksum seed from protocol setup.
     pub checksum_seed: i32,
     /// Whether to use sparse file writing.
@@ -81,7 +80,7 @@ pub struct RequestConfig<'a> {
     /// Whether to fsync after write.
     pub do_fsync: bool,
     /// Temporary directory for staging received files before final placement.
-    pub temp_dir: Option<&'a Path>,
+    pub temp_dir: Option<PathBuf>,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
@@ -157,7 +156,7 @@ pub struct RequestConfig<'a> {
     pub append_verify: bool,
 }
 
-impl RequestConfig<'_> {
+impl RequestConfig {
     /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
     ///
     /// Returns a compressed token reader when the negotiated algorithms include
@@ -190,7 +189,7 @@ impl RequestConfig<'_> {
 /// without requiring them as individual function arguments.
 pub struct ResponseContext<'a> {
     /// Protocol and checksum configuration shared with the request phase.
-    pub config: &'a RequestConfig<'a>,
+    pub config: &'a RequestConfig,
     /// SEC-1.e parent-dirfd carrier rooted at the destination tree.
     ///
     /// Threaded through to the per-entry response processing so the
@@ -277,6 +276,7 @@ fn read_response_header<R: Read>(
     ndx_codec: &mut impl protocol::codec::NdxCodec,
     pending: crate::pipeline::PendingTransfer,
     ctx: &ResponseContext<'_>,
+    flist_sink: &mut impl crate::receiver::ndx_stream::FlistMarkerSink,
 ) -> io::Result<ResponseHeader> {
     let expected_ndx = pending.ndx();
 
@@ -288,17 +288,17 @@ fn read_response_header<R: Read>(
     // `read_exact` for two `iflags` bytes the peer never sends - see the note on
     // `SenderAttrs::read_attrs_after_ndx`, which was split out for exactly this.
     //
-    // `NoLazyFlist` keeps the previous semantics rather than widening them: its
-    // `inc_recurse()` is false, so every file-list marker stays a protocol
-    // violation via `rsync.c:343`, which is what this driver already did - it
-    // cannot consume sub-lists. `last_file_ndx` is diagnostic context for that
-    // error only; it is not a classification input.
-    let mut flist_sink =
-        crate::receiver::ndx_stream::NoLazyFlist::new(StreamRole::Receiver, expected_ndx);
+    // The sink is the receiver's own context, which owns `file_list`,
+    // `ndx_segments` and `flist_eof`, so a sub-list marker arriving mid-response
+    // is receivable rather than fatal. Nothing widens on its own: the sink's
+    // `inc_recurse()` reads the negotiated compatibility flags, so a peer that
+    // never negotiated INC_RECURSE still trips the `rsync.c:343` gate on every
+    // marker, exactly as this driver behaved before. `last_file_ndx` is
+    // diagnostic context for that error only; it is not a classification input.
     let (echoed_ndx, sender_attrs) = crate::receiver::ndx_stream::read_ndx_and_attrs(
         reader,
         ndx_codec,
-        &mut flist_sink,
+        flist_sink,
         ctx.config.preserve_xattrs,
         ctx.config.want_xattr_optim,
     )?
@@ -459,7 +459,7 @@ mod tests {
     }
 
     /// Builds a minimal protocol-31 `RequestConfig` with iflags enabled.
-    fn iflags_request_config() -> RequestConfig<'static> {
+    fn iflags_request_config() -> RequestConfig {
         RequestConfig {
             protocol: ProtocolVersion::from_supported(31).expect("31 is supported"),
             write_iflags: true,
