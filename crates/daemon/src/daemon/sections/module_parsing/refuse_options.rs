@@ -123,64 +123,217 @@ struct ShortOption {
 /// relative to upstream, which fails CLOSED, so they are an operator-visible
 /// policy decision rather than a bug fix; see the per-row comments below.
 const SHORT_OPTIONS: &[ShortOption] = &[
-    ShortOption { letter: '@', long_name: Some("modify-window") },
-    ShortOption { letter: '0', long_name: Some("from0") },
-    ShortOption { letter: '4', long_name: Some("ipv4") },
-    ShortOption { letter: '6', long_name: Some("ipv6") },
-    ShortOption { letter: '8', long_name: Some("8-bit-output") },
-    ShortOption { letter: 'a', long_name: Some("archive") },
-    ShortOption { letter: 'A', long_name: Some("acls") },
-    ShortOption { letter: 'b', long_name: Some("backup") },
-    ShortOption { letter: 'B', long_name: Some("block-size") },
-    ShortOption { letter: 'c', long_name: Some("checksum") },
-    ShortOption { letter: 'C', long_name: Some("cvs-exclude") },
-    ShortOption { letter: 'd', long_name: Some("dirs") },
+    ShortOption {
+        letter: '@',
+        long_name: Some("modify-window"),
+    },
+    ShortOption {
+        letter: '0',
+        long_name: Some("from0"),
+    },
+    ShortOption {
+        letter: '4',
+        long_name: Some("ipv4"),
+    },
+    ShortOption {
+        letter: '6',
+        long_name: Some("ipv6"),
+    },
+    ShortOption {
+        letter: '8',
+        long_name: Some("8-bit-output"),
+    },
+    ShortOption {
+        letter: 'a',
+        long_name: Some("archive"),
+    },
+    ShortOption {
+        letter: 'A',
+        long_name: Some("acls"),
+    },
+    ShortOption {
+        letter: 'b',
+        long_name: Some("backup"),
+    },
+    ShortOption {
+        letter: 'B',
+        long_name: Some("block-size"),
+    },
+    ShortOption {
+        letter: 'c',
+        long_name: Some("checksum"),
+    },
+    ShortOption {
+        letter: 'C',
+        long_name: Some("cvs-exclude"),
+    },
+    ShortOption {
+        letter: 'd',
+        long_name: Some("dirs"),
+    },
     // upstream longName is NULL: `-D` is its own row meaning
     // `--devices --specials`. oc keeps the `devices` association, which
     // over-refuses (a `refuse options = devices` rule also blocks `-D`).
     // That fails CLOSED, so it is left alone here.
-    ShortOption { letter: 'D', long_name: Some("devices") },
-    ShortOption { letter: 'e', long_name: Some("rsh") },
-    ShortOption { letter: 'E', long_name: Some("executability") },
-    ShortOption { letter: 'f', long_name: Some("filter") },
+    ShortOption {
+        letter: 'D',
+        long_name: Some("devices"),
+    },
+    ShortOption {
+        letter: 'e',
+        long_name: Some("rsh"),
+    },
+    ShortOption {
+        letter: 'E',
+        long_name: Some("executability"),
+    },
+    ShortOption {
+        letter: 'f',
+        long_name: Some("filter"),
+    },
     // upstream longName is NULL: `-F` is the repeated-filter shortcut. Same
     // fails-closed reasoning as `-D`.
-    ShortOption { letter: 'F', long_name: Some("filter") },
-    ShortOption { letter: 'g', long_name: Some("group") },
-    ShortOption { letter: 'h', long_name: Some("human-readable") },
-    ShortOption { letter: 'H', long_name: Some("hard-links") },
-    ShortOption { letter: 'i', long_name: Some("itemize-changes") },
-    ShortOption { letter: 'I', long_name: Some("ignore-times") },
-    ShortOption { letter: 'J', long_name: Some("omit-link-times") },
-    ShortOption { letter: 'k', long_name: Some("copy-dirlinks") },
-    ShortOption { letter: 'K', long_name: Some("keep-dirlinks") },
-    ShortOption { letter: 'l', long_name: Some("links") },
-    ShortOption { letter: 'L', long_name: Some("copy-links") },
-    ShortOption { letter: 'm', long_name: Some("prune-empty-dirs") },
-    ShortOption { letter: 'M', long_name: Some("remote-option") },
-    ShortOption { letter: 'n', long_name: Some("dry-run") },
-    ShortOption { letter: 'N', long_name: Some("crtimes") },
-    ShortOption { letter: 'o', long_name: Some("owner") },
-    ShortOption { letter: 'O', long_name: Some("omit-dir-times") },
-    ShortOption { letter: 'p', long_name: Some("perms") },
+    ShortOption {
+        letter: 'F',
+        long_name: Some("filter"),
+    },
+    ShortOption {
+        letter: 'g',
+        long_name: Some("group"),
+    },
+    ShortOption {
+        letter: 'h',
+        long_name: Some("human-readable"),
+    },
+    ShortOption {
+        letter: 'H',
+        long_name: Some("hard-links"),
+    },
+    ShortOption {
+        letter: 'i',
+        long_name: Some("itemize-changes"),
+    },
+    ShortOption {
+        letter: 'I',
+        long_name: Some("ignore-times"),
+    },
+    ShortOption {
+        letter: 'J',
+        long_name: Some("omit-link-times"),
+    },
+    ShortOption {
+        letter: 'k',
+        long_name: Some("copy-dirlinks"),
+    },
+    ShortOption {
+        letter: 'K',
+        long_name: Some("keep-dirlinks"),
+    },
+    ShortOption {
+        letter: 'l',
+        long_name: Some("links"),
+    },
+    ShortOption {
+        letter: 'L',
+        long_name: Some("copy-links"),
+    },
+    ShortOption {
+        letter: 'm',
+        long_name: Some("prune-empty-dirs"),
+    },
+    ShortOption {
+        letter: 'M',
+        long_name: Some("remote-option"),
+    },
+    ShortOption {
+        letter: 'n',
+        long_name: Some("dry-run"),
+    },
+    ShortOption {
+        letter: 'N',
+        long_name: Some("crtimes"),
+    },
+    ShortOption {
+        letter: 'o',
+        long_name: Some("owner"),
+    },
+    ShortOption {
+        letter: 'O',
+        long_name: Some("omit-dir-times"),
+    },
+    ShortOption {
+        letter: 'p',
+        long_name: Some("perms"),
+    },
     // upstream longName is NULL: `-P` means `--partial --progress`.
-    ShortOption { letter: 'P', long_name: Some("partial") },
-    ShortOption { letter: 'q', long_name: Some("quiet") },
-    ShortOption { letter: 'r', long_name: Some("recursive") },
-    ShortOption { letter: 'R', long_name: Some("relative") },
-    ShortOption { letter: 's', long_name: Some("secluded-args") },
-    ShortOption { letter: 'S', long_name: Some("sparse") },
-    ShortOption { letter: 't', long_name: Some("times") },
-    ShortOption { letter: 'T', long_name: Some("temp-dir") },
-    ShortOption { letter: 'u', long_name: Some("update") },
-    ShortOption { letter: 'U', long_name: Some("atimes") },
-    ShortOption { letter: 'v', long_name: Some("verbose") },
-    ShortOption { letter: 'V', long_name: Some("version") },
-    ShortOption { letter: 'W', long_name: Some("whole-file") },
-    ShortOption { letter: 'x', long_name: Some("one-file-system") },
-    ShortOption { letter: 'X', long_name: Some("xattrs") },
-    ShortOption { letter: 'y', long_name: Some("fuzzy") },
-    ShortOption { letter: 'z', long_name: Some("compress") },
+    ShortOption {
+        letter: 'P',
+        long_name: Some("partial"),
+    },
+    ShortOption {
+        letter: 'q',
+        long_name: Some("quiet"),
+    },
+    ShortOption {
+        letter: 'r',
+        long_name: Some("recursive"),
+    },
+    ShortOption {
+        letter: 'R',
+        long_name: Some("relative"),
+    },
+    ShortOption {
+        letter: 's',
+        long_name: Some("secluded-args"),
+    },
+    ShortOption {
+        letter: 'S',
+        long_name: Some("sparse"),
+    },
+    ShortOption {
+        letter: 't',
+        long_name: Some("times"),
+    },
+    ShortOption {
+        letter: 'T',
+        long_name: Some("temp-dir"),
+    },
+    ShortOption {
+        letter: 'u',
+        long_name: Some("update"),
+    },
+    ShortOption {
+        letter: 'U',
+        long_name: Some("atimes"),
+    },
+    ShortOption {
+        letter: 'v',
+        long_name: Some("verbose"),
+    },
+    ShortOption {
+        letter: 'V',
+        long_name: Some("version"),
+    },
+    ShortOption {
+        letter: 'W',
+        long_name: Some("whole-file"),
+    },
+    ShortOption {
+        letter: 'x',
+        long_name: Some("one-file-system"),
+    },
+    ShortOption {
+        letter: 'X',
+        long_name: Some("xattrs"),
+    },
+    ShortOption {
+        letter: 'y',
+        long_name: Some("fuzzy"),
+    },
+    ShortOption {
+        letter: 'z',
+        long_name: Some("compress"),
+    },
 ];
 
 /// Looks up one short option, or `None` when the byte is not an option letter.
@@ -310,8 +463,9 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
                 // `long_name` is `None` only for rows upstream leaves NULL, in
                 // which case the rule can only have named the bare letter.
                 let refused = match option.long_name {
-                    Some(long) => is_option_refused(module, long, Some(letter))
-                        .then(|| format!("--{long}")),
+                    Some(long) => {
+                        is_option_refused(module, long, Some(letter)).then(|| format!("--{long}"))
+                    }
                     None => is_option_refused(module, &letter.to_string(), Some(letter))
                         .then(|| format!("-{letter}")),
                 };
@@ -446,9 +600,9 @@ fn names_same_capability(pattern: &str, long_name: &str) -> bool {
     if pattern == long_name {
         return true;
     }
-    OPTION_ALIAS_GROUPS.iter().any(|group| {
-        group.contains(&pattern) && group.contains(&long_name)
-    })
+    OPTION_ALIAS_GROUPS
+        .iter()
+        .any(|group| group.contains(&pattern) && group.contains(&long_name))
 }
 
 /// Evaluates a canonical option (long name + optional short letter) against an

@@ -94,7 +94,8 @@ fn refuse_shell_hook(
     // never reached the daemon log at all - the operator's only record of a
     // fail-closed security decision, silently dropped.
     if let Some(log) = ctx.log_sink {
-        let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text.clone()).with_role(Role::Daemon);
+        let message =
+            rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text.clone()).with_role(Role::Daemon);
         log_message(log, &message);
     }
 
@@ -353,12 +354,8 @@ fn process_approved_module(
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
         let host_owned = ctx.host_display().to_owned();
-        let result = handle_refused_option_post_handshake(
-            ctx,
-            &refused,
-            negotiated_protocol,
-            &client_args,
-        );
+        let result =
+            handle_refused_option_post_handshake(ctx, &refused, negotiated_protocol, &client_args);
         // upstream: clientserver.c:1079/1171 - parse_arguments() rejecting a
         // refused option runs after the post-xfer-exec fork point and exits
         // via exit_cleanup(RERR_UNSUPPORTED), which the waiting parent
@@ -525,29 +522,25 @@ fn process_approved_module(
         module
     };
 
-    let mut config = match build_server_config(
-        ctx,
-        &client_args,
-        config_module,
-        negotiated_protocol,
-    )? {
-        Some(cfg) => cfg,
-        None => {
-            // upstream: clientserver.c - config assembly runs after the
-            // post-xfer-exec fork point (post-chroot, post-args), so a
-            // failure here is a child exit the waiting parent still hooks.
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user.as_deref(),
-                &client_args,
-                MODULE_ABORT_EXIT_CODE,
-            );
-            return Ok(());
-        }
-    };
+    let mut config =
+        match build_server_config(ctx, &client_args, config_module, negotiated_protocol)? {
+            Some(cfg) => cfg,
+            None => {
+                // upstream: clientserver.c - config assembly runs after the
+                // post-xfer-exec fork point (post-chroot, post-args), so a
+                // failure here is a child exit the waiting parent still hooks.
+                let host_owned = ctx.host_display().to_owned();
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_owned,
+                    auth_user.as_deref(),
+                    &client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
+                return Ok(());
+            }
+        };
 
     // upstream: clientserver.c:rsync_module() - build daemon_filter_list from
     // module filter/exclude/include/exclude_from/include_from parameters.
@@ -923,8 +916,7 @@ fn process_approved_module(
         // kernel FIN as the process exits; the threaded daemon collapses
         // that pattern into the explicit shutdown here.
         if let Some(tcp) = stream.tcp_stream() {
-            if let Err(err) =
-                core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
+            if let Err(err) = core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
             {
                 if let Some(log) = ctx.log_sink {
                     let text = format!("daemon-sender drain-barrier shutdown failed: {err}");

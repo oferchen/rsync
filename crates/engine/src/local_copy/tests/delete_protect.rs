@@ -1,4 +1,3 @@
-
 #[test]
 fn delete_respects_protect_filters() {
     let temp = tempdir().expect("tempdir");
@@ -11,13 +10,10 @@ fn delete_respects_protect_filters() {
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"keep").expect("write keep");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([filters::FilterRule::protect("keep.txt")])
-        .expect("compile filters");
+    let filters =
+        FilterSet::from_rules([filters::FilterRule::protect("keep.txt")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .filters(Some(filters));
@@ -43,10 +39,7 @@ fn delete_risk_rule_overrides_protection() {
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"keep").expect("write keep");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     // With first-match-wins, risk must come before protect to override
     let filters = FilterSet::from_rules([

@@ -11,7 +11,6 @@
 // 5. Error messages include path context
 // 6. Guard behavior on disk full errors (temp file cleanup)
 
-
 #[test]
 fn local_copy_error_from_disk_full_io_error() {
     let disk_full = io::Error::new(io::ErrorKind::StorageFull, "No space left on device");
@@ -58,7 +57,6 @@ fn local_copy_error_disk_full_code_name_is_rerr_partial() {
     assert_eq!(error.code_name(), "RERR_PARTIAL");
 }
 
-
 #[test]
 fn detect_storage_full_error_kind() {
     let disk_full = io::Error::from(io::ErrorKind::StorageFull);
@@ -84,7 +82,6 @@ fn raw_os_error_enospc_detected_as_storage_full() {
     let enospc = io::Error::from_raw_os_error(28);
     assert_eq!(enospc.raw_os_error(), Some(28));
 }
-
 
 #[test]
 fn disk_full_error_message_includes_action_context() {
@@ -147,7 +144,6 @@ fn disk_full_error_preserves_original_io_error_message() {
     }
 }
 
-
 #[test]
 fn guard_discard_cleans_up_temp_file_on_disk_full() {
     let temp = tempdir().expect("tempdir");
@@ -203,7 +199,6 @@ fn guard_partial_mode_preserves_file_on_discard() {
     assert_eq!(fs::read(&dest).expect("read"), b"partial data");
 }
 
-
 #[test]
 fn remove_existing_destination_handles_disk_full_context() {
     let temp = tempdir().expect("tempdir");
@@ -236,7 +231,6 @@ fn remove_incomplete_destination_silent_on_not_found() {
     remove_incomplete_destination(&path);
 }
 
-
 #[test]
 fn io_error_exit_code_is_23_for_general_io_errors() {
     // General I/O errors (non-vanished) return exit code 23 (RERR_PARTIAL)
@@ -262,10 +256,7 @@ fn io_error_exit_code_is_24_for_vanished_files() {
     // NotFound I/O errors return exit code 24 (RERR_VANISHED)
     let io_error = io::Error::from(io::ErrorKind::NotFound);
     let error = LocalCopyError::io("read file", PathBuf::from("/vanished"), io_error);
-    assert_eq!(
-        error.exit_code(),
-        super::filter_program::VANISHED_EXIT_CODE,
-    );
+    assert_eq!(error.exit_code(), super::filter_program::VANISHED_EXIT_CODE,);
     assert_eq!(error.exit_code(), 24);
 }
 
@@ -277,7 +268,6 @@ fn io_error_exit_code_matches_upstream_rerr_partial() {
 
     assert_eq!(error.exit_code(), 23);
 }
-
 
 #[test]
 fn disk_full_error_has_source() {
@@ -293,14 +283,17 @@ fn disk_full_error_has_source() {
 #[test]
 fn disk_full_error_debug_format_includes_details() {
     let disk_full = io::Error::new(io::ErrorKind::StorageFull, "No space left on device");
-    let error = LocalCopyError::io("write file", PathBuf::from("/destination/file.txt"), disk_full);
+    let error = LocalCopyError::io(
+        "write file",
+        PathBuf::from("/destination/file.txt"),
+        disk_full,
+    );
 
     let debug = format!("{error:?}");
 
     assert!(debug.contains("Io"));
     assert!(debug.contains("write file"));
 }
-
 
 #[test]
 #[cfg(unix)]
@@ -353,7 +346,6 @@ fn directory_write_error_propagates_correctly() {
     }
 }
 
-
 #[test]
 fn local_copy_error_kind_as_io_returns_components() {
     let disk_full = io::Error::new(io::ErrorKind::StorageFull, "disk full");
@@ -382,7 +374,6 @@ fn local_copy_error_into_kind_consumes_error() {
     let kind = error.into_kind();
     assert!(matches!(kind, LocalCopyErrorKind::Io { .. }));
 }
-
 
 #[test]
 fn disk_full_vs_general_io_errors_have_same_exit_code() {
@@ -417,7 +408,6 @@ fn io_errors_have_different_code_name_than_timeout() {
     assert_ne!(io_error.code_name(), timeout_error.code_name());
 }
 
-
 #[test]
 fn error_context_preserved_for_large_file_paths() {
     // Test with maximum path length scenarios
@@ -434,10 +424,7 @@ fn error_context_preserved_for_large_file_paths() {
 
 #[test]
 fn error_for_special_characters_in_path() {
-    let special_paths = [
-        "/path/with spaces/file.txt",
-        "/path/with_quotes/file.txt",
-    ];
+    let special_paths = ["/path/with spaces/file.txt", "/path/with_quotes/file.txt"];
 
     for path_str in special_paths {
         let disk_full = io::Error::new(io::ErrorKind::StorageFull, "disk full");
@@ -450,16 +437,17 @@ fn error_for_special_characters_in_path() {
     }
 }
 
-
 #[test]
 fn multiple_disk_full_errors_are_independent() {
     let errors: Vec<_> = (0..5)
         .map(|i| {
-            let disk_full = io::Error::new(
-                io::ErrorKind::StorageFull,
-                format!("disk full error {i}"),
-            );
-            LocalCopyError::io("write file", PathBuf::from(format!("/test{i}.txt")), disk_full)
+            let disk_full =
+                io::Error::new(io::ErrorKind::StorageFull, format!("disk full error {i}"));
+            LocalCopyError::io(
+                "write file",
+                PathBuf::from(format!("/test{i}.txt")),
+                disk_full,
+            )
         })
         .collect();
 
@@ -471,7 +459,6 @@ fn multiple_disk_full_errors_are_independent() {
     }
 }
 
-
 #[test]
 fn disk_full_during_copy_preserves_partial_file_in_partial_mode() {
     let temp = tempdir().expect("tempdir");
@@ -482,7 +469,8 @@ fn disk_full_during_copy_preserves_partial_file_in_partial_mode() {
     let staging = guard.staging_path().to_path_buf();
 
     // Write some data before "disk full"
-    file.write_all(b"partial content before error").expect("write");
+    file.write_all(b"partial content before error")
+        .expect("write");
     drop(file);
 
     // Simulate disk full - in partial mode, discard moves the temp onto the
@@ -490,7 +478,10 @@ fn disk_full_during_copy_preserves_partial_file_in_partial_mode() {
     guard.discard();
 
     assert!(!staging.exists(), "temp is consumed by the move");
-    assert!(dest.exists(), "partial content preserved at the destination");
+    assert!(
+        dest.exists(),
+        "partial content preserved at the destination"
+    );
     let content = fs::read(&dest).expect("read partial");
     assert_eq!(content, b"partial content before error");
 }
@@ -511,9 +502,11 @@ fn disk_full_during_copy_removes_temp_file_in_normal_mode() {
     // Simulate disk full - in normal mode, discard should remove temp file
     guard.discard();
 
-    assert!(!staging.exists(), "Temp file should be removed in normal mode");
+    assert!(
+        !staging.exists(),
+        "Temp file should be removed in normal mode"
+    );
 }
-
 
 #[test]
 fn can_retry_after_disk_full_error() {
@@ -528,7 +521,8 @@ fn can_retry_after_disk_full_error() {
 
     // Second attempt - should succeed
     {
-        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
         file.write_all(b"success on retry").expect("write");
         drop(file);
         guard.commit().expect("commit");
@@ -560,7 +554,6 @@ fn multiple_failed_attempts_clean_up_properly() {
 
     assert_eq!(fs::read(&dest).expect("read"), b"final success");
 }
-
 
 #[test]
 fn readonly_filesystem_error_maps_correctly() {

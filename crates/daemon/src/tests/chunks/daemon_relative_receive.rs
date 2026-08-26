@@ -71,7 +71,8 @@ fn daemon_relative_receive_preserves_nested_paths() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
@@ -104,7 +105,10 @@ fn daemon_relative_receive_preserves_nested_paths() {
 
     // Verify full nested directory structure was reconstructed
     let dest_deep = dest_dir.join("a").join("b").join("c").join("deep.txt");
-    assert!(dest_deep.exists(), "a/b/c/deep.txt must exist at destination");
+    assert!(
+        dest_deep.exists(),
+        "a/b/c/deep.txt must exist at destination"
+    );
     assert_eq!(
         fs::read(&dest_deep).expect("read deep.txt"),
         b"deep content\n",

@@ -296,7 +296,14 @@ fn split_filter_tokens(s: &str) -> Vec<String> {
     // Prefixes that start a new rule token when found after whitespace.
     const SHORT_PREFIXES: &[&str] = &["+ ", "- ", "+/", "-/"];
     const KEYWORD_PREFIXES: &[&str] = &[
-        "include ", "exclude ", "hide ", "show ", "protect ", "risk ", "clear ", "merge ",
+        "include ",
+        "exclude ",
+        "hide ",
+        "show ",
+        "protect ",
+        "risk ",
+        "clear ",
+        "merge ",
         "dir-merge ",
     ];
 
@@ -372,10 +379,10 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
     const KEYWORDS: &[(&str, bool, bool, bool)] = &[
         ("exclude", false, false, false),
         ("include", true, false, false),
-        ("hide", false, true, false),  // sender-side exclude
-        ("show", true, true, false),   // sender-side include
+        ("hide", false, true, false),    // sender-side exclude
+        ("show", true, true, false),     // sender-side include
         ("protect", false, false, true), // receiver-side exclude
-        ("risk", true, false, true),   // receiver-side include
+        ("risk", true, false, true),     // receiver-side include
     ];
 
     for &(keyword, is_include, sender, receiver) in KEYWORDS {
@@ -457,8 +464,8 @@ fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
     // turn `**/*.o` into `/**/*.o` and destroy the leading-`**` that WILD2_PREFIX
     // depends on. Since root-anchoring of a `**`-prefixed pattern is already
     // implied by WILD2_PREFIX, leave such patterns unanchored.
-    let anchored = !pattern.starts_with("**")
-        && (pattern.starts_with('/') || pattern.contains('/'));
+    let anchored =
+        !pattern.starts_with("**") && (pattern.starts_with('/') || pattern.contains('/'));
     let directory_only = pattern.ends_with('/');
 
     // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to

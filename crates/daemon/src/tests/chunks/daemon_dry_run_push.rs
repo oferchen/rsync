@@ -64,7 +64,8 @@ fn daemon_dry_run_push() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);

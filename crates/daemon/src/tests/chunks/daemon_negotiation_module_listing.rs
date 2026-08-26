@@ -16,7 +16,10 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
     // Normalise to forward slashes for symmetry with the comment-bearing test
     // below; Windows accepts forward slashes, and this avoids any future
     // Windows-only parser surprises around `\` as an escape character.
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -33,7 +36,10 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "Expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "Expected greeting, got: {line}"
+    );
 
     send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
@@ -43,7 +49,10 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
     // Read module listing - upstream: clientserver.c:1254 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
-    assert_eq!(line, "test           \t\n", "Expected %-15s aligned module, got: {line}");
+    assert_eq!(
+        line, "test           \t\n",
+        "Expected %-15s aligned module, got: {line}"
+    );
 
     line.clear();
     reader.read_line(&mut line).expect("exit");
@@ -142,7 +151,10 @@ fn daemon_negotiation_module_list_includes_comments() {
     // natively) to keep the comma separator that delimits the comment from
     // being swallowed by the escape state machine in
     // `daemon::sections::module_parsing::split_module_path_comment_and_options`.
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([

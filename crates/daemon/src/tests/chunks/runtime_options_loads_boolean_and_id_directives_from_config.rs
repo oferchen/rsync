@@ -25,4 +25,3 @@ fn runtime_options_loads_boolean_and_id_directives_from_config() {
     assert!(!module.listable());
     assert!(module.use_chroot());
 }
-

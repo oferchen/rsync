@@ -129,9 +129,7 @@ fn itemize_unchanged_file_shows_metadata_reused() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .times(true)
-        .collect_events(true);
+    let options = LocalCopyOptions::default().times(true).collect_events(true);
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -167,10 +165,8 @@ fn itemize_permission_change_shows_p_indicator() {
     fs::write(&destination, content).expect("write dest");
 
     // Set different permissions
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
-        .expect("set source perms");
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))
-        .expect("set dest perms");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).expect("set dest perms");
 
     // Set same modification time to avoid time changes
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
@@ -227,9 +223,7 @@ fn itemize_time_change_shows_t_indicator_when_preserved() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .times(true)
-        .collect_events(true);
+    let options = LocalCopyOptions::default().times(true).collect_events(true);
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -288,15 +282,13 @@ fn itemize_multiple_changes_shows_all_indicators() {
 
     // Create destination with old content and permissions
     fs::write(&destination, b"old").expect("write dest");
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))
-        .expect("set dest perms");
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).expect("set dest perms");
     let old_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&destination, old_time).expect("set dest mtime");
 
     // Create source with new content, different permissions and time
     fs::write(&source, b"new content here").expect("write source");
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
-        .expect("set source perms");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
     let new_time = FileTime::from_unix_time(1_700_001_000, 0);
     set_file_mtime(&source, new_time).expect("set source mtime");
 
@@ -324,8 +316,15 @@ fn itemize_multiple_changes_shows_all_indicators() {
     let change_set = record.change_set();
     assert!(change_set.checksum_changed(), "checksum should change");
     assert!(change_set.size_changed(), "size should change");
-    assert_eq!(change_set.time_change(), Some(TimeChange::Modified), "time should change");
-    assert!(change_set.permissions_changed(), "permissions should change");
+    assert_eq!(
+        change_set.time_change(),
+        Some(TimeChange::Modified),
+        "time should change"
+    );
+    assert!(
+        change_set.permissions_changed(),
+        "permissions should change"
+    );
 }
 
 #[test]
@@ -359,9 +358,13 @@ fn itemize_new_directory_shows_creation() {
     // Should have records for directory and file
     assert!(!records.is_empty());
 
-    let dir_record = records.iter()
+    let dir_record = records
+        .iter()
         .find(|r| r.action() == &LocalCopyAction::DirectoryCreated);
-    assert!(dir_record.is_some(), "should have directory creation record");
+    assert!(
+        dir_record.is_some(),
+        "should have directory creation record"
+    );
 
     let dir_record = dir_record.unwrap();
     assert!(dir_record.was_created());
@@ -386,9 +389,7 @@ fn itemize_symlink_shows_correct_type() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .links(true)
-        .collect_events(true);
+    let options = LocalCopyOptions::default().links(true).collect_events(true);
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -434,7 +435,8 @@ fn itemize_hard_link_shows_correct_action() {
     let records = report.records();
 
     // Should have at least one hard link record
-    let hard_link_record = records.iter()
+    let hard_link_record = records
+        .iter()
         .find(|r| r.action() == &LocalCopyAction::HardLink);
     assert!(hard_link_record.is_some(), "should have hard link record");
 }
@@ -460,10 +462,7 @@ fn itemize_new_hard_link_follower_marked_created() {
     fs::write(&file1, b"linked content").expect("write a");
     fs::hard_link(&file1, &file2).expect("hard link b -> a");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest_dir.into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest_dir.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -646,10 +645,7 @@ fn itemize_copy_dest_hard_link_follower_not_marked_created() {
     set_file_mtime(&copy_leader, timestamp).expect("copy_dest leader mtime");
     set_file_mtime(&copy_follower, timestamp).expect("copy_dest follower mtime");
 
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest_dir.into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest_dir.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -769,10 +765,8 @@ fn itemize_chmod_modifier_shows_permission_change() {
     fs::write(&destination, content).expect("write dest");
 
     // Set same permissions initially
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
-        .expect("set source perms");
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))
-        .expect("set dest perms");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).expect("set dest perms");
 
     // Set same modification time
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
@@ -854,15 +848,13 @@ fn itemize_format_matches_upstream_for_changed_file() {
 
     // Create destination with specific state
     fs::write(&destination, b"old").expect("write dest");
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))
-        .expect("set dest perms");
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).expect("set dest perms");
     let old_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&destination, old_time).expect("set dest mtime");
 
     // Create source with changes
     fs::write(&source, b"new content").expect("write source");
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
-        .expect("set source perms");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
     let new_time = FileTime::from_unix_time(1_700_001_000, 0);
     set_file_mtime(&source, new_time).expect("set source mtime");
 

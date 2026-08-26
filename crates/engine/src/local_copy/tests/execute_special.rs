@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 #[test]
 fn execute_copies_fifo() {
@@ -20,9 +19,7 @@ fn execute_copies_fifo() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .permissions(true)
-                .specials(true),
+            LocalCopyOptions::default().permissions(true).specials(true),
         )
         .expect("fifo copy succeeds");
 
@@ -52,7 +49,9 @@ fn execute_fifo_replaces_directory_when_force_enabled() {
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default().specials(true).force_replacements(true),
+        LocalCopyOptions::default()
+            .specials(true)
+            .force_replacements(true),
     )
     .expect("forced replacement succeeds");
 
@@ -84,9 +83,7 @@ fn execute_copies_fifo_within_directory() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .permissions(true)
-                .specials(true),
+            LocalCopyOptions::default().permissions(true).specials(true),
         )
         .expect("fifo copy succeeds");
 
@@ -375,7 +372,13 @@ fn execute_with_one_file_system_skips_mount_points() {
     )
     .expect("copy executes");
 
-    assert!(destination.join("source").join("data").join("file.txt").exists());
+    assert!(
+        destination
+            .join("source")
+            .join("data")
+            .join("file.txt")
+            .exists()
+    );
     assert!(!destination.join("source").join("mount").exists());
     assert!(report.records().iter().any(|record| {
         record.action() == &LocalCopyAction::SkippedMountPoint
@@ -419,7 +422,13 @@ fn execute_without_one_file_system_crosses_mount_points() {
     )
     .expect("copy executes");
 
-    assert!(destination.join("source").join("mount").join("inside.txt").exists());
+    assert!(
+        destination
+            .join("source")
+            .join("mount")
+            .join("inside.txt")
+            .exists()
+    );
     assert!(
         report
             .records()
@@ -427,7 +436,6 @@ fn execute_without_one_file_system_crosses_mount_points() {
             .all(|record| { record.action() != &LocalCopyAction::SkippedMountPoint })
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -521,15 +529,18 @@ fn execute_copies_symlink_with_safe_links_keeps_safe() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .links(true)
-                .safe_links(true),
+            LocalCopyOptions::default().links(true).safe_links(true),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.symlinks_copied(), 1);
     let dest_link = dest_root.join("source").join("safe_link");
-    assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&dest_link)
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[cfg(unix)]
@@ -569,11 +580,13 @@ fn execute_with_safe_links_skips_unsafe() {
     let summary = report.summary();
     assert_eq!(summary.symlinks_copied(), 0);
     assert!(!dest_root.join("source").join("unsafe_link").exists());
-    assert!(report.records().iter().any(|record| {
-        matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink)
-    }));
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+    );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -650,7 +663,6 @@ fn execute_without_hard_links_copies_separately() {
     assert_eq!(summary.files_copied(), 2);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_dry_run_does_not_create_symlink() {
@@ -706,7 +718,6 @@ fn execute_dry_run_does_not_create_fifo() {
     assert!(!dest_fifo.exists());
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_copies_broken_symlink() {
@@ -734,7 +745,6 @@ fn execute_copies_broken_symlink() {
     let dest_target = fs::read_link(&dest_link).expect("read dest link");
     assert_eq!(dest_target, Path::new("nonexistent_target"));
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -764,9 +774,7 @@ fn execute_copies_mixed_special_files() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .links(true)
-                .specials(true),
+            LocalCopyOptions::default().links(true).specials(true),
         )
         .expect("copy succeeds");
 
@@ -776,21 +784,24 @@ fn execute_copies_mixed_special_files() {
 
     assert!(dest_root.join("source").join("regular.txt").is_file());
     assert!(dest_root.join("source").join("target.txt").is_file());
-    assert!(fs::symlink_metadata(dest_root.join("source").join("link"))
-        .expect("meta")
-        .file_type()
-        .is_symlink());
-    assert!(fs::symlink_metadata(dest_root.join("source").join("fifo"))
-        .expect("meta")
-        .file_type()
-        .is_fifo());
+    assert!(
+        fs::symlink_metadata(dest_root.join("source").join("link"))
+            .expect("meta")
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        fs::symlink_metadata(dest_root.join("source").join("fifo"))
+            .expect("meta")
+            .file_type()
+            .is_fifo()
+    );
 }
-
 
 #[cfg(unix)]
 #[test]
 fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
-    use std::os::unix::fs::{symlink, FileTypeExt};
+    use std::os::unix::fs::{FileTypeExt, symlink};
 
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
@@ -812,9 +823,7 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .links(true)
-                .specials(true),
+            LocalCopyOptions::default().links(true).specials(true),
         )
         .expect("copy succeeds");
 
@@ -847,7 +856,7 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
 ))]
 #[test]
 fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
-    use std::os::unix::fs::{symlink, FileTypeExt};
+    use std::os::unix::fs::{FileTypeExt, symlink};
 
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
@@ -869,9 +878,7 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .links(true)
-                .specials(true),
+            LocalCopyOptions::default().links(true).specials(true),
         )
         .expect("copy succeeds");
 
@@ -893,11 +900,10 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_fifo_replaces_existing_symlink() {
-    use std::os::unix::fs::{symlink, FileTypeExt};
+    use std::os::unix::fs::{FileTypeExt, symlink};
 
     let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
@@ -909,10 +915,7 @@ fn execute_fifo_replaces_existing_symlink() {
     fs::write(&dummy_target, b"dummy").expect("write dummy");
     symlink(&dummy_target, &dest).expect("create dest symlink");
 
-    let operands = vec![
-        source_fifo.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_fifo.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -945,10 +948,7 @@ fn execute_fifo_replaces_existing_regular_file() {
     let dest = temp.path().join("dest.pipe");
     fs::write(&dest, b"regular file content").expect("write dest file");
 
-    let operands = vec![
-        source_fifo.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_fifo.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -980,10 +980,7 @@ fn execute_symlink_replaces_existing_fifo() {
     let dest = temp.path().join("dest_link");
     mkfifo_for_tests(&dest, 0o600).expect("mkfifo at dest");
 
-    let operands = vec![
-        source_link.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -1024,10 +1021,7 @@ fn execute_symlink_replaces_existing_socket() {
     let dest = temp.path().join("dest_link");
     mksocket_for_tests(&dest).expect("mksocket at dest");
 
-    let operands = vec![
-        source_link.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -1043,7 +1037,6 @@ fn execute_symlink_replaces_existing_socket() {
     );
     assert_eq!(fs::read_link(&dest).expect("read link"), target);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1067,9 +1060,7 @@ fn execute_recopy_fifo_replaces_existing_fifo() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .specials(true)
-                .permissions(true),
+            LocalCopyOptions::default().specials(true).permissions(true),
         )
         .expect("re-copy succeeds");
 
@@ -1077,7 +1068,6 @@ fn execute_recopy_fifo_replaces_existing_fifo() {
     assert!(metadata.file_type().is_fifo());
     assert_eq!(summary.fifos_created(), 1);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1114,9 +1104,7 @@ fn execute_copies_multiple_fifos_with_different_permissions() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .specials(true)
-                .permissions(true),
+            LocalCopyOptions::default().specials(true).permissions(true),
         )
         .expect("copy succeeds");
 
@@ -1126,24 +1114,50 @@ fn execute_copies_multiple_fifos_with_different_permissions() {
     let dest_private = dest_root.join("source").join("private.pipe");
     let dest_group = dest_root.join("source").join("group.pipe");
 
-    assert!(fs::symlink_metadata(&dest_public).expect("meta").file_type().is_fifo());
-    assert!(fs::symlink_metadata(&dest_private).expect("meta").file_type().is_fifo());
-    assert!(fs::symlink_metadata(&dest_group).expect("meta").file_type().is_fifo());
+    assert!(
+        fs::symlink_metadata(&dest_public)
+            .expect("meta")
+            .file_type()
+            .is_fifo()
+    );
+    assert!(
+        fs::symlink_metadata(&dest_private)
+            .expect("meta")
+            .file_type()
+            .is_fifo()
+    );
+    assert!(
+        fs::symlink_metadata(&dest_group)
+            .expect("meta")
+            .file_type()
+            .is_fifo()
+    );
 
     assert_eq!(
-        fs::symlink_metadata(&dest_public).expect("meta").permissions().mode() & 0o777,
+        fs::symlink_metadata(&dest_public)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777,
         0o666
     );
     assert_eq!(
-        fs::symlink_metadata(&dest_private).expect("meta").permissions().mode() & 0o777,
+        fs::symlink_metadata(&dest_private)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
     assert_eq!(
-        fs::symlink_metadata(&dest_group).expect("meta").permissions().mode() & 0o777,
+        fs::symlink_metadata(&dest_group)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777,
         0o660
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1169,9 +1183,7 @@ fn execute_delete_removes_extraneous_fifo() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .specials(true)
-                .delete(true),
+            LocalCopyOptions::default().specials(true).delete(true),
         )
         .expect("delete copy succeeds");
 
@@ -1179,10 +1191,12 @@ fn execute_delete_removes_extraneous_fifo() {
         !extraneous_fifo.exists(),
         "extraneous FIFO should be deleted"
     );
-    assert!(dest_root.join("keep.txt").is_file(), "keep.txt should remain");
+    assert!(
+        dest_root.join("keep.txt").is_file(),
+        "keep.txt should remain"
+    );
     assert!(summary.items_deleted() >= 1);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1209,11 +1223,13 @@ fn execute_device_file_skipped_without_devices_or_copy_devices() {
     assert_eq!(summary.devices_created(), 0);
     assert_eq!(summary.files_copied(), 0);
     assert!(!dest_root.join("zero").exists());
-    assert!(report.records().iter().any(|record| {
-        record.action() == &LocalCopyAction::SkippedNonRegular
-    }));
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| { record.action() == &LocalCopyAction::SkippedNonRegular })
+    );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1236,10 +1252,7 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
     fs::write(source_dir.join("regular.txt"), b"regular file").expect("write regular");
 
     let dest = temp.path().join("dest");
-    let operands = vec![
-        source_dir.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // copy_links follows the symlink, but specials is disabled so the FIFO
@@ -1262,11 +1275,13 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
     // The symlink to the FIFO should have been dereferenced by copy_links,
     // but since specials is disabled, the FIFO should be skipped
     assert_eq!(report.summary().fifos_created(), 0);
-    assert!(report.records().iter().any(|record| {
-        record.action() == &LocalCopyAction::SkippedNonRegular
-    }));
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| { record.action() == &LocalCopyAction::SkippedNonRegular })
+    );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1279,8 +1294,11 @@ fn execute_copy_unsafe_links_broken_target_errors() {
 
     // Create a symlink pointing to a nonexistent path outside the tree
     let link_path = source_dir.join("broken_unsafe");
-    symlink(Path::new("/nonexistent/path/that/does/not/exist.txt"), &link_path)
-        .expect("create broken absolute symlink");
+    symlink(
+        Path::new("/nonexistent/path/that/does/not/exist.txt"),
+        &link_path,
+    )
+    .expect("create broken absolute symlink");
 
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&dest_dir).expect("create dest");
@@ -1300,10 +1318,12 @@ fn execute_copy_unsafe_links_broken_target_errors() {
             .copy_unsafe_links(true),
     );
 
-    assert!(result.is_err(), "copy should fail when unsafe symlink target is missing");
+    assert!(
+        result.is_err(),
+        "copy should fail when unsafe symlink target is missing"
+    );
     assert!(!dest_dir.join("broken_unsafe").exists());
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1336,9 +1356,7 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
 
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .links(true)
-            .copy_dirlinks(true),
+        LocalCopyOptions::default().links(true).copy_dirlinks(true),
     )
     .expect("copy succeeds");
 
@@ -1370,7 +1388,6 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
         Path::new("target.txt")
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1434,7 +1451,6 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
     );
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_fifo_produces_fifo_copied_event() {
@@ -1460,9 +1476,10 @@ fn execute_fifo_produces_fifo_copied_event() {
 
     assert_eq!(report.summary().fifos_created(), 1);
     assert!(
-        report.records().iter().any(|record| {
-            record.action() == &LocalCopyAction::FifoCopied
-        }),
+        report
+            .records()
+            .iter()
+            .any(|record| { record.action() == &LocalCopyAction::FifoCopied }),
         "should record a FifoCopied event for the FIFO"
     );
 }
@@ -1515,7 +1532,6 @@ fn execute_fifo_creation_sets_was_created_for_itemize() {
         "a newly materialised FIFO must flag creation so itemize renders `cS+++++++++`"
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1572,7 +1588,6 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
     assert_eq!(summary.files_copied(), 3);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn execute_copy_links_overrides_links_option() {
@@ -1599,9 +1614,7 @@ fn execute_copy_links_overrides_links_option() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .copy_links(true)
-                .links(true),
+            LocalCopyOptions::default().copy_links(true).links(true),
         )
         .expect("copy succeeds");
 
@@ -1618,7 +1631,6 @@ fn execute_copy_links_overrides_links_option() {
     assert_eq!(fs::read(&dest_link).expect("read"), b"overridden");
     assert_eq!(summary.symlinks_copied(), 0);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1653,13 +1665,21 @@ fn execute_without_links_skips_symlink_records_event() {
     let summary = report.summary();
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.files_copied(), 1);
-    assert!(!dest_root.join("source").join("link").exists(), "symlink should not be copied");
-    assert!(dest_root.join("source").join("target.txt").exists(), "regular file should be copied");
-    assert!(report.records().iter().any(|record| {
-        record.action() == &LocalCopyAction::SkippedNonRegular
-    }));
+    assert!(
+        !dest_root.join("source").join("link").exists(),
+        "symlink should not be copied"
+    );
+    assert!(
+        dest_root.join("source").join("target.txt").exists(),
+        "regular file should be copied"
+    );
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| { record.action() == &LocalCopyAction::SkippedNonRegular })
+    );
 }
-
 
 #[cfg(all(
     unix,
@@ -1680,8 +1700,7 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
 
     let fifo = source_root.join("archive.pipe");
     mkfifo_for_tests(&fifo, 0o640).expect("mkfifo");
-    fs::set_permissions(&fifo, PermissionsExt::from_mode(0o640))
-        .expect("set fifo permissions");
+    fs::set_permissions(&fifo, PermissionsExt::from_mode(0o640)).expect("set fifo permissions");
 
     let socket = source_root.join("archive.sock");
     mksocket_for_tests(&socket).expect("mksocket");
@@ -1728,7 +1747,6 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
     assert_eq!(summary.fifos_created(), 2);
     assert_eq!(summary.files_copied(), 1);
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1831,10 +1849,7 @@ fn copy_unsafe_links_emits_info_symsafe_notice() {
     symlink(&outside_target, &unsafe_link).expect("create unsafe symlink");
 
     let dest_root = temp.path().join("dest");
-    let operands = vec![
-        source_root.into_os_string(),
-        dest_root.into_os_string(),
-    ];
+    let operands = vec![source_root.into_os_string(), dest_root.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -1891,10 +1906,7 @@ fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {
     symlink(&outside_target, &unsafe_link).expect("create unsafe symlink");
 
     let dest_root = temp.path().join("dest");
-    let operands = vec![
-        source_root.into_os_string(),
-        dest_root.into_os_string(),
-    ];
+    let operands = vec![source_root.into_os_string(), dest_root.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(
@@ -1922,7 +1934,6 @@ fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {
         "expected no SYMSAFE notice at default verbosity; got {symsafe_msgs:?}"
     );
 }
-
 
 #[cfg(unix)]
 #[test]
@@ -1982,7 +1993,6 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     assert_eq!(fs::read(real_beta.join("b.txt")).expect("read"), b"beta");
 }
 
-
 #[cfg(all(
     unix,
     not(any(
@@ -2020,9 +2030,7 @@ fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default()
-                .links(true)
-                .specials(true),
+            LocalCopyOptions::default().links(true).specials(true),
         )
         .expect("dry run succeeds");
 

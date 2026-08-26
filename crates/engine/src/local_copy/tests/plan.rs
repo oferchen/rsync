@@ -1,4 +1,3 @@
-
 #[test]
 fn plan_from_operands_requires_destination() {
     let operands = vec![OsString::from("only-source")];
@@ -199,6 +198,12 @@ fn local_copy_stop_at_enforced() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect_err("stop-at should fail copy");
 
-    assert!(matches!(error.kind(), LocalCopyErrorKind::StopAtReached { .. }));
-    assert!(!destination.exists(), "destination should not exist on stop-at");
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::StopAtReached { .. }
+    ));
+    assert!(
+        !destination.exists(),
+        "destination should not exist on stop-at"
+    );
 }

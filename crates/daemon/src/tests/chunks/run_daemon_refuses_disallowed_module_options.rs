@@ -6,7 +6,10 @@ fn run_daemon_refuses_disallowed_module_options() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
@@ -60,10 +63,12 @@ fn run_daemon_refuses_disallowed_module_options() {
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

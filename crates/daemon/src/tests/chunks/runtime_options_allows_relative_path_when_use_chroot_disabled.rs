@@ -14,4 +14,3 @@ fn runtime_options_allows_relative_path_when_use_chroot_disabled() {
     assert_eq!(modules[0].path, PathBuf::from("data/docs"));
     assert!(!modules[0].use_chroot());
 }
-

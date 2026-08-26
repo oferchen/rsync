@@ -15,11 +15,8 @@ fn msg_error_exit_payload_uses_little_endian_encoding() {
     );
 
     // Round-trip through MessageFrame to confirm the payload is preserved.
-    let frame = protocol::MessageFrame::new(
-        protocol::MessageCode::ErrorExit,
-        payload.to_vec(),
-    )
-    .expect("valid frame");
+    let frame = protocol::MessageFrame::new(protocol::MessageCode::ErrorExit, payload.to_vec())
+        .expect("valid frame");
     let mut buf = Vec::new();
     frame.encode_into_writer(&mut buf).expect("encode");
     // The payload occupies the last 4 bytes of the encoded frame.

@@ -32,8 +32,16 @@ fn execute_empty_file_basic_transfer() {
 
     assert_eq!(summary.files_copied(), 1, "empty file should be copied");
     assert!(destination.exists(), "destination should exist");
-    assert_eq!(fs::read(&destination).expect("read dest"), b"", "destination should be empty");
-    assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0, "file size should be 0");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"",
+        "destination should be empty"
+    );
+    assert_eq!(
+        fs::metadata(&destination).expect("metadata").len(),
+        0,
+        "file size should be 0"
+    );
 }
 
 #[test]
@@ -56,7 +64,11 @@ fn execute_empty_file_replaces_nonempty_destination() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"", "destination should now be empty");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"",
+        "destination should now be empty"
+    );
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
@@ -78,8 +90,15 @@ fn execute_empty_file_dry_run_does_not_create_file() {
         .execute_with_options(LocalCopyExecution::DryRun, LocalCopyOptions::default())
         .expect("dry run succeeds");
 
-    assert_eq!(summary.files_copied(), 1, "dry run should report file would be copied");
-    assert!(!destination.exists(), "dry run should not create destination");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "dry run should report file would be copied"
+    );
+    assert!(
+        !destination.exists(),
+        "dry run should not create destination"
+    );
 }
 
 #[cfg(unix)]
@@ -111,8 +130,12 @@ fn execute_empty_file_preserves_permissions() {
     let dest_mode = fs::metadata(&destination)
         .expect("dest metadata")
         .permissions()
-        .mode() & 0o777;
-    assert_eq!(dest_mode, 0o600, "permissions should be preserved for empty file");
+        .mode()
+        & 0o777;
+    assert_eq!(
+        dest_mode, 0o600,
+        "permissions should be preserved for empty file"
+    );
 }
 
 #[test]
@@ -140,11 +163,13 @@ fn execute_empty_file_preserves_timestamp() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata")
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+    assert_eq!(
+        dest_mtime.unix_seconds(),
+        source_mtime.unix_seconds(),
+        "timestamp should be preserved for empty file"
     );
-    assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds(),
-        "timestamp should be preserved for empty file");
 }
 
 #[cfg(unix)]
@@ -171,9 +196,7 @@ fn execute_empty_file_preserves_both_permissions_and_timestamp() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .permissions(true)
-                .times(true),
+            LocalCopyOptions::default().permissions(true).times(true),
         )
         .expect("copy succeeds");
 
@@ -206,7 +229,8 @@ fn execute_empty_file_delta_transfer_from_empty() {
 
     // Set different mtimes to force delta evaluation
     set_file_mtime(&source, FileTime::from_unix_time(2_000_000_000, 0)).expect("set source mtime");
-    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0)).expect("set dest mtime");
+    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("set dest mtime");
 
     let operands = vec![
         source.into_os_string(),
@@ -222,8 +246,16 @@ fn execute_empty_file_delta_transfer_from_empty() {
         .expect("delta copy succeeds");
 
     // Delta transfer of empty to empty should be trivial
-    assert_eq!(summary.files_copied(), 1, "file should be counted as copied");
-    assert_eq!(summary.bytes_copied(), 0, "no data bytes should be transferred");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "file should be counted as copied"
+    );
+    assert_eq!(
+        summary.bytes_copied(),
+        0,
+        "no data bytes should be transferred"
+    );
     assert_eq!(summary.matched_bytes(), 0, "no bytes should be matched");
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
@@ -238,7 +270,8 @@ fn execute_empty_file_delta_transfer_from_nonempty() {
     fs::write(&destination, b"old content that will be removed").expect("write dest");
 
     set_file_mtime(&source, FileTime::from_unix_time(2_000_000_000, 0)).expect("set source mtime");
-    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0)).expect("set dest mtime");
+    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("set dest mtime");
 
     let operands = vec![
         source.into_os_string(),
@@ -254,7 +287,11 @@ fn execute_empty_file_delta_transfer_from_nonempty() {
         .expect("delta copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"", "destination should be truncated to empty");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"",
+        "destination should be truncated to empty"
+    );
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
@@ -268,7 +305,8 @@ fn execute_empty_file_delta_transfer_to_nonempty() {
     fs::write(&destination, b"").expect("write empty dest");
 
     set_file_mtime(&source, FileTime::from_unix_time(2_000_000_000, 0)).expect("set source mtime");
-    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0)).expect("set dest mtime");
+    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("set dest mtime");
 
     let operands = vec![
         source.into_os_string(),
@@ -313,7 +351,11 @@ fn execute_multiple_empty_files_recursive() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 3, "all three empty files should be copied");
+    assert_eq!(
+        summary.files_copied(),
+        3,
+        "all three empty files should be copied"
+    );
     assert!(dest_root.join("empty1.txt").exists());
     assert!(dest_root.join("empty2.txt").exists());
     assert!(dest_root.join("empty3.txt").exists());
@@ -352,10 +394,19 @@ fn execute_mixed_empty_and_nonempty_files() {
     assert_eq!(summary.files_copied(), 4, "all files should be copied");
 
     assert_eq!(fs::read(dest_root.join("empty.txt")).expect("read"), b"");
-    assert_eq!(fs::read(dest_root.join("another_empty.txt")).expect("read"), b"");
+    assert_eq!(
+        fs::read(dest_root.join("another_empty.txt")).expect("read"),
+        b""
+    );
 
-    assert_eq!(fs::read(dest_root.join("content.txt")).expect("read"), b"has content");
-    assert_eq!(fs::read(dest_root.join("more_content.txt")).expect("read"), b"more data");
+    assert_eq!(
+        fs::read(dest_root.join("content.txt")).expect("read"),
+        b"has content"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("more_content.txt")).expect("read"),
+        b"more data"
+    );
 }
 
 #[test]
@@ -388,9 +439,18 @@ fn execute_nested_directories_with_empty_files() {
     assert!(dest_root.join("root_empty.txt").exists());
     assert!(dest_root.join("level1/l1_empty.txt").exists());
     assert!(dest_root.join("level1/level2/l2_empty.txt").exists());
-    assert_eq!(fs::read(dest_root.join("root_empty.txt")).expect("read"), b"");
-    assert_eq!(fs::read(dest_root.join("level1/l1_empty.txt")).expect("read"), b"");
-    assert_eq!(fs::read(dest_root.join("level1/level2/l2_empty.txt")).expect("read"), b"");
+    assert_eq!(
+        fs::read(dest_root.join("root_empty.txt")).expect("read"),
+        b""
+    );
+    assert_eq!(
+        fs::read(dest_root.join("level1/l1_empty.txt")).expect("read"),
+        b""
+    );
+    assert_eq!(
+        fs::read(dest_root.join("level1/level2/l2_empty.txt")).expect("read"),
+        b""
+    );
 }
 
 #[test]
@@ -416,14 +476,16 @@ fn execute_empty_file_with_checksum_mode() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .checksum(true)
-                .times(true),
+            LocalCopyOptions::default().checksum(true).times(true),
         )
         .expect("copy succeeds");
 
     // Checksum of two empty files should match, so file should be skipped
-    assert_eq!(summary.files_copied(), 0, "identical empty files should be skipped in checksum mode");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "identical empty files should be skipped in checksum mode"
+    );
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
@@ -438,7 +500,8 @@ fn execute_empty_file_with_update_flag() {
 
     // Source is newer
     set_file_mtime(&source, FileTime::from_unix_time(2_000_000_000, 0)).expect("set source time");
-    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0)).expect("set dest time");
+    set_file_mtime(&destination, FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("set dest time");
 
     let operands = vec![
         source.into_os_string(),
@@ -469,7 +532,8 @@ fn execute_empty_file_update_skips_when_dest_newer() {
 
     // Destination is newer
     set_file_mtime(&source, FileTime::from_unix_time(1_000_000_000, 0)).expect("set source time");
-    set_file_mtime(&destination, FileTime::from_unix_time(2_000_000_000, 0)).expect("set dest time");
+    set_file_mtime(&destination, FileTime::from_unix_time(2_000_000_000, 0))
+        .expect("set dest time");
 
     let operands = vec![
         source.into_os_string(),
@@ -512,7 +576,11 @@ fn execute_empty_file_with_inplace() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"", "destination should be truncated in-place");
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"",
+        "destination should be truncated in-place"
+    );
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
@@ -544,10 +612,11 @@ fn execute_empty_file_with_temp_dir() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"");
 
     // Verify no temp files left behind
-    let staging_files: Vec<_> = fs::read_dir(&temp_dir)
-        .expect("read temp dir")
-        .collect();
-    assert!(staging_files.is_empty(), "no temp files should remain after empty file transfer");
+    let staging_files: Vec<_> = fs::read_dir(&temp_dir).expect("read temp dir").collect();
+    assert!(
+        staging_files.is_empty(),
+        "no temp files should remain after empty file transfer"
+    );
 }
 
 #[cfg(unix)]
@@ -582,7 +651,8 @@ fn execute_empty_file_preserves_permissions_with_chmod() {
     let dest_mode = fs::metadata(&destination)
         .expect("dest metadata")
         .permissions()
-        .mode() & 0o777;
+        .mode()
+        & 0o777;
 
     // 0o640 from the source plus the execute bits `+x` adds. `+x` names no
     // who-class, so upstream masks the implied bits with the umask
@@ -616,7 +686,11 @@ fn execute_empty_file_with_bytes_transferred_counter() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.bytes_copied(), 0, "zero bytes should be transferred for empty file");
+    assert_eq!(
+        summary.bytes_copied(),
+        0,
+        "zero bytes should be transferred for empty file"
+    );
     assert_eq!(summary.regular_files_total(), 1);
 }
 
@@ -648,7 +722,11 @@ fn execute_empty_file_to_empty_file_skipped_with_times() {
         .expect("copy succeeds");
 
     // With times preservation and identical timestamps, should skip
-    assert_eq!(summary.files_copied(), 0, "identical empty files should be skipped");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "identical empty files should be skipped"
+    );
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
@@ -740,7 +818,11 @@ fn execute_empty_file_collect_events() {
     assert_eq!(records.len(), 1, "should have one record for empty file");
     let record = &records[0];
     assert_eq!(record.action(), &LocalCopyAction::DataCopied);
-    assert_eq!(record.bytes_transferred(), 0, "record should show 0 bytes transferred");
+    assert_eq!(
+        record.bytes_transferred(),
+        0,
+        "record should show 0 bytes transferred"
+    );
 }
 
 #[test]

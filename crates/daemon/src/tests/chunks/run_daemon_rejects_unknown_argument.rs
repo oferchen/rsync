@@ -17,4 +17,3 @@ fn run_daemon_rejects_unknown_argument() {
         "diagnostic should point operators to the help output"
     );
 }
-

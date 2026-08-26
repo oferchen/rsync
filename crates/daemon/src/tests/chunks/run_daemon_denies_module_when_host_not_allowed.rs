@@ -11,7 +11,10 @@ fn run_daemon_denies_module_when_host_not_allowed() {
     // resolve and the test then panics with WSAECONNRESET on the greeting
     // read. Forward-slash-normalised to avoid the daemon module-arg parser's
     // backslash escape behaviour (see PR #4560 for the same root cause).
-    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
+    let module_path = std::env::temp_dir()
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
@@ -64,10 +67,12 @@ fn run_daemon_denies_module_when_host_not_allowed() {
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

@@ -195,7 +195,9 @@ fn parse_bool_option_value(value: Option<&str>, name: &str) -> Result<bool, Stri
 /// Parses a required size value for a buffer-size socket option.
 fn parse_size_option_value(value: Option<&str>, name: &str) -> Result<usize, String> {
     match value {
-        None => Err(format!("{name} requires a numeric value (e.g., {name}=65536)")),
+        None => Err(format!(
+            "{name} requires a numeric value (e.g., {name}=65536)"
+        )),
         Some(s) => s
             .parse::<usize>()
             .map_err(|_| format!("invalid numeric value '{s}' for {name}")),
@@ -255,7 +257,10 @@ fn parse_tos_option_value(value: Option<&str>) -> Result<u32, String> {
         None => Err("IP_TOS requires a numeric value (e.g., IP_TOS=0x10)".to_string()),
         Some(s) => {
             let trimmed = s.trim();
-            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+            if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
                 u32::from_str_radix(hex, 16)
                     .map_err(|_| format!("invalid hex value '{trimmed}' for IP_TOS"))
             } else {

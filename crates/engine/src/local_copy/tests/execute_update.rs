@@ -43,10 +43,7 @@ fn update_skips_file_when_destination_is_newer() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest content"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
 
 #[test]
@@ -448,9 +445,8 @@ fn update_combined_with_times_preserves_mtime() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata")
-    );
+    let dest_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     // Note: Some filesystems don't preserve full nanosecond precision
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
 }
@@ -712,7 +708,11 @@ fn update_matches_upstream_rsync_semantics() {
     assert_eq!(summary.files_copied(), 2, "should copy case3 and case4");
     // Case1 is skipped because dest is newer (counted in skipped_newer)
     // Case2 is skipped because dest mtime == source mtime (also counted in skipped_newer with --update flag)
-    assert_eq!(summary.regular_files_skipped_newer(), 1, "should skip case1 (newer)");
+    assert_eq!(
+        summary.regular_files_skipped_newer(),
+        1,
+        "should skip case1 (newer)"
+    );
     // Note: case2 with equal mtime + same size is skipped, but may not increment skipped_newer counter
 
     assert_eq!(

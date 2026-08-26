@@ -347,7 +347,11 @@ fn link_dest_best_match_prefers_exact_over_content_only() {
         "destination must not link the level-2 basis"
     );
     assert!(summary.hard_links_created() >= 1);
-    assert_eq!(summary.files_copied(), 0, "an exact basis is hard-linked, not copied");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "an exact basis is hard-linked, not copied"
+    );
     // The level-2 basis inode must not be mutated (no attr reapply on a shared inode).
     assert_eq!(
         link_dest1_meta.permissions().mode() & 0o777,
@@ -1416,8 +1420,16 @@ fn link_dest_copies_when_only_xattrs_differ() {
         basis_meta.ino(),
         "a match_level-2 basis (attrs differ) must be copied, not hard-linked"
     );
-    assert_eq!(dest_meta.nlink(), 1, "copied file must not gain a hard link");
-    assert_eq!(summary.hard_links_created(), 0, "no hard link at match_level 2");
+    assert_eq!(
+        dest_meta.nlink(),
+        1,
+        "copied file must not gain a hard link"
+    );
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "no hard link at match_level 2"
+    );
 
     // The basis inode is left untouched - its xattr is not overwritten.
     let basis_xattr = xattr::get(&link_dest_file, "user.k")
@@ -1542,8 +1554,9 @@ fn link_dest_refused_hard_link_creates_the_node_instead() {
             );
 
             // The refusal must not fail the transfer (3.4.4 exited 23 here).
-            let summary = summary
-                .unwrap_or_else(|error| panic!("{case}: transfer failed instead of copying: {error}"));
+            let summary = summary.unwrap_or_else(|error| {
+                panic!("{case}: transfer failed instead of copying: {error}")
+            });
             let _ = &summary;
 
             // ...and the entry must exist, created from the source.
@@ -2062,6 +2075,8 @@ impl NanosecondBasis {
     }
 
     fn basis_ino(&self) -> u64 {
-        fs::metadata(&self.basis_file).expect("basis metadata").ino()
+        fs::metadata(&self.basis_file)
+            .expect("basis metadata")
+            .ino()
     }
 }

@@ -356,4 +356,3 @@ fn workspace_prefix_match_requires_separator_boundary() {
     assert_eq!(source.path(), expected);
     assert!(Path::new(source.path()).is_absolute());
 }
-

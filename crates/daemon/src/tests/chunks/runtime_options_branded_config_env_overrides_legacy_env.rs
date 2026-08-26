@@ -30,4 +30,3 @@ fn runtime_options_branded_config_env_overrides_legacy_env() {
     assert_eq!(module.name, "branded");
     assert_eq!(module.path, branded_dir);
 }
-

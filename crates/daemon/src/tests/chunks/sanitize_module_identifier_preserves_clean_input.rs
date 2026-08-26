@@ -6,4 +6,3 @@ fn sanitize_module_identifier_preserves_clean_input() {
         Cow::Owned(_) => panic!("clean identifiers should not allocate"),
     }
 }
-

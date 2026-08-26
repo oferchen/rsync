@@ -12,4 +12,3 @@ fn runtime_options_parse_bwlimit_argument() {
     );
     assert!(options.bandwidth_limit_configured());
 }
-

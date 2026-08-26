@@ -47,8 +47,7 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
     filetime::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
         .expect("backdate ref unchanged");
-    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time)
-        .expect("backdate ref changed");
+    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time).expect("backdate ref changed");
 
     // Match source unchanged.txt mtime to the reference so compare-dest sees it as identical
     filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
@@ -81,7 +80,8 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -207,7 +207,8 @@ fn daemon_link_dest_push_creates_hardlinks() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -258,10 +259,7 @@ fn daemon_link_dest_push_creates_hardlinks() {
 
     // new_file.txt should be a regular copy (not in reference)
     let dest_new = dest_dir.join("new_file.txt");
-    assert!(
-        dest_new.exists(),
-        "new_file.txt must exist at destination"
-    );
+    assert!(dest_new.exists(), "new_file.txt must exist at destination");
     assert_eq!(
         fs::read(&dest_new).expect("read new_file.txt"),
         b"brand new\n",
@@ -324,8 +322,7 @@ fn daemon_copy_dest_push_copies_from_reference() {
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
     filetime::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
         .expect("backdate ref unchanged");
-    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time)
-        .expect("backdate ref changed");
+    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time).expect("backdate ref changed");
 
     // Match source unchanged.txt mtime to reference
     filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
@@ -358,7 +355,8 @@ fn daemon_copy_dest_push_copies_from_reference() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();

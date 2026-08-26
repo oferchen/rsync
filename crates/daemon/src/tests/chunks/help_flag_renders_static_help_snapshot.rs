@@ -8,4 +8,3 @@ fn help_flag_renders_static_help_snapshot() {
     let expected = render_help(ProgramName::Rsyncd);
     assert_eq!(stdout, expected.into_bytes());
 }
-

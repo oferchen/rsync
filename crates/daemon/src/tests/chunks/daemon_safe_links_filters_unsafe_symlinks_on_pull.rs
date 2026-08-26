@@ -45,12 +45,10 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
     unix_fs::symlink("file.txt", source_dir.join("safe_link")).expect("create safe_link");
 
     // Safe symlink: relative target that stays within the module via parent traversal
-    unix_fs::symlink("../file.txt", source_subdir.join("inner_link"))
-        .expect("create inner_link");
+    unix_fs::symlink("../file.txt", source_subdir.join("inner_link")).expect("create inner_link");
 
     // Unsafe symlink: absolute path outside the transfer tree
-    unix_fs::symlink("/etc/passwd", source_dir.join("unsafe_link"))
-        .expect("create unsafe_link");
+    unix_fs::symlink("/etc/passwd", source_dir.join("unsafe_link")).expect("create unsafe_link");
 
     // Unsafe symlink: relative path that escapes the module root
     unix_fs::symlink("../../outside.txt", source_dir.join("escape_link"))
@@ -83,7 +81,8 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);

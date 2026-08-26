@@ -447,8 +447,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_early_exec_captures_stderr() {
         let ctx = test_context();
-        let result =
-            run_early_exec("echo 'early error' >&2; exit 1", &ctx, None).expect("command should run");
+        let result = run_early_exec("echo 'early error' >&2; exit 1", &ctx, None)
+            .expect("command should run");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("early error"));
@@ -490,8 +490,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stderr() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx)
-            .expect("command should run");
+        let result =
+            run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx).expect("command should run");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("custom error"));
@@ -551,7 +551,11 @@ mod xfer_exec_tests {
             assert_eq!(exit, cooked, "cooked exit status should be passed through");
             assert_eq!(raw, cooked << 8, "raw status should be the wait encoding");
             // The raw value must decode back to the cooked code via WEXITSTATUS.
-            assert_eq!((raw >> 8) & 0xff, cooked, "WEXITSTATUS(raw) must equal cooked");
+            assert_eq!(
+                (raw >> 8) & 0xff,
+                cooked,
+                "WEXITSTATUS(raw) must equal cooked"
+            );
         }
     }
 
@@ -568,8 +572,7 @@ mod xfer_exec_tests {
         let ctx = test_context();
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
-        let result =
-            run_pre_xfer_exec("/nonexistent/binary/path", &ctx).expect("sh -c should run");
+        let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx).expect("sh -c should run");
         assert!(result.is_err());
     }
 
@@ -739,8 +742,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stdout_on_failure() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx)
-            .expect("command should run");
+        let result =
+            run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx).expect("command should run");
         let err = result.unwrap_err();
         assert_eq!(err.stdout, "pre-xfer info");
         assert!(err.message.contains("pre-xfer exec returned"));

@@ -1,4 +1,3 @@
-
 #[test]
 fn min_size_excludes_files_smaller_than_limit() {
     let temp = tempdir().expect("tempdir");
@@ -12,10 +11,7 @@ fn min_size_excludes_files_smaller_than_limit() {
     fs::write(source.join("medium.txt"), b"hello world!").expect("write 12-byte file");
     fs::write(source.join("large.txt"), vec![b'a'; 100]).expect("write 100-byte file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(10));
@@ -26,11 +22,23 @@ fn min_size_excludes_files_smaller_than_limit() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("tiny.txt").exists(), "1-byte file should be excluded");
-    assert!(!target_root.join("small.txt").exists(), "5-byte file should be excluded");
+    assert!(
+        !target_root.join("tiny.txt").exists(),
+        "1-byte file should be excluded"
+    );
+    assert!(
+        !target_root.join("small.txt").exists(),
+        "5-byte file should be excluded"
+    );
 
-    assert!(target_root.join("medium.txt").exists(), "12-byte file should be included");
-    assert!(target_root.join("large.txt").exists(), "100-byte file should be included");
+    assert!(
+        target_root.join("medium.txt").exists(),
+        "12-byte file should be included"
+    );
+    assert!(
+        target_root.join("large.txt").exists(),
+        "100-byte file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 2);
 }
@@ -47,10 +55,7 @@ fn min_size_includes_files_equal_to_limit() {
     fs::write(source.join("exact.txt"), vec![b'x'; 100]).expect("write 100-byte file");
     fs::write(source.join("above.txt"), vec![b'x'; 101]).expect("write 101-byte file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(100));
@@ -61,11 +66,20 @@ fn min_size_includes_files_equal_to_limit() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("below.txt").exists(), "99-byte file should be excluded");
+    assert!(
+        !target_root.join("below.txt").exists(),
+        "99-byte file should be excluded"
+    );
 
-    assert!(target_root.join("exact.txt").exists(), "100-byte file should be included");
+    assert!(
+        target_root.join("exact.txt").exists(),
+        "100-byte file should be included"
+    );
 
-    assert!(target_root.join("above.txt").exists(), "101-byte file should be included");
+    assert!(
+        target_root.join("above.txt").exists(),
+        "101-byte file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 2);
 }
@@ -83,10 +97,7 @@ fn min_size_includes_files_larger_than_limit() {
     fs::write(source.join("large2.txt"), vec![b'b'; 5000]).expect("write 5KB file");
     fs::write(source.join("huge.txt"), vec![b'c'; 10000]).expect("write 10KB file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(500));
@@ -97,11 +108,23 @@ fn min_size_includes_files_larger_than_limit() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("small.txt").exists(), "4-byte file should be excluded");
+    assert!(
+        !target_root.join("small.txt").exists(),
+        "4-byte file should be excluded"
+    );
 
-    assert!(target_root.join("large1.txt").exists(), "1000-byte file should be included");
-    assert!(target_root.join("large2.txt").exists(), "5000-byte file should be included");
-    assert!(target_root.join("huge.txt").exists(), "10000-byte file should be included");
+    assert!(
+        target_root.join("large1.txt").exists(),
+        "1000-byte file should be included"
+    );
+    assert!(
+        target_root.join("large2.txt").exists(),
+        "5000-byte file should be included"
+    );
+    assert!(
+        target_root.join("huge.txt").exists(),
+        "10000-byte file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 3);
 }
@@ -118,10 +141,7 @@ fn min_size_with_kilobyte_suffix() {
     fs::write(source.join("exact.txt"), vec![b'x'; 1024]).expect("write 1KB file");
     fs::write(source.join("large.txt"), vec![b'x'; 2048]).expect("write 2KB file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(1024));
@@ -132,10 +152,19 @@ fn min_size_with_kilobyte_suffix() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("small.txt").exists(), "500-byte file should be excluded");
+    assert!(
+        !target_root.join("small.txt").exists(),
+        "500-byte file should be excluded"
+    );
 
-    assert!(target_root.join("exact.txt").exists(), "1KB file should be included");
-    assert!(target_root.join("large.txt").exists(), "2KB file should be included");
+    assert!(
+        target_root.join("exact.txt").exists(),
+        "1KB file should be included"
+    );
+    assert!(
+        target_root.join("large.txt").exists(),
+        "2KB file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 2);
 }
@@ -152,10 +181,7 @@ fn min_size_with_megabyte_suffix() {
     fs::write(source.join("exact.txt"), vec![b'x'; 1024 * 1024]).expect("write 1MB file");
     fs::write(source.join("large.txt"), vec![b'x'; 2 * 1024 * 1024]).expect("write 2MB file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(1024 * 1024));
@@ -166,10 +192,19 @@ fn min_size_with_megabyte_suffix() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("small.txt").exists(), "512KB file should be excluded");
+    assert!(
+        !target_root.join("small.txt").exists(),
+        "512KB file should be excluded"
+    );
 
-    assert!(target_root.join("exact.txt").exists(), "1MB file should be included");
-    assert!(target_root.join("large.txt").exists(), "2MB file should be included");
+    assert!(
+        target_root.join("exact.txt").exists(),
+        "1MB file should be included"
+    );
+    assert!(
+        target_root.join("large.txt").exists(),
+        "2MB file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 2);
 }
@@ -186,10 +221,7 @@ fn min_size_with_gigabyte_suffix() {
     fs::write(source.join("tiny.txt"), b"small").expect("write tiny file");
     fs::write(source.join("medium.txt"), vec![b'x'; 100 * 1024 * 1024]).expect("write 100MB file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(1024u64 * 1024 * 1024));
@@ -200,8 +232,14 @@ fn min_size_with_gigabyte_suffix() {
 
     let target_root = dest.join("source");
 
-    assert!(!target_root.join("tiny.txt").exists(), "tiny file should be excluded");
-    assert!(!target_root.join("medium.txt").exists(), "100MB file should be excluded");
+    assert!(
+        !target_root.join("tiny.txt").exists(),
+        "tiny file should be excluded"
+    );
+    assert!(
+        !target_root.join("medium.txt").exists(),
+        "100MB file should be excluded"
+    );
 
     assert_eq!(summary.files_copied(), 0);
 }
@@ -218,10 +256,7 @@ fn min_size_zero_includes_all_files() {
     fs::write(source.join("small.txt"), b"x").expect("write 1-byte file");
     fs::write(source.join("medium.txt"), vec![b'x'; 100]).expect("write 100-byte file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(0));
@@ -232,9 +267,18 @@ fn min_size_zero_includes_all_files() {
 
     let target_root = dest.join("source");
 
-    assert!(target_root.join("empty.txt").exists(), "empty file should be included");
-    assert!(target_root.join("small.txt").exists(), "1-byte file should be included");
-    assert!(target_root.join("medium.txt").exists(), "100-byte file should be included");
+    assert!(
+        target_root.join("empty.txt").exists(),
+        "empty file should be included"
+    );
+    assert!(
+        target_root.join("small.txt").exists(),
+        "1-byte file should be included"
+    );
+    assert!(
+        target_root.join("medium.txt").exists(),
+        "100-byte file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 3);
 }
@@ -251,10 +295,7 @@ fn min_size_none_includes_all_files() {
     fs::write(source.join("small.txt"), b"hello").expect("write small file");
     fs::write(source.join("large.txt"), vec![b'x'; 1000]).expect("write large file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(None);
@@ -265,9 +306,18 @@ fn min_size_none_includes_all_files() {
 
     let target_root = dest.join("source");
 
-    assert!(target_root.join("tiny.txt").exists(), "tiny file should be included");
-    assert!(target_root.join("small.txt").exists(), "small file should be included");
-    assert!(target_root.join("large.txt").exists(), "large file should be included");
+    assert!(
+        target_root.join("tiny.txt").exists(),
+        "tiny file should be included"
+    );
+    assert!(
+        target_root.join("small.txt").exists(),
+        "small file should be included"
+    );
+    assert!(
+        target_root.join("large.txt").exists(),
+        "large file should be included"
+    );
 
     assert_eq!(summary.files_copied(), 3);
 }
@@ -282,13 +332,9 @@ fn min_size_does_not_affect_directories() {
     fs::create_dir_all(&dest).expect("create dest");
 
     fs::write(source.join("subdir1/small.txt"), b"x").expect("write small file");
-    fs::write(source.join("subdir2/nested/large.txt"), vec![b'x'; 1000])
-        .expect("write large file");
+    fs::write(source.join("subdir2/nested/large.txt"), vec![b'x'; 1000]).expect("write large file");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default().min_file_size(Some(100));
@@ -301,11 +347,20 @@ fn min_size_does_not_affect_directories() {
     // Directories should always be created regardless of min-size
     assert!(target_root.join("subdir1").is_dir(), "subdir1 should exist");
     assert!(target_root.join("subdir2").is_dir(), "subdir2 should exist");
-    assert!(target_root.join("subdir2/nested").is_dir(), "nested dir should exist");
+    assert!(
+        target_root.join("subdir2/nested").is_dir(),
+        "nested dir should exist"
+    );
 
-    assert!(!target_root.join("subdir1/small.txt").exists(), "small file should be excluded");
+    assert!(
+        !target_root.join("subdir1/small.txt").exists(),
+        "small file should be excluded"
+    );
 
-    assert!(target_root.join("subdir2/nested/large.txt").exists(), "large file should be included");
+    assert!(
+        target_root.join("subdir2/nested/large.txt").exists(),
+        "large file should be included"
+    );
 }
 
 #[test]
@@ -321,15 +376,11 @@ fn min_size_works_with_other_filters() {
     fs::write(source.join("small.tmp"), b"y").expect("write small tmp");
     fs::write(source.join("large.tmp"), vec![b'y'; 1000]).expect("write large tmp");
 
-    let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
-    ];
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Combine min-size filter with pattern filter
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .min_file_size(Some(100))
         .filters(Some(filters));
@@ -341,16 +392,28 @@ fn min_size_works_with_other_filters() {
     let target_root = dest.join("source");
 
     // small.txt: excluded by min-size
-    assert!(!target_root.join("small.txt").exists(), "small.txt excluded by size");
+    assert!(
+        !target_root.join("small.txt").exists(),
+        "small.txt excluded by size"
+    );
 
     // large.txt: included (passes both filters)
-    assert!(target_root.join("large.txt").exists(), "large.txt should be included");
+    assert!(
+        target_root.join("large.txt").exists(),
+        "large.txt should be included"
+    );
 
     // small.tmp: excluded by pattern filter
-    assert!(!target_root.join("small.tmp").exists(), "small.tmp excluded by pattern");
+    assert!(
+        !target_root.join("small.tmp").exists(),
+        "small.tmp excluded by pattern"
+    );
 
     // large.tmp: excluded by pattern filter (even though size is OK)
-    assert!(!target_root.join("large.tmp").exists(), "large.tmp excluded by pattern");
+    assert!(
+        !target_root.join("large.tmp").exists(),
+        "large.tmp excluded by pattern"
+    );
 
     assert_eq!(summary.files_copied(), 1);
 }
@@ -383,9 +446,17 @@ fn min_size_prunes_empty_directories_when_enabled() {
         .expect("copy succeeds");
 
     // Directories should be pruned since all files were filtered out
-    assert!(!ctx.dest.join("source").join("source/empty_dir").exists(), "empty_dir should be pruned");
-    assert!(!ctx.dest.join("source").join("source/dir_with_small_files").exists(),
-            "dir_with_small_files should be pruned");
+    assert!(
+        !ctx.dest.join("source").join("source/empty_dir").exists(),
+        "empty_dir should be pruned"
+    );
+    assert!(
+        !ctx.dest
+            .join("source")
+            .join("source/dir_with_small_files")
+            .exists(),
+        "dir_with_small_files should be pruned"
+    );
 }
 
 #[cfg(unix)]
@@ -394,15 +465,9 @@ fn min_size_prunes_empty_directories_when_enabled() {
 fn min_size_does_not_affect_symlinks() {
     let ctx = test_helpers::setup_copy_test();
 
-    test_helpers::create_test_tree(
-        &ctx.source,
-        &[
-            ("target.txt", Some(b"x")),
-        ],
-    );
+    test_helpers::create_test_tree(&ctx.source, &[("target.txt", Some(b"x"))]);
 
-    std::os::unix::fs::symlink("target.txt", ctx.source.join("link.txt"))
-        .expect("create symlink");
+    std::os::unix::fs::symlink("target.txt", ctx.source.join("link.txt")).expect("create symlink");
 
     let operands = vec![
         ctx.source.into_os_string(),
@@ -418,8 +483,14 @@ fn min_size_does_not_affect_symlinks() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("source").join("source/target.txt").exists(), "small target excluded");
+    assert!(
+        !ctx.dest.join("source").join("source/target.txt").exists(),
+        "small target excluded"
+    );
 
     // Symlink should still be created (symlinks are not filtered by size)
-    assert!(ctx.dest.join("source").join("source/link.txt").exists(), "symlink should be included");
+    assert!(
+        ctx.dest.join("source").join("source/link.txt").exists(),
+        "symlink should be included"
+    );
 }

@@ -381,7 +381,10 @@ mod draining_reader_tests {
 
         let mut received = Vec::new();
         reader.read_to_end(&mut received).expect("read to end");
-        assert_eq!(received, payload, "DrainingReader must preserve every byte in order");
+        assert_eq!(
+            received, payload,
+            "DrainingReader must preserve every byte in order"
+        );
     }
 
     #[test]
@@ -523,7 +526,9 @@ mod draining_reader_tests {
         let (go_tx, go_rx) = channel::<()>();
         let peer = thread::spawn(move || {
             let (mut server, _) = listener.accept().expect("accept");
-            server.write_all(&first_for_peer).expect("write first burst");
+            server
+                .write_all(&first_for_peer)
+                .expect("write first burst");
             server.flush().expect("flush first");
             // Wait until the consumer has drained the first burst and stopped
             // the drain thread before writing the trailing goodbye bytes.
@@ -543,7 +548,10 @@ mod draining_reader_tests {
         // Consume the first burst through the drain reader.
         let mut got_first = vec![0u8; first.len()];
         reader.read_exact(&mut got_first).expect("read first burst");
-        assert_eq!(got_first, first, "drain reader must replay the first burst intact");
+        assert_eq!(
+            got_first, first,
+            "drain reader must replay the first burst intact"
+        );
 
         // Stop the drain thread (it clears the read timeout on exit, then the
         // drain clone is dropped), then let the peer send its trailing goodbye
@@ -625,7 +633,10 @@ mod draining_reader_tests {
             payload_len,
             "the sibling write clone must deliver every byte (no truncation)"
         );
-        assert_eq!(got, payload, "write clone bytes must arrive intact and in order");
+        assert_eq!(
+            got, payload,
+            "write clone bytes must arrive intact and in order"
+        );
         handle.stop();
     }
 }

@@ -489,4 +489,3 @@ fn negotiated_stream_parts_copy_buffered_remaining_into_vec_copies_unread_bytes(
     assert_eq!(target, expected[consumed..]);
     assert_eq!(parts.buffered_consumed(), consumed);
 }
-

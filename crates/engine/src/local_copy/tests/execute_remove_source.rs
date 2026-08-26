@@ -1,4 +1,3 @@
-
 // Tests for --remove-source-files flag
 
 #[test]
@@ -22,18 +21,27 @@ fn remove_source_files_removes_successfully_transferred_file() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.sources_removed(), 1);
-    assert!(!ctx.source.join("file.txt").exists(), "source file should be removed");
-    assert_eq!(fs::read(ctx.dest.join("file.txt")).expect("read dest"), b"content");
+    assert!(
+        !ctx.source.join("file.txt").exists(),
+        "source file should be removed"
+    );
+    assert_eq!(
+        fs::read(ctx.dest.join("file.txt")).expect("read dest"),
+        b"content"
+    );
 }
 
 #[test]
 fn remove_source_files_removes_multiple_files() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("file1.txt", Some(b"content1")),
-        ("file2.txt", Some(b"content2")),
-        ("file3.txt", Some(b"content3")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("file1.txt", Some(b"content1")),
+            ("file2.txt", Some(b"content2")),
+            ("file3.txt", Some(b"content3")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let mut source_operand = ctx.source.clone().into_os_string();
@@ -69,10 +77,8 @@ fn remove_source_files_preserves_unchanged_files() {
 
     // Set same mtime on both files so they're considered identical
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
-    set_file_times(ctx.source.join("file.txt"), timestamp, timestamp)
-        .expect("set source times");
-    set_file_times(ctx.dest.join("file.txt"), timestamp, timestamp)
-        .expect("set dest times");
+    set_file_times(ctx.source.join("file.txt"), timestamp, timestamp).expect("set source times");
+    set_file_times(ctx.dest.join("file.txt"), timestamp, timestamp).expect("set dest times");
 
     let operands = vec![
         ctx.source.join("file.txt").into_os_string(),
@@ -90,7 +96,11 @@ fn remove_source_files_preserves_unchanged_files() {
         .expect("execution succeeds");
 
     assert_eq!(summary.files_copied(), 0, "file should not be copied");
-    assert_eq!(summary.sources_removed(), 0, "unchanged files should not be removed");
+    assert_eq!(
+        summary.sources_removed(),
+        0,
+        "unchanged files should not be removed"
+    );
     assert!(ctx.source.join("file.txt").exists(), "source should remain");
     assert!(ctx.dest.join("file.txt").exists(), "dest should remain");
 }
@@ -98,10 +108,13 @@ fn remove_source_files_preserves_unchanged_files() {
 #[test]
 fn remove_source_files_does_not_remove_directories() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("dir1/file.txt", Some(b"content1")),
-        ("dir2/file.txt", Some(b"content2")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("dir1/file.txt", Some(b"content1")),
+            ("dir2/file.txt", Some(b"content2")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let mut source_operand = ctx.source.clone().into_os_string();
@@ -121,17 +134,26 @@ fn remove_source_files_does_not_remove_directories() {
     assert_eq!(summary.sources_removed(), 2);
     assert!(!ctx.source.join("dir1/file.txt").exists());
     assert!(!ctx.source.join("dir2/file.txt").exists());
-    assert!(ctx.source.join("dir1").is_dir(), "directory should not be removed");
-    assert!(ctx.source.join("dir2").is_dir(), "directory should not be removed");
+    assert!(
+        ctx.source.join("dir1").is_dir(),
+        "directory should not be removed"
+    );
+    assert!(
+        ctx.source.join("dir2").is_dir(),
+        "directory should not be removed"
+    );
 }
 
 #[test]
 fn remove_source_files_with_filter_only_removes_transferred() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("include.txt", Some(b"included")),
-        ("exclude.log", Some(b"excluded")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("include.txt", Some(b"included")),
+            ("exclude.log", Some(b"excluded")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let mut source_operand = ctx.source.clone().into_os_string();
@@ -140,8 +162,7 @@ fn remove_source_files_with_filter_only_removes_transferred() {
     let operands = vec![source_operand, ctx.dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")])
-        .expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
 
     let summary = plan
         .execute_with_options(
@@ -171,10 +192,8 @@ fn remove_source_files_with_update_preserves_newer_dest() {
     // Make source older than dest
     let old_time = FileTime::from_unix_time(1_600_000_000, 0);
     let new_time = FileTime::from_unix_time(1_700_000_000, 0);
-    set_file_times(ctx.source.join("file.txt"), old_time, old_time)
-        .expect("set source times");
-    set_file_times(ctx.dest.join("file.txt"), new_time, new_time)
-        .expect("set dest times");
+    set_file_times(ctx.source.join("file.txt"), old_time, old_time).expect("set source times");
+    set_file_times(ctx.dest.join("file.txt"), new_time, new_time).expect("set dest times");
 
     let operands = vec![
         ctx.source.join("file.txt").into_os_string(),
@@ -192,8 +211,16 @@ fn remove_source_files_with_update_preserves_newer_dest() {
         )
         .expect("execution succeeds");
 
-    assert_eq!(summary.files_copied(), 0, "older file should not overwrite newer");
-    assert_eq!(summary.sources_removed(), 0, "source should not be removed when not transferred");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "older file should not overwrite newer"
+    );
+    assert_eq!(
+        summary.sources_removed(),
+        0,
+        "source should not be removed when not transferred"
+    );
     assert!(ctx.source.join("file.txt").exists(), "source should remain");
     assert_eq!(
         fs::read(ctx.dest.join("file.txt")).expect("read dest"),
@@ -224,8 +251,16 @@ fn remove_source_files_with_ignore_existing_preserves_source() {
         )
         .expect("execution succeeds");
 
-    assert_eq!(summary.files_copied(), 0, "file should not be copied when dest exists");
-    assert_eq!(summary.sources_removed(), 0, "source should not be removed when not transferred");
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "file should not be copied when dest exists"
+    );
+    assert_eq!(
+        summary.sources_removed(),
+        0,
+        "source should not be removed when not transferred"
+    );
     assert!(ctx.source.join("file.txt").exists(), "source should remain");
     assert_eq!(
         fs::read(ctx.dest.join("file.txt")).expect("read dest"),
@@ -253,9 +288,19 @@ fn remove_source_files_dry_run_does_not_remove() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.sources_removed(), 0, "dry run should not remove sources");
-    assert!(ctx.source.join("file.txt").exists(), "source should remain in dry run");
-    assert!(!ctx.dest.join("file.txt").exists(), "dest should not exist in dry run");
+    assert_eq!(
+        summary.sources_removed(),
+        0,
+        "dry run should not remove sources"
+    );
+    assert!(
+        ctx.source.join("file.txt").exists(),
+        "source should remain in dry run"
+    );
+    assert!(
+        !ctx.dest.join("file.txt").exists(),
+        "dest should not exist in dry run"
+    );
 }
 
 #[test]
@@ -292,11 +337,14 @@ fn remove_source_files_with_inplace_removes_after_update() {
 #[test]
 fn remove_source_files_removes_nested_files() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("a/b/c/file1.txt", Some(b"deep1")),
-        ("a/b/file2.txt", Some(b"mid")),
-        ("a/file3.txt", Some(b"shallow")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("a/b/c/file1.txt", Some(b"deep1")),
+            ("a/b/file2.txt", Some(b"mid")),
+            ("a/file3.txt", Some(b"shallow")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let mut source_operand = ctx.source.clone().into_os_string();
@@ -332,11 +380,7 @@ fn remove_source_files_removes_symlinks() {
 
     let ctx = test_helpers::setup_copy_test();
     fs::write(ctx.source.join("target.txt"), b"target").expect("write target");
-    symlink(
-        ctx.source.join("target.txt"),
-        ctx.source.join("link.txt"),
-    )
-    .expect("create symlink");
+    symlink(ctx.source.join("target.txt"), ctx.source.join("link.txt")).expect("create symlink");
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let operands = vec![
@@ -356,9 +400,18 @@ fn remove_source_files_removes_symlinks() {
 
     assert_eq!(summary.symlinks_copied(), 1);
     assert_eq!(summary.sources_removed(), 1);
-    assert!(!ctx.source.join("link.txt").exists(), "symlink should be removed");
-    assert!(ctx.source.join("target.txt").exists(), "target should remain");
-    assert!(ctx.dest.join("link.txt").exists(), "symlink should be copied");
+    assert!(
+        !ctx.source.join("link.txt").exists(),
+        "symlink should be removed"
+    );
+    assert!(
+        ctx.source.join("target.txt").exists(),
+        "target should remain"
+    );
+    assert!(
+        ctx.dest.join("link.txt").exists(),
+        "symlink should be copied"
+    );
 }
 
 #[test]
@@ -410,10 +463,24 @@ fn remove_source_files_with_min_size_only_removes_matching() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1, "only large file should be copied");
-    assert_eq!(summary.sources_removed(), 1, "only large file should be removed");
-    assert!(ctx.source.join("small.txt").exists(), "small file should remain");
-    assert!(!ctx.source.join("large.txt").exists(), "large file should be removed");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "only large file should be copied"
+    );
+    assert_eq!(
+        summary.sources_removed(),
+        1,
+        "only large file should be removed"
+    );
+    assert!(
+        ctx.source.join("small.txt").exists(),
+        "small file should remain"
+    );
+    assert!(
+        !ctx.source.join("large.txt").exists(),
+        "large file should be removed"
+    );
     assert!(!ctx.dest.join("small.txt").exists());
     assert!(ctx.dest.join("large.txt").exists());
 }
@@ -440,10 +507,24 @@ fn remove_source_files_with_max_size_only_removes_matching() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1, "only small file should be copied");
-    assert_eq!(summary.sources_removed(), 1, "only small file should be removed");
-    assert!(!ctx.source.join("small.txt").exists(), "small file should be removed");
-    assert!(ctx.source.join("large.txt").exists(), "large file should remain");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "only small file should be copied"
+    );
+    assert_eq!(
+        summary.sources_removed(),
+        1,
+        "only small file should be removed"
+    );
+    assert!(
+        !ctx.source.join("small.txt").exists(),
+        "small file should be removed"
+    );
+    assert!(
+        ctx.source.join("large.txt").exists(),
+        "large file should remain"
+    );
     assert!(ctx.dest.join("small.txt").exists());
     assert!(!ctx.dest.join("large.txt").exists());
 }
@@ -472,10 +553,24 @@ fn remove_source_files_with_existing_only_when_updated() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1, "only existing file should be updated");
-    assert_eq!(summary.sources_removed(), 1, "only updated file should be removed");
-    assert!(!ctx.source.join("update.txt").exists(), "updated file should be removed");
-    assert!(ctx.source.join("new.txt").exists(), "new file should remain (not transferred)");
+    assert_eq!(
+        summary.files_copied(),
+        1,
+        "only existing file should be updated"
+    );
+    assert_eq!(
+        summary.sources_removed(),
+        1,
+        "only updated file should be removed"
+    );
+    assert!(
+        !ctx.source.join("update.txt").exists(),
+        "updated file should be removed"
+    );
+    assert!(
+        ctx.source.join("new.txt").exists(),
+        "new file should remain (not transferred)"
+    );
     assert!(ctx.dest.join("update.txt").exists());
     assert!(!ctx.dest.join("new.txt").exists());
 }
@@ -517,17 +612,24 @@ fn remove_source_files_with_permissions_removes_after_copy() {
     let dest_perms = fs::metadata(ctx.dest.join("file.txt"))
         .expect("dest metadata")
         .permissions();
-    assert_eq!(dest_perms.mode() & 0o777, 0o600, "permissions should be preserved");
+    assert_eq!(
+        dest_perms.mode() & 0o777,
+        0o600,
+        "permissions should be preserved"
+    );
 }
 
 #[test]
 fn remove_source_files_summary_tracks_count() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("file1.txt", Some(b"one")),
-        ("file2.txt", Some(b"two")),
-        ("file3.txt", Some(b"three")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("file1.txt", Some(b"one")),
+            ("file2.txt", Some(b"two")),
+            ("file3.txt", Some(b"three")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let mut source_operand = ctx.source.clone().into_os_string();
@@ -602,15 +704,26 @@ fn remove_source_files_unlink_failure_exits_partial() {
 #[test]
 fn remove_source_files_with_relative_paths() {
     let ctx = test_helpers::setup_copy_test();
-    test_helpers::create_test_tree(&ctx.source, &[
-        ("dir1/file1.txt", Some(b"content1")),
-        ("dir2/file2.txt", Some(b"content2")),
-    ]);
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[
+            ("dir1/file1.txt", Some(b"content1")),
+            ("dir2/file2.txt", Some(b"content2")),
+        ],
+    );
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let operands = vec![
-        ctx.source.join(".").join("dir1").join("file1.txt").into_os_string(),
-        ctx.source.join(".").join("dir2").join("file2.txt").into_os_string(),
+        ctx.source
+            .join(".")
+            .join("dir1")
+            .join("file1.txt")
+            .into_os_string(),
+        ctx.source
+            .join(".")
+            .join("dir2")
+            .join("file2.txt")
+            .into_os_string(),
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

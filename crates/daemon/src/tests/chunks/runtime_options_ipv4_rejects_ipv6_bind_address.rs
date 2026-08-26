@@ -14,4 +14,3 @@ fn runtime_options_ipv4_rejects_ipv6_bind_address() {
             .contains("cannot use --ipv4 with an IPv6 bind address")
     );
 }
-

@@ -71,7 +71,10 @@ fn parse_max_connections(value: &OsString) -> Result<NonZeroUsize, DaemonError> 
         .ok_or_else(|| config_error("--max-connections must be greater than zero".to_owned()))
 }
 
-fn parse_tcp_fastopen_mode(value: &OsString, _brand: Brand) -> Result<TcpFastOpenMode, DaemonError> {
+fn parse_tcp_fastopen_mode(
+    value: &OsString,
+    _brand: Brand,
+) -> Result<TcpFastOpenMode, DaemonError> {
     let text = value.to_string_lossy();
     text.parse::<TcpFastOpenMode>()
         .map_err(|error| config_error(error.to_string()))
@@ -512,8 +515,8 @@ fn apply_daemon_param_overrides(
             }
             // Security-sensitive directives are not overridable via dparam.
             "hosts allow" | "hosts-allow" | "hosts deny" | "hosts-deny" | "auth users"
-            | "auth-users" | "auth digest" | "auth-digest" | "secrets file"
-            | "secrets-file" | "refuse options" | "refuse-options" | "uid" | "gid" => {
+            | "auth-users" | "auth digest" | "auth-digest" | "secrets file" | "secrets-file"
+            | "refuse options" | "refuse-options" | "uid" | "gid" => {
                 return Err(config_error(format!(
                     "daemon param '{key_raw}' cannot be overridden via --dparam"
                 )));

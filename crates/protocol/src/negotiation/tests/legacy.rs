@@ -1,4 +1,3 @@
-
 #[test]
 fn prologue_sniffer_reports_binary_prefix_state() {
     let mut sniffer = NegotiationPrologueSniffer::new();

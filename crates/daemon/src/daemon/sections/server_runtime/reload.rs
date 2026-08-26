@@ -18,8 +18,8 @@ fn reload_daemon_config(
     notifier: &systemd::ServiceNotifier,
 ) {
     if let Some(log) = log_sink {
-        let message = rsync_info!("received SIGHUP, reloading configuration")
-            .with_role(Role::Daemon);
+        let message =
+            rsync_info!("received SIGHUP, reloading configuration").with_role(Role::Daemon);
         log_message(log, &message);
     }
     if let Err(error) = notifier.status("Reloading configuration") {
@@ -30,10 +30,8 @@ fn reload_daemon_config(
         Some(path) => path,
         None => {
             if let Some(log) = log_sink {
-                let message = rsync_info!(
-                    "SIGHUP ignored: no config file was loaded at startup"
-                )
-                .with_role(Role::Daemon);
+                let message = rsync_info!("SIGHUP ignored: no config file was loaded at startup")
+                    .with_role(Role::Daemon);
                 log_message(log, &message);
             }
             return;
@@ -44,9 +42,7 @@ fn reload_daemon_config(
         Ok(parsed) => parsed,
         Err(error) => {
             if let Some(log) = log_sink {
-                let text = format!(
-                    "config reload failed, keeping old configuration: {error}"
-                );
+                let text = format!("config reload failed, keeping old configuration: {error}");
                 let message = rsync_warning!(text).with_role(Role::Daemon);
                 log_message(log, &message);
             }
@@ -54,20 +50,22 @@ fn reload_daemon_config(
         }
     };
 
-    let new_modules: Vec<ModuleRuntime> =
-        match build_module_runtimes(parsed.modules, connection_limiter) {
-            Ok(runtimes) => runtimes,
-            Err(error) => {
-                if let Some(log) = log_sink {
-                    let text = format!(
-                        "config reload failed opening a module lock file, keeping old configuration: {error}"
-                    );
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                return;
+    let new_modules: Vec<ModuleRuntime> = match build_module_runtimes(
+        parsed.modules,
+        connection_limiter,
+    ) {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            if let Some(log) = log_sink {
+                let text = format!(
+                    "config reload failed opening a module lock file, keeping old configuration: {error}"
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
             }
-        };
+            return;
+        }
+    };
     let module_count = new_modules.len();
     *modules = Arc::new(new_modules);
     *motd_lines = Arc::new(parsed.motd_lines);

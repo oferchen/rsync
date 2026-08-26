@@ -174,17 +174,17 @@ fn apply_module_directive(
         }
         "gid" => {
             let gid = parse_gid_setting(value).map_err(|reason| {
-                config_parse_error(path, line_number, format!("invalid gid '{value}': {reason}"))
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid gid '{value}': {reason}"),
+                )
             })?;
             builder.set_gid(gid);
         }
         "timeout" => {
             let timeout = parse_timeout_seconds(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid timeout '{value}'"),
-                )
+                config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
             })?;
             builder.set_timeout(timeout);
         }

@@ -22,4 +22,3 @@ fn runtime_options_loads_refuse_options_from_config() {
         &["delete", "compress", "progress"]
     );
 }
-

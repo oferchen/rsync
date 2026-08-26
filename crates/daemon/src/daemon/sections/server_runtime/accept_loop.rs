@@ -44,9 +44,12 @@ fn serve_connections(
     // when QUIC is configured; unconfigured (the default, even under
     // `--all-features`) leaves this `None` and no UDP socket is opened.
     #[cfg(all(unix, feature = "quic"))]
-    let quic_bind = options
-        .quic_listener_enabled()
-        .then(|| (options.effective_quic_port(), options.resolve_quic_identity()));
+    let quic_bind = options.quic_listener_enabled().then(|| {
+        (
+            options.effective_quic_port(),
+            options.resolve_quic_identity(),
+        )
+    });
 
     let RuntimeOptions {
         bind_address,
@@ -351,9 +354,7 @@ fn serve_connections(
     }
 
     if let Some(log) = log_sink.as_ref() {
-        let text = format!(
-            "rsyncd version {version} starting, listening on port {port}"
-        );
+        let text = format!("rsyncd version {version} starting, listening on port {port}");
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
     }

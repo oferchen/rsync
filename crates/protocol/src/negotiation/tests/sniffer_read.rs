@@ -1,4 +1,3 @@
-
 #[test]
 fn prologue_sniffer_observe_empty_chunk_after_complete_legacy_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();

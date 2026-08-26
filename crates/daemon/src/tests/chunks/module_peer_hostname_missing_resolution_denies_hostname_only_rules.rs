@@ -10,4 +10,3 @@ fn module_peer_hostname_missing_resolution_denies_hostname_only_rules() {
     }
     assert!(!module.permits(peer, PeerHost::new(resolved, true)));
 }
-

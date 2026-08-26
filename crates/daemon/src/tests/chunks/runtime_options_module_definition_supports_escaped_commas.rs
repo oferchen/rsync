@@ -13,4 +13,3 @@ fn runtime_options_module_definition_supports_escaped_commas() {
     assert_eq!(modules[0].comment.as_deref(), Some("Project, Docs"));
     assert!(modules[0].read_only());
 }
-

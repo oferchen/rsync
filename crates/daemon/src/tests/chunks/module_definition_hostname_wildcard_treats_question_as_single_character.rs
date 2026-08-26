@@ -6,4 +6,3 @@ fn module_definition_hostname_wildcard_treats_question_as_single_character() {
     assert!(!module.permits(peer, PeerHost::new(Some("app1.example.com"), true)));
     assert!(!module.permits(peer, PeerHost::new(Some("app123.example.com"), true)));
 }
-

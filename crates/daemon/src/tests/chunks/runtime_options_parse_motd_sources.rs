@@ -20,4 +20,3 @@ fn runtime_options_parse_motd_sources() {
 
     assert_eq!(options.motd_lines(), expected.as_slice());
 }
-

@@ -338,7 +338,11 @@ fn execute_with_checksum_skips_matching_directory_contents() {
         2,
         "2 identical files should match"
     );
-    assert_eq!(summary.files_copied(), 2, "2 different/new files should copy");
+    assert_eq!(
+        summary.files_copied(),
+        2,
+        "2 different/new files should copy"
+    );
 
     assert_eq!(
         fs::read(target_root.join("same1.txt")).expect("read same1"),
@@ -536,10 +540,7 @@ fn execute_skip_checksum_large_files_single_byte_difference() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read"),
-        source_data
-    );
+    assert_eq!(fs::read(&destination).expect("read"), source_data);
 }
 
 /// Dry run with `--checksum` runs the same quick check as a real run, so a
@@ -581,8 +582,14 @@ fn execute_skip_checksum_dry_run_reports_correctly() {
     // would-be-copy; the content-identical file is matched.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 1);
-    assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
-    assert_eq!(fs::read(dest_root.join("diff.txt")).expect("read"), b"dest_vvv");
+    assert_eq!(
+        fs::read(dest_root.join("same.txt")).expect("read"),
+        b"identical"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("diff.txt")).expect("read"),
+        b"dest_vvv"
+    );
 }
 
 #[test]
@@ -956,10 +963,7 @@ fn execute_with_size_only_copies_larger_file() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read"),
-        b"source is larger"
-    );
+    assert_eq!(fs::read(&destination).expect("read"), b"source is larger");
 }
 
 #[test]
@@ -969,8 +973,7 @@ fn execute_with_size_only_copies_smaller_file() {
     let destination = temp.path().join("dest.txt");
 
     fs::write(&source, b"tiny").expect("write source");
-    fs::write(&destination, b"destination is much larger")
-        .expect("write dest");
+    fs::write(&destination, b"destination is much larger").expect("write dest");
 
     let operands = vec![
         source.into_os_string(),
@@ -1418,9 +1421,7 @@ fn execute_skip_existing_only_with_update() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .existing_only(true)
-                .update(true),
+            LocalCopyOptions::default().existing_only(true).update(true),
         )
         .expect("copy succeeds");
 
@@ -1525,8 +1526,14 @@ fn execute_with_multiple_sources_and_ignore_existing() {
     assert_eq!(summary.files_copied(), 2);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
     assert_eq!(fs::read(dest_root.join("new.txt")).expect("read"), b"new");
-    assert_eq!(fs::read(dest_root.join("another_new.txt")).expect("read"), b"also new");
-    assert_eq!(fs::read(dest_root.join("exists.txt")).expect("read"), b"original");
+    assert_eq!(
+        fs::read(dest_root.join("another_new.txt")).expect("read"),
+        b"also new"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("exists.txt")).expect("read"),
+        b"original"
+    );
 }
 
 /// Ignore-existing takes precedence over update (source newer, but dest exists -> skip).
@@ -1913,10 +1920,7 @@ fn execute_with_delete_missing_args_removes_destination_entries() {
     let destination = destination_root.join("absent.txt");
     fs::write(&destination, b"stale").expect("write destination");
 
-    let operands = vec![
-        missing.into_os_string(),
-        destination_root.into_os_string(),
-    ];
+    let operands = vec![missing.into_os_string(), destination_root.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
@@ -2189,9 +2193,8 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
     // But mtime should be synced from source
-    let final_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let final_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(final_mtime, source_mtime);
 }
 

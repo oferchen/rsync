@@ -64,11 +64,7 @@ fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()
 /// `setgroups`/`setuid` after chroot. Each failure returns `@ERROR: setgid
 /// failed`, `@ERROR: setgroups failed`, or `@ERROR: setuid failed` and the
 /// connection is dropped.
-fn drop_privileges(
-    uid: Option<u32>,
-    gids: &[u32],
-    log_sink: &SharedLogSink,
-) -> io::Result<()> {
+fn drop_privileges(uid: Option<u32>, gids: &[u32], log_sink: &SharedLogSink) -> io::Result<()> {
     if let Err(err) = platform::privilege::drop_privileges(uid, gids) {
         let text = format!("drop_privileges(uid={uid:?}, gids={gids:?}) failed: {err}");
         let message = rsync_error!(1, text).with_role(Role::Daemon);
@@ -632,8 +628,8 @@ mod privilege_tests {
             ..Default::default()
         };
         let sink = test_log_sink();
-        let (applied, _inner) = chroot_or_fallback(&module, &sink)
-            .expect("unset use chroot must fall back, not error");
+        let (applied, _inner) =
+            chroot_or_fallback(&module, &sink).expect("unset use chroot must fall back, not error");
         assert!(!applied, "rootless fallback must report chroot NOT applied");
     }
 

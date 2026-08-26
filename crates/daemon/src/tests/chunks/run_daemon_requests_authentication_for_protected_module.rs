@@ -75,20 +75,19 @@ fn run_daemon_requests_authentication_for_protected_module() {
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");
-    assert_eq!(
-        line.trim_end(),
-        "@ERROR: auth failed on module secure"
-    );
+    assert_eq!(line.trim_end(), "@ERROR: auth failed on module secure");
 
     // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
     // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-

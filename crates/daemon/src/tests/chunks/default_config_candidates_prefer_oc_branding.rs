@@ -8,4 +8,3 @@ fn default_config_candidates_prefer_oc_branding() {
         ]
     );
 }
-

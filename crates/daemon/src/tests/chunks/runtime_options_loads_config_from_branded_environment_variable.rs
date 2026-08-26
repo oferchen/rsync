@@ -19,4 +19,3 @@ fn runtime_options_loads_config_from_branded_environment_variable() {
     assert_eq!(module.name, "data");
     assert_eq!(module.path, module_dir);
 }
-

@@ -205,7 +205,8 @@ fn delete_missing_args_removes_destination_for_vanished_source() {
     fs::create_dir_all(&dest_root).expect("create dest");
 
     // Pre-populate destination with the file that should be deleted.
-    fs::write(dest_root.join("disappear.txt"), b"old destination copy").expect("write dest disappear");
+    fs::write(dest_root.join("disappear.txt"), b"old destination copy")
+        .expect("write dest disappear");
     // Also pre-populate a file that should remain.
     fs::write(dest_root.join("stay.txt"), b"old stay").expect("write dest stay");
 

@@ -23,4 +23,3 @@ fn runtime_options_parse_hostname_patterns() {
     assert_eq!(module.hosts_deny.len(), 1);
     assert!(matches!(module.hosts_deny[0], HostPattern::Hostname(_)));
 }
-

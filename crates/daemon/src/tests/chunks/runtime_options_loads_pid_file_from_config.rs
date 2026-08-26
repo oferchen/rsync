@@ -17,4 +17,3 @@ fn runtime_options_loads_pid_file_from_config() {
     let expected = dir.path().join("daemon.pid");
     assert_eq!(options.pid_file(), Some(expected.as_path()));
 }
-

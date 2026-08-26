@@ -360,7 +360,12 @@ mod proxy_protocol_tests {
         let mut cursor = io::Cursor::new(header);
         let result = parse_proxy_header_from(&mut cursor);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unsupported PROXY v2 version"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported PROXY v2 version")
+        );
     }
 
     #[test]

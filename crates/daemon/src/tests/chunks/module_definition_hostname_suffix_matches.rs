@@ -7,4 +7,3 @@ fn module_definition_hostname_suffix_matches() {
     assert!(!module.permits(peer, PeerHost::new(Some("example.net"), true)));
     assert!(!module.permits(peer, PeerHost::new(Some("sampleexample.com"), true)));
 }
-

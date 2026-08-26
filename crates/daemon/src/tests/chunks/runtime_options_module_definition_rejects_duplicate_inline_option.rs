@@ -13,4 +13,3 @@ fn runtime_options_module_definition_rejects_duplicate_inline_option() {
             .contains("duplicate module option")
     );
 }
-

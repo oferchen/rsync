@@ -19,4 +19,3 @@ fn runtime_options_loads_max_connections_from_config() {
         MaxConnections::Limited(NonZeroU32::new(7).expect("non-zero"))
     );
 }
-

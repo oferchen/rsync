@@ -32,4 +32,3 @@ fn runtime_options_parse_hosts_allow_and_deny() {
         HostPattern::Ipv4 { prefix: 32, .. }
     ));
 }
-

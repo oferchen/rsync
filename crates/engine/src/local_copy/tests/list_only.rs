@@ -50,7 +50,8 @@ fn list_only_enumerates_files_without_transfer() {
     // actually copied; the meaningful check is that files were enumerated.
     assert!(!collector.records.is_empty());
 
-    let paths: Vec<_> = collector.records
+    let paths: Vec<_> = collector
+        .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
@@ -59,9 +60,7 @@ fn list_only_enumerates_files_without_transfer() {
     assert!(paths.iter().any(|p| p == "file2.txt"));
     assert!(paths.iter().any(|p| p.contains("subdir")));
 
-    let dest_entries: Vec<_> = fs::read_dir(&dest)
-        .expect("read dest")
-        .collect();
+    let dest_entries: Vec<_> = fs::read_dir(&dest).expect("read dest").collect();
     assert_eq!(dest_entries.len(), 0, "destination should remain empty");
 }
 
@@ -80,8 +79,7 @@ fn list_only_provides_file_metadata() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o644))
-            .expect("set permissions");
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("set permissions");
     }
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
@@ -102,7 +100,8 @@ fn list_only_provides_file_metadata() {
     )
     .expect("dry run succeeds");
 
-    let file_record = collector.records
+    let file_record = collector
+        .records
         .iter()
         .find(|r| r.relative_path().to_string_lossy() == "data.bin")
         .expect("file record present");
@@ -158,7 +157,8 @@ fn list_only_shows_symlinks_correctly() {
         )
         .expect("dry run succeeds");
 
-        let link_record = collector.records
+        let link_record = collector
+            .records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "link.txt")
             .expect("link record present");
@@ -213,7 +213,8 @@ fn list_only_shows_directories_with_metadata() {
     )
     .expect("dry run succeeds");
 
-    let dir_record = collector.records
+    let dir_record = collector
+        .records
         .iter()
         .find(|r| {
             r.relative_path().to_string_lossy().contains("testdir")
@@ -255,8 +256,7 @@ fn list_only_respects_filter_rules() {
     let operands = vec![source_operand, dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")])
-        .expect("create filter");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("create filter");
 
     let mut collector = RecordCollector::new();
 
@@ -267,14 +267,18 @@ fn list_only_respects_filter_rules() {
     )
     .expect("dry run succeeds");
 
-    let paths: Vec<_> = collector.records
+    let paths: Vec<_> = collector
+        .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
 
     assert!(paths.iter().any(|p| p == "include.txt"));
     assert!(paths.iter().any(|p| p == "exclude.txt"));
-    assert!(!paths.iter().any(|p| p == "data.log"), "*.log should be filtered");
+    assert!(
+        !paths.iter().any(|p| p == "data.log"),
+        "*.log should be filtered"
+    );
 }
 
 #[test]
@@ -296,11 +300,8 @@ fn list_only_with_include_filter() {
     let operands = vec![source_operand, dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([
-        FilterRule::include("*.txt"),
-        FilterRule::exclude("*"),
-    ])
-    .expect("create filter");
+    let filters = FilterSet::from_rules([FilterRule::include("*.txt"), FilterRule::exclude("*")])
+        .expect("create filter");
 
     let mut collector = RecordCollector::new();
 
@@ -311,14 +312,24 @@ fn list_only_with_include_filter() {
     )
     .expect("dry run succeeds");
 
-    let paths: Vec<_> = collector.records
+    let paths: Vec<_> = collector
+        .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
 
-    assert!(paths.iter().any(|p| p == "data.txt"), "*.txt should be included");
-    assert!(!paths.iter().any(|p| p == "image.jpg"), "*.jpg should be excluded");
-    assert!(!paths.iter().any(|p| p == "doc.pdf"), "*.pdf should be excluded");
+    assert!(
+        paths.iter().any(|p| p == "data.txt"),
+        "*.txt should be included"
+    );
+    assert!(
+        !paths.iter().any(|p| p == "image.jpg"),
+        "*.jpg should be excluded"
+    );
+    assert!(
+        !paths.iter().any(|p| p == "doc.pdf"),
+        "*.pdf should be excluded"
+    );
 }
 
 #[test]
@@ -348,12 +359,9 @@ fn list_only_shows_special_permission_bits() {
         fs::write(&setgid_file, b"setgid").expect("write setgid");
         fs::write(&sticky_file, b"sticky").expect("write sticky");
 
-        fs::set_permissions(&setuid_file, fs::Permissions::from_mode(0o4755))
-            .expect("set setuid");
-        fs::set_permissions(&setgid_file, fs::Permissions::from_mode(0o2755))
-            .expect("set setgid");
-        fs::set_permissions(&sticky_file, fs::Permissions::from_mode(0o1755))
-            .expect("set sticky");
+        fs::set_permissions(&setuid_file, fs::Permissions::from_mode(0o4755)).expect("set setuid");
+        fs::set_permissions(&setgid_file, fs::Permissions::from_mode(0o2755)).expect("set setgid");
+        fs::set_permissions(&sticky_file, fs::Permissions::from_mode(0o1755)).expect("set sticky");
 
         let mut source_operand = source.into_os_string();
         source_operand.push(std::path::MAIN_SEPARATOR_STR);
@@ -370,21 +378,24 @@ fn list_only_shows_special_permission_bits() {
         )
         .expect("dry run succeeds");
 
-        let setuid_record = collector.records
+        let setuid_record = collector
+            .records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "setuid")
             .expect("setuid record present");
         let setuid_mode = setuid_record.metadata().unwrap().mode().unwrap();
         assert_ne!(setuid_mode & 0o4000, 0, "setuid bit should be set");
 
-        let setgid_record = collector.records
+        let setgid_record = collector
+            .records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "setgid")
             .expect("setgid record present");
         let setgid_mode = setgid_record.metadata().unwrap().mode().unwrap();
         assert_ne!(setgid_mode & 0o2000, 0, "setgid bit should be set");
 
-        let sticky_record = collector.records
+        let sticky_record = collector
+            .records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "sticky")
             .expect("sticky record present");
@@ -445,8 +456,11 @@ fn list_only_with_recursive_shows_nested_structure() {
     fs::create_dir(source.join("level1")).expect("create level1");
     fs::create_dir(source.join("level1").join("level2")).expect("create level2");
     fs::write(source.join("level1").join("file1.txt"), b"l1").expect("write l1");
-    fs::write(source.join("level1").join("level2").join("file2.txt"), b"l2")
-        .expect("write l2");
+    fs::write(
+        source.join("level1").join("level2").join("file2.txt"),
+        b"l2",
+    )
+    .expect("write l2");
 
     let mut source_operand = source.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR_STR);
@@ -463,7 +477,8 @@ fn list_only_with_recursive_shows_nested_structure() {
     )
     .expect("dry run succeeds");
 
-    let paths: Vec<_> = collector.records
+    let paths: Vec<_> = collector
+        .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
@@ -474,7 +489,13 @@ fn list_only_with_recursive_shows_nested_structure() {
     assert!(paths.iter().any(|p| p.contains("file2.txt")));
 
     assert!(!dest.join("level1").join("file1.txt").exists());
-    assert!(!dest.join("level1").join("level2").join("file2.txt").exists());
+    assert!(
+        !dest
+            .join("level1")
+            .join("level2")
+            .join("file2.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -506,7 +527,8 @@ fn list_only_without_recursive_shows_only_top_level() {
     )
     .expect("dry run succeeds");
 
-    let paths: Vec<_> = collector.records
+    let paths: Vec<_> = collector
+        .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
@@ -773,7 +795,8 @@ fn list_only_handles_size_zero_files() {
     )
     .expect("dry run succeeds");
 
-    let empty_record = collector.records
+    let empty_record = collector
+        .records
         .iter()
         .find(|r| r.relative_path().to_string_lossy() == "empty.txt")
         .expect("empty file record present");
@@ -852,14 +875,13 @@ fn list_only_shows_multiple_file_types_in_single_listing() {
 
         plan.execute_with_options_and_handler(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default()
-                .recursive(true)
-                .links(true),
+            LocalCopyOptions::default().recursive(true).links(true),
             Some(&mut collector),
         )
         .expect("dry run succeeds");
 
-        let kinds: Vec<_> = collector.records
+        let kinds: Vec<_> = collector
+            .records
             .iter()
             .filter_map(|r| r.metadata().map(|m| m.kind()))
             .collect();

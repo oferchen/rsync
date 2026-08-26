@@ -46,7 +46,10 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
 
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
 
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
@@ -92,17 +95,17 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");
-    assert_eq!(
-        line.trim_end(),
-        "@ERROR: auth failed on module protected"
-    );
+    assert_eq!(line.trim_end(), "@ERROR: auth failed on module protected");
 
     // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
     // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
     // the refusal; the socket just closes (next read is EOF).
     line.clear();
     let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    assert_eq!(
+        read, 0,
+        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");

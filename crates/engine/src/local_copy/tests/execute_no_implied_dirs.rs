@@ -4,7 +4,6 @@
 // - With implied dirs (default): parent directories are created automatically
 // - Without implied dirs: only explicitly listed directories are created
 
-
 #[test]
 #[ignore = "--no-implied-dirs not fully implemented; intermediate directories are still created implicitly"]
 fn no_implied_dirs_does_not_create_intermediate_directories() {
@@ -99,10 +98,7 @@ fn no_implied_dirs_works_with_relative_paths() {
     source_operand.push("/./");
     source_operand.push("dir1/dir2/file.txt");
 
-    let operands = vec![
-        source_operand,
-        dest_root.clone().into_os_string(),
-    ];
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // With --relative and --no-implied-dirs the implied leading dirs are still
@@ -141,10 +137,7 @@ fn no_implied_dirs_with_relative_creates_explicit_dirs_only() {
     source_dir_operand.push("/./");
     source_dir_operand.push("dir1");
 
-    let operands = vec![
-        source_dir_operand,
-        dest_root.clone().into_os_string(),
-    ];
+    let operands = vec![source_dir_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -161,7 +154,13 @@ fn no_implied_dirs_with_relative_creates_explicit_dirs_only() {
 
     // Nested directories should also exist because recursion includes them
     assert!(dest_root.join("dir1").join("dir2").exists());
-    assert!(dest_root.join("dir1").join("dir2").join("file2.txt").exists());
+    assert!(
+        dest_root
+            .join("dir1")
+            .join("dir2")
+            .join("file2.txt")
+            .exists()
+    );
 
     assert!(summary.files_copied() >= 2);
 }
@@ -217,10 +216,7 @@ fn no_implied_dirs_with_relative_and_deep_file() {
     source_operand.push("/./");
     source_operand.push("a/b/c/file.txt");
 
-    let operands = vec![
-        source_operand,
-        dest_root.clone().into_os_string(),
-    ];
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
@@ -257,9 +253,7 @@ fn no_implied_dirs_with_mkpath_creates_missing_parents() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // --mkpath overrides --no-implied-dirs
-    let options = LocalCopyOptions::default()
-        .implied_dirs(false)
-        .mkpath(true);
+    let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -297,8 +291,21 @@ fn no_implied_dirs_recursive_copy_with_nested_structure() {
     assert!(dest_root.join("source").join("root.txt").exists());
 
     // Nested structure should also be created as part of recursion
-    assert!(dest_root.join("source").join("parent").join("child").exists());
-    assert!(dest_root.join("source").join("parent").join("child").join("nested.txt").exists());
+    assert!(
+        dest_root
+            .join("source")
+            .join("parent")
+            .join("child")
+            .exists()
+    );
+    assert!(
+        dest_root
+            .join("source")
+            .join("parent")
+            .join("child")
+            .join("nested.txt")
+            .exists()
+    );
 
     assert!(summary.files_copied() >= 2);
     assert!(summary.directories_created() >= 3);
@@ -381,10 +388,7 @@ fn no_implied_dirs_with_trailing_slash_copies_contents() {
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let operands = vec![
-        source_operand,
-        dest_root.clone().into_os_string(),
-    ];
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().implied_dirs(false);
 
@@ -507,14 +511,15 @@ fn no_implied_dirs_collection_reports_correct_events() {
 
     let records = report.records();
 
-    assert!(records
-        .iter()
-        .any(|r| r.action() == &LocalCopyAction::DirectoryCreated));
-    assert!(records
-        .iter()
-        .any(|r| matches!(r.action(),
-            LocalCopyAction::DataCopied |
-            LocalCopyAction::MetadataReused)));
+    assert!(
+        records
+            .iter()
+            .any(|r| r.action() == &LocalCopyAction::DirectoryCreated)
+    );
+    assert!(records.iter().any(|r| matches!(
+        r.action(),
+        LocalCopyAction::DataCopied | LocalCopyAction::MetadataReused
+    )));
 }
 
 // Mirrors the upstream `relative-implied` testsuite `--no-implied-dirs` half:
@@ -692,7 +697,12 @@ fn no_implied_dirs_follows_an_existing_dest_symlink_path_element() {
         .expect("--no-implied-dirs follows the existing dest symlink");
 
     assert!(
-        dest_root.join("path").symlink_metadata().expect("stat path").file_type().is_symlink(),
+        dest_root
+            .join("path")
+            .symlink_metadata()
+            .expect("stat path")
+            .file_type()
+            .is_symlink(),
         "--no-implied-dirs must KEEP the dest symlink, not replace it"
     );
     let through = dest_root.join("real").join("file");
@@ -726,7 +736,11 @@ fn implied_dirs_replaces_the_same_dest_symlink_with_a_real_directory() {
 
     let planted = dest_root.join("path");
     assert!(
-        !planted.symlink_metadata().expect("stat path").file_type().is_symlink(),
+        !planted
+            .symlink_metadata()
+            .expect("stat path")
+            .file_type()
+            .is_symlink(),
         "the default must REPLACE the dest symlink with a real directory"
     );
     assert_eq!(

@@ -1,4 +1,3 @@
-
 #[test]
 fn destination_write_guard_uses_custom_partial_directory() {
     let temp = tempdir().expect("tempdir");
@@ -21,8 +20,14 @@ fn destination_write_guard_uses_custom_partial_directory() {
     // into the partial dir by basename on interrupt.
     assert_eq!(temp_path.parent(), Some(destination_dir.as_path()));
     let expected_partial = destination_dir.join(partial_dir).join("file.txt");
-    assert!(!temp_path.exists(), "temp consumed by move into partial dir");
-    assert!(expected_partial.exists(), "partial preserved in partial dir");
+    assert!(
+        !temp_path.exists(),
+        "temp consumed by move into partial dir"
+    );
+    assert!(
+        expected_partial.exists(),
+        "partial preserved in partial dir"
+    );
     assert!(!destination.exists());
 }
 

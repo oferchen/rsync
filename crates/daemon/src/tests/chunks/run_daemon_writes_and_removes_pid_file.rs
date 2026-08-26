@@ -51,4 +51,3 @@ fn run_daemon_writes_and_removes_pid_file() {
     assert!(result.is_ok());
     assert!(!pid_path.exists());
 }
-

@@ -81,7 +81,7 @@ pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
         return SeccompOutcome::Unavailable;
     }
     use seccompiler::{
-        apply_filter, BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch,
+        BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch, apply_filter,
     };
     use std::collections::BTreeMap;
 

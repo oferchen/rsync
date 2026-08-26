@@ -515,4 +515,3 @@ fn sniff_negotiation_buffered_remaining_vectored_tracks_consumption() {
         .collect();
     assert_eq!(flattened, stream.buffered_remaining_slice());
 }
-

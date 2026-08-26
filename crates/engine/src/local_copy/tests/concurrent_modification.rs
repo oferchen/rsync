@@ -430,7 +430,11 @@ fn checksum_mode_detects_content_change() {
     // Should detect mismatch and copy
     match result {
         Ok(summary) => {
-            assert_eq!(summary.files_copied(), 1, "file should be copied due to checksum mismatch");
+            assert_eq!(
+                summary.files_copied(),
+                1,
+                "file should be copied due to checksum mismatch"
+            );
             let dest_content = fs::read(dest_root.join("checksum.txt")).expect("read dest");
             assert_eq!(dest_content, b"original checksum content");
         }
@@ -465,7 +469,11 @@ fn checksum_mode_skips_identical_content() {
 
     match result {
         Ok(summary) => {
-            assert_eq!(summary.files_copied(), 0, "identical file should be skipped");
+            assert_eq!(
+                summary.files_copied(),
+                0,
+                "identical file should be skipped"
+            );
             assert_eq!(summary.regular_files_matched(), 1);
         }
         Err(e) => panic!("unexpected error: {e}"),

@@ -429,9 +429,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
     assert!(line.starts_with("@RSYNCD: AUTHREQD"));
 
     // Send empty credentials
-    stream
-        .write_all(b"\n")
-        .expect("send empty credentials");
+    stream.write_all(b"\n").expect("send empty credentials");
     stream.flush().expect("flush");
 
     // upstream: clientserver.c:764 - auth failure sends

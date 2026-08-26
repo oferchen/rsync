@@ -30,13 +30,7 @@ mod file_operations_tests {
         let dest_root = temp.path().to_path_buf();
         let dest = dest_root.join("file.txt");
 
-        let backup = compute_backup_path(
-            &dest_root,
-            &dest,
-            None,
-            None,
-            OsStr::new("~"),
-        );
+        let backup = compute_backup_path(&dest_root, &dest, None, None, OsStr::new("~"));
 
         assert_eq!(backup, dest_root.join("file.txt~"));
     }
@@ -48,13 +42,8 @@ mod file_operations_tests {
         let dest = dest_root.join("file.txt");
         let backup_dir = temp.path().join("backups");
 
-        let backup = compute_backup_path(
-            &dest_root,
-            &dest,
-            None,
-            Some(&backup_dir),
-            OsStr::new("~"),
-        );
+        let backup =
+            compute_backup_path(&dest_root, &dest, None, Some(&backup_dir), OsStr::new("~"));
 
         assert_eq!(backup, backup_dir.join("file.txt~"));
     }
@@ -83,13 +72,7 @@ mod file_operations_tests {
         let dest_root = temp.path().to_path_buf();
         let dest = dest_root.join("file.txt");
 
-        let backup = compute_backup_path(
-            &dest_root,
-            &dest,
-            None,
-            None,
-            OsStr::new(""),
-        );
+        let backup = compute_backup_path(&dest_root, &dest, None, None, OsStr::new(""));
 
         assert_eq!(backup, dest_root.join("file.txt"));
     }
@@ -103,7 +86,8 @@ mod file_operations_tests {
         fs::write(&source, b"original content").expect("write");
 
         let metadata = fs::metadata(&source).expect("metadata");
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
+        let result =
+            copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
         assert!(backup.exists());
@@ -128,7 +112,8 @@ mod file_operations_tests {
         std::os::windows::fs::symlink_file(&target, &symlink).expect("symlink");
 
         let metadata = fs::symlink_metadata(&symlink).expect("metadata");
-        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
+        let result =
+            copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
         assert!(backup.exists());
@@ -148,8 +133,14 @@ mod file_operations_tests {
         fs::write(source_dir.join("file.txt"), b"content").expect("write");
 
         let metadata = fs::metadata(&source_dir).expect("metadata");
-        let result =
-            copy_entry_to_backup(&source_dir, &backup, metadata.file_type(), true, true, false);
+        let result = copy_entry_to_backup(
+            &source_dir,
+            &backup,
+            metadata.file_type(),
+            true,
+            true,
+            false,
+        );
 
         // Should succeed but not copy directory
         assert!(result.is_ok());
@@ -240,7 +231,8 @@ mod file_operations_tests {
         fs::write(&dummy_file, b"dummy").expect("write");
         let metadata = fs::metadata(&dummy_file).expect("metadata");
 
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
+        let result =
+            copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         // Should fail because source doesn't exist
         assert!(result.is_err());
@@ -302,13 +294,7 @@ mod file_operations_tests {
         let dest_root = temp.path().join("root");
         let dest = temp.path().join("outside").join("file.txt");
 
-        let backup = compute_backup_path(
-            &dest_root,
-            &dest,
-            None,
-            None,
-            OsStr::new("~"),
-        );
+        let backup = compute_backup_path(&dest_root, &dest, None, None, OsStr::new("~"));
 
         // Should use dest's parent when dest is not under dest_root
         assert_eq!(backup, temp.path().join("outside").join("file.txt~"));
@@ -330,7 +316,10 @@ mod file_operations_tests {
         );
 
         // dest_root.join("../backups") should work
-        let expected = dest_root.join("../backups").join("subdir").join("file.txt~");
+        let expected = dest_root
+            .join("../backups")
+            .join("subdir")
+            .join("file.txt~");
         assert_eq!(backup, expected);
     }
 
@@ -344,13 +333,11 @@ mod file_operations_tests {
         fs::write(&backup, b"old backup").expect("write old backup");
 
         let metadata = fs::metadata(&source).expect("metadata");
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
+        let result =
+            copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
-        assert_eq!(
-            fs::read_to_string(&backup).expect("read"),
-            "new content"
-        );
+        assert_eq!(fs::read_to_string(&backup).expect("read"), "new content");
     }
 
     #[test]
@@ -367,7 +354,8 @@ mod file_operations_tests {
         std::os::windows::fs::symlink_file(&target, &symlink).expect("symlink");
 
         let metadata = fs::symlink_metadata(&symlink).expect("metadata");
-        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
+        let result =
+            copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
 
@@ -376,9 +364,6 @@ mod file_operations_tests {
         assert!(backup_meta.is_symlink());
 
         // The target should be the same (even though it doesn't exist)
-        assert_eq!(
-            fs::read_link(&backup).expect("read backup link"),
-            target
-        );
+        assert_eq!(fs::read_link(&backup).expect("read backup link"), target);
     }
 }

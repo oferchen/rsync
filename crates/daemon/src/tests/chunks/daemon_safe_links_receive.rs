@@ -55,23 +55,20 @@ fn daemon_safe_links_receive() {
     unix_fs::symlink("file.txt", source_dir.join("safe_link")).expect("create safe_link");
 
     // Safe symlink: relative target that stays within the tree via parent traversal
-    unix_fs::symlink("../file.txt", source_subdir.join("inner_link"))
-        .expect("create inner_link");
+    unix_fs::symlink("../file.txt", source_subdir.join("inner_link")).expect("create inner_link");
 
     // Safe symlink: sibling file in the same subdirectory
     unix_fs::symlink("deep.txt", source_subdir.join("peer_link")).expect("create peer_link");
 
     // Unsafe symlink: absolute path outside the transfer tree
-    unix_fs::symlink("/etc/passwd", source_dir.join("unsafe_link"))
-        .expect("create unsafe_link");
+    unix_fs::symlink("/etc/passwd", source_dir.join("unsafe_link")).expect("create unsafe_link");
 
     // Unsafe symlink: relative path that escapes the transfer root
     unix_fs::symlink("../../outside.txt", source_dir.join("escape_link"))
         .expect("create escape_link");
 
     // Unsafe symlink: relative path that escapes from a subdirectory
-    unix_fs::symlink("../../outside.txt", source_subdir.join("deep_esc"))
-        .expect("create deep_esc");
+    unix_fs::symlink("../../outside.txt", source_subdir.join("deep_esc")).expect("create deep_esc");
 
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -101,7 +98,8 @@ fn daemon_safe_links_receive() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) =
+        start_daemon_pending_no_detach(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);

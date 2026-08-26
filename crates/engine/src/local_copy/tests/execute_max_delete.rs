@@ -14,7 +14,6 @@
 
 use super::filter_program::MAX_DELETE_EXIT_CODE;
 
-
 #[test]
 fn max_delete_stops_after_n_deletions() {
     let ctx = test_helpers::setup_copy_test();
@@ -73,8 +72,11 @@ fn max_delete_reports_correct_skipped_count() {
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
     for i in 1..=5 {
-        fs::write(target_root.join(format!("extra{i}.txt")), format!("extra{i}").as_bytes())
-            .expect("write extra");
+        fs::write(
+            target_root.join(format!("extra{i}.txt")),
+            format!("extra{i}").as_bytes(),
+        )
+        .expect("write extra");
     }
 
     let operands = vec![
@@ -92,7 +94,10 @@ fn max_delete_reports_correct_skipped_count() {
 
     match error.kind() {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
-            assert_eq!(*skipped, 3, "should report 3 skipped entries (5 total - 2 deleted)");
+            assert_eq!(
+                *skipped, 3,
+                "should report 3 skipped entries (5 total - 2 deleted)"
+            );
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
@@ -135,7 +140,6 @@ fn max_delete_error_message_format() {
         "error message should mention skipped: {message}"
     );
 }
-
 
 #[test]
 fn max_delete_zero_prevents_all_deletions() {
@@ -326,8 +330,11 @@ fn max_delete_none_allows_unlimited_deletions() {
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
     for i in 1..=10 {
-        fs::write(target_root.join(format!("extra{i}.txt")), format!("extra{i}").as_bytes())
-            .expect("write extra");
+        fs::write(
+            target_root.join(format!("extra{i}.txt")),
+            format!("extra{i}").as_bytes(),
+        )
+        .expect("write extra");
     }
 
     let operands = vec![
@@ -335,9 +342,7 @@ fn max_delete_none_allows_unlimited_deletions() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let options = LocalCopyOptions::default()
-        .delete(true)
-        .max_deletions(None);
+    let options = LocalCopyOptions::default().delete(true).max_deletions(None);
 
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -351,7 +356,6 @@ fn max_delete_none_allows_unlimited_deletions() {
         );
     }
 }
-
 
 #[test]
 fn max_delete_with_delete_during() {
@@ -420,7 +424,10 @@ fn max_delete_with_delete_before() {
     match error.kind() {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
             // delete-before may traverse directories differently, causing varying skip counts
-            assert!(*skipped >= 1, "should report at least 1 skipped entry, got {skipped}");
+            assert!(
+                *skipped >= 1,
+                "should report at least 1 skipped entry, got {skipped}"
+            );
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
@@ -498,7 +505,6 @@ fn max_delete_with_delete_delay() {
     }
 }
 
-
 #[test]
 fn max_delete_with_dry_run_reports_limit_exceeded() {
     let ctx = test_helpers::setup_copy_test();
@@ -567,7 +573,6 @@ fn max_delete_dry_run_success_when_under_limit() {
 
     assert!(target_root.join("extra.txt").exists());
 }
-
 
 #[test]
 fn max_delete_counts_directory_deletions() {
@@ -641,7 +646,6 @@ fn max_delete_mixed_files_and_directories() {
     }
 }
 
-
 #[test]
 fn max_delete_no_effect_when_no_deletions_needed() {
     let ctx = test_helpers::setup_copy_test();
@@ -701,7 +705,6 @@ fn max_delete_without_delete_flag_has_no_effect() {
         "extra file should remain when delete not enabled"
     );
 }
-
 
 #[test]
 fn max_delete_survivor_set_matches_upstream_traversal() {
@@ -784,7 +787,6 @@ fn max_delete_error_code_name() {
     let error = LocalCopyError::delete_limit_exceeded(5);
     assert_eq!(error.code_name(), "RERR_DEL_LIMIT");
 }
-
 
 #[test]
 fn max_deletions_option_sets_correctly() {

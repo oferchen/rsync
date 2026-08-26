@@ -1,5 +1,3 @@
-
-
 #[test]
 fn block_size_override_default_is_none() {
     let opts = LocalCopyOptions::default();
@@ -51,7 +49,6 @@ fn block_size_builder_none_clears_override() {
         .expect("valid options");
     assert!(opts.block_size_override().is_none());
 }
-
 
 #[test]
 fn block_size_override_affects_delta_matching_small_block() {

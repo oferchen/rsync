@@ -87,13 +87,10 @@ impl RuntimeOptions {
                 options.detach = false;
             } else if argument == "--detach" {
                 options.detach = true;
-            } else if let Some(value) =
-                take_option_value(argument, &mut iter, "--max-sessions")?
-            {
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
-            } else if let Some(value) =
-                take_option_value(argument, &mut iter, "--max-connections")?
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--max-connections")?
             {
                 let max = parse_max_connections(&value)?;
                 options.set_max_connections(max)?;
@@ -103,17 +100,13 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv4)?;
             } else if argument == "--ipv6" || argument == "-6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
-            } else if let Some(value) =
-                take_option_value(argument, &mut iter, "--tcp-fastopen")?
-            {
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--tcp-fastopen")? {
                 options.set_tcp_fastopen(parse_tcp_fastopen_mode(&value, brand)?);
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
                 options.set_log_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
                 options.set_lock_file(PathBuf::from(value))?;
-            } else if let Some(value) =
-                take_option_value(argument, &mut iter, "--secrets-file")?
-            {
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--secrets-file")? {
                 let validated = validate_cli_secrets_file(PathBuf::from(value))?;
                 options.set_cli_secrets_file(validated)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {

@@ -10,4 +10,3 @@ fn first_existing_config_path_falls_back_to_legacy_candidate() {
 
     assert_eq!(result, Some(expected));
 }
-

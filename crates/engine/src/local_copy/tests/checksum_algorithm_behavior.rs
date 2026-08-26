@@ -82,10 +82,7 @@ fn checksum_md4_transfers_different_files() {
     // File should be copied because MD4 checksums differ
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"source!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"source!");
 }
 
 /// Tests that MD5 algorithm (default for protocol >= 30) correctly identifies identical files.
@@ -268,10 +265,7 @@ fn checksum_sha1_transfers_different_files() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"sha1 source"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"sha1 source");
 }
 
 /// Tests that XXH64 algorithm (fast non-cryptographic) works correctly.
@@ -339,10 +333,7 @@ fn checksum_xxh64_transfers_different_files() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"xxh64 source"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"xxh64 source");
 }
 
 /// Tests that XXH64 with different seeds produces different results.
@@ -369,10 +360,7 @@ fn checksum_xxh64_different_seeds_are_independent() {
         set_file_mtime(path, older_time).expect("set dest time");
     }
 
-    let operands1 = vec![
-        source1.into_os_string(),
-        dest1.clone().into_os_string(),
-    ];
+    let operands1 = vec![source1.into_os_string(), dest1.clone().into_os_string()];
     let plan1 = LocalCopyPlan::from_operands(&operands1).expect("plan1");
     let summary1 = plan1
         .execute_with_options(
@@ -383,10 +371,7 @@ fn checksum_xxh64_different_seeds_are_independent() {
         )
         .expect("copy1 succeeds");
 
-    let operands2 = vec![
-        source2.into_os_string(),
-        dest2.clone().into_os_string(),
-    ];
+    let operands2 = vec![source2.into_os_string(), dest2.clone().into_os_string()];
     let plan2 = LocalCopyPlan::from_operands(&operands2).expect("plan2");
     let summary2 = plan2
         .execute_with_options(
@@ -467,10 +452,7 @@ fn checksum_xxh3_transfers_different_files() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"xxh3 source!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"xxh3 source!");
 }
 
 /// Tests that XXH3-128 algorithm works correctly for checksum comparison.
@@ -561,9 +543,8 @@ fn checksum_ignores_mtime_when_content_matches() {
     set_file_mtime(&source, very_new).expect("set source time");
     set_file_mtime(&destination, very_old).expect("set dest time");
 
-    let dest_mtime_before = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime_before =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
 
     let operands = vec![
         source.into_os_string(),
@@ -582,9 +563,8 @@ fn checksum_ignores_mtime_when_content_matches() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 
-    let dest_mtime_after = FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime_after =
+        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime_before, dest_mtime_after);
 }
 
@@ -619,10 +599,7 @@ fn checksum_transfers_when_mtime_matches_but_content_differs() {
 
     // File SHOULD be copied because checksums differ
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"new content!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"new content!");
 }
 
 /// Tests that without checksum mode, mtime+size match causes skip.
@@ -661,10 +638,7 @@ fn without_checksum_mtime_match_skips_even_with_different_content() {
     // File should be SKIPPED (mtime+size match, no checksum)
     assert_eq!(summary.files_copied(), 0);
     // Content remains different
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"dest!!!!"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"dest!!!!");
 }
 
 /// Tests that after transfer, content is verified correct.
@@ -764,10 +738,7 @@ fn checksum_large_file_differ_at_end() {
 
     // Should transfer (checksums differ even for last-byte change)
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        source_content
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }
 
 /// Tests that checksum comparison handles empty files correctly.
@@ -977,10 +948,7 @@ fn no_checksum_falls_back_to_mtime() {
     // Without checksum, should skip (mtime+size match)
     assert_eq!(summary.files_copied(), 0);
     // Content remains different
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"bbbbbbb"
-    );
+    assert_eq!(fs::read(&destination).expect("read dest"), b"bbbbbbb");
 }
 
 /// Tests that all algorithms produce consistent skip/copy decisions.

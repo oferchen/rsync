@@ -1,4 +1,3 @@
-
 #[test]
 fn prologue_sniffer_reset_restores_canonical_capacity_after_shrink() {
     let mut sniffer = NegotiationPrologueSniffer::new();

@@ -10,4 +10,3 @@ fn connection_limiter_open_preserves_existing_counts() {
     let contents = fs::read_to_string(&lock_path).expect("read lock file");
     assert_eq!(contents, "docs 1\nother 2\n");
 }
-

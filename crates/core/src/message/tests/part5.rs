@@ -310,4 +310,3 @@ fn rsync_info_macro_honors_track_caller() {
         TESTS_DIR
     );
 }
-

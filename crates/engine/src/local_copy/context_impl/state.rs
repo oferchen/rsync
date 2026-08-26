@@ -8,8 +8,7 @@ impl<'a> CopyContext<'a> {
         observer: Option<&'a mut dyn LocalCopyRecordHandler>,
         destination_root: PathBuf,
     ) -> Self {
-        let limiter =
-            BandwidthLimitComponents::new(options.bandwidth_limit_bytes()).into_limiter();
+        let limiter = BandwidthLimitComponents::new(options.bandwidth_limit_bytes()).into_limiter();
         let collect_events = options.events_enabled();
         let stop_at_wallclock = options.stop_at();
         let stop_deadline = stop_at_wallclock.map(|deadline| {
@@ -398,10 +397,7 @@ impl<'a> CopyContext<'a> {
 
     /// Stores destination `lstat` metadata gathered during checksum-mode
     /// prefetch so `copy_file` can reuse it instead of re-lstat'ing.
-    pub(super) fn set_destination_metadata_cache(
-        &mut self,
-        cache: HashMap<PathBuf, fs::Metadata>,
-    ) {
+    pub(super) fn set_destination_metadata_cache(&mut self, cache: HashMap<PathBuf, fs::Metadata>) {
         self.destination_metadata_cache = cache;
     }
 
@@ -449,7 +445,6 @@ impl<'a> CopyContext<'a> {
         }
         self.destination_metadata_cache.clear();
     }
-
 
     /// Returns the configured delete timing (before, during, after, or delay).
     pub(super) const fn delete_timing(&self) -> Option<DeleteTiming> {

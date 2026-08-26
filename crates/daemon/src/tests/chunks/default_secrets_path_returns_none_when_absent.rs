@@ -10,4 +10,3 @@ fn default_secrets_path_returns_none_when_absent() {
 
     assert!(result.is_none());
 }
-

@@ -30,6 +30,9 @@ fn connection_limiter_enforces_limits_across_guards() {
 
     drop(third);
     drop(first);
-    assert!(limiter.acquire("docs", MaxConnections::Limited(limit)).is_ok());
+    assert!(
+        limiter
+            .acquire("docs", MaxConnections::Limited(limit))
+            .is_ok()
+    );
 }
-

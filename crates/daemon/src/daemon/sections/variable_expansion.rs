@@ -122,11 +122,7 @@ fn env_expansion(name: &str) -> Option<String> {
 ///
 /// upstream: `loadparm.c` - string parameters are expanded via `lp_string()`
 /// which calls `alloc_sub_advanced()` for each access.
-fn expand_module_vars(
-    module: &mut ModuleDefinition,
-    client_addr: &str,
-    client_host: &str,
-) {
+fn expand_module_vars(module: &mut ModuleDefinition, client_addr: &str, client_host: &str) {
     let ctx = VarExpansionContext {
         module_name: &module.name.clone(),
         module_path: &module.path.display().to_string(),
@@ -581,7 +577,6 @@ mod variable_expansion_tests {
         }
     }
 
-
     #[test]
     fn expand_diffhost() {
         let ctx = sample_ctx();
@@ -594,10 +589,7 @@ mod variable_expansion_tests {
     #[test]
     fn expand_module() {
         let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/srv/%MODULE%", &ctx),
-            "/srv/backup"
-        );
+        assert_eq!(expand_config_vars("/srv/%MODULE%", &ctx), "/srv/backup");
     }
 
     #[test]
@@ -636,12 +628,8 @@ mod variable_expansion_tests {
     #[test]
     fn expand_double_percent_mid_string() {
         let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("a%%b%%c", &ctx),
-            "a%b%c"
-        );
+        assert_eq!(expand_config_vars("a%%b%%c", &ctx), "a%b%c");
     }
-
 
     #[test]
     fn expand_unset_env_variable_preserved() {
@@ -650,7 +638,9 @@ mod variable_expansion_tests {
         // `%TOKEN%` in place (getenv returns NULL, so the raw chars pass
         // through). WHY: a config author's `%FOO%` must not silently vanish when
         // FOO is undefined.
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_EXPAND_UNSET");
         let ctx = sample_ctx();
         assert_eq!(
@@ -665,7 +655,9 @@ mod variable_expansion_tests {
         // %UPPERCASE% token that is not a built-in name and substitutes the
         // value when set. WHY: rsyncd.conf paths like `path = %HOME%/rsync` must
         // resolve against the daemon's environment exactly as upstream does.
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::test_env::EnvGuard::set(
             "OC_RSYNC_TEST_EXPAND_VAR",
             std::ffi::OsStr::new("/srv/env"),
@@ -704,10 +696,7 @@ mod variable_expansion_tests {
     #[test]
     fn expand_trailing_percent_no_close() {
         let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/path/%MODULE", &ctx),
-            "/path/%MODULE"
-        );
+        assert_eq!(expand_config_vars("/path/%MODULE", &ctx), "/path/%MODULE");
     }
 
     #[test]
@@ -738,8 +727,7 @@ mod variable_expansion_tests {
     fn expand_all_variables_combined() {
         let ctx = sample_ctx();
         let input = "%DIFFHOST%-%MODULE%-%RSYNC_MODULE_NAME%-%RSYNC_MODULE_PATH%-%ADDR%";
-        let expected =
-            "client.example.com-backup-backup-/srv/backup-192.168.1.100";
+        let expected = "client.example.com-backup-backup-/srv/backup-192.168.1.100";
         assert_eq!(expand_config_vars(input, &ctx), expected);
     }
 
@@ -764,17 +752,16 @@ mod variable_expansion_tests {
     #[test]
     fn expand_percent_before_variable() {
         let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("100%% %MODULE%", &ctx),
-            "100% backup"
-        );
+        assert_eq!(expand_config_vars("100%% %MODULE%", &ctx), "100% backup");
     }
-
 
     #[test]
     fn resolve_diffhost() {
         let ctx = sample_ctx();
-        assert_eq!(resolve_variable("DIFFHOST", &ctx), Some("client.example.com"));
+        assert_eq!(
+            resolve_variable("DIFFHOST", &ctx),
+            Some("client.example.com")
+        );
     }
 
     #[test]
@@ -792,7 +779,10 @@ mod variable_expansion_tests {
     #[test]
     fn resolve_rsync_module_path() {
         let ctx = sample_ctx();
-        assert_eq!(resolve_variable("RSYNC_MODULE_PATH", &ctx), Some("/srv/backup"));
+        assert_eq!(
+            resolve_variable("RSYNC_MODULE_PATH", &ctx),
+            Some("/srv/backup")
+        );
     }
 
     #[test]
@@ -806,7 +796,6 @@ mod variable_expansion_tests {
         let ctx = sample_ctx();
         assert_eq!(resolve_variable("NOPE", &ctx), None);
     }
-
 
     #[test]
     fn expand_module_vars_expands_path() {
@@ -955,7 +944,6 @@ mod variable_expansion_tests {
             Some(PathBuf::from("/etc/multi.include"))
         );
     }
-
 
     fn sample_path_ctx<'a>() -> PathExpansionContext<'a> {
         PathExpansionContext {
@@ -1164,10 +1152,7 @@ mod variable_expansion_tests {
         // The `'` inside `"..."` must not open a single-quoted run, or the
         // value after it would be escaped for the wrong context.
         // upstream: `loadparm.c:300-305`.
-        assert_eq!(
-            expanded("echo \"it's\" %u", &ctx),
-            "echo \"it's\" 'alice'"
-        );
+        assert_eq!(expanded("echo \"it's\" %u", &ctx), "echo \"it's\" 'alice'");
     }
 
     #[test]
@@ -1231,7 +1216,6 @@ mod variable_expansion_tests {
         // operator-configured path stays verbatim. upstream: `loadparm.c:266`.
         assert_eq!(expanded("du %P", &ctx), "du /srv/my backups");
     }
-
 
     #[test]
     fn log_file_path_expands_module_name() {

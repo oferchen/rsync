@@ -108,4 +108,3 @@ fn run_daemon_accepts_valid_credentials() {
         );
     }
 }
-
