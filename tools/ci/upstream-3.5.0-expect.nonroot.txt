@@ -139,7 +139,7 @@ exclude-implied-trailing-backslash skip
 exclude-lsh pass
 excludefrom-symlink skip
 executability pass
-fake-super-acl-xattr fail
+fake-super-acl-xattr pass
 fake-super-backup-fifo-regression pass
 file-to-file-mkpath-dry-run pass
 files-from pass
