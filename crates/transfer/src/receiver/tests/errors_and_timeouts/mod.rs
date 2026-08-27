@@ -215,4 +215,80 @@ mod failed_directories_tests {
         failed.mark_failed("b");
         assert_eq!(failed.count(), 2);
     }
+
+    // The seven cases below were the only assertions in a detached, never-compiled
+    // copy of this type that this module did not already cover. The copy is gone;
+    // these are kept because they pin real behaviour of the live implementation.
+
+    #[test]
+    fn failed_directories_does_not_match_parent() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("foo/bar");
+
+        // Marking a child must not make its ancestors look failed.
+        assert!(failed.failed_ancestor("foo/file.txt").is_none());
+        assert!(failed.failed_ancestor("foo").is_none());
+    }
+
+    #[test]
+    fn failed_directories_prefix_is_not_confused_by_similar_names() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("abc");
+
+        // `abcd` shares a string prefix with `abc` but is not beneath it. The
+        // walk truncates at `/`, so this must not match.
+        assert!(failed.failed_ancestor("abcd").is_none());
+        assert!(failed.failed_ancestor("abcd/file.txt").is_none());
+        assert!(failed.failed_ancestor("abc/file.txt").is_some());
+    }
+
+    #[test]
+    fn failed_directories_returns_the_closest_failed_ancestor() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("a");
+        failed.mark_failed("a/b");
+        failed.mark_failed("a/b/c");
+
+        // Nested marks all match; the walk reports the nearest one.
+        assert_eq!(failed.failed_ancestor("a/b/c/d/file.txt"), Some("a/b/c"));
+    }
+
+    #[test]
+    fn failed_directories_duplicate_marks_do_not_increase_count() {
+        let mut failed = FailedDirectories::new();
+
+        failed.mark_failed("foo/bar");
+        assert_eq!(failed.count(), 1);
+        failed.mark_failed("foo/bar");
+        assert_eq!(failed.count(), 1);
+    }
+
+    #[test]
+    fn failed_directories_entries_are_independent() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("a/b");
+        failed.mark_failed("x/y");
+
+        assert_eq!(failed.failed_ancestor("a/b/c/file.txt"), Some("a/b"));
+        assert_eq!(failed.failed_ancestor("x/y/z/file.txt"), Some("x/y"));
+        assert!(failed.failed_ancestor("a/c/file.txt").is_none());
+        assert!(failed.failed_ancestor("x/z/file.txt").is_none());
+    }
+
+    #[test]
+    fn failed_directories_empty_path_matches_nothing() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("foo");
+
+        assert!(failed.failed_ancestor("").is_none());
+    }
+
+    #[test]
+    fn failed_directories_handles_a_path_without_separators() {
+        let mut failed = FailedDirectories::new();
+        failed.mark_failed("file");
+
+        assert_eq!(failed.failed_ancestor("file"), Some("file"));
+        assert!(failed.failed_ancestor("other").is_none());
+    }
 }

@@ -184,7 +184,6 @@ Cycle 1 (initial sweep):
 - `crates/flist/src/batched_stat/statx_support.rs`
 - `crates/metadata/src/apply/timestamps.rs`
 - `crates/metadata/src/copy_as.rs`
-- `crates/metadata/src/permission_tests.rs`
 - `crates/platform/src/env.rs`
 - `crates/platform/src/signal.rs`
 
