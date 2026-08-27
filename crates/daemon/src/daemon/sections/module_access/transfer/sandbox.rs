@@ -407,13 +407,38 @@ fn validate_client_paths_in_module(
 /// `symlink_optout_allowed()` is the whole of its daemon-side rule, and it is
 /// read as `module_id >= 0 && lp_insecure_links(module_id)`.
 fn landlock_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
-    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
-        return Some("pre-xfer-exec or post-xfer-exec configured (would block hook exec)");
+    if let Some(reason) = exec_hook_skip_reason(module) {
+        return Some(reason);
     }
     if module.insecure_links {
         return Some("insecure links = yes (operator opted this module out of path confinement)");
     }
     None
+}
+
+/// Why a kernel sandbox layer must be skipped for a module that runs an
+/// `exec()` hook, or `None` when no hook is configured.
+///
+/// Shared by BOTH layers because both are inherited across `exec()` and
+/// neither can be relaxed for the child:
+///
+/// - **Landlock**: the ruleset is inherited, so an allowlist pinned to
+///   `module.path` blocks a hook script living outside it.
+/// - **seccomp**: the filter is inherited too, and the worker allowlist
+///   deliberately omits `execve` / `fork` / `wait4` - the exact syscalls a
+///   hook needs. MEASURED on Linux 7.0 aarch64: with the filter engaged the
+///   daemon logs `failed to run post-xfer exec command for module 'data':
+///   Operation not permitted (os error 1)` and the hook never runs, while the
+///   same config with the filter disabled runs it.
+///
+/// Keeping one predicate is the point: the layers previously disagreed, so
+/// Landlock stood aside for the operator's declared hook while seccomp
+/// silently `EPERM`ed it. Widening the allowlist instead would hand `execve`
+/// to anything that hijacks the worker, which is the attack the filter exists
+/// to stop - so the layer stands aside per module, exactly as Landlock does.
+fn exec_hook_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
+    (module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some())
+        .then_some("pre-xfer-exec or post-xfer-exec configured (would block hook exec)")
 }
 
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
@@ -597,6 +622,12 @@ fn engage_landlock_sandbox(
 /// failure is logged as a warning and the connection continues - SEC-1
 /// `*at` helpers and Landlock remain the primary defenses.
 ///
+/// **Modules with an exec hook are skipped**, for the same reason Landlock
+/// skips them: the filter is inherited across `exec()` and the worker
+/// allowlist omits `execve` / `fork` / `wait4`, so an engaged filter turns
+/// the operator's configured `pre-xfer exec` / `post-xfer exec` into an
+/// `EPERM` failure instead of hardening anything.
+///
 /// **Stdio sessions are skipped.** When the daemon runs as `--server
 /// --daemon` over stdin/stdout (remote-shell daemon mode via `lsh.sh` /
 /// SSH), the process IS the worker. A process-scoped filter would
@@ -606,7 +637,10 @@ fn engage_landlock_sandbox(
 /// daemon workers are disposable threads inside a long-lived process, so
 /// the filter dies with the thread and does not affect the daemon or any
 /// other connection.
-fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
+fn engage_seccomp_sandbox(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+) -> io::Result<()> {
     // Stdio sessions: the process IS the worker. Applying seccomp here
     // would restrict the entire process (including post-transfer cleanup,
     // exit handlers, and the parent shell). Skip - Landlock + SEC-1 *at*
@@ -631,6 +665,19 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
     if let Some(var) = SandboxLayer::Seccomp.operator_optout_var() {
         if let Some(log) = ctx.log_sink {
             let text = SandboxLayer::Seccomp.optout_log_text(ctx.request, var);
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(());
+    }
+
+    // Exec hooks: the filter is inherited across `exec()` and the worker
+    // allowlist has no `execve` / `fork` / `wait4`, so leaving it engaged
+    // does not harden the module - it makes the operator's configured hook
+    // fail with EPERM. Same predicate, same decision as Landlock.
+    if let Some(reason) = exec_hook_skip_reason(module) {
+        if let Some(log) = ctx.log_sink {
+            let text = format!("module '{}': seccomp=skipped reason={reason}", ctx.request);
             let message = rsync_info!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }

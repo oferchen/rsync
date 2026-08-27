@@ -608,7 +608,7 @@ fn process_approved_module(
     // process IS the worker, so a process-scoped filter would restrict its
     // post-transfer cleanup. Failures do not abort the connection -
     // Landlock + SEC-1 `*at` remain the primary defenses.
-    engage_seccomp_sandbox(ctx)?;
+    engage_seccomp_sandbox(ctx, module)?;
 
     // #503: arm the background delta-drain thread only for a real transfer. An
     // empty client-arg list means the peer requested the module then dropped the
