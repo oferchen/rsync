@@ -107,7 +107,13 @@ pub(super) fn commit_file(
     // `process_whole_file` via `make_backup_copy` prior to the first write.
     let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
-            make_backup(&begin.file_path, backup_config, config)?
+            make_backup(&begin.file_path, backup_config, config).map_err(|e| {
+                crate::temp_guard::attach_commit_op(
+                    crate::temp_guard::CommitOp::Backup,
+                    &begin.file_path,
+                    e,
+                )
+            })?
         } else {
             None
         }
@@ -128,7 +134,14 @@ pub(super) fn commit_file(
                 clear_partial_dir_obstruction(parent)?;
                 fs::create_dir_all(parent)?;
             }
-            let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)?;
+            let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)
+                .map_err(|e| {
+                    crate::temp_guard::attach_commit_op(
+                        crate::temp_guard::CommitOp::Rename,
+                        &staging_path,
+                        e,
+                    )
+                })?;
             CleanupManager::global().unregister_temp_file(cleanup_guard.path());
             cleanup_guard.keep();
             return Ok(CommitOutcome {
@@ -140,7 +153,14 @@ pub(super) fn commit_file(
     }
 
     let was_copy = if needs_rename {
-        let result = rename_config_sandboxed(config, cleanup_guard.path(), &begin.file_path)?;
+        let result = rename_config_sandboxed(config, cleanup_guard.path(), &begin.file_path)
+            .map_err(|e| {
+                crate::temp_guard::attach_commit_op(
+                    crate::temp_guard::CommitOp::Rename,
+                    &begin.file_path,
+                    e,
+                )
+            })?;
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace && !begin.is_device_target {

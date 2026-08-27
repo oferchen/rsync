@@ -17,30 +17,57 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::sync::Arc;
 
-/// Payload attached to a failed [`open_tmpfile`] so the caller can name the
-/// temp file the `mkstemp` attempt used.
+/// Which commit-path operation raised a failure, so the receiver's diagnostic
+/// names that operation instead of labelling every failure `mkstemp`.
+///
+/// Upstream emits one message per site, each naming its own operation:
+/// `mkstemp %s failed` (`rsync-3.5.0/receiver.c:452-453`),
+/// `rename failed for %s (from %s)` (`rsync-3.5.0/receiver.c:710-712`) and
+/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.0/backup.c:401-402`). oc runs
+/// these stages behind one `Result`, so the operation identity has to ride on
+/// the error to survive the trip back to the reporting thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOp {
+    /// Creating the `.name.XXXXXX` temp file.
+    Mkstemp,
+    /// Moving the pre-image aside under `--backup`.
+    Backup,
+    /// Renaming the finished temp file onto its destination.
+    Rename,
+}
+
+/// Payload attached to a failed commit-path operation so the caller can name
+/// both the operation and the path it acted on.
+///
+/// Upstream reports the operand of the failing call, not the final
+/// destination: `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
+/// full_fname(fnametmp))` (`rsync-3.5.0/receiver.c:452-453`). The disk-commit
+/// thread hands failures back as a plain [`io::Error`], so the operation and
+/// its operand ride along inside it and are recovered with
+/// [`commit_op_failure`].
 ///
 /// Upstream reports the temp name, not the final destination:
 /// `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", full_fname(fnametmp))`
-/// (receiver.c:297). The disk-commit thread hands the failure back as a plain
+/// (receiver.c:452-453). The disk-commit thread hands the failure back as a plain
 /// [`io::Error`], so the attempted name rides along inside it and is recovered
 /// with [`attempted_temp_path`].
 ///
 /// [`fmt::Display`] forwards to the underlying error verbatim, so a wrapped
 /// error still renders exactly like the unwrapped one.
 #[derive(Debug)]
-struct TempOpenError {
-    temp_path: PathBuf,
+struct CommitOpError {
+    op: CommitOp,
+    operand: PathBuf,
     source: io::Error,
 }
 
-impl fmt::Display for TempOpenError {
+impl fmt::Display for CommitOpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.source, f)
     }
 }
 
-impl std::error::Error for TempOpenError {
+impl std::error::Error for CommitOpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
     }
@@ -52,10 +79,37 @@ impl std::error::Error for TempOpenError {
 /// `None` for every other error, so callers fall back to whatever name they
 /// already have.
 pub fn attempted_temp_path(error: &io::Error) -> Option<&Path> {
+    match commit_op_failure(error) {
+        Some((CommitOp::Mkstemp, path)) => Some(path),
+        _ => None,
+    }
+}
+
+/// Returns the commit-path operation an error came from, with the path that
+/// operation acted on.
+///
+/// `None` for an error raised outside the annotated stages, so callers fall
+/// back to whatever name they already have - the same contract
+/// [`attempted_temp_path`] has always had, widened from one operation to all
+/// of them.
+pub fn commit_op_failure(error: &io::Error) -> Option<(CommitOp, &Path)> {
     error
         .get_ref()?
-        .downcast_ref::<TempOpenError>()
-        .map(|e| e.temp_path.as_path())
+        .downcast_ref::<CommitOpError>()
+        .map(|e| (e.op, e.operand.as_path()))
+}
+
+/// Tags `source` with the operation that raised it, preserving its
+/// [`io::ErrorKind`] so existing predicates keep classifying it unchanged.
+pub fn attach_commit_op(op: CommitOp, operand: &Path, source: io::Error) -> io::Error {
+    io::Error::new(
+        source.kind(),
+        CommitOpError {
+            op,
+            operand: operand.to_path_buf(),
+            source,
+        },
+    )
 }
 
 /// Length of the random suffix including the leading dot: `.XXXXXX` = 7 bytes.
@@ -260,13 +314,14 @@ fn open_tmpfile_inner(
                 return Err(io::Error::new(e.kind(), e.to_string()));
             }
             // Carry the attempted name so the receiver's diagnostic can print
-            // `fnametmp` the way receiver.c:297 does. The wrapper keeps both
+            // `fnametmp` the way receiver.c:452-453 does. The wrapper keeps both
             // `kind()` and the Display text of the original error.
             Err(e) => {
                 return Err(io::Error::new(
                     e.kind(),
-                    TempOpenError {
-                        temp_path: concrete_path,
+                    CommitOpError {
+                        op: CommitOp::Mkstemp,
+                        operand: concrete_path,
                         source: e,
                     },
                 ));
@@ -666,7 +721,7 @@ mod tests {
     use tempfile::tempdir;
 
     /// upstream names `fnametmp`, not the destination, in the `mkstemp %s
-    /// failed` diagnostic (receiver.c:297), so a failed open must hand the
+    /// failed` diagnostic (receiver.c:452-453), so a failed open must hand the
     /// attempted `.name.XXXXXX` back to the caller while keeping the error's
     /// `kind()` and rendered text untouched.
     #[cfg(unix)]
