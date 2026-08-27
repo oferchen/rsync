@@ -311,13 +311,33 @@ fn try_create_new(
             }
         }
     }
+    // Every other shape - no sandbox, no `dest_dir`, no file name, or a temp
+    // path whose parent is NOT the destination directory (an operator
+    // `--temp-dir` pointing elsewhere) - still has to resolve its parent
+    // chain. A plain path-based create resolves it with libc, so a symlink at
+    // any parent component redirects the create out of the tree; `O_EXCL`
+    // protects only the leaf. Route it through upstream's three-arm
+    // `do_open_at()` contract so the parent walk is the same one the sandbox
+    // branch gets.
+    //
+    // upstream: `rsync-3.5.0/syscall.c:3344` `do_mkstemp_atfd()` -
+    // `openat(dfd, filename, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, perms)`.
+    // `O_NOFOLLOW` is unconditional there, and `perms` is the mode the caller
+    // asks for; the replaced `OpenOptions` create could express neither, and
+    // defaulted to `0o666` where its sandbox sibling already used `0o600`.
+    #[cfg(unix)]
+    let opened = fast_io::ConfinedFallback::confined().open_at(
+        concrete_path,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+        0o600,
+    );
     // SEC-1.r (Windows): create the temp file without following a reparse
     // point at the leaf - the analog of the Unix `O_EXCL | O_NOFOLLOW` open -
     // so a symlink/junction pre-planted at the temp name cannot redirect the
     // create outside the destination tree (CVE-2024-12747 residual).
     #[cfg(windows)]
     let opened = fast_io::create_new_no_follow(concrete_path);
-    #[cfg(not(windows))]
+    #[cfg(not(any(unix, windows)))]
     let opened = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1288,5 +1308,95 @@ mod tests {
             "an unregistered guard must not disturb other registry entries on drop"
         );
         manager.unregister_temp_file(&other);
+    }
+}
+
+/// The temp-file create must resolve its parent chain through the ownership
+/// walk on EVERY shape, not only when the temp path's parent happens to be the
+/// destination directory.
+///
+/// `try_create_new` takes its sandbox branch only when
+/// `parent == dest_dir`. An operator `--temp-dir` elsewhere - or any call with
+/// no sandbox - used to fall through to a plain `OpenOptions::create_new`,
+/// which resolves the parent chain with libc. `O_EXCL` refuses a symlink at
+/// the LEAF, so the exposure was never the temp name itself: it was a symlink
+/// at a PARENT component redirecting the create out of the tree.
+///
+/// upstream: `rsync-3.5.0/syscall.c:3344` `do_mkstemp_atfd()`.
+#[cfg(all(test, unix))]
+mod confined_temp_create {
+    use super::try_create_new;
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+    use std::os::unix::fs::symlink;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    /// `TempDir` under a canonical root: the confinement root is compared
+    /// against a resolved path, so a `/var` -> `/private/var` style prefix
+    /// would make every cell below pass for the wrong reason.
+    fn canonical_tempdir() -> (TempDir, PathBuf) {
+        let keep = TempDir::new().expect("tempdir");
+        let root = keep.path().canonicalize().expect("canonicalize");
+        (keep, root)
+    }
+
+    /// `module/` is the confined root, `outside/secret` the out-of-tree
+    /// victim, and `module/esc` a symlink out of the root. The symlink is
+    /// owned by this euid, so the ownership walk TRUSTS it - what refuses the
+    /// escape is the confinement root, which is why the session below must
+    /// carry one.
+    fn fixture(root: &Path) -> PathBuf {
+        let module = root.join("module");
+        std::fs::create_dir(&module).expect("module");
+        std::fs::create_dir(root.join("outside")).expect("outside");
+        std::fs::write(root.join("outside/secret"), b"OUTSIDE").expect("secret");
+        symlink("../outside", module.join("esc")).expect("esc");
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(module.clone()),
+        });
+        module
+    }
+
+    /// The assertion is on WHAT THE OUT-OF-TREE DIRECTORY CONTAINS, not on the
+    /// call returning `Err`: the plain create this replaces succeeds and
+    /// leaves a new entry beside `secret`, which a "did it error?" test would
+    /// miss if the error ever arrived for an unrelated reason.
+    #[test]
+    fn temp_create_refuses_a_parent_symlink_escaping_the_root() {
+        let (_keep, root) = canonical_tempdir();
+        let module = fixture(&root);
+        let escaping = module.join("esc/.oc-rsync-temp-victim");
+
+        try_create_new(&escaping, None, None)
+            .expect_err("a temp path escaping the confinement root must be refused");
+
+        let mut left: Vec<_> = std::fs::read_dir(root.join("outside"))
+            .expect("outside readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec![std::ffi::OsString::from("secret")],
+            "nothing may be created outside the confinement root"
+        );
+    }
+
+    /// Non-vacuity companion: the SAME session, a temp path INSIDE the root.
+    /// Without it the cell above would also pass against a session that
+    /// refused every create.
+    #[test]
+    fn temp_create_still_succeeds_inside_the_root() {
+        let (_keep, root) = canonical_tempdir();
+        let module = fixture(&root);
+        let inside = module.join(".oc-rsync-temp-ok");
+
+        try_create_new(&inside, None, None).expect("an in-root temp path must still be created");
+        assert!(inside.exists(), "the in-root temp file must exist");
     }
 }

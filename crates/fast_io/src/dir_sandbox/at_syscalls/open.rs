@@ -87,13 +87,17 @@ pub fn openat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: i32, mode: u32) -> io:
 ///   component, the helper resolves the leaf through the sandbox dirfd
 ///   so a mid-syscall symlink swap on the leaf cannot redirect the
 ///   open to an attacker-chosen inode.
-/// - In every other case the helper falls back to
-///   [`std::fs::OpenOptions`] against `link_path` with a best-effort
-///   translation of the standard `O_*` bits (`O_RDONLY` / `O_WRONLY` /
-///   `O_RDWR` for the access mode, plus `O_CREAT` / `O_TRUNC` /
-///   `O_APPEND` / `O_EXCL` for the lifecycle modifiers). Flags outside
-///   that set are silently dropped on the fallback path because
-///   [`std::fs::OpenOptions`] does not expose every libc bit.
+/// - In every other case the helper applies upstream's three-arm
+///   `do_open_at()` contract to `link_path` through
+///   [`ConfinedFallback`](crate::ConfinedFallback).
+///
+/// That tail used to translate the flag word onto [`std::fs::OpenOptions`],
+/// which cannot express `O_NOFOLLOW` or `O_DIRECTORY` and dropped them
+/// silently - so a caller asking not to follow the leaf was given a following
+/// open and no error. `ConfinedFallback::open_at` issues a real `openat(2)`,
+/// which honours the whole flag word on both arms, and on arm 2 adds
+/// `O_NOFOLLOW` the way upstream does
+/// (`rsync-3.5.0/syscall.c:1519`).
 ///
 /// Typical temp-file creation passes
 /// `flags = libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW`,
@@ -103,9 +107,10 @@ pub fn openat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: i32, mode: u32) -> io:
 ///
 /// # Errors
 ///
-/// Surfaces either the [`openat`] error or the
-/// [`std::fs::OpenOptions::open`] error verbatim, depending on which
-/// path was taken.
+/// Surfaces either the [`openat`] error or, on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, that op's error
+/// verbatim - including the ownership walk's refusal, and `ELOOP` when the
+/// caller asked for `O_NOFOLLOW` and the leaf is a symlink.
 pub fn openat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -119,48 +124,7 @@ pub fn openat_via_sandbox_or_fallback(
     {
         return openat(sandbox.current_dirfd(), leaf, flags, mode);
     }
-    open_path_with_flags(link_path, flags, mode)
-}
-
-/// Best-effort translation of libc `O_*` flag bits onto
-/// [`std::fs::OpenOptions`].
-///
-/// Only the bits the stdlib actually exposes are consulted: the access
-/// mode (`O_RDONLY` / `O_WRONLY` / `O_RDWR`), the lifecycle bits
-/// (`O_CREAT`, `O_TRUNC`, `O_APPEND`, `O_EXCL`), and the create-mode
-/// argument. Everything else (`O_NOFOLLOW`, `O_DIRECTORY`, `O_CLOEXEC`,
-/// `O_NONBLOCK`, ...) is silently dropped on the fallback path because
-/// the stdlib has no portable knob for them; callers that need those
-/// semantics must take the sandbox fast path.
-fn open_path_with_flags(path: &Path, flags: i32, mode: u32) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut opts = std::fs::OpenOptions::new();
-    match flags & libc::O_ACCMODE {
-        libc::O_WRONLY => {
-            opts.write(true);
-        }
-        libc::O_RDWR => {
-            opts.read(true).write(true);
-        }
-        _ => {
-            opts.read(true);
-        }
-    }
-    if flags & libc::O_CREAT != 0 {
-        opts.create(true);
-        opts.mode(mode);
-    }
-    if flags & libc::O_TRUNC != 0 {
-        opts.truncate(true);
-    }
-    if flags & libc::O_APPEND != 0 {
-        opts.append(true);
-    }
-    if flags & libc::O_EXCL != 0 {
-        opts.create_new(true);
-    }
-    opts.open(path)
+    crate::ConfinedFallback::confined().open_at(link_path, flags, mode)
 }
 
 /// Issue `readlinkat(dirfd, name, buf, size)` and return the link

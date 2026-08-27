@@ -173,14 +173,16 @@ pub fn linkat(
 ///   component, the helper resolves the leaf through the sandbox dirfd
 ///   so a mid-syscall symlink swap on the leaf cannot redirect the
 ///   create to an attacker-chosen parent.
-/// - In every other case the helper falls back to
-///   [`std::fs::create_dir`] on `dir_path`.
+/// - In every other case the helper applies upstream's three-arm
+///   `do_mkdir_at()` contract to `dir_path` through
+///   [`ConfinedFallback`](crate::ConfinedFallback), so a foreign-owned symlink
+///   on the parent chain is refused instead of followed.
 ///
 /// # Errors
 ///
-/// Surfaces either the [`mkdirat`] error or the
-/// [`std::fs::create_dir`] error verbatim, depending on which path was
-/// taken.
+/// Surfaces either the [`mkdirat`] error or, on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, that op's error
+/// verbatim - including the ownership walk's refusal.
 pub fn mkdirat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -198,7 +200,7 @@ pub fn mkdirat_via_sandbox_or_fallback(
     {
         return mkdirat(dirfd.as_fd(), name, mode);
     }
-    std::fs::create_dir(dir_path)
+    crate::ConfinedFallback::confined().mkdir_at(dir_path, mode)
 }
 
 /// Issue `symlinkat` against `link_path` when the `sandbox` root is
@@ -210,14 +212,16 @@ pub fn mkdirat_via_sandbox_or_fallback(
 ///   component, the helper resolves the leaf through the sandbox dirfd
 ///   so a mid-syscall symlink swap on the leaf cannot redirect the
 ///   create to an attacker-chosen parent.
-/// - In every other case the helper falls back to
-///   [`std::os::unix::fs::symlink`] on `link_path`.
+/// - In every other case the helper applies upstream's three-arm
+///   `do_symlink_at()` contract to `link_path` through
+///   [`ConfinedFallback`](crate::ConfinedFallback), so a foreign-owned symlink
+///   on the parent chain is refused instead of followed.
 ///
 /// # Errors
 ///
-/// Surfaces either the [`symlinkat`] error or the
-/// [`std::os::unix::fs::symlink`] error verbatim, depending on which
-/// path was taken.
+/// Surfaces either the [`symlinkat`] error or, on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, that op's error
+/// verbatim - including the ownership walk's refusal.
 pub fn symlinkat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -235,7 +239,7 @@ pub fn symlinkat_via_sandbox_or_fallback(
     {
         return symlinkat(target, dirfd.as_fd(), name);
     }
-    std::os::unix::fs::symlink(target, link_path)
+    crate::ConfinedFallback::confined().symlink_at(target, link_path)
 }
 
 /// Issue `linkat` against `new_path` when the `sandbox` root is the

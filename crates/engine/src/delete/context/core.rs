@@ -676,10 +676,29 @@ pub(super) struct DrainParts {
 /// Returns `Some` when `root` resolves to a real (non-symlink) directory
 /// the process can open. Any failure - the delete root does not exist, is
 /// a symlink, or the platform refuses the open - is logged at debug level
-/// and yields `None` so the emitter transparently falls back to the
-/// path-based syscalls. This mirrors the receiver's
-/// `open_sandbox_for_dest` fallback contract: a sandbox open failure must
-/// never turn a working delete into a failure.
+/// and yields `None`, and the emitter then dispatches through the
+/// path-based [`super::super::emitter::DeleteFs`] methods instead of the
+/// dirfd-anchored `*_at` ones.
+///
+/// # What `None` now means (CF-P2a)
+///
+/// `None` used to mean "unconfined": the path-based methods were bare
+/// `std::fs` calls. They are not any more - they resolve through
+/// [`fast_io::ConfinedFallback`], which refuses rather than following
+/// once a confinement root is installed. So this fallback keeps its
+/// availability promise (a sandbox open failure must never turn a
+/// working delete into a failure) without keeping its old security cost.
+///
+/// Note this is not the only route to the path-based methods, and not
+/// the important one. `DeleteEmitter::open_plan_dirfd` opens each plan
+/// directory through the sandbox with `O_DIRECTORY | O_NOFOLLOW` and
+/// discards the error with `.ok()`, so a *successful* sandbox open here
+/// still yields `None` for any plan directory whose components the
+/// confined open refuses - which is exactly the planted-symlink case.
+/// Keying the drop to a weaker syscall on a runtime errno is upstream's
+/// stated objection (`rsync-3.5.0/syscall.c:658` `do_unlink_at()`, whose
+/// third arm is an error and never a plain path syscall); the
+/// `ConfinedFallback` routing is what makes that drop safe here.
 #[cfg(unix)]
 fn open_delete_sandbox(root: &Path) -> Option<Arc<fast_io::DirSandbox>> {
     match fast_io::DirSandbox::open_root(root) {

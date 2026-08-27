@@ -474,6 +474,29 @@ fn owner_walk_open(
 ///   which no operator path being renamed onto can have.
 /// - Otherwise see `owner_walk_open`.
 pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
+    owner_trusted_parent_kind(path, crate::confinement::PathKind::Ancillary)
+}
+
+/// [`owner_trusted_parent`] with the caller's [`PathKind`](crate::confinement::PathKind).
+///
+/// The parent walk and the confinement judgement are one decision upstream -
+/// `owner_walk_parent()` reads `operator_path_resolve`, which its call sites
+/// set around themselves - so a site whose path must stay under the session
+/// root has to say so here. [`owner_trusted_parent`] is the
+/// [`Ancillary`](crate::confinement::PathKind::Ancillary) spelling and keeps
+/// its existing callers unchanged.
+///
+/// upstream: `rsync-3.5.0/syscall.c:558` `owner_walk_parent()`, and
+/// `rsync-3.5.0/syscall.c:552` `int operator_path_resolve = 0;` - the flag this
+/// parameter replaces.
+///
+/// # Errors
+///
+/// See [`owner_trusted_parent`].
+pub fn owner_trusted_parent_kind(
+    path: &Path,
+    kind: crate::confinement::PathKind,
+) -> io::Result<(OwnedFd, OsString)> {
     let Some(leaf) = path.file_name().map(OsStr::to_os_string) else {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     };
@@ -482,7 +505,7 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY,
         Mode::empty(),
-        crate::confinement::PathKind::Ancillary,
+        kind,
     )?;
     Ok((dirfd, leaf))
 }
