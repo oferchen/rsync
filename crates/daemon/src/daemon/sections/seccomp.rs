@@ -344,28 +344,18 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
 /// Operator-driven runtime opt-out for the worker seccomp filter.
 ///
 /// The filter is ON by default when the `daemon-seccomp` feature is
-/// compiled in. Setting `OC_RSYNC_NO_SECCOMP=1` (or any truthy value)
-/// disables it. Empty, `0`, and `false` leave the filter engaged.
+/// compiled in; `OC_RSYNC_NO_SECCOMP=1` or `OC_RSYNC_DAEMON_SECCOMP=0`
+/// disables it. [`SandboxLayer`] owns the variable names and the parsing
+/// for both kernel sandbox layers, so Landlock and seccomp cannot drift
+/// apart on what counts as an opt-out.
 ///
-/// `OC_RSYNC_DAEMON_SECCOMP=0` is also accepted as an opt-out alias so
-/// operators who previously used `OC_RSYNC_DAEMON_SECCOMP=1` to opt in
-/// can flip the same variable to `0` instead of learning a new name.
+/// The wire-in (`engage_seccomp_sandbox`) checks the same predicate so it
+/// can log the operator's decision by name. This second check keeps the
+/// opt-out honoured for direct callers of
+/// [`apply_worker_seccomp_filter`] that never reach the wire-in.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
 fn seccomp_runtime_disabled() -> bool {
-    // OC_RSYNC_NO_SECCOMP=1 disables.
-    if let Ok(v) = std::env::var("OC_RSYNC_NO_SECCOMP") {
-        if !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false") {
-            return true;
-        }
-    }
-    // OC_RSYNC_DAEMON_SECCOMP=0 / false also disables (inverse of old
-    // opt-in semantics).
-    if let Ok(v) = std::env::var("OC_RSYNC_DAEMON_SECCOMP") {
-        if v == "0" || v.eq_ignore_ascii_case("false") {
-            return true;
-        }
-    }
-    false
+    SandboxLayer::Seccomp.operator_optout_var().is_some()
 }
 
 /// `rseq(2)` syscall number for the current target.
