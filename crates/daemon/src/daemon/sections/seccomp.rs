@@ -194,6 +194,15 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_renameat2,
         libc::SYS_unlinkat,
         libc::SYS_mkdirat,
+        // Device nodes, FIFOs and unix-socket nodes under `-D` / `--specials`.
+        // `metadata::special` materialises all three through
+        // `nix::sys::stat::mknod`, i.e. the libc `mknod()` SYMBOL (deliberate:
+        // fakeroot interposes the symbol, matching upstream `syscall.c`
+        // `do_mknod()`), which glibc lowers to `mknodat`. Omitting it made a
+        // `-a` push drop every special SILENTLY: MEASURED on Linux 7.0.0
+        // aarch64, a source tree holding `plain.txt` + a FIFO arrived with
+        // only `plain.txt` and the client still exited 0.
+        libc::SYS_mknodat,
         libc::SYS_symlinkat,
         libc::SYS_linkat,
         libc::SYS_readlinkat,
@@ -305,6 +314,13 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
     ]);
     #[cfg(target_arch = "x86_64")]
     s.push(libc::SYS_arch_prctl);
+
+    // glibc before 2.33 lowers `mknod()` to the legacy `mknod` syscall rather
+    // than `mknodat`. The legacy number exists only on x86_64 (aarch64 never
+    // had it), so gate the push on the arch, not on the libc version we
+    // cannot see from here. Same shape as the `arch_prctl` push above.
+    #[cfg(target_arch = "x86_64")]
+    s.push(libc::SYS_mknod);
 
     // glibc 2.35+ initialises restartable sequences per thread. `SYS_rseq`
     // is missing from older libc bindings; fall back to the documented
@@ -432,6 +448,24 @@ mod seccomp_tests {
         let mut dedup = list.clone();
         dedup.dedup();
         assert_eq!(list.len(), dedup.len(), "allowlist must be deduplicated");
+    }
+
+    /// `-D` / `--specials` materialises devices, FIFOs and socket nodes via
+    /// the libc `mknod()` symbol, which glibc lowers to `mknodat` (and, on
+    /// pre-2.33 x86_64 glibc, to the legacy `mknod`). Without these the
+    /// receiver drops every special SILENTLY and still exits 0.
+    #[test]
+    fn allowlist_admits_special_file_creation() {
+        let list = worker_seccomp_allowlist();
+        assert!(
+            list.binary_search(&libc::SYS_mknodat).is_ok(),
+            "mknodat missing: -D / --specials would silently drop every device, fifo and socket",
+        );
+        #[cfg(target_arch = "x86_64")]
+        assert!(
+            list.binary_search(&libc::SYS_mknod).is_ok(),
+            "legacy mknod missing: glibc < 2.33 on x86_64 lowers mknod() to it",
+        );
     }
 
     #[test]

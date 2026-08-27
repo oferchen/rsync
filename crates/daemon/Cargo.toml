@@ -148,6 +148,11 @@ fast_io = { path = "../fast_io", default-features = false, features = ["io_uring
 # integration tests can build the filter independently of the production
 # allowlist.
 seccompiler = "0.5"
+# `metadata::create_fifo_node_from_parts` is the production special-file
+# creator; `tests/seccomp_worker_filter.rs` calls it under the real filter
+# rather than hand-copying an `mknod` call, so the pin tracks what the
+# receiver actually issues.
+metadata = { path = "../metadata", default-features = false }
 
 [[bench]]
 name = "daemon_benchmark"
