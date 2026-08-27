@@ -1576,6 +1576,7 @@ mod tests {
     /// raised outside the tagged stages still renders under `mkstemp` with the
     /// DESTINATION name, and that fallback is what made a non-mkstemp failure
     /// read as a temp-create failure in CI.
+    #[cfg(unix)]
     #[test]
     fn commit_failure_names_the_operation_that_failed() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
@@ -1637,6 +1638,7 @@ mod tests {
     /// `(13)` renders every failure as `Permission denied` regardless of what
     /// actually happened, which is why the CI line could not be trusted to
     /// describe its own cause.
+    #[cfg(unix)]
     #[test]
     fn commit_failure_reports_the_real_errno() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
