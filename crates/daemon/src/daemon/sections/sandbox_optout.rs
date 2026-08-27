@@ -82,8 +82,7 @@ impl SandboxLayer {
 
 /// True when `var` is set to anything other than empty, `0`, or `false`.
 fn env_flag_truthy(var: &str) -> bool {
-    std::env::var(var)
-        .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    std::env::var(var).is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
 }
 
 /// True when `var` is set to `0` or `false`.
@@ -132,11 +131,7 @@ mod sandbox_optout_tests {
             let _enable = EnvGuard::remove(layer.enable_var());
             for value in ["", "0", "false", "FALSE"] {
                 let _disable = EnvGuard::set(layer.disable_var(), OsStr::new(value));
-                assert_eq!(
-                    layer.operator_optout_var(),
-                    None,
-                    "{layer:?} value {value}",
-                );
+                assert_eq!(layer.operator_optout_var(), None, "{layer:?} value {value}",);
             }
         }
     }

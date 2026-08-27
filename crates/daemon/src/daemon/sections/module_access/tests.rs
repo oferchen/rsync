@@ -1812,6 +1812,58 @@ mod module_access_tests {
         );
     }
 
+    /// BOTH kernel layers must stand aside for the same module, from the same
+    /// predicate. They used to disagree: Landlock skipped for the operator's
+    /// declared hook while the seccomp filter stayed engaged and EPERMed the
+    /// `execve` the hook needs, so the hook silently never ran.
+    #[test]
+    fn an_exec_hook_releases_both_kernel_sandbox_layers() {
+        for module in [
+            ModuleRuntime::from(ModuleDefinition {
+                pre_xfer_exec: Some("/usr/local/bin/before.sh".into()),
+                ..Default::default()
+            }),
+            ModuleRuntime::from(ModuleDefinition {
+                post_xfer_exec: Some("/usr/local/bin/after.sh".into()),
+                ..Default::default()
+            }),
+        ] {
+            let hook =
+                exec_hook_skip_reason(&module).expect("an exec hook must release the layers");
+            assert_eq!(
+                landlock_skip_reason(&module),
+                Some(hook),
+                "landlock must skip for the same reason the shared predicate gives"
+            );
+        }
+    }
+
+    /// Non-vacuity companion: without a hook neither layer stands aside, so the
+    /// test above cannot pass by making the skip unconditional.
+    #[test]
+    fn a_module_without_an_exec_hook_keeps_both_layers() {
+        let module = test_module_with_defaults();
+        assert_eq!(exec_hook_skip_reason(&module), None);
+        assert_eq!(landlock_skip_reason(&module), None);
+    }
+
+    /// `insecure links` releases Landlock ONLY - it is a path-confinement
+    /// decision and says nothing about the syscall filter. Pinning the
+    /// asymmetry keeps a future "make both layers agree" edit from widening it.
+    #[test]
+    fn insecure_links_does_not_release_the_seccomp_layer() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            insecure_links: true,
+            ..Default::default()
+        });
+        assert!(landlock_skip_reason(&module).is_some());
+        assert_eq!(
+            exec_hook_skip_reason(&module),
+            None,
+            "`insecure links` is about paths, not syscalls; seccomp must stay engaged"
+        );
+    }
+
     #[test]
     fn absent_insecure_links_leaves_the_confinement_engaged() {
         let module = test_module_with_defaults();
