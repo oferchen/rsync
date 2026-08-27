@@ -1418,7 +1418,7 @@ impl GeneratorContext {
                 );
                 return 0;
             }
-            // upstream: sender.c:429-430,176-177 - any other re-lstat failure is
+            // upstream: sender.c:429-430,459 - any other re-lstat failure is
             // rsyserr(FERROR_XFER, ...), setting got_xfer_error -> exit 23.
             Err(error) => {
                 eprintln!("{}", sender_op_failure("re-lstat", source_path, &error));
@@ -1467,7 +1467,7 @@ impl GeneratorContext {
                 );
                 0
             }
-            // upstream: sender.c:454,176-177 - rsyserr(FERROR_XFER, ...) on
+            // upstream: sender.c:454,459 - rsyserr(FERROR_XFER, ...) on
             // unlink failure sets got_xfer_error -> exit 23.
             Err(error) => {
                 eprintln!("{}", sender_op_failure("remove", source_path, &error));
