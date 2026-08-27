@@ -702,22 +702,31 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
 }
 
 #[test]
-fn parity_stats_level_3_matches_level_2_plus_summary() {
-    // Upstream level 3 adds malloc/flist heap statistics from every process
-    // (main.c:333-337 calls show_malloc_stats/show_flist_stats). oc-rsync has
-    // no native heap statistics to surface, so level 3 emits the same user-
-    // facing block as level 2; the difference is purely in optional heap
-    // diagnostics which upstream itself only renders on MEM_ALLOC_INFO
-    // platforms. Asserting parity of the user-visible block is the relevant
-    // contract for wire-compatible scripting consumers.
+fn parity_stats_level_3_is_level_2_prefixed_by_the_heap_block() {
+    // upstream: handle_stats() (main.c:337-340) calls show_malloc_stats()
+    // under INFO_GTE(STATS, 3) BEFORE output_summary(), so level 3 is level 2
+    // with the heap block prefixed - not equal to it. The block is absent
+    // wherever the allocator cannot report, which is upstream's
+    // `#ifdef MEM_ALLOC_INFO` case (rsync.h:1543); there the two levels do
+    // coincide. Both arms are asserted so neither can pass vacuously.
     let (summary, _temp) = create_known_summary(&[("lvl3.txt", b"level three")]);
     let level_2 = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
     let level_3 = render_stats_at_level(&summary, HumanReadableMode::Grouped, 3);
 
-    assert_eq!(
-        level_3, level_2,
-        "level 3 user-visible output must match level 2 byte-for-byte"
-    );
+    let Some(prefix) = level_3.strip_suffix(&level_2) else {
+        panic!("level 3 must end with the whole of level 2:\n{level_3}");
+    };
+
+    match fast_io::heap_stats::heap_stats() {
+        Some(_) => assert!(
+            prefix.contains("heap statistics"),
+            "level 3 must prefix level 2 with the heap block:\n{prefix}"
+        ),
+        None => assert!(
+            prefix.is_empty(),
+            "with no allocator counters, level 3 must equal level 2:\n{prefix}"
+        ),
+    }
 }
 
 #[test]

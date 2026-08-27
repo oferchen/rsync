@@ -112,6 +112,8 @@ pub mod container;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod dir_sandbox;
+/// Active-allocator heap counters for the `--info=stats3` diagnostic block.
+pub mod heap_stats;
 /// The receiver's in-place output open: upstream's three-arm chain
 /// (`receiver.c:1195-1224`) with the path resolution injected.
 pub mod inplace_open;

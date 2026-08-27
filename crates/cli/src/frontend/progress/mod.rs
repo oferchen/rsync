@@ -2,6 +2,7 @@
 
 pub mod diagnostic;
 mod format;
+mod heap_report;
 mod interleave;
 mod live;
 mod mode;
@@ -23,8 +24,8 @@ pub(crate) use self::interleave::PendingDiagnostics;
 pub(crate) use self::live::{LiveProgress, ProgressOutputConfig};
 pub(crate) use self::mode::ProgressMode;
 pub use self::mode::{NameOutputLevel, ProgressSetting, StderrMode}; // Changed to pub for test_utils
-#[cfg(test)]
-pub(crate) use self::render::emit_list_only;
 pub(crate) use self::render::{
     DeltaTransmissionState, DeltaTransmissionSummary, emit_transfer_summary,
 };
+#[cfg(test)]
+pub(crate) use self::render::{emit_list_only, emit_stats};
