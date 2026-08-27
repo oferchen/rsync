@@ -264,8 +264,17 @@ const fn traversal_is_by_location() -> bool {
 /// `flags` comes from [`traversal_dir_flags`]; upstream opens the same two
 /// directories with the same meaning at `syscall.c:349-351`.
 fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
-    rustix::fs::open(if absolute { "/" } else { "." }, flags, Mode::empty())
-        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+    // `openat` with `CWD`, never the legacy `open`: on x86_64 rustix issues
+    // the raw `SYS_open` for the no-dirfd form, and the daemon's seccomp
+    // allowlist admits only the `*at` variants, so a plain `open` is EPERM'd
+    // inside a worker. `openat(AT_FDCWD, p, ..)` is the same operation.
+    rustix::fs::openat(
+        rustix::fs::CWD,
+        if absolute { "/" } else { "." },
+        flags,
+        Mode::empty(),
+    )
+    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
 /// Open the walk's final component with the caller's flags.
@@ -352,7 +361,8 @@ fn owner_walk_open(
         } else {
             path
         };
-        return rustix::fs::open(target, flags, mode)
+        // `openat`/`CWD` for the same seccomp reason as `open_start_dir`.
+        return rustix::fs::openat(rustix::fs::CWD, target, flags, mode)
             .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
     }
 

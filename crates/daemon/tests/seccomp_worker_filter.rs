@@ -20,6 +20,8 @@ use std::collections::BTreeMap;
 use std::io;
 use std::os::unix::process::ExitStatusExt;
 
+use daemon::seccomp_test_support::{SeccompOutcome, apply_worker_seccomp_filter};
+
 /// Architecture detected at build time.
 fn target_arch() -> Option<TargetArch> {
     if cfg!(target_arch = "x86_64") {
@@ -169,5 +171,57 @@ fn blocked_syscall_traps_with_sigsys() {
     assert_ne!(
         code, 99,
         "child reached past blocked syscall - filter not enforcing",
+    );
+}
+
+/// The ownership walk must keep resolving once the worker filter engages.
+///
+/// The walk opens its starting directory - `/` for an absolute path - and
+/// that open has to be an `openat`. On x86_64 rustix lowers the no-dirfd
+/// `rustix::fs::open` to the legacy `SYS_open`, which this allowlist
+/// deliberately omits in favour of the `*at` variants, so a plain `open`
+/// returns `EPERM` inside a worker and every confined resolution beneath
+/// it fails. Regression pin: a daemon receiver could not create its
+/// destination temp file, surfacing as `mkstemp ... Permission denied`.
+///
+/// Installs the production filter through `apply_worker_seccomp_filter`
+/// rather than a hand-copied rule set, so the pin tracks the real
+/// allowlist as it changes.
+#[test]
+fn the_ownership_walk_resolves_under_the_worker_filter() {
+    let probe = std::env::temp_dir().join(format!("oc-owner-walk-probe-{}", std::process::id()));
+    std::fs::write(&probe, b"probe").expect("probe file must be creatable");
+    assert!(
+        probe.is_absolute(),
+        "the probe must be absolute so the walk starts at `/`",
+    );
+
+    let child_path = probe.clone();
+    let raw = fork_run(move || {
+        match apply_worker_seccomp_filter() {
+            SeccompOutcome::Installed => {}
+            // Kernel refused the filter, or this build cannot install one:
+            // treat as a skip, matching the sibling tests above.
+            _ => return 77,
+        }
+        match fast_io::owner_walk::operator_open_read(&child_path) {
+            Ok(_) => 0,
+            Err(_) => 99,
+        }
+    });
+
+    let _ = std::fs::remove_file(&probe);
+    let status = std::process::ExitStatus::from_raw(raw);
+    if let Some(sig) = status.signal() {
+        panic!("child killed by signal {sig} while walking under the worker filter");
+    }
+    let code = status.code().expect("child must exit");
+    if code == 77 {
+        eprintln!("seccomp filter install rejected by kernel; skipping");
+        return;
+    }
+    assert_eq!(
+        code, 0,
+        "the ownership walk was refused under the worker filter - a syscall the walk issues is missing from the allowlist",
     );
 }
