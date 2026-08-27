@@ -225,3 +225,57 @@ fn the_ownership_walk_resolves_under_the_worker_filter() {
         "the ownership walk was refused under the worker filter - a syscall the walk issues is missing from the allowlist",
     );
 }
+
+/// The receiver must still be able to materialise a FIFO under the worker
+/// filter. `-a` implies `-D`, so a source tree holding a fifo, a device or a
+/// unix-socket node reaches `metadata::special`, which creates all three
+/// through the libc `mknod()` symbol - and glibc lowers that to `mknodat`.
+///
+/// Regression pin. MEASURED on Linux 7.0.0 aarch64 before the allowlist
+/// admitted it: a daemon push of `{plain.txt, pipe}` landed only
+/// `plain.txt` in the module, with **exit 0 and no diagnostic** - a silent
+/// data loss, not a visible refusal. The control leg with
+/// `OC_RSYNC_NO_SECCOMP=1` landed both.
+///
+/// Calls the production creator rather than a hand-written `mknod`, so the
+/// pin tracks the syscall the receiver actually issues even if
+/// `metadata::special` changes how it issues it.
+#[test]
+fn a_special_file_is_creatable_under_the_worker_filter() {
+    let node = std::env::temp_dir().join(format!("oc-mknod-probe-{}", std::process::id()));
+    let _ = std::fs::remove_file(&node);
+
+    let child_path = node.clone();
+    let raw = fork_run(move || {
+        match apply_worker_seccomp_filter() {
+            SeccompOutcome::Installed => {}
+            // Kernel refused the filter, or this build cannot install one:
+            // treat as a skip, matching the sibling tests above.
+            _ => return 77,
+        }
+        match metadata::create_fifo_node_from_parts(&child_path, 0o644, false, false) {
+            Ok(()) => 0,
+            Err(_) => 99,
+        }
+    });
+
+    let created = node.exists();
+    let _ = std::fs::remove_file(&node);
+    let status = std::process::ExitStatus::from_raw(raw);
+    if let Some(sig) = status.signal() {
+        panic!("child killed by signal {sig} while creating a fifo under the worker filter");
+    }
+    let code = status.code().expect("child must exit");
+    if code == 77 {
+        eprintln!("seccomp filter install rejected by kernel; skipping");
+        return;
+    }
+    assert_eq!(
+        code, 0,
+        "fifo creation was refused under the worker filter - `-D`/`--specials` would silently drop every special file",
+    );
+    assert!(
+        created,
+        "the child reported success but no node exists - the pin would pass vacuously",
+    );
+}
