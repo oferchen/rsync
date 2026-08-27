@@ -28,6 +28,42 @@ from pathlib import Path
 
 ROOT = Path("crates")
 PERMITTED = {"fast_io", "metadata", "checksums", "engine", "protocol"}
+# The coding standards name an explicit never-contain-unsafe set. A crate that is
+# on neither list is UNLISTED, not forbidden - reporting those two the same way
+# turns ordinary dev-only crates into apparent policy violations.
+FORBIDDEN = {
+    "daemon", "cli", "core", "transfer", "batch", "filters", "signature",
+    "bandwidth", "logging", "logging-sink", "branding", "rsync_io", "compress",
+}
+
+
+def classify(crate: str) -> str:
+    if crate in PERMITTED:
+        return "permitted"
+    if crate in FORBIDDEN:
+        return "FORBIDDEN"
+    return "unlisted"
+
+
+def scope_of(path: Path) -> str:
+    """Crate name, qualified by cargo target.
+
+    This audit answers two questions with different populations, and one walk
+    can serve both only while they stay distinct:
+
+      - *which crates may contain unsafe* is about the LIBRARY;
+      - *does every unsafe block carry a SAFETY comment* is about ALL compiled
+        unsafe, because a test can invoke UB just as well as a library can.
+
+    `crates/<c>/tests/*.rs` and `crates/<c>/benches/*.rs` are their own crate
+    roots, so the library's `#![deny(unsafe_code)]` does not reach them. Unsafe
+    found there is real, and it is not unsafe *in the library*. Do not re-merge
+    these keys: collapsing them makes a test binary look like a policy breach.
+    """
+    crate = path.parts[1]
+    if len(path.parts) > 2 and path.parts[2] in ("tests", "benches"):
+        return f"{crate} ({path.parts[2]})"
+    return crate
 
 UNSAFE_BLOCK_RE = re.compile(r"\bunsafe\s*\{")
 UNSAFE_FN_RE = re.compile(r"\bunsafe\s+fn\b")
@@ -107,7 +143,7 @@ def main() -> int:
             continue
         if "unsafe {" not in text:
             continue
-        crate = path.parts[1]
+        crate = scope_of(path)
         per_crate_files[crate] += 1
         lines = text.split("\n")
         for i, line in enumerate(lines):
@@ -122,19 +158,36 @@ def main() -> int:
 
     print("=== Per-crate unsafe block counts ===")
     for crate in sorted(per_crate_blocks, key=lambda c: -per_crate_blocks[c]):
-        permit = "permitted" if crate in PERMITTED else "NOT PERMITTED"
+        base = crate.split(" (")[0]
+        permit = (
+            f"{classify(base)}; test/bench target, library policy N/A"
+            if "(" in crate
+            else classify(base)
+        )
         print(
             f"  {crate}: {per_crate_blocks[crate]} blocks across {per_crate_files[crate]} files ({permit})"
         )
 
     print(f"\nTotal blocks: {sum(per_crate_blocks.values())}")
     print(f"Total violations: {len(violations)}")
+
+    # An UNCLASSIFIED crate is an outcome in its own right, not a pass and not a
+    # failure: the coding standards list crates that may hold unsafe and crates
+    # that may not, and say nothing about the rest. Reporting the count and the
+    # names keeps a newly-added crate carrying unsafe visible instead of
+    # silently benign - the state to watch is this number growing.
+    unclassified = sorted(
+        {c.split(" (")[0] for c in per_crate_blocks if classify(c.split(" (")[0]) == "unlisted"}
+    )
+    print(f"Unclassified crates carrying unsafe: {len(unclassified)}")
+    for crate in unclassified:
+        print(f"  {crate} - on neither the permitted nor the forbidden list")
     print()
 
     print("=== Violations (missing or placeholder SAFETY) ===")
     by_crate: dict[str, list[tuple[str, int, str, str]]] = defaultdict(list)
     for v in violations:
-        by_crate[Path(v[0]).parts[1]].append(v)
+        by_crate[scope_of(Path(v[0]))].append(v)
     for crate in sorted(by_crate):
         print(f"\n--- crate: {crate} ({len(by_crate[crate])} violations) ---")
         for path, line, kind, snippet in by_crate[crate]:
