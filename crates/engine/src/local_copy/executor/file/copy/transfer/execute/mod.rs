@@ -621,6 +621,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         buffer,
         use_sparse_writes,
         compress_enabled,
+        whole_file_enabled,
         source,
         delta_basis,
         record_path,

@@ -679,6 +679,7 @@ impl<'a> CopyContext<'a> {
         buffer: &mut [u8],
         sparse: bool,
         compress: bool,
+        whole_file_enabled: bool,
         source: &Path,
         destination: &Path,
         relative: &Path,
@@ -722,7 +723,25 @@ impl<'a> CopyContext<'a> {
         // and io_uring on Linux do not reliably respect the seeked file position
         // when both source and destination have been seeked to non-zero offsets.
         // upstream: receiver.c - append path uses standard read/write loop.
-        if self.options.kernel_content_copy_allowed()
+        //
+        // `--no-whole-file` disqualifies it as well. This is the fourth mover
+        // that hands a whole file to the kernel unread, and the other three
+        // already refuse on that flag - `clonefile::eligible`,
+        // `ficlone::eligible` and `wincopy::eligible` each carry
+        // `whole_file_enabled`. Leaving it off here made the executor decline a
+        // reflink of a file while still handing the identical file to io_uring
+        // or copy_file_range, so the operator's request was honoured by three
+        // tiers and ignored by the fourth. It also hid the source read from
+        // everything that observes one, which is how upstream's
+        // `source-change-size-continues` cell sees a changing source at all.
+        //
+        // The default local copy keeps the fast path: upstream forces
+        // `whole_file = 1` for a local transfer that did not ask otherwise
+        // (main.c:653-657, `if (whole_file < 0 && !write_batch) whole_file = 1;`),
+        // so only an explicit --no-whole-file, --append or --write-batch lands
+        // in the read loop below.
+        if whole_file_enabled
+            && self.options.kernel_content_copy_allowed()
             && !sparse
             && !compress
             && self.limiter.is_none()
