@@ -119,12 +119,13 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      # rustfmt reaches a file only through the `mod` tree, so every file pulled
-      # in with `include!("...")` is invisible to the step above - it exits 0 no
-      # matter how those files are formatted. Nearly 500 source files in this
-      # workspace are reached that way. This step runs rustfmt on them directly.
-      - name: Format check (include!()d files)
-        run: python3 tools/ci/check_include_fmt.py
+      # rustfmt reaches a file only through the `mod` tree, so a file pulled in
+      # with `include!("...")` - or referenced by no module at all - is
+      # invisible to the step above, which exits 0 no matter how such a file is
+      # formatted. This step hands rustfmt every tracked .rs file instead, so
+      # coverage does not depend on reproducing rustfmt's own walk.
+      - name: Format check (every tracked .rs file)
+        run: python3 tools/ci/check_rustfmt_all.py
 
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
