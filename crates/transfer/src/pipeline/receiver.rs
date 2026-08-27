@@ -299,14 +299,33 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
+    /// - `receiver.c:452-453` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
     ///   full_fname(fnametmp))`
-    fn mkstemp_failure(&self, dest: &std::path::Path, error: &io::Error) -> String {
-        let named = crate::temp_guard::attempted_temp_path(error).unwrap_or(dest);
-        format!(
-            "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
-            full_fname_path(named, self.daemon_paths()),
-        )
+    fn commit_failure(&self, dest: &std::path::Path, error: &io::Error) -> String {
+        let (op, named) = match crate::temp_guard::commit_op_failure(error) {
+            Some((op, path)) => (Some(op), path),
+            None => (None, dest),
+        };
+        let name = full_fname_path(named, self.daemon_paths());
+        let reason = upstream_errno_text(error);
+        match op {
+            // upstream: rsync-3.5.0/receiver.c:452-453
+            Some(crate::temp_guard::CommitOp::Mkstemp) | None => {
+                format!("rsync: [receiver] mkstemp {name} failed: {reason}")
+            }
+            // upstream: rsync-3.5.0/backup.c:401-402 `keep_backup failed: %s -> "%s"`.
+            // oc names the pre-image only; the backup destination is chosen
+            // inside make_backup and is not carried back on the error.
+            Some(crate::temp_guard::CommitOp::Backup) => {
+                format!("rsync: [receiver] keep_backup failed: {name}: {reason}")
+            }
+            // upstream: rsync-3.5.0/receiver.c:710-712 `rename failed for %s
+            // (from %s)`. oc names the destination only; the `from` operand is
+            // the internal temp name, which upstream prints and oc omits.
+            Some(crate::temp_guard::CommitOp::Rename) => {
+                format!("rsync: [receiver] rename failed for {name}: {reason}")
+            }
+        }
     }
 
     /// Formats a failed metadata apply the way upstream reports it.
@@ -413,12 +432,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
+                        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
                         // "mkstemp %s failed", full_fname(fnametmp)). Emitting
                         // this as FERROR_XFER (not FINFO) makes the peer's
                         // rwrite() set got_xfer_error, so the run exits 23
                         // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
-                        let message = self.mkstemp_failure(&path, &e);
+                        let message = self.commit_failure(&path, &e);
                         self.warnings.push((MessageCode::ErrorXfer, message));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -476,12 +495,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
+                        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
                         // "mkstemp %s failed", full_fname(fnametmp)). Emitting
                         // this as FERROR_XFER (not FINFO) makes the peer's
                         // rwrite() set got_xfer_error, so the run exits 23
                         // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
-                        let message = self.mkstemp_failure(&path, &e);
+                        let message = self.commit_failure(&path, &e);
                         self.warnings.push((MessageCode::ErrorXfer, message));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -698,6 +717,34 @@ impl PipelinedReceiver {
 /// - `receiver.c:825-832` - `do_open()` failure handling logs and continues
 fn is_permission_error(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::PermissionDenied
+}
+/// Renders an error the way upstream's `rsyserr` does: `strerror(errno)`
+/// followed by the numeric errno in parentheses.
+///
+/// `io::Error`'s own `Display` appends `" (os error N)"`, so the suffix is
+/// stripped and re-emitted in upstream's shape. A non-OS error renders
+/// verbatim, with no parenthesised number to invent.
+///
+/// upstream: `rsync-3.5.0/log.c` `rsyserr()` - `"%s: %s (%d)"`.
+fn upstream_errno_text(error: &io::Error) -> String {
+    let display = error.to_string();
+    // A tagged failure is an `io::Error::new(kind, payload)`, i.e. the `Custom`
+    // variant, whose `raw_os_error()` is `None` even though the payload wraps a
+    // real OS error. Recover the errno from the source chain so tagging an
+    // error does not silently drop the number from its own message.
+    let errno = error.raw_os_error().or_else(|| {
+        std::error::Error::source(error.get_ref()?)?
+            .downcast_ref::<io::Error>()?
+            .raw_os_error()
+    });
+    match errno {
+        Some(errno) => {
+            let suffix = format!(" (os error {errno})");
+            let text = display.strip_suffix(&suffix).unwrap_or(&display);
+            format!("{text} ({errno})")
+        }
+        None => display,
+    }
 }
 
 impl Drop for PipelinedReceiver {
@@ -1518,6 +1565,168 @@ mod tests {
         );
     }
 
+    /// The commit path runs mkstemp, backup, rename and metadata behind one
+    /// `Result`, so a `PermissionDenied` from any of them reaches the same
+    /// reporting arm. Upstream gives each site its own text - `mkstemp %s
+    /// failed` (`rsync-3.5.0/receiver.c:452-453`), `rename failed for %s`
+    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.0/backup.c:401-402`) -
+    /// and oc must not label all three `mkstemp`.
+    ///
+    /// The untagged arm is the one that matters for regressions: an error
+    /// raised outside the tagged stages still renders under `mkstemp` with the
+    /// DESTINATION name, and that fallback is what made a non-mkstemp failure
+    /// read as a temp-create failure in CI.
+    #[cfg(unix)]
+    #[test]
+    fn commit_failure_names_the_operation_that_failed() {
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let dest = std::path::Path::new("/srv/mod/payload");
+        let temp = std::path::Path::new("/srv/mod/.payload.a2dBeL");
+        let denied = || io::Error::from_raw_os_error(libc::EACCES);
+
+        let mkstemp = pr.commit_failure(
+            dest,
+            &crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Mkstemp,
+                temp,
+                denied(),
+            ),
+        );
+        let backup = pr.commit_failure(
+            dest,
+            &crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Backup,
+                dest,
+                denied(),
+            ),
+        );
+        let rename = pr.commit_failure(
+            dest,
+            &crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Rename,
+                dest,
+                denied(),
+            ),
+        );
+        let untagged = pr.commit_failure(dest, &denied());
+
+        assert!(
+            mkstemp.contains("mkstemp") && mkstemp.contains(".payload.a2dBeL"),
+            "mkstemp keeps upstream's text and names the TEMP file: {mkstemp}"
+        );
+        assert!(
+            backup.contains("keep_backup failed") && !backup.contains("mkstemp"),
+            "a backup failure must not be labelled mkstemp: {backup}"
+        );
+        assert!(
+            rename.contains("rename failed for") && !rename.contains("mkstemp"),
+            "a rename failure must not be labelled mkstemp: {rename}"
+        );
+        assert!(
+            untagged.contains("mkstemp") && untagged.contains("payload"),
+            "an untagged error keeps the historical fallback: {untagged}"
+        );
+        for rendered in [&mkstemp, &backup, &rename, &untagged] {
+            assert!(
+                rendered.ends_with("Permission denied (13)"),
+                "every arm renders strerror + errno like rsyserr: {rendered}"
+            );
+        }
+    }
+
+    /// The errno must come from the error, not from a literal. A hardcoded
+    /// `(13)` renders every failure as `Permission denied` regardless of what
+    /// actually happened, which is why the CI line could not be trusted to
+    /// describe its own cause.
+    #[cfg(unix)]
+    #[test]
+    fn commit_failure_reports_the_real_errno() {
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let dest = std::path::Path::new("/srv/mod/payload");
+        let rendered = pr.commit_failure(dest, &io::Error::from_raw_os_error(libc::EPERM));
+        assert!(
+            rendered.ends_with("(1)"),
+            "EPERM must render as (1), not the EACCES literal: {rendered}"
+        );
+        assert!(
+            !rendered.contains("(13)"),
+            "the errno must not be hardcoded: {rendered}"
+        );
+    }
+
+    /// Wiring proof for the rename stage: the tag has to be attached by the
+    /// real commit path, not merely spellable in a unit test.
+    ///
+    /// A writable `--temp-dir` with a read-only destination directory lets
+    /// mkstemp SUCCEED and the rename onto the destination fail `EACCES`,
+    /// which is the one shape that separates the two stages end to end.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_rename_is_reported_as_a_rename_not_a_mkstemp() {
+        use std::os::unix::fs::PermissionsExt;
+        // Root bypasses the read-only dir bit, so the rename would succeed.
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+        let dir = test_support::create_tempdir();
+        let temp_dir = dir.path().join("tmp");
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&temp_dir).unwrap();
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+        let file_path = readonly_dir.join("payload.dat");
+
+        let config = DiskCommitConfig {
+            temp_dir: Some(temp_dir),
+            ..DiskCommitConfig::default()
+        };
+        let mut pr = PipelinedReceiver::new(config).unwrap();
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                    xattr_basis: None,
+                    file_entry: None,
+                }),
+                data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            PathBuf::from(file_path.file_name().unwrap()),
+            0,
+            false,
+        );
+        let (_bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(errors.len(), 1, "one recoverable per-file error");
+        let warnings = pr.drain_warnings();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "one warning queued for the failed rename"
+        );
+        assert!(
+            warnings[0].1.contains("rename failed for"),
+            "the live commit path must tag the rename stage: {}",
+            warnings[0].1
+        );
+        assert!(
+            !warnings[0].1.contains("mkstemp"),
+            "mkstemp SUCCEEDED here - labelling this mkstemp is the defect: {}",
+            warnings[0].1
+        );
+    }
+
     /// only sets `got_xfer_error` (yielding exit 23, `RERR_PARTIAL`) on
     /// `FERROR_XFER` receipt (upstream log.c:311). Routing this as `MSG_INFO`
     /// would let a client-sender push against a read-only destination exit 0,
@@ -1588,7 +1797,7 @@ mod tests {
         assert!(
             warnings[0].1.starts_with(&expected_prefix)
                 && warnings[0].1.ends_with("\" failed: Permission denied (13)"),
-            "message should mirror upstream receiver.c:297 \"mkstemp %s failed\" \
+            "message should mirror upstream receiver.c:452-453 \"mkstemp %s failed\" \
              with the absolute temp name: {}",
             warnings[0].1
         );
@@ -1668,7 +1877,7 @@ mod tests {
     /// ```
     ///
     /// upstream: util1.c:1285-1290 inside `full_fname()`, reached from
-    /// receiver.c:297 `rsyserr(..., "mkstemp %s failed", full_fname(fnametmp))`.
+    /// receiver.c:452-453 `rsyserr(..., "mkstemp %s failed", full_fname(fnametmp))`.
     #[cfg(unix)]
     #[test]
     fn output_open_failure_names_daemon_module() {
