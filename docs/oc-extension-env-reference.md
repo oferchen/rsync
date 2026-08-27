@@ -277,6 +277,23 @@ Alias with inverse polarity for the same filter: `0` or `false` disables
 it, matching the variable's historical opt-in spelling. Same
 `daemon-seccomp` feature requirement as `OC_RSYNC_NO_SECCOMP`.
 
+### OC_RSYNC_NO_LANDLOCK
+
+Runtime opt-out for the daemon worker Landlock LSM path allowlist. The
+allowlist is on by default on kernels that support Landlock; any truthy
+value (not empty, `0`, or `false`) skips it, and the daemon logs
+`landlock=skipped reason=OC_RSYNC_NO_LANDLOCK ...`. Use to establish
+whether a failing transfer is being denied by path confinement (`EACCES`)
+rather than by the syscall filter (`EPERM`). Per-module `insecure links =
+yes` and a configured `pre-xfer exec` / `post-xfer exec` skip the layer
+too, independently of this variable.
+
+### OC_RSYNC_DAEMON_LANDLOCK
+
+Alias with inverse polarity for the same allowlist: `0` or `false`
+disables it. Mirrors the `OC_RSYNC_DAEMON_SECCOMP` spelling so both
+kernel sandbox layers answer to the same pair of variable shapes.
+
 ### OC_RSYNC_ASYNC_DAEMON
 
 Opt-in async accept loop for the TCP daemon. Requires the `async-daemon`

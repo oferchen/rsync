@@ -386,7 +386,9 @@ fn validate_client_paths_in_module(
 ///
 /// Both arms are per-module operator configuration, and both are skips rather
 /// than downgrades because a Landlock ruleset cannot be relaxed once applied -
-/// it is inherited by children and only ever narrows.
+/// it is inherited by children and only ever narrows. The process-wide
+/// operator opt-out ([`SandboxLayer::Landlock`]) is decided by the caller
+/// before this runs, so it is deliberately not an arm here.
 ///
 /// - **exec hooks**: rulesets are inherited across `exec()`, so an allowlist
 ///   pinned to the module path would block hook scripts that live outside it
@@ -431,7 +433,9 @@ fn landlock_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
 /// flip would EACCES the very paths the operator's configuration permits.
 ///
 /// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded,
-/// unavailable, or skipped because a pre/post-xfer-exec hook is configured).
+/// unavailable, skipped by the operator's `OC_RSYNC_NO_LANDLOCK` /
+/// `OC_RSYNC_DAEMON_LANDLOCK=0` opt-out, or skipped because a
+/// pre/post-xfer-exec hook is configured).
 /// Returns `Ok(false)` after emitting an `@ERROR` reply when the kernel
 /// advertised Landlock support but the helper failed to engage the ruleset -
 /// we treat that as a regression because the SEC-1.p design requires the
@@ -453,6 +457,19 @@ fn engage_landlock_sandbox(
         EnforcementStatus, LandlockOutcome, best_effort_fs_downgrade, is_supported,
         restrict_to_module_paths,
     };
+
+    // Operator opt-out first: it is the most explicit signal and it is
+    // process-wide, so it outranks the per-module skips below. Landlock had
+    // no escape hatch at all while seccomp had two, which made a Landlock
+    // denial the one sandbox failure an operator could not A/B in the field.
+    if let Some(var) = SandboxLayer::Landlock.operator_optout_var() {
+        if let Some(log) = ctx.log_sink {
+            let text = SandboxLayer::Landlock.optout_log_text(ctx.request, var);
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(true);
+    }
 
     if let Some(reason) = landlock_skip_reason(module) {
         if let Some(log) = ctx.log_sink {
@@ -573,7 +590,10 @@ fn engage_landlock_sandbox(
 ///
 /// On builds without the `daemon-seccomp` feature the helper is a no-op
 /// that returns `Unavailable`; the wire-in is unconditional so the call
-/// site does not need `#[cfg]` branching. Construction or installation
+/// site does not need `#[cfg]` branching. The operator opt-out
+/// (`OC_RSYNC_NO_SECCOMP` / `OC_RSYNC_DAEMON_SECCOMP=0`) is decided here
+/// rather than read out of `Unavailable`, which cannot distinguish a build
+/// without seccomp from a build whose operator turned it off. Construction or installation
 /// failure is logged as a warning and the connection continues - SEC-1
 /// `*at` helpers and Landlock remain the primary defenses.
 ///
@@ -597,6 +617,20 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
                 "module '{}': seccomp BPF skipped (stdio session - filter would restrict entire process)",
                 ctx.request,
             );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(());
+    }
+
+    // Operator opt-out. Checked here as well as inside
+    // `apply_worker_seccomp_filter` because the filter can only answer
+    // `Unavailable`, which conflates "this build has no seccomp" with "the
+    // operator turned it off" - two facts an operator reading the log needs
+    // to tell apart.
+    if let Some(var) = SandboxLayer::Seccomp.operator_optout_var() {
+        if let Some(log) = ctx.log_sink {
+            let text = SandboxLayer::Seccomp.optout_log_text(ctx.request, var);
             let message = rsync_info!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }

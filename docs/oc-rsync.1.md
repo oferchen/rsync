@@ -1265,6 +1265,12 @@ values, defaults, and required build features.
 **OC_RSYNC_DAEMON_SECCOMP**
 :   Set to **0** to disable the same seccomp filter (inverse alias).
 
+**OC_RSYNC_NO_LANDLOCK**
+:   Set to **1** to disable the daemon worker Landlock path allowlist.
+
+**OC_RSYNC_DAEMON_LANDLOCK**
+:   Set to **0** to disable the same Landlock allowlist (inverse alias).
+
 **OC_RSYNC_ASYNC_DAEMON**
 :   Opt in to the async daemon accept loop (builds with the
     async-daemon feature).

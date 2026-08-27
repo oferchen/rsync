@@ -787,6 +787,8 @@ include!("daemon/sections/greeting.rs");
 
 include!("daemon/sections/privilege.rs");
 
+include!("daemon/sections/sandbox_optout.rs");
+
 include!("daemon/sections/seccomp.rs");
 
 include!("daemon/sections/capabilities.rs");
