@@ -181,6 +181,62 @@ fn a_plain_path_inside_the_module_opens() {
     assert_eq!(read_all(file), "PLAIN");
 }
 
+/// THE WRITE-SIDE PIN. The same rule on the create-and-truncate entry point
+/// the `--inplace --backup-dir` pre-image copy uses. A read-side leak returns
+/// out-of-module TEXT to the peer; this one WRITES an in-module file's contents
+/// to a path outside the module, so both entry points have to carry the check.
+///
+/// upstream: `rsync-3.5.0/backup.c:443-449` `make_backup()` and
+/// `generator.c:2281-2301` - `operator_path_resolve = 1` around the backup and
+/// around the in-place copy that bypasses it.
+#[test]
+fn a_confined_create_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let planted = fixture.module.join("backup/sub/evil");
+    symlink(&fixture.secret, &planted).expect("plant the symlink");
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_open_write_create_confined(&planted, 0o600)
+        .expect_err("a confined create must not resolve out of the module");
+
+    assert_eq!(
+        error.raw_os_error(),
+        Some(libc::ELOOP),
+        "the refusal must be ELOOP, as on the read side"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture.secret).expect("the outside file survives"),
+        "SECRET-MARKER",
+        "a refused create must not have truncated the outside file: O_TRUNC \
+         does its damage at open time, so a refusal that happened after the \
+         open would leave nothing to read back"
+    );
+}
+
+/// NEGATIVE CONTROL for the write side. A trusted symlink whose target stays
+/// inside the module is still followed and written through - the ordinary
+/// operator layout the walk exists to keep working. Without this, "refuse every
+/// symlink at the backup leaf" would satisfy the pin above.
+#[test]
+fn a_confined_create_staying_inside_the_module_is_followed() {
+    let fixture = fixture();
+    let inside = fixture.module.join("data");
+    fs::write(&inside, "IN-MODULE").expect("write in-module target");
+    let link = fixture.module.join("backup/sub/benign");
+    symlink(&inside, &link).expect("plant the in-module symlink");
+
+    let _session = serve_module(&fixture.module);
+    let mut file = fast_io::operator_open_write_create_confined(&link, 0o600)
+        .expect("an in-module target must still be written through");
+    std::io::Write::write_all(&mut file, b"REWRITTEN").expect("write");
+    drop(file);
+
+    assert_eq!(
+        fs::read_to_string(&inside).expect("read the in-module target"),
+        "REWRITTEN"
+    );
+}
+
 /// The other half of upstream's rule: the confinement applies to CONFINED opens
 /// only. `--log-file`, the `--*-from` family and the daemon's lock and motd
 /// files may legitimately live outside the tree, so the ANCILLARY entry point

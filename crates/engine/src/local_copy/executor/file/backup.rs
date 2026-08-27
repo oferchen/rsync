@@ -17,7 +17,8 @@ use crate::local_copy::create_symlink;
 use crate::local_copy::map_metadata_error;
 
 /// Duplicates a destination's pre-transfer bytes into the operator-named
-/// backup path, resolving that path with the ownership walk.
+/// backup path, resolving that path with the ownership walk and confining the
+/// result to the session's confinement root.
 ///
 /// Used by the `--inplace --backup` paths, where the destination inode is
 /// rewritten in place rather than replaced, so the pre-image must be COPIED
@@ -31,6 +32,15 @@ use crate::local_copy::map_metadata_error;
 /// at the `--backup-dir` leaf. `std::fs::copy` has exactly that behaviour,
 /// which is what upstream's `operator-path-inplace-backup-dir` cell observes as
 /// an escape out of the transfer tree.
+///
+/// `operator_path_resolve` is BOTH halves of upstream's rule, so the open is
+/// the confined one: the ownership walk follows a trusted-owned symlink by
+/// design, and a non-chrooted daemon's own `--backup-dir` entries are
+/// trusted-owned by construction, so ownership alone would let a backup entry
+/// pointing outside the module carry an in-module file's contents out of it
+/// (syscall.c:186-240 `abspath_outside_confinement()`). A session with no
+/// confinement root - every plain local client - is unaffected: there is
+/// nothing to be outside of.
 ///
 /// Permissions are taken from the source and applied through the open
 /// descriptor, matching `fs::copy` (and upstream's
@@ -49,7 +59,7 @@ pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result
 
         // Mask to the permission bits: `mode()` carries the file-type bits too,
         // and only the low 12 are meaningful as an `O_CREAT` mode.
-        fast_io::operator_open_write_create(backup_path, permissions.mode() & 0o7777)?
+        fast_io::operator_open_write_create_confined(backup_path, permissions.mode() & 0o7777)?
     };
     // Non-Unix has no ownership walk to run; degrade to a plain create, as the
     // other operator-path helpers do.

@@ -757,6 +757,44 @@ pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs:
     )
 }
 
+/// Open an operator-supplied path for writing, creating or truncating it,
+/// additionally bound to the session's confinement root.
+///
+/// The `--backup-dir` shape under `--inplace`. The in-place backup has to
+/// duplicate the destination's pre-transfer bytes into the operator-named
+/// backup path, and the ownership walk follows a trusted-owned symlink at that
+/// path by design. A non-chrooted daemon writes its `--backup-dir` entries as
+/// its own uid, so a backup entry is TRUSTED-owned by construction: point one
+/// outside the module and the follow carries an in-module file's contents out
+/// of the tree. Ownership decides whether to follow; the root decides whether
+/// the landing site is acceptable.
+///
+/// The `Ancillary` twin [`operator_open_write_create`] stays with the opens
+/// that may legitimately live outside the tree - the `--write-batch` files.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+///   1` around the whole backup, naming `--backup-dir` as an operator path.
+/// - `rsync-3.5.0/generator.c:2281-2301` and `:2327-2349` - the in-place backup
+///   bypasses `make_backup()`, so the generator raises the same flag around its
+///   own `copy_file()` / `do_open_at()`.
+/// - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()`.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved path lands outside the confinement root.
+/// - Otherwise see `operator_open_with`.
+pub fn operator_open_write_create_confined(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_kind(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+        crate::confinement::PathKind::Confined,
+    )
+}
+
 /// Exclusively create an operator-supplied path through the ownership walk.
 ///
 /// The `O_EXCL` twin of [`operator_open_write_create`], for the receiver's
