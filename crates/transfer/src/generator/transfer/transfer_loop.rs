@@ -1438,7 +1438,20 @@ impl GeneratorContext {
         }
 
         // upstream: sender.c:171 - do_unlink(fname) once every guard passed.
-        match std::fs::remove_file(source_path) {
+        //
+        // Routed through `fast_io::unlink_path` rather than
+        // `std::fs::remove_file`: the latter lowers to the legacy `unlink(2)`,
+        // which the daemon worker seccomp allowlist does not admit, so a
+        // sandboxed daemon sender failed every removal with EPERM while every
+        // other syscall on the path succeeded. `unlinkat(AT_FDCWD, ..)`
+        // resolves identically to `unlink(2)` - this is a syscall-number
+        // substitution, NOT confinement. Fd-anchoring this site the way 3.5.0
+        // does is tracked as task 1043; see `unlink_path`'s doc comment.
+        #[cfg(unix)]
+        let removal = fast_io::unlink_path(source_path, fast_io::UnlinkFlags::File);
+        #[cfg(not(unix))]
+        let removal = std::fs::remove_file(source_path);
+        match removal {
             Ok(()) => {
                 // upstream: sender.c:179-180 - INFO_GTE(REMOVE,1) success notice.
                 info_log!(Remove, 1, "removing source {}", source_path.display());

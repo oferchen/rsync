@@ -1306,6 +1306,242 @@ mod module_access_tests {
         assert_eq!(config.file_selection.min_file_size, Some(1024));
     }
 
+    /// Builds the client argv a daemon sees: the compact flag string, then the
+    /// long-form options, then the `.` separator upstream's `server_options()`
+    /// emits before the module-relative paths.
+    fn daemon_argv(flag_string: &str, long_form: &[&str]) -> Vec<String> {
+        let mut args = vec!["--server".to_owned(), flag_string.to_owned()];
+        args.extend(long_form.iter().map(|a| (*a).to_owned()));
+        args.push(".".to_owned());
+        args.push("module/".to_owned());
+        args
+    }
+
+    // Every case below is an option upstream's `server_options()` emits to a
+    // daemon and that oc's own `--server` argv parser already honours, but that
+    // the daemon's long-form parser dropped. Dropping is silent
+    // (`is_client_only_flag_reaching_daemon` only ever fires for the batch
+    // family), so each of these was a live behaviour difference between the two
+    // transports rather than a diagnostic.
+
+    // upstream: options.c:2914 - `if (list_only > 1) args[ac++] = "--list-only"`.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_list_only() {
+        let args = daemon_argv("-logDtpr", &["--list-only"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.flags.list_only);
+    }
+
+    // The negations below run against a config whose field is already `true`,
+    // because that is the state the compact flag string leaves behind:
+    // `ServerConfig::from_flag_string_and_args` parses the letters first and
+    // `apply_long_form_args` runs on its result. Starting from the struct
+    // default would let a missing arm pass, since the default is already the
+    // value being asserted.
+
+    // upstream: options.c:2917-2919 - `-d --delete` on the client emits `--no-r`
+    // so the remote may delete without `-r`; options.c:632 clears the same
+    // `recurse` global the compact `r` letter set.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_no_r() {
+        let args = daemon_argv("-logDtpr", &["--no-r"]);
+        let mut config = ServerConfig::default();
+        config.flags.recursive = true;
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(!config.flags.recursive);
+    }
+
+    // upstream: options.c:2926-2930 - `-D` covers devices only, so a client that
+    // preserves devices but not specials sends `--no-specials`.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_no_specials() {
+        let args = daemon_argv("-logDtpr", &["--no-specials"]);
+        let mut config = ServerConfig::default();
+        config.flags.specials = true;
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(!config.flags.specials);
+    }
+
+    // upstream: options.c:2931-2932 - `--specials` without `-D` is the other
+    // half of the same branch: specials preserved, devices not.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_specials() {
+        let args = daemon_argv("-logtpr", &["--specials"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.flags.specials);
+    }
+
+    // upstream: options.c:2948-2951 - the two spellings set the same global to 1
+    // and 0. Feeding both in order proves the negation arm exists and wins,
+    // which asserting the default alone could not.
+    #[test]
+    fn apply_long_form_args_honours_both_msgs2stderr_spellings() {
+        let mut config = ServerConfig::default();
+        let args = daemon_argv("-logDtpr", &["--msgs2stderr"]);
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.flags.msgs_to_stderr);
+
+        let args = daemon_argv("-logDtpr", &["--msgs2stderr", "--no-msgs2stderr"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(!config.flags.msgs_to_stderr);
+    }
+
+    // upstream: options.c:3059-3060 - `else if (keep_partial && am_sender)`
+    // sends the bare `--partial` to a daemon receiver.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_partial() {
+        let args = daemon_argv("-logDtpr", &["--partial"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.flags.partial);
+    }
+
+    // upstream: options.c:3128-3130 - an `--inplace --sparse` sender emits
+    // `--no-W` so the receiver still asks for a delta; options.c:760 clears the
+    // same `whole_file` global the compact `W` letter set.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_no_whole_file() {
+        let args = daemon_argv("-logDtprW", &["--inplace", "--no-W"]);
+        let mut config = ServerConfig::default();
+        config.flags.whole_file = true;
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(!config.flags.whole_file);
+    }
+
+    // upstream: options.c:3143-3144 - a `--files-from` transfer with relative
+    // paths off sends `--no-relative`; options.c:707-708 spell it both ways.
+    #[test]
+    fn apply_long_form_args_honours_both_no_relative_spellings() {
+        for spelling in ["--no-relative", "--no-R"] {
+            let args = daemon_argv("-logDtprR", &[spelling]);
+            let mut config = ServerConfig::default();
+            config.flags.relative = true;
+            assert!(apply_long_form_args(&args, &mut config).is_none());
+            assert!(!config.flags.relative, "{spelling} must clear relative");
+        }
+    }
+
+    // upstream: options.c:3153-3156 - the daemon SENDER unlinks each source file
+    // once the receiver acknowledges it. Dropping this left every source in
+    // place on a daemon pull that asked for them to be moved.
+    #[test]
+    fn apply_long_form_args_honours_both_remove_source_files_spellings() {
+        for spelling in ["--remove-source-files", "--remove-sent-files"] {
+            let args = daemon_argv("-logDtpr", &[spelling]);
+            let mut config = ServerConfig::default();
+            assert!(apply_long_form_args(&args, &mut config).is_none());
+            assert!(
+                config.flags.remove_source_files,
+                "{spelling} must request source removal"
+            );
+        }
+    }
+
+    // upstream: options.c:3161-3162 - forwarded to a daemon receiver so it
+    // fallocate()s each destination file before writing.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_preallocate() {
+        let args = daemon_argv("-logDtpr", &["--preallocate"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.flags.preallocate);
+    }
+
+    // upstream: options.c:3164-3165 - forwarded so the daemon sender opens
+    // source files O_NOATIME.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_open_noatime() {
+        let args = daemon_argv("-logDtpr", &["--open-noatime"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(config.write.open_noatime);
+    }
+
+    // upstream: compat.c:544 - the checksum vstring is sent only when
+    // `!checksum_choice`. A daemon that dropped the option kept sending a list
+    // its peer had already decided not to read, which desyncs the exchange;
+    // this is the wire-affecting member of the set, not a preference.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_checksum_choice() {
+        let args = daemon_argv("-logDtpr", &["--checksum-choice=xxh3"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(
+            config.checksum_choice,
+            Some(::protocol::ChecksumAlgorithm::XXH3)
+        );
+    }
+
+    // upstream: checksum.c:196-202 - a comma splits the spec into the transfer
+    // sum and the whole-file sum; only the transfer half reaches the wire
+    // negotiation, so taking the whole string would reject a legal spec.
+    #[test]
+    fn apply_long_form_args_takes_the_transfer_half_of_a_checksum_choice_pair() {
+        let args = daemon_argv("-logDtpr", &["--checksum-choice=xxh3,md5"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(
+            config.checksum_choice,
+            Some(::protocol::ChecksumAlgorithm::XXH3)
+        );
+    }
+
+    // upstream: checksum.c:127-140 parse_csum_name() - `auto` is a legal name
+    // that resolves to md5, not an error. oc's client resolves `auto,<file>` to
+    // MD5 before forwarding it, so the daemon must land on the same algorithm
+    // or the two ends disagree about a checksum neither of them negotiated.
+    #[test]
+    fn apply_long_form_args_resolves_an_auto_checksum_choice_to_md5() {
+        let args = daemon_argv("-logDtpr", &["--checksum-choice=auto,md5"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(
+            config.checksum_choice,
+            Some(::protocol::ChecksumAlgorithm::MD5)
+        );
+    }
+
+    // upstream: checksum.c:156 - an unknown name is `RERR_UNSUPPORTED`, not a
+    // silent fallback. Falling back would pick an algorithm the peer is not
+    // using, which corrupts the comparison rather than failing it.
+    #[test]
+    fn apply_long_form_args_rejects_an_unknown_checksum_choice() {
+        let args = daemon_argv("-logDtpr", &["--checksum-choice=nope"]);
+        let mut config = ServerConfig::default();
+        assert_eq!(
+            apply_long_form_args(&args, &mut config),
+            Some(ClientArgRejection::InvalidValue(
+                "unknown checksum name: nope".to_owned()
+            ))
+        );
+    }
+
+    // upstream: options.c:3046-3049 + compat.c:823-825 - the SERVER picks the
+    // seed and writes it on the wire, so a daemon that drops the client's value
+    // makes `--checksum-seed` a no-op over a daemon while it works over ssh.
+    #[test]
+    fn apply_long_form_args_honours_a_forwarded_checksum_seed() {
+        let args = daemon_argv("-logDtpr", &["--checksum-seed=12345"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.checksum_seed, Some(12345));
+    }
+
+    // upstream: options.c:861 is POPT_ARG_INT and options.c:3047 prints `%d`, so
+    // the value can be negative. `write_seed` puts it back on the wire as the
+    // same 32 bits, so a u32-only parse would drop exactly the values upstream
+    // can emit.
+    #[test]
+    fn apply_long_form_args_accepts_a_negative_checksum_seed() {
+        let args = daemon_argv("-logDtpr", &["--checksum-seed=-5"]);
+        let mut config = ServerConfig::default();
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert_eq!(config.checksum_seed, Some(-5i32 as u32));
+    }
+
     // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
     // terminator, so an empty value parses as 0. For `--max-size` that means
     // "exclude every non-empty file", NOT "no limit"; treating it as absent

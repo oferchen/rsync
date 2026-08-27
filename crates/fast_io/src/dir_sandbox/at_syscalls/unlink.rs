@@ -145,6 +145,48 @@ pub fn unlinkat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: UnlinkFlags) -> io::
     }
 }
 
+/// Remove `path`, resolved against the process working directory, via
+/// `unlinkat(2)` instead of the legacy `unlink(2)` / `rmdir(2)` pair.
+///
+/// # This is NOT a confinement improvement
+///
+/// `AT_FDCWD` with an absolute `path` makes the kernel ignore the directory
+/// fd entirely, so resolution is **identical to `unlink(2)`** - every path
+/// component is still followed, and a parent-symlink swap can still redirect
+/// the removal. This is a syscall-number substitution to stay inside the
+/// daemon worker seccomp allowlist, nothing more. Do not read a call to this
+/// helper as evidence that the site is confined.
+///
+/// # Why it diverges from the pinned upstream
+///
+/// Behaviourally the divergence is measured against the 3.4.4 **behaviour**
+/// pin (`Cargo.toml:461`): there `successful_send()` removes the source with a
+/// plain `do_unlink(fname)` - path-based, exactly what `std::fs::remove_file`
+/// compiles to. oc carries seccomp hardening upstream does not, and that filter
+/// admits only the `*at` syscall forms, so the legacy number returns `EPERM`
+/// inside a sandboxed worker. The substitution is semantically null and costs
+/// no extra syscall.
+///
+/// Line references below resolve against the 3.5.0 **citation** pin
+/// (`xtask/src/commands/citations.rs:61`), which is what the drift gate reads.
+/// At 3.5.0 `successful_send()` is `sender.c:395` and it goes further than this
+/// helper does: it resolves a confined parent dirfd via
+/// `secure_sender_parent_fd()` (`sender.c:416`), re-stats fd-relative
+/// (`sender.c:426-428`), and removes through `secure_remove_source_file()`
+/// (`sender.c:201-203`, itself `do_unlink_atfd`) at the `sender.c:453` removal
+/// ternary. Adopting that shape is the U350-4d site tracked as task 1043; this
+/// helper deliberately does not attempt it.
+///
+/// Callers holding a `DirSandbox` should prefer [`unlinkat`] against the
+/// sandbox dirfd, which does pin the parent against a TOCTOU swap.
+///
+/// # Errors
+///
+/// Surfaces the `unlinkat(2)` error verbatim; see [`unlinkat`].
+pub fn unlink_path(path: &Path, flags: UnlinkFlags) -> io::Result<()> {
+    unlinkat(rustix::fs::CWD, path.as_os_str(), flags)
+}
+
 /// Issue `unlinkat` against `link_path` when the `sandbox` root is the
 /// immediate parent.
 ///

@@ -164,6 +164,84 @@ fn apply_long_form_args(
             // `- /*/*` over the wire filter list. Consumed here without mkpath
             // semantics so a stray forward is not mistaken for a positional path.
             "--old-dirs" | "--old-d" => {}
+            // upstream: options.c:2914 - `if (list_only > 1) args[ac++] =
+            // "--list-only"`, forwarded only when the operator asked for a
+            // listing explicitly (options.c:809 stores 2, not 1). It reaches
+            // whichever end the server plays: a daemon receiver renders the
+            // file list without requesting any file, and a daemon sender's
+            // flist build descends the named directories instead of listing
+            // them as entries.
+            "--list-only" => {
+                config.flags.list_only = true;
+            }
+            // upstream: options.c:2917-2919 - a client running `-d --delete`
+            // emits `--no-r` so a remote that only got `-d` may still delete.
+            // options.c:632 clears the same `recurse` global the compact `r`
+            // letter sets, so the negation has to be applied after the flag
+            // string has been parsed.
+            "--no-r" => {
+                config.flags.recursive = false;
+            }
+            // upstream: options.c:2926-2932 - `preserve_specials` never rides
+            // the compact flag string, because `-D` covers devices only. The
+            // long form carries it instead: `--no-specials` when devices are
+            // preserved but specials are not, `--specials` when specials are
+            // preserved without devices (options.c:686-687).
+            "--specials" => {
+                config.flags.specials = true;
+            }
+            "--no-specials" => {
+                config.flags.specials = false;
+            }
+            // upstream: options.c:2948-2951 - `--msgs2stderr` /
+            // `--no-msgs2stderr` (options.c:619-620) tell the peer where to
+            // route its own name and info output.
+            "--msgs2stderr" => {
+                config.flags.msgs_to_stderr = true;
+            }
+            "--no-msgs2stderr" => {
+                config.flags.msgs_to_stderr = false;
+            }
+            // upstream: options.c:3059-3060 - `else if (keep_partial &&
+            // am_sender)` emits the bare `--partial` (options.c:788) to a
+            // server receiver, which then keeps a partially transferred file
+            // instead of unlinking it.
+            "--partial" => {
+                config.flags.partial = true;
+            }
+            // upstream: options.c:3129-3130 - an `--inplace --sparse` sender
+            // emits `--no-W` so the receiver still asks for a delta rather
+            // than the whole file. options.c:760 clears the same `whole_file`
+            // global the compact `W` letter sets.
+            "--no-W" => {
+                config.flags.whole_file = false;
+            }
+            // upstream: options.c:3143-3144 - a `--files-from` transfer with
+            // relative paths off emits the long `--no-relative` in place of
+            // the compact `R`. options.c:707-708 spell it both ways.
+            "--no-relative" | "--no-R" => {
+                config.flags.relative = false;
+            }
+            // upstream: options.c:3153-3156 - `--remove-source-files`, and the
+            // deprecated `--remove-sent-files` alias (options.c:744-745), tell
+            // a server sender to unlink each source file once the receiver has
+            // acknowledged it. Dropping it left the sources in place on every
+            // daemon pull that asked for them to be moved.
+            "--remove-source-files" | "--remove-sent-files" => {
+                config.flags.remove_source_files = true;
+            }
+            // upstream: options.c:3161-3162 - `if (preallocate_files &&
+            // am_sender)` forwards `--preallocate` (options.c:729) to a server
+            // receiver so it fallocate()s each destination file before writing.
+            "--preallocate" => {
+                config.flags.preallocate = true;
+            }
+            // upstream: options.c:3164-3165 - `--open-noatime` (options.c:658)
+            // is forwarded so the server sender opens source files with
+            // O_NOATIME and leaves their access times untouched.
+            "--open-noatime" => {
+                config.write.open_noatime = true;
+            }
             // upstream: options.c:2849 - backup
             "--backup" => {
                 config.flags.backup = true;
@@ -384,6 +462,34 @@ fn apply_long_form_args(
                     if let Ok(mapping) = ::metadata::GroupMapping::parse(spec) {
                         config.group_mapping = Some(mapping);
                     }
+                // upstream: options.c:2981-2982 - `safe_arg("--checksum-choice",
+                // checksum_choice)` forwards the raw spec, and compat.c:544
+                // then makes it load-bearing on the WIRE: the checksum vstring
+                // is sent only `if (!checksum_choice)`. A daemon that drops the
+                // option sends a list its peer never reads, so the exchange
+                // desyncs - the failure `negotiate.rs:335-343` already warns
+                // about for the reverse direction.
+                } else if let Some(spec) = arg.strip_prefix("--checksum-choice=") {
+                    match parse_transfer_checksum_choice(spec) {
+                        Ok(algorithm) => config.checksum_choice = Some(algorithm),
+                        Err(message) => {
+                            rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
+                        }
+                    }
+                // upstream: options.c:3046-3049 - `--checksum-seed=%d` is
+                // forwarded from an `int` global (options.c:861 is POPT_ARG_INT),
+                // and compat.c:823-825 has the SERVER pick the seed and write it
+                // on the wire. Dropping the value made `--checksum-seed` a no-op
+                // over a daemon while it worked over a remote shell.
+                //
+                // Parsed as `i32` and reinterpreted, because that is the width
+                // upstream prints from and the width `write_seed` puts back on
+                // the wire; a `u32`-only parse would reject the negative values
+                // upstream's `%d` can emit.
+                } else if let Some(seed) = arg.strip_prefix("--checksum-seed=") {
+                    if let Ok(value) = seed.trim().parse::<i32>() {
+                        config.checksum_seed = Some(value as u32);
+                    }
                 } else if arg == "--from0" {
                     // upstream: options.c:940 - --from0 sets NUL-delimited mode
                     // for --files-from content read from the protocol stream.
@@ -442,6 +548,31 @@ pub(crate) enum ClientArgRejection {
     /// The payload is the message verbatim, already in upstream's
     /// `--%s=%s is %s` shape (`options.c:1253`).
     InvalidValue(String),
+}
+
+/// Resolves the TRANSFER half of a `--checksum-choice=SPEC` value.
+///
+/// upstream: `checksum.c:196-202 parse_checksum_choice()` - the spec is split on
+/// its first `,`; the part before names the transfer sum and the part after
+/// names the whole-file sum, and without a comma both take the same name. Only
+/// the transfer sum reaches the wire negotiation, which is the single thing
+/// `ServerConfig::checksum_choice` feeds, so the file half is left to the client
+/// that chose it.
+///
+/// upstream: `checksum.c:127-160 parse_csum_name()` - a missing name or the
+/// case-insensitive literal `auto` resolves to md5 rather than being an error,
+/// and any other unknown name aborts with `RERR_UNSUPPORTED`. oc's client
+/// resolves `auto` the same way before forwarding
+/// (`core::client::config::enums::checksum::transfer_protocol_override`), so
+/// both ends land on the same algorithm and skip the vstring exchange together.
+fn parse_transfer_checksum_choice(spec: &str) -> Result<::protocol::ChecksumAlgorithm, String> {
+    let transfer = spec.split(',').next().unwrap_or(spec);
+    if transfer.is_empty() || transfer.eq_ignore_ascii_case("auto") {
+        return Ok(::protocol::ChecksumAlgorithm::MD5);
+    }
+    ::protocol::ChecksumAlgorithm::parse(transfer)
+        // upstream: checksum.c:156 - `"unknown checksum name: %s\n"`.
+        .map_err(|_| format!("unknown checksum name: {transfer}"))
 }
 
 /// Parses a `--max-size`/`--min-size` value the way upstream's popt case does.
