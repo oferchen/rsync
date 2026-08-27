@@ -49,6 +49,7 @@ use super::format::{
     format_progress_rate, format_size, format_stat_categories, format_summary_rate,
     is_progress_event, list_only_event,
 };
+use super::heap_report;
 use super::interleave::PendingDiagnostics;
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
@@ -578,6 +579,13 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
 ) -> io::Result<()> {
     if level == 0 {
         return Ok(());
+    }
+
+    // upstream: main.c:337-340 handle_stats() emits the heap block under
+    // INFO_GTE(STATS, 3) BEFORE output_summary(), so it precedes the detail
+    // block here too.
+    if level >= 3 {
+        heap_report::emit_heap_statistics(stdout)?;
     }
 
     if level >= 2 {

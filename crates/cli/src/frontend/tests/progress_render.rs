@@ -156,3 +156,44 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
     assert!(output.contains("sample.txt\n\nNumber of files"));
     assert!(output.contains("Total bytes sent"));
 }
+
+/// upstream: main.c:337-340 `handle_stats()` gates `show_malloc_stats()` on
+/// `INFO_GTE(STATS, 3)`, so `--stats`/`-vv` (levels 1 and 2) must not print it.
+///
+/// The level-3 assertion is an equality against sample availability rather than
+/// a bare `contains`: the block is emitted exactly when the allocator can be
+/// introspected, so this pins the GATE without depending on which allocator the
+/// test binary happens to link.
+#[test]
+fn heap_statistics_are_gated_on_stats_level_three() {
+    use crate::frontend::progress::emit_stats;
+    use fast_io::heap_stats::heap_stats;
+
+    let (summary, _temp) = create_sample_summary();
+    let render_at = |level: u8| {
+        let mut out = Vec::new();
+        emit_stats(
+            &summary,
+            &mut out,
+            HumanReadableMode::DecimalUnits,
+            false,
+            false,
+            level,
+            false,
+        )
+        .expect("emit_stats");
+        String::from_utf8(out).expect("utf8")
+    };
+
+    for level in [1u8, 2] {
+        assert!(
+            !render_at(level).contains("heap statistics"),
+            "level {level} must not emit the heap block"
+        );
+    }
+    assert_eq!(
+        render_at(3).contains("heap statistics"),
+        heap_stats().is_some(),
+        "level 3 must emit the heap block whenever a sample is available"
+    );
+}
