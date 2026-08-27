@@ -12,7 +12,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:129-178` - `successful_send()` performs the unlink
+//! - `sender.c:395` - `successful_send()` performs the unlink
 //! - `options.c:765,2964-2965` - `remove_source_files` global and
 //!   `--remove-source-files` forwarding to the server-side sender
 //! - `testsuite/delete.test` - end-to-end coverage
@@ -93,7 +93,7 @@ fn remove_source_files_unlinks_transferred_files() {
 
 /// `--remove-source-files` under `--dry-run` must NOT touch the source
 /// tree. Upstream `successful_send()` returns early when `do_xfers` is
-/// false (sender.c:131-138 via the `!remove_source_files` short-circuit
+/// false (sender.c:405-406 via the `!remove_source_files` short-circuit
 /// combined with the global `do_xfers` gate).
 #[test]
 fn remove_source_files_dry_run_preserves_source() {

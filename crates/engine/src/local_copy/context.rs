@@ -216,7 +216,7 @@ pub(crate) struct CopyContext<'a> {
     /// but this flag drives the final `RERR_PARTIAL` (exit 23) exit code,
     /// mirroring upstream `successful_send()` where every such `FERROR_XFER`
     /// sets `got_xfer_error` without aborting the transfer.
-    // upstream: sender.c:131-182 successful_send(); log.c:311 got_xfer_error
+    // upstream: sender.c:395 successful_send(); log.c:311 got_xfer_error
     sender_remove_error: bool,
     /// Set when the delete emitter reported a genuine swallowed unlink/rmdir
     /// error during the recursive peel (an `EACCES` and friends the walker

@@ -134,7 +134,7 @@ pub struct GeneratorContext {
     /// until the peer confirms the commit via `MSG_SUCCESS`. Empty and unused
     /// unless `--remove-source-files` is active.
     ///
-    /// upstream: sender.c:131-182 `successful_send()` unlinks on confirmation,
+    /// upstream: sender.c:395 `successful_send()` unlinks on confirmation,
     /// never inline at send time (io.c:1623-1637 `MSG_SUCCESS` handler).
     pub(crate) pending_source_removals: super::pending_removal::PendingSourceRemovals,
     /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
@@ -1156,7 +1156,7 @@ impl GeneratorContext {
 
     /// Validates that a file index is within bounds of the file list.
     ///
-    /// upstream: sender.c:144 `flist_for_ndx()` / rsync.c:352 - an out-of-range
+    /// upstream: sender.c:408 `flist_for_ndx()` / rsync.c:352 - an out-of-range
     /// wire file index aborts with `exit_cleanup(RERR_PROTOCOL)` (exit 2). The
     /// error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
     /// rather than RERR_STREAMIO(12).

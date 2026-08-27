@@ -151,7 +151,7 @@ pub(crate) struct MultiplexReader<R> {
     /// to its final destination. The sender drains these to drive the deferred
     /// `--remove-source-files` unlink - a source is removed only after its
     /// transfer is confirmed, never inline right after the bytes are sent.
-    /// upstream: io.c:1623-1637, sender.c:131-182 `successful_send()`.
+    /// upstream: io.c:1623-1637, sender.c:395 `successful_send()`.
     pub(super) success_indices: Vec<i32>,
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
     /// immediate termination. upstream: io.c:1684-1722 calls _exit_cleanup().
@@ -420,7 +420,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// - `io.c:1623-1637`: `MSG_SUCCESS` received; when `!am_generator` it
     ///   drives `successful_send(val)`.
-    /// - `sender.c:131-182`: `successful_send()` performs the deferred unlink.
+    /// - `sender.c:395`: `successful_send()` performs the deferred unlink.
     pub(super) fn take_success_indices(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.success_indices)
     }
