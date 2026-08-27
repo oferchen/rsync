@@ -294,7 +294,7 @@ impl GeneratorContext {
         // with the receiver's NDX requests and are demultiplexed as the sender
         // drives the transfer loop and goodbye handshake. Now that the wire is
         // drained, run the deferred --remove-source-files unlink for every file
-        // the peer confirmed committed (sender.c:131-182 successful_send()). A
+        // the peer confirmed committed (sender.c:395 successful_send()). A
         // file the peer never confirmed keeps its source: an interrupted or
         // failed transfer returns via `?` above and never reaches this point,
         // so its source is intentionally left in place. This is the crash-safe

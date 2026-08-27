@@ -5,7 +5,7 @@
 //! Instead the receiver/generator sends `MSG_SUCCESS(ndx)` back to the sender
 //! only once the file has been fully received and committed to its final
 //! destination, and the sender's `successful_send()` unlinks the source in
-//! response (`io.c:1623-1637`, `sender.c:131-182`). This keeps
+//! response (`io.c:1623-1637`, `sender.c:395`). This keeps
 //! `--remove-source-files` crash-safe: an interrupted, failed, or redone
 //! transfer never deletes a source that did not safely land at the destination.
 //!
@@ -20,7 +20,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:131-182` - `successful_send()` re-stats and unlinks on confirmation.
+//! - `sender.c:395` - `successful_send()` re-stats and unlinks on confirmation.
 //! - `io.c:1096-1111` / `io.c:1623-1637` - `MSG_SUCCESS` wire round-trip.
 
 use std::collections::HashSet;
@@ -57,7 +57,7 @@ impl PendingSourceRemovals {
     /// `successful_send()` becomes a no-op guard when the file no longer
     /// matches.
     ///
-    /// upstream: io.c:1623-1637 -> sender.c:131-182.
+    /// upstream: io.c:1623-1637 -> sender.c:395.
     pub(crate) fn confirm(&mut self, flat_ndx: usize) -> bool {
         self.pending.remove(&flat_ndx)
     }

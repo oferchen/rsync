@@ -281,7 +281,7 @@ impl<R: Read> ServerReader<R> {
     ///
     /// - `io.c:1623-1637`: `MSG_SUCCESS` received; `!am_generator` calls
     ///   `successful_send(val)`.
-    /// - `sender.c:131-182`: `successful_send()` performs the deferred unlink.
+    /// - `sender.c:395`: `successful_send()` performs the deferred unlink.
     pub fn take_success_indices(&mut self) -> Vec<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_success_indices(),

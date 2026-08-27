@@ -316,7 +316,7 @@ pub struct ParsedServerFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:129-178` `successful_send()` - performs the unlink
+    /// - `sender.c:395` `successful_send()` - performs the unlink
     /// - `options.c:765` - `remove_source_files` global definition
     pub remove_source_files: bool,
 

@@ -5742,7 +5742,7 @@ fn source_base_interning_round_trips_and_shares() {
 /// A source is removed only after its commit is confirmed by `MSG_SUCCESS`.
 ///
 /// Encodes the crash-safety contract of upstream `successful_send()`
-/// (sender.c:131-182): the unlink runs from the `MSG_SUCCESS` handler
+/// (sender.c:395): the unlink runs from the `MSG_SUCCESS` handler
 /// (io.c:1623-1637), never inline at send time. Here the sender has transmitted
 /// the file (so its removal is marked pending) and the peer then confirms the
 /// commit - only then does the source disappear.
@@ -5825,7 +5825,7 @@ fn remove_source_files_defers_until_msg_success() {
 /// [`confirm_source_removal`](GeneratorContext::confirm_source_removal) only for
 /// the indices that actually arrived; every index whose `MSG_SUCCESS` never
 /// crossed the wire stays pending, so its source survives. Encodes the
-/// upstream crash-safety contract (sender.c:131-182 `successful_send()`): an
+/// upstream crash-safety contract (sender.c:395 `successful_send()`): an
 /// interrupted transfer never deletes a source that did not safely land at the
 /// destination. The kill point is forced by choosing which confirmations are
 /// delivered - no sleeps, no race, fully deterministic.

@@ -516,7 +516,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // into the capability string this local ServerConfig is parsed from. It
     // governs the local half of BOTH roles: on a push the local client is the
     // sender and must run the deferred unlink of its own sources once the remote
-    // receiver confirms each commit with MSG_SUCCESS (sender.c:131-182); on a
+    // receiver confirms each commit with MSG_SUCCESS (sender.c:395); on a
     // pull the local client is the generator/receiver and must emit MSG_SUCCESS
     // to the remote sender so it can unlink the remote sources (receiver.c:1063-1069).
     // Without carrying it here the removal is silently skipped for every remote

@@ -42,7 +42,7 @@ use crate::writer::{BatchRoute, MsgInfoSender};
 /// Under `--only-write-batch` that stream goes into the batch file *instead of*
 /// the wire, which is what lets the remote receiver run with `dry_run = 1`
 /// (`main.c:1839`) and never read a byte of delta. The NDX+attrs header
-/// (`sender.c:442`) always stays on the wire, so the divert is scoped to the
+/// (`sender.c:766`) always stays on the wire, so the divert is scoped to the
 /// payload and reverted on drop. Under `--write-batch` (or with no batch at
 /// all) the route is unchanged and the recorder keeps teeing (`io.c:2282`).
 struct XferSink<'w, W: Write + MsgInfoSender + ?Sized> {
@@ -179,7 +179,7 @@ fn open_source_mmap(
 
 /// Formats the sender-side re-lstat/remove failure diagnostic.
 ///
-/// Mirrors upstream `sender.c:176-177`
+/// Mirrors upstream `sender.c:459`
 /// `rsyserr(FERROR_XFER, errno, "sender failed to %s %s", failed_op, fname)`:
 /// the path is emitted with a bare `%s`, never `full_fname()`, so it carries no
 /// surrounding quotes.
@@ -204,9 +204,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:184-200` - `write_ndx_and_attrs()` body (calls
+    /// - `sender.c:468-485` - `write_ndx_and_attrs()` body (calls
     ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
-    /// - `sender.c:442-443` - `write_ndx_and_attrs(f_out, ...)` followed by
+    /// - `sender.c:766-767` - `write_ndx_and_attrs(f_out, ...)` followed by
     ///   `write_sum_head(f_xfer, s)`
     fn write_ndx_attrs_and_sum_head<W: Write + MsgInfoSender>(
         &self,
@@ -1215,7 +1215,7 @@ impl GeneratorContext {
             // matching upstream which sets the flag only after a real send.
             sent_files.mark_sent(ndx);
 
-            // upstream: sender.c:131-182 successful_send() - the source unlink is
+            // upstream: sender.c:395 successful_send() - the source unlink is
             // DEFERRED, never run inline at send time. Upstream waits for the
             // receiver/generator to confirm the commit with MSG_SUCCESS(ndx)
             // (io.c:1623-1637) and only then unlinks in successful_send().
@@ -1359,7 +1359,7 @@ impl GeneratorContext {
     /// returning the `io_error` bits the caller must OR into the transfer's
     /// accumulated error state.
     ///
-    /// Mirrors upstream `successful_send()` (sender.c:131-182): the source is
+    /// Mirrors upstream `successful_send()` (sender.c:395): the source is
     /// re-stat'd (`do_stat` under `--copy-links`, else `do_lstat`) and is only
     /// unlinked when it still matches the size and modification time recorded in
     /// the file list. A vanished source (`ENOENT`) is the benign "already
@@ -1370,14 +1370,14 @@ impl GeneratorContext {
     /// [`IOERR_GENERAL`](super::super::io_error_flags::IOERR_GENERAL); the send
     /// loop reports it via `MSG_IO_ERROR` after the final file.
     ///
-    /// The dev/ino "destination file" guard (sender.c:155-160) is gated on
+    /// The dev/ino "destination file" guard (sender.c:433-440) is gated on
     /// `local_server` upstream. The network generator is never `local_server`
     /// (local transfers use the engine copy path), so that guard lives only on
     /// the local-copy side.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:131-182` `successful_send()`
+    /// - `sender.c:395` `successful_send()`
     /// - `options.c:765` `remove_source_files` global
     #[must_use]
     fn remove_source_file_if_requested(
@@ -1387,18 +1387,18 @@ impl GeneratorContext {
     ) -> i32 {
         use super::super::io_error_flags::IOERR_GENERAL;
 
-        // upstream: sender.c:139-140 - bail before any FS calls when the flag is off.
+        // upstream: sender.c:405-406 - bail before any FS calls when the flag is off.
         if !self.config.flags.remove_source_files {
             return 0;
         }
-        // upstream: sender.c:131-138 - successful_send() is a no-op when
+        // upstream: sender.c:405-406 - successful_send() is a no-op when
         // do_xfers is false (dry-run). Mirror that early return so --dry-run
         // never touches the filesystem.
         if self.config.flags.dry_run {
             return 0;
         }
 
-        // upstream: sender.c:150 - re-stat the source (do_stat under
+        // upstream: sender.c:426-428 - re-stat the source (do_stat under
         // --copy-links, else do_lstat) before removing it, so a source that
         // vanished or changed since it entered the file list is never unlinked.
         let restat = if self.config.flags.copy_links {
@@ -1408,7 +1408,7 @@ impl GeneratorContext {
         };
         let current = match restat {
             Ok(meta) => meta,
-            // upstream: sender.c:174-175 - ENOENT is the benign FINFO notice.
+            // upstream: sender.c:456-457 - ENOENT is the benign FINFO notice.
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 info_log!(
                     Remove,
@@ -1418,7 +1418,7 @@ impl GeneratorContext {
                 );
                 return 0;
             }
-            // upstream: sender.c:151-153,176-177 - any other re-lstat failure is
+            // upstream: sender.c:429-430,459 - any other re-lstat failure is
             // rsyserr(FERROR_XFER, ...), setting got_xfer_error -> exit 23.
             Err(error) => {
                 eprintln!("{}", sender_op_failure("re-lstat", source_path, &error));
@@ -1426,7 +1426,7 @@ impl GeneratorContext {
             }
         };
 
-        // upstream: sender.c:162-169 - refuse to remove a source that changed
+        // upstream: sender.c:442-451 - refuse to remove a source that changed
         // size or modification time since it entered the file list.
         let (size, mtime, mtime_nsec) = stat_identity(&current);
         if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
@@ -1437,7 +1437,7 @@ impl GeneratorContext {
             return IOERR_GENERAL;
         }
 
-        // upstream: sender.c:171 - do_unlink(fname) once every guard passed.
+        // upstream: sender.c:453 - do_unlink(fname) once every guard passed.
         //
         // Routed through `fast_io::unlink_path` rather than
         // `std::fs::remove_file`: the latter lowers to the legacy `unlink(2)`,
@@ -1453,11 +1453,11 @@ impl GeneratorContext {
         let removal = std::fs::remove_file(source_path);
         match removal {
             Ok(()) => {
-                // upstream: sender.c:179-180 - INFO_GTE(REMOVE,1) success notice.
+                // upstream: sender.c:461-462 - INFO_GTE(REMOVE,1) success notice.
                 info_log!(Remove, 1, "removing source {}", source_path.display());
                 0
             }
-            // upstream: sender.c:174-175 - ENOENT after the guards is still benign.
+            // upstream: sender.c:456-457 - ENOENT after the guards is still benign.
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 info_log!(
                     Remove,
@@ -1467,7 +1467,7 @@ impl GeneratorContext {
                 );
                 0
             }
-            // upstream: sender.c:172-173,176-177 - rsyserr(FERROR_XFER, ...) on
+            // upstream: sender.c:454,459 - rsyserr(FERROR_XFER, ...) on
             // unlink failure sets got_xfer_error -> exit 23.
             Err(error) => {
                 eprintln!("{}", sender_op_failure("remove", source_path, &error));
@@ -1495,7 +1495,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `io.c:1623-1637` - `MSG_SUCCESS` receipt drives `successful_send(val)`.
-    /// - `sender.c:131-182` - `successful_send()` unlink + guards.
+    /// - `sender.c:395` - `successful_send()` unlink + guards.
     #[must_use]
     pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> i32 {
         if wire_ndx < 0 {
@@ -1560,7 +1560,7 @@ impl SentFileTracker {
 /// Source-file identity recorded in the file list, compared against a fresh
 /// re-stat before `--remove-source-files` unlinks the source.
 ///
-/// upstream: `sender.c:162` compares `st.st_size` / `st.st_mtime` /
+/// upstream: `sender.c:442` compares `st.st_size` / `st.st_mtime` /
 /// `ST_MTIME_NSEC` against the file-list `F_LENGTH` / `modtime` / `F_MOD_NSEC`.
 #[derive(Clone, Copy)]
 struct RecordedSourceIdentity {
@@ -1575,7 +1575,7 @@ struct RecordedSourceIdentity {
 /// only when the recorded timestamp carried nanoseconds (upstream gates the
 /// nsec compare on `NSEC_BUMP`, i.e. a transmitted `FLAG_MOD_NSEC`).
 ///
-/// upstream: sender.c:162-169
+/// upstream: sender.c:442-451
 const fn source_changed_since_flist(
     recorded: RecordedSourceIdentity,
     current_size: u64,
@@ -1757,7 +1757,7 @@ mod sender_remove_guard_tests {
 
     #[test]
     fn re_lstat_failure_leaves_the_path_unquoted() {
-        // Output fidelity: upstream sender.c:176-177 emits the path with a bare
+        // Output fidelity: upstream sender.c:459 emits the path with a bare
         // %s, never full_fname(), so the diagnostic carries no surrounding
         // quotes. This fails on the pre-fix code that wrapped the path in `"`.
         let error = io::Error::from_raw_os_error(13);
@@ -1801,7 +1801,7 @@ mod sender_remove_guard_tests {
     #[test]
     fn grown_source_is_not_removed() {
         // Data safety: the user appended to the file after it entered the flist;
-        // removing it now would destroy data we never sent (sender.c:162).
+        // removing it now would destroy data we never sent (sender.c:442).
         let r = recorded(1024, 1_700_000_000, 0);
         assert!(source_changed_since_flist(r, 2048, 1_700_000_000, 0));
     }
@@ -1809,7 +1809,7 @@ mod sender_remove_guard_tests {
     #[test]
     fn retouched_source_is_not_removed() {
         // Data safety: same size but a newer mtime means the file was rewritten
-        // in place; upstream refuses the remove (sender.c:162 st_mtime compare).
+        // in place; upstream refuses the remove (sender.c:442 st_mtime compare).
         let r = recorded(1024, 1_700_000_000, 0);
         assert!(source_changed_since_flist(r, 1024, 1_700_000_500, 0));
     }
