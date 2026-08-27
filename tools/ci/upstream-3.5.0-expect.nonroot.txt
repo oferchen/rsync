@@ -193,7 +193,7 @@ match-want-i-nolen skip
 max-alloc-zero-rejected pass
 merge pass
 metadata-depth pass
-misc-coverage fail
+misc-coverage pass
 missing pass
 mkpath pass
 msg-io-timeout-overflow pass

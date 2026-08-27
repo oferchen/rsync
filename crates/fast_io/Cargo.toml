@@ -40,6 +40,12 @@ rustix = { workspace = true, features = ["fs"] }
 # (SEC-1.e); read-mostly lookups by canonical operand path.
 dashmap = { workspace = true }
 
+# jemalloc's `mallctl` interface, for the `--info=stats3` heap block. The
+# binary already installs `tikv-jemallocator` on unix (src/bin/oc-rsync.rs),
+# which pulls the same `-sys` crate, so this adds no crate to the tree - it
+# only makes the already-linked allocator's `stats.*` namespace reachable.
+tikv-jemalloc-sys = { version = "0.7", features = ["stats"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Optional: io_uring support (Linux 5.6+)
 io-uring = { version = "0.7", optional = true }
@@ -216,6 +222,12 @@ test-support = { path = "../test-support" }
 # setrlimit/getrlimit pair, so the test needs no `unsafe` libc call; the crate
 # is already a production dependency here under the `fs` feature.
 rustix = { workspace = true, features = ["process", "stdio"] }
+
+# The heap_stats tests must run under the SAME global allocator the binary
+# installs (src/bin/oc-rsync.rs). Without it jemalloc is linked but unused in
+# the test binary, so `stats.*` describes a heap nothing allocates from and the
+# counters never move - the test would pass or fail for the wrong reason.
+tikv-jemallocator = "0.7"
 
 [[bench]]
 name = "io_optimizations"
