@@ -18,33 +18,50 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const title = context.payload.pull_request.title;
-            const labels = [];
+            // One table, not a nine-arm if/else: the prefix set is also
+            // documented in CONTRIBUTING and the release config, so it is
+            // spelled once here and read twice below.
+            const PREFIX_LABELS = {
+              feat: 'enhancement',
+              perf: 'performance',
+              fix: 'bug',
+              docs: 'documentation',
+              ci: 'ci',
+              test: 'test',
+              refactor: 'refactor',
+              chore: 'chore',
+              style: 'style',
+            };
 
-            if (/^feat[:(]/.test(title))
-              labels.push('enhancement');
-            else if (/^perf[:(]/.test(title))
-              labels.push('performance');
-            else if (/^fix[:(]/.test(title))
-              labels.push('bug');
-            else if (/^docs[:(]/.test(title))
-              labels.push('documentation');
-            else if (/^ci[:(]/.test(title))
-              labels.push('ci');
-            else if (/^test[:(]/.test(title))
-              labels.push('test');
-            else if (/^refactor[:(]/.test(title))
-              labels.push('refactor');
-            else if (/^chore[:(]/.test(title))
-              labels.push('chore');
-            else if (/^style[:(]/.test(title))
-              labels.push('style');
+            const pr = context.payload.pull_request;
+            const prefix = /^([a-z]+)[:(]/.exec(pr.title);
+            const wanted = prefix ? PREFIX_LABELS[prefix[1]] : undefined;
 
-            if (labels.length > 0) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                labels: labels,
-              });
+            // A title left without a recognised prefix is a policy problem,
+            // not a labelling one - leave whatever is there alone.
+            if (!wanted) return;
+
+            // This workflow runs on `edited`, so a corrected prefix
+            // (feat: -> fix:) used to ADD `bug` and leave `enhancement`
+            // behind. GitHub files a PR under the FIRST matching category of
+            // .github/release.yml, so the stale label wins and a bug fix is
+            // released under Features. The label set is DERIVED from the
+            // title: reconcile it rather than accumulate. Only the labels in
+            // the table are touched, so anything applied by hand survives.
+            const managed = new Set(Object.values(PREFIX_LABELS));
+            const current = (pr.labels || []).map((label) => label.name);
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            };
+
+            if (!current.includes(wanted)) {
+              await github.rest.issues.addLabels({ ...issue, labels: [wanted] });
+            }
+
+            for (const name of current) {
+              if (name !== wanted && managed.has(name)) {
+                await github.rest.issues.removeLabel({ ...issue, name });
+              }
             }
