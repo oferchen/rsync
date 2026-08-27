@@ -196,15 +196,17 @@ pub fn unlink_path(path: &Path, flags: UnlinkFlags) -> io::Result<()> {
 ///   component, the helper resolves the leaf through the sandbox dirfd
 ///   so a mid-syscall symlink swap on the leaf cannot redirect the
 ///   unlink to an attacker-chosen parent.
-/// - In every other case the helper falls back to
-///   [`std::fs::remove_file`] / [`std::fs::remove_dir`] on `link_path`,
-///   per the [`UnlinkFlags`] selector.
+/// - In every other case the helper applies upstream's three-arm
+///   `do_unlink_at()` contract to `link_path` through
+///   [`ConfinedFallback`](crate::ConfinedFallback): a plain path syscall only
+///   when the opt-out is set, the `*at` form against a walked parent
+///   otherwise, and an error - never a plain syscall - when the walk refuses.
 ///
 /// # Errors
 ///
-/// Surfaces either the [`unlinkat`] error or the
-/// [`std::fs::remove_file`] / [`std::fs::remove_dir`] error verbatim,
-/// depending on which path was taken.
+/// Surfaces either the [`unlinkat`] error or, on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, that op's error
+/// verbatim - including the ownership walk's refusal.
 pub fn unlink_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -222,10 +224,10 @@ pub fn unlink_via_sandbox_or_fallback(
     {
         return unlinkat(dirfd.as_fd(), name, flags);
     }
-    match flags {
-        UnlinkFlags::File => std::fs::remove_file(link_path),
-        UnlinkFlags::Dir => std::fs::remove_dir(link_path),
-    }
+    // No sandbox anchored the leaf, so this is upstream's `do_unlink_at()`
+    // decision rather than a free path syscall: policy picks the arm, and a
+    // refused walk is an error, never a plain `unlink`.
+    crate::ConfinedFallback::confined().unlink_at(link_path, flags)
 }
 
 /// Recursively remove the directory at `target_path` anchored on the
@@ -247,17 +249,21 @@ pub fn unlink_via_sandbox_or_fallback(
 ///    level. After the inner loop drains, the helper closes the walked
 ///    dirfd and removes the now-empty directory through [`unlinkat`]
 ///    with [`UnlinkFlags::Dir`] against the sandbox parent.
-/// 2. In every other case the helper falls back to
-///    [`std::fs::remove_dir_all`] on `target_path`. The fallback is
-///    vulnerable to the symlink-swap class the carrier closes and is
-///    intended only for the no-sandbox contexts (test fixtures,
-///    client-side `--local` callers, callers that have not yet plumbed
-///    a [`DirSandbox`](crate::dir_sandbox::DirSandbox)).
+/// 2. In every other case the helper applies upstream's three-arm contract
+///    to `target_path` through
+///    [`ConfinedFallback`](crate::ConfinedFallback). The descent still starts
+///    from a walked parent rather than from a path the kernel re-resolves, so
+///    the no-sandbox contexts (test fixtures, client-side `--local` callers,
+///    callers that have not yet plumbed a
+///    [`DirSandbox`](crate::dir_sandbox::DirSandbox)) are no longer open to
+///    the symlink-swap class the carrier closes. Only the opt-out arm still
+///    reaches [`std::fs::remove_dir_all`], which is what that arm means.
 ///
 /// `target_path` must point at a directory; a non-directory leaf is
 /// surfaced verbatim from the kernel as `ENOTDIR`. A symlink at the
-/// leaf is refused with `ELOOP` (sandbox path, via `O_NOFOLLOW`) or
-/// returned verbatim from [`std::fs::remove_dir_all`] (fallback path).
+/// leaf is refused with `ELOOP` (sandbox path, via `O_NOFOLLOW`; and on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, from the ownership
+/// walk) or returned verbatim from [`std::fs::remove_dir_all`] (opt-out arm).
 ///
 /// # Errors
 ///
@@ -325,12 +331,21 @@ fn residue_to_legacy_result(residue: UnlinkResidue) -> io::Result<()> {
 /// chmod during the walk is swallowed and surfaces later as the retry's
 /// own `EACCES`.
 fn remove_dir_all_with_uid_write_fix(target_path: &Path) -> io::Result<()> {
-    match std::fs::remove_dir_all(target_path) {
+    // BOTH attempts go through the contract. Routing only the first would let
+    // the `EACCES` retry re-resolve `target_path` with libc and undo a refusal
+    // the walk had just issued - the same "half the fix is inert on the second
+    // path" shape as the `--partial-dir` abort path.
+    let peel = || {
+        crate::ConfinedFallback::confined()
+            .remove_dir_all_at(target_path)
+            .and_then(residue_to_legacy_result)
+    };
+    match peel() {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
             fix_uid_write_recursive(target_path);
-            match std::fs::remove_dir_all(target_path) {
+            match peel() {
                 Ok(()) => Ok(()),
                 Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
                 Err(err) => Err(err),

@@ -139,9 +139,10 @@ pub fn renameat(
 ///   relatives, the helper resolves both leaves through the sandbox
 ///   dirfd so a mid-syscall symlink swap on either leaf cannot redirect
 ///   the rename to an attacker-chosen inode.
-/// - In every other case the helper falls back to [`std::fs::rename`]
-///   on the absolute paths so behaviour matches the existing
-///   path-based commit semantics.
+/// - In every other case the helper applies upstream's three-arm
+///   `do_rename_at()` contract to both absolute paths through
+///   [`ConfinedFallback`](crate::ConfinedFallback), which walks each endpoint
+///   independently and honours `replace`.
 ///
 /// Today both endpoints anchor on `sandbox.current_dirfd()` because the
 /// receiver always creates its temp file inside the same destination
@@ -156,8 +157,9 @@ pub fn renameat(
 ///
 /// # Errors
 ///
-/// Surfaces either the [`renameat`] error or the [`std::fs::rename`]
-/// error verbatim, depending on which path was taken.
+/// Surfaces either the [`renameat`] error or, on the
+/// [`ConfinedFallback`](crate::ConfinedFallback) tail, that op's error
+/// verbatim - including the ownership walk's refusal of either endpoint.
 #[allow(clippy::too_many_arguments)]
 pub fn renameat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
@@ -195,7 +197,10 @@ pub fn renameat_via_sandbox_or_fallback(
     if sandbox.is_some() {
         return confined_rename(old_dest_dir, old_link_path, new_link_path, replace);
     }
-    std::fs::rename(old_link_path, new_link_path)
+    // `replace` is honoured here too. The old `std::fs::rename` tail always
+    // replaced, so `replace == false` silently lost `RENAME_NOREPLACE` on
+    // exactly the paths with no sandbox to enforce it.
+    crate::ConfinedFallback::confined().rename_at(old_link_path, new_link_path, replace)
 }
 
 /// One endpoint of a confined commit, already reduced to a dirfd plus a name to
