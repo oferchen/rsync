@@ -13,7 +13,10 @@ use ::metadata::MetadataOptions;
 
 use super::TransferFlags;
 use super::execute::execute_transfer_once;
-use crate::local_copy::{CopyContext, LocalCopyExecution, LocalCopyOptions};
+use crate::local_copy::{
+    CopyContext, LocalCopyExecution, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
+    LocalCopyRecordHandler,
+};
 
 /// Length the file list recorded, and the length the copy must NOT stop at.
 const RECORDED_LEN: usize = 4096;
@@ -102,6 +105,7 @@ fn assert_copy_stops_at_the_declared_length(sparse: bool) {
             &mut buffer,
             sparse,
             false,
+            true,
             &source,
             &destination,
             Path::new("src.bin"),
@@ -261,6 +265,7 @@ fn assert_short_source_is_recorded(sparse: bool, paced: bool) {
             &mut buffer,
             sparse,
             false,
+            true,
             &source,
             &destination,
             Path::new("src.bin"),
@@ -326,6 +331,7 @@ fn a_complete_source_records_no_read_error() {
             &mut buffer,
             false,
             false,
+            true,
             &source,
             &destination,
             Path::new("src.bin"),
@@ -342,5 +348,188 @@ fn a_complete_source_records_no_read_error() {
     assert!(
         !context.source_read_error_occurred(),
         "a source that matched its recorded length was reported as short"
+    );
+}
+
+/// Buffer the mover-selection fixture drives the copy with.
+const MOVER_BUFFER_LEN: usize = 64 * 1024;
+
+/// Source length for that fixture: several buffers, so a chunked userspace
+/// read loop reports one progress update per chunk while a single handoff to
+/// the kernel reports exactly one for the whole file.
+const MOVER_SOURCE_LEN: usize = 3 * MOVER_BUFFER_LEN;
+
+/// Counts the in-flight progress updates a copy produces, which is how this
+/// module tells the two movers apart from outside the executor.
+#[derive(Default)]
+struct ProgressCounter {
+    updates: usize,
+    transferred: u64,
+}
+
+impl LocalCopyRecordHandler for ProgressCounter {
+    fn handle(&mut self, _record: LocalCopyRecord) {}
+
+    fn handle_progress(&mut self, progress: LocalCopyProgress<'_>) {
+        self.updates += 1;
+        self.transferred = progress.bytes_transferred();
+    }
+}
+
+/// Runs one whole-file copy and reports how many progress updates it produced
+/// and how many bytes the last update accounted for.
+fn mover_progress_updates(whole_file_enabled: bool) -> (usize, u64) {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    write_bytes(&source, MOVER_SOURCE_LEN);
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&destination).expect("create destination");
+    let mut buffer = vec![0u8; MOVER_BUFFER_LEN];
+
+    let mut counter = ProgressCounter::default();
+    {
+        let mut context = CopyContext::new(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default(),
+            Some(&mut counter),
+            temp.path().to_path_buf(),
+        );
+
+        context
+            .copy_file_contents(
+                &mut reader,
+                &mut writer,
+                &mut buffer,
+                false,
+                false,
+                whole_file_enabled,
+                &source,
+                &destination,
+                Path::new("src.bin"),
+                None,
+                MOVER_SOURCE_LEN as u64,
+                0,
+                0,
+                Instant::now(),
+                false,
+            )
+            .expect("copy");
+    }
+    drop(writer);
+
+    assert_eq!(
+        fs::metadata(&destination).expect("stat destination").len(),
+        MOVER_SOURCE_LEN as u64,
+        "whole_file_enabled={whole_file_enabled}: the destination is incomplete, so the \
+         update count describes a copy that did not happen"
+    );
+
+    (counter.updates, counter.transferred)
+}
+
+/// `--no-whole-file` must reach the userspace read loop, not a kernel handoff.
+///
+/// The kernel content tier (io_uring, then `copy_file_range`) moves the file
+/// without the process ever reading it. That is the same "send the whole file
+/// as-is" that `--whole-file` names, and the executor's three other tiers -
+/// `clonefile::eligible`, `ficlone::eligible`, `wincopy::eligible` - already
+/// decline it when the operator asked for the delta algorithm. This tier did
+/// not, so a reflink of a file was refused while an identical io_uring handoff
+/// of the same file was not, and nothing that observes the source being read
+/// could see the transfer at all.
+///
+/// upstream keeps the default local copy on the fast tier: `main.c:653-657`
+/// forces `whole_file = 1` for a local transfer that did not ask otherwise
+/// (`if (whole_file < 0 && !write_batch) whole_file = 1;`), so only an explicit
+/// `--no-whole-file`, `--append` or `--write-batch` gets here.
+///
+/// Both legs are asserted together because either alone is satisfiable by a
+/// blanket answer: pinning only the `false` leg passes for a build that always
+/// reads in userspace, and pinning only the `true` leg passes for a build that
+/// always hands off.
+#[test]
+fn no_whole_file_reads_the_source_in_userspace() {
+    let (chunked_updates, chunked_bytes) = mover_progress_updates(false);
+    let (handoff_updates, handoff_bytes) = mover_progress_updates(true);
+
+    assert!(
+        chunked_updates > 1,
+        "--no-whole-file produced {chunked_updates} progress update(s) for a \
+         {MOVER_SOURCE_LEN}-byte source read through a {MOVER_BUFFER_LEN}-byte buffer: \
+         the copy was handed to the kernel instead of being read in userspace"
+    );
+    assert_eq!(
+        handoff_updates, 1,
+        "the default whole-file copy produced {handoff_updates} progress updates, so it \
+         no longer takes the kernel content tier and this test can no longer tell the \
+         two movers apart"
+    );
+    assert_eq!(
+        chunked_bytes, MOVER_SOURCE_LEN as u64,
+        "the --no-whole-file copy accounted for {chunked_bytes} of {MOVER_SOURCE_LEN} bytes"
+    );
+    assert_eq!(
+        handoff_bytes, MOVER_SOURCE_LEN as u64,
+        "the whole-file copy accounted for {handoff_bytes} of {MOVER_SOURCE_LEN} bytes"
+    );
+}
+
+/// Non-vacuity companion for the cell above: a `--no-whole-file` copy of a
+/// source that matches its recorded length must still reproduce it byte for
+/// byte and must leave the short-read flag clear. Without this, routing every
+/// copy through a loop that reported an error unconditionally would satisfy
+/// the mover assertion.
+#[test]
+fn no_whole_file_copy_of_a_complete_source_records_no_read_error() {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    write_bytes(&source, MOVER_SOURCE_LEN);
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&destination).expect("create destination");
+    let mut buffer = vec![0u8; MOVER_BUFFER_LEN];
+
+    let mut context = CopyContext::new(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default(),
+        None,
+        temp.path().to_path_buf(),
+    );
+
+    context
+        .copy_file_contents(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            false,
+            false,
+            false,
+            &source,
+            &destination,
+            Path::new("src.bin"),
+            None,
+            MOVER_SOURCE_LEN as u64,
+            0,
+            0,
+            Instant::now(),
+            false,
+        )
+        .expect("copy");
+    drop(writer);
+
+    assert!(
+        !context.source_read_error_occurred(),
+        "a --no-whole-file copy of a source that matched its recorded length was \
+         reported as short"
+    );
+    assert_eq!(
+        fs::read(&destination).expect("read destination"),
+        fs::read(&source).expect("read source"),
+        "the --no-whole-file copy did not reproduce the source"
     );
 }

@@ -312,7 +312,7 @@ sender-scan-dir-escape pass
 simd-checksum pass
 size-filter pass
 skiplist-spec pass
-source-change-size-continues fail
+source-change-size-continues pass
 sparse pass
 ssh-basic pass
 stop-time pass
