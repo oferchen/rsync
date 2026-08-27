@@ -37,33 +37,69 @@ and exposing safe public APIs from the other permitted crates.
 
 ## Workspace summary
 
-Latest re-run of `tools/audit/unsafe_safety_comment_audit.py` reports
-**589 `unsafe { ... }` blocks** across the workspace. **All 589 blocks now
-carry a SAFETY comment**; **0 remain missing one** for a workspace coverage
-of **100.00%** (up from 96.43% in the previous audit cycle).
+Regenerated from `tools/audit/unsafe_safety_comment_audit.py` at the commit that
+corrected its crate attribution. The figures below are that script's output, not
+a hand count - re-run it to check them.
 
-| Metric                                  | Cycle 1 (571) | Cycle 2 (589) | Cycle 3 (589) |
-|-----------------------------------------|--------------:|--------------:|--------------:|
-| Total `unsafe { ... }` blocks           |           571 |           589 |           589 |
-| Blocks with a SAFETY comment            |           519 |           568 |           589 |
-| Blocks missing a SAFETY comment         |            52 |            21 |             0 |
-| Workspace coverage (with SAFETY)        |         90.9% |        96.43% |       100.00% |
+- **900 `unsafe { ... }` blocks** across the workspace.
+- **33 carry no SAFETY comment, or a placeholder one.** These are listed
+  below and are deliberately **not** ratcheted: freezing a baseline this size
+  would hide the one addition that matters inside it.
+- **5 crates carrying unsafe are unclassified** - on neither the permitted
+  nor the forbidden list. That is an outcome, not a pass: the number growing
+  means a new crate started carrying unsafe without anyone deciding whether it
+  may.
 
-| Crate            | Blocks | Files | Permitted? | Notes                          |
-|------------------|-------:|------:|------------|--------------------------------|
-| `fast_io`        |    322 |    58 | yes        | io_uring, IOCP, sendfile, splice, mmap, syscall batch |
-| `metadata`       |     76 |     6 | yes        | POSIX id lookups, timestamps, ACL/xattr stubs (Windows DACL/SACL SDDL round-trip added blocks) |
-| `platform`       |     56 |     7 | no         | Windows console / service / privilege APIs and POSIX env helpers |
-| `checksums`      |     54 |    14 | yes        | SIMD rolling hash and MD4/MD5 batched lanes |
-| `engine`         |     29 |    11 | yes        | buffer pool atomics, deferred sync, clonefile, ACL tests |
-| `windows-gnu-eh` |     13 |     1 | no         | LoadLibrary/GetProcAddress shim for `__register_frame_info` |
-| `core`           |     12 |     4 | no         | signal handler installation, integration test scaffolding |
-| `cli`            |     11 |     3 | no         | env-guard helpers for clap integration tests |
-| `flist`          |      8 |     2 | no         | `fstatat` + `statx` syscall wrappers used during batched stat |
-| `embedding`      |      3 |     1 | no         | env-guard helpers for in-process embed tests |
-| `branding`       |      2 |     1 | no         | env-guard helpers for brand-detection tests |
-| `daemon`         |      2 |     2 | no         | `getrusage` stress test scaffolding |
-| `protocol`       |      1 |     1 | yes        | `Vec::set_len` in `read_payload_into` (already documented) |
+⚠ The previous revision of this section claimed 589 blocks and 100.00% coverage.
+Those figures were from an earlier cycle and were never regenerated as the tree
+grew; they are superseded here.
+
+Counts are keyed by **cargo target**. `crates/<c>/tests/` and `/benches/` are
+their own crate roots, so a library's `#![deny(unsafe_code)]` does not reach
+them - unsafe there is real, but it is not unsafe *in the library*, and the
+permitted/forbidden policy does not govern it.
+
+| Crate (target) | Blocks | Files | Policy status |
+|---|---:|---:|---|
+| `fast_io` | 487 | 100 | permitted |
+| `metadata` | 99 | 19 | permitted |
+| `platform` | 62 | 9 | unlisted |
+| `checksums` | 54 | 14 | permitted |
+| `fast_io (tests)` | 48 | 10 | permitted; test/bench target, library policy N/A |
+| `engine` | 42 | 15 | permitted |
+| `fast_io (benches)` | 21 | 7 | permitted; test/bench target, library policy N/A |
+| `daemon (tests)` | 14 | 4 | FORBIDDEN; test/bench target, library policy N/A |
+| `windows-gnu-eh` | 13 | 1 | unlisted |
+| `cli` | 12 | 3 | FORBIDDEN |
+| `flist` | 8 | 2 | unlisted |
+| `checksums (tests)` | 7 | 1 | permitted; test/bench target, library policy N/A |
+| `engine (tests)` | 6 | 3 | permitted; test/bench target, library policy N/A |
+| `core` | 5 | 1 | FORBIDDEN |
+| `cli (tests)` | 3 | 1 | FORBIDDEN; test/bench target, library policy N/A |
+| `core (tests)` | 3 | 2 | FORBIDDEN; test/bench target, library policy N/A |
+| `embedding` | 3 | 1 | unlisted |
+| `branding` | 2 | 1 | FORBIDDEN |
+| `engine (benches)` | 2 | 1 | permitted; test/bench target, library policy N/A |
+| `metadata (tests)` | 2 | 1 | permitted; test/bench target, library policy N/A |
+| `protocol (benches)` | 2 | 1 | permitted; test/bench target, library policy N/A |
+| `rsync_io (tests)` | 2 | 1 | FORBIDDEN; test/bench target, library policy N/A |
+| `protocol` | 1 | 1 | permitted |
+| `test-support` | 1 | 1 | unlisted |
+| `transfer (tests)` | 1 | 1 | FORBIDDEN; test/bench target, library policy N/A |
+
+### Blocks without a usable SAFETY comment
+
+| Crate (target) | Count |
+|---|---:|
+| `checksums (tests)` | 7 |
+| `engine` | 6 |
+| `fast_io` | 11 |
+| `fast_io (tests)` | 2 |
+| `metadata` | 4 |
+| `platform` | 1 |
+| `protocol (benches)` | 2 |
+
+Run the script for file-and-line detail. These are recorded, not triaged.
 
 ## Round-by-round history
 
