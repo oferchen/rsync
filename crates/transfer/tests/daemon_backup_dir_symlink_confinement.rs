@@ -110,6 +110,24 @@ struct Outcome {
     client_exit: Option<i32>,
     /// The client's stderr, for the failure messages.
     client_stderr: String,
+    /// The daemon's `rsyncd.log`. Without it a receiver-side refusal is only
+    /// visible as the client's errno, which cannot distinguish a sandbox denial
+    /// from an ordinary permission problem.
+    daemon_log: String,
+}
+
+impl Outcome {
+    /// The single owner of the failure block every assertion appends.
+    ///
+    /// Both streams are needed: the client says *what* failed, the daemon says
+    /// *why* - whether landlock was enforced and over how many roots, and
+    /// whether the seccomp filter engaged.
+    fn diagnostics(&self) -> String {
+        format!(
+            "\nstderr:\n{}\ndaemon log:\n{}",
+            self.client_stderr, self.daemon_log
+        )
+    }
 }
 
 fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> io::Result<()> {
@@ -230,6 +248,7 @@ fn push_over_destination(plant: Plant, extra: &[&str]) -> Option<Outcome> {
             .unwrap_or(false),
         client_exit: output.status.code(),
         client_stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        daemon_log: fs::read_to_string(root.join("rsyncd.log")).unwrap_or_default(),
     })
 }
 
@@ -242,19 +261,21 @@ fn measured(plant: Plant, extra: &[&str], what: &str) -> Outcome {
 /// to preserve was not destroyed instead.
 fn assert_confined(outcome: &Outcome, what: &str) {
     assert_eq!(
-        outcome.outside, OUTSIDE_MARKER,
+        outcome.outside,
+        OUTSIDE_MARKER,
         "{what}: the backup escaped the module root - the destination's \
          pre-transfer bytes were deposited outside it (client exit {:?})\
-         \nstderr:\n{}",
-        outcome.client_exit, outcome.client_stderr,
+         {}",
+        outcome.client_exit,
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.destination.as_deref().ok(),
         Some(PRE_IMAGE),
         "{what}: a refused backup must leave the destination alone - the \
          pre-image is exactly what the backup could not save, so overwriting \
-         it anyway destroys it (upstream receiver.c:694-695)\nstderr:\n{}",
-        outcome.client_stderr,
+         it anyway destroys it (upstream receiver.c:694-695){}",
+        outcome.diagnostics(),
     );
     assert!(
         outcome.backup_dir_is_symlink,
@@ -310,22 +331,22 @@ fn a_backup_dir_symlink_staying_inside_the_module_is_still_followed() {
     assert_eq!(
         outcome.client_exit,
         Some(0),
-        "an in-module backup dir must not fail the transfer\nstderr:\n{}",
-        outcome.client_stderr,
+        "an in-module backup dir must not fail the transfer{}",
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.inside_backup.as_deref().ok(),
         Some(PRE_IMAGE),
         "the in-module symlink target must receive the pre-transfer bytes: the \
          confinement applies to the LANDING SITE, not to symlinks as such\
-         \nstderr:\n{}",
-        outcome.client_stderr,
+         {}",
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.destination.as_deref().ok(),
         Some(NEW_CONTENT),
-        "the destination must still have been updated\nstderr:\n{}",
-        outcome.client_stderr,
+        "the destination must still have been updated{}",
+        outcome.diagnostics(),
     );
     assert!(
         outcome.backup_dir_is_symlink,
@@ -345,15 +366,15 @@ fn an_ordinary_backup_dir_gets_the_pre_transfer_bytes() {
     assert_eq!(
         outcome.client_exit,
         Some(0),
-        "the plain push must succeed\nstderr:\n{}",
-        outcome.client_stderr,
+        "the plain push must succeed{}",
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.destination.as_deref().ok(),
         Some(NEW_CONTENT),
         "the destination must have been updated, or this fixture never \
-         exercised the backup path\nstderr:\n{}",
-        outcome.client_stderr,
+         exercised the backup path{}",
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.outside, OUTSIDE_MARKER,
@@ -376,15 +397,15 @@ fn an_ordinary_backup_dir_works_under_delay_updates() {
     assert_eq!(
         outcome.client_exit,
         Some(0),
-        "the --delay-updates push must succeed\nstderr:\n{}",
-        outcome.client_stderr,
+        "the --delay-updates push must succeed{}",
+        outcome.diagnostics(),
     );
     assert_eq!(
         outcome.destination.as_deref().ok(),
         Some(NEW_CONTENT),
         "the destination must have been updated by the delayed sweep\
-         \nstderr:\n{}",
-        outcome.client_stderr,
+         {}",
+        outcome.diagnostics(),
     );
     // The file an escape would overwrite must be untouched here too.
     assert_eq!(outcome.outside, OUTSIDE_MARKER);
