@@ -103,7 +103,7 @@ malicious-sender-delete-scope pass
 malicious-server-partial-basis-symlink-overwrite fail
 match-append-empty-nullmap skip
 match-want-i-nolen skip
-misc-coverage fail
+misc-coverage pass
 msg-io-timeout-zero pass
 nonroot-restrictive-perms skip
 operator-path-backup-dir-daemon pass
