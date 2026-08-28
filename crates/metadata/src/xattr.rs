@@ -1679,8 +1679,9 @@ mod tests {
     ///
     /// The two euid sources only disagree under an LD_PRELOAD identity fake,
     /// so this re-execs the unit-test binary under `fakeroot(1)` and asserts
-    /// there. Without `fakeroot` on `PATH` the check cannot be made at all and
-    /// says so rather than passing quietly.
+    /// there. Two environments cannot host the check - no `fakeroot` on
+    /// `PATH`, and a statically linked build where LD_PRELOAD is inert - and
+    /// each says so rather than passing quietly.
     #[test]
     #[cfg(target_os = "linux")]
     fn receiver_user_only_is_false_under_fakeroot() {
@@ -1688,11 +1689,21 @@ mod tests {
         const TEST_PATH: &str = "xattr::tests::receiver_user_only_is_false_under_fakeroot";
 
         if std::env::var_os(MARKER).is_some() {
-            assert!(
-                crate::am_root(),
-                "fakeroot must fake the libc geteuid; without that the child \
-                 proves nothing"
-            );
+            // fakeroot fakes the identity by interposing the libc symbol with
+            // LD_PRELOAD, which a statically linked binary (the musl CI cell)
+            // ignores entirely - measured: a `-static` probe reports the real
+            // uid from both libc and the raw syscall under fakeroot, while the
+            // dynamic build of the same source reports 0 from libc. Where the
+            // interposition did not take, the two euid sources cannot be made
+            // to disagree and there is nothing here to observe.
+            if !crate::am_root() {
+                eprintln!(
+                    "SKIPPED {TEST_PATH}: fakeroot(1) ran but could not \
+                     interpose the libc geteuid, so this binary is statically \
+                     linked and LD_PRELOAD is inert"
+                );
+                return;
+            }
             assert!(
                 !receiver_user_only(),
                 "upstream keeps security.*/trusted.* on a fakeroot receiver \
@@ -1723,6 +1734,15 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+
+        // Re-emit a skip the child decided on, so a leg that could not observe
+        // anything says so here too instead of reading as a clean pass.
+        for line in String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("SKIPPED"))
+        {
+            eprintln!("{line}");
+        }
     }
 
     /// Resolves a bare program name against `PATH`, returning the first
