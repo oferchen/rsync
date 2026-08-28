@@ -6,7 +6,9 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use filters::FilterSet;
@@ -292,6 +294,11 @@ pub(crate) struct BackupEnv<'a> {
     #[cfg(unix)]
     pub(crate) sandbox: Option<&'a fast_io::DirSandbox>,
     /// Destination root the sandbox is anchored on.
+    ///
+    /// Paired with `sandbox`: every reader consults the two together to decide
+    /// whether an operation reduces to a single `*at()` call anchored on the
+    /// destination, so the field is Unix-only for the same reason `sandbox` is.
+    #[cfg(unix)]
     pub(crate) dest_dir: Option<&'a Path>,
     /// Metadata options applied to `--backup-dir` parents created on demand.
     pub(crate) metadata_opts: Option<&'a MetadataOptions>,
@@ -317,6 +324,7 @@ impl DiskCommitConfig {
         BackupEnv {
             #[cfg(unix)]
             sandbox: self.sandbox.as_deref(),
+            #[cfg(unix)]
             dest_dir: self.dest_dir.as_deref(),
             metadata_opts: self.metadata_opts.as_ref(),
         }

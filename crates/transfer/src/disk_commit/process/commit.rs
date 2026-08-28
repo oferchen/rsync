@@ -146,7 +146,7 @@ pub(super) fn commit_file(
             // glibc to lower to, which is why the defect was architecture-only.
             if let Some(parent) = staging_path.parent() {
                 clear_partial_dir_obstruction(parent)?;
-                create_dir_all_sandboxed(config, parent)?;
+                create_dir_all_sandboxed(config.backup_env(), parent)?;
             }
             let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)
                 .map_err(|e| {
