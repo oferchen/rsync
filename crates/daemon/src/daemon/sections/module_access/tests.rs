@@ -1910,6 +1910,101 @@ mod module_access_tests {
         );
     }
 
+    /// A module served WITHOUT chroot keeps the real module path as its
+    /// Landlock root - the arm that always worked, pinned so the chroot arms
+    /// below cannot be satisfied by making the new root selection
+    /// unconditional.
+    #[test]
+    fn an_unchrooted_module_pins_landlock_to_the_real_module_path() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            path: PathBuf::from("/srv/data"),
+            ..Default::default()
+        });
+        assert_eq!(
+            landlock_root(&module, &PrivilegeOutcome::not_chrooted()),
+            LandlockRoot::Confine(Path::new("/srv/data")),
+        );
+    }
+
+    /// WHY: `engage_landlock_sandbox` runs AFTER `chroot()`, and
+    /// `restrict_to_module_paths` OPENS every root it is given. Handing it the
+    /// pre-chroot `module.path` therefore cannot work: the kernel returns
+    /// ENOENT and the layer degrades to a warning. MEASURED on Linux 7.0
+    /// x86_64 before this pin, with `use chroot = yes` and `path = /srv/data`:
+    /// `landlock setup failed: failed to open "/srv/data": No such file or
+    /// directory`, the transfer completing with chroot as the only
+    /// confinement. So: never the pre-chroot path once chrooted.
+    #[test]
+    fn a_chrooted_module_never_pins_landlock_to_the_pre_chroot_path() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            path: PathBuf::from("/srv/data"),
+            ..Default::default()
+        });
+        for inner in [Some(PathBuf::from("/")), Some(PathBuf::from("/inner")), None] {
+            let outcome = PrivilegeOutcome {
+                chroot_applied: true,
+                inner_module_path: inner.clone(),
+            };
+            assert_ne!(
+                landlock_root(&module, &outcome),
+                LandlockRoot::Confine(Path::new("/srv/data")),
+                "post-chroot the pre-chroot path opens nothing; inner={inner:?}"
+            );
+        }
+    }
+
+    /// A chroot whose root IS the module root subsumes the allowlist, so the
+    /// layer must stand aside as a TAKEN branch rather than attempt an install
+    /// that cannot succeed. Pinning `SubsumedByChroot` (not merely "not the old
+    /// path") keeps a future edit from substituting the post-chroot `/`: the
+    /// `READONLY_SYSTEM_PATHS` rules resolve inside the jail and a deeper
+    /// Landlock rule overrides a shallower one, so a module tree containing
+    /// `etc/` or `var/` would silently become read-only.
+    ///
+    /// upstream: clientserver.c:912-925 sets `module_dir = "/"` then zeroes
+    /// `module_dirlen`, so clientserver.c:1093
+    /// `use_secure_symlinks = am_daemon && (!am_chrooted || module_dirlen)`
+    /// is false here - upstream reaches the same conclusion for its own
+    /// path-confinement layer.
+    #[test]
+    fn a_chroot_at_the_module_root_subsumes_landlock() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            path: PathBuf::from("/srv/data"),
+            ..Default::default()
+        });
+        let outcome = PrivilegeOutcome {
+            chroot_applied: true,
+            inner_module_path: Some(PathBuf::from("/")),
+        };
+        assert_eq!(
+            landlock_root(&module, &outcome),
+            LandlockRoot::SubsumedByChroot,
+        );
+    }
+
+    /// The `/./` shape is the one that genuinely needs Landlock: the chroot
+    /// lands on the OUTER path, so nothing kernel-side confines the inner
+    /// module boundary. Pin the post-chroot inner directory as the root.
+    ///
+    /// upstream: clientserver.c:1084-1093 - "the kernel chroot confines the
+    /// outer path but not the inner module", which is why upstream keeps its
+    /// own secure-symlink path active for exactly this configuration.
+    #[test]
+    fn a_chroot_with_an_inner_boundary_pins_landlock_to_the_inner_path() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            path: PathBuf::from("/srv/outer/./inner"),
+            ..Default::default()
+        });
+        let outcome = PrivilegeOutcome {
+            chroot_applied: true,
+            inner_module_path: Some(PathBuf::from("/inner")),
+        };
+        assert_eq!(
+            landlock_root(&module, &outcome),
+            LandlockRoot::Confine(Path::new("/inner")),
+        );
+    }
+
     #[test]
     fn build_daemon_filter_rules_empty_module() {
         let module = test_module_with_defaults();
