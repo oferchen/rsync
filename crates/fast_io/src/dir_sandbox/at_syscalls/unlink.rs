@@ -157,28 +157,30 @@ pub fn unlinkat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: UnlinkFlags) -> io::
 /// daemon worker seccomp allowlist, nothing more. Do not read a call to this
 /// helper as evidence that the site is confined.
 ///
-/// # Why it diverges from the pinned upstream
+/// # Why the legacy syscall is not used
 ///
-/// Behaviourally the divergence is measured against the 3.4.4 **behaviour**
-/// pin (`Cargo.toml:461`): there `successful_send()` removes the source with a
-/// plain `do_unlink(fname)` - path-based, exactly what `std::fs::remove_file`
-/// compiles to. oc carries seccomp hardening upstream does not, and that filter
-/// admits only the `*at` syscall forms, so the legacy number returns `EPERM`
-/// inside a sandboxed worker. The substitution is semantically null and costs
-/// no extra syscall.
+/// oc carries seccomp hardening upstream does not, and that filter admits only
+/// the `*at` syscall forms, so the legacy number returns `EPERM` inside a
+/// sandboxed worker. The substitution is semantically null and costs no extra
+/// syscall.
 ///
-/// Line references below resolve against the 3.5.0 **citation** pin
-/// (`xtask/src/commands/citations.rs:61`), which is what the drift gate reads.
-/// At 3.5.0 `successful_send()` is `sender.c:395` and it goes further than this
-/// helper does: it resolves a confined parent dirfd via
+/// # What this helper is, and is not, for
+///
+/// It is the **declined arm** of upstream's fallback contract - the plain
+/// path-based removal a site performs when the ownership walk has been opted
+/// out of (`insecure links = yes` / `--insecure-links`) or when there is no
+/// parent to anchor at. `successful_send()` spells that arm as the
+/// `do_unlink(fname)` half of its `dfd >= 0 ? ... : ...` removal ternary
+/// (`sender.c:453`); its confined half resolves the parent once with
 /// `secure_sender_parent_fd()` (`sender.c:416`), re-stats fd-relative
-/// (`sender.c:426-428`), and removes through `secure_remove_source_file()`
-/// (`sender.c:201-203`, itself `do_unlink_atfd`) at the `sender.c:453` removal
-/// ternary. Adopting that shape is the U350-4d site tracked as task 1043; this
-/// helper deliberately does not attempt it.
+/// (`sender.c:426-428`) and removes with `secure_remove_source_file()`
+/// (`sender.c:201-203`, itself `do_unlink_atfd`).
 ///
+/// So a site that has a parent to anchor at should not reach here directly.
 /// Callers holding a `DirSandbox` should prefer [`unlinkat`] against the
-/// sandbox dirfd, which does pin the parent against a TOCTOU swap.
+/// sandbox dirfd; callers working from a path should go through
+/// [`ConfinedFallback`](crate::ConfinedFallback), which owns all three arms and
+/// picks this one only when the policy says so.
 ///
 /// # Errors
 ///

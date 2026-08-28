@@ -89,6 +89,29 @@ impl AtMetadata {
     pub fn size(&self) -> u64 {
         widen_size(self.stat.st_size)
     }
+
+    /// Whole-second modification time (`st_mtime`), matching
+    /// [`std::os::unix::fs::MetadataExt::mtime`].
+    ///
+    /// Paired with [`mtime_nsec`](Self::mtime_nsec) and [`size`](Self::size)
+    /// this is the whole of upstream's changed-file guard, so a caller holding
+    /// a parent descriptor can decide "still the entry I chose" without a
+    /// second, path-based stat.
+    ///
+    /// upstream: `rsync-3.5.0/sender.c:442` - `st.st_mtime != file->modtime`.
+    #[must_use]
+    pub fn mtime(&self) -> i64 {
+        widen_time(self.stat.st_mtime)
+    }
+
+    /// Sub-second component of the modification time (`st_mtime_nsec`),
+    /// matching [`std::os::unix::fs::MetadataExt::mtime_nsec`].
+    ///
+    /// upstream: `rsync-3.5.0/sender.c:445` - the `ST_MTIME_NSEC` compare.
+    #[must_use]
+    pub fn mtime_nsec(&self) -> i64 {
+        widen_time(self.stat.st_mtime_nsec)
+    }
 }
 
 /// Widen `st_dev` to `u64`. `dev_t` is `i32` on macOS and `u64` on
@@ -116,6 +139,12 @@ fn widen_ino(value: libc::ino_t) -> u64 {
 /// supported Unix target.
 fn widen_size(value: libc::off_t) -> u64 {
     value as u64
+}
+
+/// Widen a `struct stat` time field to `i64`. `time_t` is `i64` everywhere we
+/// ship, but `st_mtime_nsec` is `c_long`, which is `i32` on 32-bit targets.
+fn widen_time(value: impl Into<i64>) -> i64 {
+    value.into()
 }
 
 /// Widen `st_mode` to `u32`. `mode_t` is `u16` on macOS and `u32` on
@@ -154,6 +183,38 @@ pub(super) fn widen_mode(value: libc::mode_t) -> u32 {
 /// - `EINVAL` when `name` contains an interior NUL byte (translated
 ///   from [`std::ffi::NulError`]).
 pub fn fstatat_nofollow(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<AtMetadata> {
+    fstatat_with_flags(dirfd, name, libc::AT_SYMLINK_NOFOLLOW)
+}
+
+/// Issue `fstatat(dirfd, name, &mut stat, 0)` - the leaf **is** followed.
+///
+/// The dirfd still pins the parent, so no component above the leaf can be
+/// swapped out from under the call; only the leaf itself resolves as a
+/// symlink would. This is the `--copy-links` half of a stat pair whose other
+/// half is [`fstatat_nofollow`], mirroring upstream's one call site that
+/// chooses between the two by that flag.
+///
+/// upstream: `rsync-3.5.0/sender.c:426-428` - `copy_links ? do_stat_atfd(dfd,
+/// bname, &st) : do_lstat_atfd(dfd, bname, &st)`.
+///
+/// `name` must not contain an interior NUL byte; callers that pull names from
+/// `Path::file_name` cannot trigger this (paths cannot contain NUL on Unix).
+///
+/// # Errors
+///
+/// Surfaces the underlying syscall error verbatim; see [`fstatat_nofollow`],
+/// plus `ELOOP` for a symlink chain at the leaf that does not terminate.
+pub fn fstatat_follow(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<AtMetadata> {
+    fstatat_with_flags(dirfd, name, 0)
+}
+
+/// The single `fstatat(2)` call behind [`fstatat_nofollow`] and
+/// [`fstatat_follow`]; `flags` is the only difference between them.
+fn fstatat_with_flags(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    flags: libc::c_int,
+) -> io::Result<AtMetadata> {
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
@@ -168,17 +229,12 @@ pub fn fstatat_nofollow(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<AtMet
     //   success we assume the struct is fully initialised (the kernel
     //   contract for `fstatat(2)` on success); on failure we never read
     //   from it.
-    // - `AT_SYMLINK_NOFOLLOW` selects the no-follow variant so a
-    //   symlink at the leaf is rejected/reported, not resolved.
+    // - `flags` is `0` or `AT_SYMLINK_NOFOLLOW`, the only two values the
+    //   two public wrappers above pass, and both are valid for `fstatat(2)`.
     #[allow(unsafe_code)]
     let (rc, stat) = unsafe {
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        let rc = libc::fstatat(
-            dirfd.as_raw_fd(),
-            c_name.as_ptr(),
-            stat.as_mut_ptr(),
-            libc::AT_SYMLINK_NOFOLLOW,
-        );
+        let rc = libc::fstatat(dirfd.as_raw_fd(), c_name.as_ptr(), stat.as_mut_ptr(), flags);
         (rc, stat)
     };
 
