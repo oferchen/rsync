@@ -1254,21 +1254,57 @@ mod module_access_tests {
         );
     }
 
+    // `--only-write-batch` is the one member of the batch family upstream
+    // deliberately forwards to the server: `options.c:3016-3017` emits the
+    // literal `--only-write-batch=X` inside `server_options()`'s `am_sender`
+    // block, and `options.c:812` accepts it into the same popt table the daemon
+    // runs. Refusing it here turned away a conforming upstream 3.5.0 client with
+    // `@ERROR: --only-write-batch=X: unrecognized option (in daemon mode)` and
+    // exit 4, where upstream's own daemon completes the push writing nothing.
+    //
+    // The daemon must take the mode switch from it, not the value: the `X` is a
+    // placeholder (`main.c:1912` gates `open_batch_files()` on `!am_server`),
+    // while `clientserver.c:1195` sets `dry_run = 1` and `receiver.c:987-993`
+    // logs each item without touching the destination.
     #[test]
-    fn apply_long_form_args_reports_only_write_batch_kv_as_unknown() {
+    fn apply_long_form_args_accepts_only_write_batch_and_forces_dry_run() {
         let args = vec![
             "--server".to_owned(),
-            "--only-write-batch=/tmp/dry.batch".to_owned(),
+            "--only-write-batch=X".to_owned(),
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        let offender = apply_long_form_args(&args, &mut config);
-        assert_eq!(
-            offender,
-            Some(ClientArgRejection::Unrecognized(
-                "--only-write-batch=/tmp/dry.batch".to_owned()
-            ))
+        assert_eq!(config.role, ServerRole::Receiver);
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(
+            config.flags.only_write_batch,
+            "--only-write-batch=X must select the receiver's only-write-batch loop"
         );
+        assert!(
+            config.flags.dry_run,
+            "upstream clientserver.c:1195 forces dry_run when write_batch < 0"
+        );
+    }
+
+    // `server_options()` emits the token only inside its `am_sender` block, so a
+    // daemon serving a PULL is the sender and never sees it. A generator that
+    // switched itself into dry-run would stop streaming the data the client
+    // needs to record, so the arm must stay inert for that role.
+    #[test]
+    fn apply_long_form_args_leaves_a_sender_daemon_untouched_by_only_write_batch() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "--only-write-batch=X".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            ..ServerConfig::default()
+        };
+        assert!(apply_long_form_args(&args, &mut config).is_none());
+        assert!(!config.flags.only_write_batch);
+        assert!(!config.flags.dry_run);
     }
 
     // upstream: options.c:2998-3001 - `server_options()` forwards
