@@ -101,7 +101,7 @@ pub trait ChecksumSeedExchanger {
     ///
     /// - `None` or `Some(0)`: generate from `time() ^ (pid << 6)`
     /// - `Some(n)`: use `n` as the fixed seed
-    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<u32>) -> io::Result<i32>;
+    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<i32>) -> io::Result<i32>;
 
     /// Reads the 4-byte LE checksum seed sent by the server.
     fn read_seed(&self, reader: &mut dyn Read) -> io::Result<i32>;
@@ -183,7 +183,7 @@ impl CapabilityNegotiator for RsyncNegotiator {
 }
 
 impl ChecksumSeedExchanger for RsyncNegotiator {
-    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<u32>) -> io::Result<i32> {
+    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<i32>) -> io::Result<i32> {
         // upstream: options.c:847 - seed generation
         let seed = match fixed_seed {
             Some(0) | None => {
@@ -195,7 +195,7 @@ impl ChecksumSeedExchanger for RsyncNegotiator {
                 let pid = std::process::id() as i32;
                 timestamp ^ (pid << 6)
             }
-            Some(fixed) => fixed as i32,
+            Some(fixed) => fixed,
         };
         writer.write_all(&seed.to_le_bytes())?;
         writer.flush()?;

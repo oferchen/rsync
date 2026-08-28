@@ -135,7 +135,11 @@ mod tests {
 
     #[test]
     fn parse_checksum_seed_argument_negative() {
-        assert!(parse_checksum_seed_argument(&os("-1")).is_err());
+        // upstream: options.c:151 declares `int checksum_seed`, a signed global.
+        // The popt entry at options.c:861 binds it with `POPT_ARG_INT`, so a
+        // negative seed is valid, and options.c:3047 forwards it verbatim as
+        // `--checksum-seed=-1`.
+        assert_eq!(parse_checksum_seed_argument(&os("-1")).unwrap(), -1);
     }
 
     #[test]

@@ -121,7 +121,10 @@ pub struct ProtocolSetupConfig<'a> {
     ///
     /// A value of `0` means "use current time" in upstream rsync, which is
     /// equivalent to `None` (the default random seed generation).
-    pub checksum_seed: Option<u32>,
+    ///
+    /// upstream: options.c:151 `int checksum_seed` - the seed is signed and the
+    /// `POPT_ARG_INT` parse (options.c:861) accepts the whole `i32` range.
+    pub checksum_seed: Option<i32>,
 
     /// Whether incremental recursion is allowed for this transfer.
     ///
@@ -235,7 +238,7 @@ impl<'a> ProtocolSetupConfig<'a> {
 
     /// Sets [`Self::checksum_seed`].
     #[must_use]
-    pub const fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
+    pub const fn with_checksum_seed(mut self, seed: Option<i32>) -> Self {
         self.checksum_seed = seed;
         self
     }

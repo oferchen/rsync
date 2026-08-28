@@ -200,7 +200,9 @@ pub struct ParsedArgs {
     pub checksum_choice_arg: Option<OsString>,
 
     /// `--checksum-seed` - seed for reproducible checksums.
-    pub checksum_seed: Option<u32>,
+    ///
+    /// upstream: options.c:151 `int checksum_seed` - a signed value.
+    pub checksum_seed: Option<i32>,
 
     /// `--size-only` - skip based on size only, ignore mtime.
     pub size_only: bool,

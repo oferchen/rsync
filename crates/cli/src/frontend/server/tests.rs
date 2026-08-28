@@ -1507,7 +1507,70 @@ fn known_flag_rejects_unknown() {
 fn checksum_seed_parses_valid() {
     assert_eq!(parse_server_checksum_seed("0").unwrap(), 0);
     assert_eq!(parse_server_checksum_seed("12345").unwrap(), 12345);
-    assert_eq!(parse_server_checksum_seed("4294967295").unwrap(), u32::MAX);
+    assert_eq!(parse_server_checksum_seed("2147483647").unwrap(), i32::MAX);
+}
+
+/// upstream: options.c:151 `int checksum_seed`, parsed with `POPT_ARG_INT`
+/// (options.c:861) and forwarded by the client with `"%d"` (options.c:3047). An
+/// upstream client run with `--checksum-seed=-1` therefore invokes us as
+/// `--server --checksum-seed=-1`; refusing that value aborts the transfer with
+/// exit 1 before a single byte moves.
+#[test]
+fn checksum_seed_accepts_negative() {
+    assert_eq!(parse_server_checksum_seed("-1").unwrap(), -1);
+    assert_eq!(parse_server_checksum_seed("-2147483648").unwrap(), i32::MIN);
+}
+
+/// popt rejects an out-of-`int` value with `POPT_ERROR_OVERFLOW`
+/// (popt/popt.c poptSaveArg), so no upstream peer can send one.
+#[test]
+fn checksum_seed_rejects_above_i32_max() {
+    assert!(parse_server_checksum_seed("4294967295").is_err());
+}
+
+/// Emits the remote-shell argv for `seed`, asserts its rendered text, and reads
+/// the seed back out through the same `--server` flag scanner the remote end
+/// runs.
+fn checksum_seed_round_trip(seed: i32) -> i32 {
+    let config = ClientConfig::builder().checksum_seed(Some(seed)).build();
+    let argv = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
+        .build(std::ffi::OsStr::new("/path"));
+
+    let expected = format!("--checksum-seed={seed}");
+    assert!(
+        argv.iter().any(|a| a == expected.as_str()),
+        "expected {expected} in argv: {argv:?}"
+    );
+
+    let flags = parse_server_long_flags(&argv);
+    let text = flags
+        .checksum_seed
+        .as_deref()
+        .expect("the emitted argv must carry --checksum-seed");
+    parse_server_checksum_seed(text).expect("the emitted seed must parse on the server side")
+}
+
+/// The client emit and the `--server` parse are the two ends of one value, and
+/// a negative seed is the case that separates them: upstream stores the seed in
+/// an `int` (options.c:151) and forwards it with `"%d"` (options.c:3047), so
+/// `-1` must render as `--checksum-seed=-1` and come back as `-1`. Rendering it
+/// unsigned yields `--checksum-seed=4294967295`, which upstream's
+/// `POPT_ARG_INT` (options.c:861) refuses with `POPT_ERROR_OVERFLOW` - the
+/// transfer dies at argument parsing rather than mis-seeding a checksum, so
+/// this test fails loudly rather than silently.
+#[test]
+fn checksum_seed_negative_survives_emit_and_server_parse() {
+    assert_eq!(checksum_seed_round_trip(-1), -1);
+    assert_eq!(checksum_seed_round_trip(i32::MIN), i32::MIN);
+}
+
+/// Positive-seed companion: the round trip must stay intact for the values that
+/// already worked, so a regression in the signed handling cannot hide behind a
+/// wholesale break of the path.
+#[test]
+fn checksum_seed_positive_survives_emit_and_server_parse() {
+    assert_eq!(checksum_seed_round_trip(12345), 12345);
+    assert_eq!(checksum_seed_round_trip(i32::MAX), i32::MAX);
 }
 
 #[test]

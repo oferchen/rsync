@@ -1669,6 +1669,22 @@ mod server_option_fidelity_tests {
         );
     }
 
+    // upstream: options.c:151 stores the seed in an `int` and options.c:3047
+    // prints it with `"%d"`, so a negative seed goes over as `-1`. Rendering it
+    // unsigned would emit `--checksum-seed=4294967295`, which the daemon's own
+    // `POPT_ARG_INT` equivalent (options.c:861) rejects as an overflow.
+    #[test]
+    fn negative_checksum_seed_forwarded_signed() {
+        let config = ClientConfig::builder().checksum_seed(Some(-1)).build();
+        assert!(
+            args(&config, false)
+                .iter()
+                .any(|a| a == "--checksum-seed=-1"),
+            "expected --checksum-seed=-1: {:?}",
+            args(&config, false)
+        );
+    }
+
     // upstream: options.c:2886-2894 - --partial-dir and --delay-updates are
     // am_sender only; the remote receiver stages partial/updated files there.
     #[test]

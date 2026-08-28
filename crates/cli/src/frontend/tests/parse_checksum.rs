@@ -8,19 +8,47 @@ fn parse_checksum_seed_argument_accepts_zero() {
 }
 
 #[test]
-fn parse_checksum_seed_argument_accepts_max_u32() {
-    let seed = parse_checksum_seed_argument(OsStr::new("4294967295")).expect("parse checksum seed");
-    assert_eq!(seed, u32::MAX);
+fn parse_checksum_seed_argument_accepts_max_i32() {
+    let seed = parse_checksum_seed_argument(OsStr::new("2147483647")).expect("parse checksum seed");
+    assert_eq!(seed, i32::MAX);
+}
+
+/// upstream: options.c:861 uses `POPT_ARG_INT`, which popt bounds to
+/// `INT_MIN..=INT_MAX` (popt/popt.c poptSaveArg returns `POPT_ERROR_OVERFLOW`
+/// otherwise). Accepting a larger value would have us forward
+/// `--checksum-seed=4294967295` (options.c:3047) to a peer that answers
+/// "number too large or too small" and exits 1.
+#[test]
+fn parse_checksum_seed_argument_rejects_above_i32_max() {
+    let error = parse_checksum_seed_argument(OsStr::new("4294967295"))
+        .expect_err("a value above i32::MAX should fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("invalid --checksum-seed value"),
+        "diagnostic missing invalid message: {rendered}"
+    );
+}
+
+/// upstream: options.c:151 declares `int checksum_seed`, so `-1` is a legal
+/// seed. Refusing it makes oc-rsync unable to express a value upstream accepts,
+/// and - on the `--server` side - unable to serve an upstream client that used
+/// it.
+#[test]
+fn parse_checksum_seed_argument_accepts_negative() {
+    let seed = parse_checksum_seed_argument(OsStr::new("-1")).expect("negative seed should parse");
+    assert_eq!(seed, -1);
+    let min = parse_checksum_seed_argument(OsStr::new("-2147483648")).expect("i32::MIN parses");
+    assert_eq!(min, i32::MIN);
 }
 
 #[test]
-fn parse_checksum_seed_argument_rejects_negative() {
-    let error =
-        parse_checksum_seed_argument(OsStr::new("-1")).expect_err("negative seed should fail");
+fn parse_checksum_seed_argument_rejects_below_i32_min() {
+    let error = parse_checksum_seed_argument(OsStr::new("-2147483649"))
+        .expect_err("a value below i32::MIN should fail");
     let rendered = error.to_string();
     assert!(
-        rendered.contains("must be non-negative"),
-        "diagnostic missing negativity detail: {rendered}"
+        rendered.contains("invalid --checksum-seed value"),
+        "diagnostic missing invalid message: {rendered}"
     );
 }
 
@@ -36,8 +64,7 @@ fn parse_checksum_seed_argument_rejects_non_numeric() {
 }
 
 #[test]
-fn parse_checksum_seed_argument_rejects_overflow_u32() {
-    // u32::MAX + 1 = 4294967296 should fail
+fn parse_checksum_seed_argument_rejects_overflow() {
     let error =
         parse_checksum_seed_argument(OsStr::new("4294967296")).expect_err("overflow should fail");
     let rendered = error.to_string();

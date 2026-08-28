@@ -482,13 +482,13 @@ fn apply_long_form_args(
                 // on the wire. Dropping the value made `--checksum-seed` a no-op
                 // over a daemon while it worked over a remote shell.
                 //
-                // Parsed as `i32` and reinterpreted, because that is the width
-                // upstream prints from and the width `write_seed` puts back on
-                // the wire; a `u32`-only parse would reject the negative values
-                // upstream's `%d` can emit.
+                // Parsed as `i32`, because that is the width upstream prints
+                // from and the width `write_seed` puts back on the wire; a
+                // `u32`-only parse would reject the negative values upstream's
+                // `%d` can emit.
                 } else if let Some(seed) = arg.strip_prefix("--checksum-seed=") {
                     if let Ok(value) = seed.trim().parse::<i32>() {
-                        config.checksum_seed = Some(value as u32);
+                        config.checksum_seed = Some(value);
                     }
                 } else if arg == "--from0" {
                     // upstream: options.c:940 - --from0 sets NUL-delimited mode

@@ -213,7 +213,7 @@ pub struct ClientConfigBuilder {
     whole_file: Option<bool>,
     checksum: bool,
     checksum_choice: StrongChecksumChoice,
-    checksum_seed: Option<u32>,
+    checksum_seed: Option<i32>,
     size_only: bool,
     ignore_times: bool,
     ignore_existing: bool,

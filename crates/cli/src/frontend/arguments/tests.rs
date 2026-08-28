@@ -2685,11 +2685,29 @@ mod checksum_choice_tests {
         assert_eq!(parsed.checksum_seed, Some(0));
     }
 
+    /// upstream: options.c:861 parses the seed with `POPT_ARG_INT`, which popt
+    /// bounds to `INT_MIN..=INT_MAX` and otherwise fails with
+    /// `POPT_ERROR_OVERFLOW`. Accepting `4294967295` here would let us forward
+    /// `--checksum-seed=4294967295` (options.c:3047) to a peer that cannot
+    /// parse it, aborting the transfer with a usage error.
     #[test]
-    fn checksum_seed_max_u32() {
+    fn checksum_seed_above_i32_max_is_rejected() {
+        assert!(parse_test_args(["--checksum-seed=4294967295", "src/", "dst/"]).is_err());
+    }
+
+    /// upstream: options.c:151 declares `int checksum_seed`, so a negative seed
+    /// is legal and reaches the remote verbatim as `--checksum-seed=-1`.
+    #[test]
+    fn checksum_seed_negative() {
+        let parsed = parse_test_args(["--checksum-seed=-1", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(-1));
+    }
+
+    #[test]
+    fn checksum_seed_min_i32() {
         let parsed =
-            parse_test_args(["--checksum-seed=4294967295", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.checksum_seed, Some(u32::MAX));
+            parse_test_args(["--checksum-seed=-2147483648", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(i32::MIN));
     }
 
     #[test]
@@ -2708,13 +2726,15 @@ mod checksum_choice_tests {
     #[test]
     fn checksum_seed_overflow_rejected() {
         let result = parse_test_args(["--checksum-seed=4294967296", "src/", "dst/"]);
-        assert!(result.is_err(), "u32::MAX + 1 should be rejected");
+        assert!(result.is_err(), "i32::MAX + 1 should be rejected");
     }
 
+    /// upstream: options.c:861 is `POPT_ARG_INT`, so a value below `INT_MIN`
+    /// fails with `POPT_ERROR_OVERFLOW` (popt/popt.c poptSaveArg).
     #[test]
-    fn checksum_seed_negative_rejected() {
-        let result = parse_test_args(["--checksum-seed=-1", "src/", "dst/"]);
-        assert!(result.is_err(), "negative seed should be rejected");
+    fn checksum_seed_below_i32_min_rejected() {
+        let result = parse_test_args(["--checksum-seed=-2147483649", "src/", "dst/"]);
+        assert!(result.is_err(), "below i32::MIN should be rejected");
     }
 
     #[test]

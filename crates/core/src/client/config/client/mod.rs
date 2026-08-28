@@ -168,7 +168,7 @@ pub struct ClientConfig {
     pub(super) whole_file: Option<bool>,
     pub(super) checksum: bool,
     pub(super) checksum_choice: StrongChecksumChoice,
-    pub(super) checksum_seed: Option<u32>,
+    pub(super) checksum_seed: Option<i32>,
     pub(super) size_only: bool,
     pub(super) ignore_times: bool,
     pub(super) ignore_existing: bool,

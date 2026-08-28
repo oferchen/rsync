@@ -108,10 +108,15 @@ pub(crate) fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
     }
 }
 
-/// Parses the `--checksum-seed` argument as a non-negative `u32`.
+/// Parses the `--checksum-seed` argument as a signed `i32`.
 ///
-/// A leading `+` prefix is permitted and ignored.
-pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message> {
+/// A leading `+` prefix is permitted and ignored. Negative values are accepted:
+/// upstream declares `int checksum_seed` (options.c:151) and parses the option
+/// with `POPT_ARG_INT` (options.c:861), which popt accepts over the full
+/// `INT_MIN..=INT_MAX` range and rejects outside it with `POPT_ERROR_OVERFLOW`
+/// (popt/popt.c poptSaveArg). The emitter then forwards it with `"%d"`
+/// (options.c:3047), so a value outside `i32` could never be parsed by a peer.
+pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<i32, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
     let display = if trimmed.is_empty() {
@@ -126,26 +131,16 @@ pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message
         );
     }
 
-    if trimmed.starts_with('-') {
-        return Err(rsync_error!(
-            1,
-            format!(
-                "invalid --checksum-seed value '{}': must be non-negative",
-                display
-            )
-        )
-        .with_role(Role::Client));
-    }
-
     let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
 
-    normalized.parse::<u32>().map_err(|_| {
+    normalized.parse::<i32>().map_err(|_| {
         rsync_error!(
             1,
             format!(
-                "invalid --checksum-seed value '{}': must be between 0 and {}",
+                "invalid --checksum-seed value '{}': must be between {} and {}",
                 display,
-                u32::MAX
+                i32::MIN,
+                i32::MAX
             )
         )
         .with_role(Role::Client)
