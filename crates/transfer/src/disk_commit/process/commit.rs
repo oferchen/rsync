@@ -130,9 +130,23 @@ pub(super) fn commit_file(
             // `AlreadyExists` for that shape and the `?` fails the whole
             // transfer where upstream unlinks the obstruction and proceeds -
             // measured against real 3.5.0 over a daemon push, which exits 0.
+            //
+            // The create goes through [`create_dir_all_sandboxed`], the same
+            // helper the `--backup-dir` parent already uses, rather than a bare
+            // `std::fs::create_dir_all`. `.~tmp~` is a single component beneath
+            // `dest_dir`, so that helper reduces it to one `mkdirat` anchored on
+            // the destination sandbox. A bare `create_dir_all` reaches glibc's
+            // `mkdir()` wrapper, which lowers to the legacy `mkdir(2)` on
+            // x86_64 - a syscall the daemon worker's seccomp allowlist
+            // deliberately omits in favour of the `*at` variants. MEASURED on
+            // x86_64 CI: the whole `--delay-updates` push died here with
+            // `Operation not permitted`, surfacing downstream as
+            // `mkstemp ... failed`, while the identical push without
+            // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
+            // glibc to lower to, which is why the defect was architecture-only.
             if let Some(parent) = staging_path.parent() {
                 clear_partial_dir_obstruction(parent)?;
-                fs::create_dir_all(parent)?;
+                create_dir_all_sandboxed(config, parent)?;
             }
             let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)
                 .map_err(|e| {
@@ -740,9 +754,9 @@ fn create_backup_path_parents(
 /// When the sandbox is present and `parent` is a single component directly
 /// under `dest_dir`, the final directory component is created via
 /// [`fast_io::mkdirat_via_sandbox_or_fallback`] so a symlink swap on the
-/// destination root cannot redirect it. Deeper trees, or the no-sandbox case,
-/// keep the original recursive [`std::fs::create_dir_all`] so behavior is
-/// unchanged (`create_dir_all` is idempotent for already-existing ancestors).
+/// destination root cannot redirect it. Deeper trees, and the no-sandbox case,
+/// go through [`fast_io::operator_create_dir_all`], which is recursive like
+/// `std::fs::create_dir_all` but issues `mkdirat` per component.
 #[cfg(unix)]
 fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
     if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
@@ -763,7 +777,7 @@ fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Res
             Err(e) => Err(e),
         };
     }
-    fs::create_dir_all(parent)
+    fast_io::operator_create_dir_all(parent, 0o777)
 }
 
 #[cfg(not(unix))]

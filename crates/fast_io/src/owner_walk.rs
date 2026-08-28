@@ -545,6 +545,39 @@ pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
     }
 }
 
+/// Recursive directory create that issues `mkdirat` for every component.
+///
+/// Mirrors [`std::fs::create_dir_all`]'s contract - build missing ancestors,
+/// treat an existing directory as success - but routes each component through
+/// [`operator_mkdir`], so the syscall is always `mkdirat` and never the legacy
+/// `mkdir(2)`.
+///
+/// The daemon worker's seccomp allowlist admits only the `*at` syscall
+/// variants. On x86_64 glibc lowers `mkdir()` to the legacy `SYS_mkdir`, which
+/// that allowlist omits, so a bare `create_dir_all` is refused with `EPERM`;
+/// aarch64 has no legacy form to lower to and succeeds either way. That split
+/// is why the defect is invisible on one architecture.
+///
+/// # Errors
+///
+/// Surfaces any walk or `mkdirat` error. Only a missing ancestor is recursed
+/// on; every other failure is reported as-is so a refused component stays
+/// refused rather than being retried unconfined.
+pub fn operator_create_dir_all(path: &Path, mode: u32) -> io::Result<()> {
+    if path.as_os_str().is_empty() {
+        return Ok(());
+    }
+    match operator_mkdir(path, mode) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = path.parent().ok_or(error)?;
+            operator_create_dir_all(parent, mode)?;
+            operator_mkdir(path, mode)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Rename `old_path` to `new_path` with both endpoints resolved by the
 /// ownership walk.
 ///

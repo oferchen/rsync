@@ -443,6 +443,39 @@ pub(in crate::receiver) enum DeletePassPhase {
     Late,
 }
 
+/// Creates a delayed-sweep directory, through the ownership walk where one
+/// exists.
+///
+/// On Unix this issues `mkdirat` per component. glibc lowers `mkdir()` to the
+/// legacy `mkdir(2)` on x86_64, and the daemon worker's seccomp allowlist
+/// admits only the `*at` variants, so a plain `create_dir_all` is refused with
+/// EPERM there while succeeding on aarch64, which has no legacy form to lower
+/// to. Other platforms have neither the ownership walk nor the filter.
+#[cfg(unix)]
+fn sweep_create_dir_all(path: &Path) -> io::Result<()> {
+    fast_io::operator_create_dir_all(path, 0o777)
+}
+
+#[cfg(not(unix))]
+fn sweep_create_dir_all(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+/// Renames a delayed-sweep file, through the ownership walk where one exists.
+///
+/// Unix issues `renameat` for the same reason [`sweep_create_dir_all`] issues
+/// `mkdirat`: the worker's seccomp allowlist omits the legacy `rename(2)` that
+/// glibc's `rename()` lowers to on x86_64.
+#[cfg(unix)]
+fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fast_io::operator_rename(old_path, new_path, true)
+}
+
+#[cfg(not(unix))]
+fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    std::fs::rename(old_path, new_path)
+}
+
 /// Renames all delayed-update files from their staging paths to their final
 /// destinations, removing each emptied staging directory as it goes.
 ///
@@ -482,8 +515,6 @@ pub(in crate::receiver) fn handle_delayed_updates(
     backup_config: Option<crate::disk_commit::BackupConfig>,
     partial_dir: Option<&Path>,
 ) -> i32 {
-    use std::fs;
-
     use crate::generator::io_error_flags::IOERR_GENERAL;
 
     // Mirrors upstream's got_xfer_error: a failed rename here is a transfer
@@ -511,10 +542,10 @@ pub(in crate::receiver) fn handle_delayed_updates(
             // the derived `ENOENT` from the rename rather than the `EACCES`
             // that actually stopped the backup.
             let placed = match backup_path.parent() {
-                Some(parent) if !parent.exists() => fs::create_dir_all(parent),
+                Some(parent) if !parent.exists() => sweep_create_dir_all(parent),
                 _ => Ok(()),
             }
-            .and_then(|()| fs::rename(final_path, &backup_path));
+            .and_then(|()| sweep_rename(final_path, &backup_path));
 
             match placed {
                 Ok(()) => {
@@ -568,7 +599,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
         );
 
         // upstream: receiver.c:546 - do_rename(partialptr, fname)
-        if let Err(e) = fs::rename(staging_path, final_path) {
+        if let Err(e) = sweep_rename(staging_path, final_path) {
             // upstream: rsyserr(FERROR_XFER, ...) sets got_xfer_error ->
             // RERR_PARTIAL (exit 23). On kernels 5.13-5.18 the Landlock
             // sandbox lacks ACCESS_FS_REFER, so this cross-dir rename is
