@@ -21,18 +21,21 @@ mod metadata;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::commit::make_backup;
 pub(super) use self::file_ops::{process_file, process_whole_file};
 
-// Re-exported for the in-module test suite (`use super::*`), which exercises
-// the rename/cross-device/backup helpers and the writer selector directly.
+/// Forces the backup ladder's link and rename tiers onto `EXDEV` for the
+/// guard's lifetime, so a test can exercise the cross-device `copy_file()`
+/// tier (upstream `backup.c:414` `make_backup: COPY`) without a second
+/// filesystem. Shared with the `--delay-updates` sweep's tests, which reach
+/// the same ladder.
 #[cfg(test)]
-use self::commit::ForceExdev;
+pub(crate) use self::commit::ForceExdev;
 #[cfg(all(test, unix))]
 use self::commit::rename_config_sandboxed;
 #[cfg(test)]
 use self::commit::{
-    delay_updates_staging_path, is_cross_device, make_backup, make_backup_copy,
-    rename_with_io_uring_fallback,
+    delay_updates_staging_path, is_cross_device, make_backup_copy, rename_with_io_uring_fallback,
 };
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
