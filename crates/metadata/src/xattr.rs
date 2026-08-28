@@ -33,26 +33,27 @@ use crate::xattr_unix as backend;
 #[cfg(windows)]
 use crate::xattr_windows as backend;
 
-/// Caches the euid check since it does not change during a transfer.
-#[cfg(target_os = "linux")]
-fn is_root() -> bool {
-    use std::sync::OnceLock;
-    static IS_ROOT: OnceLock<bool> = OnceLock::new();
-    *IS_ROOT.get_or_init(|| rustix::process::geteuid().is_root())
-}
-
 /// Returns upstream's `user_only` value for the receiver/local xattr paths.
 ///
-/// upstream: xattrs.c:249 `int user_only = am_sender ? 0 : !am_root;` - the
-/// sender never restricts to the user namespace (see
+/// upstream: xattrs.c:249 `int user_only = am_sender ? 0 : !am_root;` and
+/// xattrs.c:1002 `int user_only = am_root <= 0;` - the sender never restricts
+/// to the user namespace (see
 /// [`XattrRole::user_only`](crate::xattr_send::XattrRole::user_only)); every
 /// receiver-side or local-copy path restricts a non-root process to the
 /// `user.*` namespace, matching upstream's non-root receiver behaviour
-/// (`xattrs.c:830` allows a non-root process to store only the user namespace).
+/// (`xattrs.c:876` allows a non-root process to store only the user namespace).
+///
+/// The privilege test goes through [`crate::am_root`], which reads the cached
+/// **libc** `geteuid` (`identity::is_root`), never a `rustix` raw syscall.
+/// Upstream's `am_root` comes from `MY_UID()` (`rsync.h:1455` = libc
+/// `geteuid()`, sampled at `main.c:1844`), so `fakeroot`'s LD_PRELOAD
+/// interposition is visible to it. A raw syscall reports the real
+/// unprivileged uid under `fakeroot` and would confine the receiver to
+/// `user.*` in exactly the runs where upstream keeps `security.*`/`trusted.*`.
 fn receiver_user_only() -> bool {
     #[cfg(target_os = "linux")]
     {
-        !is_root()
+        !crate::am_root()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1651,6 +1652,86 @@ mod tests {
         assert!(!is_xattr_permitted("security.selinux", true));
         assert!(!is_xattr_permitted("trusted.test", true));
         assert!(!is_xattr_permitted("system.posix_acl_access", true));
+    }
+
+    /// The receiver screen must answer upstream's `am_root`, not a raw euid.
+    ///
+    /// upstream: `xattrs.c:1002` `int user_only = am_root <= 0;` where
+    /// `am_root` is `main.c:1846`'s cached `MY_UID() == ROOT_UID`, and
+    /// `MY_UID()` is the **libc** `geteuid()` (`rsync.h:1455`). `fakeroot`
+    /// interposes that libc symbol, so upstream under `fakeroot` sees
+    /// `am_root == 1` and keeps every namespace but `system.*`. A raw
+    /// `geteuid` syscall is invisible to the interposition, still reports the
+    /// real unprivileged uid, and would drop `security.*`/`trusted.*` on the
+    /// receiver that upstream stores.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn receiver_user_only_answers_the_libc_am_root() {
+        assert_eq!(
+            receiver_user_only(),
+            !crate::am_root(),
+            "the receiver xattr screen must be the negation of the crate's \
+             canonical am_root, which reads the libc geteuid"
+        );
+    }
+
+    /// Under `fakeroot` the receiver screen must open up, as upstream's does.
+    ///
+    /// The two euid sources only disagree under an LD_PRELOAD identity fake,
+    /// so this re-execs the unit-test binary under `fakeroot(1)` and asserts
+    /// there. Without `fakeroot` on `PATH` the check cannot be made at all and
+    /// says so rather than passing quietly.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn receiver_user_only_is_false_under_fakeroot() {
+        const MARKER: &str = "OC_RSYNC_XATTR_FAKEROOT_CHILD";
+        const TEST_PATH: &str = "xattr::tests::receiver_user_only_is_false_under_fakeroot";
+
+        if std::env::var_os(MARKER).is_some() {
+            assert!(
+                crate::am_root(),
+                "fakeroot must fake the libc geteuid; without that the child \
+                 proves nothing"
+            );
+            assert!(
+                !receiver_user_only(),
+                "upstream keeps security.*/trusted.* on a fakeroot receiver \
+                 because am_root is 1 there (xattrs.c:1002)"
+            );
+            return;
+        }
+
+        let Some(fakeroot) = find_in_path("fakeroot") else {
+            eprintln!(
+                "SKIPPED {TEST_PATH}: fakeroot(1) is not on PATH, so the libc \
+                 and raw-syscall effective uids cannot be made to disagree"
+            );
+            return;
+        };
+
+        let exe = std::env::current_exe().expect("locate the unit-test binary");
+        let output = std::process::Command::new(fakeroot)
+            .arg(&exe)
+            .args(["--exact", TEST_PATH, "--nocapture", "--test-threads=1"])
+            .env(MARKER, "1")
+            .output()
+            .expect("re-exec the unit-test binary under fakeroot");
+
+        assert!(
+            output.status.success(),
+            "the fakeroot leg failed:\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Resolves a bare program name against `PATH`, returning the first
+    /// existing candidate. Used to decide whether the `fakeroot` leg can run.
+    #[cfg(target_os = "linux")]
+    fn find_in_path(program: &str) -> Option<std::path::PathBuf> {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(program))
+            .find(|candidate| candidate.is_file())
     }
 
     #[test]
