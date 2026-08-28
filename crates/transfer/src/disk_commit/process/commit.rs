@@ -755,7 +755,7 @@ fn create_backup_path_parents(
 /// under `dest_dir`, the final directory component is created via
 /// [`fast_io::mkdirat_via_sandbox_or_fallback`] so a symlink swap on the
 /// destination root cannot redirect it. Deeper trees, and the no-sandbox case,
-/// go through [`create_dir_all_at`], which is recursive like
+/// go through [`fast_io::operator_create_dir_all`], which is recursive like
 /// `std::fs::create_dir_all` but issues `mkdirat` per component.
 #[cfg(unix)]
 fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
@@ -777,43 +777,7 @@ fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Res
             Err(e) => Err(e),
         };
     }
-    create_dir_all_at(parent)
-}
-
-/// Recursive directory create that issues `mkdirat` for every component.
-///
-/// Mirrors [`std::fs::create_dir_all`]'s contract - build missing ancestors,
-/// treat an existing directory as success - but routes each component through
-/// the ownership walk so the syscall is `mkdirat`, never the legacy
-/// `mkdir(2)`.
-///
-/// The daemon worker's seccomp allowlist deliberately admits only the `*at`
-/// syscall variants (`worker_seccomp_allowlist`, `crates/daemon`). On x86_64
-/// glibc lowers `mkdir()` to the legacy `SYS_mkdir`, which that allowlist
-/// omits, so a bare `create_dir_all` is refused with EPERM; aarch64 has no
-/// legacy form to lower to and succeeds. MEASURED on x86_64 CI: the
-/// `--delay-updates` receiver failed at the `.~tmp~` create with
-/// `errno Some(1)` while the same commit passed on aarch64.
-#[cfg(unix)]
-fn create_dir_all_at(path: &Path) -> io::Result<()> {
-    if path.as_os_str().is_empty() {
-        return Ok(());
-    }
-    match fast_io::operator_mkdir(path, 0o777) {
-        Ok(()) => Ok(()),
-        // A missing ancestor is the only error worth recursing on; every other
-        // failure is reported as-is so a refused component stays refused.
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            let parent = path.parent().ok_or(e)?;
-            create_dir_all_at(parent)?;
-            match fast_io::operator_mkdir(path, 0o777) {
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-                other => other,
-            }
-        }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(e),
-    }
+    fast_io::operator_create_dir_all(parent, 0o777)
 }
 
 #[cfg(not(unix))]

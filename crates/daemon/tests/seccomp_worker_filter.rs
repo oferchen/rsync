@@ -389,8 +389,12 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         if let Err(e) = fast_io::operator_rename(&destination, &backup, true) {
             return report(12, &e);
         }
-        // upstream: receiver.c:709 do_rename(partialptr, fname).
-        if let Err(e) = std::fs::rename(&staged, &destination) {
+        // upstream: receiver.c:709 do_rename(partialptr, fname). The sweep
+        // issues this through the ownership walk (`operator_rename`), so the
+        // probe does too: a bare `std::fs::rename` reaches glibc's wrapper,
+        // lowered to the legacy `rename(2)` on x86_64, which this allowlist
+        // omits in favour of `renameat`.
+        if let Err(e) = fast_io::operator_rename(&staged, &destination, true) {
             return report(13, &e);
         }
         0
