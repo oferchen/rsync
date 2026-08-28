@@ -80,8 +80,8 @@ pub(super) struct CommitOutcome {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1029-1052`: delay_updates stages to partial dir
-/// - `receiver.c:529-557`: `handle_delayed_updates()` bulk rename
+/// - `receiver.c:1285-1314`: delay_updates stages to partial dir
+/// - `receiver.c:685-720`: `handle_delayed_updates()` bulk rename
 pub(super) fn commit_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -103,7 +103,7 @@ pub(super) fn commit_file(
     // inode is rewritten in place, so a rename-to-backup here would move the very
     // file we already overwrote (its pre-transfer contents are gone by commit).
     // Upstream instead COPIES the pre-image aside BEFORE the inplace rewrite
-    // (generator.c:1862,1898); oc mirrors that in `process_file` /
+    // (generator.c:2281,2328); oc mirrors that in `process_file` /
     // `process_whole_file` via `make_backup_copy` prior to the first write.
     let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
@@ -178,7 +178,7 @@ pub(super) fn commit_file(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace && !begin.is_device_target {
-        // upstream: receiver.c:496 gates the in-place ftruncate on
+        // upstream: receiver.c:652 gates the in-place ftruncate on
         // `!IS_DEVICE(file->mode)`, so `--write-devices` never truncates the
         // target device - its data lands via the in-place writes and a
         // block/char device has no length to set (ftruncate would fail EINVAL).
@@ -203,7 +203,7 @@ pub(super) fn commit_file(
         false
     };
     cleanup_guard.keep();
-    // upstream: receiver.c:1035-1037 - once the file is committed, a basis that
+    // upstream: receiver.c:1291-1299 - once the file is committed, a basis that
     // came from the partial directory (FNAMECMP_PARTIAL_DIR) is unlinked and the
     // now-empty partial-dir is rmdir'd via handle_partial_dir(PDIR_DELETE). The
     // removal is unconditional for --partial-dir successes: when no partial
@@ -277,9 +277,9 @@ pub(super) fn delay_updates_staging_path(
 ///   modtime (`cleanup_file->modtime = 0`, `tweak_modtime = 1`) so an
 ///   interrupted partial stands out in `ls` and is not skipped by `--update`.
 ///   Used by the interrupt paths (channel disconnect, `Abort`, `Shutdown`).
-/// - `false` (normal failed-verify keep): upstream `receiver.c:1047` calls
+/// - `false` (normal failed-verify keep): upstream `receiver.c:1309` calls
 ///   `finish_transfer(..., recv_ok, ...)` with `recv_ok == 0`, which maps to
-///   `ATTRS_SKIP_MTIME` (`rsync.c:748-749`), so the retained stub keeps its
+///   `ATTRS_SKIP_MTIME` (`rsync.c:911-912`), so the retained stub keeps its
 ///   recent temp-creation mtime rather than being reset to the epoch.
 ///
 /// `--partial-dir` never zeros the mtime in either case (upstream routes it
@@ -287,10 +287,10 @@ pub(super) fn delay_updates_staging_path(
 ///
 /// # Upstream Reference
 ///
-/// - `cleanup.c:105-115` - `handle_partial_dir()` moves temp to partial-dir
+/// - `cleanup.c:169-170` - `handle_partial_dir()` moves temp to partial-dir
 /// - `cleanup.c:174-180` - signal cleanup zeros modtime for plain `--partial`
-/// - `receiver.c:1047` - normal keep uses `ok_to_set_time = recv_ok` (0 on fail)
-/// - `rsync.c:748-749` - `ok_to_set_time ? ATTRS_ACCURATE_TIME : ATTRS_SKIP_MTIME`
+/// - `receiver.c:1309` - normal keep uses `ok_to_set_time = recv_ok` (0 on fail)
+/// - `rsync.c:911-912` - `ok_to_set_time ? ATTRS_ACCURATE_TIME : ATTRS_SKIP_MTIME`
 pub(super) fn retain_partial_file(
     config: &DiskCommitConfig,
     cleanup_guard: &mut TempFileGuard,
@@ -300,7 +300,7 @@ pub(super) fn retain_partial_file(
     match &config.partial_mode {
         PartialMode::None => {}
         PartialMode::Partial => {
-            // upstream: cleanup.c:130-135 - rename temp file directly to
+            // upstream: cleanup.c:181-182 - finish_transfer() puts the temp at
             // the destination. The incomplete content replaces any existing
             // file at the destination path.
             let temp_path = cleanup_guard.path().to_path_buf();
@@ -311,7 +311,7 @@ pub(super) fn retain_partial_file(
                     // stands out as unfinished in an ls and --update does not
                     // skip it as "up to date". Only for plain --partial, not
                     // --partial-dir (handle_partial_dir() leaves the mtime
-                    // alone). The normal failed-verify keep (receiver.c:1047,
+                    // alone). The normal failed-verify keep (receiver.c:1309,
                     // ok_to_set_time=0 -> ATTRS_SKIP_MTIME) does NOT zero it,
                     // preserving the recent temp-creation mtime - so zero only
                     // when `zero_mtime` is set (the interrupt paths).
@@ -351,7 +351,7 @@ pub(super) fn retain_partial_file(
             }
         }
         PartialMode::PartialDir(dir) => {
-            // upstream: cleanup.c:105-115 - move temp file into partial-dir
+            // upstream: cleanup.c:169-170 - move temp file into partial-dir
             let temp_path = cleanup_guard.path().to_path_buf();
             match cleanup_guard.rename_to_partial_dir(dest_path, dir) {
                 Ok(partial_path) => {
@@ -435,10 +435,10 @@ pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) ->
 /// (`transfer_ops::response.rs`) and the primary #6808 ownership/timestamp
 /// anchoring.
 ///
-/// upstream: `syscall.c:910` `do_rename_at()` opens each slashed path's parent
+/// upstream: `syscall.c:1866` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` (openat2 `RESOLVE_BENEATH`) and issues
-/// `renameat()` against the resulting dirfd, gated on `am_daemon &&
-/// !am_chrooted`.
+/// `renameat()` against the resulting dirfd, gated on `secure_relpath_active()`
+/// (`syscall.c:100`).
 ///
 /// In every other case (no sandbox, or a `--temp-dir`/partial-dir on a
 /// different tree than `dest_dir`) it falls back to the existing io_uring /
@@ -521,18 +521,20 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
 /// `--backup-dir` (or `--backup` suffix landing on another mount) on a
 /// different filesystem than the destination triggers.
 ///
-/// upstream: `backup.c:226` `make_backup()` - after `link_or_rename()` cannot
-/// move the pre-image across the mount (`do_rename_at` fails with `EXDEV`),
-/// rsync falls back to `copy_file()` + unlink (`backup.c:270`). oc reuses the
-/// same `fs::copy` + `fs::remove_file` mechanism the tmp->dest commit uses in
+/// upstream: `backup.c:265` `make_backup_inner()` - after `link_or_rename()`
+/// cannot move the pre-image across the mount (`do_rename_at` fails with
+/// `EXDEV`), rsync falls back to `copy_file()` (`backup.c:401`), leaving the
+/// original for the temp->destination rename to replace. oc reuses the same
+/// `fs::copy` + `fs::remove_file` mechanism the tmp->dest commit uses in
 /// [`rename_with_io_uring_fallback`] (`util1.c:robust_rename()`), so `fs::copy`
 /// carries the mode bits exactly as upstream's `copy_file(..., file->mode)`.
 fn backup_rename_or_copy(old_path: &Path, new_path: &Path) -> io::Result<bool> {
     match backup_rename_syscall(old_path, new_path) {
         Ok(()) => Ok(false),
         Err(e) if is_cross_device(&e) => {
-            // upstream: backup.c:270-284 - copy_file() then keep_backup unlinks
-            // the source; the backup ends up on the other filesystem.
+            // upstream: backup.c:400-416 - the keep_backup copy tier duplicates
+            // the pre-image with copy_file(); oc unlinks the source afterwards so
+            // the backup ends up on the other filesystem.
             fs::copy(old_path, new_path)?;
             fs::remove_file(old_path)?;
             Ok(true)
@@ -652,7 +654,7 @@ impl Drop for ForceExdev {
 /// Otherwise - the common `--backup-dir` case, where the backup tree may live
 /// on a different mount than the destination - it falls back to
 /// [`backup_rename_or_copy`], which renames and, on a cross-device failure,
-/// copies the pre-image and unlinks the original (upstream `backup.c:226`).
+/// copies the pre-image and unlinks the original (upstream `backup.c:265`).
 /// Returns `Ok(true)` when that copy fallback ran so the caller can emit the
 /// upstream `make_backup: COPY` trace instead of `RENAME`.
 #[cfg(unix)]
@@ -706,8 +708,8 @@ fn backup_rename_sandboxed(
 /// error, matching a real `--backup-dir` on another mount where `link(2)` fails
 /// with `EXDEV` before `rename(2)` does.
 ///
-/// upstream: `backup.c:443-449` `make_backup()`; `backup.c:200-207`
-/// `link_or_rename()`; `syscall.c:676` `do_link_at()` under
+/// upstream: `backup.c:443-449` `make_backup()`; `backup.c:239-246`
+/// `link_or_rename()`; `syscall.c:961` `do_link_at()` under
 /// `operator_path_resolve`.
 fn backup_hardlink_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
     #[cfg(test)]
@@ -743,10 +745,10 @@ fn backup_hardlink_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path)
 /// the temp->destination rename to replace. Any failure returns `false` so the
 /// caller falls through to the unchanged rename/copy tier.
 ///
-/// upstream: `backup.c:200-207` - `do_link_at` success traces HLINK and returns
+/// upstream: `backup.c:239-246` - `do_link_at` success traces HLINK and returns
 /// 2; a link failure on a regular file falls through to `do_rename_at`.
-/// upstream: `backup.c:246-255` `make_backup()` - an `EEXIST`/`EISDIR` collision
-/// deletes the stale backup entry and retries `link_or_rename` once.
+/// upstream: `backup.c:318-327` `make_backup_inner()` - an `EEXIST`/`EISDIR`
+/// collision deletes the stale backup entry and retries `link_or_rename` once.
 fn backup_hardlink_tier(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> bool {
     match backup_hardlink_syscall(env, old_path, new_path) {
         Ok(()) => true,
@@ -763,11 +765,11 @@ fn backup_hardlink_tier(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) ->
 /// With `--backup-dir`, each freshly-created subdirectory inherits its
 /// corresponding destination directory's attributes and any non-directory
 /// obstruction is removed, mirroring upstream `copy_valid_path`
-/// (backup.c:61-154) via the shared [`create_backup_dir_parents`] helper; the
+/// (backup.c:88-190) via the shared [`create_backup_dir_parents`] helper; the
 /// leaf `mkdir` stays SEC-1.j sandbox-anchored through the injected
 /// [`create_dir_all_sandboxed`]. Without `--backup-dir` the backup lands
 /// alongside the destination, whose parent already exists, so upstream runs no
-/// `copy_valid_path` (backup.c:159) and a plain create suffices.
+/// `copy_valid_path` (backup.c:195) and a plain create suffices.
 fn create_backup_path_parents(
     parent: &Path,
     backup_config: &BackupConfig,
@@ -828,16 +830,16 @@ fn create_dir_all_sandboxed(_env: BackupEnv<'_>, parent: &Path) -> io::Result<()
 
 /// Creates a backup of the destination file before overwriting.
 ///
-/// Mirrors upstream `backup.c:make_backup()`, called from `rsync.c:739`
+/// Mirrors upstream `backup.c:make_backup()`, called from `rsync.c:897`
 /// `finish_transfer()` as `make_backup(fname, False)`: `link_or_rename()` tries
 /// `do_link_at` first (HLINK, upstream `ret == 2`, the original stays in place
 /// for the temp->destination rename to replace) and only falls back to
 /// `do_rename_at` (RENAME) or the cross-device copy tier (COPY) when the link
 /// cannot be made. Parent directories are created if needed when using
 /// `--backup-dir`. On success, emits the matching `--debug=BACKUP` mechanism
-/// notice (`backup.c:201-202`/`:216-217`/`:284`) and returns a [`BackupNotice`] carrying the
+/// notice (`backup.c:240-241`/`:255-256`/`:414`) and returns a [`BackupNotice`] carrying the
 /// destination-relative paths so the main thread can emit upstream's
-/// `INFO_GTE(BACKUP, 1)` line (`backup.c:352`). The disk thread cannot emit
+/// `INFO_GTE(BACKUP, 1)` line (`backup.c:432`). The disk thread cannot emit
 /// the info line directly because its thread-local [`logging::VerbosityConfig`]
 /// is never seeded with the user's `--info=backup` selection.
 pub(super) fn make_backup(
@@ -861,14 +863,14 @@ pub(super) fn make_backup(
         create_backup_path_parents(parent, backup_config, env)?;
     }
 
-    // upstream: backup.c:191-207 - `prefer_rename` is False here (rsync.c:739),
+    // upstream: backup.c:230-246 - `prefer_rename` is False here (rsync.c:897),
     // so `do_link_at` runs first. The tier is limited to a regular pre-image:
     // upstream gates symlinks and specials on CAN_HARDLINK_SYMLINK /
-    // CAN_HARDLINK_SPECIAL (backup.c:192-199), and this commit path only ever
+    // CAN_HARDLINK_SPECIAL (backup.c:231-238), and this commit path only ever
     // replaces a regular destination anyway.
     let is_regular = fs::symlink_metadata(file_path).is_ok_and(|m| m.is_file());
     if is_regular && backup_hardlink_tier(env, file_path, &backup_path) {
-        // upstream: backup.c:201-202 - DEBUG_GTE(BACKUP, 1) HLINK success. The
+        // upstream: backup.c:240-241 - DEBUG_GTE(BACKUP, 1) HLINK success. The
         // original is deliberately left in place (upstream returns 2 and
         // finish_transfer does not redirect fnamecmp); the temp->destination
         // rename that follows replaces it.
@@ -878,11 +880,11 @@ pub(super) fn make_backup(
 
     let was_copy = backup_rename_sandboxed(env, file_path, &backup_path)?;
     if was_copy {
-        // upstream: backup.c:284 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
+        // upstream: backup.c:414 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
         // successful." when the cross-device copy tier moved the pre-image.
         trace_make_backup_copy(&file_path.display().to_string());
     } else {
-        // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
+        // upstream: backup.c:255-256 - DEBUG_GTE(BACKUP, 1) on the RENAME success
         // branch of link_or_rename.
         trace_make_backup_rename(&file_path.display().to_string());
     }
@@ -891,7 +893,7 @@ pub(super) fn make_backup(
 
 /// Builds the destination-relative [`BackupNotice`] for a completed backup.
 ///
-/// upstream: `backup.c:352` - INFO_GTE(BACKUP, 1) fires on the `success:` label
+/// upstream: `backup.c:432` - INFO_GTE(BACKUP, 1) fires on the `success:` label
 /// for every successful backup, whichever mechanism ran. Paths are displayed
 /// relative to the destination root to match upstream test assertions
 /// (`testsuite/backup.test`). The actual `info_log!` emission happens on the
@@ -918,15 +920,15 @@ fn backup_notice(
 /// rewritten in place rather than replaced by a temp+rename.
 ///
 /// upstream: backup.c make_backup() inplace copy path - the generator makes the
-/// backup a COPY (`generator.c:1862` `copy_file(fname, backupptr, ...)`, and the
-/// delta twin at `generator.c:1898`) BEFORE the receiver rewrites the
+/// backup a COPY (`generator.c:2281` `copy_file(fname, backupptr, ...)`, and the
+/// delta twin at `generator.c:2328`) BEFORE the receiver rewrites the
 /// destination in place, keeping `fnamecmp_type == FNAMECMP_FNAME`. A plain
 /// rename-to-backup would move the very inode we are about to update, so the
 /// pre-image must be duplicated first. Unlike the rename path this does NOT emit
 /// the `make_backup: RENAME` debug line (upstream's inplace copy bypasses
 /// `make_backup()` and so emits no `DEBUG_GTE(BACKUP, 1)` trace), but it still
 /// returns a [`BackupNotice`] so the main thread emits the same
-/// `INFO_GTE(BACKUP, 1)` "backed up X to Y" line (`generator.c:1990-1992`).
+/// `INFO_GTE(BACKUP, 1)` "backed up X to Y" line (`generator.c:2448-2450`).
 ///
 /// Called before the first inplace write; the caller has already confirmed
 /// `begin.is_inplace`. Returns `Ok(None)` when the destination does not yet
@@ -952,16 +954,16 @@ pub(super) fn make_backup_copy(
         create_backup_path_parents(parent, backup_config, env)?;
     }
 
-    // upstream: generator.c:1866 copy_file() - duplicate the pre-transfer bytes
+    // upstream: generator.c:2295 copy_file() - duplicate the pre-transfer bytes
     // into the backup, leaving the original inode in place to be updated. A
     // pre-existing backup at this path is overwritten (upstream robust_unlinks
-    // it at generator.c:1901); the O_TRUNC create reaches the same end state.
+    // it at generator.c:2340); the O_TRUNC create reaches the same end state.
     // The backup path is operator-named and resolves through the ownership
     // walk: generator.c:2283 raises `operator_path_resolve` around this copy
     // precisely because the in-place backup bypasses `make_backup()`.
     copy_pre_image_to_backup(file_path, &backup_path)?;
 
-    // upstream: generator.c:1990-1992 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+    // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
     // `info_log!` emission happens on the main thread (see
     // `crate::pipeline::receiver::emit_backup_notice`).
