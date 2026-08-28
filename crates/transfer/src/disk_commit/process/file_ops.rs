@@ -819,7 +819,7 @@ fn make_inplace_backup(
     let Some(ref backup_config) = config.backup else {
         return Ok(None);
     };
-    make_backup_copy(&begin.file_path, backup_config, config)
+    make_backup_copy(&begin.file_path, backup_config, config.backup_env())
 }
 
 /// Stats the destination before an inplace write so `dest_mode()` keeps its
