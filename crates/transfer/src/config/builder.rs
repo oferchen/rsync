@@ -72,7 +72,7 @@ pub struct ServerConfigBuilder {
     reference_directories: Vec<ReferenceDirectory>,
     deletion: DeletionConfig,
     write: WriteConfig,
-    checksum_seed: Option<u32>,
+    checksum_seed: Option<i32>,
     checksum_choice: Option<protocol::ChecksumAlgorithm>,
     block_size: Option<NonZeroU32>,
     trust_sender: bool,
@@ -350,7 +350,7 @@ impl ServerConfigBuilder {
     }
 
     /// Sets an optional user-specified checksum seed.
-    pub fn checksum_seed(&mut self, seed: Option<u32>) -> &mut Self {
+    pub fn checksum_seed(&mut self, seed: Option<i32>) -> &mut Self {
         self.checksum_seed = seed;
         self
     }

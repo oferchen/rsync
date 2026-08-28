@@ -101,7 +101,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) drop_devices: bool,
     pub(crate) force_replacements: bool,
     pub(crate) checksum: bool,
-    pub(crate) checksum_seed: Option<u32>,
+    pub(crate) checksum_seed: Option<i32>,
     pub(crate) size_only: bool,
     pub(crate) ignore_times: bool,
     pub(crate) ignore_existing: bool,

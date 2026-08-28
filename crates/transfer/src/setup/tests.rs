@@ -911,28 +911,28 @@ fn setup_protocol_server_seed_zero_uses_time_based_generation() {
 }
 
 #[test]
-fn setup_protocol_server_max_u32_seed() {
-    // --checksum-seed=4294967295 (u32::MAX) should work
+fn setup_protocol_server_negative_seed() {
+    // upstream: options.c:151 `int checksum_seed` - `--checksum-seed=-1` is a
+    // legal value an upstream client can forward (options.c:3047 prints `%d`),
+    // so the server must carry it to the wire unchanged rather than refuse it.
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
     let mut stdout = Vec::new();
 
-    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(u32::MAX));
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(-1));
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
-        .expect("setup with max seed should succeed");
+        .expect("setup with negative seed should succeed");
 
-    // u32::MAX as i32 is -1
     assert_eq!(
-        result.checksum_seed,
-        u32::MAX as i32,
-        "u32::MAX seed should be transmitted as i32 (-1)"
+        result.checksum_seed, -1_i32,
+        "a negative seed must survive the exchange verbatim"
     );
 
     let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
     assert_eq!(
         written_seed, -1_i32,
-        "Wire representation of u32::MAX is -1 as i32"
+        "wire representation of seed -1 is the i32 -1"
     );
 }
 
@@ -959,9 +959,9 @@ fn setup_protocol_client_reads_fixed_seed_from_server() {
 
 #[test]
 fn setup_protocol_client_reads_negative_seed_from_server() {
-    // Server may send a negative i32 seed (from u32::MAX cast)
+    // Server may send a negative i32 seed
     let protocol = ProtocolVersion::try_from(29).unwrap();
-    let test_seed: i32 = -1; // This is what u32::MAX becomes
+    let test_seed: i32 = -1;
     let seed_bytes = test_seed.to_le_bytes();
 
     let mut stdin = &seed_bytes[..];
@@ -1407,7 +1407,7 @@ impl ChecksumSeedExchanger for MockNegotiator {
     fn write_seed(
         &self,
         _writer: &mut dyn std::io::Write,
-        _fixed_seed: Option<u32>,
+        _fixed_seed: Option<i32>,
     ) -> std::io::Result<i32> {
         Ok(self.fixed_seed)
     }

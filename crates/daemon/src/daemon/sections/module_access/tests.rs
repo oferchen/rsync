@@ -1539,7 +1539,7 @@ mod module_access_tests {
         let args = daemon_argv("-logDtpr", &["--checksum-seed=-5"]);
         let mut config = ServerConfig::default();
         assert!(apply_long_form_args(&args, &mut config).is_none());
-        assert_eq!(config.checksum_seed, Some(-5i32 as u32));
+        assert_eq!(config.checksum_seed, Some(-5));
     }
 
     // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the

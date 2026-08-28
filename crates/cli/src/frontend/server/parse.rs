@@ -124,16 +124,21 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
 
 /// Parses a `--checksum-seed=NUM` value from the server argument list.
 ///
-/// upstream: options.c - `--checksum-seed=NUM` parsed in `server_options()`.
-pub(super) fn parse_server_checksum_seed(value: &str) -> Result<u32, String> {
+/// upstream: options.c:151 declares `int checksum_seed`, a signed global.
+/// The popt entry at options.c:861 binds it with `POPT_ARG_INT`, so the server
+/// side accepts the full signed range, and the client emits it at
+/// options.c:3047 with `"--checksum-seed=%d"`. A negative seed therefore
+/// reaches us as `--checksum-seed=-1` and must not be refused.
+pub(super) fn parse_server_checksum_seed(value: &str) -> Result<i32, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("--checksum-seed value must not be empty".to_owned());
     }
-    trimmed.parse::<u32>().map_err(|_| {
+    trimmed.parse::<i32>().map_err(|_| {
         format!(
-            "invalid --checksum-seed value '{value}': must be 0..{}",
-            u32::MAX
+            "invalid --checksum-seed value '{value}': must be {}..{}",
+            i32::MIN,
+            i32::MAX
         )
     })
 }

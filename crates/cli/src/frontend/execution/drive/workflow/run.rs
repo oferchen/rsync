@@ -1200,12 +1200,11 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
 /// parsed `--checksum-seed=N` (options.c:847, an `int` defaulting to 0) is only
 /// treated as user-supplied when it is non-zero. An explicit `--checksum-seed=0`
 /// is indistinguishable from an unset seed and therefore derives a fresh one,
-/// exactly like omitting the flag. The bit pattern of `N` is preserved across
-/// the `u32 -> i32` cast so that seeds above `i32::MAX` round-trip through the
-/// batch header verbatim.
-fn explicit_batch_seed(parsed: Option<u32>) -> Option<i32> {
+/// exactly like omitting the flag. `N` is already an `i32`, matching upstream's
+/// `int checksum_seed` (options.c:151), so it reaches the batch header verbatim.
+fn explicit_batch_seed(parsed: Option<i32>) -> Option<i32> {
     match parsed {
-        Some(n) if n != 0 => Some(n as i32),
+        Some(n) if n != 0 => Some(n),
         _ => None,
     }
 }
@@ -1336,14 +1335,17 @@ mod tests {
         assert_eq!(explicit_batch_seed(Some(12345)), Some(12345));
     }
 
-    /// Seeds above `i32::MAX` must round-trip by bit pattern, matching upstream's
-    /// `int checksum_seed` storage.
+    /// A negative seed must reach the batch header verbatim. upstream:
+    /// options.c:151 stores the seed in an `int` and io.c:2524
+    /// `write_int(batch_fd, checksum_seed)` writes those same 32 bits, so a
+    /// batch oc-rsync writes stays readable by upstream `--read-batch`.
     #[test]
-    fn explicit_large_seed_preserves_bit_pattern() {
+    fn explicit_negative_seed_flows_through() {
         assert_eq!(
-            explicit_batch_seed(Some(0xDEAD_BEEF)),
+            explicit_batch_seed(Some(0xDEAD_BEEFu32 as i32)),
             Some(0xDEAD_BEEFu32 as i32)
         );
+        assert_eq!(explicit_batch_seed(Some(-1)), Some(-1));
     }
 
     /// upstream: compat.c:823 `if (!checksum_seed)` treats an explicit
