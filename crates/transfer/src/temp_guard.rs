@@ -576,15 +576,20 @@ impl TempFileGuard {
             io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename")
         })?;
 
-        // Create the partial directory if it does not exist.
+        // Create the partial directory through the shared owner, which runs
+        // upstream's confined reuse probe before the confined `mkdirat`
+        // (util1.c:1518-1530 `handle_partial_dir(PDIR_CREATE)`). A bare
+        // `parent.exists()` guard here would be a FOLLOWING stat, skipping the
+        // create - and therefore the walk - on exactly the case that matters:
+        // a foreign-owned symlink already standing at the partial-dir name.
+        // The `?` keeps the create a precondition, so a refusal aborts the
+        // retention instead of renaming into the refused location.
         if let Some(parent) = partial_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
+            engine::create_partial_dir(parent)?;
         }
 
         // Rename temp file to the partial path, with cross-device fallback.
-        match fs::rename(self.path(), &partial_path) {
+        match partial_dir_rename(self.path(), &partial_path) {
             Ok(()) => {
                 self.keep_on_drop = true;
                 Ok(partial_path)
@@ -631,6 +636,28 @@ pub fn partial_dir_fname(dest_path: &Path, partial_dir: &Path) -> Option<PathBuf
 /// with the engine local-copy commit guard and the disk-commit path.
 fn is_cross_device_error(e: &io::Error) -> bool {
     fast_io::is_cross_device(e)
+}
+
+/// Renames a temp file into the `--partial-dir` through the ownership walk
+/// where one exists.
+///
+/// Unix issues `renameat` for the same reason
+/// [`engine::create_partial_dir`] issues `mkdirat`: upstream wraps the whole
+/// retention in `operator_path_resolve` (util1.c:1518-1530), so a foreign-owned
+/// symlink on the way to the partial dir cannot redirect the staged file - a
+/// complete copy of the source - out of the tree. It is also what the daemon
+/// worker's seccomp allowlist admits: that filter carries only the `*at`
+/// variants, and glibc lowers `rename()` to the legacy `rename(2)` on x86_64.
+///
+/// Other platforms have neither the ownership walk nor the filter.
+#[cfg(unix)]
+fn partial_dir_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fast_io::operator_rename(old_path, new_path, true)
+}
+
+#[cfg(not(unix))]
+fn partial_dir_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fs::rename(old_path, new_path)
 }
 
 /// Commits a temp file to its final destination on Windows with a
