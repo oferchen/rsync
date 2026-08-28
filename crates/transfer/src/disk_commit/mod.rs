@@ -39,3 +39,14 @@ pub use self::config::{
     ENV_CHANNEL_CAPACITY, PartialMode,
 };
 pub use self::thread::{DiskThreadHandle, spawn_disk_thread};
+
+/// The backup ladder and the fields it borrows, shared with the
+/// `--delay-updates` sweep.
+///
+/// upstream: `receiver.c:694` `handle_delayed_updates()` and `rsync.c:739`
+/// `finish_transfer()` both call the same `make_backup(fname, False)`, so the
+/// sweep is not a second implementation - it is a second caller.
+pub(crate) use self::config::BackupEnv;
+#[cfg(test)]
+pub(crate) use self::process::ForceExdev;
+pub(crate) use self::process::make_backup;
