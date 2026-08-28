@@ -33,6 +33,7 @@ use crate::daemon::{
     // From sections/cli_args.rs
     ProgramName,
     RERR_SYNTAX_EXIT_CODE,
+    RERR_UNSUPPORTED_EXIT_CODE,
     // From runtime_options.rs
     RuntimeOptions,
     TestSecretsEnvOverride,
