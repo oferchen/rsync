@@ -1360,9 +1360,10 @@ impl GeneratorContext {
     /// accumulated error state.
     ///
     /// Mirrors upstream `successful_send()` (sender.c:395): the source is
-    /// re-stat'd (`do_stat` under `--copy-links`, else `do_lstat`) and is only
-    /// unlinked when it still matches the size and modification time recorded in
-    /// the file list. A vanished source (`ENOENT`) is the benign "already
+    /// re-stat'd through a confined parent descriptor (`do_stat_atfd` under
+    /// `--copy-links`, else `do_lstat_atfd`) and is only unlinked - through that
+    /// same descriptor - when it still matches the size and modification time
+    /// recorded in the file list. A vanished source (`ENOENT`) is the benign "already
     /// removed" notice (`FINFO`); a re-stat failure, a source that changed since
     /// it entered the file list, or an unlink failure is an `FERROR_XFER`, which
     /// upstream turns into `got_xfer_error` -> exit 23 (`RERR_PARTIAL`) without
@@ -1385,8 +1386,6 @@ impl GeneratorContext {
         source_path: &Path,
         recorded: RecordedSourceIdentity,
     ) -> i32 {
-        use super::super::io_error_flags::IOERR_GENERAL;
-
         // upstream: sender.c:405-406 - bail before any FS calls when the flag is off.
         if !self.config.flags.remove_source_files {
             return 0;
@@ -1398,82 +1397,11 @@ impl GeneratorContext {
             return 0;
         }
 
-        // upstream: sender.c:426-428 - re-stat the source (do_stat under
-        // --copy-links, else do_lstat) before removing it, so a source that
-        // vanished or changed since it entered the file list is never unlinked.
-        let restat = if self.config.flags.copy_links {
-            std::fs::metadata(source_path)
-        } else {
-            std::fs::symlink_metadata(source_path)
-        };
-        let current = match restat {
-            Ok(meta) => meta,
-            // upstream: sender.c:456-457 - ENOENT is the benign FINFO notice.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                info_log!(
-                    Remove,
-                    1,
-                    "sender file already removed: {}",
-                    source_path.display()
-                );
-                return 0;
-            }
-            // upstream: sender.c:429-430,459 - any other re-lstat failure is
-            // rsyserr(FERROR_XFER, ...), setting got_xfer_error -> exit 23.
-            Err(error) => {
-                eprintln!("{}", sender_op_failure("re-lstat", source_path, &error));
-                return IOERR_GENERAL;
-            }
-        };
-
-        // upstream: sender.c:442-451 - refuse to remove a source that changed
-        // size or modification time since it entered the file list.
-        let (size, mtime, mtime_nsec) = stat_identity(&current);
-        if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
-            eprintln!(
-                "ERROR: Skipping sender remove for changed file: {}",
-                source_path.display()
-            );
-            return IOERR_GENERAL;
-        }
-
-        // upstream: sender.c:453 - do_unlink(fname) once every guard passed.
-        //
-        // Routed through `fast_io::unlink_path` rather than
-        // `std::fs::remove_file`: the latter lowers to the legacy `unlink(2)`,
-        // which the daemon worker seccomp allowlist does not admit, so a
-        // sandboxed daemon sender failed every removal with EPERM while every
-        // other syscall on the path succeeded. `unlinkat(AT_FDCWD, ..)`
-        // resolves identically to `unlink(2)` - this is a syscall-number
-        // substitution, NOT confinement. Fd-anchoring this site the way 3.5.0
-        // does is tracked as task 1043; see `unlink_path`'s doc comment.
-        #[cfg(unix)]
-        let removal = fast_io::unlink_path(source_path, fast_io::UnlinkFlags::File);
-        #[cfg(not(unix))]
-        let removal = std::fs::remove_file(source_path);
-        match removal {
-            Ok(()) => {
-                // upstream: sender.c:461-462 - INFO_GTE(REMOVE,1) success notice.
-                info_log!(Remove, 1, "removing source {}", source_path.display());
-                0
-            }
-            // upstream: sender.c:456-457 - ENOENT after the guards is still benign.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                info_log!(
-                    Remove,
-                    1,
-                    "sender file already removed: {}",
-                    source_path.display()
-                );
-                0
-            }
-            // upstream: sender.c:454,459 - rsyserr(FERROR_XFER, ...) on
-            // unlink failure sets got_xfer_error -> exit 23.
-            Err(error) => {
-                eprintln!("{}", sender_op_failure("remove", source_path, &error));
-                IOERR_GENERAL
-            }
-        }
+        // upstream: sender.c:408-455 - the parent resolve, the fd-relative
+        // re-stat and the unlink are ONE decision about ONE directory entry,
+        // so they live together in a free function the guard tests drive
+        // directly.
+        remove_confirmed_source(source_path, recorded, self.config.flags.copy_links)
     }
 
     /// Runs the deferred `--remove-source-files` unlink for a file the peer has
@@ -1603,6 +1531,174 @@ const fn source_changed_since_flist(
 /// upstream: sender.c:745 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
 fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
     std::fs::metadata(source_path).is_ok_and(|meta| meta.len() < flist_len)
+}
+
+/// Re-stats a confirmed source through a confined parent descriptor and unlinks
+/// it through that same descriptor.
+///
+/// This is the body of upstream `successful_send()` from its parent resolve
+/// down to its unlink, with upstream's three outcomes preserved:
+///
+/// - the walk resolves a parent (`dfd >= 0`): the re-stat is `fstatat` against
+///   that descriptor and the removal is `unlinkat` against it, so the entry
+///   confirmed is provably the entry removed - no path component is re-resolved
+///   in between, and a directory symlink swapped in over the parent after the
+///   stat cannot redirect the unlink;
+/// - the walk declines (`dfd < 0` with `errno == 0`, i.e. `insecure links = yes`
+///   or `--insecure-links`): the pre-3.5.0 path-based `lstat` + `unlink` pair,
+///   which is what the opt-out asks for;
+/// - the walk refuses (`dfd < 0` with `errno` set): `failed_op =
+///   "secure-open-parent"`, reported like any other failure and never silently
+///   downgraded to the path-based removal.
+///
+/// The re-stat compares exactly what upstream compares - size, whole-second
+/// mtime, and the sub-second component when the file list carried one - and
+/// nothing else. It is deliberately NOT a `(dev, ino)` comparison: the file
+/// list records no inode to compare against, and upstream's one dev/ino test
+/// here is the separate `local_server` guard that refuses to delete the
+/// *destination* file, which reads the receiver's dev/ino off the wire and
+/// lives on the local-copy side.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/sender.c:416` - `dfd = secure_sender_parent_fd(file, fname, &bname)`
+/// - `rsync-3.5.0/sender.c:421-425` - the `secure-open-parent` failure arm
+/// - `rsync-3.5.0/sender.c:426-428` - `do_stat_atfd` / `do_lstat_atfd` on `dfd`
+/// - `rsync-3.5.0/sender.c:442-451` - the size/mtime changed-file guard
+/// - `rsync-3.5.0/sender.c:453` - `secure_remove_source_file(dfd, bname)`
+/// - `rsync-3.5.0/sender.c:201-203` - that function, `do_unlink_atfd(dfd, bname, 0)`
+/// - `rsync-3.5.0/sender.c:455-459` - the shared `failed:` label, where `ENOENT`
+///   from ANY of the three operations is the benign "already removed" notice
+#[cfg(unix)]
+#[must_use]
+fn remove_confirmed_source(
+    source_path: &Path,
+    recorded: RecordedSourceIdentity,
+    copy_links: bool,
+) -> i32 {
+    use std::os::fd::AsFd as _;
+
+    use super::super::io_error_flags::IOERR_GENERAL;
+
+    // upstream: sender.c:416 - resolve the parent ONCE. Both the re-stat and
+    // the unlink below run against this one descriptor.
+    let parent = match fast_io::ConfinedFallback::confined().parent_at(source_path) {
+        Ok(parent) => parent,
+        // upstream: sender.c:421-425 + 455-459 - a refused parent is
+        // failed_op = "secure-open-parent", which shares the `failed:` label,
+        // and therefore the ENOENT-is-benign arm, with the other two failures.
+        Err(error) => return report_removal_failure("secure-open-parent", source_path, &error),
+    };
+
+    // upstream: sender.c:426-428 - do_stat_atfd under --copy-links, else
+    // do_lstat_atfd; the path-based pair only on the declined arm.
+    let restat = match &parent {
+        Some((dirfd, leaf)) => {
+            let at = if copy_links {
+                fast_io::fstatat_follow(dirfd.as_fd(), leaf)
+            } else {
+                fast_io::fstatat_nofollow(dirfd.as_fd(), leaf)
+            };
+            at.map(|meta| (meta.size(), meta.mtime(), meta.mtime_nsec() as u32))
+        }
+        None => if copy_links {
+            std::fs::metadata(source_path)
+        } else {
+            std::fs::symlink_metadata(source_path)
+        }
+        .map(|meta| stat_identity(&meta)),
+    };
+    let (size, mtime, mtime_nsec) = match restat {
+        Ok(identity) => identity,
+        // upstream: sender.c:429-430,455-459 - ENOENT is the benign FINFO
+        // notice, anything else is rsyserr(FERROR_XFER) -> exit 23.
+        Err(error) => return report_removal_failure("re-lstat", source_path, &error),
+    };
+
+    // upstream: sender.c:442-451 - refuse to remove a source that changed size
+    // or modification time since it entered the file list.
+    if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
+        eprintln!(
+            "ERROR: Skipping sender remove for changed file: {}",
+            source_path.display()
+        );
+        return IOERR_GENERAL;
+    }
+
+    // upstream: sender.c:453 - secure_remove_source_file(dfd, bname) through the
+    // very descriptor the re-stat used, or do_unlink(fname) on the declined arm.
+    let removal = match &parent {
+        Some((dirfd, leaf)) => fast_io::unlinkat(dirfd.as_fd(), leaf, fast_io::UnlinkFlags::File),
+        None => fast_io::unlink_path(source_path, fast_io::UnlinkFlags::File),
+    };
+    match removal {
+        Ok(()) => {
+            // upstream: sender.c:461-462 - INFO_GTE(REMOVE,1) success notice.
+            info_log!(Remove, 1, "removing source {}", source_path.display());
+            0
+        }
+        Err(error) => report_removal_failure("remove", source_path, &error),
+    }
+}
+
+/// Windows has neither the `*at` family nor the ownership walk, so the removal
+/// stays the path-based pair upstream itself uses on its declined arm.
+#[cfg(not(unix))]
+#[must_use]
+fn remove_confirmed_source(
+    source_path: &Path,
+    recorded: RecordedSourceIdentity,
+    copy_links: bool,
+) -> i32 {
+    use super::super::io_error_flags::IOERR_GENERAL;
+
+    let restat = if copy_links {
+        std::fs::metadata(source_path)
+    } else {
+        std::fs::symlink_metadata(source_path)
+    };
+    let current = match restat {
+        Ok(meta) => meta,
+        Err(error) => return report_removal_failure("re-lstat", source_path, &error),
+    };
+
+    let (size, mtime, mtime_nsec) = stat_identity(&current);
+    if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
+        eprintln!(
+            "ERROR: Skipping sender remove for changed file: {}",
+            source_path.display()
+        );
+        return IOERR_GENERAL;
+    }
+
+    match std::fs::remove_file(source_path) {
+        Ok(()) => {
+            info_log!(Remove, 1, "removing source {}", source_path.display());
+            0
+        }
+        Err(error) => report_removal_failure("remove", source_path, &error),
+    }
+}
+
+/// Upstream's shared `failed:` label: `ENOENT` from the parent resolve, the
+/// re-stat or the unlink alike is the benign "already removed" notice and no
+/// error bit; anything else is `rsyserr(FERROR_XFER, ...)`, which upstream
+/// turns into `got_xfer_error` -> exit 23.
+///
+/// upstream: `rsync-3.5.0/sender.c:455-459`
+#[must_use]
+fn report_removal_failure(op: &str, source_path: &Path, error: &io::Error) -> i32 {
+    if error.kind() == io::ErrorKind::NotFound {
+        info_log!(
+            Remove,
+            1,
+            "sender file already removed: {}",
+            source_path.display()
+        );
+        return 0;
+    }
+    eprintln!("{}", sender_op_failure(op, source_path, error));
+    super::super::io_error_flags::IOERR_GENERAL
 }
 
 /// Extracts `(size, mtime_seconds, mtime_nanoseconds)` from a re-stat result in
@@ -1842,6 +1938,162 @@ mod sender_remove_guard_tests {
         assert_eq!(size, 11);
         let r = recorded(size, mtime, mtime_nsec);
         assert!(!source_changed_since_flist(r, size, mtime, mtime_nsec));
+    }
+}
+
+/// The `--remove-source-files` unlink must land on the entry the re-stat
+/// confirmed, and must not be steerable out of the confinement root by a
+/// directory symlink planted above the leaf.
+///
+/// These cells install a process-global confinement session
+/// (`fast_io::confinement::install_session`), which is sound only because
+/// nextest runs one process per test.
+///
+/// # Why the fixture uses a symlink the test itself owns
+///
+/// The ownership walk deliberately FOLLOWS a symlink owned by root or by our
+/// own euid - that is the operator's own layout, and refusing it would break
+/// every ordinary deployment. So a non-root fixture cannot make the walk refuse
+/// on ownership grounds, and a cell built that way would be inert. What it can
+/// exercise is the other half of the same walk: the confinement-root judgement,
+/// which asks where the leaf LANDS and does not care who owns the link. That is
+/// exactly upstream's daemon arm, where `secure_sender_parent_fd()` anchors at
+/// `module_dir` so a parent flipped to point outside the module cannot be
+/// walked through.
+///
+/// upstream: `rsync-3.5.0/sender.c:395` `successful_send()`
+#[cfg(all(test, unix))]
+mod sender_remove_confinement_tests {
+    use super::{RecordedSourceIdentity, remove_confirmed_source, stat_identity};
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+    use std::path::Path;
+
+    /// Publish `root` as the session's confinement root, the way a daemon
+    /// publishes its module root before serving a request.
+    fn confine_to(root: &Path) {
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(root.to_path_buf()),
+        });
+    }
+
+    /// The identity the file list would have recorded for `path`.
+    fn recorded_for(path: &Path) -> RecordedSourceIdentity {
+        let meta = std::fs::symlink_metadata(path).expect("stat the source");
+        let (size, mtime, mtime_nsec) = stat_identity(&meta);
+        RecordedSourceIdentity {
+            size,
+            mtime,
+            mtime_nsec,
+        }
+    }
+
+    /// A parent component flipped to point outside the confinement root must
+    /// not be walked through, so the file it leads to is NOT the file removed.
+    ///
+    /// WHY this matters and not merely "an unlink failed": the sender decided
+    /// to delete an entry inside the module. Resolving that decision through
+    /// `AT_FDCWD` on the path string re-walks every component at unlink time,
+    /// so whoever controls a parent directory name controls which inode the
+    /// deletion lands on - here, a file the transfer never touched and that
+    /// lives outside the served module entirely. The pre-fix code removes it.
+    #[test]
+    fn a_parent_symlink_out_of_the_root_cannot_steer_the_removal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("module");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).expect("mkdir module");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        let victim = outside.join("data.bin");
+        std::fs::write(&victim, b"not ours to delete").expect("write the victim");
+        // The parent the sender's path names, pointing out of the module.
+        std::os::unix::fs::symlink("../outside", root.join("sub")).expect("plant the symlink");
+        let spelled = root.join("sub").join("data.bin");
+        // Recorded identity MATCHES, so the changed-file guard cannot be what
+        // saves the victim - only the confined resolve can.
+        let recorded = recorded_for(&spelled);
+
+        confine_to(&root);
+        let io_error = remove_confirmed_source(&spelled, recorded, false);
+
+        assert!(
+            victim.exists(),
+            "the out-of-root file was removed: the unlink followed the planted parent symlink"
+        );
+        assert_ne!(
+            io_error, 0,
+            "a refused parent is upstream's secure-open-parent failure (FERROR_XFER -> exit 23)"
+        );
+    }
+
+    /// The companion that keeps the cell above honest: an ordinary source
+    /// inside the root is still removed, and reports no error.
+    ///
+    /// Without this, "confine everything" and "refuse everything" would look
+    /// identical - and refusing every removal would silently turn
+    /// `--remove-source-files` into a no-op.
+    #[test]
+    fn an_ordinary_in_root_source_is_still_removed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("module");
+        std::fs::create_dir_all(root.join("sub")).expect("mkdir module/sub");
+        let source = root.join("sub").join("data.bin");
+        std::fs::write(&source, b"sent and confirmed").expect("write the source");
+        let recorded = recorded_for(&source);
+
+        confine_to(&root);
+        let io_error = remove_confirmed_source(&source, recorded, false);
+
+        assert_eq!(io_error, 0, "an in-root removal must report no error");
+        assert!(!source.exists(), "the confirmed source was not removed");
+    }
+
+    /// The fd-relative re-stat must still be a re-stat: a source rewritten
+    /// since it entered the file list is kept, exactly as on the path-based
+    /// arm (sender.c:442-451). A stat that compared nothing would delete it.
+    #[test]
+    fn a_source_that_changed_since_the_flist_is_kept() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("module");
+        std::fs::create_dir_all(root.join("sub")).expect("mkdir module/sub");
+        let source = root.join("sub").join("data.bin");
+        std::fs::write(&source, b"short").expect("write the source");
+        let mut recorded = recorded_for(&source);
+        // The file list saw a longer file than the one on disk now.
+        recorded.size += 4096;
+
+        confine_to(&root);
+        let io_error = remove_confirmed_source(&source, recorded, false);
+
+        assert_ne!(io_error, 0, "a changed source is FERROR_XFER -> exit 23");
+        assert!(source.exists(), "a changed source must not be removed");
+    }
+
+    /// A source that vanished before the confirmation arrived is upstream's
+    /// benign "already removed" notice, not an error bit - the shared `failed:`
+    /// label folds `ENOENT` from the parent resolve and the re-stat alike into
+    /// the same `FINFO` (sender.c:455-458).
+    #[test]
+    fn a_vanished_source_is_not_an_error() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("module");
+        std::fs::create_dir_all(root.join("sub")).expect("mkdir module/sub");
+        let source = root.join("sub").join("data.bin");
+        std::fs::write(&source, b"transient").expect("write the source");
+        let recorded = recorded_for(&source);
+        std::fs::remove_file(&source).expect("the source vanishes");
+
+        confine_to(&root);
+
+        assert_eq!(
+            remove_confirmed_source(&source, recorded, false),
+            0,
+            "ENOENT is the benign FINFO notice, never an error bit"
+        );
     }
 }
 
