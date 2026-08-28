@@ -471,12 +471,24 @@ fn should_warn_fd_exhaustion(err: &io::Error, warned: &AtomicBool) -> bool {
 ///
 /// # Descriptor exhaustion
 ///
-/// The carrier holds one dirfd per live path component, so a deep descent
-/// can exhaust the open-file limit where a single path-based `open()`
-/// would not. Upstream prints a one-shot hint on `EMFILE`/`ENFILE` for
-/// exactly this reason (upstream: syscall.c:2924-2936); without it the
-/// bare "Too many open files" is opaque about which limit to raise.
-/// [`warn_once_on_fd_exhaustion`] owns that decision for both walks.
+/// The two callers do not share a descriptor cost, and only one of them can
+/// reach the ceiling:
+///
+/// - [`DirSandbox::enter`] retains a `DirFrame` per level, so the descent
+///   holds one dirfd per live component and a deep tree exhausts the
+///   open-file limit where a single path-based `open()` would not. This is
+///   the caller the emit below exists for.
+/// - `DirSandbox::open_dest_anchor_with_policy` rebinds one `OwnedFd` per
+///   component and drops the parent immediately, so its cost is constant in
+///   the tail's depth and it cannot exhaust. Measured: a 64-component tail
+///   resolves under `RLIMIT_NOFILE=8`
+///   (`the_anchor_walk_cannot_exhaust_but_the_entered_walk_can`).
+///
+/// Upstream prints a one-shot hint on `EMFILE`/`ENFILE` for exactly the
+/// accumulating shape (upstream: syscall.c:2924-2936); without it the bare
+/// "Too many open files" is opaque about which limit to raise.
+/// [`warn_once_on_fd_exhaustion`] owns that decision for both accumulating
+/// walks - this one and `ConfinedWalk::descend`.
 fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     let result = openat_dir_strict(parent_fd, child_name);
 
