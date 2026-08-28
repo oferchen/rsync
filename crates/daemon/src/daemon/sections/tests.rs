@@ -1293,7 +1293,7 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
         &mut stream,
         &mut limiter,
         "@ERROR: The server is configured to refuse --compress",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
+        RERR_UNSUPPORTED_EXIT_CODE,
     )
     .expect("send multiplexed error");
 
@@ -1324,7 +1324,7 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
     let mut expected_exit = Vec::new();
     MessageFrame::new(
         MessageCode::ErrorExit,
-        FEATURE_UNAVAILABLE_EXIT_CODE.to_le_bytes().to_vec(),
+        RERR_UNSUPPORTED_EXIT_CODE.to_le_bytes().to_vec(),
     )
     .expect("frame")
     .encode_into_writer(&mut expected_exit)

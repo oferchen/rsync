@@ -181,8 +181,11 @@ fn run_daemon_post_ok_refused_option_uses_multiplexed_error() {
         .expect("read MSG_ERROR_EXIT payload");
     assert_eq!(
         i32::from_le_bytes(exit_buf),
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-        "refused-options exit code must mirror upstream's unsupported-feature path",
+        RERR_UNSUPPORTED_EXIT_CODE,
+        "refused-options exit code must be RERR_UNSUPPORTED (4), not RERR_SYNTAX (1): \
+         upstream's single post-OK fatal branch ends in exit_cleanup(RERR_UNSUPPORTED) \
+         at clientserver.c:1267, and that code reaches the peer verbatim through \
+         MSG_ERROR_EXIT - a client scripting on `rsync -z` being refused sees 4",
     );
 
     drop(reader);

@@ -156,8 +156,9 @@ fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
         .expect("MSG_ERROR_EXIT payload must survive the daemon's close");
     assert_eq!(
         i32::from_le_bytes(exit_buf),
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-        "refusal exit code",
+        RERR_UNSUPPORTED_EXIT_CODE,
+        "refusal exit code must be RERR_UNSUPPORTED (4), matching the \
+         exit_cleanup(RERR_UNSUPPORTED) this test's own header cites",
     );
 
     // Drain until the connection ends: the daemon closes only after its linger

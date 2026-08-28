@@ -303,6 +303,14 @@ fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> i
 /// `unexpected tag 72` (65 + `MPLEX_BASE`) on the receiver. Raw
 /// `@ERROR: ...\n` text would similarly produce `unexpected tag 77` (the
 /// byte `T` from "The server ..." minus `MPLEX_BASE = 7`).
+///
+/// The `MSG_ERROR_EXIT` payload carries `RERR_UNSUPPORTED`, not
+/// `RERR_SYNTAX`. upstream: clientserver.c:1254-1268 - the single post-OK
+/// fatal branch (`if (!ret || err_msg)`) covers both a refused option and a
+/// failed `pre-xfer exec`, and it ends in `exit_cleanup(RERR_UNSUPPORTED)`
+/// at clientserver.c:1267. That is the code the peer observes; the sibling
+/// read-only/write-only rejection is a different decision made later in
+/// `do_server_recv()`/`do_server_sender()` and keeps `RERR_SYNTAX`.
 fn handle_refused_option_post_handshake(
     ctx: &mut ModuleRequestContext<'_>,
     refused: &str,
@@ -315,7 +323,7 @@ fn handle_refused_option_post_handshake(
         ctx.reader.get_mut(),
         ctx.limiter,
         &error.line(),
-        FEATURE_UNAVAILABLE_EXIT_CODE,
+        RERR_UNSUPPORTED_EXIT_CODE,
     )?;
     if let Some(log) = ctx.log_sink {
         log_module_refused_option(log, ctx.host_display(), ctx.peer_ip, ctx.request, refused);
