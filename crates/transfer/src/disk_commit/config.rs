@@ -288,7 +288,7 @@ impl Default for DiskCommitConfig {
 /// Upstream reaches the same state through file-scope globals that
 /// `make_backup()` (`backup.c:437`) consults directly, so there is no upstream
 /// aggregate to mirror; this is oc's explicit spelling of that ambient state.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct BackupEnv<'a> {
     /// Destination sandbox anchoring the backup `*at()` syscalls.
     #[cfg(unix)]

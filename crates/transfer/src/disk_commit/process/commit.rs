@@ -621,11 +621,11 @@ fn simulated_cross_device_error() -> io::Error {
 /// Test-only RAII guard that forces [`backup_rename_syscall`] onto the
 /// cross-device path for its lifetime, exercising the copy fallback.
 #[cfg(test)]
-pub(super) struct ForceExdev;
+pub(crate) struct ForceExdev;
 
 #[cfg(test)]
 impl ForceExdev {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         FORCE_EXDEV.with(|c| c.set(true));
         Self
     }
@@ -840,7 +840,7 @@ fn create_dir_all_sandboxed(_env: BackupEnv<'_>, parent: &Path) -> io::Result<()
 /// `INFO_GTE(BACKUP, 1)` line (`backup.c:352`). The disk thread cannot emit
 /// the info line directly because its thread-local [`logging::VerbosityConfig`]
 /// is never seeded with the user's `--info=backup` selection.
-pub(super) fn make_backup(
+pub(crate) fn make_backup(
     file_path: &Path,
     backup_config: &BackupConfig,
     env: BackupEnv<'_>,

@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 
+use crate::disk_commit::{BackupEnv, make_backup};
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
 
@@ -236,9 +237,24 @@ impl ReceiverContext {
             // sandbox without ACCESS_FS_REFER on kernels 5.13-5.18) sets
             // IOERR_GENERAL so the transfer exits 23 (RERR_PARTIAL) instead
             // of reporting success while the file was never updated.
+            // The ladder reads the destination sandbox, the root it is anchored
+            // on, and the metadata options applied to a `--backup-dir` parent
+            // created on demand - the same three the disk-commit path supplies.
+            // Upstream reaches them as file-scope globals that `make_backup()`
+            // (backup.c:437) consults directly; [`BackupEnv`] is oc's explicit
+            // spelling of that ambient state.
+            let metadata_opts = self.build_metadata_options();
+            let env = BackupEnv {
+                #[cfg(unix)]
+                sandbox,
+                #[cfg(unix)]
+                dest_dir: Some(dest_dir),
+                metadata_opts: Some(&metadata_opts),
+            };
             self.flist_io_error |= handle_delayed_updates(
                 all_delayed_updates,
                 backup_cfg,
+                env,
                 self.config.partial_dir.as_deref(),
             );
         }
@@ -443,24 +459,6 @@ pub(in crate::receiver) enum DeletePassPhase {
     Late,
 }
 
-/// Creates a delayed-sweep directory, through the ownership walk where one
-/// exists.
-///
-/// On Unix this issues `mkdirat` per component. glibc lowers `mkdir()` to the
-/// legacy `mkdir(2)` on x86_64, and the daemon worker's seccomp allowlist
-/// admits only the `*at` variants, so a plain `create_dir_all` is refused with
-/// EPERM there while succeeding on aarch64, which has no legacy form to lower
-/// to. Other platforms have neither the ownership walk nor the filter.
-#[cfg(unix)]
-fn sweep_create_dir_all(path: &Path) -> io::Result<()> {
-    fast_io::operator_create_dir_all(path, 0o777)
-}
-
-#[cfg(not(unix))]
-fn sweep_create_dir_all(path: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(path)
-}
-
 /// Renames a delayed-sweep file, through the ownership walk where one exists.
 ///
 /// Unix issues `renameat` for the same reason [`sweep_create_dir_all`] issues
@@ -474,24 +472,6 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
 #[cfg(not(unix))]
 fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
     std::fs::rename(old_path, new_path)
-}
-
-/// Moves an existing destination file to its backup name during the
-/// `--delay-updates` sweep, through the operator-path ownership walk bound to
-/// the session's confinement root.
-///
-/// upstream: `backup.c:443-449` `make_backup()`; `syscall.c:1891`
-/// `do_rename_at()` under `operator_path_resolve`.
-#[cfg(unix)]
-#[inline]
-fn delayed_backup_rename(from: &Path, to: &Path) -> std::io::Result<()> {
-    fast_io::operator_rename_confined(from, to, true)
-}
-
-#[cfg(not(unix))]
-#[inline]
-fn delayed_backup_rename(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::rename(from, to)
 }
 
 /// Renames all delayed-update files from their staging paths to their final
@@ -531,6 +511,7 @@ fn delayed_backup_rename(from: &Path, to: &Path) -> std::io::Result<()> {
 pub(in crate::receiver) fn handle_delayed_updates(
     delayed: &[(PathBuf, PathBuf)],
     backup_config: Option<crate::disk_commit::BackupConfig>,
+    env: BackupEnv<'_>,
     partial_dir: Option<&Path>,
 ) -> i32 {
     use crate::generator::io_error_flags::IOERR_GENERAL;
@@ -541,73 +522,48 @@ pub(in crate::receiver) fn handle_delayed_updates(
     let mut io_error = 0;
 
     for (staging_path, final_path) in delayed {
-        // upstream: receiver.c:694 - make_backup(fname, False)
-        if let Some(ref bc) = backup_config
-            && final_path.exists()
-        {
-            let backup_path = engine::compute_backup_path(
-                &bc.dest_dir,
-                final_path,
-                None,
-                bc.backup_dir.as_deref(),
-                &bc.suffix,
-            );
-            // upstream: backup.c:128-139 copy_valid_path() - the backup parent
-            // tree is built inside get_backup_name(), and a `backup mkdir %s
-            // failed` there makes make_backup() return 0. Discarding this
-            // error hid the real errno: the sweep went on to rename into a
-            // directory that was never created, so the reported failure was
-            // the derived `ENOENT` from the rename rather than the `EACCES`
-            // that actually stopped the backup.
-            //
-            // The rename itself is the `--delay-updates` sweep's own
-            // `make_backup()` tier, so it takes the same operator-path resolver
-            // the disk-commit and local-copy sites do: a trusted-owned
-            // directory symlink standing at the `--backup-dir` would otherwise
-            // move the destination's pre-transfer bytes out of the module root.
-            // A refusal fails the backup, which the `Err` arm below turns into
-            // the upstream skip - so nothing escapes AND the pre-image survives.
-            // upstream: backup.c:443-449 `make_backup()` sets
-            // `operator_path_resolve` around the whole backup, whichever
-            // caller reached it.
-            let placed = match backup_path.parent() {
-                Some(parent) if !parent.exists() => sweep_create_dir_all(parent),
-                _ => Ok(()),
-            }
-            .and_then(|()| delayed_backup_rename(final_path, &backup_path));
-
-            match placed {
-                Ok(()) => {
-                    // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1)
-                    // RENAME success notice. The delayed-updates sweep is
-                    // the third backup site (alongside disk-commit and
-                    // local-copy); upstream emits this from
-                    // backup.c:make_backup() regardless of caller.
-                    engine::trace_make_backup_rename(&final_path.display().to_string());
+        // upstream: receiver.c:694 - `if (make_backups > 0 && !make_backup(fname,
+        // False)) continue;`. This is the SAME `make_backup(fname, False)` that
+        // `finish_transfer()` calls (rsync.c:739), so the sweep is a second
+        // CALLER of the ladder, never a second implementation of it. Routing it
+        // here inherits every tier upstream has: the hard-link tier
+        // (backup.c:200-207), the confined rename, and the cross-device
+        // `copy_file()` fallback (backup.c:414 `make_backup: COPY`).
+        //
+        // A rename-only backup here fails on exactly the shape the copy tier
+        // exists for - a `--backup-dir` on another filesystem. The `EXDEV`
+        // aborts the backup, the upstream skip below leaves the staged file in
+        // the partial dir, and the run still exits 0: the destination silently
+        // keeps its pre-transfer contents. Measured against rsync 3.5.0 over a
+        // daemon push with the backup dir on a separate mount.
+        if let Some(ref bc) = backup_config {
+            // upstream: backup.c:276 - `x_lstat(fname, ...) < 0` returns 3
+            // ("nothing to keep"), which is truthy, so an absent destination is
+            // a success that still renames. `make_backup` mirrors that as
+            // `Ok(None)`.
+            match make_backup(final_path, bc, env) {
+                Ok(Some(notice)) => {
                     // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1)
-                    // rprintf(FINFO, "backed up %s to %s\n", fname, buf)
-                    // fires on success label of make_backup() after the
-                    // rename completes. Paths are displayed relative to
-                    // the destination root to match the upstream test
-                    // assertions (testsuite/backup.test:29,43,56).
-                    let final_rel = final_path.strip_prefix(&bc.dest_dir).unwrap_or(final_path);
-                    let backup_rel = backup_path
-                        .strip_prefix(&bc.dest_dir)
-                        .unwrap_or(&backup_path);
+                    // `rprintf(FINFO, "backed up %s to %s\n", fname, buf)` on the
+                    // `success:` label, whichever mechanism ran. The ladder
+                    // already emitted the matching DEBUG_GTE(BACKUP, 1)
+                    // HLINK/RENAME/COPY trace for the tier it actually took;
+                    // the sweep must not name a mechanism of its own.
                     info_log!(
                         Backup,
                         1,
                         "backed up {} to {}",
-                        final_rel.display(),
-                        backup_rel.display()
+                        notice.original.display(),
+                        notice.backup.display()
                     );
                 }
+                Ok(None) => {}
                 Err(e) => {
                     // upstream: receiver.c:694 - `!make_backup(...)` skips
-                    // straight to the next delayed entry. The staged file
-                    // stays in the partial dir and the destination keeps its
-                    // pre-transfer contents, so the pre-image the backup
-                    // could not preserve is not destroyed instead.
+                    // straight to the next delayed entry. The staged file stays
+                    // in the partial dir and the destination keeps its
+                    // pre-transfer contents, so the pre-image the backup could
+                    // not preserve is not destroyed instead.
                     //
                     // No io_error bit: make_backup() reports through FERROR,
                     // which log.c:336-341 routes to stderr without setting
@@ -931,7 +887,7 @@ mod tests {
             (staged_b.clone(), final_b.clone()),
         ];
 
-        handle_delayed_updates(&delayed, None, None);
+        handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
 
         // Files should be at final paths.
         assert_eq!(fs::read_to_string(&final_a).unwrap(), "content-a");
@@ -974,7 +930,7 @@ mod tests {
             (staged2.clone(), final2.clone()),
         ];
 
-        handle_delayed_updates(&delayed, None, None);
+        handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
 
         assert_eq!(fs::read_to_string(&final1).unwrap(), "one");
         assert_eq!(fs::read_to_string(&final2).unwrap(), "two");
@@ -1006,6 +962,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged, final_path.clone())],
             None,
+            BackupEnv::default(),
             Some(partial_dir.as_path()),
         );
         assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
@@ -1034,6 +991,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged, final_path.clone())],
             None,
+            BackupEnv::default(),
             Some(Path::new("pdir")),
         );
         assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
@@ -1073,7 +1031,7 @@ mod tests {
         ];
 
         // Should not panic or abort, but must report the failed rename.
-        let io_error = handle_delayed_updates(&delayed, None, None);
+        let io_error = handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
 
         assert_eq!(
             io_error & IOERR_GENERAL,
@@ -1099,7 +1057,8 @@ mod tests {
         fs::write(&staged, b"content").unwrap();
         let final_path = dir.path().join("a.txt");
 
-        let io_error = handle_delayed_updates(&[(staged, final_path)], None, None);
+        let io_error =
+            handle_delayed_updates(&[(staged, final_path)], None, BackupEnv::default(), None);
 
         assert_eq!(
             io_error, 0,
@@ -1111,7 +1070,10 @@ mod tests {
     /// reports no error.
     #[test]
     fn handle_delayed_updates_empty_is_noop() {
-        assert_eq!(handle_delayed_updates(&[], None, None), 0);
+        assert_eq!(
+            handle_delayed_updates(&[], None, BackupEnv::default(), None),
+            0
+        );
     }
 
     /// Verifies that `handle_delayed_updates` backs up a pre-existing
@@ -1152,6 +1114,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged.clone(), final_path.clone())],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1207,6 +1170,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged.clone(), final_path.clone())],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1247,6 +1211,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged.clone(), final_path.clone())],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1299,6 +1264,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged.clone(), final_path.clone())],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1317,6 +1283,145 @@ mod tests {
             fs::read_to_string(&final_path).unwrap(),
             "new-content",
             "staged file must reach the nested destination path"
+        );
+    }
+
+    /// The `--delay-updates` sweep must reach the cross-device tier of the
+    /// backup ladder, not just its rename tier.
+    ///
+    /// upstream: `receiver.c:694` `handle_delayed_updates()` calls the same
+    /// `make_backup(fname, False)` as `finish_transfer()` (rsync.c:739), so a
+    /// `--backup-dir` on another mount takes `copy_file()` + unlink
+    /// (`backup.c:414` `make_backup: COPY`) exactly as it does on the ordinary
+    /// commit path.
+    ///
+    /// Measured against rsync 3.5.0 over a daemon push with the backup dir on a
+    /// separate filesystem: upstream updates the destination and writes the
+    /// backup; oc's rename-only sweep took `EXDEV`, failed the backup, skipped
+    /// the staged rename per upstream's own rule, and still exited 0 - so the
+    /// destination silently kept its pre-transfer contents. [`ForceExdev`]
+    /// reproduces that mount boundary without a second filesystem.
+    ///
+    /// ⚠ This cell guards the TIER, not the ROUTING. `ForceExdev` is an
+    /// instrument on the ladder's own syscalls, so a sweep that never enters
+    /// the ladder is unaffected by it and this test passes anyway - measured.
+    /// `handle_delayed_updates_backup_clears_an_obstructed_backup_parent` is
+    /// the cell that witnesses the routing.
+    #[test]
+    fn handle_delayed_updates_backup_crosses_a_device_boundary() {
+        use crate::disk_commit::{BackupConfig, ForceExdev};
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let final_path = dest_root.join("name1");
+        fs::write(&final_path, b"pre-image").unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        let io_error = {
+            let _exdev = ForceExdev::new();
+            handle_delayed_updates(
+                &[(staged.clone(), final_path.clone())],
+                Some(backup_config),
+                BackupEnv::default(),
+                None,
+            )
+        };
+
+        let backup_path = backup_root.join("name1~");
+        assert_eq!(
+            fs::read_to_string(&backup_path).ok().as_deref(),
+            Some("pre-image"),
+            "the copy tier must carry the pre-image across the device boundary"
+        );
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "new-content",
+            "a cross-device backup must not suppress the staged rename"
+        );
+        assert_eq!(
+            io_error, 0,
+            "a successful sweep contributes no io_error bit"
+        );
+    }
+
+    /// Witnesses that the sweep enters the shared ladder at all.
+    ///
+    /// A non-directory standing where a `--backup-dir` subdirectory must go is
+    /// cleared by upstream's `copy_valid_path()` (`backup.c:61-154`), which
+    /// `get_backup_name()` runs inside `make_backup()` - so it applies to the
+    /// `--delay-updates` sweep exactly as it does to `finish_transfer()`. oc
+    /// reaches it through `create_backup_path_parents`.
+    ///
+    /// The sweep's own `create_dir_all` had no such step: it reports
+    /// `AlreadyExists` for that shape, which fails the backup, which skips the
+    /// staged rename - so the destination is left un-updated and the run still
+    /// exits 0. That makes this the discriminating cell: it fails on any
+    /// implementation that does not route through the ladder, where the
+    /// cross-device cell above cannot.
+    #[test]
+    fn handle_delayed_updates_backup_clears_an_obstructed_backup_parent() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+        // A regular file where `bak/deep/` has to be created.
+        fs::write(backup_root.join("deep"), b"obstruction").unwrap();
+
+        let deep_dest = dest_root.join("deep");
+        fs::create_dir(&deep_dest).unwrap();
+        let final_path = deep_dest.join("name1");
+        fs::write(&final_path, b"pre-image").unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        let io_error = handle_delayed_updates(
+            &[(staged.clone(), final_path.clone())],
+            Some(backup_config),
+            BackupEnv::default(),
+            None,
+        );
+
+        assert_eq!(
+            fs::read_to_string(backup_root.join("deep").join("name1~"))
+                .ok()
+                .as_deref(),
+            Some("pre-image"),
+            "the obstruction must be cleared and the pre-image kept beneath it"
+        );
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "new-content",
+            "an obstructed backup parent must not suppress the staged rename"
+        );
+        assert_eq!(
+            io_error, 0,
+            "a successful sweep contributes no io_error bit"
         );
     }
 
@@ -1353,6 +1458,7 @@ mod tests {
         handle_delayed_updates(
             &[(staged.clone(), final_path.clone())],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1410,6 +1516,7 @@ mod tests {
                 (staged_b.clone(), final_b.clone()),
             ],
             Some(backup_config),
+            BackupEnv::default(),
             None,
         );
 
@@ -1468,7 +1575,7 @@ mod tests {
             (staged_a.clone(), final_a.clone()),
             (staged_b.clone(), final_b.clone()),
         ];
-        handle_delayed_updates(&delayed, None, None);
+        handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
 
         assert!(final_a.exists());
         assert!(final_b.exists());
