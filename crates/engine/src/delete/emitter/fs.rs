@@ -167,7 +167,7 @@ pub trait DeleteFs: std::fmt::Debug {
 /// Production [`DeleteFs`] implementation backed by `std::fs` (path
 /// fallback) and the `fast_io` `*at` syscall wrappers (sandbox path).
 ///
-/// All file-like kinds route to [`fs::remove_file`] (Unix `unlink(2)`,
+/// All file-like kinds route to [`std::fs::remove_file`] (Unix `unlink(2)`,
 /// Windows `DeleteFileW`) on the path fallback. The sandbox path routes
 /// every leaf-removal through [`fast_io::unlinkat`] for the non-recursive
 /// kinds and [`fast_io::recursive_unlinkat`] for the recursive fallback,
@@ -291,7 +291,7 @@ impl DeleteFs for RealDeleteFs {
     ///
     /// The residue [`remove_dir_all_at`](fast_io::ConfinedFallback::remove_dir_all_at)
     /// returns is dropped here because this trait method mirrors
-    /// [`fs::remove_dir_all`]'s `()` result. The dirfd-anchored sibling
+    /// [`std::fs::remove_dir_all`]'s `()` result. The dirfd-anchored sibling
     /// [`Self::remove_dir_all_at`] is the one that surfaces the residue to the
     /// emitter's exit-code decision; that split is unchanged.
     #[cfg(unix)]
