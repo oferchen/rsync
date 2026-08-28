@@ -1306,3 +1306,147 @@ fn confined_walk_warns_on_fd_exhaustion_and_stays_silent_on_enoent() {
          RLIMIT_NOFILE={ceiling}; got: {emitted:?}"
     );
 }
+
+/// The peer-tail anchor walk cannot exhaust descriptors; the `enter()`
+/// descent that shares its open helper can.
+///
+/// Both walks go through [`openat_dir`](super::openat_dir), so the
+/// descriptor-exhaustion emit inside it appears to hang off
+/// [`open_dest_anchor`](DirSandbox::open_dest_anchor) - a walk that rebinds a
+/// single `OwnedFd` per component and drops the parent immediately, and
+/// therefore costs one descriptor no matter how deep the tail is. Reading only
+/// that call site, the emit looks unreachable and invites deletion. It is not:
+/// [`enter`](DirSandbox::enter) retains a frame per level, so it is the caller
+/// that reaches the ceiling, and the emit is load-bearing for it.
+///
+/// Two cells at the *same* depth under the *same* ceiling, so depth and limit
+/// are held fixed and only the descriptor discipline varies:
+///
+/// 1. The anchor walk resolves a 64-component tail with three descriptors of
+///    headroom, and prints nothing. This is both the proof of constant cost
+///    and the negative control for the emit: it is the same `openat_dir` code
+///    path, succeeding, and it must stay silent.
+/// 2. The identical descent through `enter()` fails with `EMFILE` before it
+///    reaches 64 and prints the hint exactly once.
+///
+/// Cell 1 failing means the anchor walk started retaining descriptors - a
+/// behaviour change worth catching on its own, since the peer controls the
+/// tail's depth. Cell 2 failing means the emit stopped firing for the walk
+/// that needs it.
+///
+/// Both the `RLIMIT_NOFILE` change and the stderr redirect are process-global,
+/// which is safe only because nextest runs each test in its own process. Every
+/// descriptor either cell needs is allocated before the ceiling drops - the
+/// `openat2` capability probe included, which is a `OnceLock` and is warmed
+/// deliberately - and both globals are restored before any assertion so a
+/// failing assert can still allocate for its output.
+///
+/// upstream: syscall.c:2797-2800 - "The walk holds one fd per component, so
+/// depth is bounded by RLIMIT_NOFILE anyway"; syscall.c:2924-2936 - the hint,
+/// which upstream places on the accumulating walk alone.
+#[test]
+fn the_anchor_walk_cannot_exhaust_but_the_entered_walk_can() {
+    use rustix::io::{Errno, dup};
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    use rustix::stdio::{dup2_stderr, stderr};
+    use std::io::{Read, Seek, SeekFrom};
+
+    // Deep enough that a per-component descriptor cost cannot fit under the
+    // ceiling, shallow enough to stay well inside macOS's 1024-byte PATH_MAX.
+    const DEPTH: usize = 64;
+
+    let (_keep, anchor) = canonical_tempdir();
+    let deep: std::path::PathBuf = std::iter::repeat_n("a", DEPTH).collect();
+    std::fs::create_dir_all(anchor.join(&deep)).expect("build the deep peer tail");
+
+    // Warm the one-shot `openat2` capability probe under the ambient limit.
+    // It is a `OnceLock` that costs a descriptor on its first call, and it
+    // would otherwise fire inside the measurement and cache a verdict reached
+    // under descriptor pressure.
+    DirSandbox::open_dest_anchor(&anchor, std::path::Path::new("a"))
+        .expect("the warm-up resolve must succeed under the ambient limit");
+
+    let mut captured = tempfile::tempfile().expect("stderr capture file");
+    let saved_stderr = dup(stderr()).expect("save stderr");
+    let original = getrlimit(Resource::Nofile);
+
+    // Three descriptors of headroom. The anchor walk's peak is two (the
+    // parent is still borrowed while its child is opened), so it fits at any
+    // depth; a walk that retains a frame per level runs out almost at once.
+    let ceiling = next_free_fd() + 3;
+
+    dup2_stderr(&captured).expect("redirect stderr");
+    let lowered = setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(ceiling),
+            maximum: original.maximum,
+        },
+    );
+    let observed = getrlimit(Resource::Nofile).current;
+
+    // Gate both cells on the drop actually landing: `setrlimit` refuses a
+    // request above `rlim_max`, and running anyway would turn a failed drop
+    // into a silent pass.
+    let dropped = lowered.is_ok() && observed == Some(ceiling);
+
+    let anchor_walk = dropped.then(|| DirSandbox::open_dest_anchor(&anchor, &deep));
+    let entered = dropped.then(|| {
+        DirSandbox::open_root(&anchor).and_then(|mut sandbox| {
+            for _ in 0..DEPTH {
+                sandbox.enter(std::ffi::OsStr::new("a"))?;
+            }
+            Ok(sandbox.depth())
+        })
+    });
+
+    setrlimit(Resource::Nofile, original).expect("restore RLIMIT_NOFILE");
+    dup2_stderr(&saved_stderr).expect("restore stderr");
+
+    let mut emitted = String::new();
+    captured.seek(SeekFrom::Start(0)).expect("rewind capture");
+    captured
+        .read_to_string(&mut emitted)
+        .expect("read captured stderr");
+
+    assert_eq!(
+        observed,
+        Some(ceiling),
+        "the harness could not lower RLIMIT_NOFILE to {ceiling} \
+         (setrlimit: {lowered:?}, original: {original:?}); no descriptor \
+         pressure was applied and nothing below this point was exercised"
+    );
+
+    anchor_walk
+        .expect("the cells are gated on the drop above")
+        .unwrap_or_else(|err| {
+            panic!(
+                "the anchor walk must resolve a {DEPTH}-component tail under \
+                 RLIMIT_NOFILE={ceiling}; it costs one descriptor regardless of \
+                 depth. Failing with {err:?} means it now retains a descriptor \
+                 per component, which the peer controls the depth of"
+            )
+        });
+
+    let err = match entered.expect("the cells are gated on the drop above") {
+        Err(err) => err,
+        Ok(depth) => panic!(
+            "`enter()` holds a frame per level, so {DEPTH} levels cannot fit \
+             under RLIMIT_NOFILE={ceiling}; reaching depth {depth} means no \
+             descriptor pressure was applied and the emit was never reached"
+        ),
+    };
+    assert_eq!(
+        err.raw_os_error(),
+        Some(Errno::MFILE.raw_os_error()),
+        "the accumulating descent must surface EMFILE to its caller, not an \
+         errno re-derived after the hint was printed; got {err:?}"
+    );
+
+    assert_eq!(
+        emitted.matches(super::FD_EXHAUSTION_HINT).count(),
+        1,
+        "exactly one hint is expected: none from the anchor walk, which \
+         succeeded, and one from the descent that exhausted; got: {emitted:?}"
+    );
+}
