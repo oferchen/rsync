@@ -20,6 +20,9 @@ impl ClientConfig {
     #[must_use]
     pub const fn checksum_signature_algorithm(&self) -> SignatureAlgorithm {
         let algorithm = self.checksum_choice.file_signature_algorithm();
+        // upstream: checksum.c:342 `XXH64(buf, len, checksum_seed)` - and the
+        // XXH3 siblings just below it - pass the signed seed straight into an
+        // unsigned 64-bit parameter, so C sign-extends and `as u64` must too.
         match (algorithm, self.checksum_seed) {
             (SignatureAlgorithm::Xxh64 { .. }, Some(seed)) => {
                 SignatureAlgorithm::Xxh64 { seed: seed as u64 }
@@ -35,8 +38,12 @@ impl ClientConfig {
     }
 
     /// Returns the checksum seed configured via `--checksum-seed`, if any.
+    ///
+    /// upstream: options.c:151 declares `int checksum_seed`, a signed global.
+    /// It is forwarded to the remote at options.c:3047 as
+    /// `"--checksum-seed=%d"`.
     #[doc(alias = "--checksum-seed")]
-    pub const fn checksum_seed(&self) -> Option<u32> {
+    pub const fn checksum_seed(&self) -> Option<i32> {
         self.checksum_seed
     }
 

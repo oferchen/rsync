@@ -448,9 +448,10 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:847`: `--checksum-seed=NUM`
+    /// - `options.c:151`: `int checksum_seed = 0;` (signed storage)
+    /// - `options.c:861`: `POPT_ARG_INT` parse, so the full `i32` range is legal
     /// - `compat.c:750`: `checksum_seed = (int32)time(NULL);` (default)
-    pub checksum_seed: Option<u32>,
+    pub checksum_seed: Option<i32>,
     /// Optional checksum algorithm override from `--checksum-choice`.
     ///
     /// When set, forces the negotiated checksum algorithm for the transfer
