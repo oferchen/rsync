@@ -19,7 +19,7 @@ use engine::{
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
 use crate::temp_guard::TempFileGuard;
 
-use super::super::config::{BackupConfig, DiskCommitConfig, PartialMode};
+use super::super::config::{BackupConfig, BackupEnv, DiskCommitConfig, PartialMode};
 
 /// Sparse finalization carried from the write pass.
 ///
@@ -107,7 +107,7 @@ pub(super) fn commit_file(
     // `process_whole_file` via `make_backup_copy` prior to the first write.
     let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
-            make_backup(&begin.file_path, backup_config, config).map_err(|e| {
+            make_backup(&begin.file_path, backup_config, config.backup_env()).map_err(|e| {
                 crate::temp_guard::attach_commit_op(
                     crate::temp_guard::CommitOp::Backup,
                     &begin.file_path,
@@ -657,17 +657,17 @@ impl Drop for ForceExdev {
 /// upstream `make_backup: COPY` trace instead of `RENAME`.
 #[cfg(unix)]
 fn backup_rename_sandboxed(
-    config: &DiskCommitConfig,
+    env: BackupEnv<'_>,
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
-    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+    if let (Some(sandbox), Some(dest_dir)) = (env.sandbox, env.dest_dir)
         && let (Some(old_leaf), Some(new_leaf)) = (old_path.file_name(), new_path.file_name())
         && old_path.parent() == Some(dest_dir)
         && new_path.parent() == Some(dest_dir)
     {
         fast_io::renameat_via_sandbox_or_fallback(
-            Some(sandbox.as_ref()),
+            Some(sandbox),
             dest_dir,
             Path::new(old_leaf),
             old_path,
@@ -683,7 +683,7 @@ fn backup_rename_sandboxed(
 
 #[cfg(not(unix))]
 fn backup_rename_sandboxed(
-    _config: &DiskCommitConfig,
+    _env: BackupEnv<'_>,
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
@@ -709,23 +709,18 @@ fn backup_rename_sandboxed(
 /// upstream: `backup.c:443-449` `make_backup()`; `backup.c:200-207`
 /// `link_or_rename()`; `syscall.c:676` `do_link_at()` under
 /// `operator_path_resolve`.
-fn backup_hardlink_syscall(
-    config: &DiskCommitConfig,
-    old_path: &Path,
-    new_path: &Path,
-) -> io::Result<()> {
+fn backup_hardlink_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
     #[cfg(test)]
     if force_exdev_active() {
         return Err(simulated_cross_device_error());
     }
     #[cfg(unix)]
     {
-        if let (Some(sandbox), Some(dest_dir)) =
-            (config.sandbox.as_ref(), config.dest_dir.as_deref())
+        if let (Some(sandbox), Some(dest_dir)) = (env.sandbox, env.dest_dir)
             && new_path.parent() == Some(dest_dir)
         {
             return fast_io::linkat_via_sandbox_or_fallback(
-                Some(sandbox.as_ref()),
+                Some(sandbox),
                 old_path,
                 dest_dir,
                 new_path.strip_prefix(dest_dir).unwrap_or(new_path),
@@ -736,7 +731,7 @@ fn backup_hardlink_syscall(
     }
     #[cfg(not(unix))]
     {
-        let _ = config;
+        let _ = env;
         fast_io::hard_link(old_path, new_path)
     }
 }
@@ -752,12 +747,12 @@ fn backup_hardlink_syscall(
 /// 2; a link failure on a regular file falls through to `do_rename_at`.
 /// upstream: `backup.c:246-255` `make_backup()` - an `EEXIST`/`EISDIR` collision
 /// deletes the stale backup entry and retries `link_or_rename` once.
-fn backup_hardlink_tier(config: &DiskCommitConfig, old_path: &Path, new_path: &Path) -> bool {
-    match backup_hardlink_syscall(config, old_path, new_path) {
+fn backup_hardlink_tier(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> bool {
+    match backup_hardlink_syscall(env, old_path, new_path) {
         Ok(()) => true,
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             fs::remove_file(new_path).is_ok()
-                && backup_hardlink_syscall(config, old_path, new_path).is_ok()
+                && backup_hardlink_syscall(env, old_path, new_path).is_ok()
         }
         Err(_) => false,
     }
@@ -776,21 +771,21 @@ fn backup_hardlink_tier(config: &DiskCommitConfig, old_path: &Path, new_path: &P
 fn create_backup_path_parents(
     parent: &Path,
     backup_config: &BackupConfig,
-    config: &DiskCommitConfig,
+    env: BackupEnv<'_>,
 ) -> io::Result<()> {
     match backup_config.backup_dir.as_deref() {
         Some(backup_dir) => {
-            let metadata_opts = config.metadata_opts.clone().unwrap_or_default();
+            let metadata_opts = env.metadata_opts.cloned().unwrap_or_default();
             create_backup_dir_parents(
                 &backup_config.dest_dir,
                 backup_dir,
                 parent,
                 &metadata_opts,
-                |path| create_dir_all_sandboxed(config, path),
+                |path| create_dir_all_sandboxed(env, path),
             )
         }
         None if parent.exists() => Ok(()),
-        None => create_dir_all_sandboxed(config, parent),
+        None => create_dir_all_sandboxed(env, parent),
     }
 }
 
@@ -804,13 +799,13 @@ fn create_backup_path_parents(
 /// go through [`fast_io::operator_create_dir_all`], which is recursive like
 /// `std::fs::create_dir_all` but issues `mkdirat` per component.
 #[cfg(unix)]
-fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
-    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+fn create_dir_all_sandboxed(env: BackupEnv<'_>, parent: &Path) -> io::Result<()> {
+    if let (Some(sandbox), Some(dest_dir)) = (env.sandbox, env.dest_dir)
         && parent.parent() == Some(dest_dir)
         && let Some(leaf) = parent.file_name()
     {
         return match fast_io::mkdirat_via_sandbox_or_fallback(
-            Some(sandbox.as_ref()),
+            Some(sandbox),
             dest_dir,
             Path::new(leaf),
             parent,
@@ -827,7 +822,7 @@ fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Res
 }
 
 #[cfg(not(unix))]
-fn create_dir_all_sandboxed(_config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
+fn create_dir_all_sandboxed(_env: BackupEnv<'_>, parent: &Path) -> io::Result<()> {
     fs::create_dir_all(parent)
 }
 
@@ -848,7 +843,7 @@ fn create_dir_all_sandboxed(_config: &DiskCommitConfig, parent: &Path) -> io::Re
 pub(super) fn make_backup(
     file_path: &Path,
     backup_config: &BackupConfig,
-    config: &DiskCommitConfig,
+    env: BackupEnv<'_>,
 ) -> io::Result<Option<BackupNotice>> {
     if !file_path.exists() {
         return Ok(None);
@@ -863,7 +858,7 @@ pub(super) fn make_backup(
     );
 
     if let Some(parent) = backup_path.parent() {
-        create_backup_path_parents(parent, backup_config, config)?;
+        create_backup_path_parents(parent, backup_config, env)?;
     }
 
     // upstream: backup.c:191-207 - `prefer_rename` is False here (rsync.c:739),
@@ -872,7 +867,7 @@ pub(super) fn make_backup(
     // CAN_HARDLINK_SPECIAL (backup.c:192-199), and this commit path only ever
     // replaces a regular destination anyway.
     let is_regular = fs::symlink_metadata(file_path).is_ok_and(|m| m.is_file());
-    if is_regular && backup_hardlink_tier(config, file_path, &backup_path) {
+    if is_regular && backup_hardlink_tier(env, file_path, &backup_path) {
         // upstream: backup.c:201-202 - DEBUG_GTE(BACKUP, 1) HLINK success. The
         // original is deliberately left in place (upstream returns 2 and
         // finish_transfer does not redirect fnamecmp); the temp->destination
@@ -881,7 +876,7 @@ pub(super) fn make_backup(
         return Ok(Some(backup_notice(backup_config, file_path, &backup_path)));
     }
 
-    let was_copy = backup_rename_sandboxed(config, file_path, &backup_path)?;
+    let was_copy = backup_rename_sandboxed(env, file_path, &backup_path)?;
     if was_copy {
         // upstream: backup.c:284 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
         // successful." when the cross-device copy tier moved the pre-image.
@@ -939,7 +934,7 @@ fn backup_notice(
 pub(super) fn make_backup_copy(
     file_path: &Path,
     backup_config: &BackupConfig,
-    config: &DiskCommitConfig,
+    env: BackupEnv<'_>,
 ) -> io::Result<Option<BackupNotice>> {
     if !file_path.exists() {
         return Ok(None);
@@ -954,7 +949,7 @@ pub(super) fn make_backup_copy(
     );
 
     if let Some(parent) = backup_path.parent() {
-        create_backup_path_parents(parent, backup_config, config)?;
+        create_backup_path_parents(parent, backup_config, env)?;
     }
 
     // upstream: generator.c:1866 copy_file() - duplicate the pre-transfer bytes

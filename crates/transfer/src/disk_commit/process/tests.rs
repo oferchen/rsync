@@ -394,9 +394,13 @@ fn make_backup_returns_destination_relative_notice() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup(&file_path, &config, &DiskCommitConfig::default())
-        .expect("make_backup succeeds")
-        .expect("notice produced when an existing file is backed up");
+    let notice = make_backup(
+        &file_path,
+        &config,
+        DiskCommitConfig::default().backup_env(),
+    )
+    .expect("make_backup succeeds")
+    .expect("notice produced when an existing file is backed up");
 
     let backup_path = file_path.with_extension("bin~");
     assert!(
@@ -441,9 +445,13 @@ fn make_backup_regular_file_traces_hlink() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    make_backup(&file_path, &config, &DiskCommitConfig::default())
-        .expect("make_backup succeeds")
-        .expect("notice produced when an existing file is backed up");
+    make_backup(
+        &file_path,
+        &config,
+        DiskCommitConfig::default().backup_env(),
+    )
+    .expect("make_backup succeeds")
+    .expect("notice produced when an existing file is backed up");
 
     let traces: Vec<String> = drain_events()
         .into_iter()
@@ -495,9 +503,13 @@ fn make_backup_cross_device_uses_copy_fallback() {
 
     let notice = {
         let _force = ForceExdev::new();
-        make_backup(&file_path, &config, &DiskCommitConfig::default())
-            .expect("cross-device backup must succeed via the copy fallback")
-            .expect("notice produced when an existing file is backed up")
+        make_backup(
+            &file_path,
+            &config,
+            DiskCommitConfig::default().backup_env(),
+        )
+        .expect("cross-device backup must succeed via the copy fallback")
+        .expect("notice produced when an existing file is backed up")
     };
 
     let backup_path = file_path.with_extension("bin~");
@@ -534,8 +546,12 @@ fn make_backup_missing_file_is_noop() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup(&file_path, &config, &DiskCommitConfig::default())
-        .expect("make_backup succeeds");
+    let notice = make_backup(
+        &file_path,
+        &config,
+        DiskCommitConfig::default().backup_env(),
+    )
+    .expect("make_backup succeeds");
     assert!(notice.is_none(), "no notice when nothing was backed up");
 }
 
@@ -583,7 +599,7 @@ fn make_backup_backup_dir_subdir_inherits_source_mode() {
         ..DiskCommitConfig::default()
     };
 
-    make_backup(&file_path, &config, &disk_config)
+    make_backup(&file_path, &config, disk_config.backup_env())
         .expect("make_backup succeeds")
         .expect("notice produced for the backed-up file");
 
@@ -635,7 +651,7 @@ fn make_backup_backup_dir_clears_nondir_obstruction() {
         ..DiskCommitConfig::default()
     };
 
-    make_backup(&file_path, &config, &disk_config)
+    make_backup(&file_path, &config, disk_config.backup_env())
         .expect("make_backup must succeed after clearing the obstruction")
         .expect("notice produced for the backed-up file");
 
@@ -670,9 +686,13 @@ fn make_backup_copy_duplicates_and_keeps_original() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup_copy(&file_path, &config, &DiskCommitConfig::default())
-        .expect("make_backup_copy succeeds")
-        .expect("notice produced when an existing file is copied");
+    let notice = make_backup_copy(
+        &file_path,
+        &config,
+        DiskCommitConfig::default().backup_env(),
+    )
+    .expect("make_backup_copy succeeds")
+    .expect("notice produced when an existing file is copied");
 
     let backup_path = file_path.with_extension("bin~");
     assert!(backup_path.exists(), "backup copy must exist");
@@ -710,8 +730,12 @@ fn make_backup_copy_missing_file_is_noop() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup_copy(&file_path, &config, &DiskCommitConfig::default())
-        .expect("make_backup_copy succeeds");
+    let notice = make_backup_copy(
+        &file_path,
+        &config,
+        DiskCommitConfig::default().backup_env(),
+    )
+    .expect("make_backup_copy succeeds");
     assert!(notice.is_none(), "no notice when nothing was backed up");
     assert!(
         !file_path.with_extension("bin~").exists(),

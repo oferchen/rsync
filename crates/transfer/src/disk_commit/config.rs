@@ -6,7 +6,7 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use filters::FilterSet;
@@ -274,6 +274,29 @@ impl Default for DiskCommitConfig {
     }
 }
 
+/// The destination-anchoring inputs the backup ladder actually reads.
+///
+/// `make_backup` and its hard-link / rename / copy tiers consult exactly three
+/// things from the commit configuration: the receiver's destination sandbox,
+/// the destination root that sandbox is anchored on, and the metadata options
+/// applied when a `--backup-dir` parent has to be created. Borrowing those
+/// three keeps the ladder callable from any receiver path instead of only the
+/// ones that hold a whole [`DiskCommitConfig`].
+///
+/// Upstream reaches the same state through file-scope globals that
+/// `make_backup()` (`backup.c:437`) consults directly, so there is no upstream
+/// aggregate to mirror; this is oc's explicit spelling of that ambient state.
+#[derive(Clone, Copy)]
+pub(crate) struct BackupEnv<'a> {
+    /// Destination sandbox anchoring the backup `*at()` syscalls.
+    #[cfg(unix)]
+    pub(crate) sandbox: Option<&'a fast_io::DirSandbox>,
+    /// Destination root the sandbox is anchored on.
+    pub(crate) dest_dir: Option<&'a Path>,
+    /// Metadata options applied to `--backup-dir` parents created on demand.
+    pub(crate) metadata_opts: Option<&'a MetadataOptions>,
+}
+
 impl DiskCommitConfig {
     /// Returns the effective channel capacity, clamped to valid bounds.
     ///
@@ -283,5 +306,19 @@ impl DiskCommitConfig {
     pub fn effective_channel_capacity(&self) -> usize {
         self.channel_capacity
             .clamp(MIN_CHANNEL_CAPACITY, MAX_CHANNEL_CAPACITY)
+    }
+
+    /// Borrows the three fields the backup ladder reads.
+    ///
+    /// The ladder takes [`BackupEnv`] rather than the whole configuration so it
+    /// declares its real dependency; see that type's documentation.
+    #[must_use]
+    pub(crate) fn backup_env(&self) -> BackupEnv<'_> {
+        BackupEnv {
+            #[cfg(unix)]
+            sandbox: self.sandbox.as_deref(),
+            dest_dir: self.dest_dir.as_deref(),
+            metadata_opts: self.metadata_opts.as_ref(),
+        }
     }
 }
