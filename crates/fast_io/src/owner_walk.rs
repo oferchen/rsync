@@ -844,7 +844,7 @@ pub fn operator_open_write_create_confined(path: &Path, mode: u32) -> io::Result
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`]. `AlreadyExists` is the expected, retryable
+/// See `operator_open_with`. `AlreadyExists` is the expected, retryable
 /// outcome when the generated name collides.
 pub fn operator_open_create_new(path: &Path, mode: u32) -> io::Result<std::fs::File> {
     operator_open_with(
@@ -881,7 +881,7 @@ pub fn operator_open_create_new(path: &Path, mode: u32) -> io::Result<std::fs::F
 ///
 /// # Errors
 ///
-/// See [`operator_open_with`].
+/// See `operator_open_with`.
 pub fn operator_open_recv(
     path: &Path,
     create: bool,
