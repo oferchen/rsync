@@ -510,6 +510,40 @@ fn apply_long_form_args(
                     if fmt.contains("%I") {
                         config.flags.info_flags.itemize_unchanged = true;
                     }
+                // `--only-write-batch` is NOT client-only: it rides the same
+                // popt table the daemon runs (`options.c:812` -
+                // `{"only-write-batch", 0, POPT_ARG_STRING, &batch_name,
+                // OPT_ONLY_WRITE_BATCH, ...}`, whose case at
+                // `options.c:1779-1781` sets `write_batch = -1`), and a
+                // conforming client emits it at `options.c:3016-3017`
+                // (`if (write_batch < 0) args[ac++] = "--only-write-batch=X"`).
+                // The server-side reset at `options.c:2261-2273` that prints
+                // "ignoring --write-batch option sent to server" fires only for
+                // `write_batch > 0 || read_batch`, so `write_batch = -1`
+                // survives on the daemon. Refusing it turned away upstream
+                // 3.5.0 with `@ERROR: unrecognized option (in daemon mode)`.
+                //
+                // The value is upstream's literal placeholder `X`, never a real
+                // path: `main.c:1912` gates `open_batch_files()` on `!am_server`,
+                // so the daemon never opens a batch file. What it must take from
+                // the flag is the mode switch - `clientserver.c:1195`
+                // `if (write_batch < 0) dry_run = 1` - and the receiver body at
+                // `receiver.c:987-993`, which logs the item and writes nothing
+                // while the generator still sends real block checksums.
+                //
+                // Gated on the receiver role because `server_options()` emits the
+                // token only inside its `am_sender` block, so a daemon serving a
+                // pull never sees it. This mirrors the sibling `--server` argv
+                // parser (`cli/src/frontend/server/run.rs`).
+                } else if arg
+                    .split('=')
+                    .next()
+                    .is_some_and(|name| name == "--only-write-batch")
+                {
+                    if config.role == ServerRole::Receiver {
+                        config.flags.only_write_batch = true;
+                        config.flags.dry_run = true;
+                    }
                 } else if rejection.is_none() && is_client_only_flag_reaching_daemon(arg) {
                     // upstream: options.c:1460-1465 - the daemon's popt loop
                     // emits `rsync: <BAD>: <err> (in daemon mode)` on the
@@ -632,28 +666,27 @@ fn size_arg_error(opt_name: &str, value: &str, reason: &str) -> String {
 /// Reports whether `arg` is a client-only flag that should never reach the
 /// daemon.
 ///
-/// `--write-batch`, `--only-write-batch`, and `--read-batch` set up local
-/// batch-file recording or replay on the CLIENT side only. Upstream
-/// `options.c:server_options()` deliberately omits them from the argv sent
-/// to the server; the only related token upstream emits is the literal
-/// `--only-write-batch=X` placeholder at `options.c:2832-2833`, which
-/// carries no real path. Encountering one here means the client-side
-/// sanitiser failed - the previous behaviour was a silent connection close
-/// in the middle of file-list framing. Surface this as a Rule-12 fail-loud
-/// `@ERROR` instead.
+/// `--write-batch` and `--read-batch` set up local batch-file recording or
+/// replay on the CLIENT side only. Upstream `options.c:server_options()`
+/// deliberately omits them from the argv sent to the server. Encountering one
+/// here means the client-side sanitiser failed - the previous behaviour was a
+/// silent connection close in the middle of file-list framing. Surface this as
+/// a Rule-12 fail-loud `@ERROR` instead.
+///
+/// `--only-write-batch` is deliberately NOT in this set: upstream emits it to
+/// the server on purpose (`options.c:3016-3017`) and keeps `write_batch = -1`
+/// there, so it is handled as a real option by the caller.
 ///
 /// Both bare-flag (`--write-batch`) and key=value (`--write-batch=PATH`)
 /// forms are detected.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:784-786` - `read-batch`, `write-batch`, `only-write-batch`
-///   popt entries (client-only)
+/// - `options.c:810-811` - `read-batch` and `write-batch` popt entries
+/// - `options.c:2261-2273` - the server-side reset that fires for
+///   `write_batch > 0 || read_batch`
 /// - `options.c:1444-1449` - daemon-mode unknown option error path
 fn is_client_only_flag_reaching_daemon(arg: &str) -> bool {
     let bare = arg.split('=').next().unwrap_or(arg);
-    matches!(
-        bare,
-        "--write-batch" | "--only-write-batch" | "--read-batch"
-    )
+    matches!(bare, "--write-batch" | "--read-batch")
 }
