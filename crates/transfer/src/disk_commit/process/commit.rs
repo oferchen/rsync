@@ -130,9 +130,23 @@ pub(super) fn commit_file(
             // `AlreadyExists` for that shape and the `?` fails the whole
             // transfer where upstream unlinks the obstruction and proceeds -
             // measured against real 3.5.0 over a daemon push, which exits 0.
+            //
+            // The create goes through [`create_dir_all_sandboxed`], the same
+            // helper the `--backup-dir` parent already uses, rather than a bare
+            // `std::fs::create_dir_all`. `.~tmp~` is a single component beneath
+            // `dest_dir`, so that helper reduces it to one `mkdirat` anchored on
+            // the destination sandbox. A bare `create_dir_all` reaches glibc's
+            // `mkdir()` wrapper, which lowers to the legacy `mkdir(2)` on
+            // x86_64 - a syscall the daemon worker's seccomp allowlist
+            // deliberately omits in favour of the `*at` variants. MEASURED on
+            // x86_64 CI: the whole `--delay-updates` push died here with
+            // `Operation not permitted`, surfacing downstream as
+            // `mkstemp ... failed`, while the identical push without
+            // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
+            // glibc to lower to, which is why the defect was architecture-only.
             if let Some(parent) = staging_path.parent() {
                 clear_partial_dir_obstruction(parent)?;
-                fs::create_dir_all(parent)?;
+                create_dir_all_sandboxed(config, parent)?;
             }
             let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)
                 .map_err(|e| {
