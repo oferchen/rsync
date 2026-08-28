@@ -160,6 +160,36 @@ impl ConfinedFallback {
         }
     }
 
+    /// The resolved parent descriptor and leaf name for `path`, or `None` when
+    /// arm 1 applies and there is no descriptor to hold.
+    ///
+    /// # Why a call site would want the descriptor rather than an operation
+    ///
+    /// Every other method here resolves, acts, and drops the descriptor, so two
+    /// consecutive calls walk twice and a parent flipped between them is a
+    /// window the pair does not close. A site that must *inspect* an entry and
+    /// then *act* on the very entry it inspected has to hold one descriptor
+    /// across both, which is what upstream's `successful_send()` does: it
+    /// resolves the parent once (`sender.c:416`), re-stats through it
+    /// (`sender.c:426-428`), and unlinks through the same descriptor
+    /// (`sender.c:453`) before closing it.
+    ///
+    /// `None` is arm 1 and `Err` is arm 3, exactly as for [`arm_for`]; the
+    /// caller supplies the arm-1 path-based operation itself, as upstream does
+    /// with its `dfd >= 0 ? ..._atfd(...) : ...(fname)` ternaries.
+    ///
+    /// [`arm_for`]: Self::arm_for
+    ///
+    /// # Errors
+    ///
+    /// Arm 3: whatever the ownership walk refused with - see [`arm_for`].
+    pub fn parent_at(&self, path: &Path) -> io::Result<Option<(OwnedFd, OsString)>> {
+        match self.resolve(path)? {
+            Resolved::Unconfined => Ok(None),
+            Resolved::Confined { parent, leaf } => Ok(Some((parent, leaf))),
+        }
+    }
+
     /// Remove a non-directory entry at `path`.
     ///
     /// `entry` selects `unlinkat(2)`'s flag word exactly as upstream does:
