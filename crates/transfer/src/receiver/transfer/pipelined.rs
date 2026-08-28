@@ -89,8 +89,6 @@ impl ReceiverContext {
             Vec::new()
         };
 
-        // upstream: generator.c:1329-1338 - make_path() for relative_paths
-        self.ensure_relative_parents(&setup.dest_dir);
         let mut metadata_errors = self.create_directories(
             &setup.dest_dir,
             &setup.metadata_opts,
@@ -100,6 +98,16 @@ impl ReceiverContext {
             #[cfg(unix)]
             setup.sandbox.as_deref(),
         )?;
+        // upstream: generator.c:1718-1725 - make_path() fills in a parent that
+        // is still absent after its own file-list entry would have created it.
+        // Must follow create_directories: running it first would pre-empt the
+        // classified, confined mkdir there and make a real run report an
+        // existing directory where its own --dry-run reports a created one.
+        self.ensure_relative_parents(
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        );
         #[cfg(unix)]
         self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]

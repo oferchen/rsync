@@ -541,24 +541,47 @@ impl ReceiverContext {
         Ok(all_errors)
     }
 
-    /// Creates implied parent directories for `--relative` path components.
+    /// Creates the still-missing implied parent directories of `--relative`
+    /// path components.
     ///
-    /// When `--relative` is active, the file list may contain entries with deep paths
-    /// (e.g., `a/b/c/file.txt`). If `--no-implied-dirs` was used, the intermediate
-    /// directories (`a/`, `a/b/`, `a/b/c/`) may not appear as explicit directory
-    /// entries in the file list. This method ensures all parent directories exist
-    /// before files, symlinks, or other entries are processed.
+    /// When `--relative` is active the file list may contain entries with deep
+    /// paths (`a/b/c/file.txt`). With `--no-implied-dirs` at protocol < 30 the
+    /// intermediate directories (`a/`, `a/b/`, `a/b/c/`) never appear as
+    /// directory entries, so nothing else would create them. This method fills
+    /// exactly that gap.
     ///
-    /// Uses a set to track already-created paths, avoiding redundant `mkdir` syscalls
-    /// when many entries share common parent directories.
+    /// It is a **fallback, not a pre-pass**: the caller must run it *after* the
+    /// file list's own directory entries have been created and itemized. That
+    /// ordering is upstream's. `recv_generator()` walks the file list in order;
+    /// a directory entry is created and itemized by `gen_entry_mkdir()`
+    /// (`generator.c:1873`) when its own entry is reached, and the parent
+    /// `make_path()` at `generator.c:1718-1725` fires only for an entry whose
+    /// `do_stat_at(dn, ...)` still reports the parent absent. Running it first
+    /// pre-empts the directory pass: the directories then already exist when
+    /// they are classified, so a real run reports `.d..t......` where its own
+    /// `--dry-run` (which skips destination writes) reports `cd+++++++++`, and
+    /// the unconfined `create_dir` displaces the confined `mkdirat` that the
+    /// classified path would have issued.
+    ///
+    /// Uses a set to track already-created paths, avoiding redundant `mkdir`
+    /// syscalls when many entries share common parent directories.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1329-1338` - `make_path()` for missing parents when
-    ///   `relative_paths && !implied_dirs`
-    /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()` when
-    ///   `relative_paths` and initial `mkdir` returns `ENOENT`
-    pub(in crate::receiver) fn ensure_relative_parents(&self, dest_dir: &Path) {
+    /// - `generator.c:1718-1725` - `make_path(fname, MKP_DROP_NAME |
+    ///   MKP_SKIP_SLASH)` for a parent that `do_stat_at()` reports missing
+    /// - `generator.c:1876-1878` - retry `gen_entry_mkdir()` after `make_path()`
+    ///   when `relative_paths` and the initial mkdir returns `ENOENT`
+    /// - `util1.c:238` / `util1.c:277` - every component `make_path()` creates
+    ///   goes through `do_mkdir_at()`, i.e. the confined mkdir, never a bare
+    ///   `mkdir(2)`. `syscall.c:2066 do_mkdir_at()` opens the parent with
+    ///   `owner_walk_parent()` and issues `mkdirat()` against that dirfd, so a
+    ///   symlinked component cannot redirect the create out of the module.
+    pub(in crate::receiver) fn ensure_relative_parents(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
             return;
         }
@@ -591,23 +614,34 @@ impl ReceiverContext {
 
             // Walk up the path to find the deepest ancestor that needs creation.
             // Build the list of paths to create from shallowest to deepest.
-            let mut ancestors_to_create: Vec<PathBuf> = Vec::new();
+            let mut ancestors_to_create: Vec<(PathBuf, &Path)> = Vec::new();
             let mut current = target;
             loop {
                 let abs_path = dest_dir.join(current);
                 if created.contains(&abs_path) || abs_path.exists() {
                     break;
                 }
-                ancestors_to_create.push(abs_path);
+                ancestors_to_create.push((abs_path, current));
                 match current.parent() {
                     Some(p) if !p.as_os_str().is_empty() => current = p,
                     _ => break,
                 }
             }
 
-            // Create from shallowest to deepest.
-            for dir_path in ancestors_to_create.into_iter().rev() {
-                if let Err(e) = fs::create_dir(&dir_path) {
+            // Create from shallowest to deepest. Each component goes through
+            // the confined mkdir, mirroring `make_path()`'s use of
+            // `do_mkdir_at()` (util1.c:238/277) rather than a bare `mkdir(2)`.
+            for (dir_path, rel_path) in ancestors_to_create.into_iter().rev() {
+                #[cfg(unix)]
+                let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
+                    sandbox, dest_dir, rel_path, &dir_path, 0o777,
+                );
+                #[cfg(not(unix))]
+                let create_result = {
+                    let _ = rel_path;
+                    fs::create_dir(&dir_path)
+                };
+                if let Err(e) = create_result {
                     if e.kind() != io::ErrorKind::AlreadyExists {
                         debug_log!(
                             Recv,
