@@ -279,3 +279,152 @@ fn a_special_file_is_creatable_under_the_worker_filter() {
         "the child reported success but no node exists - the pin would pass vacuously",
     );
 }
+
+/// Every syscall the `--delay-updates` receiver issues must be admitted by
+/// the worker filter.
+///
+/// `--delay-updates` substitutes the implicit `.~tmp~` partial directory
+/// (upstream `options.c:2563-2564`), which puts the receiver on a strictly
+/// larger set of operations than a plain push: it creates a staging
+/// directory, opens the temp through the operator-path fallback rather
+/// than the destination sandbox, moves the pre-image aside for
+/// `--backup-dir`, and renames the staged file into place. The plain push
+/// reaches none of the four.
+///
+/// Regression pin. MEASURED on x86_64 CI at PR head `6664b588e`: a daemon
+/// push with `--backup --backup-dir=bak --delay-updates` died with
+/// `rsync: [receiver] mkstemp "payload" (in data) failed: Operation not
+/// permitted (1)` and exit 23, while the identical push WITHOUT
+/// `--delay-updates` succeeded on the same run. `EPERM` is this filter's
+/// configured denial errno - Landlock reports `EACCES`, and
+/// `LANDLOCK_ACCESS_FS_REFER` reports `EXDEV` - so the refusal is the
+/// seccomp allowlist, not the path sandbox. The same push passes on
+/// aarch64, where the legacy non-`*at` syscalls this allowlist omits do
+/// not exist and glibc therefore has no alternative to lower to.
+///
+/// Same class as [`the_ownership_walk_resolves_under_the_worker_filter`]
+/// and the same visible symptom (`mkstemp ... Permission denied`), but a
+/// different caller: that pin covers the walk's starting `open`, this one
+/// covers the `--delay-updates` staging sequence.
+///
+/// Each step reports a distinct exit code and its errno, so a failure
+/// names the operation instead of leaving the caller to be guessed at.
+#[test]
+fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
+    let root = std::env::temp_dir().join(format!("oc-delay-updates-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).expect("probe root must be creatable");
+    let staging = root.join(".~tmp~");
+    let backup_dir = root.join("bak");
+    let destination = root.join("payload");
+    std::fs::create_dir(&backup_dir).expect("backup dir must be creatable");
+    std::fs::write(&destination, b"PRE-IMAGE").expect("destination must be creatable");
+    assert!(
+        root.is_absolute(),
+        "the probe root must be absolute so the ownership walk starts at `/`",
+    );
+
+    let mut fds: [libc::c_int; 2] = [-1, -1];
+    // SAFETY: `pipe` fills two ints; the array outlives the call.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    assert!(rc == 0, "pipe failed: {}", io::Error::last_os_error());
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+
+    let staged = staging.join("payload");
+    let child_paths = (
+        staging,
+        staged,
+        destination.clone(),
+        backup_dir.join("payload"),
+    );
+    let raw = fork_run(move || {
+        let (staging, staged, destination, backup) = child_paths;
+        match apply_worker_seccomp_filter() {
+            SeccompOutcome::Installed => {}
+            // Kernel refused the filter, or this build cannot install one:
+            // treat as a skip, matching the sibling tests above.
+            _ => return 77,
+        }
+        // Reports the failing step's errno through the inherited pipe. The
+        // exit code alone cannot carry it, and without the errno a red cell
+        // says only "something was refused".
+        let report = |step: i32, err: &io::Error| -> i32 {
+            let line = format!("step {step} errno {:?}\n", err.raw_os_error());
+            // SAFETY: `write` on an inherited pipe fd with a borrowed buffer
+            // whose length is passed explicitly; async-signal-safe.
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::write(write_fd, line.as_ptr().cast(), line.len())
+            };
+            step
+        };
+
+        // upstream: util1.c:1518-1530 handle_partial_dir(PDIR_CREATE).
+        if let Err(e) = std::fs::create_dir_all(&staging) {
+            return report(10, &e);
+        }
+        // upstream: receiver.c:426-434 open_tmpfile() -> secure_mkstemp().
+        // The temp's parent is the staging dir, not the destination root,
+        // so this takes the operator-path fallback rather than the
+        // destination `DirSandbox` the plain push uses.
+        if let Err(e) = fast_io::ConfinedFallback::confined().open_at(
+            &staged,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+            0o600,
+        ) {
+            return report(11, &e);
+        }
+        // upstream: receiver.c:694 make_backup(fname, False) - the delayed
+        // sweep's own backup tier. `operator_rename` is the ownership walk
+        // plus `renameat`, which is the syscall shape the allowlist has to
+        // admit; the confinement variant the sweep uses adds a root check in
+        // userspace and issues the same calls.
+        if let Err(e) = fast_io::operator_rename(&destination, &backup, true) {
+            return report(12, &e);
+        }
+        // upstream: receiver.c:709 do_rename(partialptr, fname).
+        if let Err(e) = std::fs::rename(&staged, &destination) {
+            return report(13, &e);
+        }
+        0
+    });
+
+    // SAFETY: closing the parent's write end so the read below sees EOF.
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::close(write_fd)
+    };
+    let mut detail = String::new();
+    {
+        use std::io::Read;
+        use std::os::fd::FromRawFd;
+        // SAFETY: `read_fd` is owned by this scope and not used elsewhere.
+        #[allow(unsafe_code)]
+        let mut reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        let _ = reader.read_to_string(&mut detail);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+
+    let status = std::process::ExitStatus::from_raw(raw);
+    if let Some(sig) = status.signal() {
+        panic!("child killed by signal {sig} during the --delay-updates staging sequence");
+    }
+    let code = status.code().expect("child must exit");
+    if code == 77 {
+        eprintln!("seccomp filter install rejected by kernel; skipping");
+        return;
+    }
+    let step = match code {
+        10 => "create the `.~tmp~` staging directory",
+        11 => "open the staged temp file through the operator-path fallback",
+        12 => "move the pre-image into the `--backup-dir`",
+        13 => "rename the staged file over the destination",
+        _ => "an unrecognised step",
+    };
+    assert_eq!(
+        code, 0,
+        "the worker filter refused the --delay-updates receiver at: {step} ({detail}) - \
+         a syscall that step issues is missing from the allowlist",
+    );
+}
