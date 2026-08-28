@@ -153,7 +153,12 @@ fn buffers_freed_with_or_without_explicit_unregister() {
         let Some(group) = try_group(&ring, 4096, 4) else {
             return;
         };
-        let _ = group.unregister(&ring);
+        let cleanup = group.unregister(&ring);
+        assert!(
+            cleanup.is_ok(),
+            "path A: unregister on the live ring must succeed, otherwise the \
+             registration stays live and paths B and C silently skip: {cleanup:?}"
+        );
         drop(group);
     }
 
@@ -170,7 +175,13 @@ fn buffers_freed_with_or_without_explicit_unregister() {
     // ring remains in a clean state for further registrations.
     for _ in 0..3 {
         if let Some(group) = RegisteredBufferGroup::try_new(&ring, 4096, 2) {
-            let _ = group.unregister(&ring);
+            let cleanup = group.unregister(&ring);
+            assert!(
+                cleanup.is_ok(),
+                "path C: unregister must succeed, otherwise the next \
+                 iteration re-registers against a still-live registration \
+                 and silently skips: {cleanup:?}"
+            );
         }
     }
 }
@@ -211,11 +222,18 @@ fn drop_does_not_release_kernel_registration() {
     // the live ring fd. After this, fresh registration must succeed -
     // confirming the ring itself is not poisoned by the silent-Drop
     // policy, only the prior kernel-side registration was still live.
-    let _ = ring.submitter().unregister_buffers();
+    let cleanup = ring.submitter().unregister_buffers();
+    assert!(
+        cleanup.is_ok(),
+        "explicit unregister_buffers on the live ring must succeed before \
+         the re-registration probe: {cleanup:?}"
+    );
     let third = RegisteredBufferGroup::new(&ring, 4096, 2);
+    let third_err = third.as_ref().err();
     assert!(
         third.is_ok(),
-        "after explicit unregister, the ring must accept a fresh registration"
+        "after explicit unregister, the ring must accept a fresh \
+         registration; the fresh `new` reported {third_err:?}"
     );
 }
 
@@ -285,10 +303,9 @@ fn drop_on_construction_failure_does_not_double_register() {
     // update semantics the second `new` succeeds; in that case we
     // cannot probe the failure-recovery branch and skip out cleanly.
     let second = RegisteredBufferGroup::new(&ring, 4096, 2);
-    if second.is_ok() {
+    let Err(second_err) = second else {
         return;
-    }
-    drop(second);
+    };
 
     // The first group is still functional - registration-failure
     // recovery in the second call did not poison its state.
@@ -296,15 +313,28 @@ fn drop_on_construction_failure_does_not_double_register() {
     let s = first.checkout().expect("first group still usable");
     drop(s);
 
-    // Explicit unregister on the live group clears kernel state.
-    let _ = first.unregister(&ring);
+    // Explicit unregister on the live group clears kernel state. This is a
+    // precondition of the reuse probe below, not incidental teardown: a
+    // failed unregister leaves the first registration live, so the fresh
+    // `new` would be rejected with EBUSY for a reason that has nothing to
+    // do with failure-recovery. Assert it so the panic names the real step.
+    let cleanup = first.unregister(&ring);
+    assert!(
+        cleanup.is_ok(),
+        "unregister on the live ring must clear the kernel registration \
+         before the reuse probe (the rejected second `new` reported \
+         {second_err}): {cleanup:?}"
+    );
     drop(first);
 
     // After cleanup, a fresh group constructs cleanly. This proves the
     // failure-recovery branch did not leave dangling kernel state.
     let third = RegisteredBufferGroup::new(&ring, 4096, 2);
+    let third_err = third.as_ref().err();
     assert!(
         third.is_ok(),
-        "ring must be reusable after a failed registration was cleaned up"
+        "ring must be reusable after a failed registration was cleaned up \
+         (the rejected second `new` reported {second_err}); the fresh `new` \
+         reported {third_err:?}"
     );
 }
