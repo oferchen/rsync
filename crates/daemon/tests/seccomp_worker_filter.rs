@@ -361,7 +361,13 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         };
 
         // upstream: util1.c:1518-1530 handle_partial_dir(PDIR_CREATE).
-        if let Err(e) = std::fs::create_dir_all(&staging) {
+        // The receiver creates this through the ownership walk, so the probe
+        // calls the same primitive rather than `std::fs::create_dir_all`:
+        // glibc lowers `mkdir()` to the legacy `mkdir(2)` on x86_64, which
+        // this allowlist deliberately omits in favour of the `*at` variants,
+        // so a bare `create_dir_all` would pin a syscall production no longer
+        // issues.
+        if let Err(e) = fast_io::operator_mkdir(&staging, 0o777) {
             return report(10, &e);
         }
         // upstream: receiver.c:426-434 open_tmpfile() -> secure_mkstemp().
