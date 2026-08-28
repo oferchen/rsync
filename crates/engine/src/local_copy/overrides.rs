@@ -70,8 +70,12 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
 /// Hard-links a destination entry into the backup area.
 ///
 /// Same test-override seam as [`create_hard_link`], but on Unix production
-/// resolves both endpoints through the ownership walk
-/// ([`fast_io::operator_link`]). A backup area is an operator path, and the link
+/// resolves both endpoints through the ownership walk, bound to the session's
+/// confinement root ([`fast_io::operator_link_confined`]). Ownership alone is
+/// not enough: a non-chrooted daemon owns everything it creates, so a directory
+/// symlink standing at the `--backup-dir` is trusted-owned by construction and
+/// is followed by design; only the root can refuse where it lands.
+/// A backup area is an operator path, and the link
 /// tier runs *before* the rename tier, so confining only [`backup_rename`]
 /// would leave upstream's `backup-dir-symlink-race` escape wide open: the
 /// attacker's flipped parent redirects the link and the rename is never
@@ -95,7 +99,7 @@ pub(super) fn create_backup_hard_link(source: &Path, destination: &Path) -> io::
 
     #[cfg(unix)]
     {
-        fast_io::operator_link(source, destination)
+        fast_io::operator_link_confined(source, destination)
     }
     #[cfg(not(unix))]
     {
@@ -169,11 +173,14 @@ where
 /// Renames a destination entry to its backup location.
 ///
 /// On Unix both endpoints are resolved by the ownership walk
-/// ([`fast_io::operator_rename`]): every path component is inspected without
-/// following it, a symlink owned by uid 0 or our euid is followed as the
+/// ([`fast_io::operator_rename_confined`]): every path component is inspected
+/// without following it, a symlink owned by uid 0 or our euid is followed as the
 /// operator's own layout, and one owned by anyone else is refused. A backup
 /// directory may legitimately sit outside the transfer tree, so location cannot
-/// be the trust signal here - authority is.
+/// be the trust signal for WHETHER TO FOLLOW - authority is. It is still the
+/// signal for whether the landing site is acceptable when the session has a
+/// confinement root, which is what stops a followed trusted symlink from
+/// carrying an in-module file out of a served module.
 ///
 /// Without that, an attacker who can create entries inside the backup tree
 /// flips a parent component between a real directory and a symlink pointing
@@ -200,7 +207,7 @@ pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
 
     #[cfg(unix)]
     {
-        fast_io::operator_rename(from, to, true)
+        fast_io::operator_rename_confined(from, to, true)
     }
     #[cfg(not(unix))]
     {

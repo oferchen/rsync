@@ -282,3 +282,167 @@ fn without_a_confinement_root_a_confined_open_still_follows() {
 
     assert_eq!(read_all(file), "SECRET-MARKER");
 }
+
+/// THE RENAME-SIDE PIN, at the shape a `--backup-dir` actually has: the escape
+/// is a trusted-owned DIRECTORY symlink standing where the operator named the
+/// backup area, not a symlink at the backup leaf. `renameat` never follows a
+/// leaf symlink - it replaces the name - so a leaf plant cannot express this
+/// escape at all, and only the parent walk can refuse it.
+///
+/// A refused rename must also leave the source in place: the rename MOVES the
+/// inode, so a refusal that fired after the syscall would leave nothing behind
+/// to read back.
+///
+/// upstream: `rsync-3.5.0/backup.c:443-449` `make_backup()` -
+/// `operator_path_resolve = 1` around the whole backup; `syscall.c:1891`
+/// `do_rename_at()` walks each side with `owner_walk_parent()` while it is set.
+#[test]
+fn a_confined_rename_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let pre_image = fixture.module.join("payload");
+    fs::write(&pre_image, "PRE-IMAGE-IN-MODULE").expect("seed the in-module file");
+    let outside_dir = fixture.secret.parent().expect("outside dir").to_path_buf();
+    let backup_dir = fixture.module.join("backup/out");
+    symlink(&outside_dir, &backup_dir).expect("plant the out-of-module dir symlink");
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_rename_confined(&pre_image, &backup_dir.join("payload"), true)
+        .expect_err("a confined rename must not land outside the module");
+
+    assert_eq!(
+        error.raw_os_error(),
+        Some(libc::ELOOP),
+        "the refusal must be ELOOP: callers treat EXDEV as cross-device and \
+         fall back to copy+remove, which would launder it"
+    );
+    assert_eq!(
+        fs::read_to_string(&pre_image).expect("the in-module file must survive"),
+        "PRE-IMAGE-IN-MODULE",
+        "a refused rename must not have moved the source"
+    );
+    assert!(
+        !outside_dir.join("payload").exists(),
+        "nothing may have been deposited outside the module"
+    );
+}
+
+/// The LINK tier of the same backup. It runs BEFORE the rename
+/// (`link_or_rename()` with `prefer_rename = 0`), so confining only the rename
+/// leaves the escape open wherever the link succeeds - which is the ordinary
+/// same-filesystem case.
+///
+/// upstream: `rsync-3.5.0/backup.c:226-247` `link_or_rename()`;
+/// `syscall.c:961` `do_link_at()` under `operator_path_resolve`.
+#[test]
+fn a_confined_link_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let pre_image = fixture.module.join("payload");
+    fs::write(&pre_image, "PRE-IMAGE-IN-MODULE").expect("seed the in-module file");
+    let outside_dir = fixture.secret.parent().expect("outside dir").to_path_buf();
+    let backup_dir = fixture.module.join("backup/out");
+    symlink(&outside_dir, &backup_dir).expect("plant the out-of-module dir symlink");
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_link_confined(&pre_image, &backup_dir.join("payload"))
+        .expect_err("a confined link must not land outside the module");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert!(
+        !outside_dir.join("payload").exists(),
+        "no second name for the in-module inode may exist outside the module"
+    );
+}
+
+/// NEGATIVE CONTROL for the rename side. A trusted directory symlink whose
+/// target stays INSIDE the module is still followed and renamed through - the
+/// ordinary operator layout the walk exists to keep working. Without this,
+/// "refuse a rename through any symlinked parent" would satisfy both pins
+/// above while breaking a legitimate `--backup-dir`.
+#[test]
+fn a_confined_rename_through_a_symlinked_dir_staying_inside_the_module_is_followed() {
+    let fixture = fixture();
+    let pre_image = fixture.module.join("payload");
+    fs::write(&pre_image, "PRE-IMAGE-IN-MODULE").expect("seed the in-module file");
+    let real_backup = fixture.module.join("realbak");
+    fs::create_dir(&real_backup).expect("mkdir the real backup dir");
+    let backup_dir = fixture.module.join("backup/in");
+    symlink(&real_backup, &backup_dir).expect("plant the in-module dir symlink");
+
+    let _session = serve_module(&fixture.module);
+    fast_io::operator_rename_confined(&pre_image, &backup_dir.join("payload"), true)
+        .expect("an in-module landing site must still be renamed through");
+
+    assert_eq!(
+        fs::read_to_string(real_backup.join("payload")).expect("the backup exists"),
+        "PRE-IMAGE-IN-MODULE"
+    );
+    assert!(
+        fs::symlink_metadata(&backup_dir)
+            .expect("the plant survives")
+            .file_type()
+            .is_symlink(),
+        "following the link must not have replaced it"
+    );
+}
+
+/// The reason the parent walk judges `<resolved parent>/<leaf>` and not the
+/// parent alone. An ABSOLUTE walk is allowed to pass through the root's own
+/// ancestors on the way down - they are not-yet-arrived rather than diverged -
+/// so a backup directory resolving to the module root's PARENT reads as
+/// "inside" to a parent-only test while the file it deposits plainly is not.
+///
+/// This is the cell that fails if the leaf half of the check is dropped.
+///
+/// upstream: `rsync-3.5.0/syscall.c:581-596` `owner_walk_parent()` - the
+/// `snprintf(leafabs, "%s/%s", pabs, *bname)` before
+/// `abspath_outside_confinement()`; `syscall.c:233-238` - the ancestor arm that
+/// makes the parent-only answer permissive.
+#[test]
+fn a_confined_rename_into_the_roots_own_ancestor_is_refused() {
+    let fixture = fixture();
+    let pre_image = fixture.module.join("payload");
+    fs::write(&pre_image, "PRE-IMAGE-IN-MODULE").expect("seed the in-module file");
+    let above = fixture
+        .module
+        .parent()
+        .expect("the module root has a parent")
+        .to_path_buf();
+    let backup_dir = fixture.module.join("backup/up");
+    symlink(&above, &backup_dir).expect("plant a symlink to the module root's parent");
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_rename_confined(&pre_image, &backup_dir.join("escaped"), true)
+        .expect_err("the module root's parent is not inside the module root");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert!(
+        !above.join("escaped").exists(),
+        "the ancestor directory must not have received the in-module file"
+    );
+}
+
+/// The other half of upstream's rule for the rename side: an ANCILLARY operator
+/// rename is not bound to the root. Pinned so a blanket confinement inside the
+/// shared parent walk - which would satisfy every refusal above - is visible as
+/// the new divergence it would be.
+///
+/// upstream: `rsync-3.5.0/syscall.c:232-239`; `syscall.c:1891` - `do_rename_at`
+/// takes the ownership walk only while `operator_path_resolve` is set.
+#[test]
+fn an_ancillary_rename_may_still_leave_the_module() {
+    let fixture = fixture();
+    let pre_image = fixture.module.join("payload");
+    fs::write(&pre_image, "PRE-IMAGE-IN-MODULE").expect("seed the in-module file");
+    let outside_dir = fixture.secret.parent().expect("outside dir").to_path_buf();
+    let backup_dir = fixture.module.join("backup/out");
+    symlink(&outside_dir, &backup_dir).expect("plant the out-of-module dir symlink");
+
+    let _session = serve_module(&fixture.module);
+    fast_io::operator_rename(&pre_image, &backup_dir.join("payload"), true)
+        .expect("an ancillary rename is not bound to the module root");
+
+    assert_eq!(
+        fs::read_to_string(outside_dir.join("payload")).expect("the ancillary rename landed"),
+        "PRE-IMAGE-IN-MODULE"
+    );
+}

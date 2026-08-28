@@ -476,6 +476,24 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
     std::fs::rename(old_path, new_path)
 }
 
+/// Moves an existing destination file to its backup name during the
+/// `--delay-updates` sweep, through the operator-path ownership walk bound to
+/// the session's confinement root.
+///
+/// upstream: `backup.c:443-449` `make_backup()`; `syscall.c:1891`
+/// `do_rename_at()` under `operator_path_resolve`.
+#[cfg(unix)]
+#[inline]
+fn delayed_backup_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    fast_io::operator_rename_confined(from, to, true)
+}
+
+#[cfg(not(unix))]
+#[inline]
+fn delayed_backup_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
 /// Renames all delayed-update files from their staging paths to their final
 /// destinations, removing each emptied staging directory as it goes.
 ///
@@ -541,11 +559,22 @@ pub(in crate::receiver) fn handle_delayed_updates(
             // directory that was never created, so the reported failure was
             // the derived `ENOENT` from the rename rather than the `EACCES`
             // that actually stopped the backup.
+            //
+            // The rename itself is the `--delay-updates` sweep's own
+            // `make_backup()` tier, so it takes the same operator-path resolver
+            // the disk-commit and local-copy sites do: a trusted-owned
+            // directory symlink standing at the `--backup-dir` would otherwise
+            // move the destination's pre-transfer bytes out of the module root.
+            // A refusal fails the backup, which the `Err` arm below turns into
+            // the upstream skip - so nothing escapes AND the pre-image survives.
+            // upstream: backup.c:443-449 `make_backup()` sets
+            // `operator_path_resolve` around the whole backup, whichever
+            // caller reached it.
             let placed = match backup_path.parent() {
                 Some(parent) if !parent.exists() => sweep_create_dir_all(parent),
                 _ => Ok(()),
             }
-            .and_then(|()| sweep_rename(final_path, &backup_path));
+            .and_then(|()| delayed_backup_rename(final_path, &backup_path));
 
             match placed {
                 Ok(()) => {
