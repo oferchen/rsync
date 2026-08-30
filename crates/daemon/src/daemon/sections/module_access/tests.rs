@@ -1940,7 +1940,11 @@ mod module_access_tests {
             path: PathBuf::from("/srv/data"),
             ..Default::default()
         });
-        for inner in [Some(PathBuf::from("/")), Some(PathBuf::from("/inner")), None] {
+        for inner in [
+            Some(PathBuf::from("/")),
+            Some(PathBuf::from("/inner")),
+            None,
+        ] {
             let outcome = PrivilegeOutcome {
                 chroot_applied: true,
                 inner_module_path: inner.clone(),
