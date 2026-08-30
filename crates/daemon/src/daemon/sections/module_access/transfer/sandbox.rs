@@ -416,6 +416,63 @@ fn landlock_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
     None
 }
 
+/// Where the Landlock allowlist must be pinned once chroot has already run,
+/// or why the layer deliberately stands aside.
+///
+/// `restrict_to_module_paths` opens every root it is handed, and it runs
+/// **after** `chroot()`. A pre-chroot absolute path is therefore not a path
+/// this process can name any more, which is why the root has to be re-derived
+/// from the privilege outcome rather than read off `module.path`.
+#[derive(Debug, PartialEq, Eq)]
+enum LandlockRoot<'a> {
+    /// Pin the allowlist beneath this (currently resolvable) directory.
+    Confine(&'a Path),
+    /// The chroot root *is* the module root, so the kernel already denies
+    /// exactly what the allowlist would deny. Skip, deliberately.
+    SubsumedByChroot,
+}
+
+/// Selects the Landlock root for a connection whose chroot and privilege drop
+/// have already been applied.
+///
+/// Three cases, and the split mirrors upstream's own predicate for "does the
+/// kernel chroot already confine this module?":
+///
+/// - **Not chrooted** (`use chroot = no`, or the unset rootless auto-fallback):
+///   confine to the real module path, as before.
+/// - **Chrooted at the module root** (no `/./` marker): upstream sets
+///   `module_dir = "/"` and `module_dirlen = 1`, then immediately zeroes that
+///   length - clientserver.c:912-925 - so its own
+///   `use_secure_symlinks = am_daemon && (!am_chrooted || module_dirlen)`
+///   (clientserver.c:1093) evaluates false: with no inner boundary the chroot
+///   is the whole confinement. Landlock over the post-chroot `/` would deny
+///   nothing extra, and it would actively *narrow* the module: the
+///   `READONLY_SYSTEM_PATHS` rules (`/etc`, `/usr`, `/var`, ...) are resolved
+///   inside the jail, and a Landlock rule on a deeper directory overrides a
+///   shallower one - so a module tree that happens to contain `etc/` or `var/`
+///   (a system backup, say) would become read-only. Stand aside.
+/// - **Chrooted with a `/./` inner boundary**: the chroot lands on the OUTER
+///   path, leaving the inner module boundary unguarded - upstream keeps its
+///   secure-symlink path active for exactly this shape (clientserver.c:1084-1093
+///   `the kernel chroot confines the outer path but not the inner module`).
+///   Confine to the post-chroot inner directory, which is the one root that is
+///   both resolvable now and narrower than the jail.
+///
+/// upstream: rsync has no Landlock layer at all; only the
+/// chrooted-vs-inner-boundary predicate above is mirrored from it.
+fn landlock_root<'a>(
+    module: &'a ModuleRuntime,
+    privilege_outcome: &'a PrivilegeOutcome,
+) -> LandlockRoot<'a> {
+    if !privilege_outcome.chroot_applied {
+        return LandlockRoot::Confine(module.path.as_path());
+    }
+    match privilege_outcome.inner_module_path.as_deref() {
+        Some(inner) if inner != Path::new("/") => LandlockRoot::Confine(inner),
+        _ => LandlockRoot::SubsumedByChroot,
+    }
+}
+
 /// Why a kernel sandbox layer must be skipped for a module that runs an
 /// `exec()` hook, or `None` when no hook is configured.
 ///
@@ -449,6 +506,11 @@ fn exec_hook_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
 /// non-Linux targets short-circuits to `Unavailable` so the wire-in does
 /// not need `#[cfg]` branching.
 ///
+/// Because it runs post-chroot, the root comes from [`landlock_root`] and not
+/// from `module.path`, which by then names nothing this process can open. That
+/// helper also decides the one case where the layer stands aside on purpose: a
+/// chroot whose root is already the module root.
+///
 /// `extra_allowed_paths` carries absolute, in-module paths that
 /// `validate_client_paths_in_module` admitted from the client args
 /// (`--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` /
@@ -457,14 +519,13 @@ fn exec_hook_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
 /// Closing URV-5.b.REOPEN: without the widening, a default-on Landlock
 /// flip would EACCES the very paths the operator's configuration permits.
 ///
-/// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded,
-/// unavailable, skipped by the operator's `OC_RSYNC_NO_LANDLOCK` /
-/// `OC_RSYNC_DAEMON_LANDLOCK=0` opt-out, or skipped because a
-/// pre/post-xfer-exec hook is configured).
-/// Returns `Ok(false)` after emitting an `@ERROR` reply when the kernel
-/// advertised Landlock support but the helper failed to engage the ruleset -
-/// we treat that as a regression because the SEC-1.p design requires the
-/// sandbox to be live on supporting kernels.
+/// Always returns `Ok(true)`: no Landlock outcome aborts the connection,
+/// because SEC-1 `*at` helpers remain the primary defense in every one of
+/// them. The `Ok(false)` arm is kept in the signature so a future default-on
+/// flip can make a failed install fatal without rippling through the caller.
+/// A ruleset the kernel advertised but refused is logged as a WARNING naming
+/// the root and the OS error - it is a regression, and after the post-chroot
+/// root fix it can no longer be produced by our own path handling.
 ///
 /// When `pre_xfer_exec` or `post_xfer_exec` is configured, the sandbox is
 /// skipped: Landlock rulesets are inherited by child processes, so engaging
@@ -476,6 +537,7 @@ fn exec_hook_skip_reason(module: &ModuleRuntime) -> Option<&'static str> {
 fn engage_landlock_sandbox(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    privilege_outcome: &PrivilegeOutcome,
     extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
     use fast_io::landlock::{
@@ -505,6 +567,28 @@ fn engage_landlock_sandbox(
         return Ok(true);
     }
 
+    // Chroot already ran, so the root must be re-derived: `module.path` is a
+    // pre-chroot absolute path this process can no longer name, and handing it
+    // to the kernel produced `landlock setup failed: failed to open <path>: No
+    // such file or directory` on every chrooted module - an attempted-and-
+    // failed layer reported as a warning rather than as a decision. MEASURED
+    // on Linux 7.0 x86_64 before this change, for both `path = /srv/data` and
+    // `path = /srv/outer/./inner`.
+    let root = match landlock_root(module, privilege_outcome) {
+        LandlockRoot::Confine(path) => path,
+        LandlockRoot::SubsumedByChroot => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': landlock=skipped reason=chroot root is the module root (the kernel chroot already confines this module; see clientserver.c:1093)",
+                    ctx.request,
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            return Ok(true);
+        }
+    };
+
     if !is_supported() {
         if let Some(log) = ctx.log_sink {
             let text = format!(
@@ -517,17 +601,20 @@ fn engage_landlock_sandbox(
         return Ok(true);
     }
 
-    // Roots: the module path is the always-present writable surface plus
-    // any client-supplied alt-basis (`--compare-dest` / `--copy-dest` /
-    // `--link-dest`) or relocation (`--temp-dir` / `--partial-dir` /
-    // `--backup-dir`) paths that `validate_client_paths_in_module` has
-    // already confirmed to resolve beneath `module.path` (URV-5.b.1).
-    // Widening the allowlist to those paths is safe because the containment
-    // check already proved they cannot escape the module tree; without the
-    // widening, a default-on Landlock flip (URV-5.c.5) would EACCES
-    // legitimate writes the operator's configuration permits.
+    // Roots: the module root selected above is the always-present writable
+    // surface plus any client-supplied alt-basis (`--compare-dest` /
+    // `--copy-dest` / `--link-dest`) or relocation (`--temp-dir` /
+    // `--partial-dir` / `--backup-dir`) paths that
+    // `validate_client_paths_in_module` has already confirmed to resolve
+    // beneath that same root (URV-5.b.1) - it derives the root from the very
+    // same privilege outcome, so both halves of the allowlist live in the same
+    // (post-chroot) namespace. Widening the allowlist to those paths is safe
+    // because the containment check already proved they cannot escape the
+    // module tree; without the widening, a default-on Landlock flip
+    // (URV-5.c.5) would EACCES legitimate writes the operator's configuration
+    // permits.
     let mut roots: Vec<&Path> = Vec::with_capacity(1 + extra_allowed_paths.len());
-    roots.push(module.path.as_path());
+    roots.push(root);
     roots.extend_from_slice(extra_allowed_paths);
 
     match restrict_to_module_paths(&roots) {
@@ -591,11 +678,15 @@ fn engage_landlock_sandbox(
             // The kernel said yes to landlock but no to our ruleset; this
             // is a regression worth surfacing. Log a warning and continue
             // rather than killing the connection - the SEC-1 *at* chain
-            // still provides the primary defense.
+            // still provides the primary defense. Name the root we asked the
+            // kernel to pin: the previous message reported only the OS error,
+            // which read as an environment problem when it was in fact a
+            // pre-chroot path handed to a post-chroot process.
             if let Some(log) = ctx.log_sink {
                 let text = format!(
-                    "module '{}': landlock setup failed: {err}; relying on SEC-1 *at* defense",
+                    "module '{}': landlock setup failed for root {}: {err}; relying on SEC-1 *at* defense",
                     ctx.request,
+                    root.display(),
                 );
                 let message = rsync_warning!(text).with_role(Role::Daemon);
                 log_message(log, &message);

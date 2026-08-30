@@ -582,12 +582,17 @@ fn process_approved_module(
     // collected above are admitted to the allowlist alongside the module
     // root (URV-5.b.REOPEN): they are guaranteed in-tree and would
     // otherwise EACCES under a default-on flip.
+    //
+    // `privilege_outcome` is threaded through because the root itself depends
+    // on it: post-chroot, `module.path` is a name this process no longer has.
+    // It also carries the case where the layer deliberately stands aside -
+    // a chroot rooted at the module directory.
     let extra_allowed: Vec<&Path> = validated_client_paths
         .landlock_roots
         .iter()
         .map(|p| p.as_path())
         .collect();
-    if !engage_landlock_sandbox(ctx, module, &extra_allowed)? {
+    if !engage_landlock_sandbox(ctx, module, &privilege_outcome, &extra_allowed)? {
         let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
             ctx,
