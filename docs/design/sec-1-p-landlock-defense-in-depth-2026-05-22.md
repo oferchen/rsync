@@ -145,6 +145,8 @@ auth complete -> validate_module_path -> apply_module_privilege_restrictions
 The set of paths passed to `restrict_to_paths` is the union of:
 
 1. `module.path` - mandatory, always present (parsed in `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs`).
+
+   **Correction (as shipped).** `module.path` is the wrong root once the module chroots, because the call site above runs *after* `chroot()` and `restrict_to_module_paths` opens every root it is handed. The shipped code re-derives the root from the privilege outcome (`landlock_root` in `module_access/transfer/sandbox.rs`): the real module path when not chrooted; the post-chroot inner directory for a `/./` module; and no ruleset at all when the chroot root already is the module root, where the kernel chroot supplies the same confinement (upstream reaches the same conclusion for its own path-confinement layer at `clientserver.c:1093`).
 2. The module lock file directory, if configured (`module.lock_file` - the daemon needs to update the file during the connection).
 3. Any auxiliary log paths the daemon writes per-connection (transfer log, xfer log).
 
