@@ -1,3 +1,4 @@
+[![RepoGrade](https://www.repo-grade.com/api/badge/oferchen/rsync)](https://www.repo-grade.com/report/oferchen/rsync)
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
 [![Upstream Testsuite 3.5.0 (nonroot, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
