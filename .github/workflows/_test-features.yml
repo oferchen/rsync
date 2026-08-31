@@ -102,7 +102,7 @@ jobs:
 
       - name: Install cargo-nextest (Unix)
         if: runner.os != 'Windows'
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-nextest
 
@@ -253,7 +253,7 @@ jobs:
 
       - name: Install cargo-nextest (Unix)
         if: runner.os != 'Windows'
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-nextest
 
