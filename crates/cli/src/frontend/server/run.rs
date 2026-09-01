@@ -42,6 +42,23 @@ fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> 
         .or_else(|| dest.parent().and_then(|parent| parent.canonicalize().ok()))
 }
 
+/// Converts the client's forwarded `--timeout=N` into this server process's
+/// effective I/O timeout in seconds, or `None` for "no timeout".
+///
+/// upstream: `options.c` - `server_options()` emits `--timeout=%d` from the
+/// client's `io_timeout`, and the server's own `parse_arguments()` over the
+/// received argv ends in `set_io_timeout(io_timeout)` (`options.c:2511`), so a
+/// client `--timeout` arms the server process too.
+///
+/// A non-positive or unparsable value is "no timeout": upstream parses
+/// `--timeout` as a plain `int`, and `io.c:1266-1271` `set_io_timeout()` clamps
+/// a negative to `0`, which every timeout check short-circuits on.
+pub(super) fn forwarded_io_timeout(raw: Option<&str>) -> Option<u32> {
+    raw.and_then(|value| value.parse::<i64>().ok())
+        .and_then(|secs| u32::try_from(secs).ok())
+        .filter(|secs| *secs > 0)
+}
+
 /// Runs the native server implementation when `--server` is requested.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
@@ -231,6 +248,7 @@ where
     // (`GeneratorContext::source_open`), which prefers the module directory, so
     // a peer-supplied value cannot widen a module even if one arrives here.
     config.connection.confine_root = long_flags.confine_root.map(std::path::PathBuf::from);
+    config.connection.io_timeout = forwarded_io_timeout(long_flags.timeout.as_deref());
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2400-2411 - append mode implies inplace. The promotion

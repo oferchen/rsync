@@ -340,6 +340,12 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // upstream: clientserver.c:1288-1289 - the client's forwarded `--timeout`
+    // has now been read, so the connection is re-armed with the minimum of it
+    // and the module's `timeout` directive (0 on either side meaning "no
+    // timeout"). Before this point only the module value is known.
+    let io_timeout = apply_effective_io_timeout(ctx.reader.get_mut(), module, &client_args)?;
+
     // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
     // module's `refuse options` list against the actual client argv after the
     // post-OK `read_args()` round-trip. The earlier check at the OPTION-line
@@ -779,8 +785,12 @@ fn process_approved_module(
         .transition(ConnectionState::Transferring)
         .map_err(transition_error)?;
 
-    let handshake =
-        build_handshake_result(ctx.reader, negotiated_protocol, client_args.clone(), module);
+    let handshake = build_handshake_result(
+        ctx.reader,
+        negotiated_protocol,
+        client_args.clone(),
+        io_timeout,
+    );
     let final_protocol = handshake.protocol;
 
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
