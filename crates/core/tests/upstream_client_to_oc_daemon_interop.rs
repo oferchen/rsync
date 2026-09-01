@@ -9,8 +9,8 @@
 //! 3. Verify protocol negotiation, file transfers, and metadata preservation
 //!
 //! Upstream reference:
-//! - `target/interop/upstream-src/rsync-3.4.1/clientserver.c` - client protocol
-//! - `target/interop/upstream-src/rsync-3.4.1/main.c:1267-1384` - client_run()
+//! - `target/interop/upstream-src/rsync-3.5.0/clientserver.c` - client protocol
+//! - `target/interop/upstream-src/rsync-3.5.0/main.c:1323-1440` - client_run()
 //!
 //! oc-rsync reference:
 //! - `crates/daemon/src/daemon/` - daemon implementation
