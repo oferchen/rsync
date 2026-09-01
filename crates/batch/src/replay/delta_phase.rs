@@ -31,6 +31,7 @@ use super::dispatch::{
 ///
 /// upstream: receiver.c:recv_files() reads NDX + iflags + sum_head per file,
 /// then delta tokens, then file checksum. NDX_DONE signals phase transitions.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_delta_phase(
     reader: &mut BatchReader,
     entries: &mut Vec<protocol::flist::FileEntry>,
@@ -38,6 +39,7 @@ pub(super) fn apply_delta_phase(
     flags: &BatchFlags,
     result: &mut ReplayResult,
     verbosity: i32,
+    transferred: &mut Vec<usize>,
 ) -> BatchResult<()> {
     let proto = reader.config().protocol_version;
     let mut codec_state = CodecState::new(flags, proto as u32);
@@ -81,7 +83,7 @@ pub(super) fn apply_delta_phase(
         }
 
         if ndx <= NDX_FLIST_OFFSET {
-            handle_inc_recurse_segment(reader, entries, dest_root, &mut flist_segments)?;
+            handle_inc_recurse_segment(reader, entries, dest_root, &mut flist_segments, proto)?;
             result.file_count = entries.len() as u64;
             continue;
         }
@@ -95,6 +97,7 @@ pub(super) fn apply_delta_phase(
             ndx,
             proto,
             verbosity,
+            transferred,
         )?;
     }
 
@@ -184,6 +187,7 @@ fn process_file_ndx(
     ndx: i32,
     proto: i32,
     verbosity: i32,
+    transferred: &mut Vec<usize>,
 ) -> BatchResult<()> {
     let stream = reader
         .inner_reader()
@@ -252,10 +256,15 @@ fn process_file_ndx(
     // files; directories and symlinks were created in the flist phase and must
     // not be overwritten with a delta-reconstructed file.
     if is_regular {
-        apply_file_delta(&dest_path, basis_exists, delta_ops, sum_head)
-    } else {
-        Ok(())
+        apply_file_delta(&dest_path, basis_exists, delta_ops, sum_head)?;
+        // Records which cluster member the batch actually fed, so the hardlink
+        // pass links the rest of its cluster to this file rather than to a
+        // destination the batch never wrote.
+        // upstream: hlink.c:516 finish_hard_link() - "FIRST combined with DONE
+        // means we were the first to get done".
+        transferred.push(flat_index);
     }
+    Ok(())
 }
 
 /// Reads delta tokens for one file, dispatching by compression codec.
@@ -319,6 +328,7 @@ fn handle_inc_recurse_segment(
     entries: &mut Vec<protocol::flist::FileEntry>,
     dest_root: &Path,
     flist_segments: &mut Vec<(i32, usize, usize)>,
+    proto: i32,
 ) -> BatchResult<()> {
     let prev_len = entries.len();
 
@@ -327,6 +337,10 @@ fn handle_inc_recurse_segment(
     let seg_ndx_start = prev_seg.0 + prev_seg.2 as i32 + 1;
 
     reader.read_incremental_flist_segment(entries)?;
+
+    // upstream: flist.c:1335-1341 - the group tag names a wire index, so it has
+    // to be stamped before the segment is sorted out of wire order.
+    super::assign_hardlink_gnums(&mut entries[prev_len..], seg_ndx_start, proto);
 
     // upstream: flist.c:2771 - sort each sub-list segment after receiving.
     // INC_RECURSE batches require protocol >= 30, so pre29 is always false.

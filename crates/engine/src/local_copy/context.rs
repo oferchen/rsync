@@ -301,6 +301,22 @@ pub(crate) struct CopyContext<'a> {
     /// Used to compute the traversal→sorted index mapping that upstream's
     /// `flist_sort_and_clean()` produces after reading the batch flist.
     batch_entry_sort_data: Vec<(Vec<u8>, bool)>,
+    /// `(st_dev, st_ino)` to the traversal index of the entry that first
+    /// carried that inode, for `--write-batch -H`.
+    ///
+    /// upstream: `flist.c:599-625 send_file_entry()` consults `idev_find()`
+    /// for every non-directory with `st_nlink > 1`; a miss makes the entry the
+    /// group leader (`XMIT_HLINK_FIRST`) and records its index, a hit makes it
+    /// a follower carrying the leader's index.
+    batch_hlink_first_ndx: HashMap<(u64, u64), i32>,
+    /// Hardlink group number per flist entry in traversal order, `None` for
+    /// entries outside any cluster.
+    ///
+    /// upstream: `flist.c:1335-1341 recv_file_entry()` stores the same value in
+    /// `F_HL_GNUM`; `hlink.c:match_gnums()` then transfers only the
+    /// sorted-first member of each group, so the batch must carry delta data
+    /// for that member alone.
+    batch_entry_hlink_gnum: Vec<Option<i32>>,
     /// Traversal index of the current file being delta-captured.
     batch_current_delta_idx: i32,
     /// Zero-based file-list index counter for batch NDX framing.
