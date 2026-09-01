@@ -34,13 +34,13 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/hlink.c:59-65`
+//! - `target/interop/upstream-src/rsync-3.5.0/hlink.c:59-65`
 //!   (`init_hard_links`): builds the dev/ino table before the delete
 //!   sweep runs.
-//! - `target/interop/upstream-src/rsync-3.4.1/hlink.c:186-208`
+//! - `target/interop/upstream-src/rsync-3.5.0/hlink.c:200-222`
 //!   (`match_hard_links`): freezes leader assignments before
 //!   `do_delete_pass`.
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
 //!   (`delete_item`): the dispatch is unconditional `do_unlink`; the
 //!   kernel reconciles ref counts. Our [`CohortIndex`] therefore exists
 //!   to power itemize tagging and cohort-aware diagnostics, not to skip
@@ -192,7 +192,7 @@ impl CohortIndex {
     /// should be tagged as "last ref" or as one of several. The count
     /// reflects source-side membership only - destination-side ref
     /// counts are the kernel's responsibility, mirroring upstream
-    /// `delete.c:130-225` where every unlink is unconditional.
+    /// `delete.c:191-288` where every unlink is unconditional.
     #[must_use]
     pub fn surviving_refs_in_cohort(&self, cohort: HardlinkCohortId) -> u32 {
         self.cohort_sizes.get(&cohort).copied().unwrap_or(0)

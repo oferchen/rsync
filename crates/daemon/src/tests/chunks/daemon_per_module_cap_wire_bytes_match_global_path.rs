@@ -19,7 +19,7 @@
 // to each other plus to the upstream literal, guarding against drift
 // in either call site.
 //
-// upstream: target/interop/upstream-src/rsync-3.4.1/clientserver.c:752
+// upstream: target/interop/upstream-src/rsync-3.5.0/clientserver.c:799
 
 #[test]
 fn daemon_per_module_cap_wire_bytes_match_global_path() {
