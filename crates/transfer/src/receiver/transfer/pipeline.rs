@@ -34,6 +34,42 @@ use crate::transfer_ops::{
 /// base iflags.
 type InFlightFile = (usize, PathBuf, FileEntry, u32);
 
+/// Reports whether the transfer's DESTINATION is a block or character device,
+/// without following a final symlink.
+///
+/// This is the `--write-devices` predicate. It is keyed on the destination
+/// because that is the only end that can be a device: `--write-devices` streams
+/// a REGULAR source file's contents into an EXISTING device node, so the
+/// sender's file-list entry describes a regular file by construction and
+/// keying the predicate on it can never be true.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:1170` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`,
+///   where `st` is the `do_fstat()` of the opened destination/basis descriptor
+///   (`receiver.c:1143-1145`), never the file-list entry.
+/// - `receiver.c:1076` - that descriptor is opened via `do_open_atfd()`, which
+///   forces `O_NOFOLLOW` (`syscall.c:3835`), so a symlinked destination is not
+///   followed into a device; `symlink_metadata` is the same decision.
+/// - `rsync.h:1394` - `IS_DEVICE(mode)` is `S_ISCHR(mode) || S_ISBLK(mode)`. FIFOs
+///   and sockets are `IS_SPECIAL` (`rsync.h:1393`) and are NOT device targets.
+#[cfg(unix)]
+fn destination_is_device(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    std::fs::symlink_metadata(path).is_ok_and(|meta| {
+        let file_type = meta.file_type();
+        file_type.is_block_device() || file_type.is_char_device()
+    })
+}
+
+/// Windows has no `S_ISBLK`/`S_ISCHR` destination a transfer can write through,
+/// so `--write-devices` never engages there.
+#[cfg(not(unix))]
+fn destination_is_device(_path: &std::path::Path) -> bool {
+    false
+}
+
 /// The receiver's in-flight request window - wire state and per-file state
 /// held as one unit.
 ///
@@ -732,7 +768,8 @@ impl ReceiverContext {
                 };
 
                 let xattr_list = self.resolve_xattr_list(&file_entry);
-                let is_device_target = self.config.write.write_devices && file_entry.is_device();
+                let is_device_target =
+                    self.config.write.write_devices && destination_is_device(&file_path);
                 let response = process_file_response_streaming(
                     reader,
                     &mut *ndx_read_codec,
