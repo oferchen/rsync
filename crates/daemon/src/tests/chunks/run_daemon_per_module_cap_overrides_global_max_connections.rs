@@ -7,7 +7,7 @@
 // per-module cap allows, the second is refused with the upstream
 // literal even though the daemon-global cap (10) is nowhere near hit.
 //
-// upstream: target/interop/upstream-src/rsync-3.4.1/clientserver.c:744
+// upstream: target/interop/upstream-src/rsync-3.5.0/clientserver.c:791
 // applies `lp_max_connections(i)` via `claim_connection()` per module;
 // the per-module value binds independently of any daemon-wide limit.
 

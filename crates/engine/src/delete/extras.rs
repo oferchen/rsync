@@ -18,12 +18,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`
+//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
 //!   (`delete_in_dir`): scans `get_dirlist(fbuf, ...)` then for every
 //!   item calls `flist_find_ignore_dirness(cur_flist, fp) < 0` to decide
 //!   whether to delete. We perform the same set subtraction in pure
 //!   Rust: hash the segment's basenames, then walk the dest directory.
-//! - `target/interop/upstream-src/rsync-3.4.1/flist.c:flist_find`
+//! - `target/interop/upstream-src/rsync-3.5.0/flist.c:flist_find`
 //!   (basename-keyed lookup against the active flist).
 
 use std::collections::HashSet;
@@ -85,7 +85,7 @@ pub fn compute_extras(
 /// the supplied [`CohortIndex`].
 ///
 /// The cohort tag has no effect on the unlink decision itself; matching
-/// upstream `delete.c:130-225`, every extras path is still unlinked
+/// upstream `delete.c:191-288`, every extras path is still unlinked
 /// unconditionally and the kernel reconciles ref counts. The tag exists
 /// so the [`super::DeleteEmitter`] can emit cohort-aware itemize lines
 /// without re-statting and so future diagnostics can distinguish a

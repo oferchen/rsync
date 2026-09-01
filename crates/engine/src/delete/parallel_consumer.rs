@@ -40,9 +40,9 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
 //!   (`delete_item`): per-cohort dispatch order the consumer preserves.
-//! - `target/interop/upstream-src/rsync-3.4.1/main.c:225-247`
+//! - `target/interop/upstream-src/rsync-3.5.0/main.c:229-251`
 //!   (`write_del_stats` / `read_del_stats`): the goodbye-phase frame the
 //!   wire ordering invariant protects. The consumer never emits the frame
 //!   itself; it preserves cohort identity so the unchanged generator-side
@@ -488,7 +488,7 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
                 }
             }
             Err(err) => {
-                // upstream: delete.c:86-210 never aborts the pass on a
+                // upstream: delete.c:141-273 never aborts the pass on a
                 // per-entry errno; record it and keep going under the
                 // default continue-on-error policy.
                 accumulate_nonfatal(&mut summary.io_error, policy, &err);

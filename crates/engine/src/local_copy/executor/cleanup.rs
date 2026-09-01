@@ -53,9 +53,9 @@ fn normalize_filename_for_compare(name: &OsStr) -> OsString {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1344` - `one_file_system && st.st_dev != filesystem_dev` sets
+/// - `flist.c:1490` - `one_file_system && st.st_dev != filesystem_dev` sets
 ///   `FLAG_MOUNT_DIR` on the dest dirlist entry.
-/// - `generator.c:331` - `delete_in_dir()` skips a `FLAG_MOUNT_DIR` directory.
+/// - `generator.c:337` - `delete_in_dir()` skips a `FLAG_MOUNT_DIR` directory.
 #[cfg(unix)]
 fn crosses_mount_boundary(boundary_dev: u64, entry_dev: u64) -> bool {
     entry_dev != boundary_dev
@@ -176,7 +176,7 @@ where
     //    mid-traversal once the limit is reached. The emitter removes an
     //    extraneous directory wholesale and counts it as a single deletion,
     //    silently exceeding the cap for directory subtrees. The leaf executor
-    //    matches upstream delete.c:156/181 (guard-before-delete,
+    //    matches upstream delete.c:217/244 (guard-before-delete,
     //    increment-on-success).
     // 2. `--one-file-system`: a mount point nested inside an otherwise-doomed
     //    subtree must be preserved, but `remove_dir_all` recurses across the
@@ -186,7 +186,7 @@ where
     //    `--max-delete` the cap is absent, so `cap_reached` is always false and
     //    the pass never reports a limit hit.
     // 3. `--backup`: every extraneous file must be backed up before removal
-    //    (upstream delete.c:165-171 `make_backup` inside `delete_item`, invoked
+    //    (upstream delete.c:228-234 `make_backup` inside `delete_item`, invoked
     //    for each entry `delete_dir_contents` recurses over). The emitter peels
     //    a directory wholesale with `remove_dir_all`, which never backs up the
     //    contents - a silent data-loss gap. The leaf executor recurses
@@ -232,7 +232,7 @@ where
     // run at all: it would recurse across a mount boundary nested inside a
     // doomed subtree and destroy the mounted filesystem. Under --backup it would
     // peel a directory's contents without backing them up (upstream
-    // delete.c:165-171 backs up every entry `delete_dir_contents` recurses
+    // delete.c:228-234 backs up every entry `delete_dir_contents` recurses
     // over). Route the already-built plan through the leaf executor, which
     // preserves a mount, pins its parent, and backs up each file before removal.
     // The immediate `--delete*` modes reach the leaf executor via the dispatch
@@ -297,7 +297,7 @@ where
         // The emitter never aborts on a per-entry errno; a swallowed
         // unlink/rmdir error surfaces as exit code 23 in the outcome. Fold
         // it into the copy context so the run finishes RERR_PARTIAL while the
-        // pass keeps deleting the rest of the tree (upstream delete.c:86-210
+        // pass keeps deleting the rest of the tree (upstream delete.c:141-273
         // FERROR_XFER + `io_error |= IOERR_GENERAL`).
         if outcome.exit_code == EMITTER_PARTIAL_EXIT_CODE {
             context.record_delete_io_error();
@@ -315,7 +315,7 @@ where
 /// upstream: generator.c:351 `delete_during == 2` calls `remember_delete(fp, ...)`
 /// from inside `delete_in_dir` - the decision (including
 /// `change_local_filter_dir`) happens during the walk, only the unlink is
-/// postponed to `do_delayed_deletions()` (generator.c:2419). Deciding at flush
+/// postponed to `do_delayed_deletions()` (generator.c:2900). Deciding at flush
 /// time instead would wrongly consult the by-then-present merge files.
 pub(crate) fn decide_and_defer_delayed_deletions<S: AsRef<OsStr>>(
     context: &mut CopyContext,
@@ -363,9 +363,9 @@ pub(crate) fn execute_decided_deletion(
 /// (see `remove_entry_capped`), counting only successful deletions - exactly
 /// mirroring upstream `delete.c:delete_item`/`delete_dir_contents` where
 /// `stats.deleted_files` is compared against `max_delete` before every entry
-/// and incremented only on a successful removal (`delete.c:156` guard,
-/// `delete.c:181` increment), and a mount point pins its parent
-/// (`delete.c:89-97`). With no `--max-delete` the cap is absent, so
+/// and incremented only on a successful removal (`delete.c:217` guard,
+/// `delete.c:244` increment), and a mount point pins its parent
+/// (`delete.c:144-152`). With no `--max-delete` the cap is absent, so
 /// `cap_reached` is always false and the pass never reports a limit hit.
 ///
 /// The global running count is `context.summary().items_deleted()`, which the
@@ -384,7 +384,7 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
 
     // --one-file-system boundary device threaded through the recursion so a
     // mount point nested inside a doomed subtree is preserved and pins its
-    // parent, matching upstream delete.c:89-97. `build_plan_for_directory`
+    // parent, matching upstream delete.c:144-152. `build_plan_for_directory`
     // already excluded direct-child mounts, so this guards the deeper levels.
     let boundary_dev = delete_boundary_device(context, destination);
 
@@ -413,7 +413,7 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
     }
 
     if skipped > 0 {
-        // upstream: generator.c:2431 emits one warning after the pass with
+        // upstream: generator.c:2905 emits one warning after the pass with
         // the total number of entries skipped because of the limit; the run
         // then exits RERR_DEL_LIMIT (25).
         info_log!(
@@ -430,10 +430,10 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
 
 /// Orders two directory children the way upstream `get_dirlist` sorts them
 /// for a delete pass: protocol-29 `f_name_cmp` places non-directories before
-/// directories (t_ITEM before t_PATH, upstream: flist.c:3223), then by name.
+/// directories (t_ITEM before t_PATH, upstream: flist.c:3560), then by name.
 /// Callers `reverse()` the sorted slice to reproduce upstream's reverse
-/// dirlist iteration (`for (i = dirlist->used; i--; )`, delete.c:85 /
-/// generator.c:326), so directories are visited first, then files - the
+/// dirlist iteration (`for (i = dirlist->used; i--; )`, delete.c:141 /
+/// generator.c:333), so directories are visited first, then files - the
 /// order that decides which entries survive a `--max-delete` cap and the
 /// order deletion log lines are emitted.
 fn cmp_child_delete_order(a: (&OsStr, bool), b: (&OsStr, bool)) -> std::cmp::Ordering {
@@ -448,10 +448,10 @@ fn cmp_child_delete_order(a: (&OsStr, bool), b: (&OsStr, bool)) -> std::cmp::Ord
 /// depth-first (`delete_dir_contents`, reverse-sorted iteration), then the
 /// now-empty directory is itself subject to the same guard before its own
 /// removal. `skipped` accumulates the count reported to the user, matching
-/// upstream's `skipped_deletes` (`delete.c:157`).
+/// upstream's `skipped_deletes` (`delete.c:218`).
 ///
 /// `nested` distinguishes a directory reached during the recursion (upstream's
-/// `delete_item(..., DEL_DIR_IS_EMPTY)` call at `delete.c:107`) from a
+/// `delete_item(..., DEL_DIR_IS_EMPTY)` call at `delete.c:162`) from a
 /// top-level extraneous entry (upstream's initial `delete_item` without
 /// `DEL_DIR_IS_EMPTY`). Only the former counts a cap-saturated non-empty
 /// directory toward `skipped` - see the `!all_children_removed` branch below.
@@ -479,7 +479,7 @@ fn remove_entry_capped(
         }
     };
 
-    // upstream: generator.c:331 / delete.c:89-97 - a mount point is never
+    // upstream: generator.c:337 / delete.c:144-152 - a mount point is never
     // deleted and pins its enclosing directory as non-empty. Under
     // --one-file-system a directory on a different device than the transfer
     // root is that mount point: preserve it and return `false` so the caller
@@ -532,7 +532,7 @@ fn remove_entry_capped(
             let child_path = path.join(&child_name);
             let child_relative = entry_relative.join(&child_name);
             // Children are reached via the recursion, mirroring upstream's
-            // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:107; mark them
+            // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:162; mark them
             // `nested` so a cap-saturated non-empty subdir is counted.
             if !remove_entry_capped(
                 context,
@@ -548,9 +548,9 @@ fn remove_entry_capped(
 
         if !all_children_removed {
             // Contents survived because the cap was reached, so the directory
-            // cannot be removed. upstream: delete.c:117 prints this once per
+            // cannot be removed. upstream: delete.c:178 prints this once per
             // non-empty directory without flagging an I/O error. upstream
-            // delete.c:117 prints the transfer-relative name (`f_name`), not the
+            // delete.c:178 prints the transfer-relative name (`f_name`), not the
             // absolute destination path.
             info_log!(
                 Nonreg,
@@ -559,18 +559,18 @@ fn remove_entry_capped(
                 entry_relative.display().to_string().replace('\\', "/")
             );
             // A NESTED non-empty directory is still reached by upstream's
-            // `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:107): with
-            // DEL_DIR_IS_EMPTY set, delete.c:144 is skipped and control falls
-            // straight to the max_delete guard (delete.c:156), which does
+            // `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:162): with
+            // DEL_DIR_IS_EMPTY set, delete.c:205 is skipped and control falls
+            // straight to the max_delete guard (delete.c:217), which does
             // `skipped_deletes++` because the cap is saturated. The TOP-LEVEL
             // directory instead enters `delete_item` WITHOUT DEL_DIR_IS_EMPTY,
             // so its survived contents take the `goto check_ret` path
-            // (delete.c:151-152) and it is never counted. Count the nested case
+            // (delete.c:212-213) and it is never counted. Count the nested case
             // to match upstream's skipped total exactly (issue #212).
             //
             // Only count it when the cap is the reason the contents survived. A
             // directory that survived solely because it pins a `--one-file-system`
-            // mount point is upstream's DR_NOT_EMPTY (delete.c:95-96), which does
+            // mount point is upstream's DR_NOT_EMPTY (delete.c:150-151), which does
             // not touch `skipped_deletes`; counting it would falsely trip
             // RERR_DEL_LIMIT. `cap_reached` is true exactly when a cap skip
             // occurred, so it distinguishes the two without changing the
@@ -623,14 +623,14 @@ fn delete_leaf(
 ) -> Result<(), LocalCopyError> {
     let is_dir = file_type.is_dir();
 
-    // upstream: delete.c:165 - back up an extraneous file before deletion only
+    // upstream: delete.c:228 - back up an extraneous file before deletion only
     // when `backup_dir || !is_backup_file(fbuf)`.
     if !context.mode().is_dry_run()
         && !is_dir
         && let Some(name) = path.file_name()
         && context.options().should_backup_before_delete(name)
     {
-        // upstream: delete.c:167 - the delete pass calls `make_backup(fbuf,
+        // upstream: delete.c:230 - the delete pass calls `make_backup(fbuf,
         // True)`, skipping the hard-link tier since the item is unlinked
         // outright right after regardless of which strategy placed it.
         context.backup_existing_entry(path, Some(entry_relative), file_type, true)?;
@@ -639,7 +639,7 @@ fn delete_leaf(
     // A directory can survive its own delete when in-place suffix backups
     // (`--backup` without `--backup-dir`) renamed its contents to `name~`,
     // leaving it non-empty. Upstream `delete_dir_contents` reports this as the
-    // benign `DR_NOT_EMPTY` (delete.c:117): print the notice, keep the
+    // benign `DR_NOT_EMPTY` (delete.c:178): print the notice, keep the
     // directory, do not flag an I/O error or count a deletion. The rmdir must
     // therefore run before the deletion is recorded so the `*deleting` event is
     // only emitted for a directory that is actually removed.
@@ -649,7 +649,7 @@ fn delete_leaf(
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) if is_dir_not_empty(&error) => {
-                    // upstream delete.c:117 prints the transfer-relative name
+                    // upstream delete.c:178 prints the transfer-relative name
                     // (`f_name`), not the absolute destination path.
                     info_log!(
                         Nonreg,
@@ -723,11 +723,11 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<Option<DeletePlan>, LocalCopyError> {
-    // upstream: delete.c:63 / generator.c:308 - the delete pass calls
+    // upstream: delete.c:106 / generator.c:314 - the delete pass calls
     // `change_local_filter_dir(fbuf, F_DEPTH(file))` with the destination
     // directory so the receiver applies any per-dir merge rules found in the
     // directory being scanned, INHERITING an ancestor directory's rules into
-    // subdirectories (exclude.c:801 keeps them in `lp->head`). Advancing the
+    // subdirectories (exclude.c:900 keeps them in `lp->head`). Advancing the
     // persistent, depth-keyed delete-filter chain keeps ancestor frames alive
     // (rather than popping each directory's rules immediately), which is what
     // lets a parent `.rsync-filter` protect a subdirectory's entries. During a
@@ -798,13 +798,13 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
             )
         })?;
 
-        // upstream: generator.c:331-336 delete_in_dir() skips a dest directory
+        // upstream: generator.c:337-342 delete_in_dir() skips a dest directory
         // flagged FLAG_MOUNT_DIR ("cannot delete mount point"). Under
         // --one-file-system a destination directory on a different device than
         // the transfer root is that mount point: exclude it from the plan so it
         // is neither unlinked nor `remove_dir_all`'d. Its parent is the
         // source-present scanned directory, which is never a deletion candidate,
-        // so the parent is left in place (delete.c:89-97 parent pinning).
+        // so the parent is left in place (delete.c:144-152 parent pinning).
         if is_delete_mount_point(boundary_dev, &destination.join(&name_path), file_type) {
             info_log!(
                 Mount,
@@ -920,7 +920,7 @@ fn classify_kind(file_type: fs::FileType) -> DeleteEntryKind {
 ///
 /// Directories recurse into their contents so per-entry counters match
 /// upstream's `delete_in_dir` walk (one count per leaf, mirroring
-/// `target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`).
+/// `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`).
 fn apply_delete_side_effects(
     context: &mut CopyContext,
     destination: &Path,
@@ -956,7 +956,7 @@ fn apply_delete_side_effects(
             record_directory_subtree(context, &mut subtree_path, &mut subtree_relative)?;
         }
 
-        // upstream: delete.c:165 - back up an extraneous file before deletion
+        // upstream: delete.c:228 - back up an extraneous file before deletion
         // only when `backup_dir || !is_backup_file(fbuf)`. A name that already
         // ends in the backup suffix is unlinked directly (no re-backup to
         // `<name><suffix><suffix>`); the emitter below performs that unlink.
@@ -965,7 +965,7 @@ fn apply_delete_side_effects(
                 .options()
                 .should_backup_before_delete(entry.name.as_os_str())
         {
-            // upstream: delete.c:167 - prefer_rename=True; the item is
+            // upstream: delete.c:230 - prefer_rename=True; the item is
             // unlinked outright right after, so skip the hard-link tier.
             context.backup_existing_entry(
                 &path,
@@ -1087,7 +1087,7 @@ pub(crate) fn record_directory_subtree(
 /// # Upstream Reference
 ///
 /// - `sender.c:395` `successful_send()`
-/// - `log.c:311` / `main.c:1630` `got_xfer_error` -> `RERR_PARTIAL`
+/// - `log.c:338` / `main.c:1683` `got_xfer_error` -> `RERR_PARTIAL`
 pub(crate) fn remove_source_entry_if_requested(
     context: &mut CopyContext,
     source: &Path,
@@ -1323,7 +1323,7 @@ mod mount_boundary_tests {
     /// point that must be preserved.
     ///
     /// upstream: flist.c:1490 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
-    /// generator.c:331 (delete_in_dir skips it).
+    /// generator.c:337 (delete_in_dir skips it).
     #[test]
     fn mount_boundary_predicate_distinguishes_devices() {
         const ROOT_DEV: u64 = 0x10;
@@ -1388,7 +1388,7 @@ mod mount_boundary_tests {
                     "a same-device directory must remain deletable",
                 );
                 // A non-directory on a foreign device is not a mount point:
-                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1341).
+                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1487).
                 assert!(
                     !is_delete_mount_point(Some(ROOT_DEV), &foreign_file, file_ft),
                     "only directories can be mount points",

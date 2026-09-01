@@ -17,7 +17,7 @@
 // template + `{limit}` + `\n` shape, so pinning the template plus the
 // substituted bytes locks both call sites against drift.
 //
-// upstream: target/interop/upstream-src/rsync-3.4.1/clientserver.c:752
+// upstream: target/interop/upstream-src/rsync-3.5.0/clientserver.c:799
 
 #[test]
 fn daemon_max_connections_wire_bytes_match_upstream() {

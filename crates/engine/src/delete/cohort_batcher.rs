@@ -56,9 +56,9 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
 //!   (`delete_item`): per-cohort dispatch order the batcher preserves.
-//! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`
+//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
 //!   (`delete_in_dir`): one cohort per destination parent directory.
 
 use std::sync::atomic::{AtomicBool, Ordering};
