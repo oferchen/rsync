@@ -27,7 +27,7 @@ bare-do-open-symlink-race pass
 basis-xname-traversal fail
 batch-file-symlink pass
 batch-mode pass
-batch-only-remove-source-regression fail
+batch-only-remove-source-regression pass
 change-shrink pass
 change-vanish pass
 chdir-symlink-race pass

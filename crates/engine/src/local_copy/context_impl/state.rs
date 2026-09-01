@@ -81,6 +81,8 @@ impl<'a> CopyContext<'a> {
             batch_delta_sum_head: protocol::wire::SumHead::WHOLE_FILE,
             batch_delta_sum_head_offset: 0,
             batch_entry_sort_data: Vec::new(),
+            batch_hlink_first_ndx: HashMap::new(),
+            batch_entry_hlink_gnum: Vec::new(),
             batch_current_delta_idx: 0,
             batch_flist_index: 0,
             batch_ndx_codec,

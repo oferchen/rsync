@@ -46,8 +46,9 @@ mod fs_ops;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use protocol::flist::sort_file_list;
 
@@ -131,6 +132,26 @@ pub fn replay(
 
     let mut entries = reader.read_protocol_flist()?;
 
+    // upstream: flist.c:1335-1341 - recv_file_entry() stamps F_HL_GNUM while
+    // the entry is still in wire order, because the tag a follower carries is
+    // the leader's *unsorted* index. Doing it after the sort below would name
+    // a different entry.
+    let proto = reader.config().protocol_version;
+    let initial_ndx_start = if reader
+        .header()
+        .and_then(|h| h.compat_flags)
+        .map(|cf| {
+            protocol::CompatibilityFlags::from_bits(cf as u32)
+                .contains(protocol::CompatibilityFlags::INC_RECURSE)
+        })
+        .unwrap_or(false)
+    {
+        1
+    } else {
+        0
+    };
+    assign_hardlink_gnums(&mut entries, initial_ndx_start, proto);
+
     // upstream: flist.c:2771 - flist_sort_and_clean() after recv_file_list().
     // NDX values from the generator reference sorted positions, not wire order.
     let pre29 = reader.config().protocol_version < 29;
@@ -156,6 +177,7 @@ pub fn replay(
     prepare_directories_and_symlinks(&entries, dest_root, verbosity, &mut result)?;
 
     // Phase 2: Apply delta operations for regular files.
+    let mut transferred = Vec::new();
     apply_delta_phase(
         &mut reader,
         &mut entries,
@@ -163,7 +185,12 @@ pub fn replay(
         &flags,
         &mut result,
         verbosity,
+        &mut transferred,
     )?;
+
+    // Phase 2.5: rebuild the hardlink clusters. The batch carries the payload
+    // for one member per cluster, exactly as upstream's generator requested it.
+    link_hardlink_clusters(&entries, &transferred, dest_root, &flags)?;
 
     // Phase 3: Apply metadata. Directories are done last because setting
     // timestamps on a directory before writing its contents would cause the
@@ -172,6 +199,159 @@ pub fn replay(
     apply_all_metadata(&entries, dest_root, &flags, verbosity);
 
     Ok(result)
+}
+
+/// Stamps each hardlink cluster member with its group tag, mirroring the
+/// `F_HL_GNUM` bookkeeping upstream does as it reads the file list.
+///
+/// A follower already arrives carrying the tag - the leader's file-list index -
+/// so only the leader needs one, and it uses its own index. Below protocol 30
+/// there is no index on the wire at all and the cluster is named by the
+/// trailing `(dev, ino)` pair, which is folded onto the same index space here.
+///
+/// `ndx_start` is the wire index of the segment's first entry, so the tags this
+/// assigns live in the same space as the ones followers carry.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1335-1341`: `F_HL_GNUM(file) = flist->ndx_start + flist->used`
+///   for an `XMIT_HLINK_FIRST` entry, `= first_hlink_ndx` otherwise.
+/// - `flist.c:1343-1362`: the protocol 28-29 arm groups by `(dev, ino)`.
+pub(super) fn assign_hardlink_gnums(
+    entries: &mut [protocol::flist::FileEntry],
+    ndx_start: i32,
+    protocol_version: i32,
+) {
+    if protocol_version >= 30 {
+        for (offset, entry) in entries.iter_mut().enumerate() {
+            if entry.hlinked() && entry.hlink_first() {
+                let ndx = ndx_start.saturating_add(offset as i32).max(0);
+                entry.set_hardlink_idx(ndx as u32);
+            }
+        }
+        return;
+    }
+
+    let mut groups: HashMap<(i64, i64), u32> = HashMap::new();
+    for (offset, entry) in entries.iter_mut().enumerate() {
+        if !entry.hlinked() {
+            continue;
+        }
+        let (Some(dev), Some(ino)) = (entry.hardlink_dev(), entry.hardlink_ino()) else {
+            continue;
+        };
+        let ndx = ndx_start.saturating_add(offset as i32).max(0) as u32;
+        let gnum = *groups.entry((dev, ino)).or_insert(ndx);
+        entry.set_hardlink_idx(gnum);
+    }
+}
+
+/// Recreates the hardlink clusters described by the file list.
+///
+/// The batch holds the payload for a single member of each cluster, so every
+/// other member is materialised as a link to it rather than from delta data.
+/// `transferred` names the flat entry indices that phase 2 actually wrote,
+/// which is what makes the link source the member the batch fed - upstream
+/// picks the same file for the same reason ("FIRST combined with DONE means we
+/// were the first to get done"). A cluster whose members were all already
+/// up to date has no transferred member; the first one in file-list order then
+/// becomes the source, matching upstream's `virtual first`.
+///
+/// # Upstream Reference
+///
+/// - `hlink.c:113-194`: `match_gnums()` clusters by `F_HL_GNUM`.
+/// - `hlink.c:496-565`: `finish_hard_link()` links the rest of the cluster to
+///   the member that completed.
+/// - `hlink.c:224-256`: `maybe_hard_link()` leaves a member alone when it
+///   already shares the source's `(st_dev, st_ino)`.
+fn link_hardlink_clusters(
+    entries: &[protocol::flist::FileEntry],
+    transferred: &[usize],
+    dest_root: &Path,
+    flags: &BatchFlags,
+) -> BatchResult<()> {
+    if !flags.preserve_hard_links {
+        return Ok(());
+    }
+
+    let mut sources: HashMap<u32, PathBuf> = HashMap::new();
+    for &index in transferred {
+        let Some(entry) = entries.get(index) else {
+            continue;
+        };
+        if !entry.hlinked() {
+            continue;
+        }
+        if let Some(gnum) = entry.hardlink_idx() {
+            sources
+                .entry(gnum)
+                .or_insert_with(|| dest_root.join(entry.name()));
+        }
+    }
+
+    for entry in entries {
+        if !entry.hlinked() || entry.file_type() != protocol::flist::FileType::Regular {
+            continue;
+        }
+        let Some(gnum) = entry.hardlink_idx() else {
+            continue;
+        };
+        let dest_path = dest_root.join(entry.name());
+        let source_path = match sources.get(&gnum) {
+            Some(path) => path.clone(),
+            None => {
+                sources.insert(gnum, dest_path);
+                continue;
+            }
+        };
+        if source_path == dest_path || already_hard_linked(&source_path, &dest_path) {
+            continue;
+        }
+        if dest_path.symlink_metadata().is_ok() {
+            fs::remove_file(&dest_path).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "failed to replace '{}' with a hard link: {e}",
+                        dest_path.display()
+                    ),
+                ))
+            })?;
+        }
+        fast_io::hard_link(&source_path, &dest_path).map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "link {} => {} failed: {e}",
+                    dest_path.display(),
+                    source_path.display()
+                ),
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Whether the two paths already name the same inode.
+///
+/// upstream: `hlink.c:230-231 maybe_hard_link()` compares `st_dev`/`st_ino`
+/// and leaves the destination untouched when they match.
+#[cfg(unix)]
+fn already_hard_linked(source: &Path, dest: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    match (fs::symlink_metadata(source), fs::symlink_metadata(dest)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Non-Unix platforms expose no inode identity, so the link is always redone.
+#[cfg(not(unix))]
+fn already_hard_linked(source: &Path, dest: &Path) -> bool {
+    let _ = (source, dest);
+    false
 }
 
 /// Phase 1: Create directories and symlinks, ensure parent dirs for regular files.

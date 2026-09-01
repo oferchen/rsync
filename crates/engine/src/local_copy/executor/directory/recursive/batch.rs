@@ -117,6 +117,50 @@ fn build_protocol_file_entry(
     entry
 }
 
+/// Stamps the hardlink identity of a cluster member onto its flist entry.
+///
+/// Protocol 30 and above name the cluster by the leader's file-list index:
+/// `FileListWriter` reads `u32::MAX` as "this entry is the leader" and emits
+/// `XMIT_HLINKED | XMIT_HLINK_FIRST`, and any other value as a follower whose
+/// abbreviated entry is just flags, name and `write_varint(first_hlink_ndx)`.
+/// Protocols 28 and 29 have no index; the cluster is named by the trailing
+/// `(dev, ino)` pair instead.
+///
+/// upstream: `flist.c:599-625` computes `first_hlink_ndx` and the two xflags,
+/// `flist.c:668-672` writes the follower's index and abbreviates the entry, and
+/// `flist.c:741-753` writes the pre-30 `(dev, ino)` pair.
+fn apply_hardlink_fields(
+    entry: &mut protocol::flist::FileEntry,
+    metadata: &fs::Metadata,
+    hlink_group: Option<(i32, bool)>,
+    protocol_version: i32,
+) {
+    let Some((leader_ndx, is_leader)) = hlink_group else {
+        return;
+    };
+
+    if protocol_version >= 30 {
+        // upstream: flist.c:602-605 - a new group records its own index and is
+        // flagged XMIT_HLINK_FIRST; the sentinel is how the writer spells that.
+        entry.set_hardlink_idx(if is_leader {
+            u32::MAX
+        } else {
+            leader_ndx.max(0) as u32
+        });
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        entry.set_hardlink_dev(metadata.dev() as i64);
+        entry.set_hardlink_ino(metadata.ino() as i64);
+    }
+    #[cfg(not(unix))]
+    let _ = metadata;
+}
+
 /// Captures a file entry to the batch file using the protocol wire format.
 ///
 /// When batch mode is active, encodes the file entry using the protocol
@@ -143,13 +187,22 @@ pub(crate) fn capture_batch_file_entry(
     #[cfg(not(unix))]
     let numeric_ids = true;
 
-    let entry = build_protocol_file_entry(
+    // The stream flags recorded in the header are what the reader configures
+    // itself from, so the hardlink decision has to come from the same place.
+    let (protocol_version, preserve_hard_links) =
+        context.batch_hard_link_context().unwrap_or((0, false));
+    // Must run for every captured entry, cluster member or not: the group
+    // numbers it records are indexed by traversal position.
+    let hlink_group = context.assign_batch_hlink_group(metadata, preserve_hard_links);
+
+    let mut entry = build_protocol_file_entry(
         source_path,
         relative_path,
         metadata,
         is_top_dir,
         numeric_ids,
     );
+    apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
 
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context
