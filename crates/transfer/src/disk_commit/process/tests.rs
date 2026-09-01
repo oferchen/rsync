@@ -1009,3 +1009,523 @@ fn truncate_for_whole_file_sparse_noop_when_no_basis() {
     assert_eq!(preallocated_len, 0);
     assert_eq!(file.metadata().unwrap().len(), 0);
 }
+
+/// Builds the `--backup-dir` fixture the metadata-option cells share and
+/// returns `(tempdir, dest_dir, backup_dir, file_path, inherited_mode)`.
+///
+/// `inherited_mode` is picked so a plainly-created directory under the current
+/// umask can NEVER carry it: the mode a bare `mkdir` produces is measured
+/// first, and the destination subdirectory is given a different one. Without
+/// that step a umask of 077 would make "the backup subdir did not inherit
+/// 0700" true by coincidence and the cell inert.
+#[cfg(unix)]
+fn backup_dir_mode_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, u32) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let probe = dir.path().join("umask_probe");
+    fs::create_dir(&probe).expect("create probe dir");
+    let plain_mode = fs::metadata(&probe)
+        .expect("stat probe")
+        .permissions()
+        .mode()
+        & 0o777;
+    let inherited_mode = if plain_mode == 0o700 { 0o711 } else { 0o700 };
+
+    let dest_dir = dir.path().join("dst");
+    let sub = dest_dir.join("sub");
+    fs::create_dir_all(&sub).expect("create dst/sub");
+    let file_path = sub.join("payload.bin");
+    fs::write(&file_path, b"pre-image").expect("write pre-image");
+    fs::set_permissions(&sub, fs::Permissions::from_mode(inherited_mode)).expect("chmod dst/sub");
+
+    let backup_dir = dir.path().join("bak");
+    (dir, dest_dir, backup_dir, file_path, inherited_mode)
+}
+
+#[cfg(unix)]
+fn dir_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::metadata(path).expect("stat").permissions().mode() & 0o777
+}
+
+/// The `metadata_opts` the commit configuration carries must reach the
+/// `--backup-dir` attribute copy rather than being replaced by a default.
+///
+/// `create_backup_path_parents` does
+/// `env.metadata_opts.cloned().unwrap_or_default()`, and
+/// `MetadataOptions::default()` preserves permissions - so
+/// [`make_backup_backup_dir_subdir_inherits_source_mode`], which asks for
+/// `preserve_permissions(true)`, passes identically whether the field is
+/// threaded or dropped: the default agrees with it. This cell asks for
+/// `preserve_permissions(false)`, which no default can supply, so the freshly
+/// created backup subdirectory must keep the plain `mkdir` mode instead of the
+/// destination directory's.
+///
+/// The two cells are each other's companions: this one proves the caller's
+/// options are consulted, that one proves the attribute copy runs at all.
+///
+/// upstream: `backup.c:173` `set_file_attrs(backup_dir_buf, file, NULL, NULL, 0)`
+/// applies the run's own preserve flags to each new backup subdirectory; it does
+/// not pick its own.
+#[cfg(unix)]
+#[test]
+fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
+    use std::ffi::OsString;
+
+    let (_dir, dest_dir, backup_dir, file_path, inherited_mode) = backup_dir_mode_fixture();
+
+    let config = BackupConfig {
+        dest_dir: dest_dir.clone(),
+        backup_dir: Some(backup_dir.clone()),
+        suffix: OsString::new(),
+    };
+    let disk_config = DiskCommitConfig {
+        metadata_opts: Some(::metadata::MetadataOptions::new().preserve_permissions(false)),
+        ..DiskCommitConfig::default()
+    };
+
+    make_backup(&file_path, &config, disk_config.backup_env())
+        .expect("make_backup succeeds")
+        .expect("notice produced for the backed-up file");
+
+    let backup_sub = backup_dir.join("sub");
+    assert!(backup_sub.is_dir(), "backup subdirectory must be created");
+    assert!(
+        backup_sub.join("payload.bin").exists(),
+        "the fixture must actually place a backup under the new subdirectory"
+    );
+    let mode = dir_mode(&backup_sub);
+    assert_ne!(
+        mode, inherited_mode,
+        "preserve_permissions(false) must reach the backup-dir attribute copy; \
+         a dropped metadata_opts falls back to a default that DOES preserve \
+         permissions, got {mode:o}"
+    );
+}
+
+/// Fixture for the `--backup` destination-anchor pins: a destination root whose
+/// PATH was swapped for a symlink to an out-of-tree directory *after* the
+/// receiver's [`fast_io::DirSandbox`] pinned its dirfd.
+///
+/// Deterministic by program order - no threads, no sleeps. `open_root` captures
+/// the real inode first; the swap happens afterwards, leaving exactly the state
+/// an attacker who flips `dest` between the sandbox open and the backup would
+/// produce. Every path handed to the ladder afterwards is the pre-swap
+/// `dest/<leaf>` string, which is what the receiver actually holds.
+///
+/// The two wirings are then distinguishable by PLACEMENT: an `*at()` call
+/// anchored on `sandbox.current_dirfd()` lands in `pinned`, while any
+/// path-based resolution of the same string lands in `outside`. The ownership
+/// walk in the fallback follows the swapped symlink by design - it is owned by
+/// our own euid (`syscall.c:270-272`) - which is why the dirfd anchor, not the
+/// walk, is what keeps the backup inside the tree here.
+#[cfg(unix)]
+struct SwappedDestRoot {
+    _temp: tempfile::TempDir,
+    /// The destination root string the ladder is given; now a symlink.
+    dest_dir: PathBuf,
+    /// The real directory the sandbox dirfd pins.
+    pinned: PathBuf,
+    /// Out-of-tree directory the swapped path resolves to.
+    outside: PathBuf,
+    sandbox: std::sync::Arc<fast_io::DirSandbox>,
+}
+
+#[cfg(unix)]
+fn swapped_dest_root() -> SwappedDestRoot {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let staging = fs::canonicalize(temp.path()).expect("canon");
+    let dest_dir = staging.join("dest");
+    let pinned = staging.join("dest.pinned");
+    let outside = staging.join("outside");
+    fs::create_dir(&dest_dir).expect("create dest");
+    fs::create_dir(&outside).expect("create outside");
+
+    let sandbox = std::sync::Arc::new(fast_io::DirSandbox::open_root(&dest_dir).expect("sandbox"));
+
+    fs::rename(&dest_dir, &pinned).expect("move the real dest aside");
+    std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant the dest symlink");
+
+    SwappedDestRoot {
+        _temp: temp,
+        dest_dir,
+        pinned,
+        outside,
+        sandbox,
+    }
+}
+
+/// The [`BackupEnv`](super::super::config::BackupEnv) sandbox/`dest_dir` pair
+/// must reach the hard-link tier: the backup's NEW endpoint is resolved against
+/// the pinned dirfd, so a destination root swapped for a symlink cannot carry
+/// the pre-image out of the tree.
+///
+/// upstream: `backup.c:437-448` `make_backup()` raises `operator_path_resolve`
+/// around the whole ladder, and `link_or_rename()` (`backup.c:239`) runs
+/// `do_link_at()` FIRST - so confining only the rename would leave the escape
+/// wide open on every platform where the link succeeds. oc's SEC-1.h equivalent
+/// is `linkat_via_sandbox_or_fallback`, reached only when `env.sandbox` and
+/// `env.dest_dir` are both threaded through.
+///
+/// Observable difference, not a call count: with the anchor the backup file is
+/// at `pinned/payload.bin~`; without it, at `outside/payload.bin~`. See
+/// [`make_backup_without_the_destination_anchor_follows_the_root_swap`] for the
+/// non-vacuity companion that runs the same fixture unanchored.
+#[cfg(unix)]
+#[test]
+fn make_backup_hardlink_tier_anchors_the_backup_on_the_pinned_destination() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    // The pre-image the ladder reaches through the swapped path.
+    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig {
+        sandbox: Some(fx.sandbox.clone()),
+        dest_dir: Some(fx.dest_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let backup_config = BackupConfig {
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    let notice = make_backup(
+        &fx.dest_dir.join("payload.bin"),
+        &backup_config,
+        config.backup_env(),
+    )
+    .expect("anchored backup succeeds")
+    .expect("notice produced for the backed-up file");
+
+    assert!(
+        !fx.outside.join("payload.bin~").exists(),
+        "the backup must not be placed out of tree through the swapped destination root"
+    );
+    assert!(
+        fx.pinned.join("payload.bin~").exists(),
+        "the anchored link must place the backup inside the pinned destination"
+    );
+    assert_eq!(
+        fs::read(fx.pinned.join("payload.bin~")).unwrap(),
+        b"pre-transfer bytes",
+        "the backup must carry the destination's pre-transfer bytes verbatim"
+    );
+    assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+}
+
+/// Non-vacuity companion for
+/// [`make_backup_hardlink_tier_anchors_the_backup_on_the_pinned_destination`]:
+/// the SAME fixture with `env.sandbox`/`env.dest_dir` absent resolves the backup
+/// name by path and therefore DOES follow the swap.
+///
+/// This is what stops the anchored cell reading as a pass for the wrong reason.
+/// If the fixture simply could not produce a backup - a missing pre-image, a
+/// ladder that bailed out early - this test would fail too, because it asserts a
+/// backup file was written (out of tree).
+#[cfg(unix)]
+#[test]
+fn make_backup_without_the_destination_anchor_follows_the_root_swap() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig::default();
+    assert!(config.sandbox.is_none() && config.dest_dir.is_none());
+    let backup_config = BackupConfig {
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    make_backup(
+        &fx.dest_dir.join("payload.bin"),
+        &backup_config,
+        config.backup_env(),
+    )
+    .expect("unanchored backup still succeeds")
+    .expect("notice produced for the backed-up file");
+
+    let escaped_backup = fx.outside.join("payload.bin~");
+    assert!(
+        escaped_backup.exists(),
+        "the fixture must be able to produce a backup at all; nothing was written"
+    );
+    assert_eq!(
+        fs::read(&escaped_backup).unwrap(),
+        b"pre-transfer bytes",
+        "without the anchor the ladder resolves the backup name by path and \
+         follows the swap - the fixture can and does produce a backup, so the \
+         anchored cell's placement assertion is discriminating, not vacuous"
+    );
+    assert!(
+        !fx.pinned.join("payload.bin~").exists(),
+        "nothing reaches the pinned directory when no dirfd anchor is supplied"
+    );
+}
+
+/// The sandbox/`dest_dir` pair must reach the RENAME tier too: both endpoints
+/// resolve against the pinned dirfd, so the pre-image that moves is the one
+/// inside the real destination and the out-of-tree file is left alone.
+///
+/// [`ForceExdev`] knocks out the hard-link tier exactly as a real `--backup-dir`
+/// on another mount does (`link(2)` fails `EXDEV` before `rename(2)` can), which
+/// is the documented purpose of the guard. It also proves the anchored rename is
+/// the leg that ran: the guard is consulted only by `backup_rename_syscall`,
+/// which the sandbox leg bypasses. Drop `dest_dir` and the injected `EXDEV`
+/// instead diverts the ladder onto the copy tier, which path-resolves both
+/// endpoints and lands the backup out of tree.
+///
+/// upstream: `backup.c:249` `do_rename_at()` under `operator_path_resolve`;
+/// `syscall.c:1918-1923` confines each side independently.
+#[cfg(unix)]
+#[test]
+fn make_backup_rename_tier_anchors_both_endpoints_on_the_pinned_destination() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    // The real pre-image, reachable only through the pinned dirfd.
+    fs::write(fx.pinned.join("payload.bin"), b"pinned pre-image").unwrap();
+    // The out-of-tree file the swapped PATH resolves to. Deliberately a
+    // different length so a byte comparison cannot agree by coincidence.
+    fs::write(
+        fx.outside.join("payload.bin"),
+        b"out-of-tree decoy contents",
+    )
+    .unwrap();
+
+    let config = DiskCommitConfig {
+        sandbox: Some(fx.sandbox.clone()),
+        dest_dir: Some(fx.dest_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let backup_config = BackupConfig {
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    {
+        let _force = ForceExdev::new();
+        make_backup(
+            &fx.dest_dir.join("payload.bin"),
+            &backup_config,
+            config.backup_env(),
+        )
+        .expect("anchored rename succeeds without consulting the EXDEV guard")
+        .expect("notice produced for the backed-up file");
+    }
+
+    let anchored_backup = fx.pinned.join("payload.bin~");
+    assert!(
+        anchored_backup.exists(),
+        "the anchored rename must place the backup inside the pinned destination"
+    );
+    assert_eq!(
+        fs::read(&anchored_backup).unwrap(),
+        b"pinned pre-image",
+        "the anchored rename must move the pre-image held by the pinned dirfd"
+    );
+    assert!(
+        !fx.pinned.join("payload.bin").exists(),
+        "a rename moves the pre-image; the copy tier would have left it in place"
+    );
+    assert!(
+        !fx.outside.join("payload.bin~").exists(),
+        "no backup may be written out of tree through the swapped root"
+    );
+    assert_eq!(
+        fs::read(fx.outside.join("payload.bin")).unwrap(),
+        b"out-of-tree decoy contents",
+        "the out-of-tree file the swapped PATH names must be untouched"
+    );
+}
+
+/// `create_dir_all_sandboxed` is the third `BackupEnv` reader: the
+/// `--backup-dir` root is a single component under `dest_dir`, so its `mkdir` is
+/// anchored on the pinned dirfd and cannot be redirected by the swapped root.
+///
+/// The ladder then FAILS CLOSED: the link/rename tiers see a backup name two
+/// components deep, outside the SEC-1.h single-leaf shape, so they path-resolve
+/// into `outside/bak` - which does not exist, because the anchored `mkdir`
+/// created the real one inside the pinned root. Nothing is written out of tree.
+/// Without the anchor the same fixture creates `outside/bak` and completes the
+/// backup there; see
+/// [`make_backup_backup_dir_without_the_anchor_escapes_the_swapped_root`].
+///
+/// upstream: `backup.c:206` `make_path(dirbuf, 0)` ensures the backup root, run
+/// under the `operator_path_resolve` that `make_backup()` raises.
+#[cfg(unix)]
+#[test]
+fn make_backup_backup_dir_root_mkdir_anchors_on_the_pinned_destination() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig {
+        sandbox: Some(fx.sandbox.clone()),
+        dest_dir: Some(fx.dest_dir.clone()),
+        metadata_opts: Some(::metadata::MetadataOptions::new().preserve_permissions(true)),
+        ..DiskCommitConfig::default()
+    };
+    let backup_config = BackupConfig {
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: Some(PathBuf::from("bak")),
+        // upstream: options.c - the default suffix is cleared once a backup
+        // directory is named.
+        suffix: OsString::new(),
+    };
+
+    let result = make_backup(
+        &fx.dest_dir.join("payload.bin"),
+        &backup_config,
+        config.backup_env(),
+    );
+
+    assert!(
+        fx.pinned.join("bak").is_dir(),
+        "the --backup-dir root mkdir must be anchored on the pinned destination"
+    );
+    assert!(
+        !fx.outside.join("bak").exists(),
+        "no part of the backup tree may be created out of tree through the swap"
+    );
+    assert!(
+        result.is_err(),
+        "with the backup root anchored inside the pinned tree the path-resolved \
+         link/rename tiers find no parent, so the backup fails closed rather \
+         than escaping"
+    );
+    assert!(
+        !fx.outside.join("payload.bin~").exists() && !fx.pinned.join("payload.bin~").exists(),
+        "a --backup-dir backup never lands beside the destination"
+    );
+}
+
+/// Non-vacuity companion for
+/// [`make_backup_backup_dir_root_mkdir_anchors_on_the_pinned_destination`]: with
+/// `env.sandbox`/`env.dest_dir` absent the same fixture creates the whole backup
+/// tree out of tree and completes the backup there, so the anchored cell's
+/// "`outside/bak` must not exist" is a real discrimination and its `is_err()` is
+/// not a fixture that merely cannot back anything up.
+#[cfg(unix)]
+#[test]
+fn make_backup_backup_dir_without_the_anchor_escapes_the_swapped_root() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig {
+        metadata_opts: Some(::metadata::MetadataOptions::new().preserve_permissions(true)),
+        ..DiskCommitConfig::default()
+    };
+    let backup_config = BackupConfig {
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: Some(PathBuf::from("bak")),
+        suffix: OsString::new(),
+    };
+
+    make_backup(
+        &fx.dest_dir.join("payload.bin"),
+        &backup_config,
+        config.backup_env(),
+    )
+    .expect("unanchored --backup-dir backup succeeds")
+    .expect("notice produced for the backed-up file");
+
+    let escaped_backup = fx.outside.join("bak/payload.bin");
+    assert!(
+        escaped_backup.exists(),
+        "the fixture must be able to produce a --backup-dir backup at all; \
+         nothing was written"
+    );
+    assert_eq!(
+        fs::read(&escaped_backup).unwrap(),
+        b"pre-transfer bytes",
+        "unanchored, the whole backup tree follows the swap - the fixture is \
+         fully capable of producing a --backup-dir backup"
+    );
+    assert!(
+        !fx.pinned.join("bak").exists(),
+        "nothing reaches the pinned directory when no dirfd anchor is supplied"
+    );
+}
+
+/// The ORDINARY commit path must hand the ladder its own anchor too:
+/// `commit_file` builds the [`BackupEnv`](super::super::config::BackupEnv) from
+/// the same `DiskCommitConfig` that carries the sandbox, so the pre-transfer
+/// destination is backed up inside the pinned tree and the received file is
+/// committed on top of it.
+///
+/// The `--delay-updates` sweep is pinned separately
+/// (`receiver::transfer::tests`); this cell covers the immediate commit, which
+/// is the caller upstream reaches through `finish_transfer()`
+/// (`rsync.c:897` `make_backup(fname, False)`). Either call site can be
+/// downgraded to a default env without the other noticing, so both are pinned.
+#[cfg(unix)]
+#[test]
+fn commit_file_backup_anchors_on_the_pinned_destination() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    // The received temp file lives beside the final name inside the PINNED
+    // directory, which is where the receiver created it before the swap.
+    fs::write(fx.pinned.join(".tmp.payload"), b"received content").unwrap();
+    // The pre-transfer destination the ladder reaches through the swapped path.
+    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig {
+        sandbox: Some(fx.sandbox.clone()),
+        dest_dir: Some(fx.dest_dir.clone()),
+        backup: Some(BackupConfig {
+            dest_dir: fx.dest_dir.clone(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        }),
+        ..DiskCommitConfig::default()
+    };
+
+    let begin = BeginMessage {
+        file_path: fx.dest_dir.join("payload.bin"),
+        target_size: 16,
+        file_entry_index: 0,
+        checksum_verifier: None,
+        is_device_target: false,
+        is_inplace: false,
+        append_offset: 0,
+        xattr_list: None,
+        xattr_basis: None,
+        file_entry: None,
+    };
+    let mut guard = crate::temp_guard::TempFileGuard::new(fx.dest_dir.join(".tmp.payload"));
+
+    let outcome = commit_file(&begin, &config, &mut guard, true, 16, None)
+        .expect("the anchored commit must succeed");
+
+    assert!(
+        outcome.backup_notice.is_some(),
+        "an existing destination must produce a backup notice"
+    );
+    assert!(
+        !fx.outside.join("payload.bin~").exists(),
+        "the commit path must not place the backup out of tree through the \
+         swapped destination root"
+    );
+    assert_eq!(
+        fs::read(fx.pinned.join("payload.bin~")).unwrap(),
+        b"pre-transfer bytes",
+        "the backup must hold the destination's pre-transfer bytes verbatim"
+    );
+    // Non-vacuity: the commit really ran, so the backup assertions are not
+    // passing on a fixture where nothing happened.
+    assert_eq!(
+        fs::read(fx.pinned.join("payload.bin")).unwrap(),
+        b"received content",
+        "the received file must be committed onto the pinned destination"
+    );
+}
