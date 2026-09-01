@@ -13,7 +13,9 @@ mod creation;
 pub(in crate::receiver) mod deletion;
 mod links;
 mod missing_args;
-mod obstacle;
+// `pub(in crate::receiver)` so the regular-file candidate pass can name
+// `MakeWayFor` for its `DEL_FOR_FILE` removal (generator.c:2149).
+pub(in crate::receiver) mod obstacle;
 mod special;
 
 /// Normalizes a filename for cross-platform comparison.

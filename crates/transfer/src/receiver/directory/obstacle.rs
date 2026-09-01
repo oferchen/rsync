@@ -1,5 +1,6 @@
 //! The receiver's single decision site for an existing destination entry that
-//! stands where a symlink, FIFO, socket, or device node has to be created.
+//! stands where a regular file, symlink, FIFO, socket, or device node has to
+//! be written.
 //!
 //! Upstream makes this decision in exactly one place. `atomic_create()` sets
 //! `dir_in_the_way` when the obstacle is a directory, which also forces
@@ -11,8 +12,17 @@
 //! answer upstream's; deciding the directory case inside the backup path would
 //! leave every `--backup`-off shape decided somewhere else.
 //!
+//! The regular-file arm reaches the same `delete_item()` from its own call
+//! site rather than through `atomic_create()`: `generator.c:2149` removes a
+//! destination that is not a regular file (nor a device under
+//! `--write-devices`) before the delta is requested, then sets `statret = -1`
+//! so everything below sees an absent destination. Writing through such an
+//! obstacle - or renaming over it - is not the same operation: `--backup`
+//! never sees it, and a directory is never cleared at all.
+//!
 //! # Upstream Reference
 //!
+//! - `generator.c:2148-2153` - the `DEL_FOR_FILE` removal ahead of a regular-file transfer
 //! - `generator.c:2469` - `int skip_atomic, dir_in_the_way = del_for_flag && S_ISDIR(sxp->st.st_mode);`
 //! - `generator.c:2471-2472` - `dir_in_the_way` forces `skip_atomic = 1`
 //! - `generator.c:2477-2483` - `if (make_backups > 0 && !dir_in_the_way) make_backup(...)`
@@ -63,6 +73,8 @@ use crate::receiver::ReceiverContext;
 #[cfg(any(unix, windows))]
 #[derive(Clone, Copy)]
 pub(in crate::receiver) enum MakeWayFor {
+    /// upstream `DEL_FOR_FILE` - `"regular file"`.
+    File,
     /// upstream `DEL_FOR_SYMLINK` - `"symlink"`.
     Symlink,
     /// upstream `DEL_FOR_DEVICE` - `"device file"`.
@@ -84,6 +96,7 @@ impl MakeWayFor {
     /// upstream: `delete.c:275-279` - the `desc` assigned per `DEL_FOR_*`.
     const fn description(self) -> &'static str {
         match self {
+            Self::File => "regular file",
             Self::Symlink => "symlink",
             #[cfg(unix)]
             Self::Device => "device file",
@@ -119,8 +132,8 @@ fn is_not_empty(error: &io::Error) -> bool {
 
 #[cfg(any(unix, windows))]
 impl ReceiverContext {
-    /// Clears whatever stands at `existing` so a fresh non-regular entry can be
-    /// created there, reporting any refusal the way upstream reports it.
+    /// Clears whatever stands at `existing` so a fresh entry can be written
+    /// there, reporting any refusal the way upstream reports it.
     ///
     /// `Ok(())` means the path is free: it was already absent, it was removed,
     /// or it was moved into the backup area. `Err` means the entry must be

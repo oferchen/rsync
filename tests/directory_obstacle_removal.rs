@@ -1,5 +1,6 @@
-//! A directory standing where a symlink or special file has to be created is
-//! removed, never backed up - and a populated one is refused out loud.
+//! A directory standing where a regular file, symlink, or special file has to
+//! be written is removed, never backed up - and a populated one is refused out
+//! loud.
 //!
 //! upstream `generator.c:2464-2485` `atomic_create()`:
 //!
@@ -33,6 +34,27 @@
 //! | symlink | non-empty dir | 23 + two diagnostics | 12, dir kept, sibling not transferred |
 //! | fifo    | empty dir     | 0, fifo placed | **0 in silence**, dir kept |
 //! | fifo    | non-empty dir | 23 + two diagnostics | **0 in silence**, dir kept |
+//!
+//! The regular-file source reaches the same `delete_item()` from its own call
+//! site rather than through `atomic_create()`:
+//!
+//! ```text
+//! generator.c:2148-2153
+//! if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE))) {
+//!         if (delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE) != 0)
+//!                 goto cleanup;
+//!         statret = -1;
+//!         stat_errno = ENOENT;
+//! }
+//! ```
+//!
+//! oc had no analogue there, so the destination directory survived into the
+//! commit and the rename failed against it:
+//!
+//! | src kind | obstacle | rsync 3.5.0 | oc before |
+//! |---|---|---|---|
+//! | regular | empty dir     | 0, regular file placed | 12 `server error: Is a directory (21)`, dir kept |
+//! | regular | non-empty dir | 23 + two diagnostics | 12, dir kept |
 //!
 //! and under `--backup` with a sibling backup dir, oc RENAMED the directory
 //! into the backup area - a wrong-data outcome at exit 0, where upstream
@@ -82,6 +104,10 @@ fn write_rsh_shim(dir: &Path) -> PathBuf {
 
 const SIBLING: &str = "sibling payload\n";
 
+/// The bytes a regular-file source carries, distinct from anything the
+/// destination could already hold.
+const PAYLOAD: &str = "regular payload\n";
+
 struct Fixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -93,6 +119,7 @@ struct Fixture {
 enum Source {
     Symlink,
     Fifo,
+    Regular,
 }
 
 /// Builds `src/{obstacle,sibling}` and `dst/{obstacle/,sibling}`, where
@@ -122,6 +149,9 @@ fn fixture(source: Source, populate_obstacle: bool) -> Fixture {
                 .status()
                 .expect("spawn mkfifo");
             assert!(status.success(), "mkfifo failed: {status}");
+        }
+        Source::Regular => {
+            fs::write(root.join("src/obstacle"), PAYLOAD).expect("write source payload");
         }
     }
     fs::write(root.join("src/sibling"), SIBLING).expect("write src sibling");
@@ -343,5 +373,133 @@ fn a_populated_directory_obstacle_under_backup_is_refused_not_backed_up() {
     assert!(
         !fx.root.join("dst/bak/obstacle").exists(),
         "and no part of it is moved into the backup area"
+    );
+}
+
+/// The regular-file headline for `--backup` off: an EMPTY directory is
+/// `rmdir`'d and the file's data lands in its place, at exit 0.
+///
+/// Nothing masks this one. A rename over a symlink, FIFO, or socket replaces
+/// the node by accident, which is why the plain-mode cells for those shapes
+/// looked correct; `rename()` onto a directory is `EISDIR`, so oc surfaced
+/// `server error: Is a directory (21)` and stopped the whole run at 12 with
+/// the sibling unsent.
+///
+/// The `-i` row is part of the expectation: `statret = -1` is what makes the
+/// entry `ITEM_IS_NEW`, so 3.5.0 prints `<f+++++++++ a` for a cleared
+/// obstacle. Measured against 3.5.0, not read off the source.
+///
+/// upstream: `generator.c:2149` - `delete_item(fname, sx.st.st_mode,
+/// del_opts | DEL_FOR_FILE)`, then `statret = -1`.
+#[test]
+fn an_empty_directory_obstacle_is_removed_for_a_regular_file() {
+    let fx = fixture(Source::Regular, false);
+
+    let (status, stdout, stderr) = push(&fx, &["-i"]);
+
+    assert_eq!(
+        status,
+        Some(0),
+        "rsync 3.5.0 rmdir's the empty directory and writes the file at exit \
+         0; oc reported `server error: Is a directory (21)` and stopped. \
+         stderr was: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(obstacle(&fx)).expect("obstacle must now be a regular file"),
+        PAYLOAD,
+        "the file has to actually replace the directory, with the sender's \
+         bytes - a still-standing directory means the removal never ran"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.root.join("dst/sibling")).expect("read sibling"),
+        SIBLING,
+        "the rest of the transfer must still land"
+    );
+    assert!(
+        stdout.contains("+++++++++ obstacle"),
+        "upstream prints `<f+++++++++ a` for a cleared obstacle: the removal \
+         sets `statret = -1`, so the entry is ITEM_IS_NEW rather than a \
+         replacement of the directory it displaced. stdout was: {stdout}"
+    );
+}
+
+/// A POPULATED directory is refused for a regular file too, with upstream's
+/// two lines and `RERR_PARTIAL` - and the noun is `regular file`, which is the
+/// `DEL_FOR_FILE` arm of the same switch that says `symlink` and `special
+/// file` above.
+///
+/// upstream: `delete.c:276` - `case DEL_FOR_FILE: desc = "regular file";`.
+#[test]
+fn a_populated_directory_obstacle_is_refused_for_a_regular_file() {
+    let fx = fixture(Source::Regular, true);
+
+    let (status, stdout, stderr) = push(&fx, &[]);
+
+    assert_eq!(
+        status,
+        Some(23),
+        "rsync 3.5.0 exits 23 for this shape; oc exited 12. stdout: {stdout} \
+         stderr: {stderr}"
+    );
+    let output = format!("{stdout}{stderr}");
+    assert!(
+        output.contains("cannot delete non-empty directory: obstacle"),
+        "output was: {output}"
+    );
+    assert!(
+        output.contains("could not make way for new regular file: obstacle"),
+        "the noun comes from the NEW entry's type, so a regular-file source \
+         says `regular file` where a symlink says `symlink`. output was: \
+         {output}"
+    );
+    assert!(
+        obstacle(&fx).is_dir(),
+        "`del_opts` carries no DEL_RECURSE here, so the contents stay put"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.root.join("dst/sibling")).expect("read sibling"),
+        SIBLING,
+        "a refused obstacle skips its own entry only; oc used to abandon the \
+         rest of the batch at 12"
+    );
+}
+
+/// The non-vacuity companion: with NO obstacle, an ordinary regular-file
+/// replacement still lands byte-for-byte at exit 0 AND is still reported as a
+/// replacement, not as a creation.
+///
+/// The removal above sits directly in front of every regular-file transfer, so
+/// a gate one type too wide would unlink the existing destination first. The
+/// bytes alone do not catch that - `-I` re-sends the whole file either way, so
+/// a delete-then-create still produces the right content at exit 0. The `-i`
+/// row does: an unlinked destination itemizes `+++++++++` where 3.5.0 prints
+/// `<f..T......` for a file it kept and wrote over. That glyph is exactly what
+/// `statret = -1` controls, so this cell is the mirror of the assertion above.
+#[test]
+fn a_regular_file_destination_with_no_obstacle_still_transfers() {
+    let fx = fixture(Source::Regular, false);
+    // Replace the directory obstacle with an ordinary stale file, which is
+    // upstream's `stype == FT_REG` leg: kept in place and written over.
+    fs::remove_dir_all(obstacle(&fx)).expect("clear the obstacle");
+    fs::write(obstacle(&fx), "stale destination bytes\n").expect("plant stale destination");
+
+    let (status, stdout, stderr) = push(&fx, &["-i"]);
+
+    assert_eq!(status, Some(0), "stderr was: {stderr}");
+    assert_eq!(
+        fs::read_to_string(obstacle(&fx)).expect("read replaced file"),
+        PAYLOAD,
+        "an ordinary replace must still carry the sender's bytes"
+    );
+    assert!(
+        !stdout.contains("+++++++++ obstacle"),
+        "`stype == FT_REG` is upstream's keep-it leg: the destination is \
+         written over, never removed, so its row is a change and not a \
+         creation. A `+++++++++` here means the obstacle removal fired one \
+         type too wide. stdout was: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.root.join("dst/sibling")).expect("read sibling"),
+        SIBLING
     );
 }
