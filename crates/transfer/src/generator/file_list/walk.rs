@@ -24,6 +24,48 @@ use super::super::io_error_flags;
 use super::super::protocol_io::SenderDiagnostic;
 use super::batch_stat::{StatResult, batch_stat_dir_entries};
 
+/// One pending step of the directory walk.
+///
+/// The walk used to be call-stack recursion: a directory's entry was pushed,
+/// then each child was walked from inside that frame, wrapped in a filter-chain
+/// scope guard. That shape cannot be suspended, and suspending is exactly what
+/// upstream's producer does - `send_directory()` scans ONE directory and
+/// `send_extra_file_list()` (`flist.c`) decides when to scan the next.
+///
+/// Making the stack explicit preserves the traversal order and the guard
+/// nesting exactly while turning every pop into a point the walk can stop at.
+enum WalkStep {
+    /// A path whose metadata is already final: the entry points, which resolve
+    /// metadata before they call in.
+    Visit {
+        path: PathBuf,
+        metadata: std::fs::Metadata,
+        is_top_level: bool,
+    },
+    /// A directory child straight out of the batch stat.
+    ///
+    /// The `--copy-dirlinks` / `--copy-unsafe-links` re-stat is deliberately
+    /// NOT applied when the child is scheduled. It runs when the child is
+    /// reached, because its `copying unsafe symlink` notice must print after
+    /// the previous sibling's subtree, exactly as the recursion printed it.
+    VisitChild(StatResult),
+    /// Read `dir`'s children, batch-stat them, and schedule each one.
+    ///
+    /// `opened` carries a handle the caller already holds. The two arms are not
+    /// interchangeable: the recursive arm opens the directory BEFORE pushing
+    /// that directory's own entry, so an `opendir` failure is reported ahead of
+    /// the entry; the transfer-root arm opens it after entering the filter
+    /// scope. Which side opens is what keeps diagnostic ordering unchanged.
+    ScanChildren {
+        dir: PathBuf,
+        opened: Option<fast_io::pinned_root::ReadDir>,
+    },
+    /// Release one per-directory filter scope.
+    ///
+    /// upstream: `exclude.c:pop_local_filters()`
+    LeaveDir(filters::DirFilterGuard),
+}
+
 impl GeneratorContext {
     /// Pre-checks a top-level source entry and walks it if it exists.
     ///
@@ -190,6 +232,55 @@ impl GeneratorContext {
         metadata: std::fs::Metadata,
         is_top_level: bool,
     ) -> io::Result<()> {
+        let mut stack = vec![WalkStep::Visit {
+            path,
+            metadata,
+            is_top_level,
+        }];
+        self.drive_walk(base, &mut stack)
+    }
+
+    /// Runs the explicit walk stack to exhaustion.
+    ///
+    /// Steps pop LIFO, so a directory that schedules `[LeaveDir, ScanChildren]`
+    /// scans first and releases its filter scope after - the same nesting the
+    /// recursion produced. An error abandons the remaining steps, which is what
+    /// the `?` in the recursive version did by unwinding.
+    fn drive_walk(&mut self, base: &Path, stack: &mut Vec<WalkStep>) -> io::Result<()> {
+        while let Some(step) = stack.pop() {
+            match step {
+                WalkStep::Visit {
+                    path,
+                    metadata,
+                    is_top_level,
+                } => self.visit_walk_entry(base, path, metadata, is_top_level, stack)?,
+                WalkStep::VisitChild(result) => {
+                    if let Some((path, metadata)) = self.resolve_child_metadata(base, result) {
+                        self.visit_walk_entry(base, path, metadata, false, stack)?;
+                    }
+                }
+                WalkStep::ScanChildren { dir, opened } => {
+                    self.scan_children_onto(&dir, opened, stack)?;
+                }
+                WalkStep::LeaveDir(guard) => self.filter_chain.leave_directory(guard),
+            }
+        }
+        Ok(())
+    }
+
+    /// Emits one path's entry and schedules its children when it is a directory
+    /// to descend into.
+    ///
+    /// This is the body the recursion used to run per frame, with the two
+    /// recursive calls replaced by pushes onto `stack`.
+    fn visit_walk_entry(
+        &mut self,
+        base: &Path,
+        path: PathBuf,
+        metadata: std::fs::Metadata,
+        is_top_level: bool,
+        stack: &mut Vec<WalkStep>,
+    ) -> io::Result<()> {
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
         // upstream: flist.c:2338-2349 - non-relative single-file sources split
@@ -227,10 +318,12 @@ impl GeneratorContext {
                 ))
             })?;
 
-            self.scan_directory_batched(base, &path)?;
-
-            // upstream: exclude.c:pop_local_filters() - restore filter state
-            self.filter_chain.leave_directory(guard);
+            // LIFO: the scan runs before the scope is released.
+            stack.push(WalkStep::LeaveDir(guard));
+            stack.push(WalkStep::ScanChildren {
+                dir: path,
+                opened: None,
+            });
             return Ok(());
         }
 
@@ -343,11 +436,12 @@ impl GeneratorContext {
                 ))
             })?;
 
-            // Collect directory entries, then batch-stat and process
-            self.process_dir_entries_batched(base, &dir_path, entries)?;
-
-            // upstream: exclude.c:pop_local_filters() - restore filter state
-            self.filter_chain.leave_directory(guard);
+            // LIFO: the scan runs before the scope is released.
+            stack.push(WalkStep::LeaveDir(guard));
+            stack.push(WalkStep::ScanChildren {
+                dir: dir_path,
+                opened: Some(entries),
+            });
         }
 
         Ok(())
@@ -400,31 +494,62 @@ impl GeneratorContext {
     ///
     /// - `flist.c:send_directory()` - reads directory and stats each child
     fn scan_directory_batched(&mut self, base: &Path, dir_path: &Path) -> io::Result<()> {
-        match fast_io::pinned_root::read_dir(dir_path) {
-            Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
-            Err(e) => {
-                // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
-                let text = format!(
-                    "rsync: [sender] opendir {} failed: {}\n",
-                    full_fname_path(dir_path, self.daemon_paths()),
-                    engine::local_copy::upstream_io_error(&e),
-                );
-                self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
-                self.record_io_error(&e);
-                Ok(())
-            }
-        }
+        let mut stack = vec![WalkStep::ScanChildren {
+            dir: dir_path.to_path_buf(),
+            opened: None,
+        }];
+        self.drive_walk(base, &mut stack)
     }
 
-    /// Collects paths from a `ReadDir` iterator, batch-stats them, and recurses.
+    /// Opens `dir_path` when the caller did not, then schedules its children.
     ///
-    /// For entries where `--copy-unsafe-links` requires re-stat (symlinks escaping
-    /// the transfer tree), the corrected metadata is resolved after the batch.
-    fn process_dir_entries_batched(
+    /// A failed `opendir` is reported and the directory skipped; it does not
+    /// abort the walk.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1878` - `rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)`
+    fn scan_children_onto(
         &mut self,
-        base: &Path,
+        dir_path: &Path,
+        opened: Option<fast_io::pinned_root::ReadDir>,
+        stack: &mut Vec<WalkStep>,
+    ) -> io::Result<()> {
+        let entries = match opened {
+            Some(entries) => entries,
+            None => match fast_io::pinned_root::read_dir(dir_path) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
+                    let text = format!(
+                        "rsync: [sender] opendir {} failed: {}\n",
+                        full_fname_path(dir_path, self.daemon_paths()),
+                        engine::local_copy::upstream_io_error(&e),
+                    );
+                    self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+                    self.record_io_error(&e);
+                    return Ok(());
+                }
+            },
+        };
+        self.push_dir_entries_onto(dir_path, entries, stack)
+    }
+
+    /// Collects paths from a `ReadDir` iterator, batch-stats them, and schedules
+    /// each child on the walk stack.
+    ///
+    /// Children are pushed in reverse so they pop in readdir order, matching the
+    /// order the recursion visited them.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_directory()` - reads directory and stats each child
+    /// - `flist.c:2195` - `rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)`
+    fn push_dir_entries_onto(
+        &mut self,
         dir_path: &Path,
         entries: fast_io::pinned_root::ReadDir,
+        stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
         // Phase 1: collect child paths from readdir
         let mut child_paths = Vec::new();
@@ -451,75 +576,89 @@ impl GeneratorContext {
         // Phase 2: determine stat mode and batch-resolve metadata.
         // --copy-links: follow all symlinks (fs::metadata)
         // default: lstat (fs::symlink_metadata)
-        // --copy-unsafe-links needs post-batch fixup for unsafe symlinks
+        // --copy-unsafe-links needs per-child fixup, applied when the child is
+        // reached rather than here - see `WalkStep::VisitChild`.
         let follow = self.config.flags.copy_links;
         let stat_results = batch_stat_dir_entries(child_paths, follow, &self.parallel_thresholds);
 
-        // Phase 3: process each (path, metadata) pair
-        for result in stat_results {
-            let StatResult { path, metadata } = result;
-            match metadata {
-                Ok(mut meta) => {
-                    // upstream: flist.c:1362-1370 link_stat() - with
-                    // --copy-dirlinks (follow_dirlinks), a symlink whose
-                    // target is a directory is transmitted as a real
-                    // directory. Applied before the copy-unsafe-links check
-                    // exactly as upstream applies it inside link_stat() before
-                    // readlink_stat() re-examines S_ISLNK. Only symlinks to
-                    // directories are followed; symlinks to files stay
-                    // symlinks (distinct from --copy-links, which follows all).
-                    if !follow && self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
-                        if let Ok(followed) = fast_io::pinned_root::metadata(&path) {
-                            if followed.file_type().is_dir() {
-                                meta = followed;
-                            }
-                        }
-                    }
+        // Phase 3: schedule each child. Reverse, because the stack pops LIFO.
+        stack.extend(stat_results.into_iter().rev().map(WalkStep::VisitChild));
 
-                    // upstream: flist.c:215 - follow unsafe symlinks when
-                    // --copy-unsafe-links. The batch used lstat, so we need
-                    // to re-stat symlinks whose target escapes the tree.
-                    if !follow
-                        && self.config.flags.copy_unsafe_links
-                        && meta.file_type().is_symlink()
-                    {
-                        if let Ok(target) = self.read_source_link(&path) {
-                            let relative = path.strip_prefix(base).unwrap_or(&path);
-                            if super::super::super::symlink_safety::is_unsafe_symlink(
-                                target.as_os_str(),
-                                relative,
-                            ) {
-                                // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1)
-                                // fires before the target is dereferenced.
-                                info_log!(
-                                    Symsafe,
-                                    1,
-                                    "copying unsafe symlink \"{}\" -> \"{}\"",
-                                    path.display(),
-                                    target.display()
-                                );
-                                match fast_io::pinned_root::metadata(&path) {
-                                    Ok(followed) => meta = followed,
-                                    Err(e) => {
-                                        self.log_stat_error(&path, &e);
-                                        self.record_io_error(&e);
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
+        Ok(())
+    }
 
-                    self.walk_path_with_metadata(base, path, meta, false)?;
-                }
-                Err(e) => {
-                    self.log_stat_error(&path, &e);
-                    self.record_io_error(&e);
+    /// Applies the per-child stat fixups and reports the failures.
+    ///
+    /// Returns `None` when the child is dropped from the walk: its batch stat
+    /// failed, or the `--copy-unsafe-links` dereference failed. Both are logged
+    /// and counted as I/O errors without aborting the traversal.
+    ///
+    /// This runs when the child is REACHED, not when it is scheduled, so its
+    /// notices stay interleaved with the walk exactly as the recursion had them.
+    fn resolve_child_metadata(
+        &mut self,
+        base: &Path,
+        result: StatResult,
+    ) -> Option<(PathBuf, std::fs::Metadata)> {
+        let StatResult { path, metadata } = result;
+        let mut meta = match metadata {
+            Ok(meta) => meta,
+            Err(e) => {
+                self.log_stat_error(&path, &e);
+                self.record_io_error(&e);
+                return None;
+            }
+        };
+
+        let follow = self.config.flags.copy_links;
+
+        // upstream: flist.c:1362-1370 link_stat() - with --copy-dirlinks
+        // (follow_dirlinks), a symlink whose target is a directory is
+        // transmitted as a real directory. Applied before the copy-unsafe-links
+        // check exactly as upstream applies it inside link_stat() before
+        // readlink_stat() re-examines S_ISLNK. Only symlinks to directories are
+        // followed; symlinks to files stay symlinks (distinct from
+        // --copy-links, which follows all).
+        if !follow && self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
+            if let Ok(followed) = fast_io::pinned_root::metadata(&path) {
+                if followed.file_type().is_dir() {
+                    meta = followed;
                 }
             }
         }
 
-        Ok(())
+        // upstream: flist.c:215 - follow unsafe symlinks when
+        // --copy-unsafe-links. The batch used lstat, so we need to re-stat
+        // symlinks whose target escapes the tree.
+        if !follow && self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {
+            if let Ok(target) = self.read_source_link(&path) {
+                let relative = path.strip_prefix(base).unwrap_or(&path);
+                if super::super::super::symlink_safety::is_unsafe_symlink(
+                    target.as_os_str(),
+                    relative,
+                ) {
+                    // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1) fires before
+                    // the target is dereferenced.
+                    info_log!(
+                        Symsafe,
+                        1,
+                        "copying unsafe symlink \"{}\" -> \"{}\"",
+                        path.display(),
+                        target.display()
+                    );
+                    match fast_io::pinned_root::metadata(&path) {
+                        Ok(followed) => meta = followed,
+                        Err(e) => {
+                            self.log_stat_error(&path, &e);
+                            self.record_io_error(&e);
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        Some((path, meta))
     }
 
     /// Logs a stat failure with the appropriate upstream error format.
