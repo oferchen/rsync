@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Run benchmark suite comparing oc-rsync against upstream rsync.
 
-Tests local copy, SSH (push + pull), and daemon (push + pull) modes.
-Outputs JSON results to stdout.
+Tests local copy, SSH (push + pull), and daemon (push + pull) modes against
+every upstream baseline named in `UPSTREAM_RSYNC`, and outputs JSON results
+to stdout.
+
+Two upstream releases are in circulation at once -- the current one and the
+one distributions still ship -- so a single-baseline comparison answers only
+half the question a release note is asked. Every upstream cell therefore runs
+once per baseline, and the results JSON carries a per-baseline dimension.
 """
 
 import json
@@ -14,16 +20,148 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 
-UPSTREAM = os.environ.get("UPSTREAM_RSYNC", "")
-if not UPSTREAM:
-    sys.exit(
-        "UPSTREAM_RSYNC is not set: point it at the upstream rsync binary to "
-        "compare against, e.g. target/interop/upstream-src/rsync-3.5.0/rsync. "
-        "The caller that builds that binary owns the version, so this script "
-        "does not name one."
-    )
+import benchmark_env
+
 OC_RSYNC = "target/release/oc-rsync"
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """One upstream rsync build to compare against.
+
+    `label` names the release in the results JSON, the report and the chart;
+    `path` is absolute because the SSH cells pass it to the remote end via
+    `--rsync-path`, where the working directory is the login shell's, not the
+    repository's.
+    """
+
+    label: str
+    path: str
+
+    @property
+    def slug(self) -> str:
+        """Filesystem-safe form of the label, for per-baseline directories."""
+        return re.sub(r"[^A-Za-z0-9._-]", "_", self.label)
+
+
+def _version_output(binary, *args):
+    """Capture a binary's version output, or `""` if it cannot be probed."""
+    try:
+        return subprocess.run(
+            [binary, *args], capture_output=True, timeout=10, text=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def binary_version(binary):
+    """Return the `x.y.z` release number reported by an upstream rsync build.
+
+    Upstream's banner is `rsync  version 3.5.0  protocol version 32`, so the
+    first release-shaped number in it is the release. This is deliberately
+    *not* used for oc-rsync: see `oc_rsync_versions` for why that binary needs
+    its own parser.
+    """
+    out = _version_output(binary, "--version")
+    match = re.search(r"\b(\d+\.\d+\.\d+)\b", out)
+    return match.group(1) if match else ""
+
+
+def oc_rsync_versions(binary):
+    """Return `(release, wire_compat)` for an oc-rsync build.
+
+    oc-rsync's banner leads with its own release and then names the upstream
+    wire protocol it speaks:
+
+        oc-rsync v0.6.4 (revision #9d99155e1) protocol version 32
+        Compatible with rsync 3.4.4 wire protocol
+
+    `binary_version`'s "first release-shaped number" rule cannot read this.
+    `\\b` does not match between `v` and `0`, so `v0.6.4` is skipped entirely
+    and the first number the pattern accepts is the *compatibility* version --
+    which is how a published release recorded `oc_rsync_version = '3.4.4'` for
+    a 0.6.4 build. The two numbers are different facts and are read from
+    different places: the release from the machine-readable `-VV` document
+    that exists for exactly this purpose, the compatibility version from the
+    banner line that states it.
+    """
+    release = ""
+    try:
+        release = json.loads(_version_output(binary, "-VV") or "{}").get(
+            "version", ""
+        )
+    except ValueError:
+        release = ""
+    banner = _version_output(binary, "--version")
+    if not release:
+        match = re.search(r"^\S+\s+v(\d+\.\d+\.\d+)", banner, re.M)
+        release = match.group(1) if match else ""
+        if not release:
+            print(
+                f"WARNING: cannot read oc-rsync's own release from {binary}",
+                file=sys.stderr,
+            )
+    compat = re.search(
+        r"Compatible with rsync (\d+\.\d+\.\d+) wire protocol", banner
+    )
+    return release, (compat.group(1) if compat else "")
+
+
+def parse_baselines(spec):
+    """Parse `UPSTREAM_RSYNC` into an ordered list of baselines.
+
+    Accepts a comma-separated list of `label=path` entries, or bare paths
+    whose label is then taken from the binary's own `--version` output. One
+    bare path is the historical single-baseline form and still works, so a
+    local run and CI drive the same knob.
+
+    The first entry is the primary baseline: it backs the legacy `upstream`
+    and `ratio` fields in the results JSON, serves the SSH and daemon cells
+    that are not run per baseline, and is the release the headline summary is
+    stated against.
+    """
+    baselines = []
+    seen = set()
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        label, sep, path = item.partition("=")
+        if not sep:
+            path, label = label, ""
+        path = os.path.expanduser(path)
+        # A bare command name means "whatever PATH resolves", which is how
+        # some callers name the system rsync. Resolve it here rather than
+        # treating it as a relative path, because the SSH cells hand this
+        # value to a remote shell that has its own working directory.
+        if os.sep not in path:
+            path = shutil.which(path) or path
+        path = os.path.abspath(path)
+        label = label.strip() or binary_version(path) or os.path.basename(path)
+        if label in seen:
+            sys.exit(f"duplicate baseline label {label!r} in UPSTREAM_RSYNC")
+        seen.add(label)
+        baselines.append(Baseline(label, path))
+    return baselines
+
+
+BASELINES = parse_baselines(os.environ.get("UPSTREAM_RSYNC", ""))
+if not BASELINES:
+    sys.exit(
+        "UPSTREAM_RSYNC is not set: name the upstream rsync binaries to "
+        "compare against as a comma-separated list, e.g. "
+        "'3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,"
+        "3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync'. "
+        "The caller that builds those binaries owns the versions, so this "
+        "script does not name one."
+    )
+for _b in BASELINES:
+    if not os.path.isfile(_b.path):
+        sys.exit(f"upstream baseline {_b.label!r} not found at {_b.path}")
+
+PRIMARY = BASELINES[0]
 OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
 OC_RSYNC_RUSSH = os.environ.get("OC_RSYNC_RUSSH", "")
 IS_LINUX = sys.platform.startswith("linux")
@@ -303,6 +441,12 @@ def wait_for_port(port, timeout=10):
 
 PER_RUN_TIMEOUT = 600  # seconds per individual rsync invocation
 
+# `/usr/bin/time` is what supplies peak RSS. Probe for it once rather than
+# wrapping every command and discovering per run that the wrapper itself is
+# missing, which would turn a missing memory column into a suite of failed
+# transfers.
+HAVE_TIME_CMD = os.access("/usr/bin/time", os.X_OK)
+
 
 def parse_peak_rss_kb(stderr_text):
     """Extract peak RSS in KB from /usr/bin/time output.
@@ -319,13 +463,16 @@ def parse_peak_rss_kb(stderr_text):
     return None
 
 
-def benchmark_rss(cmd, runs=4):
+def benchmark_rss(cmd, runs=4, before_each=None):
     """Run a command with /usr/bin/time and return timing + peak RSS stats."""
     time_flag = "-v" if IS_LINUX else "-l"
     wrapped = f"/usr/bin/time {time_flag} {cmd}"
     times = []
     rss_values = []
+    failures = 0
     for i in range(runs):
+        if before_each is not None:
+            before_each()
         start = time.perf_counter()
         try:
             result = subprocess.run(
@@ -334,6 +481,7 @@ def benchmark_rss(cmd, runs=4):
             elapsed = time.perf_counter() - start
             stderr = result.stderr.decode(errors="replace")
             if result.returncode != 0:
+                failures += 1
                 print(f"WARNING: exit {result.returncode}: {cmd}", file=sys.stderr)
                 if stderr.strip():
                     print(f"  stderr: {stderr[:200]}", file=sys.stderr)
@@ -341,38 +489,18 @@ def benchmark_rss(cmd, runs=4):
             if rss is not None:
                 rss_values.append(rss)
         except subprocess.TimeoutExpired:
+            failures += 1
             elapsed = time.perf_counter() - start
             print(
                 f"ERROR: timeout after {PER_RUN_TIMEOUT}s (run {i+1}/{runs}): {cmd}",
                 file=sys.stderr,
             )
         times.append(elapsed)
-    result = {
-        "mean": representative_secs(times),
-        "min": min(times),
-        "max": max(times),
-    }
+    result = stats(times, failures)
     if rss_values:
         result["peak_rss_kb"] = max(rss_values)
         result["avg_rss_kb"] = sum(rss_values) // len(rss_values)
     return result
-
-
-def binary_version(binary):
-    """Return the `x.y.z` release number reported by an rsync-compatible binary.
-
-    Runs `<binary> --version` and extracts the leading release number so the
-    report and chart can label the comparison against the exact upstream
-    build. Returns an empty string if the binary cannot be probed.
-    """
-    try:
-        out = subprocess.run(
-            [binary, "--version"], capture_output=True, timeout=10, text=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    match = re.search(r"\b(\d+\.\d+\.\d+)\b", out)
-    return match.group(1) if match else ""
 
 
 def representative_secs(times):
@@ -391,14 +519,60 @@ def representative_secs(times):
     return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
-def benchmark(cmd, runs=6):
+def stats(times, failures=0):
+    """Timing statistics for one series of runs.
+
+    `spread_pct` states how far the fastest and slowest runs are apart as a
+    fraction of the representative value. A ratio built from two medians can
+    look decisive while resting on runs that varied by half their own
+    magnitude; publishing the spread next to the median is what makes a noisy
+    cell visible instead of hidden. `runs` is recorded so a reader can tell a
+    three-run cell from a six-run one.
+
+    `failures` counts runs the binary did not complete. A command that exits
+    immediately with an error is otherwise indistinguishable from one that
+    finished the work in a millisecond -- an upstream build without zstd
+    support rejects `--compress-choice=zstd` in about a millisecond and was
+    duly recorded as oc-rsync being 581x slower. Counting the failures is what
+    lets the summary refuse to average such a cell.
+    """
+    mean = representative_secs(times)
+    lo, hi = min(times), max(times)
+    result = {
+        "mean": mean,
+        "min": lo,
+        "max": hi,
+        "runs": len(times),
+        "spread_pct": round((hi - lo) / mean * 100, 1) if mean > 0 else 0.0,
+    }
+    if failures:
+        result["failures"] = failures
+    return result
+
+
+def series_failed(series):
+    """True when any run in this series did not complete."""
+    return bool(series.get("failures"))
+
+
+def benchmark(cmd, runs=6, before_each=None):
     """Run a command multiple times and return timing statistics.
 
     Reports the warm-up-discarded median under `mean` (kept under that key so
     the report/chart consumers are unchanged); `min`/`max` span every run.
+
+    `before_each` runs before every timed invocation, not once before the
+    series. A cell that resets its destination only once measures an initial
+    transfer in run 1 and a no-change transfer in runs 2..n -- and
+    `representative_secs` discards run 1 as the warm-up, so the published
+    "Initial sync" figure was the median of the no-change runs. Resetting per
+    run is what makes an initial-transfer cell measure an initial transfer.
     """
     times = []
+    failures = 0
     for i in range(runs):
+        if before_each is not None:
+            before_each()
         start = time.perf_counter()
         try:
             result = subprocess.run(
@@ -406,6 +580,7 @@ def benchmark(cmd, runs=6):
             )
             elapsed = time.perf_counter() - start
             if result.returncode != 0:
+                failures += 1
                 print(
                     f"WARNING: exit {result.returncode}: {cmd}",
                     file=sys.stderr,
@@ -414,29 +589,166 @@ def benchmark(cmd, runs=6):
                 if stderr:
                     print(f"  stderr: {stderr[:200]}", file=sys.stderr)
         except subprocess.TimeoutExpired:
+            failures += 1
             elapsed = time.perf_counter() - start
             print(
                 f"ERROR: timeout after {PER_RUN_TIMEOUT}s (run {i+1}/{runs}): {cmd}",
                 file=sys.stderr,
             )
         times.append(elapsed)
-    return {
-        "mean": representative_secs(times),
-        "min": min(times),
-        "max": max(times),
+    return stats(times, failures)
+
+
+MIB = 1024.0 * 1024.0
+
+
+def add_throughput(result, corpus_bytes):
+    """Annotate one series with the corpus rate it sustained, in MiB/s.
+
+    Defined as *corpus size / elapsed*, not bytes-on-the-wire: a no-change
+    sync moves almost nothing yet still has to stat and compare the whole
+    tree, and the rate a user cares about there is how fast the tool gets
+    through the tree. The harness knows the corpus size exactly; it does not
+    parse rsync's own transferred-byte accounting, so no figure here claims to
+    be wire throughput.
+    """
+    if corpus_bytes and result.get("mean", 0) > 0:
+        result["corpus_mibps"] = round(corpus_bytes / result["mean"] / MIB, 1)
+    return result
+
+
+def compare(
+    results,
+    test_id,
+    name,
+    mode,
+    up_cmd,
+    oc_cmd,
+    *,
+    runs=6,
+    runner=None,
+    up_before=None,
+    oc_before=None,
+    oc_per_baseline=False,
+    corpus_bytes=None,
+):
+    """Time oc-rsync against every upstream baseline and record one row.
+
+    `up_cmd` and `oc_cmd` take a `Baseline` and return the command line to
+    time, so a cell whose peer version matters (SSH, daemon) can point both
+    sides at the same release while a purely local cell ignores the argument.
+
+    `oc_per_baseline` says whether oc-rsync has to be re-timed for each
+    baseline. It must be true wherever the baseline is the *peer* -- an SSH
+    server or an rsync daemon -- because comparing oc-against-3.5.0 with
+    upstream-3.4.4-against-3.4.4 would credit or blame the client for a
+    difference in the server. Where the baseline is only the other contestant
+    in a local copy, oc-rsync is timed once and shared.
+
+    The row keeps the single-baseline `upstream`/`ratio` fields pointing at
+    the primary baseline so every existing consumer of this JSON still reads
+    a coherent comparison, and adds `upstreams`/`ratios` keyed by label.
+    """
+    runner = runner or benchmark
+    upstreams = {}
+    oc_results = {}
+    shared_oc = None
+
+    for baseline in BASELINES:
+        print(f"  baseline {baseline.label}...", file=sys.stderr)
+        upstreams[baseline.label] = runner(
+            up_cmd(baseline),
+            runs=runs,
+            before_each=(lambda b=baseline: up_before(b)) if up_before else None,
+        )
+        if oc_per_baseline or shared_oc is None:
+            measured = runner(
+                oc_cmd(baseline),
+                runs=runs,
+                before_each=(
+                    (lambda b=baseline: oc_before(b)) if oc_before else None
+                ),
+            )
+            if not oc_per_baseline:
+                shared_oc = measured
+        else:
+            measured = shared_oc
+        oc_results[baseline.label] = measured
+
+    oc_primary = oc_results[PRIMARY.label]
+    ratios = {
+        label: (
+            oc_results[label]["mean"] / up["mean"] if up["mean"] > 0 else 0.0
+        )
+        for label, up in upstreams.items()
     }
+
+    if corpus_bytes:
+        for series in list(upstreams.values()) + list(oc_results.values()):
+            add_throughput(series, corpus_bytes)
+
+    row = {
+        "id": test_id,
+        "name": name,
+        "mode": mode,
+        "upstreams": upstreams,
+        "ratios": {label: round(r, 2) for label, r in ratios.items()},
+        # Legacy single-baseline shape, pinned to the primary baseline.
+        "upstream": upstreams[PRIMARY.label],
+        "oc_rsync": oc_primary,
+        "ratio": round(ratios[PRIMARY.label], 2),
+    }
+    # A ratio against a binary that errored out is not a comparison. Name the
+    # series that failed so the report can say which side broke, and so the
+    # summary can leave the row out of its averages instead of reporting a
+    # 581x regression that is really a missing zstd in the upstream build.
+    failed = [
+        label for label, s in upstreams.items() if series_failed(s)
+    ] + [
+        f"oc-rsync/{label}"
+        for label, s in oc_results.items()
+        if series_failed(s)
+    ]
+    if failed:
+        row["failed_series"] = sorted(set(failed))
+    if oc_per_baseline:
+        row["oc_rsync_per_baseline"] = oc_results
+    if corpus_bytes:
+        row["corpus_bytes"] = corpus_bytes
+    results["tests"].append(row)
+    return row
+
+
+def tree_size(path):
+    """Total byte size of every regular file under `path`."""
+    return sum(
+        os.path.getsize(os.path.join(dp, f))
+        for dp, _, fn in os.walk(path)
+        for f in fn
+    )
+
+
+def wipe(*paths):
+    """Recreate each path as an empty directory."""
+    for path in paths:
+        shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(path, exist_ok=True)
 
 
 def main():
     tmpdir = tempfile.mkdtemp(prefix="rsync_bench_")
-    daemon_proc = None
+    daemons = []
     results = {"tests": [], "summary": {}}
 
     try:
         src = f"{tmpdir}/src"
-        dst_up = f"{tmpdir}/dst_upstream"
+        # One destination per baseline: a shared destination would leave the
+        # second baseline's "initial" transfer facing a tree the first
+        # baseline had already written.
+        dst_up = {b.label: f"{tmpdir}/dst_upstream_{b.slug}" for b in BASELINES}
         dst_oc = f"{tmpdir}/dst_oc"
-        daemon_dst = f"{tmpdir}/daemon_dest"
+        dst_oc_per = {b.label: f"{tmpdir}/dst_oc_{b.slug}" for b in BASELINES}
+        daemon_dst = {b.label: f"{tmpdir}/daemon_dest_{b.slug}" for b in BASELINES}
 
         os.makedirs(f"{src}/small", exist_ok=True)
         os.makedirs(f"{src}/medium", exist_ok=True)
@@ -463,103 +775,172 @@ def main():
             with open(f"{src}/large/file_{i}.dat", "wb") as f:
                 f.write(os.urandom(3 * 1024 * 1024))
 
-        total_size = sum(
-            os.path.getsize(os.path.join(dp, f))
-            for dp, dn, fn in os.walk(src)
-            for f in fn
-        )
+        total_size = tree_size(src)
         total_files = sum(len(fn) for _, _, fn in os.walk(src))
 
         results["test_data"] = {
             "size_mb": round(total_size / 1024 / 1024, 1),
             "files": total_files,
         }
-        results["upstream_version"] = binary_version(UPSTREAM)
-        results["oc_rsync_version"] = binary_version(OC_RSYNC)
-
-        # Start rsync daemon for daemon benchmarks
-        port = find_free_port()
-        conf_path = f"{tmpdir}/rsyncd.conf"
-        os.makedirs(daemon_dst, exist_ok=True)
-
-        with open(conf_path, "w") as f:
-            f.write(
-                f"port = {port}\n"
-                f"use chroot = false\n"
-                f"\n"
-                f"[bench]\n"
-                f"    path = {src}\n"
-                f"    read only = true\n"
-                f"\n"
-                f"[dest]\n"
-                f"    path = {daemon_dst}\n"
-                f"    read only = false\n"
-            )
-
-        print(f"Starting rsync daemon on port {port}...", file=sys.stderr)
-        daemon_proc = subprocess.Popen(
-            [UPSTREAM, "--daemon", "--config", conf_path, "--no-detach"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        results["baselines"] = [
+            {
+                "label": b.label,
+                "version": binary_version(b.path),
+                "path": b.path,
+                "primary": b.label == PRIMARY.label,
+            }
+            for b in BASELINES
+        ]
+        # Retained for consumers that predate the per-baseline dimension:
+        # the primary baseline is the one the legacy fields describe.
+        results["upstream_version"] = binary_version(PRIMARY.path)
+        oc_release, oc_compat = oc_rsync_versions(OC_RSYNC)
+        results["oc_rsync_version"] = oc_release
+        results["oc_rsync_wire_compat_version"] = oc_compat
+        results["environment"] = benchmark_env.capture(
+            os.environ.get("OC_RSYNC_SEND_ZC_DISPATCH", "")
         )
-        if not wait_for_port(port):
-            print("ERROR: rsync daemon failed to start", file=sys.stderr)
-            sys.exit(1)
-        print("Daemon ready.", file=sys.stderr)
+        print(
+            benchmark_env.send_zc_verdict(results["environment"]),
+            file=sys.stderr,
+        )
 
-        def reset_dst():
-            shutil.rmtree(dst_up, ignore_errors=True)
-            shutil.rmtree(dst_oc, ignore_errors=True)
-            os.makedirs(dst_up, exist_ok=True)
-            os.makedirs(dst_oc, exist_ok=True)
+        # One daemon per baseline, each on its own port with its own module
+        # tree. The daemon is the *peer* for the daemon cells, so timing
+        # oc-rsync against a single daemon while comparing it to two different
+        # upstream clients would fold a server-version difference into the
+        # client ratio.
+        ports = {}
+        for baseline in BASELINES:
+            port = find_free_port()
+            ports[baseline.label] = port
+            conf_path = f"{tmpdir}/rsyncd_{baseline.slug}.conf"
+            os.makedirs(daemon_dst[baseline.label], exist_ok=True)
+            with open(conf_path, "w") as f:
+                f.write(
+                    f"port = {port}\n"
+                    f"use chroot = false\n"
+                    f"\n"
+                    f"[bench]\n"
+                    f"    path = {src}\n"
+                    f"    read only = true\n"
+                    f"\n"
+                    f"[dest]\n"
+                    f"    path = {daemon_dst[baseline.label]}\n"
+                    f"    read only = false\n"
+                )
+            print(
+                f"Starting rsync {baseline.label} daemon on port {port}...",
+                file=sys.stderr,
+            )
+            daemons.append(
+                subprocess.Popen(
+                    [
+                        baseline.path,
+                        "--daemon",
+                        "--config",
+                        conf_path,
+                        "--no-detach",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            )
+            if not wait_for_port(port):
+                print(
+                    f"ERROR: rsync {baseline.label} daemon failed to start",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        print("Daemons ready.", file=sys.stderr)
 
-        def reset_daemon_dst():
-            shutil.rmtree(daemon_dst, ignore_errors=True)
-            os.makedirs(daemon_dst, exist_ok=True)
+        # The oc-vs-oc cells below (OpenSSL, io_uring, SSH transport) compare
+        # build variants of oc-rsync rather than releases of upstream, so they
+        # have no baseline dimension and speak to the primary baseline's
+        # daemon only.
+        port = ports[PRIMARY.label]
+
+        # `--rsync-path` pins the remote end of an SSH cell to the same
+        # release as the local end. Without it the remote server is whatever
+        # `rsync` the login PATH resolves, so a 3.4.4 client would be timed
+        # against a 3.5.0 server and the row would name a version it did not
+        # measure. oc-rsync takes the same option, so its SSH cells are timed
+        # against each baseline's server too and the comparison isolates the
+        # client.
+        def ssh_pin(baseline):
+            return f"--rsync-path={baseline.path}"
 
         for test in TESTS:
-            test_id = test["id"]
-            name = test["name"]
             mode = test["mode"]
             args_tpl = test["args"]
             do_reset = test["reset"]
+            is_daemon = mode.startswith("daemon_")
+            is_ssh = mode.startswith("ssh_")
+            per_baseline = is_daemon or is_ssh
 
-            print(f"Running: [{mode}] {name}...", file=sys.stderr)
+            print(f"Running: [{mode}] {test['name']}...", file=sys.stderr)
+
+            def oc_dst_for(baseline, per_baseline=per_baseline):
+                return dst_oc_per[baseline.label] if per_baseline else dst_oc
+
+            def up_args(baseline, args_tpl=args_tpl):
+                return args_tpl.format(
+                    src=src,
+                    dst=dst_up[baseline.label],
+                    port=ports[baseline.label],
+                )
+
+            def oc_args(baseline, args_tpl=args_tpl):
+                return args_tpl.format(
+                    src=src,
+                    dst=oc_dst_for(baseline),
+                    port=ports[baseline.label],
+                )
+
+            pin = ssh_pin if is_ssh else (lambda b: "")
+
+            def up_cmd(baseline):
+                return f"{baseline.path} {pin(baseline)} {up_args(baseline)}"
+
+            def oc_cmd(baseline):
+                return f"{OC_RSYNC} {pin(baseline)} {oc_args(baseline)}"
+
+            def up_before(baseline):
+                wipe(dst_up[baseline.label])
+                if is_daemon:
+                    wipe(daemon_dst[baseline.label])
+
+            def oc_before(baseline):
+                wipe(oc_dst_for(baseline))
+                if is_daemon:
+                    wipe(daemon_dst[baseline.label])
 
             if do_reset:
-                reset_dst()
-                if mode == "daemon_push":
-                    reset_daemon_dst()
-
-            up_args = args_tpl.format(src=src, dst=dst_up, port=port)
-            oc_args = args_tpl.format(src=src, dst=dst_oc, port=port)
-
-            # For daemon push, both tools push to the same daemon dest,
-            # so reset between them to get fair initial-transfer timing.
-            if mode == "daemon_push" and do_reset:
-                reset_daemon_dst()
-                up_result = benchmark(f"{UPSTREAM} {up_args}")
-                reset_daemon_dst()
-                oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
+                # An initial-transfer cell has to start from an empty
+                # destination on every run, not only the first.
+                before_up, before_oc, runs = up_before, oc_before, 3
             else:
-                up_result = benchmark(f"{UPSTREAM} {up_args}")
-                oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
+                before_up = before_oc = None
+                runs = 6
 
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
-            )
-
-            results["tests"].append(
-                {
-                    "id": test_id,
-                    "name": name,
-                    "mode": mode,
-                    "upstream": up_result,
-                    "oc_rsync": oc_result,
-                    "ratio": round(ratio, 2),
-                }
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                mode,
+                up_cmd,
+                oc_cmd,
+                runs=runs,
+                # Peak RSS is collected alongside the timing here, not only in
+                # the dedicated memory mode. The report has always had columns
+                # for it on these rows; without the /usr/bin/time wrapper they
+                # were dashes, so a throughput win bought with memory was
+                # invisible on the very table that claimed to show it.
+                runner=benchmark_rss if HAVE_TIME_CMD else benchmark,
+                up_before=before_up,
+                oc_before=before_oc,
+                oc_per_baseline=per_baseline,
+                corpus_bytes=total_size,
             )
 
         # OpenSSL vs pure-Rust comparison
@@ -567,12 +948,7 @@ def main():
             print("Running OpenSSL vs pure-Rust comparison...", file=sys.stderr)
             dst_pure = f"{tmpdir}/dst_pure"
             dst_ssl = f"{tmpdir}/dst_ssl"
-
-            def reset_openssl_dst():
-                shutil.rmtree(dst_pure, ignore_errors=True)
-                shutil.rmtree(dst_ssl, ignore_errors=True)
-                os.makedirs(dst_pure, exist_ok=True)
-                os.makedirs(dst_ssl, exist_ok=True)
+            wipe(dst_pure, dst_ssl)
 
             for test in OPENSSL_TESTS:
                 test_id = test["id"]
@@ -582,14 +958,26 @@ def main():
 
                 print(f"Running: [{mode}] {name}...", file=sys.stderr)
 
-                if test["reset"]:
-                    reset_openssl_dst()
-
+                runs = 3 if test["reset"] else 6
                 pure_args = args_tpl.format(src=src, dst=dst_pure, port=port)
                 ssl_args = args_tpl.format(src=src, dst=dst_ssl, port=port)
 
-                pure_result = benchmark(f"{OC_RSYNC} {pure_args}")
-                ssl_result = benchmark(f"{OC_RSYNC_OPENSSL} {ssl_args}")
+                pure_result = benchmark(
+                    f"{OC_RSYNC} {pure_args}",
+                    runs=runs,
+                    before_each=(
+                        (lambda: wipe(dst_pure)) if test["reset"] else None
+                    ),
+                )
+                ssl_result = benchmark(
+                    f"{OC_RSYNC_OPENSSL} {ssl_args}",
+                    runs=runs,
+                    before_each=(
+                        (lambda: wipe(dst_ssl)) if test["reset"] else None
+                    ),
+                )
+                add_throughput(pure_result, total_size)
+                add_throughput(ssl_result, total_size)
 
                 ratio = (
                     ssl_result["mean"] / pure_result["mean"]
@@ -629,15 +1017,10 @@ def main():
             dst_sub_push = f"{tmpdir}/dst_sub_push"
             dst_russh_push = f"{tmpdir}/dst_russh_push"
 
-            def reset_transport_pull():
-                for d in (dst_upstream_pull, dst_sub_pull, dst_russh_pull):
-                    shutil.rmtree(d, ignore_errors=True)
-                    os.makedirs(d, exist_ok=True)
-
-            def reset_transport_push():
-                for d in (dst_upstream_push, dst_sub_push, dst_russh_push):
-                    shutil.rmtree(d, ignore_errors=True)
-                    os.makedirs(d, exist_ok=True)
+            wipe(
+                dst_upstream_pull, dst_sub_pull, dst_russh_pull,
+                dst_upstream_push, dst_sub_push, dst_russh_push,
+            )
 
             for test in RUSSH_TESTS:
                 test_id = test["id"]
@@ -646,12 +1029,6 @@ def main():
                 is_push = "push" in test_id
 
                 print(f"Running: [{mode}] {name}...", file=sys.stderr)
-
-                if test["reset"]:
-                    if is_push:
-                        reset_transport_push()
-                    else:
-                        reset_transport_pull()
 
                 if is_push:
                     upstream_dst = dst_upstream_push
@@ -664,9 +1041,30 @@ def main():
                 sub_args = test["subprocess_args"].format(src=src, dst=sub_dst)
                 russh_args = test["russh_args"].format(src=src, dst=russh_dst)
 
-                upstream_result = benchmark(f"{UPSTREAM} {upstream_args}")
-                sub_result = benchmark(f"{OC_RSYNC} {sub_args}")
-                russh_result = benchmark(f"{OC_RSYNC_RUSSH} {russh_args}")
+                runs = 3 if test["reset"] else 6
+                reset = test["reset"]
+                pin = f"--rsync-path={PRIMARY.path}"
+                upstream_result = benchmark(
+                    f"{PRIMARY.path} {pin} {upstream_args}",
+                    runs=runs,
+                    before_each=(
+                        (lambda d=upstream_dst: wipe(d)) if reset else None
+                    ),
+                )
+                sub_result = benchmark(
+                    f"{OC_RSYNC} {pin} {sub_args}",
+                    runs=runs,
+                    before_each=(lambda d=sub_dst: wipe(d)) if reset else None,
+                )
+                russh_result = benchmark(
+                    f"{OC_RSYNC_RUSSH} {pin} {russh_args}",
+                    runs=runs,
+                    before_each=(
+                        (lambda d=russh_dst: wipe(d)) if reset else None
+                    ),
+                )
+                for series in (upstream_result, sub_result, russh_result):
+                    add_throughput(series, total_size)
 
                 ratio_russh_vs_sub = (
                     russh_result["mean"] / sub_result["mean"]
@@ -736,17 +1134,23 @@ def main():
                 print(f"Running: [io_uring] {test['name']}...", file=sys.stderr)
                 args_tpl = test["args"]
 
-                # Run with --io-uring (enabled)
-                shutil.rmtree(dst_uring, ignore_errors=True)
-                os.makedirs(dst_uring, exist_ok=True)
+                # Every io_uring cell is an initial transfer, so both arms
+                # reset before each run.
                 uring_args = args_tpl.format(src=src, dst=dst_uring, port=port)
-                uring_result = benchmark(f"{OC_RSYNC} --io-uring {uring_args}")
+                uring_result = benchmark(
+                    f"{OC_RSYNC} --io-uring {uring_args}",
+                    runs=3,
+                    before_each=lambda: wipe(dst_uring),
+                )
 
-                # Run with --no-io-uring (disabled)
-                shutil.rmtree(dst_no_uring, ignore_errors=True)
-                os.makedirs(dst_no_uring, exist_ok=True)
                 no_uring_args = args_tpl.format(src=src, dst=dst_no_uring, port=port)
-                no_uring_result = benchmark(f"{OC_RSYNC} --no-io-uring {no_uring_args}")
+                no_uring_result = benchmark(
+                    f"{OC_RSYNC} --no-io-uring {no_uring_args}",
+                    runs=3,
+                    before_each=lambda: wipe(dst_no_uring),
+                )
+                add_throughput(uring_result, total_size)
+                add_throughput(no_uring_result, total_size)
 
                 ratio = (
                     uring_result["mean"] / no_uring_result["mean"]
@@ -769,142 +1173,168 @@ def main():
 
         # Compression benchmarks (zlib and zstd)
         print("Running compression benchmarks...", file=sys.stderr)
-        dst_comp_up = f"{tmpdir}/dst_comp_up"
+        dst_comp_up = {b.label: f"{tmpdir}/dst_comp_up_{b.slug}" for b in BASELINES}
         dst_comp_oc = f"{tmpdir}/dst_comp_oc"
-
-        def reset_comp_dst():
-            shutil.rmtree(dst_comp_up, ignore_errors=True)
-            shutil.rmtree(dst_comp_oc, ignore_errors=True)
-            os.makedirs(dst_comp_up, exist_ok=True)
-            os.makedirs(dst_comp_oc, exist_ok=True)
+        wipe(dst_comp_oc, *dst_comp_up.values())
 
         for test in COMPRESSION_TESTS:
             print(f"Running: [compression] {test['name']}...", file=sys.stderr)
-            if test["reset"]:
-                reset_comp_dst()
-            up_args = test["args"].format(src=src, dst=dst_comp_up, port=port)
-            oc_args = test["args"].format(src=src, dst=dst_comp_oc, port=port)
-            up_result = benchmark(f"{UPSTREAM} {up_args}")
-            oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
+            reset = test["reset"]
+            args_tpl = test["args"]
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "compression",
+                lambda b, a=args_tpl: (
+                    f"{b.path} "
+                    + a.format(src=src, dst=dst_comp_up[b.label], port=port)
+                ),
+                lambda b, a=args_tpl: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=src, dst=dst_comp_oc, port=port)
+                ),
+                runs=3 if reset else 6,
+                up_before=(lambda b: wipe(dst_comp_up[b.label])) if reset else None,
+                oc_before=(lambda b: wipe(dst_comp_oc)) if reset else None,
+                corpus_bytes=total_size,
             )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "compression",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
         # Delta transfer benchmarks (modify files then re-sync)
         print("Running delta transfer benchmarks...", file=sys.stderr)
-        dst_delta_up = f"{tmpdir}/dst_delta_up"
+        dst_delta_up = {
+            b.label: f"{tmpdir}/dst_delta_up_{b.slug}" for b in BASELINES
+        }
         dst_delta_oc = f"{tmpdir}/dst_delta_oc"
+        wipe(dst_delta_oc, *dst_delta_up.values())
 
         # Initial sync to populate destinations
-        shutil.rmtree(dst_delta_up, ignore_errors=True)
-        shutil.rmtree(dst_delta_oc, ignore_errors=True)
-        os.makedirs(dst_delta_up, exist_ok=True)
-        os.makedirs(dst_delta_oc, exist_ok=True)
-        subprocess.run(
-            f"{UPSTREAM} -av {src}/ {dst_delta_up}/",
-            shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
-        )
-        subprocess.run(
-            f"{OC_RSYNC} -av {src}/ {dst_delta_oc}/",
-            shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
-        )
+        for path in [dst_delta_oc, *dst_delta_up.values()]:
+            subprocess.run(
+                f"{PRIMARY.path} -av {src}/ {path}/",
+                shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
+            )
 
         # Modify ~10% of medium files (append 4KB to trigger delta)
-        for i in range(0, 400, 10):
-            path = f"{src}/medium/file_{i}.bin"
-            with open(path, "ab") as f:
+        MODIFIED_MEDIUM = range(0, 400, 10)
+        for i in MODIFIED_MEDIUM:
+            with open(f"{src}/medium/file_{i}.bin", "ab") as f:
                 f.write(os.urandom(4096))
+
+        def stale_delta_dest(path):
+            """Roll the destination back to its pre-modification content.
+
+            Without this the first run performs the delta and every later run
+            has nothing left to send, so a delta cell would report the cost of
+            a no-change scan. Truncating to the original length restores the
+            size mismatch that makes the next run a real delta transfer.
+            """
+            for i in MODIFIED_MEDIUM:
+                with open(f"{path}/medium/file_{i}.bin", "r+b") as f:
+                    f.truncate(100 * 1024)
 
         for test in DELTA_TESTS:
             print(f"Running: [delta] {test['name']}...", file=sys.stderr)
-            up_args = test["args"].format(src=src, dst=dst_delta_up, port=port)
-            oc_args = test["args"].format(src=src, dst=dst_delta_oc, port=port)
-            up_result = benchmark(f"{UPSTREAM} {up_args}")
-            oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
+            args_tpl = test["args"]
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "delta",
+                lambda b, a=args_tpl: (
+                    f"{b.path} "
+                    + a.format(src=src, dst=dst_delta_up[b.label], port=port)
+                ),
+                lambda b, a=args_tpl: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=src, dst=dst_delta_oc, port=port)
+                ),
+                runs=4,
+                up_before=lambda b: stale_delta_dest(dst_delta_up[b.label]),
+                oc_before=lambda b: stale_delta_dest(dst_delta_oc),
+                corpus_bytes=total_size,
             )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "delta",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
         # Restore modified files to original size for subsequent benchmarks
-        for i in range(0, 400, 10):
-            path = f"{src}/medium/file_{i}.bin"
-            with open(path, "r+b") as f:
+        for i in MODIFIED_MEDIUM:
+            with open(f"{src}/medium/file_{i}.bin", "r+b") as f:
                 f.truncate(100 * 1024)
 
         # Large single file benchmark (1GB)
         print("Running large file benchmarks...", file=sys.stderr)
         large_src = f"{tmpdir}/large_src"
-        dst_large_up = f"{tmpdir}/dst_large_up"
+        dst_large_up = {
+            b.label: f"{tmpdir}/dst_large_up_{b.slug}" for b in BASELINES
+        }
         dst_large_oc = f"{tmpdir}/dst_large_oc"
         os.makedirs(large_src, exist_ok=True)
+        wipe(dst_large_oc, *dst_large_up.values())
 
         large_file_path = f"{large_src}/bigfile.dat"
         with open(large_file_path, "wb") as f:
             # Write 1GB in 1MB chunks
             for _ in range(1024):
                 f.write(os.urandom(1024 * 1024))
+        large_size = os.path.getsize(large_file_path)
+
+        DELTA_OFFSET = 512 * 1024 * 1024
+        DELTA_SPAN = 64 * 1024
+
+        def stale_large_dest(path):
+            """Overwrite the destination's middle 64KB so the next run deltas.
+
+            Writing on the destination side also moves its mtime, so rsync's
+            quick check sees a difference and re-runs the block search instead
+            of skipping a file whose size never changed.
+            """
+            target = f"{path}/bigfile.dat"
+            if not os.path.isfile(target):
+                return
+            with open(target, "r+b") as f:
+                f.seek(DELTA_OFFSET)
+                f.write(os.urandom(DELTA_SPAN))
 
         for test in LARGE_FILE_TESTS:
             print(f"Running: [large_file] {test['name']}...", file=sys.stderr)
+            args_tpl = test["args"]
             if test["reset"]:
-                shutil.rmtree(dst_large_up, ignore_errors=True)
-                shutil.rmtree(dst_large_oc, ignore_errors=True)
-                os.makedirs(dst_large_up, exist_ok=True)
-                os.makedirs(dst_large_oc, exist_ok=True)
+                up_before = lambda b: wipe(dst_large_up[b.label])
+                oc_before = lambda b: wipe(dst_large_oc)
+            elif test["id"] == "large_file_delta":
+                up_before = lambda b: stale_large_dest(dst_large_up[b.label])
+                oc_before = lambda b: stale_large_dest(dst_large_oc)
+            else:
+                up_before = oc_before = None
 
-            # For delta test, modify a 64KB region in the middle of the file
-            if test["id"] == "large_file_delta":
-                with open(large_file_path, "r+b") as f:
-                    f.seek(512 * 1024 * 1024)
-                    f.write(os.urandom(64 * 1024))
-
-            up_args = test["args"].format(
-                src=large_src, dst=dst_large_up, port=port,
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "large_file",
+                lambda b, a=args_tpl: (
+                    f"{b.path} "
+                    + a.format(
+                        src=large_src, dst=dst_large_up[b.label], port=port,
+                    )
+                ),
+                lambda b, a=args_tpl: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=large_src, dst=dst_large_oc, port=port)
+                ),
+                runs=3,
+                up_before=up_before,
+                oc_before=oc_before,
+                corpus_bytes=large_size,
             )
-            oc_args = test["args"].format(
-                src=large_src, dst=dst_large_oc, port=port,
-            )
-            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
-            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
-            )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "large_file",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
         # Many small files benchmark (100K files)
         print("Running many small files benchmarks...", file=sys.stderr)
         many_src = f"{tmpdir}/many_src"
-        dst_many_up = f"{tmpdir}/dst_many_up"
+        dst_many_up = {
+            b.label: f"{tmpdir}/dst_many_up_{b.slug}" for b in BASELINES
+        }
         dst_many_oc = f"{tmpdir}/dst_many_oc"
+        wipe(dst_many_oc, *dst_many_up.values())
 
         # Create 100K files x 100B across 100 directories
         for d in range(100):
@@ -913,100 +1343,98 @@ def main():
             for i in range(1000):
                 with open(f"{dir_path}/f{i:04d}.txt", "wb") as f:
                     f.write(os.urandom(100))
+        many_size = tree_size(many_src)
 
         for test in MANY_SMALL_FILES_TESTS:
             print(f"Running: [many_small] {test['name']}...", file=sys.stderr)
-            if test["reset"]:
-                shutil.rmtree(dst_many_up, ignore_errors=True)
-                shutil.rmtree(dst_many_oc, ignore_errors=True)
-                os.makedirs(dst_many_up, exist_ok=True)
-                os.makedirs(dst_many_oc, exist_ok=True)
-            up_args = test["args"].format(
-                src=many_src, dst=dst_many_up, port=port,
+            args_tpl = test["args"]
+            reset = test["reset"]
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "many_small",
+                lambda b, a=args_tpl: (
+                    f"{b.path} "
+                    + a.format(
+                        src=many_src, dst=dst_many_up[b.label], port=port,
+                    )
+                ),
+                lambda b, a=args_tpl: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=many_src, dst=dst_many_oc, port=port)
+                ),
+                runs=3,
+                up_before=(lambda b: wipe(dst_many_up[b.label])) if reset else None,
+                oc_before=(lambda b: wipe(dst_many_oc)) if reset else None,
+                corpus_bytes=many_size,
             )
-            oc_args = test["args"].format(
-                src=many_src, dst=dst_many_oc, port=port,
-            )
-            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
-            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
-            )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "many_small",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
         # Memory usage (peak RSS) benchmark
         print("Running memory usage benchmarks...", file=sys.stderr)
-        dst_mem_up = f"{tmpdir}/dst_mem_up"
+        dst_mem_up = {
+            b.label: f"{tmpdir}/dst_mem_up_{b.slug}" for b in BASELINES
+        }
         dst_mem_oc = f"{tmpdir}/dst_mem_oc"
+        wipe(dst_mem_oc, *dst_mem_up.values())
 
         memory_tests = [
             {
                 "id": "memory_initial",
                 "name": "Initial sync (10K files)",
                 "src": src,
+                "bytes": total_size,
                 "args": "-av {src}/ {dst}/",
-                "reset": True,
             },
             {
                 "id": "memory_large_file",
                 "name": "1GB file sync",
                 "src": large_src,
+                "bytes": large_size,
                 "args": "-av {src}/ {dst}/",
-                "reset": True,
             },
             {
                 "id": "memory_many_files",
                 "name": "100K files sync",
                 "src": many_src,
+                "bytes": many_size,
                 "args": "-av {src}/ {dst}/",
-                "reset": True,
             },
         ]
 
         for test in memory_tests:
             print(f"Running: [memory] {test['name']}...", file=sys.stderr)
-            if test["reset"]:
-                shutil.rmtree(dst_mem_up, ignore_errors=True)
-                shutil.rmtree(dst_mem_oc, ignore_errors=True)
-                os.makedirs(dst_mem_up, exist_ok=True)
-                os.makedirs(dst_mem_oc, exist_ok=True)
-            up_args = test["args"].format(
-                src=test["src"], dst=dst_mem_up, port=port,
+            args_tpl = test["args"]
+            test_src = test["src"]
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "memory",
+                lambda b, a=args_tpl, s=test_src: (
+                    f"{b.path} "
+                    + a.format(src=s, dst=dst_mem_up[b.label], port=port)
+                ),
+                lambda b, a=args_tpl, s=test_src: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=s, dst=dst_mem_oc, port=port)
+                ),
+                runs=3,
+                runner=benchmark_rss if HAVE_TIME_CMD else benchmark,
+                up_before=lambda b: wipe(dst_mem_up[b.label]),
+                oc_before=lambda b: wipe(dst_mem_oc),
+                corpus_bytes=test["bytes"],
             )
-            oc_args = test["args"].format(
-                src=test["src"], dst=dst_mem_oc, port=port,
-            )
-            up_result = benchmark_rss(f"{UPSTREAM} {up_args}")
-            oc_result = benchmark_rss(f"{OC_RSYNC} {oc_args}")
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
-            )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "memory",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
         # Sparse file benchmark
         print("Running sparse file benchmarks...", file=sys.stderr)
         sparse_src = f"{tmpdir}/sparse_src"
-        dst_sparse_up = f"{tmpdir}/dst_sparse_up"
+        dst_sparse_up = {
+            b.label: f"{tmpdir}/dst_sparse_up_{b.slug}" for b in BASELINES
+        }
         dst_sparse_oc = f"{tmpdir}/dst_sparse_oc"
         os.makedirs(sparse_src, exist_ok=True)
+        wipe(dst_sparse_oc, *dst_sparse_up.values())
 
         # Create files with large zero runs (simulating sparse data)
         for i in range(50):
@@ -1016,57 +1444,104 @@ def main():
                 f.write(os.urandom(1024 * 1024))
                 f.write(b"\0" * (8 * 1024 * 1024))
                 f.write(os.urandom(1024 * 1024))
+        sparse_size = tree_size(sparse_src)
 
         for test in SPARSE_TESTS:
             print(f"Running: [sparse] {test['name']}...", file=sys.stderr)
-            if test["reset"]:
-                shutil.rmtree(dst_sparse_up, ignore_errors=True)
-                shutil.rmtree(dst_sparse_oc, ignore_errors=True)
-                os.makedirs(dst_sparse_up, exist_ok=True)
-                os.makedirs(dst_sparse_oc, exist_ok=True)
-            up_args = test["args"].format(
-                src=sparse_src, dst=dst_sparse_up, port=port,
+            args_tpl = test["args"]
+            reset = test["reset"]
+            compare(
+                results,
+                test["id"],
+                test["name"],
+                "sparse",
+                lambda b, a=args_tpl: (
+                    f"{b.path} "
+                    + a.format(
+                        src=sparse_src, dst=dst_sparse_up[b.label], port=port,
+                    )
+                ),
+                lambda b, a=args_tpl: (
+                    f"{OC_RSYNC} "
+                    + a.format(src=sparse_src, dst=dst_sparse_oc, port=port)
+                ),
+                runs=3,
+                up_before=(
+                    (lambda b: wipe(dst_sparse_up[b.label])) if reset else None
+                ),
+                oc_before=(lambda b: wipe(dst_sparse_oc)) if reset else None,
+                corpus_bytes=sparse_size,
             )
-            oc_args = test["args"].format(
-                src=sparse_src, dst=dst_sparse_oc, port=port,
-            )
-            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
-            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
-            ratio = (
-                oc_result["mean"] / up_result["mean"]
-                if up_result["mean"] > 0
-                else 0
-            )
-            results["tests"].append({
-                "id": test["id"],
-                "name": test["name"],
-                "mode": "sparse",
-                "upstream": up_result,
-                "oc_rsync": oc_result,
-                "ratio": round(ratio, 2),
-            })
 
-        # Calculate summary
-        ratios = [t["ratio"] for t in results["tests"]]
+        # Calculate summary. `ratios` per row is keyed by baseline label, so
+        # the headline numbers are stated once per baseline as well; the
+        # unsuffixed fields keep describing the primary baseline for consumers
+        # that predate the dimension.
+        # Rows where a binary failed are excluded: averaging a ratio against a
+        # command that errored out in a millisecond states a performance
+        # verdict the run never measured.
+        sound = [
+            t for t in results["tests"]
+            if "ratios" in t and not t.get("failed_series")
+        ]
+        excluded = [
+            t["id"] for t in results["tests"] if t.get("failed_series")
+        ]
+
+        by_baseline = {}
+        for baseline in BASELINES:
+            label = baseline.label
+            values = [t["ratios"][label] for t in sound]
+            if not values:
+                continue
+            modes = {}
+            for t in sound:
+                modes.setdefault(t["mode"], []).append(t["ratios"][label])
+            by_baseline[label] = {
+                "avg_ratio": round(sum(values) / len(values), 2),
+                "best_ratio": round(min(values), 2),
+                "worst_ratio": round(max(values), 2),
+                "by_mode": {
+                    m: round(sum(r) / len(r), 2) for m, r in modes.items()
+                },
+            }
+
+        ratios = [
+            t["ratio"] for t in results["tests"] if not t.get("failed_series")
+        ]
         by_mode = {}
         for t in results["tests"]:
+            if t.get("failed_series"):
+                continue
             by_mode.setdefault(t["mode"], []).append(t["ratio"])
 
         results["summary"] = {
-            "avg_ratio": round(sum(ratios) / len(ratios), 2),
-            "best_ratio": round(min(ratios), 2),
-            "worst_ratio": round(max(ratios), 2),
+            "avg_ratio": round(sum(ratios) / len(ratios), 2) if ratios else 0.0,
+            "best_ratio": round(min(ratios), 2) if ratios else 0.0,
+            "worst_ratio": round(max(ratios), 2) if ratios else 0.0,
             "by_mode": {
                 m: round(sum(r) / len(r), 2) for m, r in by_mode.items()
             },
+            "by_baseline": by_baseline,
+            "excluded_tests": excluded,
         }
+        if excluded:
+            print(
+                "WARNING: excluded from the summary because a binary failed: "
+                + ", ".join(excluded),
+                file=sys.stderr,
+            )
 
         print(json.dumps(results, indent=2))
 
     finally:
-        if daemon_proc is not None:
-            daemon_proc.terminate()
-            daemon_proc.wait(timeout=5)
+        for proc in daemons:
+            proc.terminate()
+        for proc in daemons:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 

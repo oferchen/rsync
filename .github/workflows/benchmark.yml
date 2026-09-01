@@ -35,11 +35,50 @@ jobs:
   benchmark:
     name: Performance Benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Raised from 90 because every upstream cell now runs once per baseline,
+    # the SSH and daemon cells re-time oc-rsync against each peer, and the
+    # initial-transfer cells reset between runs instead of measuring a
+    # no-change sync from run 2 onwards.
+    #
+    # Measured on this runner, not guessed: the dual-baseline suite itself
+    # takes 12m47s and the whole job 19m51s with warm caches. The three
+    # release builds are the variable part -- 5m32s warm, so allow roughly
+    # 40m cold -- which puts the cold-cache worst case near 55m. 120 is a bit
+    # over 2x that. An hours-long budget was tempting after a loaded 4-core
+    # aarch64 host took 3.5h, but that host is not this runner, and an
+    # over-long timeout means a hung run holds a scarce runner for hours
+    # before failing.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # First, before any build: the probe needs only the checkout and
+      # python3, and a runner that cannot offer the opcode is a fact worth
+      # having in the first minute rather than after a twenty-five-minute
+      # build. A benchmark whose environment is unstated cannot be compared
+      # across runs, so the answer is published even when it is "yes".
+      - name: Probe io_uring SEND_ZC on the runner kernel
+        id: send_zc
+        run: |
+          set -euo pipefail
+          echo "Runner kernel: $(uname -r) ($(uname -m))"
+          python3 .github/scripts/benchmark_env.py > send_zc_probe.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          env = json.loads(Path("send_zc_probe.json").read_text())
+          zc = env["io_uring_send_zc"]
+          print("## Benchmark environment\n")
+          print(f"- Kernel `{env['kernel_release']}` on `{env['machine']}`, "
+                f"{env['cpu_count']} CPUs")
+          print(f"- IORING_OP_SEND_ZC supported: **{zc['supported']}** "
+                f"({zc['detail']})")
+          PY
+          if [ "$(python3 -c "import json;print(json.load(open('send_zc_probe.json'))['io_uring_send_zc']['supported'])")" != "True" ]; then
+            echo "::warning title=SEND_ZC unavailable::This runner's kernel does not advertise IORING_OP_SEND_ZC. The published benchmark numbers cannot show the io_uring zero-copy send path; the report says so explicitly."
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -69,15 +108,20 @@ jobs:
           cargo build --locked --release --features embedded-ssh
           cp target/release/oc-rsync target/release/oc-rsync-russh
 
-      - name: Cache upstream rsync
-        id: cache-rsync
+      # Two upstream releases are in circulation at once: 3.5.0 is current,
+      # 3.4.4 is what most distributions still ship. Comparing against only
+      # one of them answers half the question a release note is asked, so
+      # both are built and both are handed to the benchmark. Separate cache
+      # keys so a change to one version cannot invalidate the other.
+      - name: Cache upstream rsync 3.5.0
+        id: cache-rsync-350
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/interop/upstream-src/rsync-3.5.0
           key: upstream-rsync-3.5.0-${{ runner.os }}-full
 
       - name: Build upstream rsync 3.5.0
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p target/interop/upstream-src
@@ -93,6 +137,40 @@ jobs:
             make -j$(nproc)
           fi
 
+      - name: Cache upstream rsync 3.4.4
+        id: cache-rsync-344
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/interop/upstream-src/rsync-3.4.4
+          key: upstream-rsync-3.4.4-${{ runner.os }}-full
+
+      - name: Build upstream rsync 3.4.4
+        if: steps.cache-rsync-344.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop/upstream-src
+          cd target/interop/upstream-src
+
+          if [ ! -d rsync-3.4.4 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
+          fi
+
+          cd rsync-3.4.4
+          if [ ! -f rsync ]; then
+            ./configure
+            make -j$(nproc)
+          fi
+
+      - name: Self-test benchmark harness and renderers
+        # Run before the benchmark, not after: the suite takes hours, and a
+        # harness or renderer defect discovered afterwards has already cost
+        # the whole tag build. A metric regression here fails fast instead of
+        # shipping a misleading chart to the release page.
+        run: |
+          python3 tools/ci/tests/test_benchmark_harness.py
+          python3 tools/ci/tests/test_benchmark_chart.py
+          python3 tools/ci/tests/test_benchmark_report.py
+
       - name: Set up SSH loopback
         run: |
           sudo systemctl start ssh
@@ -102,31 +180,36 @@ jobs:
           chmod 600 ~/.ssh/authorized_keys
           ssh -o StrictHostKeyChecking=no localhost true
 
+      # Only one binary can own `rsync` on PATH, and it is 3.5.0: it is the
+      # primary baseline, so a cell that reaches PATH rather than an explicit
+      # path lands on the release the headline numbers are stated against.
+      # The benchmark's own SSH cells do not rely on this -- they pass
+      # `--rsync-path` so each cell's remote end matches its own baseline --
+      # but anything else on the runner that shells out to `rsync` gets 3.5.0.
       - name: Install upstream rsync to PATH
         run: sudo cp target/interop/upstream-src/rsync-3.5.0/rsync /usr/local/bin/rsync
 
       - name: Run benchmark
         id: benchmark
         env:
-          # The build step above owns the upstream version; naming it again
-          # inside benchmark.py is what let the two drift apart.
-          UPSTREAM_RSYNC: target/interop/upstream-src/rsync-3.5.0/rsync
+          # The build steps above own the upstream versions; naming them again
+          # inside benchmark.py is what let the two drift apart. The first
+          # entry is the primary baseline.
+          UPSTREAM_RSYNC: >-
+            3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync
           OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
           OC_RSYNC_RUSSH: target/release/oc-rsync-russh
+          # `iouring-send-zc` is not in any default feature set and the
+          # binary's --version does not enumerate fast_io features, so the
+          # cargo invocation above is the only place this is knowable. Change
+          # it in step with the build, not independently.
+          OC_RSYNC_SEND_ZC_DISPATCH: >-
+            compiled out (iouring-send-zc cargo feature not enabled in the release build)
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json
           python3 .github/scripts/benchmark_report.py > benchmark_report.md
           cat benchmark_report.md
-
-      - name: Self-test benchmark renderers
-        # The chart and report are published as release assets, so the
-        # renderers are exercised against synthetic results before the real
-        # ones are drawn. A metric regression here fails the tag build
-        # instead of shipping a misleading chart to the release page.
-        run: |
-          python3 tools/ci/tests/test_benchmark_chart.py
-          python3 tools/ci/tests/test_benchmark_report.py
 
       - name: Generate benchmark chart
         run: |
@@ -144,6 +227,7 @@ jobs:
             benchmark_report.md
             benchmark.svg
             benchmark.png
+            send_zc_probe.json
 
       - name: Generate step summary
         run: |
