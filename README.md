@@ -5,7 +5,6 @@
 [![Upstream Testsuite 3.5.0 (root, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
 [![Upstream Testsuite 3.5.0 (nonroot, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)
 [![Upstream Testsuite 3.5.0 (root, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)
-[![Upstream Testsuite 3.5.0dev (development, not a gate)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
@@ -20,7 +19,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, 3.4.4 and 3.5.0, with 2.6.9 built and cached; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC`: against the 3.4.4 corpus all tests pass and the known-failures roster is empty, and against the newer 3.5.0 corpus **9 of 349 tests currently diverge** (see below).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against the peer releases enumerated by `versions=` in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh), plus the build-only peers in `extra_build_versions=`; that script is the source of truth, and re-listing it here is what let the list drift before. Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC` on the 3.5.0 corpus, where **7 of 345 tests currently diverge** across the two full-corpus legs (see below).
 
 **Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
 
@@ -31,18 +30,26 @@ The 3.5.0 **release** testsuite runs as four flows, one per cell of privilege x 
 | non-root | [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
 | root     | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
 
-The pipe legs run the whole 349-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 158 tests that can. The `upstream testsuite` and `upstream testsuite (root)` checks that gate every PR run this same 3.5.0 corpus.
+The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. The `upstream testsuite` and `upstream testsuite (root)` checks that gate every PR run this same 3.5.0 corpus.
 
 Current outcomes, as recorded in each leg's committed manifest:
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 252 | 8 | 89 | 349 |
-| root, pipe | 280 | 9 | 60 | 349 |
-| non-root, tcp | 100 | 22 | 36 | 158 |
-| root, tcp | 112 | 28 | 18 | 158 |
+| non-root, pipe | 254 | 6 | 85 | 345 |
+| root, pipe | 282 | 7 | 56 | 345 |
+| non-root, tcp | 101 | 21 | 33 | 155 |
+| root, tcp | 113 | 27 | 15 | 155 |
 
-**9 distinct tests** diverge across the two full-corpus legs, and 34 across all four. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts.
+Every figure above is the outcome column of a committed manifest, not a
+transcribed run log. Re-derive any row with:
+
+```sh
+awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
+  tools/ci/upstream-3.5.0-expect.nonroot.txt
+```
+
+**7 distinct tests** diverge across the two full-corpus legs, and 32 across all four (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts.
 
 Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml) is a **development** tracker, not a gate and not the 3.5.0 release: it builds RsyncProject git master (`version.h` == `3.5.0dev`), a moving target, and is deliberately non-blocking so an upstream-side break can never fail a PR here.
 
@@ -70,7 +77,7 @@ Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/acti
 
 | Platform | Tier | Notes |
 |---|---|---|
-| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock + seccomp. Every required CI cell runs the full nextest workspace. Production deployment target. |
+| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock. Every required CI cell runs the full nextest workspace. Production deployment target. A seccomp BPF syscall allowlist for the daemon worker is available behind `--features daemon-seccomp`; it is off in default builds and in the released binaries. |
 | macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Every required CI cell runs the full nextest workspace. Full metadata, ACL, and xattr parity including AppleDouble (`._foo`) resource-fork preservation. |
 | Windows x86_64 | **Tier 2** | IOCP file I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`, `FILE_FLAG_DELETE_ON_CLOSE`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the receiver uses IOCP-batched `WriteFile`, which is faster than the upstream Cygwin `read`/`write` fallback. NTFS DACL preservation, xattrs via NTFS Alternate Data Streams, and IOCP socket I/O (`WSARecv` / `WSASend`) are shipped; POSIX symlinks are materialized (directory links fall back to a junction when unprivileged, unprivileged file symlinks are skipped with a warning), while POSIX device nodes / FIFOs remain stubbed in line with NTFS limits. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md). |
 
@@ -101,7 +108,7 @@ See the [CHANGELOG](./CHANGELOG.md) for the full, per-release change history.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.4** and **3.5.0** in CI across protocols 28-32. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested in CI across protocols 28-32 against the upstream releases [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh) enumerates - `versions=` for the scenario matrix, `extra_build_versions=` for the build-and-cache peers, `extended_matrix_versions=` for the extended matrix and forced-protocol sweep. Read the script rather than a list here; the per-version protocol and mode coverage is tabulated under [Supported rsync wire protocol versions](#supported-rsync-wire-protocol-versions) below. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -227,7 +234,7 @@ oc-rsync is wire-compatible with upstream rsync 3.5.0, but a few architectural c
 - **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync warns when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, and - with the default `ssh-config-parse` feature - when a `Compression yes` directive applies via `~/.ssh/config` / `-F` / `/etc/ssh/ssh_config`; it does not auto-disable either layer, so operators should pick one.
 - **Daemon encryption.** The daemon protocol is plaintext, matching upstream rsync (authentication only, no encryption). oc-rsync has no built-in TLS client - the former `--ssl` / `client-tls` path was removed to match upstream. Encrypt with the SSH transport, or place the daemon behind a TLS-terminating proxy (`stunnel`, HAProxy, nginx) and reach it through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
 - **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports) and for the receive-side disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP backend is selected on Windows). An IOCP file *reader* also exists, but the per-file dispatch that would select it is behind the experimental, non-default `adaptive-basis-dispatch` feature, so default builds still read files via standard buffered I/O.
-- **`.rsync-filter` per-directory inheritance.** Per-directory merge inheritance passes upstream's `testsuite/*.test` filter corpus (the known-failures roster is empty), including nested merges and `!`-clear semantics; the deepest anchored-vs-unanchored corner cases remain an area of ongoing hardening.
+- **`.rsync-filter` per-directory inheritance.** Nested merges and `!`-clear semantics work; `merge`, `filter-merge-recursion`, `filter-depth`, `exclude` and `exclude-lsh` pass in the gating 3.5.0 corpus. `filter-merge-content-echo` is one of the seven divergences tabulated above, and the deepest anchored-vs-unanchored corner cases remain an area of ongoing hardening.
 - **`--checksum-seed` / `--fuzzy`.** Both are implemented and honoured on the common path (`--fuzzy` ports upstream's `fuzzy_distance` basis selection); deeper corner-case conformance audits against upstream rsync 3.5.0 are tracked separately.
 
 ---

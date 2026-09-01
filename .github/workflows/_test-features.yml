@@ -200,6 +200,20 @@ jobs:
             args: "-p fast_io --features landlock"
             apt: ""
             needs_bin: false
+          # The feature originates in `daemon` but has to be reachable from the
+          # root `bin` package that owns the `oc-rsync` binary, or no shipped
+          # build can ever carry the filter. That forwarding edge is what this
+          # row pins, hence the qualified `bin/daemon-seccomp` spec: a bare
+          # `--features daemon-seccomp` alongside `-p daemon` resolves against
+          # the daemon crate and passes even when the root package declares
+          # nothing - exactly the hole that let the edge go missing. Selecting
+          # `-p bin` builds the `[[bin]]` as part of the test build, and with
+          # the row's feature set rather than the default one, so this row is
+          # `needs_bin: false` for the same reason `default-features` is.
+          - name: daemon-seccomp
+            args: "-p bin -p daemon --features bin/daemon-seccomp"
+            apt: ""
+            needs_bin: false
           - name: openssl
             args: "-p checksums --features openssl"
             apt: "libssl-dev pkg-config"

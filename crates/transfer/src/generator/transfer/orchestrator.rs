@@ -21,6 +21,21 @@ use crate::generator::GeneratorStats;
 use crate::role_trailer::error_location;
 use crate::transfer_state::TransferPhase;
 
+/// How many `--remove-source-files` confirmations each half of the goodbye
+/// drain consumed, so a caller can tell the two phases apart.
+///
+/// A test that asserts only "the sources are gone" cannot distinguish a working
+/// two-phase drain from one that got all its work in the first phase, which is
+/// exactly the shape that silently degenerates into "the drain moved earlier".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SourceRemovalDrains {
+    /// Confirmations already demultiplexed when the sender still owed the peer
+    /// its goodbye reply - the ones whose diagnostics a pulling client reads.
+    pub(crate) before_goodbye: usize,
+    /// Confirmations that only arrived while the goodbye handshake ran.
+    pub(crate) during_goodbye: usize,
+}
+
 impl GeneratorContext {
     /// Prints the `sending incremental file list` banner on the client's own
     /// output at file-list-send time, ahead of any per-file rows.
@@ -50,6 +65,83 @@ impl GeneratorContext {
         self.config.connection.client_mode
             && self.config.flags.recursive
             && logging::info_gte(logging::InfoFlag::Flist, 1)
+    }
+
+    /// Runs the goodbye handshake with the deferred `--remove-source-files`
+    /// drain split across it, and reports how many confirmations each phase
+    /// consumed.
+    ///
+    /// Upstream has no batched drain: `read_a_msg()` calls
+    /// `successful_send(val)` the instant it demultiplexes a `MSG_SUCCESS`
+    /// frame (`io.c:1793-1807`), so the unlink - and the `FERROR_XFER` a
+    /// refused unlink raises - happens wherever the sender is doing I/O, inside
+    /// `send_files()` and again inside `read_final_goodbye()` (`main.c:997`).
+    /// Our reader accumulates the indices instead of dispatching them, so that
+    /// eagerness has to be reproduced by draining at each point upstream would
+    /// already have reacted.
+    ///
+    /// **Phase 1** runs before the sender answers the goodbye. That is the last
+    /// moment a diagnostic still reaches a pulling client: `sender.c:455-462`
+    /// ends every failing arm at `FERROR_XFER`, and it is the LOG CODE that
+    /// carries the exit status, not an `io_error` bit - `rwrite()` sets
+    /// `got_xfer_error` (`log.c:337-338`) and, on a server, forwards the text
+    /// as `MSG_ERROR_XFER` (`log.c:357-367`) so the client sets it too, which
+    /// `cleanup.c:217-218` lifts to `RERR_PARTIAL` (23) at BOTH ends. Once the
+    /// sender writes its `NDX_DONE` the client writes its own and stops
+    /// reading, so a frame written after that lands in a dead window and the
+    /// client exits 0 for a destructive-intent option that did not do its job.
+    ///
+    /// **Phase 2** runs after. `MSG_SUCCESS` frames keep arriving through the
+    /// handshake - the receiver commits and acknowledges its last files after
+    /// its generator has already sent `NDX_DONE` - and those confirmations are
+    /// only visible once the goodbye reads have demultiplexed them. Dropping
+    /// this phase would turn the split into "the drain moved earlier" and leak
+    /// exactly those sources.
+    ///
+    /// A file the peer never confirmed keeps its source: an interrupted or
+    /// failed transfer returns via `?` before reaching here, so nothing is
+    /// unlinked without a commit the peer acknowledged.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1793-1807` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
+    /// - `sender.c:395` - `successful_send()` performs the guarded unlink
+    /// - `main.c:993-997` - `read_final_goodbye()` still drives `read_a_msg()`
+    pub(crate) fn goodbye_draining_source_removals<R, W, F>(
+        &mut self,
+        reader: &mut super::super::super::reader::ServerReader<R>,
+        writer: &mut super::super::super::writer::ServerWriter<W>,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_write_codec: &mut protocol::codec::MonotonicNdxWriter,
+        finalize_between_write_and_read: F,
+    ) -> io::Result<SourceRemovalDrains>
+    where
+        R: Read,
+        W: Write,
+        F: FnMut(&mut super::super::super::writer::ServerWriter<W>) -> io::Result<()>,
+    {
+        let arrival = self.read_receiver_goodbye(reader, ndx_read_codec)?;
+
+        let before_goodbye =
+            self.drain_confirmed_source_removals(writer, reader.take_success_indices())?;
+
+        if arrival == super::GoodbyeArrival::Done {
+            self.answer_goodbye_with_finalizer(
+                reader,
+                writer,
+                ndx_read_codec,
+                ndx_write_codec,
+                finalize_between_write_and_read,
+            )?;
+        }
+
+        let during_goodbye =
+            self.drain_confirmed_source_removals(writer, reader.take_success_indices())?;
+
+        Ok(SourceRemovalDrains {
+            before_goodbye,
+            during_goodbye,
+        })
     }
 
     /// Runs the generator role to completion.
@@ -278,7 +370,11 @@ impl GeneratorContext {
         // already shut down. Early close during goodbye-shutdown is rare
         // and the transfer is over, so any other error is treated as a
         // real failure rather than swallowed.
-        self.handle_goodbye_with_finalizer(
+        //
+        // The goodbye is split in two so the deferred --remove-source-files
+        // drain can run in the gap between the halves; see
+        // `goodbye_draining_source_removals`.
+        self.goodbye_draining_source_removals(
             reader,
             writer,
             &mut ndx_read_codec,
@@ -289,19 +385,6 @@ impl GeneratorContext {
                 Err(e) => Err(e),
             },
         )?;
-
-        // upstream: io.c:1623-1637 - MSG_SUCCESS(ndx) frames arrive interleaved
-        // with the receiver's NDX requests and are demultiplexed as the sender
-        // drives the transfer loop and goodbye handshake. Now that the wire is
-        // drained, run the deferred --remove-source-files unlink for every file
-        // the peer confirmed committed (sender.c:395 successful_send()). A
-        // file the peer never confirmed keeps its source: an interrupted or
-        // failed transfer returns via `?` above and never reaches this point,
-        // so its source is intentionally left in place. This is the crash-safe
-        // ordering the inline unlink violated.
-        for wire_ndx in reader.take_success_indices() {
-            self.io_error |= self.confirm_source_removal(wire_ndx);
-        }
 
         // UTS-V3.A drain barrier: explicit user-space drain after
         // `handle_goodbye_with_finalizer` returns and before the writer

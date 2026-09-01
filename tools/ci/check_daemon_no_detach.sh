@@ -51,8 +51,9 @@ PENDING_CEILING=77
 # it exits 0 before any assertion runs. Lower this as they are fixed; it must
 # never be raised.
 #
-# The one remaining file is tests/integration_daemon_max_connections_cap.rs.
-ROOT_DETACHING_CEILING=1
+# Every root test now passes the flag, so the ceiling is 0: a new one that
+# forgets it fails this guard on its first run.
+ROOT_DETACHING_CEILING=0
 
 violations=0
 
