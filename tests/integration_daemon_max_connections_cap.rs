@@ -22,7 +22,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::{Mutex, mpsc};
+use std::sync::{Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -54,63 +54,103 @@ enum ClientOutcome {
     Refused(String),
 }
 
-/// Runs the full daemon handshake for a single client, then reports whether
-/// the module request was admitted or refused.
+/// Why a client probe produced no outcome.
 ///
-/// Admitted clients block on `release` so the caller can hold the
-/// connection slot open until all probes complete, ensuring the third
-/// client races against a full cap rather than against an already-released
-/// slot.
-fn run_client(
-    port: u16,
-    ready_deadline: Instant,
-    release: mpsc::Receiver<()>,
-) -> Result<ClientOutcome, String> {
+/// The two variants are kept apart because only one of them may be tolerated.
+/// A probe that never reached the listener says nothing about the cap, while a
+/// probe that connected and then failed is indistinguishable from a broken cap
+/// and must fail the test - collapsing both into one string is what let a
+/// "skip when every client failed" guard swallow real daemon breakage.
+enum ClientError {
+    /// The daemon never became connectable within the deadline.
+    Connect(String),
+    /// The client reached the daemon and the exchange then failed.
+    Exchange(String),
+}
+
+impl std::fmt::Display for ClientError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connect(message) | Self::Exchange(message) => formatter.write_str(message),
+        }
+    }
+}
+
+/// Renders a client-error list for an assertion message.
+fn describe(errors: &[ClientError]) -> String {
+    errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Connects to the daemon, waiting until it has bound or the deadline passes.
+fn connect_to_daemon(port: u16, ready_deadline: Instant) -> Result<TcpStream, ClientError> {
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    // Retry the initial connect until the daemon is bound.
-    let mut stream = loop {
+    loop {
         match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
-            Ok(stream) => break stream,
+            Ok(stream) => return Ok(stream),
             Err(_) if Instant::now() < ready_deadline => {
                 thread::sleep(Duration::from_millis(10));
             }
-            Err(err) => return Err(format!("connect: {err}")),
+            Err(err) => return Err(ClientError::Connect(format!("connect: {err}"))),
         }
-    };
+    }
+}
+
+/// Runs the daemon handshake on an established connection and classifies the
+/// daemon's answer to the module request.
+fn request_module(stream: &TcpStream) -> Result<ClientOutcome, ClientError> {
+    let exchange =
+        |context: &str, err: std::io::Error| ClientError::Exchange(format!("{context}: {err}"));
+
+    let mut writer = stream
+        .try_clone()
+        .map_err(|err| exchange("clone stream", err))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|err| format!("set_read_timeout: {err}"))?;
+        .map_err(|err| exchange("set_read_timeout", err))?;
     stream
         .set_write_timeout(Some(Duration::from_secs(10)))
-        .map_err(|err| format!("set_write_timeout: {err}"))?;
+        .map_err(|err| exchange("set_write_timeout", err))?;
 
     let mut reader = BufReader::new(
         stream
             .try_clone()
-            .map_err(|err| format!("clone stream: {err}"))?,
+            .map_err(|err| exchange("clone stream", err))?,
     );
     let mut line = String::new();
     reader
         .read_line(&mut line)
-        .map_err(|err| format!("read greeting: {err}"))?;
+        .map_err(|err| exchange("read greeting", err))?;
     if !line.starts_with("@RSYNCD:") {
-        return Err(format!("unexpected greeting: {line:?}"));
+        return Err(ClientError::Exchange(format!(
+            "unexpected greeting: {line:?}"
+        )));
     }
 
-    stream
-        .write_all(b"@RSYNCD: 32.0\n")
-        .map_err(|err| format!("send handshake: {err}"))?;
-    stream
+    // The digest name list is mandatory for protocol > 31: a greeting with no
+    // space after the version is refused with `@ERROR: your client omitted the
+    // digest name list`. Sending a bare `@RSYNCD: 32.0` turns every probe into
+    // a protocol refusal, so the module request - and the cap under test - is
+    // never reached.
+    //
+    // upstream: rsync-3.5.0/clientserver.c:228-238 `exchange_protocols()`.
+    writer
+        .write_all(b"@RSYNCD: 32.0 md5 md4\n")
+        .map_err(|err| exchange("send handshake", err))?;
+    writer
         .write_all(format!("{MODULE_NAME}\n").as_bytes())
-        .map_err(|err| format!("send module: {err}"))?;
-    stream
+        .map_err(|err| exchange("send module", err))?;
+    writer
         .flush()
-        .map_err(|err| format!("flush module: {err}"))?;
+        .map_err(|err| exchange("flush module", err))?;
 
     line.clear();
     reader
         .read_line(&mut line)
-        .map_err(|err| format!("read response: {err}"))?;
+        .map_err(|err| exchange("read response", err))?;
     let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
 
     if trimmed.starts_with("@ERROR:") {
@@ -122,13 +162,68 @@ fn run_client(
     }
 
     if !trimmed.starts_with("@RSYNCD: OK") {
-        return Err(format!("unexpected module response: {trimmed:?}"));
+        return Err(ClientError::Exchange(format!(
+            "unexpected module response: {trimmed:?}"
+        )));
     }
 
-    // Admitted: hold the connection open until the caller signals release
-    // so the contended cap probe lands while both slots are still occupied.
-    let _ = release.recv();
     Ok(ClientOutcome::Admitted)
+}
+
+/// Runs one client probe against the capped module.
+///
+/// Every client - admitted, refused or failed - waits on `all_classified`
+/// before returning, and returning is what drops the socket and releases any
+/// slot the daemon granted. That makes the contended probe deterministic: no
+/// slot can be handed back until all `TOTAL_CLIENTS` answers are in, so the
+/// client that finds the cap saturated is guaranteed to exist regardless of
+/// scheduling. The barrier replaces a fixed sleep, which only made the race
+/// unlikely rather than impossible.
+fn run_client(
+    port: u16,
+    ready_deadline: Instant,
+    all_classified: &Barrier,
+) -> Result<ClientOutcome, ClientError> {
+    let stream = match connect_to_daemon(port, ready_deadline) {
+        Ok(stream) => stream,
+        Err(err) => {
+            all_classified.wait();
+            return Err(err);
+        }
+    };
+
+    let outcome = request_module(&stream);
+    all_classified.wait();
+    outcome
+}
+
+/// Splits a daemon log line into its upstream prefix and its message.
+///
+/// Returns the message with `"YYYY/MM/DD HH:MM:SS [pid] "` removed, or `None`
+/// when the line does not carry that prefix. Asserting on the message rather
+/// than the whole line is what keeps a level check honest: every daemon log
+/// line is stamped, so `line.starts_with("oc-rsync warning:")` can never hold
+/// and a level assertion written that way cannot distinguish a warning from an
+/// error.
+///
+/// upstream: rsync-3.5.0/log.c:135 `logit()` -
+/// `fprintf(logfile_fp, "%s [%d] ", timestring(time(NULL)), (int)getpid())`.
+fn daemon_log_message(line: &str) -> Option<&str> {
+    let (date, rest) = line.split_once(' ')?;
+    let (time, rest) = rest.split_once(' ')?;
+    let (pid, message) = rest.split_once(' ')?;
+
+    let digits_and = |text: &str, separator: char, groups: usize| {
+        text.split(separator).count() == groups
+            && text.chars().all(|c| c.is_ascii_digit() || c == separator)
+    };
+    (digits_and(date, '/', 3) && digits_and(time, ':', 3)).then_some(())?;
+    pid.strip_prefix('[')?
+        .strip_suffix(']')?
+        .parse::<u32>()
+        .ok()?;
+
+    Some(message)
 }
 
 #[test]
@@ -174,6 +269,14 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
             log_path.as_os_str().to_os_string(),
             OsString::from("--max-sessions"),
             OsString::from(TOTAL_CLIENTS.to_string()),
+            // Mandatory. `RuntimeOptions::detach` defaults to true on Unix, so
+            // `run_daemon` calls `become_daemon()`, whose fork parent is this
+            // very test process and exits 0
+            // (`platform::daemonize::become_daemon`). Without this the binary
+            // terminates successfully before a single assertion below runs and
+            // the harness records a pass: an unconditional `panic!` in this
+            // function still reported PASSED.
+            OsString::from("--no-detach"),
         ])
         .build();
 
@@ -183,30 +286,21 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
     // bind. If the bind never lands the test skips rather than failing.
     let ready_deadline = Instant::now() + Duration::from_secs(15);
 
-    let outcomes: Vec<Result<ClientOutcome, String>> = thread::scope(|scope| {
-        let mut senders = Vec::with_capacity(TOTAL_CLIENTS);
-        let mut handles = Vec::with_capacity(TOTAL_CLIENTS);
-        for _ in 0..TOTAL_CLIENTS {
-            let (tx, rx) = mpsc::channel::<()>();
-            senders.push(tx);
-            handles.push(scope.spawn(move || run_client(port, ready_deadline, rx)));
-        }
-
-        // Allow the first two clients to reach the module-request stage
-        // and acquire connection slots; the third client must arrive
-        // while the cap is still saturated.
-        thread::sleep(Duration::from_millis(250));
-        drop(senders);
+    let all_classified = Barrier::new(TOTAL_CLIENTS);
+    let outcomes: Vec<Result<ClientOutcome, ClientError>> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..TOTAL_CLIENTS)
+            .map(|_| scope.spawn(|| run_client(port, ready_deadline, &all_classified)))
+            .collect();
 
         handles
             .into_iter()
-            .map(|h| h.join().expect("client thread panicked"))
+            .map(|handle| handle.join().expect("client thread panicked"))
             .collect()
     });
 
     let mut admitted = 0usize;
     let mut refused: Vec<String> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
+    let mut errors: Vec<ClientError> = Vec::new();
     for outcome in outcomes {
         match outcome {
             Ok(ClientOutcome::Admitted) => admitted += 1,
@@ -215,10 +309,18 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
         }
     }
 
-    // Skip cleanly when the daemon never bound (e.g. sandboxed CI).
-    if admitted == 0 && refused.is_empty() && !errors.is_empty() {
+    // Skip only when no client could open a TCP connection at all, which means
+    // the environment has no usable loopback rather than that the cap is
+    // broken. A client that connected and then failed is a real failure and
+    // falls through to the assertions below.
+    if errors.len() == TOTAL_CLIENTS
+        && errors
+            .iter()
+            .all(|err| matches!(err, ClientError::Connect(_)))
+    {
         eprintln!(
-            "daemon_caps_concurrent_module_connections_at_max_connections: skipped ({errors:?})"
+            "daemon_caps_concurrent_module_connections_at_max_connections: skipped ({})",
+            describe(&errors)
         );
         let _ = daemon_handle.join();
         return;
@@ -226,7 +328,8 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
 
     assert!(
         errors.is_empty(),
-        "client errors during concurrent probe: {errors:?}"
+        "client errors during concurrent probe: {}",
+        describe(&errors)
     );
     assert_eq!(
         admitted, CONNECTION_CAP as usize,
@@ -246,13 +349,10 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
         "refusal payload must mirror upstream clientserver.c:752 (DMC-3)"
     );
 
-    // Wait for the daemon to drain and flush its log before assertions.
-    // The daemon reaches `served >= max-sessions` after the third spawn,
-    // then joins its workers and returns.
-    let drain_deadline = Instant::now() + Duration::from_secs(10);
-    while !daemon_handle.is_finished() && Instant::now() < drain_deadline {
-        thread::sleep(Duration::from_millis(50));
-    }
+    // The daemon reaches `served >= max-sessions` once the third session ends,
+    // then joins its workers and returns. Every client socket is closed by now
+    // - `run_client` returns only after the barrier - so the join cannot block
+    // on a connection this test still holds.
     let _ = daemon_handle.join();
 
     let log_contents = fs::read_to_string(&log_path).unwrap_or_default();
@@ -269,24 +369,27 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
         cap_lines.len()
     );
     let cap_line = cap_lines[0];
+    let cap_message = daemon_log_message(cap_line).unwrap_or_else(|| {
+        panic!("cap line must carry the upstream log prefix (log.c:135): {cap_line}")
+    });
     assert!(
-        cap_line.starts_with("oc-rsync warning:"),
+        cap_message.starts_with("oc-rsync warning:"),
         "cap line must be warning-level (DMC-5): {cap_line}"
     );
     assert!(
-        cap_line.contains(&format!("which={MODULE_NAME}")),
+        cap_message.contains(&format!("which={MODULE_NAME}")),
         "missing which={MODULE_NAME}: {cap_line}"
     );
     assert!(
-        cap_line.contains("(127.0.0.1)"),
+        cap_message.contains("(127.0.0.1)"),
         "missing peer ip field: {cap_line}"
     );
     assert!(
-        cap_line.contains(&format!("cap={CONNECTION_CAP}")),
+        cap_message.contains(&format!("cap={CONNECTION_CAP}")),
         "missing cap={CONNECTION_CAP}: {cap_line}"
     );
     assert!(
-        cap_line.contains(&format!("current={CONNECTION_CAP}")),
+        cap_message.contains(&format!("current={CONNECTION_CAP}")),
         "missing current={CONNECTION_CAP}: {cap_line}"
     );
 }
