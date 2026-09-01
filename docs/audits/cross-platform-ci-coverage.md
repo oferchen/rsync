@@ -78,7 +78,7 @@ The macOS/Windows runners ignore this workflow entirely.
 |--------------------------------|-----------------|------------------------------------|--------------------------------------|
 | `parallel_determinism.yml`     | ubuntu-latest   | push/PR on `crates/`               | sequential vs parallel output diff   |
 | `interop-validation.yml`       | ubuntu-latest (x8 jobs) | push/PR/schedule           | exit codes, batch, daemon scenarios  |
-| `coverage.yml`                 | ubuntu-latest   | push/PR/schedule (nightly)         | `cargo llvm-cov`, informational      |
+| `coverage.yml`                 | ubuntu-latest   | push/PR/schedule (nightly)         | `cargo llvm-cov`, informational - **since deleted in `4cf315af9`; no workflow computes coverage** |
 | `msrv.yml`                     | ubuntu-latest   | push/PR                            | `cargo check` workspace on 1.88      |
 | `security.yml`                 | ubuntu-latest   | push/PR/schedule                   | `cargo audit`/dep-review             |
 | `known-failures.yml`           | ubuntu-latest   | weekly                             | upstream-rsync known-failure list    |

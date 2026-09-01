@@ -28,7 +28,8 @@ Source of truth: `.github/workflows/`. Of 16 workflow files, only two run on
 for `x86_64-pc-windows-gnu` on `ubuntu-latest`. This catches compile errors
 but executes nothing.
 
-`coverage.yml:40` runs only on `ubuntu-latest`. The `_test-features.yml`
+`coverage.yml:40` ran only on `ubuntu-latest` (the workflow was since deleted
+in `4cf315af9`; no workflow computes coverage). The `_test-features.yml`
 reusable workflow (`ci.yml:141-147`) hard-codes `runs-on: ubuntu-latest`
 (`_test-features.yml:25`) and gates `io_uring` and `copy_file_range` to Linux
 via `linux_only: true`, but no entry currently isolates `acl` or `xattr` as
@@ -108,7 +109,7 @@ cross-OS strategy with a parallel `windows-latest` runner.
 
 - Workflows: `.github/workflows/ci.yml:151-227`,
   `.github/workflows/_test-features.yml:22-86`,
-  `.github/workflows/coverage.yml:40-69`,
+  `.github/workflows/coverage.yml:40-69` (deleted in `4cf315af9`),
   `.github/workflows/release-cross.yml:599`.
 - Code: `crates/metadata/Cargo.toml:26-39`,
   `crates/metadata/src/lib.rs:71-170`,

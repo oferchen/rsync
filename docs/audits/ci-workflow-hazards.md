@@ -107,6 +107,10 @@ Severity: low-medium. Largest workflow, generally well-structured.
 
 ### `coverage.yml`
 
+Superseded: hazard 1 below was never fixed and the workflow was deleted in
+`4cf315af9` for exactly that reason - the 45-minute job kept timing out on
+`master`. No workflow computes coverage now. Findings retained as a record.
+
 | # | Finding | Severity | Recommended fix |
 |---|---|---|---|
 | 1 | Single 45-min job runs `cargo llvm-cov nextest --workspace --all-features`. nextest partitioning is not used. | medium | Coverage tools like `cargo-llvm-cov` support `--no-report` per partition with a final `--no-run --report` merge step. Worth investigating; saves ~30-50% wall time on a cold run. |

@@ -1,12 +1,18 @@
 # BR-4a: Workspace `cargo llvm-cov` Baseline (2026-05-20)
 
+> **Historical record.** The `Coverage` workflow this baseline came from was
+> deleted in `4cf315af9` (2026-06-14) after repeated 45-minute timeouts on
+> `master`. No workflow computes coverage today, so the 84% figure below is no
+> longer enforced anywhere and the numbers are frozen at 2026-05-20. Kept as
+> the last measured per-crate breakdown, not as a description of current CI.
+
 Read-only measurement of workspace line- and function-coverage produced by the
 `Coverage` GitHub Actions workflow. Captures the beta-readiness baseline against
 the project target of **>= 95% line coverage** (declared in
-`.github/workflows/coverage.yml` header and step summary). The current
-informational gate enforced in CI is 84% line coverage; this audit records
-where each crate sits between that gate and the 95% target so that BR-4b can
-attack the largest gaps first.
+`.github/workflows/coverage.yml` header and step summary). The informational
+gate then configured in CI was 84% line coverage; this audit records where each
+crate sits between that gate and the 95% target so that BR-4b can attack the
+largest gaps first.
 
 ## Data source
 

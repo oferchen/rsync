@@ -78,11 +78,12 @@ This release is the first build that meets all four criteria simultaneously:
 2. **No production-path placeholders.** `tools/no_placeholders.sh` is clean;
    no `todo!`, `unimplemented!`, `FIXME`, or stub functions on live code
    paths.
-3. **Interop and coverage.** `tools/ci/run_interop.sh` passes against
-   upstream rsync **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** with zero
-   entries in `KNOWN_FAILURES.conf`; `cargo llvm-cov` line coverage at or
-   above **95%**; all required CI checks green on master (fmt+clippy,
+3. **Interop.** `tools/ci/run_interop.sh` passes against upstream rsync
+   **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** with zero entries in
+   `KNOWN_FAILURES.conf`; all required CI checks green on master (fmt+clippy,
    nextest stable, Windows stable, macOS stable, Linux musl stable).
+   Line coverage is deliberately absent from this list: no workflow measures
+   it, so it cannot be a release criterion. See *Coverage* below.
 4. **Unsafe-code policy honored.** `#[allow(unsafe_code)]` confined to the
    permitted crates only: `metadata`, `fast_io`, `checksums`, `engine`,
    `protocol` (plus the documented `windows-gnu-eh` shim and the
@@ -371,11 +372,14 @@ Headline numbers (TBD once the post-tag benchmark workflow completes):
 
 ### Coverage
 
-- Workspace `cargo llvm-cov` line coverage: **TBD%** (BR-4a baseline once
-  recorded; target >= 95%).
-- Per-crate breakdown and any crates below target are recorded in the
-  BR-4a audit report under `docs/audits/`. Replace this bullet with the
-  final number and a link to the recorded baseline at tag time.
+- Not enforced by CI. The `Coverage` workflow was removed in `4cf315af9`
+  after repeated 45-minute timeouts on `master`, and nothing replaced it, so
+  no workflow computes a coverage number. The >= 95% figure is a project
+  aspiration, not a gate, and no release is blocked on it.
+- Last recorded workspace measurement: **85.52%** line coverage (145 055 /
+  169 620 lines), 13 of 27 members below 95%. Source:
+  `docs/audits/br-4a-workspace-coverage-2026-05-20.md`, measured 2026-05-20
+  and not refreshed since. Re-measure locally before quoting it at tag time.
 
 ---
 

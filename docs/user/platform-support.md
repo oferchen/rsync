@@ -18,7 +18,7 @@ generation. Regressions block merge.
 
 | Target | Runner | Notes |
 |--------|--------|-------|
-| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Full workspace nextest (stable/beta/nightly), SSH integration tests, interop against upstream rsync 3.0.9 - 3.4.3, coverage via `cargo-llvm-cov`, benchmarks, fuzzing |
+| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Full workspace nextest (stable/beta/nightly), SSH integration tests, interop against upstream rsync 3.0.9 - 3.4.3, benchmarks, fuzzing |
 
 ### Tier 2 - first-class platforms
 
@@ -144,7 +144,11 @@ reference to guarantee correctness across code paths.
 | interop (Windows) | Windows | Best-effort smoke against MSYS2 rsync |
 | io_uring kernel compat | Linux | Fallback behaviour on 5.15 and 6.8 kernels |
 | DG-3 stress | Linux, Windows, macOS | 1000-thread concurrency stress |
-| coverage | Linux | `cargo-llvm-cov`, informational threshold |
+
+Line coverage is not one of these. No workflow runs `cargo llvm-cov`; the
+`Coverage` workflow was removed in `4cf315af9` after repeated 45-minute
+timeouts on `master`. Coverage is measured on demand locally - see
+`docs/contributing/TESTING.md`.
 
 ---
 
