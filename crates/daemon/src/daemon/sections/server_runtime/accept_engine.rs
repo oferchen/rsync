@@ -641,7 +641,7 @@ fn run_accept_loop(
     state: &mut AcceptLoopState<'_>,
 ) -> Result<(), DaemonError> {
     loop {
-        if let Some(true) = check_signals_and_maintain(state)? {
+        if let Some(true) = check_signals_and_maintain(state) {
             break;
         }
 

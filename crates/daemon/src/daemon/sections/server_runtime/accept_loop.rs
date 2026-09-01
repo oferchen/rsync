@@ -386,7 +386,7 @@ fn serve_connections(
     let mut engine = build_accept_engine(listeners, &bound_addresses, &state)?;
     run_accept_loop(engine.as_mut(), &mut state)?;
 
-    let result = drain_workers(&mut state.workers);
+    drain_workers(&mut state.workers, log_sink.as_ref());
 
     let shutdown_status = match state.served {
         0 => String::from("No connections handled; shutting down"),
@@ -408,5 +408,5 @@ fn serve_connections(
 
     drop(pid_guard);
 
-    result
+    Ok(())
 }

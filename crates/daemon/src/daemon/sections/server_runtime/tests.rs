@@ -198,8 +198,7 @@ fn describe_panic_payload_handles_non_string_payload() {
 #[test]
 fn join_worker_handles_successful_thread() {
     let handle = thread::spawn(|| Ok(()));
-    let result = join_worker(handle);
-    assert!(result.is_ok());
+    join_worker(handle, None);
 }
 
 #[test]
@@ -210,11 +209,7 @@ fn join_worker_handles_connection_closed_error() {
             io::Error::new(io::ErrorKind::BrokenPipe, "connection closed"),
         ))
     });
-    let result = join_worker(handle);
-    assert!(
-        result.is_ok(),
-        "BrokenPipe should be treated as normal close"
-    );
+    join_worker(handle, None);
 }
 
 #[test]
@@ -223,10 +218,44 @@ fn join_worker_swallows_panicking_thread() {
         panic!("simulated handler crash");
     });
     // join_worker blocks until the thread completes - no sleep needed
-    let result = join_worker(handle);
+    join_worker(handle, None);
+}
+
+/// The classification this fix rests on: a worker carries the outcome of one
+/// session, so no error it can hold is fatal to the listener. Reaping a
+/// worklist of session failures must drain it and hand nothing back the accept
+/// loop could act on.
+///
+/// upstream: socket.c:679 `waitpid(-1, NULL, WNOHANG)` - the parent reaps the
+/// per-connection child with a NULL status pointer and never inspects the
+/// session's outcome at all.
+#[test]
+fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
+    let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
+    for kind in [
+        io::ErrorKind::InvalidData,
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::BrokenPipe,
+        io::ErrorKind::TimedOut,
+    ] {
+        workers.push(thread::spawn(move || {
+            Err((
+                Some("127.0.0.1:12345".parse().unwrap()),
+                io::Error::new(kind, "session failure"),
+            ))
+        }));
+    }
+    for handle in &workers {
+        while !handle.is_finished() {
+            thread::yield_now();
+        }
+    }
+
+    reap_finished_workers(&mut workers, None);
+
     assert!(
-        result.is_ok(),
-        "join_worker must swallow panics to keep the daemon alive"
+        workers.is_empty(),
+        "every finished worker must be reaped regardless of how its session ended"
     );
 }
 
