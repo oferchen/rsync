@@ -258,7 +258,7 @@ fn build_handshake_result(
     reader: &BufReader<DaemonStream>,
     negotiated_protocol: Option<ProtocolVersion>,
     client_args: Vec<String>,
-    module: &ModuleRuntime,
+    io_timeout: Option<NonZeroU64>,
 ) -> HandshakeResult {
     let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
     let buffered_data = reader.buffer().to_vec();
@@ -268,7 +268,10 @@ fn build_handshake_result(
         buffered: buffered_data,
         compat_exchanged: false,
         client_args: Some(client_args),
-        io_timeout: module.timeout.map(|t| t.get()),
+        // upstream: clientserver.c:1288-1289 - the reconciled minimum of the
+        // client's forwarded `--timeout` and the module's `timeout` directive,
+        // which is what `main.c:1295` then advertises as `MSG_IO_TIMEOUT`.
+        io_timeout: io_timeout.map(NonZeroU64::get),
         negotiated_algorithms: None,
         compat_flags: None,
         checksum_seed: 0,
