@@ -1,7 +1,7 @@
 //! Port of the upstream rsync 3.4.4 testsuite `executability.test`.
 //!
 //! Upstream source of truth:
-//!   `target/interop/upstream-src/rsync-3.4.4/testsuite/executability.test`
+//!   `testsuite/executability_test.py`
 //!   `rsync.c` `dest_mode()` - when `-E` is set without `-p`, only the
 //!   executability bits transfer from source to destination.
 //!
@@ -64,7 +64,7 @@ fn attr_only_fixture(from: &Path, to: &Path) {
 
 /// Asserts the upstream `dest_mode()` outcome for [`attr_only_fixture`].
 ///
-/// upstream: rsync.c:449-473 dest_mode() - existing dest keeps its perm bits;
+/// upstream: rsync.c:464-487 dest_mode() - existing dest keeps its perm bits;
 /// with `-E` a non-executable source strips 0111, an executable source grants
 /// exec to every class that can read, and a dest that already has any exec
 /// bit is left verbatim.
@@ -86,7 +86,7 @@ fn assert_attr_only_outcome(to: &Path) {
     );
 }
 
-/// Full three-phase replay of the upstream `executability.test`: a plain
+/// Full three-phase replay of the upstream `executability_test.py`: a plain
 /// recursive copy leaves destination modes alone, and only `-E` transfers the
 /// executability bits without disturbing the read/write bits.
 #[test]
@@ -200,9 +200,9 @@ fn executability_flag_transfers_only_exec_bits() {
 /// `metadata_unchanged` never consulted `--executability`, leaving the
 /// destination at its old mode while the itemized output claimed a `p` change.
 ///
-/// upstream: generator.c:418-426 perms_differ() feeds unchanged_attrs(), so an
+/// upstream: generator.c:424-432 perms_differ() feeds unchanged_attrs(), so an
 /// executability-presence mismatch forces set_file_attrs() on the skip path
-/// (generator.c:1827).
+/// (generator.c:2246).
 #[test]
 fn executability_applies_on_up_to_date_files_over_rsh_push() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
@@ -232,7 +232,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_push() {
 /// Regression: `-rtE` over a remote shell (pull) must chmod up-to-date files.
 ///
 /// Same attribute-only scenario as the push test, but the local client is the
-/// receiver. Note `-E` never rides the wire on a pull (options.c:2692 packs
+/// receiver. Note `-E` never rides the wire on a pull (options.c:2858 packs
 /// 'E' only when `am_sender`); the local receiver must honour its own flag.
 #[test]
 fn executability_applies_on_up_to_date_files_over_rsh_pull() {
@@ -264,8 +264,8 @@ fn executability_applies_on_up_to_date_files_over_rsh_pull() {
 /// source mode copied exactly, including the read/write bits `-E` alone would
 /// leave untouched.
 ///
-/// upstream: options.c:2690-2693 - the server arg string carries 'p', never
-/// 'E', when both are set; generator.c:418-421 perms_differ() compares the
+/// upstream: options.c:2856-2859 - the server arg string carries 'p', never
+/// 'E', when both are set; generator.c:424-427 perms_differ() compares the
 /// full mode under preserve_perms.
 #[test]
 fn executability_is_noop_when_perms_active_over_rsh() {

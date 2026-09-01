@@ -1,7 +1,7 @@
 //! Port of the upstream rsync 3.4.4 testsuite `symlink-ignore.test`.
 //!
 //! Upstream source of truth:
-//!   `target/interop/upstream-src/rsync-3.4.4/testsuite/symlink-ignore.test`
+//!   `testsuite/symlink-ignore_test.py`
 //!
 //! Why this matters: rsync's default symlink policy is to *not* copy symlinks
 //! at all. A symlink is only transferred when the user opts in with `-l`

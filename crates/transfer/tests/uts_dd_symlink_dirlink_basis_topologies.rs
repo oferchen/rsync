@@ -1,7 +1,7 @@
 //! Regression coverage for the eight `symlink-dirlink-basis` topologies the
 //! upstream rsync 3.4.4 testsuite exercises against `-K`/`--keep-dirlinks`.
 //!
-//! Upstream test: `testsuite/symlink-dirlink-basis.test`. Issue #715. The
+//! Upstream test: `testsuite/symlink-dirlink-basis_test.py`. Issue #715. The
 //! scenarios update a destination file whose parent directory is a symlink to
 //! the real directory. With `--keep-dirlinks` the receiver must follow the
 //! parent symlink at chmod time instead of refusing it through the
@@ -20,10 +20,10 @@
 //! receiver's path through the bypass.
 //!
 //! Upstream sources of truth:
-//!   - `target/interop/upstream-src/rsync-3.4.4/testsuite/symlink-dirlink-basis.test`
-//!   - `target/interop/upstream-src/rsync-3.4.1/options.c:688` (`-K` mapping)
-//!   - `target/interop/upstream-src/rsync-3.4.1/generator.c:1344`
-//!     (`link_stat(fname, &sx.st, keep_dirlinks && is_dir)`)
+//!   - `testsuite/symlink-dirlink-basis_test.py`
+//!   - `options.c:702` (`-K` mapping)
+//!   - `generator.c:1745`
+//!     (`gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`)
 
 use metadata::MetadataOptions;
 use transfer::flags::ParsedServerFlags;

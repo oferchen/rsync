@@ -1,11 +1,11 @@
-//! Nextest port of the upstream `testsuite/merge.test` scenario.
+//! Nextest port of the upstream `testsuite/merge_test.py` scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/merge.test`.
+//! `testsuite/merge_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `merge.test` verifies that rsync can merge files from multiple
+//! Upstream's `merge_test.py` verifies that rsync can merge files from multiple
 //! source directories (and bare file arguments) into a single destination in
 //! one invocation. The canonical command is:
 //!
@@ -33,14 +33,14 @@
 //! # What this test pins
 //!
 //! The transfer exits 0 and the destination tree is byte-for-byte the union
-//! upstream `merge.test` builds in its `chk/` reference tree: every disjoint
+//! upstream `merge_test.py` builds in its `chk/` reference tree: every disjoint
 //! file present with its own payload, every overlapping name carrying the
 //! shared payload, nested `sub1`/`sub2` merged, and `dir-and-not-dir`
 //! resolved to the directory form holding `inside`.
 //!
 //! # Upstream References
 //!
-//! - `testsuite/merge.test` - the upstream script this file ports.
+//! - `testsuite/merge_test.py` - the upstream script this file ports.
 //! - `flist.c` - multi-root file-list construction (`send_file_list`).
 //! - `generator.c` - per-directory reconciliation of merged entries.
 
@@ -61,7 +61,7 @@ fn write(path: &Path, contents: &str) {
 }
 
 /// Build the three source directories plus the two bare-file arguments,
-/// mirroring the upstream `merge.test` fixture block verbatim (dropping only
+/// mirroring the upstream `merge_test.py` fixture block verbatim (dropping only
 /// the never-referenced `from3/six` payload asymmetries - kept faithful here).
 fn build_sources(root: &Path) {
     write(&root.join("from1/one"), "one\n");

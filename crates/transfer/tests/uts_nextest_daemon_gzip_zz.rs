@@ -1,19 +1,19 @@
-//! UTS-NEXTEST-EDGE.e: nextest port of the upstream `testsuite/daemon-gzip-
-//! download.test` and `testsuite/daemon-gzip-upload.test` `-zz` codec
-//! scenarios.
+//! UTS-NEXTEST-EDGE.e: nextest port of the upstream
+//! `testsuite/daemon-gzip-download_test.py` and
+//! `testsuite/daemon-gzip-upload_test.py` `-zz` codec scenarios.
 //!
 //! Upstream test sources:
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/daemon-gzip-download.test`
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/daemon-gzip-upload.test`
+//! - `testsuite/daemon-gzip-download_test.py`
+//! - `testsuite/daemon-gzip-upload_test.py`
 //!
-//! (The identical scenarios also live in 3.4.3 / 3.4.2 / 3.4.1; the 3.4.4
-//! files are the canonical upstream copies.)
+//! (3.5.0 rewrote the shell `.test` scripts as Python; the scenarios are
+//! carried over unchanged from the 3.4.x `daemon-gzip-*.test` pair.)
 //!
 //! # Background
 //!
 //! Both upstream tests exercise `-zz` against a daemon transfer in both
 //! directions. `-zz` selects the new-style per-block codec (zlibx; upstream
-//! `options.c:2002` flips `compress_choice = "zlibx"` when the count of
+//! `options.c:2122-2123` flips `compress_choice = "zlibx"` when the count of
 //! `-z` flags is `>= 2` and no explicit `--compress-choice` was given).
 //! The negotiation surface lives in `crates/protocol` (capability advertise
 //! and `compress` capability bit) and the codec implementation in
@@ -61,11 +61,11 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/daemon-gzip-download.test` - upstream download script.
-//! - `testsuite/daemon-gzip-upload.test` - upstream upload script.
-//! - `options.c:2002` - `-zz` -> `compress_choice = "zlibx"` mapping.
+//! - `testsuite/daemon-gzip-download_test.py` - upstream download script.
+//! - `testsuite/daemon-gzip-upload_test.py` - upstream upload script.
+//! - `options.c:2122-2123` - `-zz` -> `compress_choice = "zlibx"` mapping.
 //! - `compat.c::setup_compress()` - codec negotiation across the wire.
-//! - `main.c:983` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
+//! - `main.c:998` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
 //!   return; the contract pinned by UTS-9.
 //! - `crates/transfer/src/generator/transfer/orchestrator.rs` - matching
 //!   flush on the oc-rsync sender side.
@@ -118,7 +118,7 @@ impl DaemonGuard {
 ///
 /// Delegates port acquisition to [`test_support::spawn_daemon_on_free_port`]:
 /// it allocates a candidate port, starts the daemon on it, and - because the
-/// default daemon binds with `SO_REUSEADDR` only (upstream `socket.c:447`) - a
+/// default daemon binds with `SO_REUSEADDR` only (upstream `socket.c:597`) - a
 /// port collision is a clean `EADDRINUSE` daemon exit rather than a silent
 /// `SO_REUSEPORT` co-bind, so a losing attempt simply retries with a fresh
 /// port. No two daemons ever share a port, eliminating the cross-talk that
@@ -309,7 +309,8 @@ fn read_all(path: &Path) -> Vec<u8> {
 
 /// UTS-NEXTEST-EDGE.e.1 - download direction.
 ///
-/// Mirrors upstream `daemon-gzip-download.test`:
+/// Mirrors upstream `daemon-gzip-download_test.py`, quoted here in the 3.4.x
+/// `daemon-gzip-download.test` shell form it was rewritten from:
 ///
 /// ```sh
 /// $RSYNC -avvvvzz localhost::test-from/ '$todir/'
@@ -395,7 +396,8 @@ fn daemon_gzip_zz_download_byte_identical() {
 
 /// UTS-NEXTEST-EDGE.e.2 - upload direction.
 ///
-/// Mirrors upstream `daemon-gzip-upload.test`:
+/// Mirrors upstream `daemon-gzip-upload_test.py`, quoted here in the 3.4.x
+/// `daemon-gzip-upload.test` shell form it was rewritten from:
 ///
 /// ```sh
 /// $RSYNC -avvvvzz '$fromdir/' localhost::test-to/
@@ -471,7 +473,7 @@ fn daemon_gzip_zz_upload_byte_identical() {
 /// UTS-NEXTEST-EDGE.e.3 - `-z` and `-zz` both engage compression on a daemon pull.
 ///
 /// `-z` requests default zlib; `-zz` requests the "new" codec (upstream
-/// `options.c:2002` maps it to `zlibx`). oc-rsync implements a single
+/// `options.c:2122-2123` maps it to `zlibx`). oc-rsync implements a single
 /// deflate codec for both (`protocol::CompressionAlgorithm::{Zlib, ZlibX}`
 /// both resolve to `compress::algorithm::CompressionAlgorithm::Zlib`), so
 /// the two flags produce the same compressed wire stream by design - rsync
@@ -560,7 +562,7 @@ fn daemon_gzip_z_vs_zz_negotiation() {
 /// the wrong daemon (upload landing in a different module root, or a reset when
 /// the sibling was torn down). That was only possible because oc set
 /// `SO_REUSEPORT` on the *default* listener, letting a second daemon co-bind.
-/// Upstream (`socket.c:447`) sets only `SO_REUSEADDR`, so a second daemon on an
+/// Upstream (`socket.c:597`) sets only `SO_REUSEADDR`, so a second daemon on an
 /// in-use port is refused with `EADDRINUSE`.
 ///
 /// This test pins that behaviour deterministically: with the fixture daemon
@@ -719,8 +721,8 @@ fn concurrent_fixtures_get_distinct_ports_and_do_not_cross_talk() {
 /// `dont compress = gz` therefore desynced the token stream and aborted the
 /// transfer with a `protocol incompatibility` / out-of-range file-list index.
 ///
-/// Upstream never does this: `token.c:1065 send_token()` dispatches purely on
-/// the global `do_compression` codec, and `token.c:225 set_compression()`'s
+/// Upstream never does this: `token.c:1068 send_token()` dispatches purely on
+/// the global `do_compression` codec, and `token.c:232 set_compression()`'s
 /// per-file suffix lookup is compiled out under `#if 0` ("No compression
 /// algorithms currently allow mid-stream changing of the level."). The daemon's
 /// `dont compress` suffix list builds a suffix tree (`init_set_compression()`)

@@ -1,7 +1,7 @@
 //! Port of the upstream rsync 3.4.4 testsuite `duplicates.test`.
 //!
 //! Upstream source of truth:
-//!   `target/interop/upstream-src/rsync-3.4.4/testsuite/duplicates.test`
+//!   `testsuite/duplicates_test.py`
 //!   `flist.c` `clean_flist()` - the dedup pass that collapses repeated names.
 //!
 //! Why this matters: a user can name the same source more than once on the

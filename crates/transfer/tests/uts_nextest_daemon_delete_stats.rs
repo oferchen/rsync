@@ -1,14 +1,15 @@
 //! UTS-NEXTEST-EDGE.g: nextest port of the `daemon-delete-stats` scenario.
 //!
 //! Upstream scenario lineage:
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/delete.test` -
-//!   canonical upstream delete sweep coverage; the daemon-mode
-//!   `NDX_DEL_STATS` exchange is not a standalone upstream script but
-//!   is exercised by the same `--delete --stats` invocation under
-//!   `runtests.py` daemon mode.
-//! - `del.c::do_delete_pass()` - the full-tree delete sweep that
-//!   populates the per-type counters.
-//! - `generator.c:2376-2398` and `main.c:225-238` (3.4.4 `write_del_stats`):
+//! - `testsuite/delete_test.py` - canonical upstream delete sweep
+//!   coverage.
+//! - `testsuite/daemon-delete-stats_test.py` - at the pinned 3.5.0 the
+//!   daemon-mode `NDX_DEL_STATS` exchange has its own script; through
+//!   3.4.x it was only exercised by the same `--delete --stats`
+//!   invocation under `runtests.py` daemon mode.
+//! - `generator.c:364` `do_delete_pass()` - the full-tree delete sweep
+//!   that populates the per-type counters.
+//! - `generator.c:2850-2872` and `main.c:229-242` (`write_del_stats`):
 //!   the `NDX_DEL_STATS` wire frame contract gated on `delete_mode ||
 //!   force_delete || read_batch` plus `INFO_GTE(STATS, 2)`.
 //!
@@ -69,11 +70,11 @@
 //!
 //! # Upstream References
 //!
-//! - `del.c::do_delete_pass()` - delete sweep loop.
-//! - `generator.c:2376-2398` - `write_del_stats()` early emission gate
+//! - `generator.c:364` `do_delete_pass()` - delete sweep loop.
+//! - `generator.c:2850-2872` - `write_del_stats()` early emission gate
 //!   (`delete_mode || force_delete || read_batch`).
-//! - `main.c:225-238` - `write_del_stats()` wire format.
-//! - `rsync.c:337-342` - sender-side `read_ndx_and_attrs()` consumes
+//! - `main.c:229-242` - `write_del_stats()` wire format.
+//! - `rsync.c:338-343` - sender-side `read_ndx_and_attrs()` consumes
 //!   the `NDX_DEL_STATS` frame and accumulates the counters.
 //! - `crates/protocol/src/stats/delete.rs::DeleteStats::write_to` /
 //!   `read_from` - oc-rsync side of the wire format.
@@ -145,7 +146,7 @@ impl Drop for DaemonGuard {
 /// until it accepts connections.
 fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:447), a
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:597), a
     // port collision is a clean EADDRINUSE daemon exit - never a silent
     // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
     // See `test_support::daemon_port`.

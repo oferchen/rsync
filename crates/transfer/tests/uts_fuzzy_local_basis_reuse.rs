@@ -1,13 +1,13 @@
-//! Nextest port of upstream `testsuite/fuzzy.test` (local-copy legs).
+//! Nextest port of upstream `testsuite/fuzzy_test.py` (local-copy legs).
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/fuzzy.test`.
+//! `testsuite/fuzzy_test.py`.
 //!
 //! # Background
 //!
 //! `--fuzzy` lets the receiver reuse a same-content, differently-named file
 //! already present in the destination directory as the delta basis for a new
-//! transfer, instead of sending the whole file. Upstream's fuzzy.test seeds
+//! transfer, instead of sending the whole file. Upstream's fuzzy_test.py seeds
 //! `$todir/rsync2.c` with the exact bytes of `$fromdir/rsync.c`, then runs
 //! `rsync -avvi --no-whole-file --fuzzy` and asserts the resulting tree
 //! matches - which only holds if the basis was actually reused.
@@ -42,7 +42,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/fuzzy.test` - the upstream script this file ports.
+//! - `testsuite/fuzzy_test.py` - the upstream script this file ports.
 //! - `generator.c` - `find_fuzzy()` selects the fuzzy basis in the receiver's
 //!   destination directory.
 

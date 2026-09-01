@@ -1,14 +1,14 @@
-//! UTS-NEXTEST-EDGE.j: nextest port of the upstream `testsuite/hardlinks.test`
+//! UTS-NEXTEST-EDGE.j: nextest port of the upstream `testsuite/hardlinks_test.py`
 //! INC_RECURSE end-to-end scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/hardlinks.test` (the
-//! identical scenario also lives in 3.4.3 / 3.4.2 / 3.4.1; the 3.4.4 file is
-//! the canonical upstream copy).
+//! `testsuite/hardlinks_test.py` (3.5.0 rewrote the shell `.test` scripts as
+//! Python; the scenario is carried over unchanged from the 3.4.x
+//! `hardlinks.test`).
 //!
 //! # Background
 //!
-//! Upstream's `hardlinks.test` exercises `-aH` (preserve hard links) under
+//! Upstream's `hardlinks_test.py` exercises `-aH` (preserve hard links) under
 //! incremental recursion (INC_RECURSE) with three escalating shapes:
 //!
 //! 1. A simple flat hardlink pair (`name1` + `name2` in the same directory)
@@ -22,7 +22,7 @@
 //! oc-rsync ships INC_RECURSE on both the sender and the receiver under
 //! ISI.h (sender default flipped back on under PR #5085 after the V61D-1
 //! regression was triaged) and IFX-7 (hardlink wire encoding parity). The
-//! runtests.py harness exercises the upstream `hardlinks.test` script
+//! runtests.py harness exercises the upstream `hardlinks_test.py` script
 //! through `continue-on-error: true` CI plumbing - a per-test regression on
 //! that path does not block a PR. The UTS-NEXTEST-EDGE family lifts the
 //! upstream scenario into a native nextest integration test so it runs as
@@ -53,7 +53,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/hardlinks.test` - the upstream script this file ports.
+//! - `testsuite/hardlinks_test.py` - the upstream script this file ports.
 //! - `hlink.c::match_hard_links()` - leader/follower assignment after the
 //!   file list sort that the INC_RECURSE path relies on (see also
 //!   `crates/daemon/src/tests/chunks/daemon_hardlinks_relative_receive.rs`).
@@ -115,7 +115,8 @@ fn trailing_slash(dir: &Path) -> std::ffi::OsString {
 
 /// Scenario 1: two-file flat hardlink pair.
 ///
-/// Mirrors the opening block of upstream `hardlinks.test`:
+/// Mirrors the opening block of upstream `hardlinks_test.py`, quoted here in
+/// the 3.4.x `hardlinks.test` shell form it was rewritten from:
 ///
 /// ```sh
 /// echo "This is the file" > "$name1"
@@ -223,7 +224,8 @@ fn flat_hardlink_pair_survives_inc_recurse_roundtrip() {
 
 /// Scenario 2: hardlink spanning a deep subdirectory under INC_RECURSE.
 ///
-/// Mirrors the middle block of upstream `hardlinks.test`:
+/// Mirrors the middle block of upstream `hardlinks_test.py`, quoted here in
+/// the 3.4.x `hardlinks.test` shell form it was rewritten from:
 ///
 /// ```sh
 /// makepath "$fromdir/subdir/down/deep"
@@ -336,7 +338,8 @@ fn deep_subdir_hardlink_survives_inc_recurse_roundtrip() {
 
 /// Scenario 3: `--link-dest` re-run hardlinks every locally-inherited entry.
 ///
-/// Mirrors the `--link-dest` block of upstream `hardlinks.test`:
+/// Mirrors the `--link-dest` block of upstream `hardlinks_test.py`, quoted
+/// here in the 3.4.x `hardlinks.test` shell form it was rewritten from:
 ///
 /// ```sh
 /// $RSYNC -aH                          "$fromdir/" "$todir/"

@@ -1,11 +1,11 @@
-//! Nextest port of the upstream `testsuite/backup.test` scenario.
+//! Nextest port of the upstream `testsuite/backup_test.py` scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/backup.test`.
+//! `testsuite/backup_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `backup.test` verifies `--backup`: before overwriting a changed
+//! Upstream's `backup_test.py` verifies `--backup`: before overwriting a changed
 //! destination file, rsync preserves the old version. Two placement modes
 //! exist and this test pins both:
 //!
@@ -25,7 +25,7 @@
 //! breaks scripts that parse the backup log. The suffix-vs-directory split is
 //! two genuinely different placement paths in the generator, so both are
 //! exercised. The `backed up X to Y` wording must match upstream byte-for-byte
-//! (`backup.c:353`) because tooling greps for it.
+//! (`backup.c:433`) because tooling greps for it.
 //!
 //! # What this test pins
 //!
@@ -37,8 +37,8 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/backup.test` - the upstream script this file ports.
-//! - `backup.c:353` - `rprintf(FINFO, "backed up %s to %s\n", fname, buf)`.
+//! - `testsuite/backup_test.py` - the upstream script this file ports.
+//! - `backup.c:433` - `rprintf(FINFO, "backed up %s to %s\n", fname, buf)`.
 //! - `options.c` - `--backup` / `--backup-dir` / `--suffix` wiring.
 
 #![cfg(unix)]

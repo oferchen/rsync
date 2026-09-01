@@ -1,4 +1,4 @@
-//! NXT-2: upstream-compat port of `testsuite/daemon-gzip-download.test`.
+//! NXT-2: upstream-compat port of `testsuite/daemon-gzip-download_test.py`.
 //!
 //! Pairs an upstream rsync client (3.4.4 by default) against an oc-rsync
 //! daemon over a real TCP socket. The transfer pulls a ~1 MB fixture with
@@ -19,11 +19,11 @@
 //!
 //! # Upstream references
 //!
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/daemon-gzip-download.test`
+//! - `testsuite/daemon-gzip-download_test.py`
 //!   - upstream script this port replaces.
-//! - `main.c:983` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
+//! - `main.c:998` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
 //!   return; contract pinned by UTS-9.
-//! - `options.c:2002` - `-zz` -> `compress_choice = "zlibx"` mapping.
+//! - `options.c:2122-2123` - `-zz` -> `compress_choice = "zlibx"` mapping.
 //!
 //! # Gating
 //!
@@ -79,7 +79,7 @@ impl Drop for DaemonGuard {
 /// for it to accept connections.
 fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Race-free free port: the default daemon binds SO_REUSEADDR only (upstream
-    // socket.c:447), so a collision is a clean EADDRINUSE exit the helper
+    // socket.c:597), so a collision is a clean EADDRINUSE exit the helper
     // retries. See `test_support::daemon_port`.
     let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
         Command::new(bin)

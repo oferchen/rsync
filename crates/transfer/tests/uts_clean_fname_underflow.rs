@@ -1,7 +1,7 @@
-//! Nextest port of upstream `testsuite/clean-fname-underflow.test`.
+//! Nextest port of upstream `testsuite/clean-fname-underflow_test.py`.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/clean-fname-underflow.test`.
+//! `testsuite/clean-fname-underflow_test.py`.
 //!
 //! # Background
 //!
@@ -31,7 +31,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/clean-fname-underflow.test` - the upstream script this file
+//! - `testsuite/clean-fname-underflow_test.py` - the upstream script this file
 //!   ports.
 //! - `util1.c` - `clean_fname()` in-place `.`/`..` collapsing.
 

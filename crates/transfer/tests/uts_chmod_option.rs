@@ -1,11 +1,11 @@
-//! Nextest port of the local legs of upstream `testsuite/chmod-option.test`.
+//! Nextest port of the local legs of upstream `testsuite/chmod-option_test.py`.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/chmod-option.test`.
+//! `testsuite/chmod-option_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `chmod-option.test` verifies that `--chmod` rewrites permission
+//! Upstream's `chmod-option_test.py` verifies that `--chmod` rewrites permission
 //! bits on the fly during a transfer, applying the same symbolic-mode grammar
 //! `chmod(1)` uses, with rsync's `F`/`D` file/directory qualifiers. Two of its
 //! legs are pure local transfers with a deterministic outcome:
@@ -35,7 +35,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/chmod-option.test` - the upstream script this file ports.
+//! - `testsuite/chmod-option_test.py` - the upstream script this file ports.
 //! - `chmod.c` - `parse_chmod()` symbolic-mode grammar and `F`/`D` qualifiers.
 //! - `generator.c` - receiver-side application of the parsed chmod modes.
 
@@ -205,7 +205,7 @@ fn chmod_file_only_clears_world_execute() {
 /// Deliverable #1: a `--chmod` that strips the transfer-root directory's own
 /// owner-execute bit self-locks it.
 ///
-/// upstream: generator.c:1503-1520 - the generator chmods the transfer root
+/// upstream: generator.c:1895-1912 - the generator chmods the transfer root
 /// ("dst/.") to its tweaked mode and then tries to re-add owner-`rwx` so it can
 /// write the root's contents. Resolving `.` inside the now owner-non-executable
 /// root fails with `EACCES` ("failed to modify permissions on dst/."), the
@@ -270,8 +270,8 @@ fn chmod_transfer_root_self_locks_without_owner_execute() {
 /// by `--chmod` regains owner-execute; owner-non-writable ones keep the strict
 /// mode.
 ///
-/// upstream: generator.c:1512-1520 raises a directory to owner-`rwx` while its
-/// contents are written, and generator.c:2107-2145 `touch_up_dirs()` restores
+/// upstream: generator.c:1904-1912 raises a directory to owner-`rwx` while its
+/// contents are written, and generator.c:2579-2617 `touch_up_dirs()` restores
 /// the tweaked mode ONLY when the owner would otherwise lack write. A subdir is
 /// addressed by name (not "./"), so the re-add chmod always succeeds; the net
 /// on-disk mode therefore keeps the transient owner bits when the owner is

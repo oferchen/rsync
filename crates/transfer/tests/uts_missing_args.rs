@@ -1,11 +1,11 @@
-//! Nextest port of the upstream `testsuite/missing.test` scenario.
+//! Nextest port of the upstream `testsuite/missing_test.py` scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/missing.test`.
+//! `testsuite/missing_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `missing.test` guards bugs Wayne Davison fixed when he reworked
+//! Upstream's `missing_test.py` guards bugs Wayne Davison fixed when he reworked
 //! the generator's `missing_below` logic (the state that suppresses per-file
 //! work under a directory that a dry run has decided not to create):
 //!
@@ -34,7 +34,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/missing.test` - the upstream script this file ports.
+//! - `testsuite/missing_test.py` - the upstream script this file ports.
 //! - `generator.c` - `missing_below` handling and the `--ignore-non-existing`
 //!   skip path (`skipping non-existent destination file`).
 //! - `delete.c` - the `--delete-after` deletion pass that must still run.

@@ -1,11 +1,11 @@
-//! Nextest port of the upstream `testsuite/trimslash.test` scenario.
+//! Nextest port of the upstream `testsuite/trimslash_test.py` scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/trimslash.test`.
+//! `testsuite/trimslash_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `trimslash.test` exercises rsync's tiny trailing-slash trimmer
+//! Upstream's `trimslash_test.py` exercises rsync's tiny trailing-slash trimmer
 //! (upstream `util1.c:trim_trailing_slashes`) via a standalone `trimslash`
 //! helper. The rule it enforces: any run of trailing slashes on a path
 //! collapses to the semantics of a single trailing slash, except that a path
@@ -38,7 +38,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/trimslash.test` - the upstream script this file ports.
+//! - `testsuite/trimslash_test.py` - the upstream script this file ports.
 //! - `util1.c` - `trim_trailing_slashes()`, the function under test.
 //! - `flist.c` - trailing-slash handling of source args (`send_file_list`).
 

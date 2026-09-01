@@ -1,14 +1,14 @@
-//! Nextest port of upstream `testsuite/delay-updates.test` (local-copy leg).
+//! Nextest port of upstream `testsuite/delay-updates_test.py` (local-copy leg).
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/delay-updates.test`.
+//! `testsuite/delay-updates_test.py`.
 //!
 //! # Background
 //!
 //! `--delay-updates` stages every updated file under a `.~tmp~` scratch
 //! directory in the destination and only renames them into place at the end of
 //! the transfer, so an interrupted run never leaves half-written files visible.
-//! Upstream's delay-updates.test runs `rsync -aiv --delay-updates` and
+//! Upstream's delay-updates_test.py runs `rsync -aiv --delay-updates` and
 //! `checkit()` confirms the destination matches - and, implicitly, that the
 //! `.~tmp~` staging directory does not survive a successful run.
 //!
@@ -33,7 +33,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/delay-updates.test` - the upstream script this file ports.
+//! - `testsuite/delay-updates_test.py` - the upstream script this file ports.
 //! - `receiver.c` / `generator.c` - `--delay-updates` stages into `partialptr`
 //!   under `.~tmp~` and renames at `finish_transfer()` time.
 

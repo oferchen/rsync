@@ -433,7 +433,7 @@
 //! # References
 //!
 //! - **Upstream rsync**: <https://github.com/RsyncProject/rsync>
-//! - **Protocol spec**: `target/interop/upstream-src/rsync-3.4.1/csprotocol.txt`
+//! - **Protocol spec**: `csprotocol.txt`
 //! - **Engine documentation**: [`engine::delta`]
 //! - **Wire format**: [`protocol::wire`]
 //! - **Metadata**: `metadata::apply`

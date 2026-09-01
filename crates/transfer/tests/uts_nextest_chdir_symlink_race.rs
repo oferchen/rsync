@@ -1,10 +1,10 @@
 //! UTS-NEXTEST-EDGE.i: nextest port of the upstream
-//! `testsuite/chdir-symlink-race.test` security scenario.
+//! `testsuite/chdir-symlink-race_test.py` security scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/chdir-symlink-race.test`
-//! (the same scenario also lives in rsync-3.4.3 / 3.4.2 / 3.4.1; the 3.4.4
-//! file is the canonical upstream copy).
+//! `testsuite/chdir-symlink-race_test.py`
+//! (3.5.0 rewrote the shell `.test` scripts as Python; the scenario is
+//! carried over unchanged from the 3.4.x `chdir-symlink-race.test`).
 //!
 //! The upstream scenario probes the chdir-symlink-race TOCTOU class of
 //! bug at the receiver: after CVE-2026-29518's fix to
