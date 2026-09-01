@@ -31,12 +31,13 @@ struct AcceptLoopState<'a> {
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
 ///
-/// Returns `Some(true)` to break the loop, `None` to continue. Propagates
-/// errors from worker reaping.
-fn check_signals_and_maintain(
-    state: &mut AcceptLoopState<'_>,
-) -> Result<Option<bool>, DaemonError> {
-    reap_finished_workers(&mut state.workers)?;
+/// Returns `Some(true)` to break the loop, `None` to continue. Nothing this
+/// step does can end the daemon: reaping a worker only reports one finished
+/// session, and reload/status failures are logged in place. That mirrors
+/// upstream's accept loop, whose body has no error exit at all
+/// (socket.c:724-778).
+fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
+    reap_finished_workers(&mut state.workers, state.log_sink.as_ref());
 
     if state.signal_flags.shutdown.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
@@ -44,7 +45,7 @@ fn check_signals_and_maintain(
                 .with_role(Role::Daemon);
             log_message(log, &message);
         }
-        return Ok(Some(true));
+        return Some(true);
     }
 
     // upstream: main.c - SIGUSR1 stops accepting new connections
@@ -64,7 +65,7 @@ fn check_signals_and_maintain(
         {
             log_sd_notify_failure(state.log_sink.as_ref(), "graceful exit status", &error);
         }
-        return Ok(Some(true));
+        return Some(true);
     }
 
     if state
@@ -105,7 +106,7 @@ fn check_signals_and_maintain(
         state.active_connections = current_active;
     }
 
-    Ok(None)
+    None
 }
 
 /// Refuses an accepted socket once the daemon hits its concurrent
