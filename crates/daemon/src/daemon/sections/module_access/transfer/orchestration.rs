@@ -782,8 +782,12 @@ fn process_approved_module(
         .transition(ConnectionState::Transferring)
         .map_err(transition_error)?;
 
-    let handshake =
-        build_handshake_result(ctx.reader, negotiated_protocol, client_args.clone(), io_timeout);
+    let handshake = build_handshake_result(
+        ctx.reader,
+        negotiated_protocol,
+        client_args.clone(),
+        io_timeout,
+    );
     let final_protocol = handshake.protocol;
 
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
