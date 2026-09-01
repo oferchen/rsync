@@ -41,15 +41,15 @@ iconv = ["core/iconv", "protocol/iconv"]
 # (the dependency is `cfg(target_os = "linux")`-gated).
 daemon-seccomp = ["dep:seccompiler"]
 # Opt-in (default-off): let the daemon-sender's socket write side dispatch
-# io_uring `IORING_OP_SEND_ZC` when the client sends `--zero-copy` and the
+# io_uring `IORING_OP_SEND_ZC` under the default `ZeroCopyPolicy::Auto` when the
 # running kernel advertises the opcode. Forwards the `iouring-send-zc` group
-# (which pulls `io_uring`) into `fast_io`. Default builds keep io_uring OUT of
-# the daemon's dependency graph, so `socket_writer_from_fd_zero_copy` resolves
-# to the fallback that degrades `--zero-copy` to the plain socket write path -
-# byte- and behavior-identical to the pre-feature daemon. On non-Linux the
-# `io-uring` crate dependency is target-gated, so enabling this feature there is
-# a no-op that still degrades to the plain writer. See
-# docs/design/iouring-send-zc.md for the buffer-lifetime contract.
+# (which pulls `io_uring`) into `fast_io`. Without it, `Auto` - the policy every
+# client arrives with, since the oc-invented `--zero-copy` flag is never
+# forwarded to a peer argv - keeps the plain socket write path, byte- and
+# behavior-identical to the pre-feature daemon. On non-Linux the `io-uring`
+# crate dependency is target-gated, so enabling this feature there is a no-op
+# that still degrades to the plain writer. See docs/design/iouring-send-zc.md
+# for the buffer-lifetime contract.
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
 # QUIC daemon transport (default-off, opt-in oc extension). Gates parsing and
 # storage of the `quic cert file` / `quic key file` / `quic port` global
