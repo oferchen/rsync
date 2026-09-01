@@ -169,12 +169,33 @@ mod imp {
 mod imp {
     use super::*;
 
+    /// NTFS reparse-point resolution is governed by separate flags on
+    /// `CreateFileW` and is not part of the rsync upstream `O_NOFOLLOW`
+    /// contract, so the leaf is opened without one; receiver-side reparse
+    /// handling is audited under WPC-3/4.
+    ///
+    /// `FILE_FLAG_BACKUP_SEMANTICS` is what lets `CreateFileW` return a
+    /// *directory* handle at all. Without it the open fails with
+    /// `PermissionDenied` and the `?` in [`super::open_basis_nofollow`]
+    /// surfaces that instead of reaching [`super::require_regular_basis`] —
+    /// so the documented `InvalidInput` refusal for a non-regular basis
+    /// would hold on Unix and silently not hold here. Opening with the flag
+    /// keeps "is this a regular file" one decision on every platform.
+    #[cfg(windows)]
     pub(super) fn open_basis_nofollow(path: &Path) -> io::Result<File> {
-        // Windows / other non-Unix: NTFS reparse-point resolution is
-        // governed by separate flags on `CreateFileW` and is not part
-        // of the rsync upstream `O_NOFOLLOW` contract. Fall through to
-        // the standard open; receiver-side reparse handling is audited
-        // under WPC-3/4.
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+    }
+
+    /// Other non-Unix platforms have no directory-open flag to set, so the
+    /// standard open already reaches [`super::require_regular_basis`].
+    #[cfg(not(windows))]
+    pub(super) fn open_basis_nofollow(path: &Path) -> io::Result<File> {
         File::open(path)
     }
 
