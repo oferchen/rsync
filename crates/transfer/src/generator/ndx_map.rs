@@ -39,7 +39,7 @@
 //! # Upstream Reference
 //!
 //! - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
-//! - `rsync.c:424` - `i = ndx - cur_flist->ndx_start`
+//! - `rsync.c:437` - `i = ndx - cur_flist->ndx_start`
 //! - `sender.c:267-272` - a gap NDX resolves to the owning directory
 //! - `flist.c:flist_free()` / `sender.c:248` - segment reclaim
 
@@ -158,7 +158,7 @@ impl NdxMap {
 
     /// Resolves a wire NDX to its flat `file_list` index.
     ///
-    /// upstream: `rsync.c:424` - `i = ndx - cur_flist->ndx_start`, after
+    /// upstream: `rsync.c:437` - `i = ndx - cur_flist->ndx_start`, after
     /// `flist_for_ndx()` has selected the list.
     pub(crate) fn wire_to_flat(&self, wire_ndx: i32) -> usize {
         let seg = self.segment_containing_ndx(wire_ndx);
@@ -198,7 +198,7 @@ impl NdxMap {
 
     /// Converts a flat index back to its wire NDX.
     ///
-    /// upstream: `generator.c:2338` - `ndx = i + cur_flist->ndx_start`.
+    /// upstream: `generator.c:2812` - `ndx = i + cur_flist->ndx_start`.
     ///
     /// Only used by tests since the NDX echo-back fix: the transfer loop
     /// preserves the original wire NDX rather than round-tripping, which is what

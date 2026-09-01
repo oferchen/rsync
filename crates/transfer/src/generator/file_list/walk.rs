@@ -787,7 +787,7 @@ impl GeneratorContext {
                 format!("file has vanished: {fname}\n"),
             )
         } else {
-            // upstream: flist.c:1846 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
+            // upstream: flist.c:2011 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             (
                 SenderDiagnostic::ErrorXfer,
                 format!(
@@ -999,7 +999,7 @@ mod rsyserr_wording_tests {
     /// refactor that re-inserts the source-location or role-version trailer
     /// will fail these asserts.
     const CASES: &[(&str, &str)] = &[
-        // upstream: flist.c:1846 - "link_stat %s failed"
+        // upstream: flist.c:2011 - "link_stat %s failed"
         (
             "rsync: [sender] link_stat \"{path}\" failed: No such file or directory (2)",
             "rsync: [sender] link_stat \"/p\" failed: No such file or directory (2)",
