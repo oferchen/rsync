@@ -372,8 +372,8 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: main.c:1166-1169 `do_server_recv()` rejects a read-only push
-    // and main.c:934-936 `do_server_sender()` rejects a write-only pull, both
+    // upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
+    // and main.c:949-952 `do_server_sender()` rejects a write-only pull, both
     // via `rprintf(FERROR, "ERROR: module is ...\n")` + `exit_cleanup(
     // RERR_SYNTAX)`. When --sender is absent the client is pushing (server =
     // Receiver); a read-only module must reject pushes and a write-only module

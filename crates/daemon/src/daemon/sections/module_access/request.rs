@@ -335,9 +335,9 @@ fn handle_refused_option_post_handshake(
 /// `read only` module or a pull from a `write only` module - through the
 /// multiplexed error path.
 ///
-/// upstream: main.c:1166-1169 `do_server_recv()` rejects a read-only push
+/// upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
 /// with `rprintf(FERROR, "ERROR: module is read only\n")` then
-/// `exit_cleanup(RERR_SYNTAX)`; main.c:934-936 `do_server_sender()` rejects a
+/// `exit_cleanup(RERR_SYNTAX)`; main.c:949-952 `do_server_sender()` rejects a
 /// write-only pull the same way. Both fire after `setup_protocol()` and
 /// `io_start_multiplex_out()`, so the message travels as a `MSG_ERROR_XFER`
 /// frame followed by `MSG_ERROR_EXIT`. Emitting the raw text with
