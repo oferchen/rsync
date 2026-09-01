@@ -287,14 +287,7 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
 /// [`transfer::RemoteExitError`], returning the peer-supplied exit code when the
 /// failure originated from a remote `MSG_ERROR_EXIT` frame.
 fn remote_exit_code(error: &std::io::Error) -> Option<i32> {
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.get_ref()?);
-    while let Some(err) = source {
-        if let Some(remote) = err.downcast_ref::<crate::server::RemoteExitError>() {
-            return Some(remote.code);
-        }
-        source = err.source();
-    }
-    None
+    crate::server::remote_exit_code(error)
 }
 
 /// Builds a `HandshakeResult` for daemon transfers where the protocol version
