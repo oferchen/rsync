@@ -32,7 +32,7 @@ pub(super) use self::file_ops::{process_file, process_whole_file};
 #[cfg(test)]
 pub(crate) use self::commit::ForceExdev;
 #[cfg(all(test, unix))]
-use self::commit::rename_config_sandboxed;
+use self::commit::{commit_file, rename_config_sandboxed};
 #[cfg(test)]
 use self::commit::{
     delay_updates_staging_path, is_cross_device, make_backup_copy, rename_with_io_uring_fallback,
