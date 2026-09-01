@@ -261,6 +261,16 @@ correct but conservative:
   explicitly cites the "wait for notification CQE before returning"
   invariant.
 
+> **Superseded on the flush path.** The last bullet describes the
+> code as audited. That notification wait was measured at 75% of the
+> time spent inside `try_send_zc` and cost a 5.8x end-to-end
+> regression on a loopback daemon pull, so `flush_buffer` now routes
+> its owned buffer through
+> `crates/fast_io/src/io_uring/send_zc_pipeline.rs`, which waits only
+> for the transfer CQE. `Write::write`'s oversized-caller-slice path
+> is unchanged and still waits for both CQEs. See section 3.3 of
+> `docs/design/iouring-send-zc.md`.
+
 ### 3.4 `ZeroCopySender` wrapper (feature-gated)
 
 The higher-level wrapper exposed under `iouring-send-zc` at
