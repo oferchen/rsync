@@ -140,6 +140,10 @@ The script displays a summary including:
 
 ## CI/CD Integration
 
+None of the pipelines below are configured for this repository. No workflow
+computes coverage; the `Coverage` workflow was deleted in `4cf315af9` after
+repeated timeouts. These are templates, not a description of current CI.
+
 ### GitHub Actions
 
 ```yaml

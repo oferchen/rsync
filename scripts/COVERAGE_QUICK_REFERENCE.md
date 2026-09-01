@@ -95,6 +95,10 @@ CARGO_LLVM_COV_EXTRA_ARGS="--ignore-filename-regex tests/" ./scripts/coverage.sh
 
 ## CI Integration
 
+Not wired up in this repository - no workflow computes coverage, and the
+`Coverage` workflow was deleted in `4cf315af9`. The snippet below is a
+template for anyone who wants to add one.
+
 ```yaml
 # GitHub Actions
 - run: ./scripts/coverage.sh --lcov-only

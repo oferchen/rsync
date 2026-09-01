@@ -15,8 +15,25 @@ Tests are layered by scope and purpose:
 5. **Fuzz targets** - find parser crashes and logic errors via cargo-fuzz.
 6. **SIMD parity tests** - ensure scalar and SIMD implementations produce identical output.
 
-Every change must include tests. The project targets greater than 95% line coverage
-(`cargo llvm-cov`), measured locally.
+Every change must include tests.
+
+The project *targets* greater than 95% line coverage, but that number is an
+aspiration, not a gate. **No workflow computes coverage.** The `Coverage`
+workflow was removed in `4cf315af9` after repeated 45-minute timeouts on
+`master`; even while it existed its threshold step carried
+`continue-on-error: true`, was pinned at 84% rather than 95%, and was never a
+required check. Nothing has replaced it, so no CI job can fail on a coverage
+drop.
+
+The last recorded workspace measurement is **85.52% line coverage**
+(`docs/audits/br-4a-workspace-coverage-2026-05-20.md`, 2026-05-20), with 13 of
+27 members below 95%. Treat that as the working baseline until someone
+re-measures. To measure locally, scope it to the crate you touched - a
+full-workspace run compiles everything and takes well over half an hour:
+
+```sh
+cargo llvm-cov nextest -p <crate> --all-features
+```
 
 ## Per-Crate Expectations
 
