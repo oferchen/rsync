@@ -3020,3 +3020,48 @@ fn fake_super_is_a_known_server_long_flag() {
     assert!(is_known_server_long_flag("--fake-super"));
     assert!(is_known_server_long_flag("--no-fake-super"));
 }
+
+/// The client's forwarded `--timeout=N` becomes this server process's
+/// `io_timeout`, and a non-positive or unparsable value is "no timeout".
+///
+/// Before the fix `ServerLongFlags::timeout` was parsed and never read, so a
+/// forwarded `--timeout` armed nothing on the SSH server side.
+///
+/// upstream: `options.c` `server_options()` emits `--timeout=%d`;
+/// `options.c:2511` `set_io_timeout(io_timeout)`; `io.c:1266-1271` clamps a
+/// negative to `0`.
+#[test]
+fn forwarded_timeout_becomes_the_server_io_timeout() {
+    use super::run::forwarded_io_timeout;
+
+    assert_eq!(forwarded_io_timeout(Some("30")), Some(30));
+    assert_eq!(forwarded_io_timeout(Some("1")), Some(1));
+    assert_eq!(forwarded_io_timeout(None), None);
+    for off in ["0", "-1", "", "abc"] {
+        assert_eq!(
+            forwarded_io_timeout(Some(off)),
+            None,
+            "--timeout={off} must read as no timeout"
+        );
+    }
+}
+
+/// The parse and the read are the same option: whatever
+/// `parse_server_long_flags` captures for `--timeout` is what
+/// `forwarded_io_timeout` converts.
+///
+/// This chains the two halves so a future rename on either side cannot leave
+/// the flag parsed-but-unread again.
+#[test]
+fn parsed_timeout_flag_feeds_the_server_io_timeout() {
+    let argv: Vec<OsString> = ["--server", "--sender", "--timeout=45", ".", "."]
+        .iter()
+        .map(OsString::from)
+        .collect();
+    let flags = parse_server_long_flags(&argv);
+    assert_eq!(
+        super::run::forwarded_io_timeout(flags.timeout.as_deref()),
+        Some(45),
+        "the parsed --timeout value must reach the server's io_timeout"
+    );
+}

@@ -520,7 +520,15 @@ pub fn run_server_stdio(
     // pre-release subprotocol (carried in its `-e` capability string) before it
     // writes its protocol version. For a stock release peer this is a no-op and
     // the version exchange is byte-identical to a plain `perform_handshake`.
-    let handshake = perform_server_handshake(stdin, stdout, &config.flag_string)?;
+    let mut handshake = perform_server_handshake(stdin, stdout, &config.flag_string)?;
+    // upstream: options.c:2511 - the server's own `parse_arguments()` run over
+    // the argv the client forwarded ends in `set_io_timeout(io_timeout)`, so a
+    // `--timeout=N` on the client arms this process too. The CLI's server-mode
+    // parser lands the value in `connection.io_timeout`; carrying it onto the
+    // handshake is what makes the generator/sender emit keep-alives at
+    // `ceil(N/2)`. Without a forwarded `--timeout` this stays `None` and the
+    // wire is unchanged.
+    handshake.io_timeout = config.connection.io_timeout.map(u64::from);
     run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
 }
 
@@ -987,8 +995,14 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         }
     }
 
-    // upstream: main.c:1267-1268 - server sends MSG_IO_TIMEOUT to client.
+    // upstream: main.c:1294-1295 - `if (am_daemon && io_timeout &&
+    // protocol_version >= 31) send_msg_int(MSG_IO_TIMEOUT, io_timeout)`. The
+    // gate is `am_daemon`, not "server": an SSH server process has an
+    // `io_timeout` of its own once the client forwards `--timeout`, and it must
+    // still not advertise one. `daemon_module` is set exactly when this process
+    // is the daemon serving a module, so it is oc's `am_daemon`.
     if !config.connection.client_mode
+        && config.connection.daemon_module.is_some()
         && let Some(timeout_secs) = handshake.io_timeout
         && handshake.protocol.supports_extended_goodbye()
     {
