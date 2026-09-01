@@ -248,6 +248,90 @@ pub fn flush_retry<W: Write>(writer: &mut W) -> io::Result<()> {
     }
 }
 
+/// Maps a fatal transfer failure onto the upstream `errcode.h` `RERR_*` value
+/// that `exit_cleanup()` would have been called with at the failing site.
+///
+/// Upstream picks the code per call site (`exit_cleanup(RERR_FILEIO)` and
+/// friends); oc carries one `io::Error` up the stack instead, so the class is
+/// recovered here from the error's tag or `ErrorKind`. This lives in `transfer`,
+/// below `core`, because both the client's `ExitCode::from_io_error` and the
+/// server's `MSG_ERROR_EXIT` producer need the same answer, and the server half
+/// runs inside this crate.
+///
+/// # Mapping Rules
+///
+/// - a tagged [`protocol::ProtocolViolation`] - `RERR_PROTOCOL` (2)
+/// - a tagged [`protocol::SyntaxViolation`] - `RERR_SYNTAX` (1)
+/// - a failed commit-path backup - `RERR_FILEIO` (11), whatever the errno
+/// - `NotFound`, `PermissionDenied`, `AlreadyExists` - `RERR_FILESELECT` (3)
+/// - the connection-class kinds - `RERR_SOCKETIO` (10)
+/// - `TimedOut` - `RERR_TIMEOUT` (30)
+/// - `UnexpectedEof`, other `InvalidData` - `RERR_STREAMIO` (12)
+/// - `Interrupted` - `RERR_SIGNAL` (20)
+/// - `Unsupported` - `RERR_UNSUPPORTED` (4)
+/// - everything else - `RERR_FILEIO` (11)
+///
+/// # Upstream Reference
+///
+/// - `errcode.h` - the `RERR_*` values.
+/// - `rsync.c:900` - `finish_transfer()` answers a failed `make_backup()` with
+///   `exit_cleanup(RERR_FILEIO)` whatever the errno was.
+#[must_use]
+pub fn rerr_for_io_error(error: &io::Error) -> i32 {
+    // upstream: errcode.h RERR_PROTOCOL=2 - a tagged protocol violation
+    // outranks the generic InvalidData => RERR_STREAMIO mapping below.
+    if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+    {
+        return 2;
+    }
+
+    // upstream: errcode.h RERR_SYNTAX=1 - an option-usage refusal is tagged at
+    // its call site, exactly as the protocol-violation class above; without the
+    // tag it would fall through to the `_ => RERR_FILEIO` arm.
+    if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>())
+    {
+        return 1;
+    }
+
+    // upstream: rsync.c:900 - a denied backup must not be graded by `ErrorKind`
+    // like the per-file open failures below. Without this arm the usual `EACCES`
+    // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.
+    if matches!(
+        crate::temp_guard::commit_op_failure(error),
+        Some((crate::temp_guard::CommitOp::Backup, _))
+    ) {
+        return 11;
+    }
+
+    match error.kind() {
+        io::ErrorKind::NotFound
+        | io::ErrorKind::PermissionDenied
+        | io::ErrorKind::AlreadyExists => 3,
+
+        io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::BrokenPipe
+        | io::ErrorKind::AddrInUse
+        | io::ErrorKind::AddrNotAvailable
+        | io::ErrorKind::NotConnected => 10,
+
+        io::ErrorKind::TimedOut => 30,
+
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::InvalidData => 12,
+
+        io::ErrorKind::Interrupted => 20,
+
+        io::ErrorKind::Unsupported => 4,
+
+        _ => 11,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

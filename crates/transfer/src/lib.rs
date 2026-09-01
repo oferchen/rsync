@@ -1029,68 +1029,185 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // receiver reports the sender's transmitted counters, not its own wire tally.
     let client_mode = config.connection.client_mode;
 
-    match config.role {
-        ServerRole::Receiver => {
-            let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
-            // upstream: flist.c:2615/2789 - recv_file_list() measures its span
-            // against the raw read counter to accumulate stats.flist_size.
-            ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
-            // upstream: io.c:859 - stats.total_written tracking
-            let mut counting_writer = writer::CountingWriter::new(&mut writer);
-            let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
-            stats.flist_size = ctx.flist_size();
-            stats.bytes_sent = counting_writer.bytes_written();
-            // upstream: io.c:820 - stats.total_read counts raw bytes read off the
-            // socket (mux frames + compressed tokens), below decompression. Source
-            // bytes_received from the wire counter so --stats reports compressed
-            // wire bytes, not the post-decompression literal byte total.
-            stats.bytes_received =
-                bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
+    // Captured before `handshake` is borrowed by the role context: the
+    // `MSG_ERROR_EXIT` gate below needs it after the dispatch has ended.
+    let negotiated_protocol = handshake.protocol.as_u8();
 
-            // upstream: main.c:325-372 handle_stats() - the sender is the only
-            // process with the authoritative byte totals. A client receiver reads
-            // the sender's cached raw counters over the wire (main.c:365-372) and
-            // swaps their meaning: it prints the sender's total_read as "Total
-            // bytes sent" and the sender's total_written as "Total bytes received".
-            // Its own wire tally diverges by the trailing stats/goodbye bytes the
-            // sender wrote after sampling, so prefer the transmitted figures.
-            // Absent (empty file list, no stats trailer) keeps the local tally,
-            // matching upstream's `if (f < 0 && !am_sender)` no-op (main.c:363).
-            if client_mode && let Some(sender_stats) = ctx.sender_stats() {
-                stats.bytes_sent = sender_stats.total_read;
-                stats.bytes_received = sender_stats.total_written;
-            }
+    let outcome: ServerResult = 'dispatch: {
+        match config.role {
+            ServerRole::Receiver => {
+                let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
+                // upstream: flist.c:2615/2789 - recv_file_list() measures its span
+                // against the raw read counter to accumulate stats.flist_size.
+                ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
+                // upstream: io.c:859 - stats.total_written tracking
+                let mut counting_writer = writer::CountingWriter::new(&mut writer);
+                let mut stats = match ctx.run(chained_reader, &mut counting_writer, progress) {
+                    Ok(stats) => stats,
+                    Err(error) => break 'dispatch Err(error),
+                };
+                stats.flist_size = ctx.flist_size();
+                stats.bytes_sent = counting_writer.bytes_written();
+                // upstream: io.c:820 - stats.total_read counts raw bytes read off the
+                // socket (mux frames + compressed tokens), below decompression. Source
+                // bytes_received from the wire counter so --stats reports compressed
+                // wire bytes, not the post-decompression literal byte total.
+                stats.bytes_received =
+                    bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
 
-            // A custom `--out-format` on a pull buffered its per-file rows as
-            // metadata events (the receiver suppressed its own stdout). Hand each
-            // one to the client callback in flist-index order so the CLI renders
-            // the user's template - mirroring how the push sender feeds the same
-            // callback. No-op unless the client set `out_format_active`.
-            if let Some(cb) = itemize {
-                for row in ctx.drain_event_rows() {
-                    cb.on_itemize_row(&row.as_row());
+                // upstream: main.c:325-372 handle_stats() - the sender is the only
+                // process with the authoritative byte totals. A client receiver reads
+                // the sender's cached raw counters over the wire (main.c:365-372) and
+                // swaps their meaning: it prints the sender's total_read as "Total
+                // bytes sent" and the sender's total_written as "Total bytes received".
+                // Its own wire tally diverges by the trailing stats/goodbye bytes the
+                // sender wrote after sampling, so prefer the transmitted figures.
+                // Absent (empty file list, no stats trailer) keeps the local tally,
+                // matching upstream's `if (f < 0 && !am_sender)` no-op (main.c:363).
+                if client_mode && let Some(sender_stats) = ctx.sender_stats() {
+                    stats.bytes_sent = sender_stats.total_read;
+                    stats.bytes_received = sender_stats.total_written;
                 }
+
+                // A custom `--out-format` on a pull buffered its per-file rows as
+                // metadata events (the receiver suppressed its own stdout). Hand each
+                // one to the client callback in flist-index order so the CLI renders
+                // the user's template - mirroring how the push sender feeds the same
+                // callback. No-op unless the client set `out_format_active`.
+                if let Some(cb) = itemize {
+                    for row in ctx.drain_event_rows() {
+                        cb.on_itemize_row(&row.as_row());
+                    }
+                }
+
+                Ok(ServerStats::Receiver(stats))
             }
+            ServerRole::Generator => {
+                let mut paths = Vec::with_capacity(config.args.len());
+                paths.extend(config.args.iter().map(std::path::PathBuf::from));
 
-            Ok(ServerStats::Receiver(stats))
+                let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
+                ctx.batch_stats_sink = batch_stats_sink;
+                // upstream: io.c:820/859 - the sender's handle_stats() reports the raw
+                // descriptor counters. Hand the generator the transport-level wire
+                // counters so it samples total_written/total_read at its handle_stats
+                // point (main.c:979-980), below multiplex framing, matching upstream.
+                ctx.set_wire_counters(
+                    std::sync::Arc::clone(&bytes_sent_counter),
+                    std::sync::Arc::clone(&bytes_received_counter),
+                );
+                let stats = match ctx.run(chained_reader, &mut writer, &paths, progress, itemize) {
+                    Ok(stats) => stats,
+                    Err(error) => break 'dispatch Err(error),
+                };
+
+                Ok(ServerStats::Generator(stats))
+            }
         }
-        ServerRole::Generator => {
-            let mut paths = Vec::with_capacity(config.args.len());
-            paths.extend(config.args.iter().map(std::path::PathBuf::from));
+    };
 
-            let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
-            ctx.batch_stats_sink = batch_stats_sink;
-            // upstream: io.c:820/859 - the sender's handle_stats() reports the raw
-            // descriptor counters. Hand the generator the transport-level wire
-            // counters so it samples total_written/total_read at its handle_stats
-            // point (main.c:979-980), below multiplex framing, matching upstream.
-            ctx.set_wire_counters(
-                std::sync::Arc::clone(&bytes_sent_counter),
-                std::sync::Arc::clone(&bytes_received_counter),
-            );
-            let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
-
-            Ok(ServerStats::Generator(stats))
+    match outcome {
+        Ok(stats) => Ok(stats),
+        Err(error) => {
+            announce_error_exit(&mut writer, &error, negotiated_protocol);
+            Err(error)
         }
     }
+}
+
+/// Tells the peer which `RERR_*` this side is exiting with, so it exits with the
+/// same code instead of inferring one from the connection dropping.
+///
+/// This is upstream's `_exit_cleanup()` tail, ported arm for arm:
+///
+/// ```c
+/// if (exit_code && exit_code != RERR_SOCKETIO && exit_code != RERR_STREAMIO
+///  && exit_code != RERR_SIGNAL1 && exit_code != RERR_TIMEOUT && !shutting_down) {
+///         if (protocol_version >= 31 || am_receiver) {
+///                 if (line > 0)
+///                         send_msg_int(MSG_ERROR_EXIT, exit_code);
+///                 ...
+/// ```
+///
+/// The four excluded codes are the ones whose own failure mode is the transport,
+/// so writing another frame down it is pointless. `line > 0` is upstream's guard
+/// against echoing an exit that a *received* `MSG_ERROR_EXIT` caused
+/// (io.c:1892 re-enters `_exit_cleanup` with a negative line); oc's equivalent
+/// is a [`RemoteExitError`] anywhere in the failure's source chain.
+///
+/// Upstream's gate reads `protocol_version >= 31 || am_receiver`, but only the
+/// first half is a *wire* condition. `am_receiver` is true in the forked
+/// receiver child, whose `send_msg()` buffers into the sibling message channel
+/// its parent generator drains - not into the socket the client reads. oc runs
+/// one process with no sibling channel, so porting `am_receiver` as a wire
+/// exemption would emit the frame where upstream emits nothing. Measured against
+/// rsync 3.5.0 over a remote shell, a server-receiver failure that reports 3 to
+/// the client at protocol 32 reports 12 at `--protocol=30`, which is the gate
+/// this port has to reproduce: protocol 31 and up, both roles.
+///
+/// A non-multiplexed writer has no frame to carry the code; `send_error_exit`
+/// reports that as an error which is deliberately dropped, exactly as upstream's
+/// `io_flush()` is a no-op with no multiplexed output active.
+///
+/// # Upstream Reference
+///
+/// - `cleanup.c:242-258` - the gate and `send_msg_int(MSG_ERROR_EXIT, exit_code)`.
+/// - `errcode.h` - `RERR_SOCKETIO`/`RERR_STREAMIO`/`RERR_SIGNAL1`/`RERR_TIMEOUT`.
+fn announce_error_exit<W: Write>(
+    writer: &mut writer::ServerWriter<W>,
+    error: &io::Error,
+    protocol_version: u8,
+) {
+    // upstream: cleanup.c:245 `line > 0` - never echo an exit the peer asked for.
+    if remote_exit_code(error).is_some() {
+        return;
+    }
+
+    let exit_code = crate::error::rerr_for_io_error(error);
+
+    // upstream: cleanup.c:242-243 - a transport-class failure is not announced over
+    // that same transport.
+    const RERR_SOCKETIO: i32 = 10;
+    const RERR_STREAMIO: i32 = 12;
+    const RERR_SIGNAL1: i32 = 19;
+    const RERR_TIMEOUT: i32 = 30;
+    if exit_code == 0
+        || matches!(
+            exit_code,
+            RERR_SOCKETIO | RERR_STREAMIO | RERR_SIGNAL1 | RERR_TIMEOUT
+        )
+    {
+        return;
+    }
+
+    // upstream: cleanup.c:244 `protocol_version >= 31 || am_receiver` - see the
+    // doc comment for why the `am_receiver` half is a sibling-channel condition
+    // and not a wire one.
+    if protocol_version < 31 {
+        return;
+    }
+
+    if writer.send_error_exit(exit_code).is_ok() {
+        let _ = writer.flush_all_pending();
+    }
+}
+
+/// Walks the source chain of an `io::Error` looking for a [`RemoteExitError`],
+/// which marks a failure that a peer's own `MSG_ERROR_EXIT` produced.
+///
+/// upstream: io.c:1892 - the handler re-enters `_exit_cleanup` with a negative
+/// line so the same code is not sent straight back out.
+///
+/// The client side reads the same chain to exit with the peer's code rather than
+/// with whatever local `ErrorKind` the aborted read produced.
+#[must_use]
+pub fn remote_exit_code(error: &io::Error) -> Option<i32> {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.get_ref()?);
+    while let Some(err) = source {
+        if let Some(remote) = err.downcast_ref::<RemoteExitError>() {
+            return Some(remote.code);
+        }
+        source = err.source();
+    }
+    None
 }
