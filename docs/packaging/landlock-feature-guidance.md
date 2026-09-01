@@ -139,25 +139,20 @@ oc-rsync --daemon --no-detach --log-file=- 2>&1 | \
 
 `daemon-seccomp` adds a kernel-enforced syscall allowlist on top of Landlock. Where Landlock denies a path-based syscall with `EACCES`, seccomp denies an unlisted syscall with `SIGSYS` before the kernel ever consults the LSM stack. The two layers compose: a regression that bypasses `*at` helpers still hits Landlock; one that skips Landlock still hits seccomp.
 
-`daemon-seccomp` is a feature of the `daemon` crate. Enable it by adding it to the daemon dependency in the workspace root `Cargo.toml`, then run a plain build:
-
-```toml
-# root Cargo.toml
-daemon = { path = "crates/daemon", default-features = false, features = ["daemon-seccomp"] }
-```
+`daemon-seccomp` originates in the `daemon` crate; the root package forwards it, so packagers enable it on the command line and need no manifest edit:
 
 ```sh
-cargo build --release --bin oc-rsync --locked
+cargo build --release --bin oc-rsync --locked --features daemon-seccomp
 ```
 
-Landlock is already compiled in (no `landlock` flag), and there is no root-level `landlock` / `daemon-seccomp` feature; passing either to `--features` on the `oc-rsync` binary fails.
+Landlock is already compiled in and has no root-level `landlock` flag; passing `--features landlock` to the `oc-rsync` binary fails.
 
-- Opt-in only until the 14-day bake window in `docs/design/lsm-seccomp-allowlist.md` completes. Default builds remain seccomp-free; distros that want the extra layer enable both flags.
-- Default action is `KILL_PROCESS`: an unlisted syscall delivers `SIGSYS` synchronously and terminates the worker. The parent `accept(2)` loop survives, so the daemon keeps serving other clients.
+- Build-time opt-in, and it stays that way: `daemon-seccomp` is not in the root package's `default` list, so stock builds and the released binaries carry no filter. Once compiled in, the filter is on at runtime by default; `OC_RSYNC_NO_SECCOMP=1` or `OC_RSYNC_DAEMON_SECCOMP=0` turns it off without a rebuild.
+- Default action is `Errno(EPERM)`, not `KILL_PROCESS`: an unlisted syscall fails with `EPERM` and the worker stays alive, so a filter gap degrades a transfer rather than killing it mid-flight.
 - Per-architecture: `x86_64` and `aarch64` are supported. On other architectures the helper logs `seccomp BPF unavailable in this build` and Landlock remains the sole layer.
 - Stackable with chroot, mount namespaces, AppArmor, SELinux, and Landlock. No extra system dependencies; `seccompiler` is a pure-Rust crate that talks to `seccomp(2)` directly.
 
-The 14-day bake window starts at merge of the opt-in feature. After zero missing-syscall reports, a follow-up PR flips the feature on by default for Linux release builds; operators who need to opt out get `--no-default-features` or a build-time exclude.
+The 14-day bake window completed with zero missing-syscall reports, which is what made the filter default-on *at runtime* once compiled in. It did not make it default-on *at build time*, and no follow-up has flipped that: the allowlist still has open gaps against parts of the tree, so enabling it for every Linux release build would `EPERM` legitimate operations. Distros that want the extra layer opt in explicitly, per the build recipe above.
 
 ## Diagnostics: `--lsm-status` flag
 

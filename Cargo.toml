@@ -132,6 +132,22 @@ async = ["daemon/async", "core/async"]
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 
+# ============================================================================
+# Security Hardening Features
+# ============================================================================
+
+# Seccomp BPF syscall allowlist for the daemon's post-fork TCP worker, layered
+# above the Landlock LSM defense that Linux builds already compile in. Linux
+# only: `daemon`'s `seccompiler` dependency is `cfg(target_os = "linux")`-gated,
+# so enabling this elsewhere is a no-op rather than an error.
+#
+# Two different defaults, do not conflate them. At BUILD time the feature is
+# opt-in and NOT in `default`, so stock `oc-rsync` binaries - including the
+# release artefacts - carry no filter. Once compiled in, the filter is ON at
+# RUNTIME by default; operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
+# `OC_RSYNC_DAEMON_SECCOMP=0`. See `docs/design/lsm-seccomp-allowlist.md`.
+daemon-seccomp = ["daemon/daemon-seccomp"]
+
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
