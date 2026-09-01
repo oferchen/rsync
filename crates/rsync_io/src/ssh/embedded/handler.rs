@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use is_terminal::IsTerminal;
-use russh::keys::{HashAlg, PublicKey, known_hosts};
+use russh::keys::{HashAlg, PublicKey, PublicKeyOrCertificate, known_hosts};
 
 use super::error::SshError;
 use super::types::StrictHostKeyChecking;
@@ -159,8 +159,24 @@ impl SshClientHandler {
 impl russh::client::Handler for SshClientHandler {
     type Error = SshError;
 
-    async fn check_server_key(&mut self, server_public_key: &PublicKey) -> Result<bool, SshError> {
-        self.verify_host_key(server_public_key)
+    /// Verify the key the server authenticated with.
+    ///
+    /// russh hands over either a plain public key or an OpenSSH host
+    /// certificate. Only the plain key can be checked against `known_hosts`.
+    /// A certificate is refused: it stands in place of the key check rather
+    /// than adding to it, so honouring one requires a trusted certificate
+    /// authority, and unwrapping the key it carries would verify a key the
+    /// client was never told to trust.
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &PublicKeyOrCertificate,
+    ) -> Result<bool, SshError> {
+        match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => self.verify_host_key(key),
+            PublicKeyOrCertificate::Certificate(_) => Err(SshError::HostCertificateUnsupported {
+                host: self.host.clone(),
+            }),
+        }
     }
 }
 
@@ -200,9 +216,73 @@ fn emit_key_changed_warning(host: &str, port: u16, key: &PublicKey, line: usize)
 mod tests {
     use std::io::Write;
 
+    use russh::client::Handler;
+    use russh::keys::ssh_key::certificate::{Builder, CertType};
     use russh::keys::{Algorithm, PrivateKey};
 
     use super::*;
+
+    /// A host certificate is refused, never unwrapped to the key it carries.
+    ///
+    /// The fixture is deliberately the one a naive implementation passes: the
+    /// host's plain key IS in `known_hosts`, so unwrapping the certificate and
+    /// checking the key inside would return `Ok(true)`. Upstream russh states
+    /// the rule at its call site - a certificate replaces the key check rather
+    /// than adding to it, so the key it carries was never something the client
+    /// was told to trust.
+    #[tokio::test]
+    async fn a_host_certificate_is_refused_rather_than_unwrapped() {
+        let ca = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("ca keypair");
+        let host = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host keypair");
+
+        let mut builder = Builder::new_with_random_nonce(
+            &mut rand::rng(),
+            host.public_key().key_data().clone(),
+            0,
+            u64::MAX,
+        )
+        .expect("certificate builder");
+        builder.cert_type(CertType::Host).expect("cert type");
+        builder
+            .valid_principal("cert.example")
+            .expect("valid principal");
+        let cert = builder.sign(&ca).expect("sign certificate");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh_path = dir.path().join("known_hosts");
+        std::fs::File::create(&kh_path).expect("create");
+        known_hosts::learn_known_hosts_path("cert.example", 22, host.public_key(), &kh_path)
+            .expect("learn host key");
+
+        let mut handler = SshClientHandler::new(
+            "cert.example".into(),
+            22,
+            StrictHostKeyChecking::Yes,
+            Some(kh_path),
+        );
+
+        // Non-vacuity: the same entry point accepts the plain key, so a refusal
+        // below cannot be an artefact of the fixture failing to verify at all.
+        let plain = handler
+            .check_server_key(&PublicKeyOrCertificate::PublicKey {
+                key: host.public_key().clone(),
+                hash_alg: None,
+            })
+            .await;
+        assert!(
+            matches!(plain, Ok(true)),
+            "the plain host key must still verify: {plain:?}",
+        );
+
+        let err = handler
+            .check_server_key(&PublicKeyOrCertificate::Certificate(cert))
+            .await
+            .expect_err("a host certificate must be refused");
+        assert!(
+            matches!(err, SshError::HostCertificateUnsupported { ref host } if host == "cert.example"),
+            "expected HostCertificateUnsupported, got: {err:?}",
+        );
+    }
 
     /// Verify handler creation with each strict host key checking mode.
     #[test]

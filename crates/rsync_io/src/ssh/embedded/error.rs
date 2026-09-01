@@ -35,6 +35,20 @@ pub enum SshError {
         host: String,
     },
 
+    /// Server authenticated with an OpenSSH host certificate.
+    ///
+    /// A certificate replaces the plain host-key check rather than adding to
+    /// it, so it can only be trusted against a certificate authority the
+    /// client was told to trust. `known_hosts` `@cert-authority` lines are not
+    /// consulted here, so no CA is ever trusted and the connection is refused
+    /// instead of falling back to the key inside the certificate - that key is
+    /// not something the client was asked to trust.
+    #[error("host certificate presented by {host}, but certificate authorities are not configured")]
+    HostCertificateUnsupported {
+        /// Hostname or IP that presented the certificate.
+        host: String,
+    },
+
     /// Failed to parse an ssh:// URL.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
