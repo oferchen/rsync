@@ -613,6 +613,7 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
 /// - `"no crtimes"` -> `"crtimes": false`
 /// - `"crtimes"` -> `"crtimes": true`
 /// - `"optional secluded-args"` -> `"secluded_args": "optional"`
+///
 /// upstream: usage.c:172-188 - JSON entry formatting in print_info_flags
 fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) -> fmt::Result {
     let comma = if needs_comma { "," } else { "" };
