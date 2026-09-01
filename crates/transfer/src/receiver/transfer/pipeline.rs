@@ -265,6 +265,42 @@ impl ReceiverContext {
         self.emit_pipeline_messages(writer, messages);
     }
 
+    /// Runs one commit drain, flushing whatever the drain queued for the peer
+    /// even when the drain itself is fatal.
+    ///
+    /// A bare `?` on the drain returns before `emit_peer_messages`, so the
+    /// per-file diagnostic that explains the abort - `keep_backup failed: ...`
+    /// for the commit-path backup that upstream answers with
+    /// `exit_cleanup(RERR_FILEIO)` - dies with the loop and the operator sees
+    /// only the exit line. Upstream loses nothing here: `_exit_cleanup()`
+    /// reaches `io_flush(MSG_FLUSH)` before the process ends, so the `FERROR`
+    /// the failed operation printed is already on its way out.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/cleanup.c:242-253` - `_exit_cleanup()` flushes queued
+    ///   messages on the fatal path.
+    /// - `rsync-3.5.0/rsync.c:897-900` - the backup failure that makes this
+    ///   path reachable.
+    fn drain_or_report<W, F>(
+        &self,
+        writer: &mut W,
+        pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
+        drain: F,
+    ) -> io::Result<(u64, Vec<(PathBuf, String)>)>
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+        F: FnOnce(
+            &mut crate::pipeline::receiver::PipelinedReceiver,
+        ) -> io::Result<(u64, Vec<(PathBuf, String)>)>,
+    {
+        let outcome = drain(pipelined_receiver);
+        if outcome.is_err() {
+            self.emit_peer_messages(writer, pipelined_receiver);
+        }
+        outcome
+    }
+
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
@@ -762,7 +798,10 @@ impl ReceiverContext {
                 );
 
                 // Non-blocking: collect any ready disk results.
-                let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
+                let (_disk_bytes, disk_meta_errors) =
+                    self.drain_or_report(writer, &mut pipelined_receiver, |pr| {
+                        pr.drain_ready_results()
+                    })?;
                 metadata_errors.extend(disk_meta_errors);
 
                 // upstream: receiver.c:1063-1069 - a committed file (recv_ok == 1)
@@ -848,7 +887,8 @@ impl ReceiverContext {
             }
 
             // Drain all remaining disk results
-            let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
+            let (_disk_bytes, disk_meta_errors) =
+                self.drain_or_report(writer, &mut pipelined_receiver, |pr| pr.drain_all_results())?;
             metadata_errors.extend(disk_meta_errors);
 
             // upstream: receiver.c:1063-1069 - flush MSG_SUCCESS for the final
