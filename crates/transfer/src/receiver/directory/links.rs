@@ -15,6 +15,8 @@ use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_f
 
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
+#[cfg(any(unix, windows))]
+use crate::receiver::directory::obstacle::MakeWayFor;
 
 impl ReceiverContext {
     /// Reports whether a received symlink's mtime should be preserved.
@@ -190,41 +192,21 @@ impl ReceiverContext {
                     continue;
                 }
                 pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
-                // upstream: generator.c:2018-2020 atomic_create - back the old
-                // symlink up before it is removed when --backup is set; on
-                // backup-mechanism failure upstream skips the entry.
-                match self.backup_existing_before_replace(
-                    &link_path,
-                    relative_path,
-                    dest_dir,
-                    sandbox,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // SEC-1.g: route the obstacle unlink through the sandbox
-                        // dirfd when the destination parent is the sandbox root,
-                        // so a TOCTOU swap on `link_path` between the readlink
-                        // above and this unlink cannot redirect the syscall to
-                        // an attacker-chosen parent. Falls back to path-based
-                        // `remove_file` otherwise.
-                        let _ = fast_io::unlink_via_sandbox_or_fallback(
-                            sandbox,
-                            dest_dir,
-                            relative_path,
-                            &link_path,
-                            fast_io::UnlinkFlags::File,
-                        );
-                    }
-                    Err(error) => {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to back up existing symlink {}: {}",
-                            link_path.display(),
-                            error
-                        );
-                        continue;
-                    }
+                // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
+                // - one decision for the obstacle: rmdir a directory, back up
+                // or unlink anything else. The refusal is reported inside.
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &link_path,
+                        relative_path,
+                        dest_dir,
+                        sandbox,
+                        MakeWayFor::Symlink,
+                    )
+                    .is_err()
+                {
+                    continue;
                 }
             } else if fast_io::lstat_via_sandbox_or_fallback(
                 sandbox,
@@ -234,43 +216,22 @@ impl ReceiverContext {
             )
             .is_ok()
             {
-                // SEC-1.f: when the sandbox is plumbed and the destination
-                // parent is the sandbox root, the obstacle stat goes through
-                // `fstatat(AT_SYMLINK_NOFOLLOW)` so a TOCTOU symlink swap on
-                // `link_path` cannot redirect the probe to a different
-                // inode. Falls back to `symlink_metadata` otherwise.
-                //
-                // upstream: generator.c:2018-2020 atomic_create - back the old
-                // obstacle up before removal when --backup is set.
-                match self.backup_existing_before_replace(
-                    &link_path,
-                    relative_path,
-                    dest_dir,
-                    sandbox,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // SEC-1.g: matching unlink also goes through the sandbox
-                        // dirfd via `unlinkat` so the obstacle-remove syscall is
-                        // anchored on the same parent the stat just observed.
-                        let _ = fast_io::unlink_via_sandbox_or_fallback(
-                            sandbox,
-                            dest_dir,
-                            relative_path,
-                            &link_path,
-                            fast_io::UnlinkFlags::File,
-                        );
-                    }
-                    Err(error) => {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to back up existing obstacle {}: {}",
-                            link_path.display(),
-                            error
-                        );
-                        continue;
-                    }
+                // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
+                // for a non-symlink obstacle. The stat above only selects this
+                // arm; `make_way_for_replacement` re-reads the type through the
+                // same sandbox dirfd to decide between rmdir and backup/unlink.
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &link_path,
+                        relative_path,
+                        dest_dir,
+                        sandbox,
+                        MakeWayFor::Symlink,
+                    )
+                    .is_err()
+                {
+                    continue;
                 }
             } else if !self.config.reference_directories.is_empty() {
                 // upstream: generator.c:1978 - `else if (basis_dir[0] != NULL)`
@@ -507,42 +468,33 @@ impl ReceiverContext {
                     continue;
                 }
                 pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
-                // upstream: generator.c:2018-2020 atomic_create - back the old
-                // symlink up before removal when --backup is set.
-                match self.backup_existing_before_replace(&link_path, relative_path, dest_dir) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        let _ = fs::remove_file(&link_path);
-                    }
-                    Err(error) => {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to back up existing symlink {}: {}",
-                            link_path.display(),
-                            error
-                        );
-                        continue;
-                    }
+                // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK).
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &link_path,
+                        relative_path,
+                        dest_dir,
+                        MakeWayFor::Symlink,
+                    )
+                    .is_err()
+                {
+                    continue;
                 }
             } else if fs::symlink_metadata(&link_path).is_ok() {
-                // upstream: generator.c:2018-2020 atomic_create - back the old
-                // obstacle up before removal when --backup is set.
-                match self.backup_existing_before_replace(&link_path, relative_path, dest_dir) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        let _ = fs::remove_file(&link_path);
-                    }
-                    Err(error) => {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to back up existing obstacle {}: {}",
-                            link_path.display(),
-                            error
-                        );
-                        continue;
-                    }
+                // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
+                // for a non-symlink obstacle.
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &link_path,
+                        relative_path,
+                        dest_dir,
+                        MakeWayFor::Symlink,
+                    )
+                    .is_err()
+                {
+                    continue;
                 }
             }
 

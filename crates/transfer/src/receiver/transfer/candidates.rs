@@ -20,6 +20,8 @@ use metadata::{MetadataOptions, apply_metadata_with_cached_stat, metadata_unchan
 use protocol::flist::FileEntry;
 
 use crate::receiver::directory::FailedDirectories;
+#[cfg(any(unix, windows))]
+use crate::receiver::directory::obstacle::MakeWayFor;
 use crate::receiver::quick_check::{
     BasisTrust, dest_mtime_newer, dest_type_matches_source, is_hardlink_follower,
     quick_check_matches, try_reference_dest,
@@ -83,6 +85,40 @@ fn dest_mtime(meta: &fs::Metadata) -> (i64, u32) {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or((0, 0), |d| (d.as_secs() as i64, d.subsec_nanos()))
     }
+}
+
+/// Reports whether an existing destination has to be removed before a regular
+/// file can be written over it.
+///
+/// Upstream keeps a destination in place only when it is already a regular
+/// file, or when `--write-devices` asked for the delta to be written straight
+/// into an existing device node. Everything else - a directory, a symlink, a
+/// FIFO, a socket, a device without `--write-devices` - is an obstacle that
+/// `delete_item()` clears first.
+///
+/// The metadata handed in is the follow-stat the candidate pass already took,
+/// so a symlink is classified by its target here; the removal itself re-probes
+/// with `lstat` and acts on the link, never through it.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:2148` - `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))`
+#[cfg(unix)]
+fn dest_blocks_regular_file(meta: &fs::Metadata, write_devices: bool) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    let file_type = meta.file_type();
+    if file_type.is_file() {
+        return false;
+    }
+    !(write_devices && (file_type.is_block_device() || file_type.is_char_device()))
+}
+
+/// Windows variant: there is no device node to write through, so anything that
+/// is not a regular file is an obstacle.
+#[cfg(windows)]
+fn dest_blocks_regular_file(meta: &fs::Metadata, _write_devices: bool) -> bool {
+    !meta.file_type().is_file()
 }
 
 pub(in crate::receiver) fn new_dir_count(plan: &[DryRunItem<'_>]) -> u64 {
@@ -153,6 +189,7 @@ impl ReceiverContext {
         &'a self,
         writer: &mut W,
         dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         metadata_opts: &MetadataOptions,
         failed_dirs: Option<&FailedDirectories>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
@@ -333,7 +370,7 @@ impl ReceiverContext {
         // Pre-size for the expected minority that need transfer.
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
-        for (idx, file_path, dest_meta) in stat_results {
+        for (idx, file_path, mut dest_meta) in stat_results {
             // upstream: generator.c:2348-2353 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
             // elapsed so a remote sender's --timeout does not fire while the
@@ -473,6 +510,50 @@ impl ReceiverContext {
                     continue;
                 }
             }
+            // upstream: generator.c:2148-2153 -
+            //   `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE))) {
+            //        if (delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE) != 0)
+            //                goto cleanup;
+            //        statret = -1; stat_errno = ENOENT; }`
+            //
+            // A destination that is not a regular file is REMOVED here, before
+            // the delta is requested. Leaving it standing is not equivalent:
+            // the commit's rename replaces a FIFO or a symlink by accident and
+            // fails outright on a directory, `--backup` never sees the
+            // displaced node, and an inplace or appending write goes THROUGH
+            // the obstacle instead of over it.
+            //
+            // This is `delete_item`'s `DEL_FOR_FILE` arm, so it routes to the
+            // same `make_way_for_replacement` the symlink, FIFO, socket, and
+            // device creators use - one removal, one set of diagnostics. A
+            // refusal is reported inside; skipping the entry here is upstream's
+            // `goto cleanup`.
+            #[cfg(any(unix, windows))]
+            if dest_meta
+                .as_ref()
+                .is_some_and(|meta| dest_blocks_regular_file(meta, self.config.write.write_devices))
+            {
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &file_path,
+                        entry.path(),
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                        MakeWayFor::File,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                // upstream: generator.c:2151-2152 - `statret = -1; stat_errno =
+                // ENOENT;`. The obstacle is gone, so every decision below sees
+                // an absent destination: ITEM_IS_NEW on the itemize row and a
+                // created-file tally rather than a replacement.
+                dest_meta = None;
+            }
+
             // upstream: generator.c:511-579 itemize() - compute the base itemize
             // flags before the data transfer so the row reflects attribute
             // changes against the pre-transfer destination. A non-existent dest
@@ -1402,6 +1483,8 @@ mod itemize_order_tests {
             let files = ctx.build_files_to_transfer(
                 &mut writer,
                 dest,
+                #[cfg(unix)]
+                None,
                 &metadata::MetadataOptions::default(),
                 None,
                 &mut metadata_errors,
@@ -1472,6 +1555,8 @@ mod itemize_order_tests {
             ctx.build_files_to_transfer(
                 &mut writer,
                 dest,
+                #[cfg(unix)]
+                None,
                 &metadata::MetadataOptions::default(),
                 None,
                 &mut metadata_errors,
@@ -2152,6 +2237,8 @@ mod itemize_order_tests {
         let _ = ctx.build_files_to_transfer(
             &mut writer,
             dest,
+            #[cfg(unix)]
+            None,
             &opts,
             None,
             &mut metadata_errors,
@@ -2211,6 +2298,8 @@ mod itemize_order_tests {
         let candidates = ctx.build_files_to_transfer(
             &mut writer,
             dest,
+            #[cfg(unix)]
+            None,
             &metadata::MetadataOptions::default(),
             None,
             &mut metadata_errors,
@@ -2555,6 +2644,8 @@ mod skip_notice_tests {
         let _ = ctx.build_files_to_transfer(
             &mut writer,
             dest,
+            #[cfg(unix)]
+            None,
             &opts,
             None,
             &mut errs,

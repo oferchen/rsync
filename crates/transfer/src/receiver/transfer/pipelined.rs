@@ -155,6 +155,8 @@ impl ReceiverContext {
         let files_to_transfer = self.build_files_to_transfer(
             writer,
             &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
             &setup.metadata_opts,
             None,
             &mut metadata_errors,

@@ -192,6 +192,8 @@ fn build_files_to_transfer_keepalive_gated_on_timeout() {
     let _ = ctx.build_files_to_transfer(
         &mut writer,
         dir.path(),
+        #[cfg(unix)]
+        None,
         &opts,
         None,
         &mut errors,
@@ -207,6 +209,8 @@ fn build_files_to_transfer_keepalive_gated_on_timeout() {
     let _ = ctx.build_files_to_transfer(
         &mut writer,
         dir.path(),
+        #[cfg(unix)]
+        None,
         &opts,
         None,
         &mut errors,
