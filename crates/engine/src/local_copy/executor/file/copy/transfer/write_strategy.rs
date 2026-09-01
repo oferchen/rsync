@@ -6,6 +6,7 @@
 //! file with atomic rename.
 
 use std::fs;
+use std::io;
 use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,38 @@ use logging::debug_log;
 use crate::local_copy::{CopyContext, LocalCopyError};
 
 use super::super::super::guard::DestinationWriteGuard;
+use super::super::super::paths::partial_dir_fname;
+
+/// upstream's `partialptr` when it names an existing regular file, i.e. the
+/// staging target of a `one_inplace` update.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:2173-2179` - `partial_dir && (partialptr =
+///   partial_dir_fname(fname)) != NULL && link_stat(partialptr, &partial_st, 0)
+///   == 0 && S_ISREG(partial_st.st_mode)`, otherwise `partialptr = NULL`.
+///   `link_stat(..., 0)` is an `lstat`, so a symlink planted at the partial leaf
+///   is not a regular file and is refused here exactly as it is there.
+/// - `rsync-3.5.0/receiver.c:1137-1138` - `one_inplace = inplace_partial &&
+///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
+///
+/// The `inplace_partial` half of that conjunction is the protocol-30
+/// `CF_INPLACE_PARTIAL_DIR` capability (`compat.c:738`, `options.c:3221`), which
+/// upstream negotiates with itself on a local transfer too - and this executor
+/// IS both ends, so it is unconditionally true here. The `fd1 != -1` half guards
+/// against a *peer* claiming a partial basis the receiver's confined open then
+/// rejects (`receiver.c:1093-1105`); nothing here is peer-supplied, the path is
+/// derived locally from the operator's own `--partial-dir`, so the remaining
+/// condition is upstream's `partialptr != NULL` alone.
+pub(in crate::local_copy) fn one_inplace_partial_file(
+    context: &CopyContext,
+    destination: &Path,
+) -> Option<PathBuf> {
+    let dir = context.partial_directory_path()?;
+    let candidate = partial_dir_fname(destination, dir);
+    let metadata = fs::symlink_metadata(&candidate).ok()?;
+    metadata.is_file().then_some(candidate)
+}
 
 /// The write strategy for transferring a file to disk.
 ///
@@ -27,6 +60,13 @@ pub(in crate::local_copy) enum WriteStrategy {
     /// Write directly to destination without temp file.
     /// Truncates when no delta signature exists.
     Inplace,
+    /// upstream's `one_inplace`: write straight into the `--partial-dir` entry
+    /// and rename that entry onto the destination on commit.
+    ///
+    /// upstream: `receiver.c:1195-1196` - `fnametmp = one_inplace ? partialptr
+    /// : fname`. The in-place target is the file inside the partial dir, never
+    /// the live destination.
+    InplacePartialDir,
     /// Create new file directly - no existing destination to protect.
     /// Uses `create_new(true)` to prevent races with concurrent writers.
     Direct,
@@ -48,15 +88,38 @@ pub(in crate::local_copy) enum WriteStrategy {
 /// # Strategy selection (upstream: receiver.c)
 ///
 /// 1. **Append** - `append_offset > 0`: resume writing at end of existing file.
-/// 2. **Inplace** - `--inplace`: write directly, truncating only when no delta.
-/// 3. **AnonymousTempFile** - Linux with `O_TMPFILE` support, no `--partial`
+/// 2. **InplacePartialDir** - upstream's `one_inplace`: a `--partial-dir` entry
+///    for this file already exists as a regular file, so the reconstruction is
+///    written into it and that entry is renamed onto the destination.
+/// 3. **Inplace** - `--inplace`: write directly, truncating only when no delta.
+/// 4. **AnonymousTempFile** - Linux with `O_TMPFILE` support, no `--partial`
 ///    (partial files need a visible staging path for resume), no `--temp-dir`
 ///    (cross-device linkat would fail): anonymous inode + `linkat(2)`. Preferred
 ///    over both Direct and TempFileRename because the kernel auto-cleans the
 ///    anonymous inode on crash - no orphaned temp files or partial writes.
-/// 4. **Direct** - no existing destination AND none of `--partial`,
+/// 5. **Direct** - no existing destination AND none of `--partial`,
 ///    `--delay-updates`, `--temp-dir`: create file directly.
-/// 5. **TempFileRename** - all other cases: temp file + atomic rename.
+/// 6. **TempFileRename** - all other cases: temp file + atomic rename.
+///
+/// `one_inplace_partial_dir` outranks plain `--inplace` for the same reason
+/// upstream's `fnametmp = one_inplace ? partialptr : fname`
+/// (`receiver.c:1196`) resolves the ternary before consulting `inplace`: when a
+/// partial-dir entry is the update target it IS the target, whichever other
+/// in-place mode is also on. `--inplace`/`--append` and `--partial-dir` are in
+/// fact rejected together during config validation
+/// (`core/src/client/config/builder`, upstream `options.c:2424-2432`), so the
+/// precedence is not observable through the CLI; it is written this way so it
+/// stays upstream's if the two are ever wired together.
+///
+/// ⚠ **Append is the one exception, and it is deliberate.** Upstream's ternary
+/// picks the *target*; the append seek (`receiver.c:372-373`) is a separate
+/// decision that upstream applies to whichever fd it opened, and its offset
+/// comes from `sx.st`, which the generator has already replaced with
+/// `partial_st` (`generator.c:2271`) - i.e. from the PARTIAL file's length. This
+/// executor derives `append_offset` from the destination's length instead, which
+/// is not the file `one_inplace` writes into, so honouring it here would seek to
+/// the wrong offset in the wrong file. Append keeps its own strategy until that
+/// offset is derived from the staging target.
 pub(in crate::local_copy) fn select_write_strategy(
     append_offset: u64,
     inplace_enabled: bool,
@@ -64,10 +127,13 @@ pub(in crate::local_copy) fn select_write_strategy(
     delay_updates_enabled: bool,
     has_existing_destination: bool,
     has_temp_directory: bool,
+    one_inplace_partial_dir: bool,
     destination: &Path,
 ) -> WriteStrategy {
     if append_offset > 0 {
         WriteStrategy::Append
+    } else if one_inplace_partial_dir {
+        WriteStrategy::InplacePartialDir
     } else if inplace_enabled {
         WriteStrategy::Inplace
     } else if !partial_enabled && !has_temp_directory && can_use_anonymous_tmpfile(destination) {
@@ -108,6 +174,9 @@ pub(in crate::local_copy) fn can_use_anonymous_tmpfile(destination: &Path) -> bo
 /// Each strategy maps to a distinct I/O path:
 /// - **Append**: opens existing file and seeks to append offset
 /// - **Inplace**: opens for writing without temp file (truncates only when no delta)
+/// - **InplacePartialDir**: opens the `--partial-dir` entry through the
+///   ownership walk (upstream's `one_inplace`); the commit renames it onto the
+///   destination
 /// - **Direct**: creates new file directly when no existing destination
 /// - **TempFileRename**: creates a staging file via `DestinationWriteGuard`
 #[allow(clippy::too_many_arguments)]
@@ -119,6 +188,7 @@ pub(in crate::local_copy) fn open_destination_writer(
     append_offset: u64,
     partial_enabled: bool,
     strategy: WriteStrategy,
+    one_inplace_partial_file: Option<&Path>,
     guard: &mut Option<DestinationWriteGuard>,
     staging_path: &mut Option<PathBuf>,
 ) -> Result<fs::File, LocalCopyError> {
@@ -147,6 +217,62 @@ pub(in crate::local_copy) fn open_destination_writer(
                 fast_io::InplaceResolution::Direct,
             )
             .map_err(|error| LocalCopyError::io("copy file", destination, error))
+        }
+        WriteStrategy::InplacePartialDir => {
+            // upstream: receiver.c:1196 - `fnametmp = one_inplace ? partialptr
+            // : fname`. The reconstruction goes into the partial-dir entry; the
+            // guard's commit rename is upstream's
+            // `finish_transfer(fname, fnametmp, ...)` (receiver.c:1288).
+            let Some(partial_file) = one_inplace_partial_file else {
+                return Err(LocalCopyError::io(
+                    "copy file",
+                    destination,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "one_inplace staging selected without a --partial-dir entry",
+                    ),
+                ));
+            };
+            let Some(partial_dir) = context.partial_directory_path() else {
+                return Err(LocalCopyError::io(
+                    "copy file",
+                    destination,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "one_inplace staging selected without --partial-dir",
+                    ),
+                ));
+            };
+            // ⚠ Upstream never passes `O_TRUNC` here, and this does. The
+            // difference is one unported half, not a policy choice: upstream's
+            // generator makes `partialptr` the delta basis as well as the
+            // in-place target (`generator.c:2270-2273` - `fnamecmp = partialptr;
+            // fnamecmp_type = FNAMECMP_PARTIAL_DIR`), so its reconstruction
+            // reads the entry it is writing and a final `ftruncate` sizes the
+            // result. This executor still picks its basis from the destination
+            // or a `--fuzzy` candidate only, so the partial entry is pure
+            // output: nothing reads it back, and its old tail has to go on open
+            // or it would survive past a shorter result. When the basis half is
+            // ported this becomes `delta_signature.is_none()`, exactly as
+            // `WriteStrategy::Inplace` above.
+            let should_truncate = true;
+            debug_log!(
+                Io,
+                3,
+                "one_inplace staging for {} into {}",
+                record_path.display(),
+                partial_file.display()
+            );
+            let (new_guard, file) = DestinationWriteGuard::new_one_inplace(
+                destination,
+                partial_file,
+                partial_dir,
+                should_truncate,
+                Some(context.destination_root()),
+            )?;
+            *staging_path = Some(new_guard.staging_path().to_path_buf());
+            *guard = Some(new_guard);
+            Ok(file)
         }
         WriteStrategy::Direct => {
             // Direct write when there is no existing file to protect.
@@ -280,8 +406,62 @@ mod tests {
             delay,
             existing,
             temp_dir,
+            false,
             Path::new(NO_TMPFILE),
         )
+    }
+
+    /// `strategy()` with upstream's `one_inplace` gate turned on.
+    fn strategy_one_inplace(partial: bool, existing: bool) -> WriteStrategy {
+        select_write_strategy(
+            0,
+            false,
+            partial,
+            false,
+            existing,
+            false,
+            true,
+            Path::new(NO_TMPFILE),
+        )
+    }
+
+    #[test]
+    fn append_outranks_one_inplace_staging() {
+        // The append offset is measured against the destination, not against
+        // the partial-dir entry one_inplace would write into, so the append
+        // strategy keeps precedence. See the note on `select_write_strategy`.
+        assert_eq!(
+            select_write_strategy(
+                1024,
+                false,
+                true,
+                false,
+                true,
+                false,
+                true,
+                Path::new(NO_TMPFILE),
+            ),
+            WriteStrategy::Append
+        );
+    }
+
+    #[test]
+    fn existing_partial_dir_entry_selects_one_inplace_staging() {
+        // upstream: receiver.c:1195-1196 - `fnametmp = one_inplace ? partialptr
+        // : fname`. Without this the same inputs pick TempFileRename and the
+        // partial-dir entry is never opened at all.
+        assert_eq!(
+            strategy_one_inplace(true, false),
+            WriteStrategy::InplacePartialDir
+        );
+        assert_eq!(
+            strategy_one_inplace(true, true),
+            WriteStrategy::InplacePartialDir
+        );
+        assert_eq!(
+            strategy(0, false, true, false, false, false),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
@@ -434,7 +614,7 @@ mod tests {
         // files need a visible staging path.
         let dir = tempfile::tempdir().expect("tempdir");
         let dest = dir.path().join("file.txt");
-        let result = select_write_strategy(0, false, true, false, true, false, &dest);
+        let result = select_write_strategy(0, false, true, false, true, false, false, &dest);
         assert_eq!(result, WriteStrategy::TempFileRename);
     }
 
@@ -443,7 +623,7 @@ mod tests {
         // --temp-dir prevents anonymous because linkat cannot cross devices.
         let dir = tempfile::tempdir().expect("tempdir");
         let dest = dir.path().join("file.txt");
-        let result = select_write_strategy(0, false, false, false, true, true, &dest);
+        let result = select_write_strategy(0, false, false, false, true, true, false, &dest);
         assert_eq!(result, WriteStrategy::TempFileRename);
     }
 

@@ -35,6 +35,23 @@ enum PartialKind {
         file: PathBuf,
         remove_dir: Option<PathBuf>,
     },
+    /// upstream's `one_inplace`: the reconstruction was written straight into
+    /// the `--partial-dir` entry, so that entry IS the staging file and there is
+    /// no separate temp to move anywhere.
+    ///
+    /// On failure the file simply stays where it is - `partial_dest` names the
+    /// staging path itself, so the shared failure finaliser performs a
+    /// self-rename and leaves it untouched. On success the commit rename moves
+    /// it onto the destination and only the now-empty relative dir is removed:
+    /// upstream skips its `do_unlink_at(partialptr)` under `!one_inplace`
+    /// (`receiver.c:1291`) precisely because `finish_transfer()` has already
+    /// renamed that entry away, and then still calls
+    /// `handle_partial_dir(partialptr, PDIR_DELETE)` (`receiver.c:1299`) to
+    /// remove the directory.
+    OneInplace {
+        file: PathBuf,
+        remove_dir: Option<PathBuf>,
+    },
 }
 
 impl PartialKind {
@@ -43,7 +60,7 @@ impl PartialKind {
         match self {
             Self::Discard => None,
             Self::Keep => Some(final_path),
-            Self::Dir { file, .. } => Some(file),
+            Self::Dir { file, .. } | Self::OneInplace { file, .. } => Some(file),
         }
     }
 
@@ -502,6 +519,78 @@ impl DestinationWriteGuard {
         }
     }
 
+    /// Creates a write guard for upstream's `one_inplace` staging: the
+    /// reconstruction is written straight into the `--partial-dir` entry and
+    /// that entry is renamed onto the destination on commit.
+    ///
+    /// `partial_file` is upstream's `partialptr` - `partial_dir_fname(fname)`,
+    /// the operator-named `--partial-dir` path. It is opened through
+    /// `fast_io`'s three-arm in-place chain with
+    /// [`InplaceResolution::OperatorWalk`](fast_io::InplaceResolution::OperatorWalk),
+    /// which is upstream's `one_inplace` argument to `secure_recv_open()`: the
+    /// target is an operator-supplied path that may legitimately point outside
+    /// the transfer tree, so every component is walked and a foreign-owned
+    /// symlink is refused. Threading the walk through *every* arm is the point -
+    /// a `protected_regular` retry that dropped to the plain resolver would
+    /// follow a parent flipped to a symlink inside the `EACCES` window.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/receiver.c:1195-1196` - `if (inplace || one_inplace) {
+    ///   fnametmp = one_inplace ? partialptr : fname; }`. The in-place target of
+    ///   a `one_inplace` update is the file in the partial dir, **not** the live
+    ///   destination.
+    /// - `rsync-3.5.0/receiver.c:1204-1224` - the three-arm open chain, each arm
+    ///   handed `one_inplace`.
+    /// - `rsync-3.5.0/receiver.c:1288` - `finish_transfer(fname, fnametmp, ...)`
+    ///   with `fnametmp == partialptr` renames the grown partial onto the
+    ///   destination.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the partial-dir entry cannot be opened for writing,
+    /// including the ownership walk's refusal of a foreign-owned component.
+    pub fn new_one_inplace(
+        destination: &Path,
+        partial_file: &Path,
+        partial_dir: &Path,
+        truncate: bool,
+        dest_root: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
+        let file = fast_io::open_inplace_output(
+            partial_file,
+            truncate,
+            fast_io::InplaceResolution::OperatorWalk,
+        )
+        .map_err(|error| LocalCopyError::io("copy file", partial_file, error))?;
+
+        // upstream: `handle_partial_dir()` only removes a *relative* partial
+        // dir; an absolute one is a reserved location.
+        let remove_dir = if partial_dir.is_relative() {
+            partial_file.parent().map(Path::to_path_buf)
+        } else {
+            None
+        };
+        let staging = partial_file.to_path_buf();
+        CleanupManager::global().register_partial(staging.clone(), Some(staging.clone()), false);
+
+        Ok((
+            Self {
+                final_path: destination.to_path_buf(),
+                strategy: GuardStrategy::NamedTempFile {
+                    temp_path: staging.clone(),
+                    partial: PartialKind::OneInplace {
+                        file: staging,
+                        remove_dir,
+                    },
+                },
+                committed: false,
+                dest_root: dest_root.map(Path::to_path_buf),
+            },
+            file,
+        ))
+    }
+
     /// Creates a write guard backed by an anonymous `O_TMPFILE` file descriptor.
     ///
     /// On Linux 3.11+ with a supporting filesystem, this opens an anonymous inode
@@ -582,6 +671,14 @@ impl DestinationWriteGuard {
         let GuardStrategy::NamedTempFile { temp_path, partial } = &mut self.strategy else {
             return Ok(None);
         };
+        // upstream: receiver.c:1301 - `keep_partial && partialptr && (!one_inplace
+        // || delay_updates)`. A `one_inplace` update wrote INTO the partial-dir
+        // entry, so under `--delay-updates` it is already staged there and
+        // upstream's `finish_transfer(partialptr, fnametmp, ...)` is a
+        // self-rename; only the deferred commit remains.
+        if let PartialKind::OneInplace { file, .. } = partial {
+            return Ok(Some(file.clone()));
+        }
         let PartialKind::Dir { file, .. } = partial else {
             return Ok(None);
         };
@@ -611,7 +708,8 @@ impl DestinationWriteGuard {
     pub fn partial_dir_to_remove(&self) -> Option<&Path> {
         match &self.strategy {
             GuardStrategy::NamedTempFile {
-                partial: PartialKind::Dir { remove_dir, .. },
+                partial:
+                    PartialKind::Dir { remove_dir, .. } | PartialKind::OneInplace { remove_dir, .. },
                 ..
             } => remove_dir.as_deref(),
             _ => None,
@@ -674,6 +772,17 @@ impl DestinationWriteGuard {
                             if let Some(dir) = remove_dir {
                                 let _ = fs::remove_dir(dir);
                             }
+                        }
+                    }
+                    // upstream: receiver.c:1291-1299 - under `one_inplace`
+                    // the `do_unlink_at(partialptr)` is skipped (the commit
+                    // rename already moved that entry onto the destination) but
+                    // `handle_partial_dir(partialptr, PDIR_DELETE)` still runs,
+                    // so the emptied relative partial dir is removed.
+                    Some(PartialKind::OneInplace { remove_dir, .. }) => {
+                        CleanupManager::global().unregister_partial(&temp_path);
+                        if let Some(dir) = remove_dir {
+                            let _ = fs::remove_dir(dir);
                         }
                     }
                     _ => {}
@@ -903,7 +1012,9 @@ impl DestinationWriteGuard {
         match &self.strategy {
             GuardStrategy::NamedTempFile { partial, .. } => match partial {
                 PartialKind::Discard => "finalise temporary file",
-                PartialKind::Keep | PartialKind::Dir { .. } => "finalise partial file",
+                PartialKind::Keep | PartialKind::Dir { .. } | PartialKind::OneInplace { .. } => {
+                    "finalise partial file"
+                }
             },
             #[cfg(target_os = "linux")]
             GuardStrategy::Anonymous { .. } => "finalise anonymous temp file",

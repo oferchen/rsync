@@ -28,11 +28,47 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
-use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+use rustix::fs::{Mode, OFlags};
 use rustix::io::Errno;
+
+use crate::dir_sandbox::at_syscalls;
+
+/// Issue the walk's `openat(2)` through the platform C library.
+///
+/// Every syscall this resolver makes goes through `fast_io`'s own libc-backed
+/// `*at` primitives rather than `rustix`, whose `linux_raw` backend issues the
+/// syscall instruction directly and bypasses libc entirely. Upstream's walk is
+/// plain C - `syscall.c:469` calls `openat(2)` from libc - so anything that
+/// interposes on the libc symbol (an operator's `LD_PRELOAD` shim, `fakeroot`,
+/// an audit or sandbox preload) sees upstream's resolution and, before this,
+/// did NOT see oc's. That is the same class of divergence as reading the euid
+/// from a raw syscall while upstream reads it from libc: the two answer
+/// different questions in an interposed process.
+///
+/// The `*at` form is also what the daemon's seccomp allowlist admits; see
+/// `open_start_dir` for why the no-dirfd `open(2)` is never used here.
+///
+/// `O_LARGEFILE` is added on Linux because `rustix`'s `linux_raw` backend adds
+/// it unconditionally and the plain libc `openat` symbol does not. It is a
+/// no-op on every 64-bit target, so this is not a behaviour choice - it keeps
+/// the emitted flag word identical to what this walk issued before, which is
+/// what makes the switch a backend change and nothing else.
+fn walk_openat(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    flags: OFlags,
+    mode: Mode,
+) -> io::Result<OwnedFd> {
+    #[allow(unused_mut)]
+    let mut raw_flags = flags.bits() as libc::c_int;
+    #[cfg(target_os = "linux")]
+    {
+        raw_flags |= libc::O_LARGEFILE;
+    }
+    at_syscalls::openat(dirfd, name, raw_flags, u32::from(mode.bits())).map(OwnedFd::from)
+}
 
 /// Symlink-follow budget for one walk, spent across every component.
 ///
@@ -81,8 +117,7 @@ pub fn symlink_owner_is_trusted(uid: u32) -> bool {
 /// `flags` comes from [`traversal_dir_flags`] - this descriptor is a step, not
 /// the answer.
 fn open_dir_component(dirfd: BorrowedFd<'_>, name: &OsStr, flags: OFlags) -> io::Result<OwnedFd> {
-    rustix::fs::openat(dirfd, name, flags | OFlags::NOFOLLOW, Mode::empty())
-        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
+    walk_openat(dirfd, name, flags | OFlags::NOFOLLOW, Mode::empty())
 }
 
 /// The components a walk must step through, in order.
@@ -286,13 +321,12 @@ fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
     // the raw `SYS_open` for the no-dirfd form, and the daemon's seccomp
     // allowlist admits only the `*at` variants, so a plain `open` is EPERM'd
     // inside a worker. `openat(AT_FDCWD, p, ..)` is the same operation.
-    rustix::fs::openat(
+    walk_openat(
         rustix::fs::CWD,
-        if absolute { "/" } else { "." },
+        OsStr::new(if absolute { "/" } else { "." }),
         flags,
         Mode::empty(),
     )
-    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
 /// Open the walk's final component with the caller's flags.
@@ -309,13 +343,12 @@ fn open_final(
     flags: OFlags,
     mode: Mode,
 ) -> io::Result<OwnedFd> {
-    rustix::fs::openat(
+    walk_openat(
         dirfd,
         name,
         flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         mode,
     )
-    .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))
 }
 
 /// Walk `path` component-by-component and open its final component.
@@ -400,8 +433,7 @@ fn owner_walk_open_tracked(
             path
         };
         // `openat`/`CWD` for the same seccomp reason as `open_start_dir`.
-        return rustix::fs::openat(rustix::fs::CWD, target, flags, mode)
-            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
+        return walk_openat(rustix::fs::CWD, target.as_os_str(), flags, mode);
     }
 
     let mut pending = walk_components(path);
@@ -415,33 +447,34 @@ fn owner_walk_open_tracked(
         let name = pending.remove(0);
         let is_last = pending.is_empty();
 
-        let stat =
-            match rustix::fs::statat(dirfd.as_fd(), name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(stat) => stat,
-                // upstream: syscall.c:381-396 - the leaf may legitimately not exist
-                // yet under O_CREAT (the `--log-file=/tmp/dir/rsync.log` shape).
-                // Open it with O_NOFOLLOW so a leaf raced into a symlink between
-                // this failed stat and the open is still refused.
-                Err(errno)
-                    if is_last && errno == Errno::NOENT && flags.contains(OFlags::CREATE) =>
-                {
-                    // upstream: syscall.c:387-391 - the confinement is checked on
-                    // this arm too. A create is exactly where a redirected leaf
-                    // does its damage, so skipping it here would leave the
-                    // `--partial-dir`/`--temp-dir` shapes unconfined.
-                    tracker.step(&name);
-                    tracker.refuse_if_outside()?;
-                    *resolved = tracker.resolved().map(Path::to_path_buf);
-                    return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
-                }
-                Err(errno) => return Err(io::Error::from_raw_os_error(errno.raw_os_error())),
-            };
+        let stat = match at_syscalls::fstatat_nofollow(dirfd.as_fd(), name.as_os_str()) {
+            Ok(stat) => stat,
+            // upstream: syscall.c:381-396 - the leaf may legitimately not exist
+            // yet under O_CREAT (the `--log-file=/tmp/dir/rsync.log` shape).
+            // Open it with O_NOFOLLOW so a leaf raced into a symlink between
+            // this failed stat and the open is still refused.
+            Err(error)
+                if is_last
+                    && error.raw_os_error() == Some(libc::ENOENT)
+                    && flags.contains(OFlags::CREATE) =>
+            {
+                // upstream: syscall.c:387-391 - the confinement is checked on
+                // this arm too. A create is exactly where a redirected leaf
+                // does its damage, so skipping it here would leave the
+                // `--partial-dir`/`--temp-dir` shapes unconfined.
+                tracker.step(&name);
+                tracker.refuse_if_outside()?;
+                *resolved = tracker.resolved().map(Path::to_path_buf);
+                return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
+            }
+            Err(error) => return Err(error),
+        };
 
-        if FileType::from_raw_mode(stat.st_mode as _) == FileType::Symlink {
+        if stat.is_symlink() {
             // upstream: syscall.c:406 - an other-uid symlink is the attacker's
             // and is refused; uid 0 or our own euid is the operator's own
             // layout and is followed. This arm is reached for the leaf too.
-            if !symlink_owner_is_trusted(stat.st_uid) {
+            if !symlink_owner_is_trusted(stat.uid()) {
                 return Err(io::Error::from_raw_os_error(libc::ELOOP));
             }
             if hops == 0 {
@@ -449,9 +482,7 @@ fn owner_walk_open_tracked(
             }
             hops -= 1;
 
-            let target = rustix::fs::readlinkat(dirfd.as_fd(), name.as_os_str(), Vec::new())
-                .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
-            let target = PathBuf::from(OsStr::from_bytes(target.as_bytes()));
+            let target = at_syscalls::readlinkat(dirfd.as_fd(), name.as_os_str())?;
             if target.is_absolute() {
                 // upstream: syscall.c:445 "followed an absolute target: restart from /".
                 dirfd = open_start_dir(true, traverse)?;
@@ -476,7 +507,7 @@ fn owner_walk_open_tracked(
 
         // upstream: syscall.c:479 - an interior component that is not a
         // directory is ENOTDIR, not a silent stop.
-        if FileType::from_raw_mode(stat.st_mode as _) != FileType::Directory {
+        if !stat.is_dir() {
             return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
         }
         dirfd = open_dir_component(dirfd.as_fd(), name.as_os_str(), traverse)?;
@@ -493,8 +524,12 @@ fn owner_walk_open_tracked(
     // subject to the sandbox exactly as that one was.
     *resolved = tracker.resolved().map(Path::to_path_buf);
     if by_location {
-        return rustix::fs::openat(dirfd.as_fd(), ".", flags | OFlags::CLOEXEC, mode)
-            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()));
+        return walk_openat(
+            dirfd.as_fd(),
+            OsStr::new("."),
+            flags | OFlags::CLOEXEC,
+            mode,
+        );
     }
     Ok(dirfd)
 }
