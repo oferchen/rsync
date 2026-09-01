@@ -5739,6 +5739,87 @@ fn source_base_interning_round_trips_and_shares() {
     );
 }
 
+/// A failed source unlink must hand the caller upstream's `FERROR_XFER` text,
+/// naming the file-list entry rather than the sender's real path.
+///
+/// WHY THIS MATTERS, and why an `io_error` bit is not a substitute.
+///
+/// Upstream's `successful_send()` sets no `io_error` bit at all: every failing
+/// arm ends at `rsyserr(FERROR_XFER, ...)` (`sender.c:455-462`), and it is that
+/// log code that decides the exit status. `rwrite()` sets `got_xfer_error = 1`
+/// on `FERROR_XFER` (`log.c:337-338`) and, on a server, forwards the same text
+/// to the client as `MSG_ERROR_XFER` (`log.c:357-367`), which sets
+/// `got_xfer_error` on the client too; `cleanup.c:217-218` then lifts a zero
+/// exit to `RERR_PARTIAL` (23) at BOTH ends. A sender that writes the failure
+/// to its own stderr therefore tells a pulling client nothing - not the
+/// message, and not the exit code - which is exactly how a destructive-intent
+/// option came to report success while having silently not removed anything.
+///
+/// The name is asserted as well because routing the text to the peer puts it on
+/// the wire: upstream prints `f_name(file, fname)` after `change_pathname()`
+/// (`sender.c:412-414`), i.e. the file-list name, so a daemon module never
+/// leaks its server-side prefix to the client.
+#[cfg(unix)]
+#[test]
+fn remove_source_files_failure_yields_ferror_xfer_text() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp = create_test_files(&[("keep.txt", b"payload")]);
+    let src = temp.path().join("keep.txt");
+    let (_h, mut ctx) = test_generator_for_path(&src, false);
+    ctx.config.flags.remove_source_files = true;
+    build_file_list_for(&mut ctx, &src);
+
+    let flat = (0..ctx.file_list.len())
+        .find(|&i| ctx.file_list[i].is_file())
+        .expect("the single-file source produces one file entry");
+    let wire = ctx.flat_to_wire_ndx(flat);
+    let flist_name = ctx.file_list[flat].path().to_path_buf();
+    ctx.pending_source_removals.mark_pending(flat);
+
+    // Deny write on the parent so the unlink fails with EACCES - a real
+    // permission refusal, not a vanished source (which is upstream's benign
+    // FINFO arm) and not a refused syscall.
+    let mut perms = std::fs::metadata(temp.path())
+        .expect("stat the source directory")
+        .permissions();
+    let restore = perms.clone();
+    perms.set_mode(0o555);
+    std::fs::set_permissions(temp.path(), perms).expect("make the parent read-only");
+
+    let outcome = ctx.confirm_source_removal(wire);
+
+    std::fs::set_permissions(temp.path(), restore).expect("restore the parent");
+
+    assert!(
+        src.exists(),
+        "the fixture must exercise a FAILED unlink: the source is still there"
+    );
+    assert_ne!(
+        outcome.io_error, 0,
+        "a failed unlink is an error, not a silent no-op"
+    );
+    let text = outcome.error_xfer.as_deref().expect(
+        "a failed unlink must hand back upstream's FERROR_XFER text; \
+                 without it the caller has nothing to set got_xfer_error with, \
+                 and a pulling client exits 0 (sender.c:455-459, log.c:337-338)",
+    );
+    assert!(
+        text.contains("sender failed to remove"),
+        "the text must be upstream's, got: {text:?}"
+    );
+    assert!(
+        text.contains(&*flist_name.to_string_lossy()),
+        "the diagnostic must name the file-list entry {flist_name:?}, got: {text:?}"
+    );
+    assert!(
+        !text.contains(&*temp.path().to_string_lossy()),
+        "the diagnostic is forwarded to the peer, so it must not carry the \
+         sender's real path prefix (sender.c:412-414 f_name after \
+         change_pathname), got: {text:?}"
+    );
+}
+
 /// A source is removed only after its commit is confirmed by `MSG_SUCCESS`.
 ///
 /// Encodes the crash-safety contract of upstream `successful_send()`
@@ -5767,8 +5848,12 @@ fn remove_source_files_unlinks_after_msg_success() {
     );
 
     // MSG_SUCCESS(ndx) confirms the commit and drives the deferred unlink.
-    let io_error = ctx.confirm_source_removal(wire);
-    assert_eq!(io_error, 0, "a clean removal sets no io_error bits");
+    let outcome = ctx.confirm_source_removal(wire);
+    assert_eq!(outcome.io_error, 0, "a clean removal sets no io_error bits");
+    assert!(
+        outcome.error_xfer.is_none(),
+        "a clean removal queues no FERROR_XFER diagnostic"
+    );
     assert!(!src.exists(), "a confirmed source must be removed");
     assert!(
         ctx.pending_source_removals.is_empty(),
@@ -5804,7 +5889,7 @@ fn remove_source_files_defers_until_msg_success() {
     // A confirmation for an index the sender never marked pending must not
     // trigger a spurious deletion.
     let bogus_wire = ctx.flat_to_wire_ndx(flat) + 100;
-    assert_eq!(ctx.confirm_source_removal(bogus_wire), 0);
+    assert_eq!(ctx.confirm_source_removal(bogus_wire).io_error, 0);
     assert!(
         src.exists(),
         "a stray MSG_SUCCESS must never delete an unrelated source"
@@ -5877,7 +5962,7 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
     // dropped: exactly one MSG_SUCCESS is consumed.
     let wire_first = ctx.flat_to_wire_ndx(file_flats[0]);
     assert_eq!(
-        ctx.confirm_source_removal(wire_first),
+        ctx.confirm_source_removal(wire_first).io_error,
         0,
         "a clean removal sets no io_error bits"
     );

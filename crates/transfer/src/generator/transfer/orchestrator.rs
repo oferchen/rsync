@@ -299,8 +299,26 @@ impl GeneratorContext {
         // failed transfer returns via `?` above and never reaches this point,
         // so its source is intentionally left in place. This is the crash-safe
         // ordering the inline unlink violated.
+        // upstream: sender.c:455-462 - every failing arm of successful_send()
+        // ends at FERROR_XFER, and it is the LOG CODE that carries the exit
+        // status, not an io_error bit: rwrite() sets got_xfer_error (log.c:338)
+        // and, on a server, forwards the text as MSG_ERROR_XFER (log.c:357-367)
+        // so the client sets got_xfer_error too. cleanup.c:217-218 then lifts a
+        // zero exit to RERR_PARTIAL (23) on BOTH ends. Routing the failure
+        // through `emit_sender_diagnostic` is therefore what makes a pulling
+        // client exit 23; the io_error bit alone only reaches a client that is
+        // itself the sender, because this drain runs after the sender has
+        // already sent its MSG_IO_ERROR.
         for wire_ndx in reader.take_success_indices() {
-            self.io_error |= self.confirm_source_removal(wire_ndx);
+            let outcome = self.confirm_source_removal(wire_ndx);
+            self.io_error |= outcome.io_error;
+            if let Some(text) = outcome.error_xfer {
+                self.emit_sender_diagnostic(
+                    writer,
+                    super::super::protocol_io::SenderDiagnostic::ErrorXfer,
+                    &text,
+                )?;
+            }
         }
 
         // UTS-V3.A drain barrier: explicit user-space drain after

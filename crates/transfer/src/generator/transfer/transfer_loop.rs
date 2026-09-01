@@ -192,6 +192,58 @@ fn sender_op_failure(op: &str, path: &Path, error: &io::Error) -> String {
     )
 }
 
+/// What a `--remove-source-files` removal attempt owes its caller: the
+/// `io_error` bits to accumulate, and the `FERROR_XFER` diagnostic to report.
+///
+/// The two travel together because upstream produces them together: every
+/// failing arm of `successful_send()` ends at `rsyserr(FERROR_XFER, ...)` /
+/// `rprintf(FERROR_XFER, ...)`, and it is that log code - not an `io_error`
+/// bit - that upstream turns into the exit status. `rwrite()` sets
+/// `got_xfer_error = 1` on `FERROR_XFER`, and on a server it *also* forwards
+/// the text to the client as `MSG_ERROR_XFER`, which sets `got_xfer_error` over
+/// there too; `exit_cleanup()` then lifts a zero exit to `RERR_PARTIAL` (23).
+/// `successful_send()` sets no `io_error` bit at all, so a sender that only
+/// records bits leaves a pulling client at exit 0.
+///
+/// The `io_error` bit is kept as well because oc's client-side sender drains it
+/// into its own exit code; it is redundant with the diagnostic, never a
+/// substitute for it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/sender.c:455-462` - the shared `failed:` label
+/// - `rsync-3.5.0/log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
+/// - `rsync-3.5.0/log.c:357-367` - `am_server` forwards it as `MSG_ERROR_XFER`
+/// - `rsync-3.5.0/cleanup.c:217-218` - `got_xfer_error` -> `RERR_PARTIAL`
+#[must_use]
+pub(crate) struct SourceRemovalOutcome {
+    /// `io_error` bits to OR into the transfer's accumulated state.
+    pub(crate) io_error: i32,
+    /// Upstream's `FERROR_XFER` text, newline-terminated, when the removal
+    /// failed or a guard refused it.
+    pub(crate) error_xfer: Option<String>,
+}
+
+impl SourceRemovalOutcome {
+    /// The removal succeeded, was not requested, or hit upstream's benign
+    /// `ENOENT` "already removed" arm.
+    const fn clean() -> Self {
+        Self {
+            io_error: 0,
+            error_xfer: None,
+        }
+    }
+
+    /// The removal failed or a guard refused it: upstream reports `text` at
+    /// `FERROR_XFER` and finishes `RERR_PARTIAL` (23).
+    fn error_xfer(text: String) -> Self {
+        Self {
+            io_error: super::super::io_error_flags::IOERR_GENERAL,
+            error_xfer: Some(text),
+        }
+    }
+}
+
 impl GeneratorContext {
     /// Writes one file's NDX + iflags (+ optional xattr response) header and the
     /// sum head that follows it.
@@ -1367,9 +1419,10 @@ impl GeneratorContext {
     /// removed" notice (`FINFO`); a re-stat failure, a source that changed since
     /// it entered the file list, or an unlink failure is an `FERROR_XFER`, which
     /// upstream turns into `got_xfer_error` -> exit 23 (`RERR_PARTIAL`) without
-    /// aborting the run. We mirror the exit code by returning
-    /// [`IOERR_GENERAL`](super::super::io_error_flags::IOERR_GENERAL); the send
-    /// loop reports it via `MSG_IO_ERROR` after the final file.
+    /// aborting the run. We mirror that by returning the diagnostic in
+    /// [`SourceRemovalOutcome::error_xfer`] for the caller to route through
+    /// `emit_sender_diagnostic`, which is where the `got_xfer_error` flag and
+    /// the `MSG_ERROR_XFER` frame to the client both come from.
     ///
     /// The dev/ino "destination file" guard (sender.c:433-440) is gated on
     /// `local_server` upstream. The network generator is never `local_server`
@@ -1380,28 +1433,33 @@ impl GeneratorContext {
     ///
     /// - `sender.c:395` `successful_send()`
     /// - `options.c:765` `remove_source_files` global
-    #[must_use]
     fn remove_source_file_if_requested(
         &self,
         source_path: &Path,
+        display_name: &Path,
         recorded: RecordedSourceIdentity,
-    ) -> i32 {
+    ) -> SourceRemovalOutcome {
         // upstream: sender.c:405-406 - bail before any FS calls when the flag is off.
         if !self.config.flags.remove_source_files {
-            return 0;
+            return SourceRemovalOutcome::clean();
         }
         // upstream: sender.c:405-406 - successful_send() is a no-op when
         // do_xfers is false (dry-run). Mirror that early return so --dry-run
         // never touches the filesystem.
         if self.config.flags.dry_run {
-            return 0;
+            return SourceRemovalOutcome::clean();
         }
 
         // upstream: sender.c:408-455 - the parent resolve, the fd-relative
         // re-stat and the unlink are ONE decision about ONE directory entry,
         // so they live together in a free function the guard tests drive
         // directly.
-        remove_confirmed_source(source_path, recorded, self.config.flags.copy_links)
+        remove_confirmed_source(
+            source_path,
+            display_name,
+            recorded,
+            self.config.flags.copy_links,
+        )
     }
 
     /// Runs the deferred `--remove-source-files` unlink for a file the peer has
@@ -1417,33 +1475,40 @@ impl GeneratorContext {
     /// The re-stat and changed-file guards in
     /// [`remove_source_file_if_requested`](Self::remove_source_file_if_requested)
     /// still gate the unlink, so a source that vanished or changed since it
-    /// entered the file list is never removed. Returns the `io_error` bits the
-    /// caller must OR into the transfer's accumulated error state.
+    /// entered the file list is never removed. Returns the `io_error` bits and
+    /// the `FERROR_XFER` diagnostic the caller must drain.
+    ///
+    /// Diagnostics name the file-list entry, not the reconstructed absolute
+    /// path: upstream reports `f_name(file, fname)` after `change_pathname()`
+    /// has moved it to the file's own directory root, so the text a daemon
+    /// module forwards to its client never carries the server's real prefix.
     ///
     /// # Upstream Reference
     ///
     /// - `io.c:1623-1637` - `MSG_SUCCESS` receipt drives `successful_send(val)`.
     /// - `sender.c:395` - `successful_send()` unlink + guards.
-    #[must_use]
-    pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> i32 {
+    /// - `sender.c:412-414` - `change_pathname(file, NULL, 0)` then
+    ///   `f_name(file, fname)` is the name every diagnostic below prints.
+    pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> SourceRemovalOutcome {
         if wire_ndx < 0 {
-            return 0;
+            return SourceRemovalOutcome::clean();
         }
         let flat_ndx = self.wire_to_flat_ndx(wire_ndx);
         if flat_ndx >= self.file_list.len() {
-            return 0;
+            return SourceRemovalOutcome::clean();
         }
         if !self.pending_source_removals.confirm(flat_ndx) {
-            return 0;
+            return SourceRemovalOutcome::clean();
         }
         let source_path = self.reconstruct_source_path(flat_ndx);
         let entry = &self.file_list[flat_ndx];
+        let display_name = entry.path().to_path_buf();
         let recorded = RecordedSourceIdentity {
             size: entry.size(),
             mtime: entry.mtime(),
             mtime_nsec: entry.mtime_nsec(),
         };
-        self.remove_source_file_if_requested(&source_path, recorded)
+        self.remove_source_file_if_requested(&source_path, &display_name, recorded)
     }
 }
 
@@ -1570,15 +1635,13 @@ fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
 /// - `rsync-3.5.0/sender.c:455-459` - the shared `failed:` label, where `ENOENT`
 ///   from ANY of the three operations is the benign "already removed" notice
 #[cfg(unix)]
-#[must_use]
 fn remove_confirmed_source(
     source_path: &Path,
+    display_name: &Path,
     recorded: RecordedSourceIdentity,
     copy_links: bool,
-) -> i32 {
+) -> SourceRemovalOutcome {
     use std::os::fd::AsFd as _;
-
-    use super::super::io_error_flags::IOERR_GENERAL;
 
     // upstream: sender.c:416 - resolve the parent ONCE. Both the re-stat and
     // the unlink below run against this one descriptor.
@@ -1587,7 +1650,7 @@ fn remove_confirmed_source(
         // upstream: sender.c:421-425 + 455-459 - a refused parent is
         // failed_op = "secure-open-parent", which shares the `failed:` label,
         // and therefore the ENOENT-is-benign arm, with the other two failures.
-        Err(error) => return report_removal_failure("secure-open-parent", source_path, &error),
+        Err(error) => return report_removal_failure("secure-open-parent", display_name, &error),
     };
 
     // upstream: sender.c:426-428 - do_stat_atfd under --copy-links, else
@@ -1612,17 +1675,17 @@ fn remove_confirmed_source(
         Ok(identity) => identity,
         // upstream: sender.c:429-430,455-459 - ENOENT is the benign FINFO
         // notice, anything else is rsyserr(FERROR_XFER) -> exit 23.
-        Err(error) => return report_removal_failure("re-lstat", source_path, &error),
+        Err(error) => return report_removal_failure("re-lstat", display_name, &error),
     };
 
     // upstream: sender.c:442-451 - refuse to remove a source that changed size
-    // or modification time since it entered the file list.
+    // or modification time since it entered the file list. Upstream reports
+    // this at FERROR_XFER, exactly like the three failed_op arms.
     if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
-        eprintln!(
-            "ERROR: Skipping sender remove for changed file: {}",
-            source_path.display()
-        );
-        return IOERR_GENERAL;
+        return SourceRemovalOutcome::error_xfer(format!(
+            "ERROR: Skipping sender remove for changed file: {}\n",
+            display_name.display()
+        ));
     }
 
     // upstream: sender.c:453 - secure_remove_source_file(dfd, bname) through the
@@ -1634,24 +1697,22 @@ fn remove_confirmed_source(
     match removal {
         Ok(()) => {
             // upstream: sender.c:461-462 - INFO_GTE(REMOVE,1) success notice.
-            info_log!(Remove, 1, "removing source {}", source_path.display());
-            0
+            info_log!(Remove, 1, "removing source {}", display_name.display());
+            SourceRemovalOutcome::clean()
         }
-        Err(error) => report_removal_failure("remove", source_path, &error),
+        Err(error) => report_removal_failure("remove", display_name, &error),
     }
 }
 
 /// Windows has neither the `*at` family nor the ownership walk, so the removal
 /// stays the path-based pair upstream itself uses on its declined arm.
 #[cfg(not(unix))]
-#[must_use]
 fn remove_confirmed_source(
     source_path: &Path,
+    display_name: &Path,
     recorded: RecordedSourceIdentity,
     copy_links: bool,
-) -> i32 {
-    use super::super::io_error_flags::IOERR_GENERAL;
-
+) -> SourceRemovalOutcome {
     let restat = if copy_links {
         std::fs::metadata(source_path)
     } else {
@@ -1659,24 +1720,23 @@ fn remove_confirmed_source(
     };
     let current = match restat {
         Ok(meta) => meta,
-        Err(error) => return report_removal_failure("re-lstat", source_path, &error),
+        Err(error) => return report_removal_failure("re-lstat", display_name, &error),
     };
 
     let (size, mtime, mtime_nsec) = stat_identity(&current);
     if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
-        eprintln!(
-            "ERROR: Skipping sender remove for changed file: {}",
-            source_path.display()
-        );
-        return IOERR_GENERAL;
+        return SourceRemovalOutcome::error_xfer(format!(
+            "ERROR: Skipping sender remove for changed file: {}\n",
+            display_name.display()
+        ));
     }
 
     match std::fs::remove_file(source_path) {
         Ok(()) => {
-            info_log!(Remove, 1, "removing source {}", source_path.display());
-            0
+            info_log!(Remove, 1, "removing source {}", display_name.display());
+            SourceRemovalOutcome::clean()
         }
-        Err(error) => report_removal_failure("remove", source_path, &error),
+        Err(error) => report_removal_failure("remove", display_name, &error),
     }
 }
 
@@ -1686,19 +1746,21 @@ fn remove_confirmed_source(
 /// turns into `got_xfer_error` -> exit 23.
 ///
 /// upstream: `rsync-3.5.0/sender.c:455-459`
-#[must_use]
-fn report_removal_failure(op: &str, source_path: &Path, error: &io::Error) -> i32 {
+fn report_removal_failure(
+    op: &str,
+    display_name: &Path,
+    error: &io::Error,
+) -> SourceRemovalOutcome {
     if error.kind() == io::ErrorKind::NotFound {
         info_log!(
             Remove,
             1,
             "sender file already removed: {}",
-            source_path.display()
+            display_name.display()
         );
-        return 0;
+        return SourceRemovalOutcome::clean();
     }
-    eprintln!("{}", sender_op_failure(op, source_path, error));
-    super::super::io_error_flags::IOERR_GENERAL
+    SourceRemovalOutcome::error_xfer(format!("{}\n", sender_op_failure(op, display_name, error)))
 }
 
 /// Extracts `(size, mtime_seconds, mtime_nanoseconds)` from a re-stat result in
@@ -2018,15 +2080,23 @@ mod sender_remove_confinement_tests {
         let recorded = recorded_for(&spelled);
 
         confine_to(&root);
-        let io_error = remove_confirmed_source(&spelled, recorded, false);
+        let outcome = remove_confirmed_source(&spelled, &spelled, recorded, false);
 
         assert!(
             victim.exists(),
             "the out-of-root file was removed: the unlink followed the planted parent symlink"
         );
         assert_ne!(
-            io_error, 0,
+            outcome.io_error, 0,
             "a refused parent is upstream's secure-open-parent failure (FERROR_XFER -> exit 23)"
+        );
+        assert!(
+            outcome
+                .error_xfer
+                .as_deref()
+                .is_some_and(|text| text.contains("secure-open-parent")),
+            "the refusal must carry upstream's failed_op text so the caller can \
+             emit it at FERROR_XFER (sender.c:421-425,455-459)"
         );
     }
 
@@ -2046,9 +2116,16 @@ mod sender_remove_confinement_tests {
         let recorded = recorded_for(&source);
 
         confine_to(&root);
-        let io_error = remove_confirmed_source(&source, recorded, false);
+        let outcome = remove_confirmed_source(&source, &source, recorded, false);
 
-        assert_eq!(io_error, 0, "an in-root removal must report no error");
+        assert_eq!(
+            outcome.io_error, 0,
+            "an in-root removal must report no error"
+        );
+        assert!(
+            outcome.error_xfer.is_none(),
+            "a clean removal must not queue an FERROR_XFER diagnostic"
+        );
         assert!(!source.exists(), "the confirmed source was not removed");
     }
 
@@ -2067,9 +2144,20 @@ mod sender_remove_confinement_tests {
         recorded.size += 4096;
 
         confine_to(&root);
-        let io_error = remove_confirmed_source(&source, recorded, false);
+        let outcome = remove_confirmed_source(&source, &source, recorded, false);
 
-        assert_ne!(io_error, 0, "a changed source is FERROR_XFER -> exit 23");
+        assert_ne!(
+            outcome.io_error, 0,
+            "a changed source is FERROR_XFER -> exit 23"
+        );
+        assert!(
+            outcome
+                .error_xfer
+                .as_deref()
+                .is_some_and(|text| text.contains("Skipping sender remove for changed file")),
+            "upstream reports the changed-file refusal at FERROR_XFER, not on \
+             local stderr (sender.c:442-451)"
+        );
         assert!(source.exists(), "a changed source must not be removed");
     }
 
@@ -2089,10 +2177,14 @@ mod sender_remove_confinement_tests {
 
         confine_to(&root);
 
+        let outcome = remove_confirmed_source(&source, &source, recorded, false);
         assert_eq!(
-            remove_confirmed_source(&source, recorded, false),
-            0,
+            outcome.io_error, 0,
             "ENOENT is the benign FINFO notice, never an error bit"
+        );
+        assert!(
+            outcome.error_xfer.is_none(),
+            "the benign already-removed notice is FINFO, never FERROR_XFER"
         );
     }
 }
