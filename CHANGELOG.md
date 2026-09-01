@@ -62,6 +62,14 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   operator who opted out is not refused anyway (#7517)
 - Stop confining a *client's* own destination on a daemon pull - the
   confinement applies to the peer-supplied side, not the operator's (#7503)
+- Confine the `--inplace` backup copy, and the `--backup-dir` link and rename,
+  to the module root (#7535, #7538)
+- Anchor the source unlink to a confined parent dirfd, so `--remove-source-files`
+  cannot be redirected by a planted path component (#7564)
+- Let the ownership walk traverse under a Landlock sandbox, open its anchor with
+  `openat` so the seccomp worker filter admits it, and fall back to the confined
+  wrappers rather than to plain syscalls when a confined open is unavailable
+  (#7541, #7545, #7548)
 
 **Daemon**
 - Refuse shell metacharacters when expanding a hook variable, closing command
@@ -99,6 +107,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Treat a backslash in a requested path as a filename byte, not a path separator
   (#7409)
 - Honour the per-module `insecure links` directive (#7484)
+- Pin the Landlock root after `chroot` rather than before it; the pre-chroot
+  path names a directory the confined process can no longer reach (#7567)
+- Admit `mknod` / `mknodat` in the seccomp worker filter, which was dropping the
+  device and FIFO creation the sandbox is meant to permit (#7547)
+- One operator opt-out now governs both kernel sandbox layers symmetrically, so
+  Landlock and seccomp cannot disagree about a single operator decision (#7546)
 
 **Peer-supplied input bounds**
 - Bound peer-supplied xattr bytes and the CONNECT host (#7297)
@@ -134,7 +148,11 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   argument now warns instead of passing silently, on the local path (#7453) and
   on the network paths (#7454)
 - `--fake-super` is accepted in a server argv, and repeated via `-M` on a
-  local transfer without being rejected (#7520, #7497)
+  local transfer without being rejected (#7520, #7497, #7524)
+- `--info=stats3` emits the heap-statistics block (#7550)
+- The INC_RECURSE lookahead window is sized rather than fixed (#7539)
+- A safe `fork`/`waitpid` wrapper for daemon sessions replaces the raw calls
+  (#7523)
 
 ### Changed
 
@@ -162,6 +180,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Interop failures name the peer version that broke, via `--only-version`
   (#7341)
 - The local-copy context state module is split by concern (#7358)
+- The receiver is the response-flist sink, and the backup ladder takes only the
+  fields it reads (#7536, #7553)
+- Three source files that nothing compiled were removed (#7543)
 
 ### Fixed
 
@@ -216,6 +237,16 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Follow a symlinked directory named with the DOTDIR marker, and keep that
   marker when the `/./` remainder is empty (#7510, #7516)
 - Refuse a non-regular `--read-batch` path (#7515)
+- Skip the delayed rename when the backup fails, instead of committing over a
+  destination whose backup never landed (#7531)
+- Retain into the `--partial-dir` through the shared owner, and route the
+  delayed sweep onto the shared backup ladder (#7556, #7557)
+- Let `--no-whole-file` read the source in userspace instead of taking a kernel
+  copy path that cannot produce a delta (#7537)
+- Warn on file-descriptor exhaustion from the confined walk rather than failing
+  without naming the cause (#7534)
+- Name the commit operation that failed instead of always reporting `mkstemp`
+  (#7552)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -260,6 +291,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   relative one relative as upstream does (#7498, #7501)
 - Resolve string module defaults at end of parse, so a global set *after* a
   module section still applies to it (#7519)
+- Honour the server options the daemon parser dropped, and accept the forwarded
+  `--only-write-batch` (#7532, #7559)
+- Exit 4 on a refused option, not 1 (#7563)
 
 **CLI and output**
 - Honour the `--` end-of-options marker in server-mode argv (#7402)
@@ -286,12 +320,14 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Honour `--drop-D` in the server argument decoder, and consume
   `--backup-dir` / `--temp-dir` instead of discarding them (#7508, #7511)
 - List a remote source under `--list-only` (#7509)
+- Carry `--checksum-seed` as a signed int, matching upstream's type (#7561)
 
 **Metadata**
 - An installed name converter must replace the host database (#7360)
 - Follow the operator's own symlinked destination root when applying metadata
   (#7462)
 - Condense the fake-super access ACL to upstream's stored form (#7502)
+- Answer upstream's `am_root` for the receiver xattr screen (#7562)
 
 ### Testing and CI
 
@@ -327,6 +363,21 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Key the parallel receive-delta fuzz oracle on every registered file, and
   let the caller name the upstream rsync the benchmark compares against
   (#7480, #7481)
+- The format check now covers every tracked `.rs` file. `cargo fmt` is blind to
+  files reached through `include!()`, and blind again to files reached through
+  nothing at all, so a formatted workspace was not a formatted tree (#7529,
+  #7542)
+- Unsafe blocks are attributed to the right crate and the right policy category
+  (#7544)
+- Pull-request labels are reconciled against the title instead of accumulating
+  (#7549)
+- Behaviour that was previously assumed is now witnessed: the INC_RECURSE
+  segment count and segment arrival (#7528), the fd-exhaustion hint and which
+  caller it serves (#7530, #7566), delete routing refusing on all six methods
+  (#7551), the `--delay-updates` staging sequence under the worker filter
+  (#7554), io_uring drop-contract registration failures (#7558), and protocol
+  negotiation environment overrides (#7575)
+- The local-recursion tests are named for what they actually run (#7526)
 
 ### Documentation
 
@@ -351,10 +402,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Close rustdoc gaps, repair references that no longer resolve, and add a
   comment-policy audit (#7488, #7489, #7522)
 - Refresh the changelog and re-measure the 3.5.0 outcome figures (#7477)
+- The 3.5.0 outcome figures and divergence counts are re-derived from the
+  committed manifests rather than transcribed from a run log (#7525, #7533)
+- Upstream's `struct file_list` mapped field-by-field onto the oc types (#7527)
+- Citations retargeted at the 3.5.0 pin for the `successful_send` cluster and
+  for the backup ladder (#7540, #7560)
+- The four rustdoc links breaking the Pages build resolved (#7555)
+- Line coverage is stated as not gated by CI (#7573)
 
 ### Maintenance
 
-- Dependency and action updates (#7473, #7474)
+- Dependency and action updates (#7473, #7474, #7568, #7569, #7570, #7571,
+  #7572)
 - Give the in-place open chain a single owner with the resolver injected,
   and the bounded drain-and-wait helper a single owner (#7487, #7504)
 - Update the Homebrew formulas for v0.6.4 (#7492)
