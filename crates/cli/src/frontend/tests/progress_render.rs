@@ -3,6 +3,7 @@ use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
 use crate::frontend::escape::EscapeStyle;
+use crate::frontend::progress::FlistBanner;
 use core::client::{ClientConfig, ClientSummary, HumanReadableMode, run_client};
 use tempfile::TempDir;
 
@@ -56,7 +57,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         false,
         HumanReadableMode::DecimalUnits,
         false,
-        false,                               // emit_flist_banner (list_only path)
+        FlistBanner::None,                   // flist_banner (list_only path)
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -94,7 +95,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         false,
         HumanReadableMode::DecimalUnits,
         false,
-        true,                                // emit_flist_banner
+        FlistBanner::Incremental,            // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -140,11 +141,11 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false, // emit_flist_banner (out_format path: starts_with assertion)
+        FlistBanner::None, // flist_banner (out_format path: starts_with assertion)
         DeltaTransmissionSummary::default(), // delta_notice
-        false, // show_copy_method
-        false, // show_atimes
-        false, // show_crtimes
+        false,             // show_copy_method
+        false,             // show_atimes
+        false,             // show_crtimes
         EscapeStyle::terminal(false), // escape style
         &mut rendered,
         &mut PendingDiagnostics::empty(),

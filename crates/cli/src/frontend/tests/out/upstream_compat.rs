@@ -12,6 +12,7 @@
 
 use super::*;
 use crate::frontend::escape::EscapeStyle;
+use crate::frontend::progress::FlistBanner;
 use core::client::run_client;
 
 #[test]
@@ -241,7 +242,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false,                               // emit_flist_banner
+        FlistBanner::None,                   // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -268,7 +269,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false,                               // emit_flist_banner
+        FlistBanner::None,                   // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
