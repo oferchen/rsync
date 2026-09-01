@@ -50,7 +50,9 @@ PENDING_CEILING=77
 # one is vacuous on Unix: the daemon forks, this test binary is the parent, and
 # it exits 0 before any assertion runs. Lower this as they are fixed; it must
 # never be raised.
-ROOT_DETACHING_CEILING=2
+#
+# The one remaining file is tests/integration_daemon_max_connections_cap.rs.
+ROOT_DETACHING_CEILING=1
 
 violations=0
 
