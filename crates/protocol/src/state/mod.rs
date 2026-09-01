@@ -321,11 +321,12 @@ mod tests {
         assert_eq!(summary.files_transferred, 3);
     }
 
-    /// upstream: `options.c:151` declares `int checksum_seed`, `options.c:861`
-    /// parses `--checksum-seed` with `POPT_ARG_INT`, and `compat.c:825` puts
-    /// the value on the wire with `write_int()`. Half the seed domain is
-    /// therefore negative, and `compat.c:823 if (!checksum_seed)` treats every
-    /// non-zero seed - negative ones included - as explicit.
+    /// upstream: `options.c:151` declares `int checksum_seed`, so half the
+    /// seed domain is negative.
+    /// `options.c:861` parses --checksum-seed with POPT_ARG_INT.
+    /// `compat.c:825` puts it on the wire with `write_int(f_out, checksum_seed)`.
+    /// `compat.c:823` guards with `if (!checksum_seed)`, so every non-zero
+    /// seed - negative ones included - is treated as explicit.
     ///
     /// A seed with the high bit set is the discriminating input: `-1` is
     /// `0xFFFF_FFFF` and `i32::MIN` is `0x8000_0000`. Neither is expressible

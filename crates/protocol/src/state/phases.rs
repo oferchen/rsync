@@ -17,10 +17,10 @@ pub struct Negotiation {
     pub protocol_version: Option<u32>,
     /// The checksum seed, if set.
     ///
-    /// upstream: `options.c:151` declares `int checksum_seed`, `options.c:861`
-    /// parses it with `POPT_ARG_INT`, and `compat.c:825` puts it on the wire
-    /// with `write_int()`. The seed is signed end to end, so half its domain
-    /// is negative.
+    /// upstream: `options.c:151` declares `int checksum_seed`, so the seed is
+    /// signed end to end and half its domain is negative.
+    /// `options.c:861` parses it with POPT_ARG_INT.
+    /// `compat.c:825` puts it on the wire with `write_int(f_out, checksum_seed)`.
     pub checksum_seed: Option<i32>,
 }
 

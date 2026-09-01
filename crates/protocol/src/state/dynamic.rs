@@ -90,8 +90,9 @@ impl DynamicProtocolState {
 
     /// Set the checksum seed.
     ///
-    /// upstream: `options.c:151` declares `int checksum_seed` and `compat.c:825`
-    /// writes it with `write_int()`, so the seed is signed on the wire.
+    /// upstream: `options.c:151` declares `int checksum_seed`, so the seed is
+    /// signed on the wire.
+    /// `compat.c:825` writes it with `write_int(f_out, checksum_seed)`.
     pub fn set_checksum_seed(&mut self, seed: i32) {
         self.checksum_seed = Some(seed);
     }
