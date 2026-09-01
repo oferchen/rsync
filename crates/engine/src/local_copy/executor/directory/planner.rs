@@ -23,7 +23,7 @@ use super::super::{
 use super::support::{DirectoryEntry, is_device, is_fifo};
 
 /// Action to take for a directory entry during recursive copy.
-// upstream: generator.c:recv_generator() - entry dispatch
+/// upstream: generator.c:recv_generator() - entry dispatch
 #[derive(Clone, Copy)]
 pub(crate) enum EntryAction {
     /// Entry excluded by filter rules.
@@ -184,7 +184,7 @@ fn decide_entry_action(
 /// Iterates over pre-sorted directory entries, applies filter rules,
 /// resolves symlinks when `--copy-links` or `--copy-dirlinks` is active,
 /// and determines the appropriate action for each entry.
-// upstream: flist.c:send_directory() - builds file list from directory
+/// upstream: flist.c:send_directory() - builds file list from directory
 pub(crate) fn plan_directory_entries<'a>(
     context: &mut CopyContext,
     entries: &'a [DirectoryEntry],
@@ -539,7 +539,7 @@ pub(crate) fn reorder_hardlink_group_holders(
 }
 
 /// Applies pre-transfer deletions when `--delete-before` is active.
-// upstream: generator.c:do_delete_pass() - pre-transfer deletion
+/// upstream: generator.c:do_delete_pass() - pre-transfer deletion
 pub(crate) fn apply_pre_transfer_deletions(
     context: &mut CopyContext,
     destination: &Path,

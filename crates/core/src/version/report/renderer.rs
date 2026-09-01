@@ -255,7 +255,7 @@ impl VersionInfoReport {
     ///
     /// Mirrors upstream rsync's `print_rsync_version(FNONE)` path, which emits
     /// a JSON object with capability flags, algorithm lists, and metadata fields.
-    // upstream: usage.c:252 - print_rsync_version with f == FNONE
+    /// upstream: usage.c:252 - print_rsync_version with f == FNONE
     pub fn write_machine_readable<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         let metadata = self.metadata;
         let protocol = if metadata.subprotocol_version() != 0 {
@@ -308,7 +308,7 @@ impl VersionInfoReport {
 
     /// Writes JSON capability/optimization sections mirroring upstream's
     /// `print_info_flags(FNONE)`.
-    // upstream: usage.c:37-216 - print_info_flags with as_json=true
+    /// upstream: usage.c:37-216 - print_info_flags with as_json=true
     fn write_json_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         let items = self.info_items();
         let mut in_section = false;
@@ -351,7 +351,7 @@ impl VersionInfoReport {
     }
 
     /// Writes a JSON array for an algorithm list.
-    // upstream: usage.c:218-249 - output_nno_list with f == FNONE
+    /// upstream: usage.c:218-249 - output_nno_list with f == FNONE
     fn write_json_list<W: FmtWrite>(
         &self,
         writer: &mut W,
@@ -613,7 +613,7 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
 /// - `"no crtimes"` -> `"crtimes": false`
 /// - `"crtimes"` -> `"crtimes": true`
 /// - `"optional secluded-args"` -> `"secluded_args": "optional"`
-// upstream: usage.c:172-188 - JSON entry formatting in print_info_flags
+/// upstream: usage.c:172-188 - JSON entry formatting in print_info_flags
 fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) -> fmt::Result {
     let comma = if needs_comma { "," } else { "" };
 
@@ -654,7 +654,7 @@ fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) 
 
 /// Converts a capability name to a JSON key by replacing hyphens and spaces
 /// with underscores.
-// upstream: usage.c:187-188 - strpbrk loop replacing ' ' and '-' with '_'
+/// upstream: usage.c:187-188 - strpbrk loop replacing ' ' and '-' with '_'
 fn json_key(s: &str) -> String {
     s.chars()
         .map(|c| if c == '-' || c == ' ' { '_' } else { c })

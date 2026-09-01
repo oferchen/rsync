@@ -30,7 +30,7 @@ use std::path::Path;
 /// Preserves permission bits (best-effort on non-Unix targets) and
 /// nanosecond timestamps. Delegates to [`apply_directory_metadata_with_options`]
 /// with default options (all preservation flags enabled).
-// upstream: rsync.c:set_file_attrs() - directory metadata application
+/// upstream: rsync.c:set_file_attrs() - directory metadata application
 pub fn apply_directory_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -42,7 +42,7 @@ pub fn apply_directory_metadata(
 ///
 /// Applies ownership, permissions, and timestamps in the same order as
 /// upstream rsync's `set_file_attrs()`: chown, chmod, then utimensat.
-// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat
+/// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat
 pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -63,7 +63,7 @@ pub fn apply_directory_metadata_with_options(
 /// Preserves permission bits (best-effort on non-Unix targets) and
 /// nanosecond timestamps. Delegates to [`apply_file_metadata_with_options`]
 /// with default options (all preservation flags enabled).
-// upstream: rsync.c:set_file_attrs() - file metadata application
+/// upstream: rsync.c:set_file_attrs() - file metadata application
 pub fn apply_file_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -75,7 +75,7 @@ pub fn apply_file_metadata(
 ///
 /// Applies ownership, permissions, timestamps, and creation time in the
 /// same order as upstream rsync's `set_file_attrs()`.
-// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat → crtime
+/// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat → crtime
 pub fn apply_file_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -128,7 +128,7 @@ pub fn apply_dest_mode_pre_transfer(
 /// `am_root` is sampled through the same libc `geteuid` the chmod apply path
 /// uses, so the self-lock decision and the on-disk fixup agree under
 /// `fakeroot`. See [`crate::transfer_root_self_locks`] for the mechanism.
-// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1512 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1512 fixup.
 #[cfg(unix)]
 pub fn transfer_root_chmod_self_lock(
     destination: &Path,
@@ -287,8 +287,8 @@ pub fn apply_file_metadata_with_fd_if_changed(
 /// (generator.c:418) to a single read-only-bit compare, mirroring the Unix
 /// arm's permission leg. Kept as a pure, platform-independent helper so it is
 /// unit-testable on Linux even though it only gates the `cfg(not(unix))` path.
-// upstream: generator.c:418 perms_differ() - the mode compare behind
-// unchanged_attrs()'s `if perms_differ(...)` leg.
+/// upstream: generator.c:418 perms_differ() - the mode compare behind
+/// unchanged_attrs()'s `if perms_differ(...)` leg.
 #[cfg(any(not(unix), test))]
 pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly: bool) -> bool {
     let required_readonly = entry_permissions & 0o200 == 0;
@@ -473,7 +473,7 @@ pub fn metadata_unchanged(
 /// Applies metadata from `metadata` to the destination symbolic link without
 /// following the link target. Delegates to [`apply_symlink_metadata_with_options`]
 /// with default options.
-// upstream: rsync.c:set_file_attrs() - symlink path uses AT_SYMLINK_NOFOLLOW
+/// upstream: rsync.c:set_file_attrs() - symlink path uses AT_SYMLINK_NOFOLLOW
 pub fn apply_symlink_metadata(
     destination: &Path,
     metadata: &fs::Metadata,

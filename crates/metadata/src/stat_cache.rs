@@ -174,7 +174,7 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
 /// that fakeroot would have faked. `nix::sys::stat::lstat` calls the libc
 /// `lstat` symbol, which fakeroot interposes, so the faked owner/mode is seen.
 /// `lstat` keeps the `AT_SYMLINK_NOFOLLOW` semantics the old statx path used.
-// upstream: syscall.c:do_lstat() calls the lstat(2) libc symbol.
+/// upstream: syscall.c:do_lstat() calls the lstat(2) libc symbol.
 #[cfg(all(unix, target_os = "linux"))]
 fn fetch_metadata_lstat(path: &Path) -> io::Result<CachedMetadata> {
     let stat = nix::sys::stat::lstat(path).map_err(io::Error::from)?;

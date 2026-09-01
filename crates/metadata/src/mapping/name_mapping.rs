@@ -97,7 +97,7 @@ impl NameMapping {
     /// is. A name target is looked up on the receiver via the kind-appropriate
     /// NSS call; on success the target is rewritten to the resolved id, on
     /// failure the upstream warning is printed and the caller drops the rule.
-    // upstream: uidlist.c:547-561 - user_to_uid/group_to_gid, drop on failure.
+    /// upstream: uidlist.c:547-561 - user_to_uid/group_to_gid, drop on failure.
     fn resolve_target(kind: MappingKind, target: &mut MappingTarget) -> bool {
         let MappingTarget::Name(name) = target else {
             return true;

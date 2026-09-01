@@ -496,7 +496,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Also suppresses deletions like any other general I/O error, matching
     /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
-    // upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL.
+    /// upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL.
     pub(super) fn record_iconv_conversion_error(&mut self) {
         self.iconv_conversion_error = true;
         self.io_errors_occurred = true;
@@ -598,10 +598,10 @@ impl<'a> CopyContext<'a> {
     /// neither the warning nor the skip fires in that case - matching
     /// upstream, where the flag both suppresses the notice and lets the
     /// delete pass run.
-    // upstream: generator.c:304-311 delete_in_dir() prints "IO error
-    // encountered -- skipping file deletion" once (guarded by a static
-    // `already_warned`) and returns without deleting whenever
-    // `io_error & IOERR_GENERAL && !ignore_errors`.
+    /// upstream: generator.c:304-311 delete_in_dir() prints "IO error
+    /// encountered -- skipping file deletion" once (guarded by a static
+    /// `already_warned`) and returns without deleting whenever
+    /// `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(super) fn delete_pass_blocked_by_io_error(&mut self) -> bool {
         if self.deletions_allowed() {
             return false;

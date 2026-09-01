@@ -41,7 +41,7 @@ impl SparseWriteState {
     /// Records the preallocated length so zero runs inside the reserved extent
     /// are punched out rather than merely seeked over (which would leave the
     /// preallocated blocks allocated).
-    // upstream: fileio.c:84 - if (sparse_past_write >= preallocated_len)
+    /// upstream: fileio.c:84 - if (sparse_past_write >= preallocated_len)
     pub(crate) const fn set_preallocated_len(&mut self, len: u64) {
         self.preallocated_len = len;
     }
@@ -57,7 +57,7 @@ impl SparseWriteState {
     /// forward when that position is at or beyond the preallocated extent (the
     /// natural-hole case for a fresh file), otherwise punches a hole to
     /// deallocate the blocks that preallocation reserved.
-    // upstream: fileio.c:80-95 flush_sparse_hole()
+    /// upstream: fileio.c:80-95 flush_sparse_hole()
     fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
         if self.pending_zero_run == 0 {
             return Ok(());
@@ -110,7 +110,7 @@ impl SparseWriteState {
     ///
     /// Returns the final logical file position (including any trailing hole)
     /// for the caller's `set_len`.
-    // upstream: fileio.c:43 sparse_end()
+    /// upstream: fileio.c:43 sparse_end()
     pub(crate) fn finish(
         &mut self,
         writer: &mut fs::File,
@@ -149,7 +149,7 @@ pub(crate) enum SpanWrite {
 /// as seeks (natural holes) or hole-punches (inside a preallocated extent) when
 /// non-zero data follows. This produces sparse files when the filesystem
 /// supports it.
-// upstream: fileio.c:write_sparse()
+/// upstream: fileio.c:write_sparse()
 pub(crate) fn write_sparse_chunk(
     writer: &mut fs::File,
     state: &mut SparseWriteState,
@@ -165,9 +165,9 @@ pub(crate) fn write_sparse_chunk(
 /// spans are seeked over rather than rewritten - but its interior zero runs are
 /// still scanned and punched. Skipping that scan is what leaves a hole-y basis
 /// file fully allocated under `--inplace --sparse`.
-// upstream: fileio.c:256-259 skip_matched() - `if (sparse_files > 0)
-// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, only the non-sparse arm
-// lseeks straight past the block.
+/// upstream: fileio.c:256-259 skip_matched() - `if (sparse_files > 0)
+/// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, only the non-sparse arm
+/// lseeks straight past the block.
 pub(crate) fn skip_matched_sparse(
     writer: &mut fs::File,
     state: &mut SparseWriteState,
