@@ -493,9 +493,16 @@ impl ReceiverContext {
     /// backup mechanism failed; the caller skips creating the replacement,
     /// mirroring upstream `atomic_create` returning 0 when `make_backup` fails.
     ///
+    /// This is the backup ARM of the obstacle decision, not the decision
+    /// itself: it is reached only from
+    /// [`ReceiverContext::make_way_for_replacement`], which has already ruled
+    /// out a directory. Upstream's `dir_in_the_way` (`generator.c:2469`) makes
+    /// `make_backup` unreachable for a directory in both modes, so calling this
+    /// with one would back up something upstream removes.
+    ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2018-2020` - `if (make_backups > 0 ...) if (!make_backup(fname, ...)) return 0;`
+    /// - `generator.c:2476-2478` - `if (make_backups > 0 && !dir_in_the_way) { if (!make_backup(fname, skip_atomic)) return 0; }`
     #[cfg(unix)]
     pub(in crate::receiver) fn backup_existing_before_replace(
         &self,
