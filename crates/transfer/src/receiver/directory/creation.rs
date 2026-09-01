@@ -133,8 +133,27 @@ impl ReceiverContext {
             // An existing real directory (or any other existing non-symlink
             // entry, matching the prior `.exists()` semantics) is reused.
             Ok(_) => Ok(DirDestination::Existing),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DirDestination::Missing),
-            Err(error) => Err(error),
+            // A stat failure of ANY errno class classifies as `Missing`; it is
+            // never raised from here.
+            //
+            // upstream: generator.c:1745-1746 - `statret = gen_entry_stat(...);
+            // stat_errno = errno;`. Every later branch tests `statret`, not the
+            // errno class, and `generator.c:1840` gates the obstruction removal
+            // on `statret == 0`. A stat that failed therefore never reaches
+            // `delete_item()`: it falls through to `gen_entry_mkdir()`
+            // (`generator.c:1831`/`1873`), and that mkdir's error is the one
+            // reported. `stat_errno` is consulted only by the `--existing`
+            // ENOENT test at generator.c:1758.
+            //
+            // Consequently the ONLY `Err` this function may return is the
+            // confined unlink above - upstream's `goto skipping_dir_contents`
+            // (`generator.c:1841-1842`), which the caller treats as a hard
+            // failure that skips the directory and its contents. Raising the
+            // stat error here instead would route ENOTDIR - the "a plain file
+            // sits where a parent directory should be" shape - into that same
+            // skip arm, laundering a hard mkdir failure into `Ok(None)` and
+            // hiding it from the caller's exit-code path.
+            Err(_) => Ok(DirDestination::Missing),
         }
     }
 
@@ -1369,6 +1388,71 @@ mod touch_up_dirs_tests {
                 .file_type()
                 .is_symlink(),
             "the fixture is only meaningful while the removal actually failed"
+        );
+    }
+
+    /// The twin of `surfaces_non_permission_error_from_mkdir`, for the BATCH
+    /// pass: a stat failure is not an obstruction refusal, and the two must not
+    /// share an arm.
+    ///
+    /// `classify_dir_destination` can fail for two unrelated reasons, and only
+    /// one of them is upstream's `skipping_dir_contents` case:
+    ///
+    /// - the confined unlink of an obstructing symlink was refused - upstream
+    ///   `generator.c:1841-1842` `goto skipping_dir_contents`, pinned by
+    ///   `a_refused_obstruction_removal_is_reported_not_reclassified` above;
+    /// - the destination could not be stat'd at all - upstream
+    ///   `generator.c:1745` just records `statret = -1`, and because
+    ///   `generator.c:1840` gates `delete_item()` on `statret == 0`, the entry
+    ///   falls through to `gen_entry_mkdir()` and that mkdir's error is what
+    ///   gets reported.
+    ///
+    /// Collapsing the second into the first turns a hard failure into a silent
+    /// "directory skipped": ENOTDIR from a plain file sitting where a parent
+    /// directory belongs stopped propagating and was folded into the failed-dir
+    /// set instead. This fixture shapes exactly that - `afile` is a regular
+    /// file, so stat'ing `afile/sub` fails ENOTDIR, which is neither NotFound
+    /// (the parent-walk retry) nor PermissionDenied (upstream's non-fatal
+    /// class) - and pins the hard error to `Err`.
+    #[cfg(unix)]
+    #[test]
+    fn a_stat_failure_is_not_an_obstruction_refusal_and_still_fails_loud() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        // A regular file where a parent directory is expected forces ENOTDIR
+        // when the receiver stats and then creates `afile/sub` beneath it.
+        fs::write(dest.join("afile"), b"not a directory").expect("plant regular file");
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+        ctx.file_list = vec![FileEntry::new_directory("afile/sub".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let result = ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        );
+
+        let err = result.expect_err(
+            "a non-EACCES mkdir failure must propagate as Err from the batch pass, \
+             not be laundered into the failed-directory set",
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "EACCES takes upstream's non-fatal branch; this fixture avoids it"
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "NotFound would take the parent-walk retry, not the hard-error path"
         );
     }
 
