@@ -36,7 +36,7 @@ mod rolling_edge_cases {
             let mut checksum = RollingChecksum::new();
             checksum.update(&[byte]);
             assert_eq!(checksum.len(), 1);
-            // upstream: checksum.c:285 `schar *buf` cast - bytes are signed [-128,127].
+            // upstream: checksum.c:307 `schar *buf` cast - bytes are signed [-128,127].
             // For single byte b: s1 = schar(b) & 0xFFFF, s2 = same, value = (s2 << 16) | s1.
             let signed = ((byte as i8) as i32) as u32 & 0xFFFF;
             let expected = (signed << 16) | signed;

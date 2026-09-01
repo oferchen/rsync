@@ -9,7 +9,7 @@
 //! ```c
 //! #define CHAR_OFFSET 0  // rsync 3.x uses 0 (no offset)
 //!
-//! // upstream: checksum.c:285 - bytes are reinterpreted as signed via
+//! // upstream: checksum.c:307 - bytes are reinterpreted as signed via
 //! // `schar *buf = (schar *)buf1`, so each byte contributes int(schar(byte))
 //! // (i.e. values >= 0x80 contribute byte - 256).
 //!
@@ -41,7 +41,7 @@ fn char_offset_is_zero() {
 
 /// Test single byte checksum.
 /// For a single byte b with CHAR_OFFSET = 0 and signed-byte semantics
-/// (upstream `checksum.c:285` casts via `schar *buf`):
+/// (upstream `checksum.c:307` casts via `schar *buf`):
 /// s1 = schar(b) mod 2^16
 /// s2 = schar(b) mod 2^16
 /// value = (s2 << 16) | s1
