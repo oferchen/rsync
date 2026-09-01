@@ -119,10 +119,10 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
 /// This test plants a regular file where the symlink's PARENT
 /// component has to be, so the underlying `symlink` syscall returns
 /// `ENOTDIR` - a non-EACCES class. The fix must surface it as `Err`.
-/// EACCES is covered by the discrimination test in the deletion module
-/// - one fail-loud regression per site is sufficient because both
-/// sites share the same upstream-parity rule (`PermissionDenied` is
-/// the only non-fatal class).
+/// EACCES is covered by the discrimination test in the deletion
+/// module: one fail-loud regression per site is sufficient because
+/// both sites share the same upstream-parity rule (`PermissionDenied`
+/// is the only non-fatal class).
 ///
 /// ⚠ The fixture used to plant an empty DIRECTORY at the leaf and rely
 /// on `symlinkat` returning EEXIST over it. That only worked because
