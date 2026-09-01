@@ -6760,3 +6760,64 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
          send_directory emits, reached by slicing instead of by scanning"
     );
 }
+
+/// Sorted, wire-side relative names currently in the context's file list.
+fn entry_names(ctx: &GeneratorContext) -> Vec<String> {
+    let mut names: Vec<String> = ctx
+        .file_list()
+        .iter()
+        .map(|e| e.name().to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The fixture both scan tests use: one file and one subdirectory at the top,
+/// and two levels of content underneath it. Two levels, because a one-level
+/// scan and a two-level scan would otherwise be indistinguishable.
+fn nested_scan_fixture() -> TempDir {
+    create_test_structure(&["top.txt", "sub/deep.txt", "sub/deeper/x.txt"])
+}
+
+#[test]
+fn scan_one_directory_emits_the_subdirectory_but_not_its_contents() {
+    let temp = nested_scan_fixture();
+
+    let handshake = test_handshake_with_protocol(32);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    ctx.scan_one_directory(temp.path(), temp.path()).unwrap();
+
+    // `sub` is present as an entry - upstream's FLAG_DIVERT_DIRS records the
+    // directory, it does not drop it. What is absent is everything below it,
+    // which is the work a later scan will do.
+    assert_eq!(entry_names(&ctx), vec!["sub", "top.txt"]);
+}
+
+#[test]
+fn the_recursive_walk_still_expands_the_same_fixture() {
+    let temp = nested_scan_fixture();
+
+    let handshake = test_handshake_with_protocol(32);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    build_file_list_for_contents(&mut ctx, temp.path());
+
+    // Without this the one-level assertion above would also hold for a fixture
+    // that simply has nothing deeper to find.
+    assert_eq!(
+        entry_names(&ctx),
+        vec![
+            ".",
+            "sub",
+            "sub/deep.txt",
+            "sub/deeper",
+            "sub/deeper/x.txt",
+            "top.txt"
+        ]
+    );
+}

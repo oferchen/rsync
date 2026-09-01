@@ -66,6 +66,61 @@ enum WalkStep {
     LeaveDir(filters::DirFilterGuard),
 }
 
+/// What the driver does when it reaches a subdirectory.
+///
+/// upstream: `flist.c:send_directory()` takes a flags word, and
+/// `send_extra_file_list()` passes `FLAG_DIVERT_DIRS` so a subdirectory found
+/// while scanning a sub-list is recorded and diverted rather than descended
+/// into. That single flag is why upstream never materialises the whole tree:
+/// one call scans one level, and the diverted directories become the work list
+/// for later calls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Descent {
+    /// Descend into every subdirectory, so one drive produces the whole tree.
+    Recurse,
+    /// Emit a subdirectory's own entry and stop there - its children belong to
+    /// a later scan. upstream: `FLAG_DIVERT_DIRS`.
+    DivertDirs,
+}
+
+/// The two things every walk step needs that are not part of the step itself:
+/// the base the wire-side relative name is computed against, and how deep to go.
+///
+/// Carried as one value rather than two parameters so adding the policy does
+/// not widen every signature in the driver.
+#[derive(Clone, Copy)]
+struct WalkScope<'a> {
+    base: &'a Path,
+    descent: Descent,
+}
+
+impl<'a> WalkScope<'a> {
+    /// The whole-tree walk every existing caller performs.
+    fn recursive(base: &'a Path) -> Self {
+        Self {
+            base,
+            descent: Descent::Recurse,
+        }
+    }
+
+    /// One level only. upstream: `FLAG_DIVERT_DIRS`.
+    fn one_level(base: &'a Path) -> Self {
+        Self {
+            base,
+            descent: Descent::DivertDirs,
+        }
+    }
+
+    /// Whether a subdirectory reached under this scope is descended into.
+    ///
+    /// The transfer root is not governed by this: `send_file_list()` always
+    /// scans the root it was pointed at, whichever flags it carries. Only
+    /// directories found *inside* a scan are diverted.
+    fn descends_into_subdirs(self) -> bool {
+        matches!(self.descent, Descent::Recurse)
+    }
+}
+
 impl GeneratorContext {
     /// Pre-checks a top-level source entry and walks it if it exists.
     ///
@@ -237,7 +292,7 @@ impl GeneratorContext {
             metadata,
             is_top_level,
         }];
-        self.drive_walk(base, &mut stack)
+        self.drive_walk(WalkScope::recursive(base), &mut stack)
     }
 
     /// Runs the explicit walk stack to exhaustion.
@@ -246,17 +301,18 @@ impl GeneratorContext {
     /// scans first and releases its filter scope after - the same nesting the
     /// recursion produced. An error abandons the remaining steps, which is what
     /// the `?` in the recursive version did by unwinding.
-    fn drive_walk(&mut self, base: &Path, stack: &mut Vec<WalkStep>) -> io::Result<()> {
+    fn drive_walk(&mut self, scope: WalkScope<'_>, stack: &mut Vec<WalkStep>) -> io::Result<()> {
         while let Some(step) = stack.pop() {
             match step {
                 WalkStep::Visit {
                     path,
                     metadata,
                     is_top_level,
-                } => self.visit_walk_entry(base, path, metadata, is_top_level, stack)?,
+                } => self.visit_walk_entry(scope, path, metadata, is_top_level, stack)?,
                 WalkStep::VisitChild(result) => {
-                    if let Some((path, metadata)) = self.resolve_child_metadata(base, result) {
-                        self.visit_walk_entry(base, path, metadata, false, stack)?;
+                    if let Some((path, metadata)) = self.resolve_child_metadata(scope.base, result)
+                    {
+                        self.visit_walk_entry(scope, path, metadata, false, stack)?;
                     }
                 }
                 WalkStep::ScanChildren { dir, opened } => {
@@ -275,13 +331,13 @@ impl GeneratorContext {
     /// recursive calls replaced by pushes onto `stack`.
     fn visit_walk_entry(
         &mut self,
-        base: &Path,
+        scope: WalkScope<'_>,
         path: PathBuf,
         metadata: std::fs::Metadata,
         is_top_level: bool,
         stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
-        let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
+        let relative = path.strip_prefix(scope.base).unwrap_or(&path).to_path_buf();
 
         // upstream: flist.c:2338-2349 - non-relative single-file sources split
         // on the last `/` so the wire-side relative name is just the basename
@@ -391,7 +447,12 @@ impl GeneratorContext {
         }
 
         // upstream: flist.c:send_file_list() - scan directory before recording entry
-        let should_recurse = metadata.is_dir() && self.config.flags.recursive;
+        //
+        // Under `FLAG_DIVERT_DIRS` the entry is still emitted; only the descent
+        // is withheld, so the directory becomes work for a later scan instead
+        // of being expanded into this one.
+        let should_recurse =
+            metadata.is_dir() && self.config.flags.recursive && scope.descends_into_subdirs();
         let dir_read = if should_recurse {
             match fast_io::pinned_root::read_dir(&path) {
                 Ok(entries) => Some(entries),
@@ -498,7 +559,56 @@ impl GeneratorContext {
             dir: dir_path.to_path_buf(),
             opened: None,
         }];
-        self.drive_walk(base, &mut stack)
+        self.drive_walk(WalkScope::recursive(base), &mut stack)
+    }
+
+    /// Scans exactly one directory: emits an entry per child and descends into
+    /// none of them.
+    ///
+    /// This is the producer step upstream's incremental recursion is built on.
+    /// `send_extra_file_list()` picks one directory off the directory list and
+    /// calls `send_directory()` with `FLAG_DIVERT_DIRS`, which emits that
+    /// directory's children and diverts any subdirectory among them instead of
+    /// expanding it. Each call therefore costs one level, not one subtree, and
+    /// the caller decides when to spend the next.
+    ///
+    /// Filter scope is entered and left around the scan, so per-directory merge
+    /// files apply to the children exactly as they do under the whole-tree walk.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_directory()` - reads one directory and stats each child
+    /// - `flist.c:send1extra()` - one directory, one sub-list
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by the lazy producer (LF-2c)")
+    )]
+    pub(in crate::generator) fn scan_one_directory(
+        &mut self,
+        base: &Path,
+        dir_path: &Path,
+    ) -> io::Result<()> {
+        // upstream: exclude.c:push_local_filters() - the per-directory scope the
+        // whole-tree walk enters before scanning, entered here for the same
+        // reason: the children are matched against this directory's merge files.
+        let guard = self.filter_chain.enter_directory(dir_path).map_err(|e| {
+            io::Error::other(format!(
+                "filter chain error in \"{}\": {e} {}{}",
+                dir_path.display(),
+                error_location!(),
+                crate::role_trailer::sender()
+            ))
+        })?;
+
+        // LIFO: the scan runs before the scope is released.
+        let mut stack = vec![
+            WalkStep::LeaveDir(guard),
+            WalkStep::ScanChildren {
+                dir: dir_path.to_path_buf(),
+                opened: None,
+            },
+        ];
+        self.drive_walk(WalkScope::one_level(base), &mut stack)
     }
 
     /// Opens `dir_path` when the caller did not, then schedules its children.
