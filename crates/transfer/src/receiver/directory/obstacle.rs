@@ -66,8 +66,16 @@ pub(in crate::receiver) enum MakeWayFor {
     /// upstream `DEL_FOR_SYMLINK` - `"symlink"`.
     Symlink,
     /// upstream `DEL_FOR_DEVICE` - `"device file"`.
+    ///
+    /// Unix only: `create_specials` is the sole constructor and Windows has
+    /// no `mknod` path, so on Windows this variant is unconstructible and
+    /// `-D warnings` rejects it as dead code.
+    #[cfg(unix)]
     Device,
     /// upstream `DEL_FOR_SPECIAL` - `"special file"`.
+    ///
+    /// Unix only, for the same reason as [`Self::Device`].
+    #[cfg(unix)]
     Special,
 }
 
@@ -77,7 +85,9 @@ impl MakeWayFor {
     const fn description(self) -> &'static str {
         match self {
             Self::Symlink => "symlink",
+            #[cfg(unix)]
             Self::Device => "device file",
+            #[cfg(unix)]
             Self::Special => "special file",
         }
     }
