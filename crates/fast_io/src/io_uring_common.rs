@@ -178,13 +178,13 @@ impl IoUringConfig {
 
     /// Returns whether socket writers may attempt `IORING_OP_SEND_ZC`.
     ///
-    /// True only when the configured policy is
-    /// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled). `Auto`
-    /// and `Disabled` both yield false so the default path uses regular
-    /// `IORING_OP_SEND`.
+    /// Delegates to [`crate::send_zc_policy_permits`]: `Enabled` always,
+    /// `Auto` only in builds carrying the `iouring-send-zc` cargo feature,
+    /// `Disabled` never. The kernel-opcode probe is applied separately by
+    /// the writer, so a `true` here is permission, not availability.
     #[must_use]
     pub fn allow_send_zc(&self) -> bool {
-        matches!(self.zero_copy_policy, crate::ZeroCopyPolicy::Enabled)
+        crate::send_zc_policy_permits(self.zero_copy_policy)
     }
 }
 

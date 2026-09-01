@@ -147,16 +147,17 @@ pub fn socket_writer_from_fd(
 }
 
 /// Creates a socket writer that dispatches `IORING_OP_SEND_ZC` when `policy`
-/// is [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled) and the
-/// running kernel advertises the opcode; otherwise returns a standard `Write`
-/// wrapper over the raw fd.
+/// permits it ([`crate::send_zc_policy_permits`]) and the running kernel
+/// advertises the opcode; otherwise returns a standard `Write` wrapper over
+/// the raw fd.
 ///
 /// This is the entry point the daemon-sender uses to opt a plaintext socket
-/// into zero-copy sends via `--zero-copy`. Unlike [`socket_writer_from_fd`],
-/// it is keyed on [`ZeroCopyPolicy`](crate::ZeroCopyPolicy) so the caller
-/// expresses SEND_ZC intent directly rather than through the orthogonal
-/// io_uring on/off axis. `Auto` and `Disabled` both yield the plain fd writer,
-/// keeping the default transfer path byte-identical.
+/// into zero-copy sends. Unlike [`socket_writer_from_fd`], it is keyed on
+/// [`ZeroCopyPolicy`](crate::ZeroCopyPolicy) so the caller expresses SEND_ZC
+/// intent directly rather than through the orthogonal io_uring on/off axis.
+/// `Disabled` always yields the plain fd writer; `Auto` does so too unless
+/// the build carries the `iouring-send-zc` cargo feature, which keeps a
+/// stock build's default transfer path byte-identical.
 ///
 /// The buffer-lifetime contract of SEND_ZC is upheld inside the returned
 /// writer: `IoUringSocketWriter::submit_send` drains both the transfer and
@@ -169,26 +170,28 @@ pub fn socket_writer_from_fd(
 ///
 /// # Errors
 ///
-/// Returns an error only when `policy` is `Enabled` and the per-thread ring
-/// cannot be constructed on the calling thread. `Auto`/`Disabled` never fail.
+/// Never returns an error: every failure to build the zero-copy writer
+/// degrades to the plain fd writer, which preserves the framing byte for
+/// byte. The `io::Result` is kept for signature parity with the non-Linux
+/// stub and the sibling factories.
 pub fn socket_writer_from_fd_zero_copy(
     fd: RawFd,
     buffer_capacity: usize,
     policy: crate::ZeroCopyPolicy,
 ) -> io::Result<IoUringOrStdSocketWriter> {
-    if !matches!(policy, crate::ZeroCopyPolicy::Enabled) {
+    if !crate::send_zc_policy_permits(policy) {
         let writer = FdWriter(fd);
         return Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)));
     }
 
-    // SEND_ZC requested. Build a writer whose config sets
-    // `zero_copy_policy = Enabled` so `IoUringSocketWriter::from_raw_fd`
-    // resolves `send_zc_active` from the kernel probe. If io_uring is
+    // SEND_ZC permitted. Carry the caller's policy into the config so
+    // `IoUringSocketWriter::from_raw_fd` re-applies the same predicate before
+    // resolving `send_zc_active` from the kernel probe. If io_uring is
     // unavailable or the writer cannot be built, fall back to the plain fd
     // writer so the transfer still proceeds with byte-identical framing.
     let config = IoUringConfig {
         buffer_size: buffer_capacity,
-        zero_copy_policy: crate::ZeroCopyPolicy::Enabled,
+        zero_copy_policy: policy,
         ..IoUringConfig::default()
     };
     if is_io_uring_available() {

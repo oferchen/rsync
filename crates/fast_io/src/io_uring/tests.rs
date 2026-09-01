@@ -1030,22 +1030,54 @@ fn zero_copy_large_payload_roundtrip() {
     );
 }
 
-// Auto/Disabled must NOT engage SEND_ZC: the factory returns the plain fd
-// `Std` writer, preserving the default socket write path. This is the
-// HARD default-path invariant at the fast_io boundary.
+// `Disabled` must NOT engage SEND_ZC on any build: the factory returns the
+// plain fd `Std` writer, preserving the default socket write path. This is the
+// HARD `--no-zero-copy` invariant at the fast_io boundary.
 #[test]
-fn zero_copy_auto_and_disabled_yield_std_writer() {
-    for policy in [crate::ZeroCopyPolicy::Auto, crate::ZeroCopyPolicy::Disabled] {
-        let (fd_a, fd_b) = make_socket_pair();
-        let writer = socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, policy).unwrap();
-        assert!(
-            matches!(writer, IoUringOrStdSocketWriter::Std(_)),
-            "{policy:?} must yield the plain Std writer, not a SEND_ZC writer"
+fn zero_copy_disabled_yields_std_writer() {
+    let (fd_a, fd_b) = make_socket_pair();
+    let writer =
+        socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Disabled).unwrap();
+    assert!(
+        matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+        "Disabled must yield the plain Std writer, not a SEND_ZC writer"
+    );
+    drop(writer);
+    close_fd(fd_a);
+    close_fd(fd_b);
+}
+
+// `Auto` follows the `iouring-send-zc` cargo feature, which is the IUS-4
+// release gate. Without it a stock build keeps the plain `Std` writer, so the
+// default transfer path is byte-identical; with it `Auto` reaches the io_uring
+// writer, whose own kernel probe then decides whether real SEND_ZC SQEs fly.
+//
+// A socketpair is AF_UNIX, where SEND_ZC's notification path is not wired, so
+// this asserts only which writer the factory picked - `zero_copy_large_payload_
+// roundtrip` covers the loopback-TCP opcode behaviour.
+#[test]
+fn zero_copy_auto_follows_the_send_zc_feature_gate() {
+    let (fd_a, fd_b) = make_socket_pair();
+    let writer =
+        socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Auto).unwrap();
+    let picked_io_uring = matches!(writer, IoUringOrStdSocketWriter::IoUring(_));
+    if cfg!(feature = "iouring-send-zc") {
+        assert_eq!(
+            picked_io_uring,
+            is_io_uring_available(),
+            "with the feature on, Auto must reach the io_uring writer whenever \
+             io_uring itself is available"
         );
-        drop(writer);
-        close_fd(fd_a);
-        close_fd(fd_b);
+    } else {
+        assert!(
+            !picked_io_uring,
+            "without the feature, Auto must keep the plain Std writer so a \
+             stock build's default path is unchanged"
+        );
     }
+    drop(writer);
+    close_fd(fd_a);
+    close_fd(fd_b);
 }
 
 /// Regression test for issue #1872: an `IORING_OP_SEND` on a back-pressured

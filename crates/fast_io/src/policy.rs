@@ -247,6 +247,35 @@ pub type IocpPolicy = BackendPolicy;
 /// platforms but skips `copy_file_range`/`sendfile`/`splice` direct calls).
 pub type ZeroCopyPolicy = BackendPolicy;
 
+/// Returns whether `policy` permits `IORING_OP_SEND_ZC` on the socket-send
+/// path, before the runtime kernel-opcode probe runs.
+///
+/// This is the policy half of the two-part SEND_ZC gate; the kernel half is
+/// `io_uring::send_zc_supported`, which the writer consults at
+/// construction. Splitting them lets callers that only own a policy (the
+/// daemon-sender's writer factory) skip the io_uring machinery entirely
+/// without duplicating the meaning of each variant.
+///
+/// - [`ZeroCopyPolicy::Disabled`] - never. `--no-zero-copy` is a hard off.
+/// - [`ZeroCopyPolicy::Enabled`] - always attempt; an unsupported kernel
+///   still degrades to plain `IORING_OP_SEND` inside the writer.
+/// - [`ZeroCopyPolicy::Auto`] - attempt only in builds carrying the
+///   `iouring-send-zc` cargo feature. That feature is the IUS-4 release gate
+///   (it raises the socket-send kernel floor from 5.6 to 6.0), so a stock
+///   build keeps `Auto` on the plain socket write path and is byte-identical
+///   to a build without this predicate.
+///
+/// Mirrors the shape of `is_splice_enabled`, which applies the same
+/// policy gate to `splice(2)`.
+#[must_use]
+pub const fn send_zc_policy_permits(policy: ZeroCopyPolicy) -> bool {
+    match policy {
+        ZeroCopyPolicy::Disabled => false,
+        ZeroCopyPolicy::Enabled => true,
+        ZeroCopyPolicy::Auto => cfg!(feature = "iouring-send-zc"),
+    }
+}
+
 /// Size threshold (bytes) above which basis-file reads use io_uring+SQPOLL
 /// instead of mmap.
 ///
@@ -467,6 +496,30 @@ mod tests {
         assert_ne!(ZeroCopyPolicy::Auto, ZeroCopyPolicy::Enabled);
         assert_ne!(ZeroCopyPolicy::Auto, ZeroCopyPolicy::Disabled);
         assert_ne!(ZeroCopyPolicy::Enabled, ZeroCopyPolicy::Disabled);
+    }
+
+    /// `--no-zero-copy` is a hard off for SEND_ZC on every build.
+    #[test]
+    fn send_zc_policy_permits_rejects_disabled() {
+        assert!(!send_zc_policy_permits(ZeroCopyPolicy::Disabled));
+    }
+
+    /// An explicit `--zero-copy` is honoured regardless of the cargo feature;
+    /// the kernel-opcode probe still has the final say inside the writer.
+    #[test]
+    fn send_zc_policy_permits_accepts_enabled() {
+        assert!(send_zc_policy_permits(ZeroCopyPolicy::Enabled));
+    }
+
+    /// `Auto` is the arm the IUS-4 release gate governs: it permits SEND_ZC
+    /// exactly when the build carries `iouring-send-zc`, so a stock build's
+    /// default socket-send path is unchanged.
+    #[test]
+    fn send_zc_policy_permits_auto_follows_the_feature_gate() {
+        assert_eq!(
+            send_zc_policy_permits(ZeroCopyPolicy::Auto),
+            cfg!(feature = "iouring-send-zc")
+        );
     }
 
     #[test]
