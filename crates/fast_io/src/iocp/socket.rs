@@ -13,13 +13,13 @@
 //!
 //! Upstream rsync uses POSIX `read(2)` / `write(2)` against the socket fd in
 //! `safe_read` / `safe_write`
-//! (`target/interop/upstream-src/rsync-3.4.1/io.c:239` and `:312`). Windows
+//! (`target/interop/upstream-src/rsync-3.5.0/io.c:292` and `:369`). Windows
 //! has no direct equivalent because `read`/`write` on a `SOCKET` are
 //! synchronous; the closest async-capable primitive is `WSARecv` / `WSASend`
 //! with `OVERLAPPED`. The buffering and EOF semantics expected by the
 //! multiplex layer above (`crates/protocol`) are unchanged: an `Ok(0)` from a
 //! socket read means the peer cleanly closed the connection, mirroring
-//! `safe_read` exiting its loop on `n == 0` (`io.c:276`).
+//! `safe_read` exiting its loop on `n == 0` (`io.c:333`).
 //!
 //! # WSA_IO_PENDING
 //!
@@ -143,7 +143,7 @@ impl IocpSocketReader {
     /// Receives bytes from the socket, returning the number transferred.
     ///
     /// `Ok(0)` indicates a graceful peer shutdown - upstream `safe_read`
-    /// breaks its loop on `n == 0` (`io.c:276`). Connection-reset and
+    /// breaks its loop on `n == 0` (`io.c:333`). Connection-reset and
     /// shutdown-on-the-other-side errors are mapped to `Ok(0)` to mirror that
     /// EOF semantic, matching how the io_uring socket reader handles
     /// `IORING_OP_RECV` returning `0` after a peer close.
@@ -434,7 +434,7 @@ fn await_completion(
         Ok(transferred) => Ok(transferred as usize),
         // `UnexpectedEof` from the pump corresponds to STATUS_END_OF_FILE,
         // which Winsock translates to a graceful close on the recv side.
-        // upstream: io.c:276 - safe_read breaks its loop on n == 0.
+        // upstream: io.c:333 - safe_read breaks its loop on n == 0.
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
         Err(e) => Err(e),
     }

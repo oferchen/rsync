@@ -9,7 +9,7 @@
 //! - `match.c:hash_search()` - consumer of rolling checksums during delta detection
 //!
 //! Upstream rsync has no NEON path; aarch64 falls through to the scalar loop
-//! at `target/interop/upstream-src/rsync-3.4.1/checksum.c:285-300`. The
+//! at `target/interop/upstream-src/rsync-3.5.0/checksum.c:303-318`. The
 //! vector-register-resident `s1` / `s2` pattern below mirrors the
 //! x86 SSSE3/SSE2 loop in `simd-checksum-x86_64.cpp:113-313`, adapted to
 //! NEON intrinsics.

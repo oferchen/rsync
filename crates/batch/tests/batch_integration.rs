@@ -7,7 +7,7 @@
 //! - Edge cases including empty batches and large data volumes
 //!
 //! The tests are organized by functional area and follow upstream rsync's
-//! batch.c behavior as documented in `target/interop/upstream-src/rsync-3.4.1/batch.c`.
+//! batch.c behavior as documented in `target/interop/upstream-src/rsync-3.5.0/batch.c`.
 //!
 //! ## Upstream Compatibility
 //!

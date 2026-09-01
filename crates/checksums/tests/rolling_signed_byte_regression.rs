@@ -2,7 +2,7 @@
 //!
 //! PR #3560 fixed a sign-extension bug in the rolling checksum where bytes
 //! `>= 0x80` were treated as unsigned, diverging from upstream rsync's
-//! `schar *buf = (schar *)buf1` cast (`checksum.c:285`). The proptest in
+//! `schar *buf = (schar *)buf1` cast (`checksum.c:307`). The proptest in
 //! `rolling_simd_parity.rs` covers this via a self-contained reference, but
 //! a corrupted reference would silently mask a regression. This file pins
 //! down hand-computed expected `(s1, s2)` values for fixtures whose bytes
@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/checksum.c:285` casts the
+//! - `target/interop/upstream-src/rsync-3.5.0/checksum.c:307` casts the
 //!   buffer to `schar *`, so each byte contributes `(byte as i8) as i32`.
 //! - `match.c:hash_search()` consumes the rolling digest as
 //!   `(s2 << 16) | s1`, both terms masked to 16 bits.

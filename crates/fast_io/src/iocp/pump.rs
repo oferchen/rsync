@@ -33,7 +33,7 @@
 //!
 //! # Upstream reference
 //!
-//! Upstream rsync 3.4.1 (`target/interop/upstream-src/rsync-3.4.1/`) does
+//! Upstream rsync 3.5.0 (`target/interop/upstream-src/rsync-3.5.0/`) does
 //! not use IOCP; the design space for the pump surface is open. The pump
 //! is intentionally minimal so #1898 can layer a batched-write API on top
 //! that mirrors `IoUringDiskBatch` (`crates/fast_io/src/io_uring/disk_batch.rs`).
