@@ -77,7 +77,7 @@ Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/acti
 
 | Platform | Tier | Notes |
 |---|---|---|
-| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock + seccomp. Every required CI cell runs the full nextest workspace. Production deployment target. |
+| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock. Every required CI cell runs the full nextest workspace. Production deployment target. A seccomp BPF syscall allowlist for the daemon worker is available behind `--features daemon-seccomp`; it is off in default builds and in the released binaries. |
 | macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Every required CI cell runs the full nextest workspace. Full metadata, ACL, and xattr parity including AppleDouble (`._foo`) resource-fork preservation. |
 | Windows x86_64 | **Tier 2** | IOCP file I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`, `FILE_FLAG_DELETE_ON_CLOSE`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the receiver uses IOCP-batched `WriteFile`, which is faster than the upstream Cygwin `read`/`write` fallback. NTFS DACL preservation, xattrs via NTFS Alternate Data Streams, and IOCP socket I/O (`WSARecv` / `WSASend`) are shipped; POSIX symlinks are materialized (directory links fall back to a junction when unprivileged, unprivileged file symlinks are skipped with a warning), while POSIX device nodes / FIFOs remain stubbed in line with NTFS limits. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md). |
 
