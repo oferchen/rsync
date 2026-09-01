@@ -183,10 +183,10 @@ mod imp {
     /// `stat`/`lstat` `relative` beneath `dirfd`.
     ///
     /// `O_PATH` is what makes this a stat and not a read: the kernel resolves
-    /// the name and hands back a descriptor that refers to it without granting
-    /// - or requiring - any access to its contents, so an unreadable file, a
-    /// FIFO with no writer, and a device all report their metadata the way
-    /// `lstat` does. `fstat` on such a descriptor has been supported since
+    /// the name and hands back a descriptor that refers to it without
+    /// granting - or requiring - any access to its contents, so an unreadable
+    /// file, a FIFO with no writer, and a device all report their metadata the
+    /// way `lstat` does. `fstat` on such a descriptor has been supported since
     /// Linux 3.6. With `O_NOFOLLOW` it names the symlink itself, which is
     /// exactly `lstat`; without it the symlink is followed, which is `stat`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
