@@ -184,7 +184,7 @@ pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> b
 /// privilege drop. It is `false` on Windows, matching upstream's `am_root = 0`
 /// on platforms without POSIX uid semantics.
 ///
-/// upstream: `main.c:1764` `our_uid = MY_UID()` - the libc `geteuid()`
+/// upstream: `main.c:1844` `our_uid = MY_UID()` - the libc `geteuid()`
 /// (`rsync.h:1455`), re-sampled by `become_copy_as_user()` after the
 /// `--copy-as` drop. A raw `geteuid` syscall answers neither: `fakeroot`
 /// interposes the libc symbol and not the syscall, so it reports the real
