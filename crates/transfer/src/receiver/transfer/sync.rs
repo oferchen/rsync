@@ -76,8 +76,6 @@ impl ReceiverContext {
         let mut bytes_received = 0u64;
 
         // First pass: create directories and symlinks from file list.
-        // upstream: generator.c:1329-1338 - make_path() for relative_paths
-        self.ensure_relative_parents(&dest_dir);
         let mut metadata_errors = self.create_directories(
             &dest_dir,
             &metadata_opts,
@@ -87,6 +85,16 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox.as_deref(),
         )?;
+        // upstream: generator.c:1718-1725 - make_path() fills in a parent that
+        // is still absent after its own file-list entry would have created it.
+        // Must follow create_directories: running it first would pre-empt the
+        // classified, confined mkdir there and make a real run report an
+        // existing directory where its own --dry-run reports a created one.
+        self.ensure_relative_parents(
+            &dest_dir,
+            #[cfg(unix)]
+            sandbox.as_deref(),
+        );
         #[cfg(unix)]
         self.create_symlinks(&dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
