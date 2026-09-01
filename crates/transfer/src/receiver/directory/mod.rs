@@ -13,6 +13,7 @@ mod creation;
 pub(in crate::receiver) mod deletion;
 mod links;
 mod missing_args;
+mod obstacle;
 mod special;
 
 /// Normalizes a filename for cross-platform comparison.
