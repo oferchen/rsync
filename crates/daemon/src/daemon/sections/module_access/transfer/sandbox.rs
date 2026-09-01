@@ -71,7 +71,50 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     };
 
-    // upstream: clientserver.c:980-989 - chroot first, then privilege drop.
+    // Resolve the identity BEFORE the chroot, because resolving it is a name
+    // lookup and the chroot is what makes names unresolvable.
+    //
+    // upstream: clientserver.c:831-880 resolves the uid (`user_to_uid`, :833)
+    // and the whole group set (`want_all_groups` :849, `add_a_group` :698-707,
+    // the `NOBODY_GROUP` default :873) while still outside any jail; the
+    // `chroot()` does not happen until :1050. Every impure arm of
+    // `resolve_drop_target` goes through NSS - the `nobody` user, the
+    // `nobody`/`nogroup` group, and the `gid = *` supplementary-group
+    // enumeration - so a jail that does not contain `/etc/passwd`, `/etc/group`
+    // and the NSS modules cannot answer them. Resolving after the chroot turns
+    // the `nobody` default that a root daemon applies to every module without
+    // an explicit numeric `uid` into `@ERROR: invalid uid nobody`, and the
+    // module never serves.
+    //
+    // Only the `setgid`/`setgroups`/`setuid` SYSCALLS need to run after the
+    // chroot (they need the root privileges the chroot also needs); those stay
+    // below. upstream: clientserver.c:1024/1031/1053.
+    let drop_target = if needs_privdrop {
+        match resolve_drop_target(module, am_root) {
+            Ok(target) => Some(target),
+            Err(err) => {
+                // A uid/gid NAME that fails to resolve (here the `nobody`
+                // default) is a distinct failure point from the setgid/setuid
+                // SYSCALL failures handled below: it yields `@ERROR: invalid
+                // uid <name>` / `@ERROR: invalid gid <name>` with a matching
+                // FLOG `Invalid uid/gid <name>`.
+                // upstream: clientserver.c:836-838 (uid) / 702-703 (gid). This
+                // lookup runs before the post-xfer-exec fork point (908), so
+                // no `post-xfer exec` hook fires here.
+                let (flog, error) = err.upstream_reply();
+                let message = rsync_error!(1, flog).with_role(Role::Daemon);
+                log_message(log_sink, &message);
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
+
+    // upstream: clientserver.c:1040-1057 - chroot, then chdir into the served
+    // root. Only the privilege-drop SYSCALLS follow it; the identity they drop
+    // to was resolved above.
     // A rootless auto-fallback (unset `use chroot` + failing probe) yields
     // `Ok(false)`; an explicit `use chroot = yes` that fails is fatal.
     let mut chroot_applied = false;
@@ -109,28 +152,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     }
 
-    if needs_privdrop {
-        // upstream: clientserver.c:783-824 - resolve the effective uid and full
-        // group set (nobody defaults, `gid = *` expansion) before dropping.
-        let target = match resolve_drop_target(module, am_root) {
-            Ok(target) => target,
-            Err(err) => {
-                // A uid/gid NAME that fails to resolve (here the `nobody`
-                // default) is a distinct failure point from the setgid/setuid
-                // SYSCALL failures handled below: it yields `@ERROR: invalid
-                // uid <name>` / `@ERROR: invalid gid <name>` with a matching
-                // FLOG `Invalid uid/gid <name>`.
-                // upstream: clientserver.c:784-786 (uid) / 657-659 (gid). This
-                // lookup runs before the post-xfer-exec fork point (908), so
-                // no `post-xfer exec` hook fires here.
-                let (flog, error) = err.upstream_reply();
-                let message = rsync_error!(1, flog).with_role(Role::Daemon);
-                log_message(log_sink, &message);
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                return Ok(None);
-            }
-        };
-
+    if let Some(target) = drop_target {
         if target.uid.is_some() || !target.gids.is_empty() {
             if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
                 // Distinguish upstream error messages based on the error text.
