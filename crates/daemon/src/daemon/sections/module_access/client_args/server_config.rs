@@ -334,26 +334,26 @@ fn build_server_config(
             // block that sanitises the alt-dest dirs also runs `backup_dir`
             // through `sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`.
             // An ABSOLUTE --backup-dir therefore re-roots at `module_dir`
-            // (util1.c:1145-1152, the `if (!rootdir) rootdir = module_dir`
-            // arm), while a relative one stays relative to the destination -
-            // the same two arms `clamp_basis_to_module` already implements for
-            // a basis directory, so it is reused rather than reimplemented.
+            // (util1.c:1145-1151, the `if (!rootdir) rootdir = module_dir`
+            // arm), while a RELATIVE one stays relative for the receiver to
+            // anchor at its own destination - see `sanitize_backup_dir` for why
+            // the relative arm must not go through `clamp_basis_to_module`.
             //
-            // Without this the daemon resolved `/backup/` against the
-            // filesystem root and the backup silently failed. That is not a
+            // Without the absolute arm the daemon resolved `/backup/` against
+            // the filesystem root and the backup silently failed. That is not a
             // cosmetic loss: `atomic_create()` makes the backup a PRECONDITION
             // (generator.c:2477-2479 `if (!make_backup(...)) return 0`), so the
             // failure SKIPPED the entry entirely, leaving the destination stale
             // while still exiting 0.
             if let Some(dir) = cfg.backup_dir.as_deref() {
-                let clamped = clamp_basis_to_module(
+                let sanitized = sanitize_backup_dir(
                     std::path::Path::new(dir),
                     &resolve_base,
                     &module_root_canonical,
                 );
-                // Lossless: `dir` is a String, and the clamp only joins and
+                // Lossless: `dir` is a String, and the sanitize only joins and
                 // drops whole components, so every retained byte stays UTF-8.
-                cfg.backup_dir = Some(clamped.to_string_lossy().into_owned());
+                cfg.backup_dir = Some(sanitized.to_string_lossy().into_owned());
             }
             // upstream: main.c:1233-1240 - the server receiver runs the very
             // same `if (sanitize_paths)` block over `partial_dir`
