@@ -398,12 +398,78 @@ impl PipelinedReceiver {
         });
     }
 
+    /// Decides whether a failed commit skips one file or stops the whole run,
+    /// and records the per-file diagnostic when it skips.
+    ///
+    /// Returns `None` when the file was skipped and the transfer may continue,
+    /// or `Some(error)` for the caller to propagate.
+    ///
+    /// Upstream answers the two commit failures differently, and the
+    /// discriminator is the operation, not the errno:
+    ///
+    /// - a denied `mkstemp()` is per-file. `receiver.c:452-455` reports it and
+    ///   `recv_files()` moves to the next file, so the run ends at
+    ///   `RERR_PARTIAL` (23) through `io_error`.
+    /// - a failed backup is fatal. `finish_transfer()` answers
+    ///   `!make_backup(fname, False)` with `exit_cleanup(RERR_FILEIO)`, which
+    ///   does not return. Continuing would let every later file overwrite the
+    ///   pre-image its own backup was asked to preserve, so the abort - not the
+    ///   exit code - is the data guarantee. The `FERROR` diagnostic
+    ///   `make_backup()` already printed is kept, matching upstream's two-line
+    ///   output (the per-file reason, then the fatal exit line).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/rsync.c:897-900` - `finish_transfer()`:
+    ///   `if (!ok) exit_cleanup(RERR_FILEIO);`
+    /// - `rsync-3.5.0/cleanup.c:103` - `_exit_cleanup()` is `NORETURN`.
+    /// - `rsync-3.5.0/cleanup.c:113-117` - the first code in wins, and
+    ///   `cleanup.c:210-218` only reaches for `RERR_PARTIAL` when no code has
+    ///   been claimed, so `RERR_FILEIO` (11) outranks the 23 the accumulated
+    ///   `got_xfer_error` would otherwise produce.
+    /// - `rsync-3.5.0/receiver.c:452-455` - the contrasting per-file `mkstemp`
+    ///   failure that does continue.
+    fn absorb_commit_error(
+        &mut self,
+        error: io::Error,
+        meta_errors: &mut Vec<(PathBuf, String)>,
+    ) -> Option<io::Error> {
+        let pending = self.expected_checksums.pop_front();
+        let path = pending.map(|p| p.file_path).unwrap_or_default();
+        let fatal_backup = matches!(
+            crate::temp_guard::commit_op_failure(&error),
+            Some((crate::temp_guard::CommitOp::Backup, _))
+        );
+
+        if fatal_backup {
+            self.warnings
+                .push((MessageCode::ErrorXfer, self.commit_failure(&path, &error)));
+            return Some(error);
+        }
+
+        if !is_permission_error(&error) {
+            return Some(error);
+        }
+
+        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
+        // "mkstemp %s failed", full_fname(fnametmp)). Emitting this as
+        // FERROR_XFER (not FINFO) makes the peer's rwrite() set
+        // got_xfer_error, so the run exits 23 (RERR_PARTIAL) instead of 0
+        // when mkstemp() was denied.
+        let message = self.commit_failure(&path, &error);
+        self.warnings.push((MessageCode::ErrorXfer, message));
+        meta_errors.push((path, error.to_string()));
+        self.permission_error_count += 1;
+        None
+    }
+
     /// Non-blockingly drains all available commit results.
     ///
     /// Returns accumulated (bytes_written, metadata_errors).
     /// Permission-denied errors from the disk thread are treated as recoverable
     /// per-file errors - logged and added to `meta_errors` rather than aborting
-    /// the transfer. Other fatal disk errors are still propagated.
+    /// the transfer. A failed backup and every other disk error are propagated;
+    /// see [`Self::absorb_commit_error`] for the split.
     /// Verifies per-file checksums when the disk thread returns a computed digest.
     ///
     /// # Upstream Reference
@@ -429,20 +495,8 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits = self.pending_commits.saturating_sub(1);
-                    let pending = self.expected_checksums.pop_front();
-                    if is_permission_error(&e) {
-                        let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
-                        // "mkstemp %s failed", full_fname(fnametmp)). Emitting
-                        // this as FERROR_XFER (not FINFO) makes the peer's
-                        // rwrite() set got_xfer_error, so the run exits 23
-                        // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
-                        let message = self.commit_failure(&path, &e);
-                        self.warnings.push((MessageCode::ErrorXfer, message));
-                        meta_errors.push((path, e.to_string()));
-                        self.permission_error_count += 1;
-                    } else {
-                        return Err(e);
+                    if let Some(err) = self.absorb_commit_error(e, &mut meta_errors) {
+                        return Err(err);
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -466,7 +520,8 @@ impl PipelinedReceiver {
     /// Returns accumulated (bytes_written, metadata_errors).
     /// Permission-denied errors from the disk thread are treated as recoverable
     /// per-file errors - logged and added to `meta_errors` rather than aborting
-    /// the transfer. Other fatal disk errors are still propagated.
+    /// the transfer. A failed backup and every other disk error are propagated;
+    /// see [`Self::absorb_commit_error`] for the split.
     /// Verifies per-file checksums when the disk thread returns a computed digest.
     ///
     /// # Upstream Reference
@@ -492,20 +547,8 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits -= 1;
-                    let pending = self.expected_checksums.pop_front();
-                    if is_permission_error(&e) {
-                        let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
-                        // "mkstemp %s failed", full_fname(fnametmp)). Emitting
-                        // this as FERROR_XFER (not FINFO) makes the peer's
-                        // rwrite() set got_xfer_error, so the run exits 23
-                        // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
-                        let message = self.commit_failure(&path, &e);
-                        self.warnings.push((MessageCode::ErrorXfer, message));
-                        meta_errors.push((path, e.to_string()));
-                        self.permission_error_count += 1;
-                    } else {
-                        return Err(e);
+                    if let Some(err) = self.absorb_commit_error(e, &mut meta_errors) {
+                        return Err(err);
                     }
                 }
                 Err(_) => {

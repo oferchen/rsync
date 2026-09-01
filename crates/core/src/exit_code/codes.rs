@@ -328,6 +328,9 @@ impl ExitCode {
     /// - `UnexpectedEof`, other `InvalidData` - `StreamIo`
     /// - `Unsupported` - `Unsupported`
     /// - `Interrupted` by signal - `Signal`
+    /// - A failed commit-path backup (tagged
+    ///   [`transfer::temp_guard::CommitOp::Backup`]) - `FileIo`, whatever the
+    ///   errno
     /// - All other I/O errors - `FileIo`
     ///
     /// A wire-protocol violation that upstream rsync exits with
@@ -358,6 +361,18 @@ impl ExitCode {
             .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>())
         {
             return Self::Syntax;
+        }
+
+        // upstream: rsync.c:900 - `finish_transfer()` answers a failed
+        // `make_backup()` with `exit_cleanup(RERR_FILEIO)` whatever the errno
+        // was, so a denied backup must not be graded by `ErrorKind` like the
+        // per-file open failures below. Without this arm the usual `EACCES`
+        // reaches the `PermissionDenied => FileSelect` arm and reports 3.
+        if matches!(
+            transfer::temp_guard::commit_op_failure(error),
+            Some((transfer::temp_guard::CommitOp::Backup, _))
+        ) {
+            return Self::FileIo;
         }
 
         match error.kind() {
