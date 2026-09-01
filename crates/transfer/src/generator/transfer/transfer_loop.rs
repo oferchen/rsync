@@ -1510,6 +1510,47 @@ impl GeneratorContext {
         };
         self.remove_source_file_if_requested(&source_path, &display_name, recorded)
     }
+
+    /// Runs the deferred `--remove-source-files` unlink for every confirmation
+    /// in `confirmed`, routing each failure through `emit_sender_diagnostic`.
+    ///
+    /// Returns how many confirmations were drained, which is what lets a test
+    /// assert that a given drain phase had real work to do rather than passing
+    /// on an empty set.
+    ///
+    /// Upstream has no batched drain to mirror: `read_a_msg()` calls
+    /// `successful_send(val)` the instant a `MSG_SUCCESS` frame is demultiplexed
+    /// (`io.c:1793-1807`), so the unlink and its `FERROR_XFER` happen wherever
+    /// the sender happened to be doing I/O - during `send_files()` and again
+    /// inside `read_final_goodbye()`. Our reader accumulates the indices instead
+    /// of dispatching them, so the eagerness upstream gets for free has to be
+    /// reproduced by calling this at each point upstream could have reacted.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1793-1807` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
+    /// - `sender.c:395` - `successful_send()` performs the guarded unlink
+    /// - `log.c:337-338`, `log.c:357-367` - `FERROR_XFER` sets `got_xfer_error`
+    ///   and, on a server, forwards the text as `MSG_ERROR_XFER`
+    pub(crate) fn drain_confirmed_source_removals<W: Write>(
+        &mut self,
+        writer: &mut crate::writer::ServerWriter<W>,
+        confirmed: Vec<i32>,
+    ) -> io::Result<usize> {
+        let drained = confirmed.len();
+        for wire_ndx in confirmed {
+            let outcome = self.confirm_source_removal(wire_ndx);
+            self.io_error |= outcome.io_error;
+            if let Some(text) = outcome.error_xfer {
+                self.emit_sender_diagnostic(
+                    writer,
+                    super::super::protocol_io::SenderDiagnostic::ErrorXfer,
+                    &text,
+                )?;
+            }
+        }
+        Ok(drained)
+    }
 }
 
 /// Per-index record of which file-list entries the sender has already
