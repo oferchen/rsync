@@ -217,7 +217,11 @@ mod relative_parents {
         let entries = vec![FileEntry::new_file("a/b/c/file.txt".into(), 100, 0o644)];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(dest.join("a").is_dir());
         assert!(dest.join("a/b").is_dir());
@@ -236,7 +240,11 @@ mod relative_parents {
         ];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(dest.join("src").is_dir());
         assert!(dest.join("src/lib").is_dir());
@@ -251,7 +259,11 @@ mod relative_parents {
         let entries = vec![FileEntry::new_file("a/b/file.txt".into(), 100, 0o644)];
         let ctx = receiver_without_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(!dest.join("a").exists());
     }
@@ -267,7 +279,11 @@ mod relative_parents {
         ];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
     }
 
     #[test]
@@ -278,7 +294,11 @@ mod relative_parents {
         let entries = vec![FileEntry::new_directory("a/b/c".into(), 0o755)];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(dest.join("a").is_dir());
         assert!(dest.join("a/b").is_dir());
@@ -298,7 +318,11 @@ mod relative_parents {
         let entries = vec![FileEntry::new_file("a/b/c/new.txt".into(), 100, 0o644)];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert_eq!(
             std::fs::read_to_string(dest.join("a/b/existing.txt")).unwrap(),
@@ -332,7 +356,11 @@ mod relative_parents {
             0o644,
         )];
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(!dest.join("deep").exists());
     }
@@ -345,7 +373,11 @@ mod relative_parents {
         let entries = vec![FileEntry::new_file("file.txt".into(), 100, 0o644)];
         let ctx = receiver_with_relative(entries);
 
-        ctx.ensure_relative_parents(dest);
+        ctx.ensure_relative_parents(
+            dest,
+            #[cfg(unix)]
+            None,
+        );
 
         let dir_entries: Vec<_> = std::fs::read_dir(dest).unwrap().collect();
         assert!(dir_entries.is_empty());
