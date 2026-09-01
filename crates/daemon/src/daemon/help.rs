@@ -279,7 +279,7 @@ mod tests {
             "missing the upstream trailer in:\n{text}"
         );
         assert!(
-            text.contains("/etc/oc-rsyncd/oc-rsyncd.conf"),
+            text.contains("/etc/oc-rsync/oc-rsyncd.conf"),
             "trailer must name the default configuration path in:\n{text}"
         );
     }

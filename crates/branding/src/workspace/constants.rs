@@ -132,15 +132,15 @@ pub const fn legacy_daemon_program_name() -> &'static str {
 }
 
 /// Configuration directory installed alongside the branded daemon.
-#[doc(alias = "/etc/oc-rsyncd")]
+#[doc(alias = "/etc/oc-rsync")]
 pub const DAEMON_CONFIG_DIR: &str = crate::generated::DAEMON_CONFIG_DIR;
 
 /// Default daemon configuration file path for the branded binary.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.conf")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.conf")]
 pub const DAEMON_CONFIG_PATH: &str = crate::generated::DAEMON_CONFIG_PATH;
 
 /// Default daemon secrets file path for the branded binary.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.secrets")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.secrets")]
 pub const DAEMON_SECRETS_PATH: &str = crate::generated::DAEMON_SECRETS_PATH;
 
 /// Legacy configuration directory honoured for upstream compatibility.

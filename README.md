@@ -373,7 +373,7 @@ oc-rsync -av ./local/ rsync://host/module/
 oc-rsync -av host::module/path/ ./local/
 
 # Run as daemon
-oc-rsync --daemon --config=/etc/oc-rsyncd/oc-rsyncd.conf
+oc-rsync --daemon --config=/etc/oc-rsync/oc-rsyncd.conf
 
 # Delta transfer with compression
 oc-rsync -avz --compress-level=3 ./source/ ./dest/

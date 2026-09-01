@@ -382,8 +382,8 @@ mod tests {
     fn deb_asset_helpers_match_expected_entries() {
         let manifest = r#"
             [package.metadata.deb]
-            assets = [["source", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"], ["source2", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"]]
-            conf-files = ["etc/oc-rsyncd/oc-rsyncd.conf", "etc/oc-rsyncd/oc-rsyncd.secrets"]
+            assets = [["source", "/etc/oc-rsync/oc-rsyncd.conf", "644"], ["source2", "/etc/oc-rsync/oc-rsyncd.secrets", "600"]]
+            conf-files = ["etc/oc-rsync/oc-rsyncd.conf", "etc/oc-rsync/oc-rsyncd.secrets"]
         "#;
         let table: toml::Table = toml::from_str(manifest).expect("parse succeeds");
         let value = Value::Table(table);
@@ -396,12 +396,12 @@ mod tests {
             .and_then(Value::as_table)
             .expect("deb table present");
 
-        assert!(deb_assets_include(deb, "/etc/oc-rsyncd/oc-rsyncd.conf"));
-        assert!(deb_assets_include(deb, "/etc/oc-rsyncd/oc-rsyncd.secrets"));
-        assert!(deb_conf_files_include(deb, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+        assert!(deb_assets_include(deb, "/etc/oc-rsync/oc-rsyncd.conf"));
+        assert!(deb_assets_include(deb, "/etc/oc-rsync/oc-rsyncd.secrets"));
+        assert!(deb_conf_files_include(deb, "/etc/oc-rsync/oc-rsyncd.conf"));
         assert!(deb_conf_files_include(
             deb,
-            "/etc/oc-rsyncd/oc-rsyncd.secrets"
+            "/etc/oc-rsync/oc-rsyncd.secrets"
         ));
     }
 
@@ -410,8 +410,8 @@ mod tests {
         let manifest = r#"
             [package.metadata.rpm]
             assets = [
-                { path = "src", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
-                { path = "src2", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true }
+                { path = "src", dest = "/etc/oc-rsync/oc-rsyncd.conf", mode = "0644", config = true },
+                { path = "src2", dest = "/etc/oc-rsync/oc-rsyncd.secrets", mode = "0600", config = true }
             ]
         "#;
         let table: toml::Table = toml::from_str(manifest).expect("parse succeeds");
@@ -425,13 +425,13 @@ mod tests {
             .and_then(Value::as_table)
             .expect("rpm table present");
 
-        assert!(rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.conf"));
-        assert!(rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.secrets"));
+        assert!(rpm_assets_include(rpm, "/etc/oc-rsync/oc-rsyncd.conf"));
+        assert!(rpm_assets_include(rpm, "/etc/oc-rsync/oc-rsyncd.secrets"));
 
         let manifest_missing_flag = r#"
             [package.metadata.rpm]
             assets = [
-                { path = "src", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644" }
+                { path = "src", dest = "/etc/oc-rsync/oc-rsyncd.conf", mode = "0644" }
             ]
         "#;
         let table: toml::Table = toml::from_str(manifest_missing_flag).expect("parse succeeds");
@@ -444,7 +444,7 @@ mod tests {
             .and_then(|metadata| metadata.get("rpm"))
             .and_then(Value::as_table)
             .expect("rpm table present");
-        assert!(!rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+        assert!(!rpm_assets_include(rpm, "/etc/oc-rsync/oc-rsyncd.conf"));
     }
 
     #[test]

@@ -298,7 +298,7 @@ fn validate_branding_rejects_relative_daemon_directory() {
 #[test]
 fn validate_branding_requires_daemon_file_names() {
     let mut branding = sample_branding();
-    branding.daemon_config = PathBuf::from("/etc/oc-rsyncd");
+    branding.daemon_config = PathBuf::from("/etc/oc-rsync");
     let config_error = validate_branding(&branding).unwrap_err();
     assert!(matches!(
         config_error,
@@ -307,7 +307,7 @@ fn validate_branding_requires_daemon_file_names() {
     ));
 
     let mut branding = sample_branding();
-    branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd");
+    branding.daemon_secrets = PathBuf::from("/etc/oc-rsync");
     let secrets_error = validate_branding(&branding).unwrap_err();
     assert!(matches!(
         secrets_error,

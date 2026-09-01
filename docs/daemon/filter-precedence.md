@@ -41,8 +41,8 @@ Set in the module section of `oc-rsyncd.conf`:
     filter = - *.tmp + *.rs - *
     include = src/ tests/
     exclude = .git/ target/
-    include from = /etc/oc-rsyncd/include.txt
-    exclude from = /etc/oc-rsyncd/exclude.txt
+    include from = /etc/oc-rsync/include.txt
+    exclude from = /etc/oc-rsync/exclude.txt
 ```
 
 `build_daemon_filter_rules()` in
