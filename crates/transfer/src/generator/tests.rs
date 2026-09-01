@@ -5986,6 +5986,144 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
     );
 }
 
+/// A `MSG_SUCCESS` that only arrives DURING the goodbye handshake must still
+/// remove its source.
+///
+/// WHY A SECOND DRAIN PHASE EXISTS AT ALL.
+///
+/// Upstream never batches: `read_a_msg()` calls `successful_send(val)` the
+/// instant it demultiplexes a `MSG_SUCCESS` frame (`io.c:1793-1807`), so the
+/// unlink happens wherever the sender is doing I/O - inside `send_files()` and
+/// again inside `read_final_goodbye()` (`main.c:997`), because the receiver
+/// commits and acknowledges its last files after its generator has already sent
+/// `NDX_DONE`. oc's reader accumulates the indices instead of dispatching them,
+/// so that eagerness has to be reproduced by draining at each point upstream
+/// would have reacted: once before the sender answers the goodbye (so a failure
+/// diagnostic still reaches a peer that is reading - see
+/// `refused_source_unlink_exits_23_in_every_topology`), and once after it (so
+/// the confirmations that arrived during the handshake are not dropped).
+///
+/// THIS TEST IS THE GUARD ON THE SECOND PHASE. Deleting it turns the two-phase
+/// drain into "the drain moved earlier", and a source the peer safely committed
+/// is silently left behind - the failure mode is invisible in the exit code and
+/// invisible in a fixture whose confirmations all arrive early.
+///
+/// The fixture is scripted at the byte level so neither phase can be empty by
+/// accident: `early.txt`'s confirmation precedes the receiver's goodbye
+/// `NDX_DONE` and `late.txt`'s follows it, and the test asserts BOTH drained
+/// counts are exactly 1. A vacuous fixture - one whose phase-2 set is empty -
+/// would pass under either shape and prove nothing.
+#[test]
+fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
+    let temp = create_test_files(&[("early.txt", b"alpha"), ("late.txt", b"bravo")]);
+    let early = temp.path().join("early.txt");
+    let late = temp.path().join("late.txt");
+
+    let handshake = test_handshake_with_protocol(31);
+    let mut config = test_config();
+    config.protocol = ProtocolVersion::try_from(31u8).unwrap();
+    // Skip del_stats so the receiver's wire is exactly the two NDX_DONE frames.
+    config.do_stats = false;
+    config.args = vec![OsString::from(&early), OsString::from(&late)];
+    config.flags.remove_source_files = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    ctx.build_file_list(&[early.clone(), late.clone()])
+        .expect("building the file list for two real files must succeed");
+
+    let flats: Vec<usize> = (0..ctx.file_list.len())
+        .filter(|&i| ctx.file_list[i].is_file())
+        .collect();
+    assert_eq!(
+        flats.len(),
+        2,
+        "two positional file sources produce two file entries"
+    );
+    let sources: Vec<PathBuf> = flats
+        .iter()
+        .map(|&flat| ctx.reconstruct_source_path(flat))
+        .collect();
+    for src in &sources {
+        assert!(src.exists(), "each source must exist before the drain");
+    }
+    // The sender finished transmitting both: every unlink is deferred.
+    for &flat in &flats {
+        ctx.pending_source_removals.mark_pending(flat);
+    }
+    let wire_early = ctx.flat_to_wire_ndx(flats[0]);
+    let wire_late = ctx.flat_to_wire_ndx(flats[1]);
+
+    // The receiver's wire, in arrival order. The MSG_SUCCESS payload is the
+    // bare 4-byte LE ndx (io.c:1202 send_msg_int(MSG_SUCCESS, ndx)); the two
+    // NDX_DONE markers ride MSG_DATA in the modern (protocol >= 30) single-byte
+    // encoding.
+    const NDX_DONE_BYTE: [u8; 1] = [0x00];
+    let mut wire = Vec::new();
+    protocol::send_msg(
+        &mut wire,
+        protocol::MessageCode::Success,
+        &wire_early.to_le_bytes(),
+    )
+    .expect("frame the pre-goodbye confirmation");
+    protocol::send_msg(&mut wire, protocol::MessageCode::Data, &NDX_DONE_BYTE)
+        .expect("frame the receiver's goodbye NDX_DONE");
+    protocol::send_msg(
+        &mut wire,
+        protocol::MessageCode::Success,
+        &wire_late.to_le_bytes(),
+    )
+    .expect("frame the in-handshake confirmation");
+    protocol::send_msg(&mut wire, protocol::MessageCode::Data, &NDX_DONE_BYTE)
+        .expect("frame the receiver's final NDX_DONE");
+
+    let mut reader = crate::reader::ServerReader::new_plain(Cursor::new(wire))
+        .activate_multiplex()
+        .expect("activate input multiplex");
+    let mut out = Vec::new();
+    let mut writer = crate::writer::ServerWriter::new_plain(&mut out)
+        .activate_multiplex()
+        .expect("activate output multiplex");
+    let mut ndx_read = protocol::codec::create_ndx_codec(31);
+    let mut ndx_write = protocol::codec::MonotonicNdxWriter::new(31);
+
+    // The PRODUCTION sequence, not a copy of it: `orchestrator::run` calls this
+    // same method, so deleting a phase there fails this test.
+    let drains = ctx
+        .goodbye_draining_source_removals(
+            &mut reader,
+            &mut writer,
+            &mut ndx_read,
+            &mut ndx_write,
+            |_w| Ok(()),
+        )
+        .expect("the goodbye plus both drains must complete");
+
+    // The consequence first, so a regression names the file it leaked.
+    assert!(
+        !sources[0].exists(),
+        "the pre-goodbye confirmation must remove its source"
+    );
+    assert!(
+        !sources[1].exists(),
+        "a source confirmed DURING the goodbye handshake must still be removed; \
+         dropping the post-goodbye drain leaks exactly this file (sender.c:395 \
+         successful_send(), dispatched inline by io.c:1793-1807)"
+    );
+    assert!(
+        ctx.pending_source_removals.is_empty(),
+        "both deferred removals must be consumed across the two phases"
+    );
+    // Then the guard that keeps the assertions above honest.
+    assert_eq!(
+        drains.before_goodbye, 1,
+        "the confirmation that preceded the goodbye belongs to the first phase"
+    );
+    assert_eq!(
+        drains.during_goodbye, 1,
+        "NON-VACUITY: the second phase must have real work, otherwise deleting \
+         it would change nothing and this test would prove nothing"
+    );
+}
+
 /// Splits the bytes a multiplexed `ServerWriter` produced into `(code, payload)`
 /// pairs so a test can pin both the frame tag and its exact text.
 fn decode_mux_frames(buf: &[u8]) -> Vec<(protocol::MessageCode, Vec<u8>)> {
