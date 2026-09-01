@@ -57,8 +57,8 @@ Two `oc-rsyncd.conf` **global** directives (they describe the listener, not a
 module):
 
 ```
-quic cert file = /etc/oc-rsync/quic/server.pem
-quic key file  = /etc/oc-rsync/quic/server.key
+quic cert file = /etc/oc-rsyncd/quic/server.pem
+quic key file  = /etc/oc-rsyncd/quic/server.key
 ```
 
 Naming follows the existing parser convention exactly: directives are written
@@ -107,7 +107,7 @@ free (no directory to create, permission-check, secure, or clean up) at the cost
 of TOFU stability, which the explicit-cert path recovers.
 
 *Alternative considered - persist the generated pair under a `quic/`
-subdirectory of the config directory (`/etc/oc-rsync/quic/self-signed.{pem,key}`,
+subdirectory of the config directory (`/etc/oc-rsyncd/quic/self-signed.{pem,key}`,
 `0700`/`0600`).* Rejected as the default: it makes the zero-config daemon write
 private-key state to disk (with the attendant permission, read-only-filesystem,
 and cleanup concerns) purely to smooth TOFU. An operator who values a stable

@@ -22,7 +22,7 @@ pub const fn brand() -> &'static str {
 }
 
 /// Upstream rsync base version targeted by this build.
-#[doc(alias = "3.4.4")]
+#[doc(alias = "3.5.0")]
 pub const UPSTREAM_VERSION: &str = crate::generated::UPSTREAM_VERSION;
 
 /// Returns the upstream rsync base version targeted by this build.
