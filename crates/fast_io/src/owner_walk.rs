@@ -820,6 +820,37 @@ fn operator_open_kind(
     owner_walk_open(path, flags, mode, kind).map(std::fs::File::from)
 }
 
+/// Open an operator-supplied DIRECTORY through the ownership walk.
+///
+/// This is upstream's `open_no_attacker_symlinks(dir, O_RDONLY | O_DIRECTORY,
+/// 0)`, and its one load-bearing caller is `change_dir()`: a non-chrooted
+/// daemon enters its module root through this walk rather than a plain
+/// `chdir`, so a symlink an attacker planted at any component of the
+/// configured `path =` is refused while the operator's own
+/// `/backup -> /mnt/disk` is still followed. The trust signal is authority
+/// (owned by uid 0 or our euid), not location, because an operator path may
+/// legitimately point anywhere.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/syscall.c:540` `open_no_attacker_symlinks()`
+/// - `rsync-3.5.0/util1.c:1254-1263` `change_dir()` - the `am_daemon &&
+///   !am_chrooted` arm, which opens the module root this way and `fchdir`s to
+///   the result.
+///
+/// # Errors
+///
+/// See `operator_open_with`; additionally `ENOTDIR` when the path does not
+/// name a directory.
+pub fn operator_open_dir(path: &Path) -> io::Result<OwnedFd> {
+    owner_walk_open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY,
+        Mode::empty(),
+        crate::confinement::PathKind::Ancillary,
+    )
+}
+
 /// Open an operator-supplied path read-only through the ownership walk.
 ///
 /// The read-side counterpart for the operator paths rsync only consumes -

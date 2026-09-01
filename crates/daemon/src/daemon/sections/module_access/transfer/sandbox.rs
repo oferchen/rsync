@@ -152,6 +152,32 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     }
 
+    // upstream: clientserver.c:1059-1065 - `change_dir(module_chdir, CD_NORMAL)`
+    // and `module_dirfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)` both
+    // run here, ABOVE the setgid/setuid at clientserver.c:1093+. The ordering
+    // is the whole mechanism: after the drop, every lookup that names the
+    // module by its absolute path re-traverses the module's ancestors as the
+    // module uid, so a module under a directory that uid cannot search (the
+    // 0700-home shape, `path = /home/backup/data`) fails with EACCES even
+    // though the module itself is world-readable. Publishing the root here
+    // rather than after the drop also means its canonicalisation still runs
+    // privileged.
+    let module_root = inner_module_path.as_deref().unwrap_or(&module.path);
+    publish_module_confinement(module, module_root, chroot_applied);
+    if let Err(err) = fast_io::confinement::pin_session_root_fd(module_root) {
+        // Upstream leaves `module_dirfd` at -1 and carries on with the
+        // absolute path (`clientserver.c:1063-1066` has no error arm), so a
+        // failed pin is not fatal here either - it only means the lookups
+        // below fall back to the absolute form they used before. Say so, since
+        // it is the difference between the module being sandboxed and not.
+        let text = format!(
+            "module '{}': could not pin the module root before the privilege drop: {err}; lookups fall back to the absolute module path",
+            module.name,
+        );
+        let message = rsync_warning!(text).with_role(Role::Daemon);
+        log_message(log_sink, &message);
+    }
+
     if let Some(target) = drop_target {
         if target.uid.is_some() || !target.gids.is_empty() {
             if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
@@ -179,12 +205,6 @@ fn apply_privilege_restrictions_with_upstream_errors(
             }
         }
     }
-
-    publish_module_confinement(
-        module,
-        inner_module_path.as_deref().unwrap_or(&module.path),
-        chroot_applied,
-    );
 
     Ok(Some(PrivilegeOutcome {
         chroot_applied,

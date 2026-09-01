@@ -300,7 +300,7 @@ impl GeneratorContext {
         // upstream: flist.c:send_file_list() - scan directory before recording entry
         let should_recurse = metadata.is_dir() && self.config.flags.recursive;
         let dir_read = if should_recurse {
-            match std::fs::read_dir(&path) {
+            match fast_io::pinned_root::read_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
@@ -400,7 +400,7 @@ impl GeneratorContext {
     ///
     /// - `flist.c:send_directory()` - reads directory and stats each child
     fn scan_directory_batched(&mut self, base: &Path, dir_path: &Path) -> io::Result<()> {
-        match std::fs::read_dir(dir_path) {
+        match fast_io::pinned_root::read_dir(dir_path) {
             Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
             Err(e) => {
                 // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
@@ -424,13 +424,13 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         dir_path: &Path,
-        entries: std::fs::ReadDir,
+        entries: fast_io::pinned_root::ReadDir,
     ) -> io::Result<()> {
         // Phase 1: collect child paths from readdir
         let mut child_paths = Vec::new();
         for entry in entries {
             match entry {
-                Ok(de) => child_paths.push(de.path()),
+                Ok(child) => child_paths.push(child),
                 Err(e) => {
                     // upstream: flist.c:2195 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     let text = format!(
@@ -469,7 +469,7 @@ impl GeneratorContext {
                     // directories are followed; symlinks to files stay
                     // symlinks (distinct from --copy-links, which follows all).
                     if !follow && self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
-                        if let Ok(followed) = std::fs::metadata(&path) {
+                        if let Ok(followed) = fast_io::pinned_root::metadata(&path) {
                             if followed.file_type().is_dir() {
                                 meta = followed;
                             }
@@ -498,7 +498,7 @@ impl GeneratorContext {
                                     path.display(),
                                     target.display()
                                 );
-                                match std::fs::metadata(&path) {
+                                match fast_io::pinned_root::metadata(&path) {
                                     Ok(followed) => meta = followed,
                                     Err(e) => {
                                         self.log_stat_error(&path, &e);
@@ -558,10 +558,20 @@ impl GeneratorContext {
     ///   the transfer tree (converting them to regular files)
     /// - Default: use lstat (preserve symlinks as symlinks)
     ///
+    /// Every stat here goes through
+    /// [`fast_io::pinned_root`](fast_io::pinned_root), which anchors the
+    /// lookup on the module root a daemon pinned while still privileged when
+    /// the path lies beneath it. Upstream is already positioned there - it
+    /// `change_dir()`s into the module before the drop - so `link_stat(".")`
+    /// costs it nothing; oc keeps absolute paths, and without the anchor the
+    /// stat re-walks the module's ancestors as the dropped uid and `EACCES`es
+    /// on an unsearchable one.
+    ///
     /// # Upstream Reference
     ///
     /// - `flist.c:217-244` - `readlink_stat()`
     /// - `flist.c:227` - `copy_unsafe_links && unsafe_symlink(linkbuf, path)`
+    /// - `clientserver.c:1059-1065` - the pin the anchoring reads.
     pub(in crate::generator) fn resolve_symlink_metadata(
         &self,
         path: &Path,
@@ -587,10 +597,10 @@ impl GeneratorContext {
         };
 
         if self.config.flags.copy_links {
-            return std::fs::metadata(path);
+            return fast_io::pinned_root::metadata(path);
         }
 
-        let meta = std::fs::symlink_metadata(path)?;
+        let meta = fast_io::pinned_root::symlink_metadata(path)?;
 
         // upstream: flist.c:1362-1370 link_stat() - with follow_dirlinks a
         // symlink whose target is a directory is transmitted as a real
@@ -619,13 +629,20 @@ impl GeneratorContext {
         // `--copy-dirlinks` is an explicit client request over a client-named
         // tree and keeps its existing meaning untouched.
         //
+        // When the daemon PINNED its module root the stat above already comes
+        // from the pinned directory, so `.` is a directory here and this gate
+        // has nothing to decide - which is upstream's position exactly, and is
+        // sound for the same reason: the pin is taken through the ownership
+        // walk (`util1.c:1254-1263`), so a foreign-uid symlink at the module
+        // root is refused before a pin exists and this gate is back in force.
+        //
         // upstream: `rsync-3.5.0/syscall.c:406` - a symlink owned by uid 0 or
         // our euid is the operator's own layout and is followed; any other uid
         // is an attacker's plant and is refused.
         let follow_dirlinks = self.config.flags.copy_dirlinks
             || (is_dotdir && symlink_target_is_operator_owned(&meta));
         if follow_dirlinks && meta.file_type().is_symlink() {
-            if let Ok(followed) = std::fs::metadata(path) {
+            if let Ok(followed) = fast_io::pinned_root::metadata(path) {
                 if followed.file_type().is_dir() {
                     return Ok(followed);
                 }
@@ -647,7 +664,7 @@ impl GeneratorContext {
                     path.display(),
                     target.display()
                 );
-                return std::fs::metadata(path);
+                return fast_io::pinned_root::metadata(path);
             }
         }
 
