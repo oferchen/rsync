@@ -14,13 +14,17 @@
 #     job surfaces the divergence (step-summary table + non-zero run status)
 #     but is best-effort tracking, not a gate.
 #
-# The REQUIRED gate stays on the pinned 3.4.4 release tarball
-# (.github/workflows/_upstream-testsuite.yml, context
-# "upstream-testsuite / upstream testsuite"). This workflow does not touch it.
+# The REQUIRED gate is pinned to the 3.5.0 RELEASE tarball
+# (.github/workflows/_upstream-testsuite.yml, contexts
+# "upstream-testsuite / upstream testsuite" and "... (root)"); it moved off
+# 3.4.4 on 2026-08-19 (PR #7387). This workflow does not touch it.
 #
-# RELEASE-DAY PLAN (2026-07-15): once 3.5.0 ships, bump the REQUIRED gate's
-# pin 3.4.4 -> 3.5.0, vendor the 3.5.0 testsuite as a release tarball, and
-# retire this git-ref tracker (or repoint it at the next dev branch).
+# WHAT REMAINS FOR THIS TRACKER. The release-day plan above is done: the gate
+# is on 3.5.0 and the 3.5.0 suite is vendored as a release tarball. What this
+# workflow still covers, and the release gate cannot, is the MOVING RsyncProject
+# master branch - divergence introduced upstream after 3.5.0 shipped. The job
+# name and file name still say "3.5.0dev" and now understate that; repointing
+# them at the next dev version is the open follow-up, not deleting the job.
 #
 # HARNESS-CALIBRATION STATUS. The 3.5.0dev suite is the Python *_test.py
 # framework (rsyncfns.py + exitcodes.py), which drives rsync differently from

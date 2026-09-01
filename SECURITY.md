@@ -85,12 +85,20 @@ rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in pat
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 252 | 8 | 89 | 349 |
-| root, pipe | 280 | 9 | 60 | 349 |
-| non-root, tcp | 100 | 22 | 36 | 158 |
-| root, tcp | 112 | 28 | 18 | 158 |
+| non-root, pipe | 254 | 6 | 85 | 345 |
+| root, pipe | 282 | 7 | 56 | 345 |
+| non-root, tcp | 101 | 21 | 33 | 155 |
+| root, tcp | 113 | 27 | 15 | 155 |
 
-The two pipe legs run the whole corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 158 tests that can observe the transport. **9 distinct tests** diverge across the two full-corpus legs, and **34** across all four. That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
+Each row is the outcome column of the corresponding
+`tools/ci/upstream-3.5.0-expect.*.txt`, counted rather than transcribed:
+
+```sh
+awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
+  tools/ci/upstream-3.5.0-expect.nonroot.txt
+```
+
+The two pipe legs run the whole 345-test corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 155 tests that can observe the transport. **7 distinct tests** diverge across the two full-corpus legs, and **32** across all four (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
 
 **Highest-severity items and their oc-rsync bearing:**
 
@@ -156,7 +164,7 @@ Additionally shipped since the last update:
 
 **Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
 
-CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. As of 2026-08-21 the gating corpus is the rewritten **3.5.0 Python suite**, run as the four legs tabulated above; the required checks are the two stdio-pipe legs, and the two loopback-TCP legs run alongside them. Each leg is gated by its committed expected-outcome manifest (`tools/ci/upstream-3.5.0-expect.{nonroot,root}{,.tcp}.txt`), generated from a real run and never hand-typed. The older 3.4.4 shell corpus still runs in the interop job with the roster at `tools/ci/upstream_testsuite_known_failures.conf`, which is currently empty - against 3.4.4 all tests pass.
+CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. The gating corpus has been the rewritten **3.5.0 Python suite** since 2026-08-19 (PR #7387), with the two loopback-TCP legs added on 2026-08-20 (PR #7408); it runs as the four legs tabulated above, the required checks being the two stdio-pipe legs. Each leg is gated by its committed expected-outcome manifest (`tools/ci/upstream-3.5.0-expect.{nonroot,root}{,.tcp}.txt`), generated from a real run and never hand-typed. The 3.4.4 shell corpus is no longer run by any workflow - `.github/workflows/_interop.yml` states plainly that it does not drive it, and `tools/ci/run_upstream_testsuite.sh` now defaults to `UPSTREAM_VERSION=3.5.0`. Its roster, `tools/ci/upstream_testsuite_known_failures.conf`, is empty and applies only to the shell-script path, so it is a historical record rather than a live measurement.
 
 ### Upstream rsync 3.4.2 audits
 
