@@ -199,6 +199,8 @@ caller (CI, ci-skip, benchmark). They are not separately triageable.
 
 ### Coverage (`coverage.yml`)
 
+- **Since deleted** in `4cf315af9` (2026-06-14) over 45-minute timeouts on
+  `master`. No workflow computes coverage now. Triage below is a record.
 - Workflow id: 250331833
 - Last 20 runs: 8 success, 4 cancelled (superseded by newer pushes),
   8 skipped (PRs without `coverage-required` label).
