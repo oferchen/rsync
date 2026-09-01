@@ -189,6 +189,8 @@ impl ReceiverContext {
         let files_to_transfer = self.build_files_to_transfer(
             writer,
             &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
             &setup.metadata_opts,
             Some(&failed_dirs),
             &mut metadata_errors,
@@ -567,6 +569,8 @@ mod itemize_order_tests {
         let _ = ctx.build_files_to_transfer(
             &mut writer,
             dest,
+            #[cfg(unix)]
+            None,
             &opts,
             Some(&failed_dirs),
             &mut metadata_errors,
