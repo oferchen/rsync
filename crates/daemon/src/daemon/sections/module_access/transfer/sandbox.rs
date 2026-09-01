@@ -164,6 +164,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // privileged.
     let module_root = inner_module_path.as_deref().unwrap_or(&module.path);
     publish_module_confinement(module, module_root, chroot_applied);
+    // The pin itself is unix-only: `pin_session_root_fd` and the rest of the
+    // held-dirfd family are `#[cfg(unix)]` in `fast_io::confinement`, because
+    // there is no dirfd to hold and no setgid/setuid drop to precede on
+    // Windows. The policy half above is cross-platform and still runs. A
+    // no-op Windows arm returning `Ok(())` would report a pin that never
+    // happened - the opposite of what the warning below exists to say.
+    #[cfg(unix)]
     if let Err(err) = fast_io::confinement::pin_session_root_fd(module_root) {
         // Upstream leaves `module_dirfd` at -1 and carries on with the
         // absolute path (`clientserver.c:1063-1066` has no error arm), so a
