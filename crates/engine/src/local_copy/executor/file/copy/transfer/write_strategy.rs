@@ -637,7 +637,7 @@ mod tests {
             return;
         }
         // With existing dest, no partial, no temp-dir -> should pick anonymous.
-        let result = select_write_strategy(0, false, false, false, true, false, &dest);
+        let result = select_write_strategy(0, false, false, false, true, false, false, &dest);
         assert_eq!(result, WriteStrategy::AnonymousTempFile);
     }
 
@@ -654,7 +654,7 @@ mod tests {
         }
         // No existing dest, no partial, no delay, no temp-dir - would be Direct
         // without O_TMPFILE, but AnonymousTempFile is preferred when available.
-        let result = select_write_strategy(0, false, false, false, false, false, &dest);
+        let result = select_write_strategy(0, false, false, false, false, false, false, &dest);
         assert_eq!(result, WriteStrategy::AnonymousTempFile);
     }
 
@@ -667,7 +667,7 @@ mod tests {
             return;
         }
         // delay_updates alone should still allow anonymous.
-        let result = select_write_strategy(0, false, false, true, true, false, &dest);
+        let result = select_write_strategy(0, false, false, true, true, false, false, &dest);
         assert_eq!(result, WriteStrategy::AnonymousTempFile);
     }
 
@@ -681,7 +681,7 @@ mod tests {
         if !can_use_anonymous_tmpfile(&dest) {
             return;
         }
-        let result = select_write_strategy(0, false, false, false, true, false, &dest);
+        let result = select_write_strategy(0, false, false, false, true, false, false, &dest);
         assert_eq!(result, WriteStrategy::AnonymousTempFile);
     }
 
