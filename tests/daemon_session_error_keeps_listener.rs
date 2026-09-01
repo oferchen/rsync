@@ -9,9 +9,18 @@
 //! failure and `fork` failure each `continue`. Only listener setup can end the
 //! daemon (`exit_cleanup(RERR_SOCKETIO)` at socket.c:699 and socket.c:715).
 //!
-//! This test pins that contract for the threaded model: client one drives an
-//! invalid `@RSYNCD:` state transition, and client two must still complete a
-//! real transfer against the same listener afterwards.
+//! This test pins that contract for the threaded model: client one drives a
+//! genuine session error, and client two must still complete a real transfer
+//! against the same listener afterwards.
+//!
+//! The provoked error is a non-UTF-8 request line. It has to be an error the
+//! daemon still raises: a repeated `@RSYNCD:` banner does NOT, because
+//! `start_daemon()` reads the version line exactly once and treats the next
+//! line as the request whatever it contains (clientserver.c:1534-1538), so a
+//! second banner is answered as an unknown module rather than refused as an
+//! out-of-order transition. Driving the FSM edge again would be fatal to the
+//! whole listener, which is precisely the shape a peer must not be able to
+//! reach.
 
 #![cfg(unix)]
 
@@ -36,10 +45,11 @@ fn allocate_test_port() -> Option<(u16, TcpListener)> {
     Some((port, listener))
 }
 
-/// Connects, reads the greeting, then sends the `@RSYNCD:` version banner
-/// twice. The second banner re-drives `Greeting -> ModuleSelect` from
-/// `ModuleSelect`, which the connection FSM rejects, producing a session error
-/// that is neither a broken pipe nor a reset.
+/// Connects, reads the greeting, echoes the version banner, then sends a
+/// request line that is not valid UTF-8. The daemon reads that line with
+/// `BufRead::read_line` into a `String`, which fails with `InvalidData` -
+/// a session error that is neither a broken pipe nor a reset, so
+/// `report_session_failure` logs it instead of treating it as a normal close.
 fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = loop {
@@ -70,8 +80,8 @@ fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
     }
 
     stream
-        .write_all(b"@RSYNCD: 32.0 md5 md4\n@RSYNCD: 32.0 md5 md4\n")
-        .map_err(|err| format!("send repeated banner: {err}"))?;
+        .write_all(b"@RSYNCD: 32.0 md5 md4\n\xff\xfe\n")
+        .map_err(|err| format!("send non-utf8 request line: {err}"))?;
     stream.flush().map_err(|err| format!("flush: {err}"))?;
 
     let mut rest = String::new();
@@ -180,8 +190,8 @@ fn session_error_does_not_stop_the_accept_loop() {
         "expected exactly one logged session failure for the first client; log:\n{log_contents}"
     );
     assert!(
-        failure_lines[0].contains("invalid daemon connection transition"),
-        "the provoked failure must be the rejected state transition: {}",
+        failure_lines[0].contains("UTF-8"),
+        "the provoked failure must be the non-UTF-8 request line, not some\n         unrelated session error that would make this fixture prove nothing: {}",
         failure_lines[0]
     );
 }
