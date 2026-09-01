@@ -16,18 +16,24 @@ name: Benchmark tooling
 on:
   pull_request:
     paths:
+      - '.github/scripts/benchmark.py'
       - '.github/scripts/benchmark_chart.py'
+      - '.github/scripts/benchmark_env.py'
       - '.github/scripts/benchmark_report.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
+      - 'tools/ci/tests/test_benchmark_harness.py'
       - 'tools/ci/tests/test_benchmark_report.py'
       - '.github/workflows/benchmark-tooling.yml'
   push:
     branches:
       - master
     paths:
+      - '.github/scripts/benchmark.py'
       - '.github/scripts/benchmark_chart.py'
+      - '.github/scripts/benchmark_env.py'
       - '.github/scripts/benchmark_report.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
+      - 'tools/ci/tests/test_benchmark_harness.py'
       - 'tools/ci/tests/test_benchmark_report.py'
       - '.github/workflows/benchmark-tooling.yml'
 
@@ -49,7 +55,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Self-test benchmark_chart.py and benchmark_report.py
+      - name: Self-test the benchmark harness and renderers
         run: |
+          python3 tools/ci/tests/test_benchmark_harness.py
           python3 tools/ci/tests/test_benchmark_chart.py
           python3 tools/ci/tests/test_benchmark_report.py
+
+      # The self-test above exercises the SEND_ZC probe but asserts it "either
+      # way", so it is silent about what this runner actually offers. Record
+      # the verdict here: it is the environment every benchmark number
+      # published from a GitHub runner rests on, it costs a second, and
+      # benchmark.yml only answers it on a tag build. A runner that cannot
+      # offer the opcode cannot produce numbers about the zero-copy send path,
+      # and that is worth knowing on every pull request rather than once a
+      # release.
+      - name: Record the runner's io_uring SEND_ZC capability
+        run: |
+          set -euo pipefail
+          echo "Runner kernel: $(uname -r) ($(uname -m))"
+          python3 .github/scripts/benchmark_env.py > runner_env.json
+          cat runner_env.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          env = json.loads(Path("runner_env.json").read_text())
+          zc = env["io_uring_send_zc"]
+          print("## GitHub runner io_uring capability\n")
+          print(f"- Kernel `{env['kernel_release']}` on `{env['machine']}`, "
+                f"{env['cpu_count']} CPUs")
+          print(f"- Meets the {zc['kernel_floor']} floor: "
+                f"**{zc['meets_kernel_floor']}**")
+          print(f"- Opcode {zc['opcode']} advertised: "
+                f"**{zc['opcode_advertised']}**")
+          print(f"- IORING_OP_SEND_ZC usable: **{zc['supported']}** "
+                f"({zc['detail']})")
+          PY
