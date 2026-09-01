@@ -575,10 +575,7 @@ fn handle_authentication(
             // upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)` right
             // after the refusal line, with no challenge and no auth-failure log.
             *ctx.session_exit_code = Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE);
-            ctx.conn_state = ctx
-                .conn_state
-                .transition(ConnectionState::Closing)
-                .map_err(transition_error)?;
+            ctx.conn_state = ctx.conn_state.close();
             Ok(None)
         }
         AuthenticationStatus::Denied(denial) => {
@@ -604,10 +601,7 @@ fn handle_authentication(
             };
             send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             // FSM: -> Closing on auth failure (session ends).
-            ctx.conn_state = ctx
-                .conn_state
-                .transition(ConnectionState::Closing)
-                .map_err(transition_error)?;
+            ctx.conn_state = ctx.conn_state.close();
             Ok(None)
         }
         AuthenticationStatus::Granted {

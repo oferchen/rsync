@@ -968,10 +968,7 @@ fn process_approved_module(
     }
 
     // FSM: Transferring -> Closing - transfer and post-xfer hooks complete.
-    ctx.conn_state = ctx
-        .conn_state
-        .transition(ConnectionState::Closing)
-        .map_err(transition_error)?;
+    ctx.conn_state = ctx.conn_state.close();
 
     Ok(())
 }

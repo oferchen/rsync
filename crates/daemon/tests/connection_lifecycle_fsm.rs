@@ -406,6 +406,64 @@ fn lifecycle_max_connections_sequential_no_leak() {
     );
 }
 
+/// A second `@RSYNCD:` banner is the request line, not a re-greeting.
+///
+/// upstream reads the version line exactly once, in `exchange_protocols()`,
+/// and the very next `read_line_old()` is the request whatever it contains
+/// (clientserver.c:1534-1538). A repeated banner is therefore a module name
+/// and draws `@ERROR: Unknown module` (:1563-1567), not a second version
+/// exchange.
+///
+/// This is the only lifecycle edge a peer can aim at the FSM: taking
+/// Greeting -> ModuleSelect twice asks for ModuleSelect -> ModuleSelect,
+/// which the ordering check rejects. That refusal is not survivable - a
+/// session error that is not a connection close is fatal to the whole
+/// listener (`join_worker`) - so accepting the repeat as a re-greeting let a
+/// peer end the daemon with two lines. Both halves are asserted: the request
+/// is refused the way upstream refuses it, and the accept loop lives.
+#[test]
+fn lifecycle_repeated_version_line_is_a_module_name() {
+    let (port, listener) = allocate_listener();
+    let (handle, flags) = spawn_daemon(listener, port);
+
+    let stream = connect_with_timeout(port);
+    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+    let mut writer = stream;
+
+    read_greeting(&mut reader);
+    send_version(&mut writer);
+    send_version(&mut writer);
+    writer.write_all(b"#list\n").expect("send #list");
+    writer.flush().expect("flush #list");
+
+    let mut response = String::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => response.push_str(&line),
+        }
+    }
+    assert!(
+        response.contains("@ERROR: Unknown module"),
+        "a repeated banner is a module name (clientserver.c:1563), got: {response:?}"
+    );
+    assert!(
+        !response.contains("@RSYNCD: EXIT"),
+        "the trailing #list must never be served, got: {response:?}"
+    );
+
+    drop(writer);
+    drop(reader);
+
+    flags.shutdown.store(true, Ordering::Relaxed);
+    let result = handle.join().expect("daemon thread");
+    assert!(
+        result.is_ok(),
+        "a refused session must not tear down the accept loop: {result:?}"
+    );
+}
+
 /// Greeting -> ModuleSelect -> Closing: version only, then disconnect.
 ///
 /// The client sends its version (triggering Greeting -> ModuleSelect)
