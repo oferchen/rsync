@@ -30,7 +30,11 @@ use crate::traits::FileWriter;
 ///
 /// Incoming writes are buffered internally. On `flush()` (or when the buffer
 /// fills), the buffered data is submitted as a batch of write SQEs -- up to
-/// `sq_entries` concurrent writes per `submit_and_wait` call.
+/// `sq_entries` of them, which the kernel may run concurrently *within* that
+/// one `submit_and_wait` call. Batches do not overlap: the ring is drained to
+/// empty before the next one is built, so a batch of a single chunk gains no
+/// concurrency at all. Those go to a positional write instead; see
+/// [`super::batching::MIN_RING_BATCH_CHUNKS`].
 ///
 /// Submissions are issued against the calling thread's per-thread ring (see
 /// [`super::per_thread_ring`]). Fixed-file registration and registered-buffer
@@ -167,13 +171,19 @@ impl IoUringWriter {
     /// Submits up to `sq_entries` writes per `submit_and_wait` call on the
     /// per-thread ring.
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
-        let raw_fd = self.file.as_raw_fd();
-        let fd = sqe_fd(raw_fd, NO_FIXED_FD);
         let buffer_size = self.buffer_size;
         let sq_entries = self.sq_entries as usize;
 
         let written = with_ring(|ring| {
-            submit_write_batch(ring, fd, data, offset, buffer_size, sq_entries, NO_FIXED_FD)
+            submit_write_batch(
+                ring,
+                &self.file,
+                data,
+                offset,
+                buffer_size,
+                sq_entries,
+                NO_FIXED_FD,
+            )
         })?;
         if written != data.len() {
             return Err(io::Error::new(
@@ -218,8 +228,6 @@ impl IoUringWriter {
             return Ok(());
         }
 
-        let raw_fd = self.file.as_raw_fd();
-        let fd = sqe_fd(raw_fd, NO_FIXED_FD);
         let len = self.buffer_pos;
         let offset = self.bytes_written;
         let buffer_size = self.buffer_size;
@@ -228,7 +236,7 @@ impl IoUringWriter {
         let written = with_ring(|ring| {
             submit_write_batch(
                 ring,
-                fd,
+                &self.file,
                 &self.buffer[..len],
                 offset,
                 buffer_size,

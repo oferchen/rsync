@@ -210,13 +210,12 @@ impl IoUringDiskBatch {
             )
         })?;
 
-        let fd = sqe_fd(active.file.as_raw_fd(), NO_FIXED_FD);
         let len = self.buffer_pos;
         let offset = active.bytes_written;
 
         let written = submit_write_batch(
             &mut self.ring,
-            fd,
+            &active.file,
             &self.buffer[..len],
             offset,
             self.config.buffer_size,

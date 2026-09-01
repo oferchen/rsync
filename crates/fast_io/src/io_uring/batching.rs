@@ -1,6 +1,9 @@
 //! Batched SQE submission helpers for io_uring file and socket I/O.
 
+use std::fs::File;
 use std::io;
+use std::os::unix::fs::FileExt;
+use std::os::unix::io::AsRawFd;
 
 use io_uring::{IoUring as RawIoUring, opcode, types};
 
@@ -43,16 +46,88 @@ pub(super) fn try_register_fd(ring: &RawIoUring, raw_fd: i32, register: bool) ->
     }
 }
 
+/// Smallest batch, in write SQEs, for which an io_uring round trip pays.
+///
+/// [`submit_write_batch`] pushes a batch, blocks in `submit_and_wait` until
+/// every SQE in it has completed, then drains the completion queue before the
+/// next batch is built. Nothing is in flight across batches, so the only
+/// concurrency io_uring can add is *within* one batch. A batch of a single
+/// chunk therefore buys nothing: it costs SQE construction, a ring transition,
+/// a CQE drain and per-slot bookkeeping on top of exactly the blocking wait a
+/// plain `pwrite(2)` would have done.
+///
+/// The value is the smallest one measured to remove the whole cost. On a
+/// 10,000-file / 313 MB loopback daemon pull (9000x1 KiB + 800x100 KiB +
+/// 200x1 MiB, aarch64, 4 cores) the receiver issues 10,600 write batches, and
+/// the count reaching the ring falls 10,600 -> 1,600 -> 800 -> 0 as this
+/// constant goes 1 -> 2 -> 4 -> 8; no batch on that workload is 8 chunks or
+/// larger. Wall clock tracks it: at 1 the pull costs ~4.8x the
+/// io_uring-disabled floor, at 2 ~1.6x, and at 8 it sits on the floor.
+/// Batches at or above this size keep the ring, because nothing measured says
+/// they are worse there.
+///
+/// Setting this to `1` disables the bypass; the ring then sees every write, as
+/// it did before.
+pub(super) const MIN_RING_BATCH_CHUNKS: usize = 8;
+
+/// Number of write SQEs the next batch over `remaining` bytes would submit.
+///
+/// Mirrors the batch sizing in [`submit_write_batch`]: `chunk_size`-sized
+/// pieces, capped at the ring's `max_sqes` submission-queue depth.
+pub(super) fn next_batch_chunks(remaining: usize, chunk_size: usize, max_sqes: usize) -> usize {
+    remaining.div_ceil(chunk_size).min(max_sqes)
+}
+
+/// Whether that batch should go to [`write_all_positional`] instead of the ring.
+pub(super) fn batch_bypasses_ring(remaining: usize, chunk_size: usize, max_sqes: usize) -> bool {
+    next_batch_chunks(remaining, chunk_size, max_sqes) < MIN_RING_BATCH_CHUNKS
+}
+
+/// Writes all of `data` at `base_offset` with positional writes.
+///
+/// The fallback [`submit_write_batch`] takes for batches too small to amortise
+/// a ring round trip. Byte-for-byte equivalent to the ring path: the same
+/// offsets, the same short-write resubmission, and the same `WriteZero` error
+/// when the kernel accepts nothing. `EINTR` is retried rather than surfaced --
+/// the ring path never reports it either, since a completed `IORING_OP_WRITE`
+/// carries the byte count, not the signal.
+pub(super) fn write_all_positional(
+    file: &File,
+    data: &[u8],
+    base_offset: u64,
+) -> io::Result<usize> {
+    let mut done = 0usize;
+    while done < data.len() {
+        match file.write_at(&data[done..], base_offset + done as u64) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "write returned 0 bytes",
+                ));
+            }
+            Ok(n) => done += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(done)
+}
+
 /// Submits a batch of write SQEs from contiguous `data` and collects completions.
 ///
 /// Splits `data` into `chunk_size`-sized pieces, submitting up to `max_sqes` at
 /// a time. Handles short writes by resubmitting the remainder.
 ///
+/// A batch of fewer than [`MIN_RING_BATCH_CHUNKS`] chunks is written with
+/// [`write_all_positional`] instead: the ring is drained between batches, so
+/// such a batch would block exactly as long as a `pwrite(2)` while adding the
+/// submission and completion work on top.
+///
 /// When `fixed_fd_slot` is not `NO_FIXED_FD`, SQEs use the registered fixed-file
 /// index and set `IOSQE_FIXED_FILE`.
 pub(super) fn submit_write_batch(
     ring: &mut RawIoUring,
-    fd: types::Fd,
+    file: &File,
     data: &[u8],
     base_offset: u64,
     chunk_size: usize,
@@ -63,13 +138,20 @@ pub(super) fn submit_write_batch(
         return Ok(0);
     }
 
+    let fd = sqe_fd(file.as_raw_fd(), fixed_fd_slot);
     let total = data.len();
     let mut global_done = 0usize;
 
     while global_done < total {
         let remaining = total - global_done;
 
-        let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
+        if batch_bypasses_ring(remaining, chunk_size, max_sqes) {
+            global_done +=
+                write_all_positional(file, &data[global_done..], base_offset + global_done as u64)?;
+            continue;
+        }
+
+        let n_chunks = next_batch_chunks(remaining, chunk_size, max_sqes);
         // Per-chunk tracking: (chunk_start_in_data, chunk_len, bytes_written_so_far).
         let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);
         for i in 0..n_chunks {
