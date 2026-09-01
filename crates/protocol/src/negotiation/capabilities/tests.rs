@@ -1,4 +1,7 @@
 use std::io;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use platform::env::EnvGuard;
 
 use super::algorithms::{SUPPORTED_CHECKSUMS, supported_compressions};
 use super::negotiate::{
@@ -6,6 +9,52 @@ use super::negotiate::{
 };
 use super::*;
 use crate::ProtocolVersion;
+
+/// Environment variable overriding the checksum negotiation list.
+const CHECKSUM_ENV: &str = "RSYNC_CHECKSUM_LIST";
+/// Environment variable overriding the compression negotiation list.
+const COMPRESS_ENV: &str = "RSYNC_COMPRESS_LIST";
+
+/// Serialises every test that reads or writes the negotiation env overrides.
+///
+/// `env_list::parse_env` calls `std::env::var` on each negotiation - nothing
+/// caches the value - so `negotiate_capabilities` observes whatever
+/// `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` hold at that instant. Under a
+/// thread-parallel harness an override test therefore rewrites the candidate
+/// lists of any test negotiating concurrently in the same process. Readers take
+/// this lock through [`default_env`], writers through [`env_lock`], so the two
+/// kinds never overlap.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Acquires [`ENV_LOCK`], ignoring poisoning so one failing test does not
+/// cascade into every other env-sensitive test.
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Holds [`ENV_LOCK`] with both negotiation overrides removed.
+///
+/// Fields drop in declaration order, so the [`EnvGuard`]s restore the previous
+/// values before the lock is released.
+struct DefaultEnv {
+    _checksum: EnvGuard,
+    _compress: EnvGuard,
+    _lock: MutexGuard<'static, ()>,
+}
+
+/// Pins both negotiation overrides to unset for the caller's scope.
+///
+/// A negotiating test then sees the built-in default candidate lists regardless
+/// of the ambient environment or of a concurrently running override test.
+#[must_use]
+fn default_env() -> DefaultEnv {
+    let lock = env_lock();
+    DefaultEnv {
+        _checksum: EnvGuard::remove(CHECKSUM_ENV),
+        _compress: EnvGuard::remove(COMPRESS_ENV),
+        _lock: lock,
+    }
+}
 
 #[test]
 fn test_checksum_algorithm_roundtrip() {
@@ -43,6 +92,8 @@ fn test_xxhash_alias() {
 
 #[test]
 fn test_negotiate_proto29_uses_defaults() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
     let mut stdout = Vec::new();
@@ -61,6 +112,8 @@ fn test_negotiate_proto29_uses_defaults() {
 
 #[test]
 fn test_negotiate_proto30_md5_zlib() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(30).unwrap();
 
     // Simulate remote choosing md5 and zlib
@@ -89,6 +142,8 @@ fn test_negotiate_proto30_md5_zlib() {
 
 #[test]
 fn test_negotiate_proto32_zlibx() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(32).unwrap();
 
     // Remote sends only zlibx - we support it, so zlibx is selected.
@@ -105,6 +160,8 @@ fn test_negotiate_proto32_zlibx() {
 
 #[test]
 fn test_negotiate_proto32_zlib() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(32).unwrap();
 
     // Remote sends zlib - always supported regardless of feature flags.
@@ -199,6 +256,8 @@ fn test_vstring_at_bufsize_is_rejected() {
 /// negotiation exchange.
 #[test]
 fn test_negotiate_nstr_messages_match_upstream_wording_client() {
+    let _env = default_env();
+
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     let mut cfg = VerbosityConfig::default();
@@ -258,6 +317,8 @@ fn test_negotiate_nstr_messages_match_upstream_wording_client() {
 /// compress summary.
 #[test]
 fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
+    let _env = default_env();
+
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     let mut cfg = VerbosityConfig::default();
@@ -314,6 +375,8 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
 /// modern negotiated table and never the raw CLVL_NOT_SPECIFIED sentinel.
 #[test]
 fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
+    let _env = default_env();
+
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     let mut cfg = VerbosityConfig::default();
@@ -397,6 +460,8 @@ fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
 /// render as `(level 9)`.
 #[test]
 fn test_negotiate_nstr_compress_summary_renders_explicit_level() {
+    let _env = default_env();
+
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     let mut cfg = VerbosityConfig::default();
@@ -451,6 +516,8 @@ fn test_negotiate_nstr_compress_summary_renders_explicit_level() {
 /// `valid_checksums.negotiated_nni == NULL` branch (checksum.c:209).
 #[test]
 fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
+    let _env = default_env();
+
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     let mut cfg = VerbosityConfig::default();
@@ -518,6 +585,8 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
 /// instead of `valid_checksums.negotiated_nni`.
 #[test]
 fn test_checksum_override_forces_chosen_algorithm() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(32).unwrap();
     // A forced checksum skips the checksum vstring exchange entirely
     // (upstream compat.c:541/547). With compression also off, nothing is read
@@ -556,6 +625,8 @@ fn test_checksum_override_forces_chosen_algorithm() {
 
 #[test]
 fn test_client_checksum_list_omits_none_matches_upstream() {
+    let _env = default_env();
+
     // WHY: upstream get_default_nno_list drops the num == 0 ("none") entry on
     // the client (compat.c:485-486, `!am_server`). The advertised list is
     // framed as a vstring on the wire; an extra " none" token changes the
@@ -588,6 +659,8 @@ fn test_client_checksum_list_omits_none_matches_upstream() {
 
 #[test]
 fn test_server_checksum_list_includes_none_matches_upstream() {
+    let _env = default_env();
+
     // WHY: the server (am_server == 1) keeps the "none" entry
     // (compat.c:485-486), so its advertised checksum list ends with " none".
     // This is the complement of the client case and pins the exact server
@@ -649,6 +722,8 @@ fn test_unsupported_compression() {
 
 #[test]
 fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
+    let _env = default_env();
+
     // When do_negotiation=false, should return defaults without any I/O
     // This happens when client lacks VARINT_FLIST_FLAGS capability
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -679,6 +754,8 @@ fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
 
 #[test]
 fn test_negotiate_compression_disabled() {
+    let _env = default_env();
+
     // When send_compression=false, should only exchange checksum list
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
@@ -721,6 +798,8 @@ fn test_peer_data(send_compression: bool) -> Vec<u8> {
 
 #[test]
 fn test_daemon_server_sends_and_reads() {
+    let _env = default_env();
+
     // Both daemon server and client do bidirectional exchange
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let peer_data = test_peer_data(true);
@@ -752,6 +831,8 @@ fn test_daemon_server_sends_and_reads() {
 
 #[test]
 fn test_daemon_client_sends_and_reads() {
+    let _env = default_env();
+
     // Client also sends its lists in bidirectional exchange
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
@@ -784,6 +865,8 @@ fn test_daemon_client_sends_and_reads() {
 
 #[test]
 fn test_daemon_mode_round_trip() {
+    let _env = default_env();
+
     // Test that server output can be consumed by client
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let peer_data = test_peer_data(true);
@@ -826,6 +909,8 @@ fn test_daemon_mode_round_trip() {
 
 #[test]
 fn test_daemon_server_without_compression() {
+    let _env = default_env();
+
     // Server with compression disabled
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let peer_data = test_peer_data(false);
@@ -852,6 +937,8 @@ fn test_daemon_server_without_compression() {
 
 #[test]
 fn test_daemon_client_selects_fallback_algorithm() {
+    let _env = default_env();
+
     // Client receives server list that doesn't include our top choices
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
@@ -880,6 +967,8 @@ fn test_daemon_client_selects_fallback_algorithm() {
 
 #[test]
 fn test_negotiate_ssh_mode_zlibx() {
+    let _env = default_env();
+
     // SSH mode (is_daemon_mode=false) - bidirectional exchange.
     // Remote sends zlibx which we support.
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -904,6 +993,8 @@ fn test_negotiate_ssh_mode_zlibx() {
 
 #[test]
 fn test_negotiate_ssh_mode_zlib() {
+    let _env = default_env();
+
     // SSH mode (is_daemon_mode=false) - bidirectional exchange.
     // Remote sends zlib - always supported.
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -1017,6 +1108,8 @@ fn test_choose_compression_empty_list() {
 
 #[test]
 fn test_daemon_client_handles_empty_capabilities() {
+    let _env = default_env();
+
     // Edge case: server sends empty capability lists.
     // Upstream recv_negotiate_str (compat.c:383-406) treats an empty list
     // as a hard error - no fallback to defaults.
@@ -1042,6 +1135,8 @@ fn test_daemon_client_handles_empty_capabilities() {
 
 #[test]
 fn test_daemon_client_handles_single_algorithm() {
+    let _env = default_env();
+
     // Server offers only one checksum and compression option
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let server_lists = b"\x03md4\x04zlib";
@@ -1067,6 +1162,8 @@ fn test_daemon_client_handles_single_algorithm() {
 
 #[test]
 fn test_client_rejects_none_only_compression_from_server() {
+    let _env = default_env();
+
     // upstream: compat.c:485-486 get_default_nno_list - the client skips the
     // zero-numbered "none" entry, so its saw[] cannot accept a server list
     // holding only "none"; recv_negotiate_str aborts with RERR_UNSUPPORTED.
@@ -1106,6 +1203,8 @@ fn test_client_rejects_none_only_compression_from_server() {
 
 #[test]
 fn test_daemon_mode_malformed_input_error() {
+    let _env = default_env();
+
     // Receives malformed vstring (claims more bytes than available)
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let malformed = b"\x0Amd5"; // Claims 10 bytes but only provides 3
@@ -1128,6 +1227,8 @@ fn test_daemon_mode_malformed_input_error() {
 
 #[test]
 fn test_all_modes_are_bidirectional() {
+    let _env = default_env();
+
     // Verify both SSH and daemon modes are bidirectional
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
@@ -1168,6 +1269,8 @@ fn test_all_modes_are_bidirectional() {
 
 #[test]
 fn test_daemon_server_selects_from_peer_list() {
+    let _env = default_env();
+
     // Server selects from peer's algorithm list
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let peer_data = test_peer_data(true);
@@ -1191,6 +1294,8 @@ fn test_daemon_server_selects_from_peer_list() {
 
 #[test]
 fn test_daemon_client_prefers_server_order() {
+    let _env = default_env();
+
     // Client should prefer server's order (first match)
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
@@ -1219,6 +1324,8 @@ fn test_daemon_client_prefers_server_order() {
 
 #[test]
 fn test_daemon_mode_respects_do_negotiation_false() {
+    let _env = default_env();
+
     // When do_negotiation=false, daemon mode should also return defaults without I/O
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let mut stdin = &b""[..];
@@ -1395,6 +1502,8 @@ fn test_vstring_moderate_length() {
 
 #[test]
 fn test_all_supported_versions_negotiate() {
+    let _env = default_env();
+
     for version_num in 28..=32 {
         let protocol = ProtocolVersion::try_from(version_num).unwrap();
 
@@ -1423,6 +1532,8 @@ fn test_all_supported_versions_negotiate() {
 
 #[test]
 fn test_v28_uses_legacy_defaults() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(28).unwrap();
     let mut stdin = &b""[..];
     let mut stdout = Vec::new();
@@ -1437,6 +1548,8 @@ fn test_v28_uses_legacy_defaults() {
 
 #[test]
 fn test_v29_uses_legacy_defaults() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
     let mut stdout = Vec::new();
@@ -1451,6 +1564,8 @@ fn test_v29_uses_legacy_defaults() {
 
 #[test]
 fn test_v30_requires_exchange() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(30).unwrap();
     let client_response = b"\x05xxh64\x05zlibx";
     let mut stdin = &client_response[..];
@@ -2032,6 +2147,8 @@ fn phase3_read_vstring_io_error() {
 
 #[test]
 fn phase3_negotiate_stdin_io_error() {
+    let _env = default_env();
+
     struct FailReader;
     impl std::io::Read for FailReader {
         fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
@@ -2058,6 +2175,8 @@ fn phase3_negotiate_stdin_io_error() {
 
 #[test]
 fn phase3_negotiate_stdout_io_error() {
+    let _env = default_env();
+
     struct FailWriter;
     impl std::io::Write for FailWriter {
         fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
@@ -2274,6 +2393,8 @@ fn phase5_negotiate_zlibx_vs_zlib() {
 
 #[test]
 fn phase6_full_negotiation_all_supported_versions() {
+    let _env = default_env();
+
     for version in 28..=32 {
         let protocol = ProtocolVersion::try_from(version).unwrap();
 
@@ -2304,6 +2425,8 @@ fn phase6_full_negotiation_all_supported_versions() {
 
 #[test]
 fn phase6_full_negotiation_checksum_only() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let response = b"\x04sha1"; // Only checksum, no compression
     let mut stdin = &response[..];
@@ -2671,6 +2794,8 @@ fn capability_compression_negotiation_preference() {
 /// Tests protocol version fallback behavior.
 #[test]
 fn capability_fallback_protocol_version_behavior() {
+    let _env = default_env();
+
     // Protocol 28-29: Uses legacy defaults without negotiation
     for version in [28, 29] {
         let protocol = ProtocolVersion::try_from(version).unwrap();
@@ -2699,6 +2824,8 @@ fn capability_fallback_protocol_version_behavior() {
 /// Tests do_negotiation=false fallback (client lacks VARINT_FLIST_FLAGS).
 #[test]
 fn capability_fallback_no_varint_flist_flags() {
+    let _env = default_env();
+
     // When client lacks VARINT_FLIST_FLAGS capability, we skip negotiation
     // and use protocol 30+ defaults without any wire exchange
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -2746,6 +2873,8 @@ fn capability_fallback_duplicate_algorithms() {
 /// Tests full negotiation where remote only supports legacy checksums.
 #[test]
 fn capability_fallback_full_negotiation_legacy_remote() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Remote is a legacy server that only knows md5 and zlib
@@ -2772,6 +2901,8 @@ fn capability_fallback_full_negotiation_legacy_remote() {
 /// Tests full negotiation where remote only supports 'none' for both.
 #[test]
 fn capability_fallback_full_negotiation_none_only() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Remote disables both checksum and compression
@@ -2797,6 +2928,8 @@ fn capability_fallback_full_negotiation_none_only() {
 /// Tests negotiation fallback with compression disabled.
 #[test]
 fn capability_fallback_compression_disabled() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Only checksum negotiation, no compression
@@ -2908,6 +3041,8 @@ fn forward_compat_only_unknown_names_hard_error() {
 /// algorithm without error.
 #[test]
 fn forward_compat_full_negotiation_with_future_peer() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let mut peer = Vec::new();
     write_vstring(&mut peer, "sha256 xxh128 xxh3 xxh64 md5 md4 sha1").unwrap();
@@ -3011,6 +3146,8 @@ fn capability_fallback_whitespace_padded_valid_lists() {
 /// Tests that negotiation handles truncated input gracefully.
 #[test]
 fn capability_fallback_truncated_vstring() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Truncated input - claims 10 bytes but only provides 3
@@ -3029,6 +3166,8 @@ fn capability_fallback_truncated_vstring() {
 /// Tests handling of empty vstring (length 0).
 #[test]
 fn capability_fallback_empty_vstring() {
+    let _env = default_env();
+
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Empty checksum list vstring: length=0
@@ -3053,6 +3192,8 @@ fn capability_fallback_empty_vstring() {
 /// Tests that all protocol versions handle fallback consistently.
 #[test]
 fn capability_fallback_all_protocol_versions() {
+    let _env = default_env();
+
     for version in 28..=32 {
         let protocol = ProtocolVersion::try_from(version).unwrap();
 
@@ -3203,6 +3344,8 @@ fn test_choose_compression_client_picks_best_local_preference() {
 
 #[test]
 fn compression_override_used_on_legacy_protocol() {
+    let _env = default_env();
+
     // upstream: compat.c:194-195 - compression_override is honoured even on
     // legacy protocols where no vstring exchange occurs.
     let protocol = ProtocolVersion::try_from(29).unwrap();
@@ -3232,6 +3375,8 @@ fn compression_override_used_on_legacy_protocol() {
 
 #[test]
 fn compression_override_used_without_negotiation() {
+    let _env = default_env();
+
     // When do_negotiation=false and compression_override is set, the override
     // should be used directly without any wire exchange.
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -3261,6 +3406,8 @@ fn compression_override_used_without_negotiation() {
 
 #[test]
 fn compression_override_none_falls_through_to_normal_negotiation() {
+    let _env = default_env();
+
     // When compression_override is None, normal vstring negotiation is used.
     // Protocol 29 defaults to Zlib when no override is present.
     let protocol = ProtocolVersion::try_from(29).unwrap();
@@ -3295,23 +3442,14 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
 /// (upstream compat.c:409-533).
 ///
 /// The environment is process-global, so every test here serialises on
-/// [`ENV_LOCK`] and mutates via [`EnvGuard`], which restores the previous value
-/// on drop.
+/// [`ENV_LOCK`] via [`env_lock`] and mutates through [`EnvGuard`], which
+/// restores the previous value on drop.
 mod env_list_overrides {
     use std::ffi::OsStr;
-    use std::sync::Mutex;
-
-    use platform::env::EnvGuard;
 
     use super::super::env_list;
     use super::super::negotiate::{choose_checksum_algorithm_in, read_vstring, write_vstring};
     use super::*;
-
-    /// Serialises env-mutating tests since the process environment is global.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    const CHECKSUM_ENV: &str = "RSYNC_CHECKSUM_LIST";
-    const COMPRESS_ENV: &str = "RSYNC_COMPRESS_LIST";
 
     /// Reads the first vstring from a captured `negotiate` output buffer.
     fn first_vstring(bytes: &[u8]) -> String {
@@ -3323,7 +3461,7 @@ mod env_list_overrides {
     // regression guard that the default wire bytes never change.
     #[test]
     fn unset_env_keeps_default_order() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3337,7 +3475,7 @@ mod env_list_overrides {
     // byte-for-byte (client drops "none").
     #[test]
     fn unset_env_advertises_default_checksum_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3356,7 +3494,7 @@ mod env_list_overrides {
     // (b) A checksum list restricts and reorders the candidate set.
     #[test]
     fn checksum_env_restricts_and_reorders() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
 
         let client = env_list::checksum_candidates(false, false, 32).unwrap();
@@ -3372,7 +3510,7 @@ mod env_list_overrides {
     // client picks its own first candidate that the server also offers.
     #[test]
     fn checksum_env_drives_client_selection() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3395,7 +3533,7 @@ mod env_list_overrides {
     // (c) A compression list likewise restricts and reorders candidates.
     #[test]
     fn compress_env_restricts_and_reorders() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
 
         let client = env_list::compression_candidates(false, false).unwrap();
@@ -3406,7 +3544,7 @@ mod env_list_overrides {
     // (c') The compression override flows onto the wire and drives selection.
     #[test]
     fn compress_env_drives_client_selection() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
 
@@ -3432,7 +3570,7 @@ mod env_list_overrides {
     // (d) Unknown names are dropped; a value with a mix keeps only valid names.
     #[test]
     fn unknown_names_are_dropped() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus md5 alsobad xxh3"));
 
         let over = env_list::checksum_candidates(false, false, 32).unwrap();
@@ -3444,7 +3582,7 @@ mod env_list_overrides {
     // sentinel (upstream compat.c:327-328), which then fails negotiation.
     #[test]
     fn all_unknown_names_yield_invalid_sentinel() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus notreal"));
 
         let over = env_list::checksum_candidates(false, false, 32).unwrap();
@@ -3473,7 +3611,7 @@ mod env_list_overrides {
     // remainder of the exit-4 negotiation failure.
     #[test]
     fn disjoint_checksum_lists_emit_full_failure_block() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3506,7 +3644,7 @@ mod env_list_overrides {
     // md4-only vstring, finds no match and surfaces upstream's three-line block.
     #[test]
     fn disjoint_checksum_lists_fail_through_negotiate() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3542,7 +3680,7 @@ mod env_list_overrides {
     // so `RSYNC_CHECKSUM_LIST="sha256 md5"` behaves exactly like "md5".
     #[test]
     fn env_list_with_unknown_sha256_negotiates_survivor() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("sha256 md5"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3566,7 +3704,7 @@ mod env_list_overrides {
     // Empty / whitespace-only values are treated as unset (default order).
     #[test]
     fn whitespace_only_env_is_treated_as_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   \t "));
         assert!(env_list::checksum_candidates(false, false, 32).is_none());
     }
@@ -3574,7 +3712,7 @@ mod env_list_overrides {
     // Duplicate names are removed, keeping first occurrence (upstream dedup).
     #[test]
     fn duplicate_names_are_deduped() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3 md5 xxh3"));
         let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(over.candidates, vec!["md5", "xxh3"]);
@@ -3584,7 +3722,7 @@ mod env_list_overrides {
     // upstream's main_nni rewrite.
     #[test]
     fn xxhash_alias_is_canonicalised() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxhash md5"));
         let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(over.candidates, vec!["xxh64", "md5"]);
@@ -3596,7 +3734,7 @@ mod env_list_overrides {
     // only rewrites recognised aliases, so "MD5" stays "MD5" (not "md5").
     #[test]
     fn mixed_case_non_alias_preserves_original_bytes() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("MD5 XXH3"));
         let over = env_list::checksum_candidates(false, false, 32).unwrap();
         // Advertised bytes preserve the operator's casing.
@@ -3615,7 +3753,7 @@ mod env_list_overrides {
     // uses names after it (upstream getenv_nstr + parse_nni_str terminator).
     #[test]
     fn ampersand_scopes_client_and_server() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3 xxh128"));
 
         let client = env_list::checksum_candidates(false, false, 32).unwrap();
@@ -3635,7 +3773,7 @@ mod env_list_overrides {
     // early when list_str is NULL.
     #[test]
     fn validate_checksum_choice_accepts_when_env_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         env_list::validate_checksum_choice("md5").expect("unset env accepts any choice");
         env_list::validate_checksum_choice("xxh128").expect("unset env accepts any choice");
@@ -3644,7 +3782,7 @@ mod env_list_overrides {
     // Whitespace-only env is treated as unset (upstream compat.c:435-436).
     #[test]
     fn validate_checksum_choice_accepts_when_env_blank() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   "));
         env_list::validate_checksum_choice("md5").expect("blank env accepts any choice");
     }
@@ -3652,7 +3790,7 @@ mod env_list_overrides {
     // (b) Env list set and the forced choice is a member - accepted.
     #[test]
     fn validate_checksum_choice_accepts_when_in_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
         env_list::validate_checksum_choice("md5").expect("md5 is in the list");
         env_list::validate_checksum_choice("xxh3").expect("xxh3 is in the list");
@@ -3665,7 +3803,7 @@ mod env_list_overrides {
     // observable stderr forwarded to the client, so a drop-in must match it.
     #[test]
     fn validate_checksum_choice_refuses_when_not_in_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
         let err = env_list::validate_checksum_choice("md5").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
@@ -3680,7 +3818,7 @@ mod env_list_overrides {
     // parse_nni_str yields "INVALID" and saw[num] is never set.
     #[test]
     fn validate_checksum_choice_refuses_when_list_all_invalid() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus nope"));
         let err = env_list::validate_checksum_choice("md5").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
@@ -3689,7 +3827,7 @@ mod env_list_overrides {
     // (d) The compress counterpart: refusal message says "compress".
     #[test]
     fn validate_compress_choice_refuses_when_not_in_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
         let err = env_list::validate_compress_choice("zlib").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
@@ -3701,7 +3839,7 @@ mod env_list_overrides {
 
     #[test]
     fn validate_compress_choice_accepts_when_in_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
         env_list::validate_compress_choice("zlib").expect("zlib is in the list");
         env_list::validate_compress_choice("zlibx").expect("zlibx is in the list");
@@ -3713,14 +3851,14 @@ mod env_list_overrides {
     // iff "md4" is present and refused otherwise.
     #[test]
     fn validate_checksum_choice_md4_in_list_accepts_md4() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md4 md5"));
         env_list::validate_checksum_choice("md4").expect("md4 is in the list");
     }
 
     #[test]
     fn validate_checksum_choice_md4_absent_refuses_md4() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
         let err = env_list::validate_checksum_choice("md4").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
@@ -3735,7 +3873,7 @@ mod env_list_overrides {
     // client half ("md5") would accept md5, but the server half ("xxh3") refuses.
     #[test]
     fn validate_uses_server_half_of_ampersand_scope() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3"));
         env_list::validate_checksum_choice("xxh3").expect("server half contains xxh3");
         let err = env_list::validate_checksum_choice("md5").unwrap_err();
@@ -3747,7 +3885,7 @@ mod env_list_overrides {
     // refusal and ErrorKind::Unsupported (exit 4 in core).
     #[test]
     fn server_negotiation_refuses_forced_checksum_not_in_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3786,7 +3924,7 @@ mod env_list_overrides {
     // still completes negotiation with the forced algorithm.
     #[test]
     fn client_does_not_validate_forced_checksum() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
@@ -3826,7 +3964,7 @@ mod env_list_overrides {
     // built-in default order, which always contains md5/md4/zlib.
     #[test]
     fn validate_default_accepts_when_env_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         env_list::validate_default_checksum("md5", false).expect("unset env accepts md5");
@@ -3838,7 +3976,7 @@ mod env_list_overrides {
     // (b) Unit: env includes the default - accepted.
     #[test]
     fn validate_default_accepts_when_default_in_list() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 md5"));
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
         env_list::validate_default_checksum("md5", true).expect("md5 is in the list");
@@ -3849,7 +3987,7 @@ mod env_list_overrides {
     // recv_negotiate_str wording and ErrorKind::Unsupported (exit 4 in core).
     #[test]
     fn validate_default_refuses_checksum_when_excluded() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
         let err = env_list::validate_default_checksum("md5", true).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
@@ -3866,7 +4004,7 @@ mod env_list_overrides {
 
     #[test]
     fn validate_default_refuses_compress_when_excluded() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // `zlibx` is always compiled in (unlike the optional zstd/lz4 codecs),
         // so the rebuilt own-list line is deterministic across feature sets.
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlibx"));
@@ -3907,7 +4045,7 @@ mod env_list_overrides {
     // md5 default unchanged. This is the strict no-op regression guard.
     #[test]
     fn nonego_returns_md5_default_when_env_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         let result = negotiate_nonego(true, false).expect("unset env is a no-op");
@@ -3921,7 +4059,7 @@ mod env_list_overrides {
     // honoured against an old peer exactly as upstream honours it.
     #[test]
     fn nonego_refuses_md5_default_when_env_excludes_it() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         let err = negotiate_nonego(true, false).unwrap_err();
@@ -3937,7 +4075,7 @@ mod env_list_overrides {
     // (f) End-to-end: env includes md5 - the default is returned.
     #[test]
     fn nonego_returns_md5_default_when_env_includes_it() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         let result = negotiate_nonego(true, false).expect("md5 is in the list");
@@ -3948,7 +4086,7 @@ mod env_list_overrides {
     // the non-negotiated path.
     #[test]
     fn nonego_refuses_zlib_default_when_env_excludes_it() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         // `zlibx` is unconditionally compiled in, keeping the own-list line
         // deterministic regardless of the optional zstd/lz4 features.
@@ -3966,7 +4104,7 @@ mod env_list_overrides {
     // (h) End-to-end compress: env includes zlib - the default is returned.
     #[test]
     fn nonego_returns_zlib_default_when_env_includes_it() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
         let result = negotiate_nonego(true, true).expect("zlib is in the list");
@@ -3978,7 +4116,7 @@ mod env_list_overrides {
     // recv on do_compression (compat.c:544), so no validation runs.
     #[test]
     fn nonego_ignores_compress_env_when_compression_off() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
         negotiate_nonego(true, false).expect("compress env is not checked when -z is off");
@@ -3989,7 +4127,7 @@ mod env_list_overrides {
     // peer just like the server.
     #[test]
     fn nonego_refuses_md5_default_on_client_side() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         let err = negotiate_nonego(false, false).unwrap_err();
