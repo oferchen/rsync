@@ -67,7 +67,16 @@ fn walk_openat(
     {
         raw_flags |= libc::O_LARGEFILE;
     }
-    at_syscalls::openat(dirfd, name, raw_flags, u32::from(mode.bits())).map(OwnedFd::from)
+    // `Mode::bits()` returns `rustix::fs::RawMode`, which IS `libc::mode_t`:
+    // `u32` on Linux but `u16` on macOS. The widening is load-bearing there and
+    // reflexive here, so clippy flags it on Linux only. Both spellings lose:
+    // `u32::from(..)` trips `useless_conversion` and `.. as u32` trips
+    // `unnecessary_cast`, each on the target where the width already matches.
+    // Obeying either lint drops the conversion and breaks the macOS build, so
+    // the allow is the portable answer - same reason as the `unused_mut` above.
+    #[allow(clippy::useless_conversion)]
+    let raw_mode = u32::from(mode.bits());
+    at_syscalls::openat(dirfd, name, raw_flags, raw_mode).map(OwnedFd::from)
 }
 
 /// Symlink-follow budget for one walk, spent across every component.
