@@ -9,9 +9,9 @@
 //! failure and `fork` failure each `continue`. Only listener setup can end the
 //! daemon (`exit_cleanup(RERR_SOCKETIO)` at socket.c:699 and socket.c:715).
 //!
-//! This test pins that contract for the threaded model: client one drives an
-//! invalid `@RSYNCD:` state transition, and client two must still complete a
-//! real transfer against the same listener afterwards.
+//! This test pins that contract for the threaded model: client one is refused
+//! mid-handshake, and client two must still complete a real transfer against
+//! the same listener afterwards.
 
 #![cfg(unix)]
 
@@ -28,6 +28,10 @@ use tempfile::tempdir;
 
 const MODULE_NAME: &str = "uploads";
 
+/// The version banner the provoker repeats. Sent twice, the second copy lands
+/// where the daemon expects a module name.
+const REPEATED_BANNER: &str = "@RSYNCD: 32.0 md5 md4";
+
 /// Allocates a free TCP port and hands the bound listener to the daemon so
 /// there is no TOCTOU window between allocation and the daemon's own bind.
 fn allocate_test_port() -> Option<(u16, TcpListener)> {
@@ -37,9 +41,10 @@ fn allocate_test_port() -> Option<(u16, TcpListener)> {
 }
 
 /// Connects, reads the greeting, then sends the `@RSYNCD:` version banner
-/// twice. The second banner re-drives `Greeting -> ModuleSelect` from
-/// `ModuleSelect`, which the connection FSM rejects, producing a session error
-/// that is neither a broken pipe nor a reset.
+/// twice. Upstream reads exactly one line after the version exchange and takes
+/// it as the module name (clientserver.c:1538-1570), so the second banner is
+/// refused as an unknown module rather than served. That refusal is what this
+/// fixture provokes.
 fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = loop {
@@ -70,7 +75,7 @@ fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
     }
 
     stream
-        .write_all(b"@RSYNCD: 32.0 md5 md4\n@RSYNCD: 32.0 md5 md4\n")
+        .write_all(format!("{REPEATED_BANNER}\n{REPEATED_BANNER}\n").as_bytes())
         .map_err(|err| format!("send repeated banner: {err}"))?;
     stream.flush().map_err(|err| format!("flush: {err}"))?;
 
@@ -161,27 +166,26 @@ fn session_error_does_not_stop_the_accept_loop() {
         "one client's session error must not fail the daemon: {daemon_result:?}"
     );
 
-    // Non-vacuity: the first client has to have genuinely broken its session.
-    // If the daemon ever starts answering a repeated banner cleanly this
-    // fixture stops provoking anything, and the property above would pass
-    // while proving nothing - so fail loudly here instead.
+    // Non-vacuity: the first client has to have been REFUSED, not served. The
+    // daemon protocol refuses by answering `@ERROR:` and closing, so a silent
+    // drop is the wrong expectation - upstream answers this exact input with
+    // `@ERROR: Unknown module '%s'` (clientserver.c:1570). Pinning the refusal
+    // itself is what keeps the property above from passing vacuously: if the
+    // daemon ever started serving this client, both assertions fire.
     let provoker_trailing = provoker.expect("provoker client failed before it could provoke");
-    assert!(
-        provoker_trailing.is_empty(),
-        "first client must be dropped mid-session, not answered; got {provoker_trailing:?}"
+    assert_eq!(
+        provoker_trailing,
+        vec![format!("@ERROR: Unknown module '{REPEATED_BANNER}'")],
+        "first client must be refused, not served; log:\n{log_contents}"
     );
-    let failure_lines: Vec<&str> = log_contents
+    let refusal_needle = format!("unknown module '{REPEATED_BANNER}' tried from");
+    let refusal_lines: Vec<&str> = log_contents
         .lines()
-        .filter(|line| line.contains("failed to serve legacy handshake"))
+        .filter(|line| line.contains(&refusal_needle))
         .collect();
     assert_eq!(
-        failure_lines.len(),
+        refusal_lines.len(),
         1,
-        "expected exactly one logged session failure for the first client; log:\n{log_contents}"
-    );
-    assert!(
-        failure_lines[0].contains("invalid daemon connection transition"),
-        "the provoked failure must be the rejected state transition: {}",
-        failure_lines[0]
+        "expected exactly one logged module refusal for the first client; log:\n{log_contents}"
     );
 }
