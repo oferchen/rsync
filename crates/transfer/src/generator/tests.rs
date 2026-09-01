@@ -7,6 +7,7 @@ use super::delta::{
     write_delta_with_compression,
 };
 use super::file_list::apply_permutation_in_place;
+use super::ndx_map::NdxMap;
 use super::protocol_io::{
     calculate_duration_ms, read_signature_blocks, read_signature_blocks_keepalive,
     signature_read_lull_mod,
@@ -340,13 +341,13 @@ fn ndx_convert_partition_point_depth_grows() {
     use super::{ndx_convert_totals, partition_point_depth};
 
     let (_handshake, mut ctx) = test_generator();
-    // Default ndx_segments has one entry; extend it to four so each query
+    // The map starts with one segment; extend it to four so each query
     // contributes a measurably larger partition_point depth.
-    ctx.incremental.ndx_segments.push((10, 11));
-    ctx.incremental.ndx_segments.push((20, 22));
-    ctx.incremental.ndx_segments.push((30, 33));
+    ctx.incremental.ndx_map.push_sublist(10, -1);
+    ctx.incremental.ndx_map.push_sublist(20, -1);
+    ctx.incremental.ndx_map.push_sublist(30, -1);
 
-    let per_call_depth = partition_point_depth(ctx.incremental.ndx_segments.len());
+    let per_call_depth = partition_point_depth(ctx.incremental.ndx_map.len());
     assert!(
         per_call_depth >= 3,
         "expected partition_point_depth(4) >= 3, got {per_call_depth}"
@@ -391,7 +392,8 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
 
     // Verify INC_RECURSE is active and ndx_start=1
     assert!(ctx.inc_recurse());
-    assert_eq!(ctx.incremental.ndx_segments, vec![(0, 1)]);
+    assert_eq!(ctx.incremental.ndx_map.len(), 1);
+    assert_eq!(ctx.incremental.ndx_map.first_ndx_start(), 1);
 
     // Gap NDX = ndx_start - 1 = 0
     let gap_ndx: i32 = 0;
@@ -400,7 +402,7 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     // wire_to_flat_ndx + flat_to_wire_ndx is no longer used in production.
     // Verify that the gap NDX value (0) is below ndx_start (1), which is
     // the condition under which upstream echoes the original NDX unchanged.
-    let ndx_start = ctx.incremental.ndx_segments[0].1;
+    let ndx_start = ctx.incremental.ndx_map.first_ndx_start();
     assert!(
         gap_ndx < ndx_start,
         "gap NDX ({gap_ndx}) must be below ndx_start ({ndx_start})"
@@ -520,7 +522,11 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // first entry is "."); sub/'s pending sub-list owns `sub` at flat 1. These
     // are flat file_list indices, NOT wire dir_ndx values (`sub` has wire
     // dir_ndx 1 but that alone would misresolve to flat 0 == `.`).
-    assert_eq!(ctx.incremental.segment_parent_flat, vec![0]);
+    assert_eq!(
+        ctx.resolve_itemize_ndx(0),
+        0,
+        "the initial list's gap NDX must resolve to `.` at flat 0"
+    );
     assert_eq!(ctx.incremental.pending_segments.len(), 1);
     assert_eq!(ctx.incremental.pending_segments[0].parent_flat_idx, 1);
     assert_eq!(ctx.incremental.pending_segments[0].flist_start, 2);
@@ -529,8 +535,9 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // owning-flat rows, exactly as encode_and_send_segment does in the transfer
     // loop. upstream flist.c:2966: ndx_start = prev(1) + prev_used(2) + 1 = 4,
     // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
-    ctx.incremental.ndx_segments = vec![(0, 1), (2, 4)];
-    ctx.incremental.segment_parent_flat = vec![0, 1];
+    ctx.incremental.ndx_map.set_initial_parent_flat(0);
+    let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1);
+    assert_eq!(sub_ndx_start, 4, "flist.c:2966 - 1 + 2 + 1");
 
     // Each gap resolves to its OWN owning directory; the child resolves to
     // itself. The `!= 0` anti-regression: sub/'s gap 3 must be flat 1 (`sub`),
@@ -5107,8 +5114,8 @@ fn empty_segment_sends_wire_bytes() {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
-    // Set up a minimal initial segment in ndx_segments.
-    ctx.incremental.ndx_segments = vec![(0, 0)];
+    // Set up a minimal initial segment.
+    ctx.incremental.ndx_map = NdxMap::new(0);
 
     // Add a dummy file entry so the file_list is non-empty (flist_start=0).
     ctx.push_file_item(
@@ -5150,7 +5157,7 @@ fn nonempty_segment_also_sends_wire_bytes() {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
-    ctx.incremental.ndx_segments = vec![(0, 0)];
+    ctx.incremental.ndx_map = NdxMap::new(0);
     let entry = protocol::flist::FileEntry::new_file("a.txt".into(), 10, 0o644);
     ctx.push_file_item(entry, PathBuf::from("a.txt"));
 
@@ -5208,8 +5215,9 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
             PathBuf::from(format!("/src/dir/file_{i}.txt")),
         );
     }
-    ctx.incremental.ndx_segments = vec![(0, 1), (3, 5), (5, 8)];
-    ctx.incremental.first_segment_idx = 0;
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(3, -1), 5);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(5, -1), 8);
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 0);
 
     // Verify initial state.
     assert_eq!(ctx.file_list()[0].name(), "dir/file_0.txt");
@@ -5218,7 +5226,7 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
 
     // Reclaim first segment [0..3).
     ctx.reclaim_oldest_segment();
-    assert_eq!(ctx.incremental.first_segment_idx, 1);
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 1);
     assert_eq!(ctx.file_list()[0].name(), ""); // reclaimed
     assert_eq!(ctx.file_list()[1].name(), ""); // reclaimed
     assert_eq!(ctx.file_list()[2].name(), ""); // reclaimed
@@ -5227,14 +5235,14 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
 
     // Reclaim second segment [3..5).
     ctx.reclaim_oldest_segment();
-    assert_eq!(ctx.incremental.first_segment_idx, 2);
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 2);
     assert_eq!(ctx.file_list()[3].name(), ""); // reclaimed
     assert_eq!(ctx.file_list()[4].name(), ""); // reclaimed
     assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // intact
 
     // Third reclaim is a no-op (last segment must not be reclaimed).
     ctx.reclaim_oldest_segment();
-    assert_eq!(ctx.incremental.first_segment_idx, 2); // unchanged
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 2); // unchanged
     assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // still intact
 }
 
@@ -5253,7 +5261,7 @@ fn reclaim_oldest_segment_noop_without_inc_recurse() {
 
     // Single segment - reclaim is a no-op.
     ctx.reclaim_oldest_segment();
-    assert_eq!(ctx.incremental.first_segment_idx, 0);
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 0);
     assert_eq!(ctx.file_list()[0].name(), "file.txt");
 }
 
