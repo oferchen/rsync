@@ -622,11 +622,25 @@ where
     // FD (lsh.sh, the parent shell, still holds an inherited copy), so the
     // peer never sees EOF and the drain loops forever. Match upstream and
     // let process exit do the work.
+    //
+    // upstream: cleanup.c:282 `_exit_cleanup()` exits with the `RERR_*` the
+    // failing site handed `exit_cleanup()`, never a flat 1. oc carries one
+    // `io::Error` up instead of a per-site code, so the class is recovered with
+    // the same mapping the client applies to its own local failures. The peer
+    // learns the code from the `MSG_ERROR_EXIT` the transfer body already sent
+    // (transfer::announce_error_exit); this is the process status the remote
+    // shell reports on top of it.
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
-            write_server_error(stderr, program_brand, format!("server error: {e}"));
-            1
+            let exit_code = core::exit_code::ExitCode::from_io_error(&e);
+            write_server_error_with_code(
+                stderr,
+                program_brand,
+                exit_code,
+                format!("server error: {e}"),
+            );
+            exit_code.as_i32()
         }
     }
 }
@@ -934,8 +948,22 @@ fn apply_value_flags<Err: Write>(
 }
 
 fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
+    write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
+}
+
+/// Renders a server-side `rsync error:` trailer carrying an explicit `RERR_*`.
+///
+/// upstream: log.c:912 `log_exit()` prints the code the process is exiting with,
+/// so a transfer-body failure must not be labelled `(code 1)` while the process
+/// leaves with a different status.
+fn write_server_error_with_code<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+    code: core::exit_code::ExitCode,
+    text: impl fmt::Display,
+) {
     let mut sink = MessageSink::with_brand(stderr, brand);
-    let mut message = rsync_error!(1, "{}", text);
+    let mut message = rsync_error!(code.as_i32(), "{}", text);
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");

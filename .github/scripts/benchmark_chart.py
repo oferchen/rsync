@@ -35,7 +35,10 @@ from html import escape
 
 CHART_WIDTH = 800
 LEFT_MARGIN = 180
-RIGHT_MARGIN = 120
+# Wide enough for the longest ratio annotation a multi-baseline row can
+# produce ("vs 3.4.4 12.5x faster"), which would otherwise run off the
+# right edge of the SVG.
+RIGHT_MARGIN = 140
 BAR_AREA_WIDTH = CHART_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 
 TOP_MARGIN = 60
@@ -62,6 +65,13 @@ RATIO_SAME_UPPER = 1.05
 
 COLOR_UPSTREAM = "#6e7681"
 COLOR_OC_RSYNC = "#58a6ff"
+# One shade per upstream baseline, in the order the run measured them. Greys
+# and browns stay visually subordinate to oc-rsync's blue, so a reader still
+# sees which bar is the subject of the comparison when there are several
+# baselines rather than one.
+COLOR_BASELINES = (COLOR_UPSTREAM, "#a1887f", "#8d6e63", "#546e7a")
+# Matching shades for oc-rsync when it had to be re-timed per baseline.
+COLOR_OC_VARIANTS = ("#58a6ff", "#79c0ff", "#a5d6ff", "#cae8ff")
 COLOR_PURE_RUST = "#58a6ff"
 COLOR_OPENSSL = "#d2a8ff"
 COLOR_STD_IO = "#da8b45"
@@ -190,24 +200,23 @@ class BarSpec:
 
 @dataclass(frozen=True)
 class TestPair:
-    """A pair of bars (upstream + oc-rsync) for one test scenario.
+    """One test scenario: its bars, left to right, and its ratio annotations.
 
-    Some modes (e.g. the 3-way SSH transport comparison) include an optional
-    third bar and a second ratio annotation. When `third` is set:
-      - `upstream` carries the first leg (e.g. upstream rsync over ssh)
-      - `oc_rsync` carries the second leg (e.g. oc-rsync subprocess ssh)
-      - `third` carries the third leg (e.g. oc-rsync embedded russh)
-      - `ratio` annotates third vs oc_rsync (russh / subprocess)
-      - `ratio_secondary` annotates oc_rsync vs upstream (oc-sub / upstream)
+    The bar count is not fixed. An upstream-comparison row carries one bar per
+    baseline plus oc-rsync (and one oc-rsync bar per baseline when oc-rsync had
+    to be re-timed against each peer); the 3-way SSH transport row carries its
+    three transports. Modelling the row as a list rather than a fixed
+    upstream/oc-rsync pair is what lets a second baseline be added without a
+    third field, a fourth, and a rule about which ratio each one means.
+
+    `annotations` are `(prefix, ratio)` pairs rendered right of the bars. A
+    single unprefixed annotation is the one-baseline case.
     """
 
     name: str
-    upstream: BarSpec
-    oc_rsync: BarSpec
-    ratio: float
+    bars: tuple[BarSpec, ...]
+    annotations: tuple[tuple[str, float], ...]
     center_y: float
-    third: BarSpec | None = None
-    ratio_secondary: float | None = None
 
 
 @dataclass(frozen=True)
@@ -252,11 +261,20 @@ def _is_three_way_ssh(mode: str, t: dict) -> bool:
     return mode in SSH_TRANSPORT_MODES and "upstream_ssh" in t
 
 
-def _series_keys(mode: str, t: dict) -> tuple[str, ...]:
-    """Result-JSON keys holding this row's series, left to right."""
-    if _is_three_way_ssh(mode, t):
-        return ("upstream_ssh", "oc_subprocess", "oc_russh")
-    return ("upstream", "oc_rsync")
+def baseline_labels(data: dict) -> list[str]:
+    """Upstream releases this run measured, in the order it measured them."""
+    declared = data.get("baselines")
+    if declared:
+        return [b["label"] for b in declared]
+    return [data.get("upstream_version") or "3.4.4"]
+
+
+def upstream_series(t: dict, label: str) -> dict:
+    return (t.get("upstreams") or {}).get(label) or t["upstream"]
+
+
+def oc_series(t: dict, label: str) -> dict:
+    return (t.get("oc_rsync_per_baseline") or {}).get(label) or t["oc_rsync"]
 
 
 def metric_value(series: dict, unit: MetricUnit) -> float:
@@ -275,10 +293,97 @@ def metric_value(series: dict, unit: MetricUnit) -> float:
     return float(series["mean"])
 
 
-def metric_values(mode: str, t: dict) -> list[float]:
+def row_series(mode: str, t: dict, labels: list[str]) -> list[tuple]:
+    """`(series, color, legend_label)` for every bar of one row, left to right.
+
+    Modes that compare oc-rsync build variants against each other (OpenSSL,
+    io_uring, SSH transport) have no baseline dimension: their bars are the
+    variants. Only the upstream-comparison modes fan out over baselines.
+    """
+    if _is_three_way_ssh(mode, t):
+        return [
+            (t["upstream_ssh"], COLOR_SSH_UPSTREAM, "upstream (ssh subprocess)"),
+            (
+                t["oc_subprocess"],
+                COLOR_SSH_SUBPROCESS,
+                "oc-rsync (ssh subprocess)",
+            ),
+            (t["oc_russh"], COLOR_SSH_RUSSH, "oc-rsync (russh embedded)"),
+        ]
+    if mode in OPENSSL_MODES:
+        return [
+            (t["upstream"], COLOR_PURE_RUST, "pure Rust"),
+            (t["oc_rsync"], COLOR_OPENSSL, "OpenSSL"),
+        ]
+    if mode in IO_URING_MODES:
+        return [
+            (t["upstream"], COLOR_STD_IO, "standard I/O"),
+            (t["oc_rsync"], COLOR_IO_URING, "io_uring"),
+        ]
+    if mode in SSH_TRANSPORT_MODES:
+        return [
+            (t["upstream"], COLOR_SSH_SUBPROCESS, "subprocess"),
+            (t["oc_rsync"], COLOR_SSH_RUSSH, "russh"),
+        ]
+
+    series = [
+        (
+            upstream_series(t, label),
+            COLOR_BASELINES[i % len(COLOR_BASELINES)],
+            f"upstream rsync {label}",
+        )
+        for i, label in enumerate(labels)
+    ]
+    if t.get("oc_rsync_per_baseline"):
+        series += [
+            (
+                oc_series(t, label),
+                COLOR_OC_VARIANTS[i % len(COLOR_OC_VARIANTS)],
+                f"oc-rsync vs {label}",
+            )
+            for i, label in enumerate(labels)
+        ]
+    else:
+        series.append((t["oc_rsync"], COLOR_OC_RSYNC, "oc-rsync"))
+    return series
+
+
+def metric_values(mode: str, t: dict, labels: list[str]) -> list[float]:
     """Measured magnitudes for every bar of one test row, in the mode's unit."""
     unit = MODE_UNITS[mode]
-    return [metric_value(t[key], unit) for key in _series_keys(mode, t)]
+    return [metric_value(s, unit) for s, _, _ in row_series(mode, t, labels)]
+
+
+def baseline_ratio(t: dict, label: str, unit: MetricUnit) -> float:
+    """oc-rsync vs one named baseline, in the row's own unit.
+
+    Same rule as `pair_ratio`: a byte-unit row derives its ratio from the
+    magnitudes it plots, because the stored `ratio`/`ratios` fields are always
+    elapsed-time ratios.
+    """
+    if unit is MetricUnit.BYTES:
+        up = metric_value(upstream_series(t, label), unit)
+        oc = metric_value(oc_series(t, label), unit)
+        return oc / up if up > 0 else 0.0
+    return (t.get("ratios") or {}).get(label, t.get("ratio", 0.0))
+
+
+def row_annotations(
+    mode: str, t: dict, labels: list[str], unit: MetricUnit, values: list[float]
+) -> tuple[tuple[str, float], ...]:
+    """`(prefix, ratio)` annotations rendered to the right of one row."""
+    if _is_three_way_ssh(mode, t):
+        return (
+            ("oc/up", t.get("ratio_sub_vs_upstream", 0.0)),
+            ("ru/oc", t.get("ratio_russh_vs_sub", t.get("ratio", 0.0))),
+        )
+    if mode in OPENSSL_MODES or mode in IO_URING_MODES or mode in SSH_TRANSPORT_MODES:
+        return (("", t.get("ratio", 0.0)),)
+    if len(labels) == 1:
+        return (("", pair_ratio(t, unit, values[0], values[-1])),)
+    return tuple(
+        (f"vs {label}", baseline_ratio(t, label, unit)) for label in labels
+    )
 
 
 def pair_ratio(t: dict, unit: MetricUnit, up_v: float, oc_v: float) -> float:
@@ -296,14 +401,16 @@ def pair_ratio(t: dict, unit: MetricUnit, up_v: float, oc_v: float) -> float:
     return t.get("ratio", 0.0)
 
 
-def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
+def compute_layout(
+    tests_by_mode: dict[str, list[dict]], labels: list[str]
+) -> ChartLayout:
     """Compute y-positions for every element and overall chart dimensions."""
     all_times = []
     for mode, mode_tests in tests_by_mode.items():
         if MODE_UNITS.get(mode) is not MetricUnit.DURATION:
             continue
         for t in mode_tests:
-            all_times.extend(metric_values(mode, t))
+            all_times.extend(metric_values(mode, t, labels))
 
     max_time = max(all_times, default=0.0) or 1.0
     scale = BAR_AREA_WIDTH / (max_time * 1.1)
@@ -330,7 +437,7 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
         # in different units from sharing an axis.
         group_values: list[float] = []
         for t in mode_tests:
-            group_values.extend(metric_values(mode, t))
+            group_values.extend(metric_values(mode, t, labels))
         # `or 1.0` also covers an all-zero group (every measurement missing),
         # which would otherwise divide by zero.
         group_max = max(group_values, default=0.0) or 1.0
@@ -349,89 +456,35 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             if j > 0:
                 y += GROUP_GAP
 
-            three_way = _is_three_way_ssh(mode, t)
+            series = row_series(mode, t, labels)
+            values = [metric_value(s, unit) for s, _, _ in series]
+            n = len(series)
+            row_height = n * BAR_HEIGHT + (n - 1) * BAR_GAP
+            center_y = y + row_height / 2
 
-            up_y = y
-            oc_y = y + BAR_HEIGHT + BAR_GAP
-            third_y = y + 2 * (BAR_HEIGHT + BAR_GAP)
-
-            if three_way:
-                # Center vertically between bar 1 and bar 3.
-                center_y = y + (3 * BAR_HEIGHT + 2 * BAR_GAP) / 2
-            else:
-                center_y = y + BAR_HEIGHT + BAR_GAP / 2
-
-            values = metric_values(mode, t)
-            if three_way:
-                up_v, oc_v, third_v = values
-            else:
-                (up_v, oc_v), third_v = values, None
-
-            up_w = max(up_v * group_scale, MIN_BAR_WIDTH)
-            oc_w = max(oc_v * group_scale, MIN_BAR_WIDTH)
-            third_w = (
-                max(third_v * group_scale, MIN_BAR_WIDTH)
-                if third_v is not None
-                else None
-            )
-
-            if mode in OPENSSL_MODES:
-                bar1_color, bar1_label = COLOR_PURE_RUST, "pure Rust"
-                bar2_color, bar2_label = COLOR_OPENSSL, "OpenSSL"
-                bar3_color, bar3_label = None, None
-            elif mode in IO_URING_MODES:
-                bar1_color, bar1_label = COLOR_STD_IO, "standard I/O"
-                bar2_color, bar2_label = COLOR_IO_URING, "io_uring"
-                bar3_color, bar3_label = None, None
-            elif mode in SSH_TRANSPORT_MODES:
-                if three_way:
-                    bar1_color, bar1_label = (
-                        COLOR_SSH_UPSTREAM, "upstream (ssh subprocess)"
-                    )
-                    bar2_color, bar2_label = (
-                        COLOR_SSH_SUBPROCESS, "oc-rsync (ssh subprocess)"
-                    )
-                    bar3_color, bar3_label = (
-                        COLOR_SSH_RUSSH, "oc-rsync (russh embedded)"
-                    )
-                else:
-                    bar1_color, bar1_label = COLOR_SSH_SUBPROCESS, "subprocess"
-                    bar2_color, bar2_label = COLOR_SSH_RUSSH, "russh"
-                    bar3_color, bar3_label = None, None
-            else:
-                bar1_color, bar1_label = COLOR_UPSTREAM, "upstream"
-                bar2_color, bar2_label = COLOR_OC_RSYNC, "oc-rsync"
-                bar3_color, bar3_label = None, None
-
-            third_bar = None
-            ratio_secondary = None
-            if three_way and third_w is not None and bar3_color is not None:
-                third_bar = BarSpec(
-                    third_y, third_w, third_v, bar3_color, bar3_label
+            bars = tuple(
+                BarSpec(
+                    y + k * (BAR_HEIGHT + BAR_GAP),
+                    max(value * group_scale, MIN_BAR_WIDTH),
+                    value,
+                    color,
+                    legend_label,
                 )
-                # Primary ratio = russh / oc subprocess.
-                # Secondary ratio = oc subprocess / upstream.
-                ratio_primary = t.get("ratio_russh_vs_sub", t.get("ratio", 0.0))
-                ratio_secondary = t.get("ratio_sub_vs_upstream", 0.0)
-            else:
-                ratio_primary = pair_ratio(t, unit, up_v, oc_v)
+                for k, ((_, color, legend_label), value) in enumerate(
+                    zip(series, values)
+                )
+            )
 
             pairs.append(
                 TestPair(
                     name=t["name"],
-                    upstream=BarSpec(up_y, up_w, up_v, bar1_color, bar1_label),
-                    oc_rsync=BarSpec(oc_y, oc_w, oc_v, bar2_color, bar2_label),
-                    ratio=ratio_primary,
+                    bars=bars,
+                    annotations=row_annotations(mode, t, labels, unit, values),
                     center_y=center_y,
-                    third=third_bar,
-                    ratio_secondary=ratio_secondary,
                 )
             )
 
-            if three_way:
-                y += 3 * BAR_HEIGHT + 2 * BAR_GAP
-            else:
-                y += 2 * BAR_HEIGHT + BAR_GAP
+            y += row_height
 
         groups.append(ModeGroup(
             label=MODE_LABELS[mode],
@@ -658,10 +711,8 @@ class ChartBuilder:
                 f'text-anchor="end" font-size="11" fill="{COLOR_LABEL}">'
                 f"{escape(pair.name)}</text>"
             )
-            self._add_bar(pair.upstream, group.unit)
-            self._add_bar(pair.oc_rsync, group.unit)
-            if pair.third is not None:
-                self._add_bar(pair.third, group.unit)
+            for bar in pair.bars:
+                self._add_bar(bar, group.unit)
             self._add_speedup(pair, group.unit)
 
     def add_legend(
@@ -671,24 +722,35 @@ class ChartBuilder:
         has_io_uring: bool = False,
         has_ssh_transport: bool = False,
         has_ssh_3way: bool = False,
-        upstream_version: str = "3.4.4",
+        baselines: tuple[str, ...] = ("3.4.4",),
     ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
-        self._parts.append(
-            f'<rect x="0" y="0" width="12" height="12" rx="2" fill="{COLOR_UPSTREAM}"/>'
-        )
-        self._parts.append(
-            f'<text x="16" y="10" font-size="11" fill="{COLOR_LABEL}">'
-            f'upstream rsync {escape(upstream_version)}</text>'
-        )
-        self._parts.append(
-            f'<rect x="170" y="0" width="12" height="12" rx="2" fill="{COLOR_OC_RSYNC}"/>'
-        )
-        self._parts.append(
-            f'<text x="186" y="10" font-size="11" fill="{COLOR_LABEL}">oc-rsync</text>'
-        )
+        # One swatch per baseline, in measurement order, then oc-rsync. A
+        # legend naming a single upstream release would leave the reader
+        # guessing which grey bar is which release.
         row = 0
+        for i, label in enumerate(baselines):
+            ry = row * 18
+            self._parts.append(
+                f'<rect x="0" y="{ry}" width="12" height="12" rx="2" '
+                f'fill="{COLOR_BASELINES[i % len(COLOR_BASELINES)]}"/>'
+            )
+            self._parts.append(
+                f'<text x="16" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">'
+                f'upstream rsync {escape(label)}</text>'
+            )
+            if i == 0:
+                self._parts.append(
+                    f'<rect x="170" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_OC_RSYNC}"/>'
+                )
+                self._parts.append(
+                    f'<text x="186" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">oc-rsync</text>'
+                )
+            row += 1
+        row -= 1
         if has_openssl:
             row += 1
             ry = row * 18
@@ -799,30 +861,29 @@ class ChartBuilder:
             )
 
     def _add_speedup(self, pair: TestPair, unit: MetricUnit) -> None:
-        text, color = ratio_text(pair.ratio, unit)
+        """Stack this row's ratio annotations, centred on the bar group."""
         x = CHART_WIDTH - RIGHT_MARGIN + 10
-        if pair.ratio_secondary is not None:
-            # Stack two ratios for the 3-way comparison: oc-sub vs upstream
-            # above, russh vs oc-sub below.
-            sec_text, sec_color = ratio_text(pair.ratio_secondary, unit)
-            y_top = pair.center_y - 4
-            y_bot = pair.center_y + 12
+        count = len(pair.annotations)
+        if count == 1:
+            prefix, ratio = pair.annotations[0]
+            text, color = ratio_text(ratio, unit)
+            label = f"{prefix} {text}".strip()
             self._parts.append(
-                f'<text x="{x}" y="{y_top:.1f}" '
-                f'font-size="10" font-weight="600" fill="{sec_color}">'
-                f"oc/up {escape(sec_text)}</text>"
-            )
-            self._parts.append(
-                f'<text x="{x}" y="{y_bot:.1f}" '
-                f'font-size="10" font-weight="600" fill="{color}">'
-                f"ru/oc {escape(text)}</text>"
-            )
-        else:
-            y = pair.center_y + 4
-            self._parts.append(
-                f'<text x="{x}" y="{y:.1f}" '
+                f'<text x="{x}" y="{pair.center_y + 4:.1f}" '
                 f'font-size="11" font-weight="600" fill="{color}">'
-                f"{escape(text)}</text>"
+                f"{escape(label)}</text>"
+            )
+            return
+
+        line_height = 16
+        top = pair.center_y - (count - 1) * line_height / 2 + 4
+        for i, (prefix, ratio) in enumerate(pair.annotations):
+            text, color = ratio_text(ratio, unit)
+            label = f"{prefix} {text}".strip()
+            self._parts.append(
+                f'<text x="{x}" y="{top + i * line_height:.1f}" '
+                f'font-size="10" font-weight="600" fill="{color}">'
+                f"{escape(label)}</text>"
             )
 
 
@@ -844,11 +905,12 @@ def generate_chart(data: dict) -> str:
         m in SSH_TRANSPORT_MODES and any("upstream_ssh" in t for t in ts)
         for m, ts in tests_by_mode.items()
     )
-    layout = compute_layout(tests_by_mode)
+    labels = baseline_labels(data)
+    layout = compute_layout(tests_by_mode, labels)
 
     extra_legend_rows = (
         int(has_openssl) + int(has_io_uring) + int(has_ssh_transport)
-        + int(has_ssh_3way)
+        + int(has_ssh_3way) + max(len(labels) - 1, 0)
     )
     extra_legend = extra_legend_rows * 18
     chart_height = layout.chart_height + extra_legend
@@ -858,10 +920,16 @@ def generate_chart(data: dict) -> str:
     test_data = data.get("test_data", {})
     size_mb = test_data.get("size_mb", "?")
     files = test_data.get("files", "?")
-    upstream_version = data.get("upstream_version") or "3.4.4"
+    oc_version = data.get("oc_rsync_version") or ""
+    env = data.get("environment") or {}
+    kernel = env.get("kernel_release")
+    machine = env.get("machine", "x86_64")
+    subject = f"oc-rsync {oc_version}".strip()
     builder.add_title(
-        f"oc-rsync vs upstream rsync {upstream_version}",
-        f"{size_mb} MB, {files} files \u2014 Linux x86_64 CI",
+        f"{subject} vs upstream rsync "
+        + " and ".join(labels),
+        f"{size_mb} MB, {files} files \u2014 Linux {machine}"
+        + (f", kernel {kernel}" if kernel else " CI"),
     )
 
     # No global x-axis grid: with per-group scaling -- and with modes that do
@@ -876,7 +944,7 @@ def generate_chart(data: dict) -> str:
         has_io_uring,
         has_ssh_transport,
         has_ssh_3way,
-        upstream_version,
+        tuple(labels),
     )
 
     return builder.render()
