@@ -66,6 +66,30 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   to the module root (#7535, #7538)
 - Anchor the source unlink to a confined parent dirfd, so `--remove-source-files`
   cannot be redirected by a planted path component (#7564)
+- Stop pre-empting the confined `--relative` implied-parent creation. Every
+  implied parent was created up front through a plain path, so a symlinked
+  component pointed a daemon's implied parent outside the module root and the
+  client still exited 0. Upstream's `make_path()` is a fallback, not a pre-pass,
+  and builds each component with `do_mkdir_at()` - the ownership walk plus
+  `mkdirat` - so the creation now runs after the directory pass and through the
+  confined wrapper, which also settles an itemize divergence where a real run
+  reported `.d..t......` for parents its own `--dry-run` called `cd+++++++++`.
+  The conflicting-symlink removal on the same path moves onto the confined
+  `unlink` wrapper, and a refused removal is reported instead of being recovered
+  with an `exists()` probe that follows the symlink whose removal was just
+  denied. The seccomp allowlist is `*at`-only by construction, so the `EPERM` it
+  raised named an unported call site rather than a filter that was too narrow
+  (#7565)
+- Bound a peer-named merge file by `--confine-root`. A dir-merge rule travels
+  over the protocol as a filter rule rather than in the argv an `rrsync` wrapper
+  validates, so the peer names the file; the per-directory merge open took the
+  ancillary entry point and followed a trusted symlink, and neither the client
+  nor the non-daemon server published `--confine-root` into the walk's session,
+  so even the already-confined opens measured against an empty root (#7598)
+- Issue the ownership walk's own syscalls through libc rather than rustix's
+  raw-syscall backend. Upstream's walk is plain C against libc, so an
+  interposition layer an operator has in place - `fakeroot`, an audit or sandbox
+  preload - saw upstream's resolution and did not see oc's (#7599)
 - Let the ownership walk traverse under a Landlock sandbox, open its anchor with
   `openat` so the seccomp worker filter admits it, and fall back to the confined
   wrappers rather than to plain syscalls when a confined open is unavailable
@@ -109,6 +133,23 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Honour the per-module `insecure links` directive (#7484)
 - Pin the Landlock root after `chroot` rather than before it; the pre-chroot
   path names a directory the confined process can no longer reach (#7567)
+- Pin the module root as a descriptor before the privilege drop, through the
+  ownership walk rather than a plain open, and resolve the sender's lookups
+  against that pin. Re-walking the absolute module path after `setuid` made a
+  module under an unsearchable parent unservable, and it failed the Landlock
+  rule-path open too - which the caller only warns about, so the module was
+  served with no kernel sandbox at all, on exactly the layout the sandbox
+  exists for (#7605)
+- Make the connection FSM's close edge total, and stop one malformed client
+  ending the listener for everybody. Four of ten call sites discarded the
+  transition result, all of them targeting `Closing`; separating teardown from
+  the handshake progression surfaced the one edge a peer can aim at, where a
+  repeated `@RSYNCD:` banner took `Greeting -> ModuleSelect` twice and the
+  resulting error killed the accept loop. Upstream reads the version line once
+  and takes the next line as the request whatever it contains, so a second
+  banner is a module name; and no per-connection outcome of any class reaches
+  the accept loop any more, matching a `sigchld_handler` that discards the
+  session status outright (#7579, #7590)
 - Admit `mknod` / `mknodat` in the seccomp worker filter, which was dropping the
   device and FIFO creation the sandbox is meant to permit (#7547)
 - One operator opt-out now governs both kernel sandbox layers symmetrically, so
@@ -153,6 +194,16 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The INC_RECURSE lookahead window is sized rather than fixed (#7539)
 - A safe `fork`/`waitpid` wrapper for daemon sessions replaces the raw calls
   (#7523)
+- The local-copy receiver stages a `--partial-dir` resume in place, writing the
+  reconstruction into the existing partial entry and renaming that entry onto
+  the destination. This is upstream's `one_inplace`, whose in-place target is
+  the partial file and never the live destination - the comment arguing the
+  opposite was describing a hazard of oc's own implementation (#7599)
+- `--version` reports rsync 3.5.0 as the wire-compatible pin, and names four
+  features the build already carried and never surfaced: `quic`, `sd-notify`,
+  `vmsplice` and `send_zc`. `daemon-seccomp` is deliberately still unreported,
+  because it is declared on the workspace root and reaches no crate that
+  renders `--version` (#7616)
 
 ### Changed
 
@@ -164,7 +215,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Upstream source citations across the workspace retargeted at the 3.5.0 line
   numbers, with the citation gate extended to run on docs-only changes and to
   fail when a cited file does not exist (#7305, #7321, #7331, #7315, #7318,
-  #7308, #7286)
+  #7308, #7286), and to range-check a citation written with an explicit
+  `rsync-3.5.0/` path prefix instead of skipping it as a foreign upstream and
+  leaving no trace in the report (#7607)
 - rsync 3.5.0 now runs the full interop scenario matrix as a gating peer,
   alongside 3.0.9, 3.1.3 and 3.4.4 (#7290, #7337)
 - The required upstream-testsuite gate runs the rsync 3.5.0 Python corpus
@@ -177,6 +230,35 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   RSS alongside elapsed time for every mode**. The measurement was already being
   collected for each run and discarded for all but the memory mode, so a speed
   win paid for in memory was invisible in the published numbers.
+- Every upstream benchmark cell is now run against **both** rsync 3.4.4 and
+  3.5.0, because the two baselines disagree materially and a single-baseline
+  table reads upstream's own regressions as an oc-rsync win. Four harness
+  defects were fixed in the same pass: `oc_rsync_version` published the wire
+  compatibility version rather than the release, every "initial sync" cell was
+  timing a no-change sync because the destination was reset once instead of per
+  run (43x off), the RSS columns were only ever populated for the memory mode,
+  and a run that failed in a millisecond was recorded as a very fast run. The
+  SSH cells now pin both ends to the same release, and an `IORING_OP_SEND_ZC`
+  probe reports kernel capability and binary capability as two separate facts
+  (#7595)
+- io_uring stops costing more than it saves, and the zero-copy send policy
+  stops being a synonym for off. `Auto` now means what its name says and can
+  reach `IORING_OP_SEND_ZC` in builds carrying the `iouring-send-zc` feature -
+  `Enabled` is unreachable from a client, since the flag is deliberately never
+  forwarded to a peer, so the transport was dead code in practice. The SEND_ZC
+  writer no longer blocks on the notification CQE, which was 75% of the time
+  spent inside a send and had made a loopback daemon pull 5.8x slower. And a
+  write batch below the ring threshold goes out positionally, which took a
+  10,000-file daemon pull from 1106 ms to 450 ms - nothing is ever in flight
+  across batches, so a one-chunk batch paid for a ring round trip that bought
+  it no concurrency. The zero-copy feature remains in no default set, because
+  on loopback it is still behind a plain socket write (#7593, #7600, #7610)
+- `daemon-seccomp` is reachable from the `oc-rsync` binary. It was declared
+  only on the `daemon` crate and forwarded by nothing, so the worker filter was
+  compiled in only by a workspace-wide `--all-features` build and was in no
+  released artefact, while `README.md` listed it as a Tier-1 Linux capability.
+  The build-time default is unchanged - still opt-in - and a feature-matrix row
+  now pins the forwarding edge rather than the crate's own declaration (#7589)
 - Interop failures name the peer version that broke, via `--only-version`
   (#7341)
 - The local-copy context state module is split by concern (#7358)
@@ -247,6 +329,42 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   without naming the cause (#7534)
 - Name the commit operation that failed instead of always reporting `mkstemp`
   (#7552)
+- Report a refused `--remove-source-files` unlink at upstream's `FERROR_XFER`,
+  and act on each confirmation where upstream would already have reacted. The
+  network sender printed the failure locally and handed back only
+  `IOERR_GENERAL`, and the single batched drain sat after the whole goodbye
+  exchange, in a window where a pulling client had stopped reading - so both an
+  ssh pull and a daemon pull exited 0 with a destructive option having silently
+  removed nothing. The drain is now two-phase: before the sender answers the
+  goodbye, which is the last moment a diagnostic still reaches the peer, and
+  after it, for the sources confirmed while the handshake ran. Moving the drain
+  earlier instead would have silently stopped removing that second set
+  (#7576, #7581)
+- A commit-path backup that cannot be placed aborts with `RERR_FILEIO` (11)
+  rather than being counted as a per-file skip, so the receiver stops instead
+  of walking the rest of a batch whose backup area is already known to be
+  unusable. The two drains held byte-identical copies of the continue-or-abort
+  decision; they now share one, split on the failing operation rather than on
+  the errno (#7582)
+- Key `--write-devices` on the destination's own type, not the file-list entry.
+  The source of a `--write-devices` transfer is a regular file by construction,
+  so the predicate was permanently false and the in-place commit ran `set_len()`
+  against the device: exit 12 where upstream exits 0 (#7583)
+- Never park on opening a non-regular destination as the delta basis. A FIFO
+  with no writer wedged the receiver indefinitely, on the default path with no
+  flag required, which for a writable daemon module is an unbounded external
+  wedge. Upstream reaches the same invariant by ordering rather than a type
+  check, so the open carries `O_NONBLOCK`, decides on the descriptor rather
+  than on a pre-open stat that a planted node could outrace, and clears the
+  flag before handing a regular file back (#7594)
+- Remove whatever stands at the destination before creating a node there, and
+  report the removal the way upstream does. A directory obstacle was backed up
+  under `--backup`, which upstream never does, and otherwise met a `File`-only
+  unlink whose result was discarded - so a FIFO over a directory reported
+  success while losing the node, and a regular file over a directory stopped
+  the whole run at `EISDIR`. All six call sites now share one
+  `make_way_for_replacement`, which owns both the `rmdir` and the unlink arm
+  (#7602)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -274,6 +392,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   not wrongly demoted (#7479)
 - Degrade the anonymous commit to a named temp where anonymous is
   unavailable (#7478)
+- Answer `am_root` from the process identity rather than a raw `geteuid`
+  syscall. rustix's Linux backend emits the syscall instruction directly, which
+  `fakeroot`'s `LD_PRELOAD` cannot interpose and the `--copy-as` privilege drop
+  cannot re-sample, so the `--super`, device-creation and fake-super gates
+  flipped in exactly the runs meant to validate them. Two other consumers in
+  the same crate already asked the question the upstream way (#7574)
+- Carry hard links through `--write-batch` and `--read-batch`. The writer set
+  no hardlink identity on the entries it encoded, and the replay decoded the
+  fields an upstream-written batch does carry and then acted on none of them,
+  so every cell of the writer/replayer cross-matrix except upstream-to-upstream
+  produced unlinked copies and the payload was written once per cluster member
+  (#7596)
 
 **Daemon**
 - Collapse `..` in client paths instead of refusing the request (#7343)
@@ -294,6 +424,27 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Honour the server options the daemon parser dropped, and accept the forwarded
   `--only-write-batch` (#7532, #7559)
 - Exit 4 on a refused option, not 1 (#7563)
+- Keep a relative `--backup-dir` relative. The daemon anchored the client's
+  value eagerly at argument-parse time against the destination operand, so a
+  push whose destination named a file died with `ENOTDIR` on a `mkdir` under
+  that file. Upstream applies its rootdir prefix only to an absolute value and
+  lets the receiver join a relative one against the directory
+  `get_local_name()` left it in - the same split `--partial-dir` already needed
+  (#7577)
+- Honour a client's forwarded `--timeout`. With no `timeout` directive in the
+  module the daemon armed nothing, so the client's own lever was inert and a
+  wedged peer held the connection indefinitely. Upstream's rule is a minimum
+  over the non-zero values, which is also what stops a peer *lengthening* a
+  short operator-set timeout; the SSH server half parsed the same value and
+  never read it (#7584)
+- Resolve the module identity before the `chroot`, not after. A root daemon
+  defaults every module without explicit numeric ids to `nobody:nobody`, and
+  those NSS lookups cannot succeed inside the jail, so every chrooted module
+  answered `@ERROR: invalid uid nobody` and served nothing. All four impure
+  arms move together - hoisting only the uid would have left
+  `@ERROR: invalid gid nobody` behind on a module with a numeric `uid` and a
+  defaulted `gid`. Only the three privilege-drop syscalls still run after the
+  chroot (#7585)
 
 **CLI and output**
 - Honour the `--` end-of-options marker in server-mode argv (#7402)
@@ -320,7 +471,26 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Honour `--drop-D` in the server argument decoder, and consume
   `--backup-dir` / `--temp-dir` instead of discarding them (#7508, #7511)
 - List a remote source under `--list-only` (#7509)
-- Carry `--checksum-seed` as a signed int, matching upstream's type (#7561)
+- Carry `--checksum-seed` as a signed int, matching upstream's type, in the CLI
+  (#7561) and in the protocol-state module, whose `u32` made half the seed
+  domain unrepresentable and which every existing test missed by using a seed
+  with the high bit clear. The local-copy options carried a second, never-read
+  copy of the seed with a getter documenting behaviour it did not have; it is
+  deleted (#7606)
+- Print the non-incremental `building file list ... done` banner. Upstream
+  picks exactly one of two banners before it lists a single entry, and oc only
+  ever produced the incremental arm, so `-dv` and `--list-only` opened with no
+  banner at all. It is two writes on two log codes, separated by the whole
+  file-list build, and it is emitted above the `--list-only` early return where
+  upstream places it - the previous emission site sat below that return, so a
+  fix there would have looked right and done nothing (#7580)
+- Send the server's exit code to the peer via `MSG_ERROR_EXIT`, and honour a
+  peer's on the SSH client as the daemon client already did. `run_server_mode`
+  collapsed every failure to a flat 1 and dropped the connection, so a client
+  graded the run by the truncated stream and reported 12 where upstream reports
+  3. Upstream's `am_receiver` half of the send gate is a forked-sibling relay
+  condition rather than a wire one, so the port gates on the protocol version
+  alone (#7609)
 
 **Metadata**
 - An installed name converter must replace the host database (#7360)
@@ -378,6 +548,41 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7554), io_uring drop-contract registration failures (#7558), and protocol
   negotiation environment overrides (#7575)
 - The local-recursion tests are named for what they actually run (#7526)
+- Three daemon integration suites ran a detaching daemon, so `become_daemon()`
+  forked and the test binary - the parent of that fork - exited 0 before any
+  assertion ran: 3 filter-directive tests, 25 server tests and the
+  max-connections cap test all reported green without executing, in hundredths
+  of a second. Turning them on surfaced the digest name list the fixtures
+  omitted - mandatory above protocol 31, so every probe was refused at the
+  greeting - a listing shape expecting a `CAP` and an `OK` line upstream never
+  sends, auth cases that negotiated md5 whatever digest they claimed to
+  exercise, guards whose conditions could not hold, and a module-refused push
+  whose outcome arrives as exit 23 rather than as an error and so was never
+  asserted at all. `check_daemon_no_detach.sh` now also counts root-level
+  tests, against a shrink-only ceiling (#7578, #7588, #7592)
+- The backup ladder's destination anchor is pinned at every consumer - the
+  hard-link tier, the rename tier, the `--backup-dir` root create, the metadata
+  options, and the three call sites that build the environment - by swapping
+  the destination root's path for an out-of-tree symlink after the sandbox has
+  pinned its dirfd. Every pre-existing test passed `BackupEnv::default()`, so
+  none of them could tell a threaded environment from a dropped one (#7608)
+- INC_RECURSE's slicing order is witnessed: the whole list is materialised
+  before it is partitioned, so peak sender-side residency is taken before the
+  first segment ships and no downstream reclaim can lower it. The two existing
+  reclaim tests hand-assign their segments and say nothing about what
+  production builds (#7611)
+- `session_error_does_not_stop_the_accept_loop` provoked its session error with
+  a repeated `@RSYNCD:` banner, which #7579 deliberately turned into a valid
+  module name; it now uses a non-UTF-8 request line, and its assertion reports
+  the greeting, both peers' results and the daemon log instead of discarding
+  them. The fixture's own non-vacuity guard is what caught the change - two
+  individually-correct commits that had never been run together (#7615, #7620)
+- A failed io_uring buffer registration carries the kernel's `ErrorKind`
+  instead of flattening it to `io::Error::other`, so the drop-contract probe
+  can tell an `ENOMEM` locked-memory refusal - which says nothing about
+  recovery - from the `EBUSY` that means a registration is still live. The
+  errno had survived only inside the message string, so no caller could branch
+  on it and the probe could not be given its siblings' tolerance (#7619)
 
 ### Documentation
 
@@ -409,6 +614,47 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   for the backup ladder (#7540, #7560)
 - The four rustdoc links breaking the Pages build resolved (#7555)
 - Line coverage is stated as not gated by CI (#7573)
+- Upstream citations retargeted at the 3.5.0 pin across the remaining crates -
+  `matching`, `checksums`, `metadata`, `compress` and `batch`, then `engine`,
+  `daemon`, `core` and `protocol`, then `transfer` - each by locating the named
+  construct at the pin and re-deriving both ends of every range, never by
+  arithmetic. The sweep turned up citations that were wrong before they were
+  stale: a `del.c` that has existed at no release, an `rsum.c` path pointing
+  into the rsync tarball for a file that belongs to zsync, two function ranges
+  that over-spanned at their own 3.4.1 baseline, and three `options.c` ranges
+  naming the wrong construct there too. Neither existing gate can see this
+  class - one only range-checks, the other only inspects citations carrying a
+  quoted C string. 3.5.0 also rewrote the shell testsuite as Python, so the
+  cited `testsuite/*.test` locators move to their `*_test.py` counterparts
+  (#7601, #7603, #7604)
+- The daemon's two refusal exit-code citations retargeted at 3.5.0. The old
+  `clientserver.c:1183` was a closing brace that calls nothing, and `main.c:935`
+  an `exit_cleanup(RERR_PROTOCOL)` on an unrelated check. Neither gate could
+  have found them: one shared its quoted anchor with a sibling citation on the
+  same line, and the other two carry no anchor at all (#7586)
+- `README.md` and `SECURITY.md` still described a 3.4.4-gated world. The
+  testsuite outcome figures are re-derived from the committed manifests, with
+  the command that produces each row named so the next refresh is a re-run
+  rather than a re-transcription; the copied interop version lists now point at
+  the script that owns them; and the claim that the 3.4.4 corpus passes with an
+  empty known-failures roster is withdrawn, since no workflow runs that corpus
+  (#7591)
+- Item prose stranded between a rustdoc block and the item it describes is
+  promoted to `///`. rustdoc stops at the first non-doc line, so 154 upstream
+  citations were invisible in the generated docs while reading, in source, as
+  though they were part of the block. Runs above an item that has no rustdoc
+  are deliberately left alone - promoting those would newly document the item
+  (#7613)
+- `missing_docs` is denied on `matching`, `test-support` and `windows-gnu-eh`,
+  the three crates that carried only the broken-link lint. All three were
+  already fully documented - measured by compiling each with the lint, then
+  falsifying that zero with a planted undocumented item - so this adds no
+  prose; it converts "currently documented" into "cannot regress" (#7614)
+- Public documentation no longer links at private items, which had been failing
+  the Pages build, and the invocation Pages uses now also runs on every pull
+  request. Four pull requests had repaired this class post-merge because
+  `cargo doc` ran only on push-to-master, so a broken link was discoverable
+  only after it landed (#7618)
 
 ### Maintenance
 
