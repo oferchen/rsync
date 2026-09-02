@@ -4,8 +4,10 @@ use crate::version::{VersionMetadata, version_metadata, version_metadata_for_pro
 use libc::{ino_t, off_t};
 use std::borrow::Cow;
 
-// libc::time_t is deprecated on musl targets (musl 1.2.0+ uses 64-bit time_t).
-// Provide a platform-safe alias: i64 on musl, libc::time_t elsewhere.
+/// Platform-safe `time_t` alias: `i64` on musl, `libc::time_t` elsewhere.
+///
+/// `libc::time_t` is deprecated on musl targets (musl 1.2.0+ uses 64-bit
+/// `time_t`), so naming it directly would warn on that target alone.
 #[cfg(target_env = "musl")]
 pub(crate) type TimeT = i64;
 #[cfg(not(target_env = "musl"))]

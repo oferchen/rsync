@@ -13,11 +13,16 @@ use std::fmt;
 /// only variant reachable in a default build, so default behaviour is
 /// preserved byte-for-byte.
 ///
-/// [`Transport::Quic`] is an opt-in oc extension - a new way to carry the same
+/// `Transport::Quic` is an opt-in oc extension - a new way to carry the same
 /// daemon protocol - compiled only under the off-by-default `quic` cargo
 /// feature (design: `docs/design/quic-transport-policy.md`, Decision D). It is
-/// not yet constructed from the CLI; the `quic://` scheme and `--quic` modifier
-/// land in a follow-up.
+/// selected by the `quic://` scheme (`DaemonRequest::parse`) or by the `--quic`
+/// modifier upgrading an `rsync://` target.
+///
+/// The variant is named here without an intra-doc link on purpose: it does not
+/// exist in a default build, so a link would be unresolvable and
+/// `#![deny(rustdoc::broken_intra_doc_links)]` would fail `cargo doc` on the
+/// default feature set.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Transport {
     /// Plain TCP to the rsync daemon (upstream behaviour, always the default).

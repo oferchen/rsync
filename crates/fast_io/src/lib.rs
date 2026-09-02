@@ -176,10 +176,15 @@ pub mod zero_detect;
 pub mod adaptive_dispatch;
 
 /// Shared exponentially-weighted moving average primitive. One implementation
-/// with two call sites: [`adaptive_dispatch`]'s per-backend throughput
-/// tracker consumes it now, and the throughput governor's per-stage telemetry
-/// will consume it later. Always compiled - unlike [`adaptive_dispatch`] it is
-/// not feature-gated, so both consumers share the same smoothing rule.
+/// with two call sites: `adaptive_dispatch`'s per-backend throughput tracker
+/// consumes it now, and the throughput governor's per-stage telemetry will
+/// consume it later. Always compiled - unlike `adaptive_dispatch` it is not
+/// feature-gated, so both consumers share the same smoothing rule.
+///
+/// `adaptive_dispatch` is named without an intra-doc link because it does not
+/// exist in a default build (see its own gate above), so the link would be
+/// unresolvable and `#![deny(rustdoc::broken_intra_doc_links)]` would fail
+/// `cargo doc` on the default feature set.
 pub mod ewma;
 
 /// Linux `FICLONERANGE` partial-reflink wrapper for the delta-apply COPY-token

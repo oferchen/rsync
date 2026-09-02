@@ -5,11 +5,18 @@
 //!
 //! This is a small adapter so the rest of the module stays platform-neutral.
 
-// RFC 1349 class selectors - consistent across Unix targets, but libc does not
-// expose them uniformly (e.g. Apple platforms omit the aliases).
+/// IP type-of-service class selector requesting low delay.
+///
+/// RFC 1349 class selectors - consistent across Unix targets, but libc does not
+/// expose them uniformly (e.g. Apple platforms omit the aliases), so the value
+/// is spelled out rather than re-exported.
 #[cfg(not(target_family = "windows"))]
 pub(super) const IPTOS_LOWDELAY: libc::c_int = 0x10;
 
+/// IP type-of-service class selector requesting high throughput.
+///
+/// Defined here for the same reason as [`IPTOS_LOWDELAY`]: libc does not expose
+/// the RFC 1349 aliases uniformly across Unix targets.
 #[cfg(not(target_family = "windows"))]
 pub(super) const IPTOS_THROUGHPUT: libc::c_int = 0x08;
 

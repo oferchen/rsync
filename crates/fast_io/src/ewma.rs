@@ -1,10 +1,15 @@
 //! Shared exponentially-weighted moving average (EWMA) primitive.
 //!
 //! A single, unit-tested EWMA type with two call sites: the adaptive
-//! basis-read dispatcher ([`crate::adaptive_dispatch`]) folds per-backend
+//! basis-read dispatcher (`crate::adaptive_dispatch`) folds per-backend
 //! throughput samples through it today, and the drum-buffer-rope throughput
 //! governor's per-stage telemetry will fold stage samples through the same
 //! type. One implementation, one smoothing rule, no drift between consumers.
+//!
+//! `adaptive_dispatch` is named without an intra-doc link throughout this
+//! module: it is gated behind the off-by-default `adaptive-basis-dispatch`
+//! feature, so a link would be unresolvable in a default build and
+//! `#![deny(rustdoc::broken_intra_doc_links)]` would fail `cargo doc`.
 //!
 //! # Smoothing rule
 //!
@@ -27,7 +32,7 @@
 ///
 /// The type is deliberately storage-agnostic: it holds the smoothing factor and
 /// the current value only. Callers that need lock-free or atomic persistence
-/// (e.g. [`crate::adaptive_dispatch`], which stores the value in an `AtomicU64`)
+/// (e.g. `crate::adaptive_dispatch`, which stores the value in an `AtomicU64`)
 /// reconstruct an `Ewma` from their own storage via [`Ewma::with_seed`], fold a
 /// sample, and write the result back.
 #[derive(Debug, Clone, Copy, PartialEq)]

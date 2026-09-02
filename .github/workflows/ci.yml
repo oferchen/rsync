@@ -262,6 +262,19 @@ jobs:
       - name: Build rustdoc (workspace, all features, no deps)
         run: cargo doc --workspace --all-features --no-deps --locked
 
+      # A SECOND question, not a duplicate of the step above. A link to an item
+      # behind `#[cfg(feature = "...")]` RESOLVES under --all-features and is
+      # unresolvable in a default build, where the item is not compiled at all -
+      # so the all-features step is structurally unable to see that class. Five
+      # such links (`fast_io::adaptive_dispatch` x4, `rsync_io::channel_adapter`)
+      # were live on master while the step above was green.
+      #
+      # `crates/fast_io/src/io_uring` is cfg(all(target_os = "linux", feature =
+      # "io_uring")), so this run deliberately does NOT cover those files; that
+      # is what the all-features step is for. Neither subsumes the other.
+      - name: Build rustdoc (workspace, default features, no deps)
+        run: cargo doc --workspace --no-deps --locked
+
   # ===========================================================================
   # tools/ Unit Tests
   # ---------------------------------------------------------------------------

@@ -1,6 +1,10 @@
 //! Sync/async bridge primitives for embedded SSH streams.
 //!
-//! This module provides the inverse of [`crate::channel_adapter`]: instead of
+//! This module provides the inverse of `crate::channel_adapter` (named without
+//! an intra-doc link: that module is gated behind the off-by-default
+//! `async-ssh` feature, so the link would be unresolvable in a default build
+//! and `#![deny(rustdoc::broken_intra_doc_links)]` would fail `cargo doc`):
+//! instead of
 //! wrapping a sync byte stream as `AsyncRead`/`AsyncWrite`, it wraps an
 //! `AsyncRead + AsyncWrite` stream (specifically `russh`'s channel I/O) as
 //! `std::io::Read`/`std::io::Write` so the existing synchronous multiplex and

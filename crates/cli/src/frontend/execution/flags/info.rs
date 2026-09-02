@@ -31,12 +31,14 @@ pub(crate) struct InfoFlagSpec {
     pub(crate) priority: u8,
 }
 
-// upstream: options.c info_verbosity[] (rsync-3.4.1:239-243) - priority is
-// the verbosity-group index. NONREG sits in group 0 (always-on default),
-// the level-1 group covers COPY/DEL/FLIST/MISC/NAME/STATS/SYMSAFE, and the
-// level-2 group covers BACKUP/MOUNT/REMOVE/SKIP. PROGRESS has no upstream
-// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=all1`
-// enables per-file progress, matching upstream `-v` parity for `--info`.
+/// Every `--info` flag, with the verbosity group that enables it.
+///
+/// upstream: options.c info_verbosity[] (rsync-3.4.1:239-243) - priority is
+/// the verbosity-group index. NONREG sits in group 0 (always-on default),
+/// the level-1 group covers COPY/DEL/FLIST/MISC/NAME/STATS/SYMSAFE, and the
+/// level-2 group covers BACKUP/MOUNT/REMOVE/SKIP. PROGRESS has no upstream
+/// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=all1`
+/// enables per-file progress, matching upstream `-v` parity for `--info`.
 #[rustfmt::skip]
 pub(crate) const INFO_FLAG_SPECS: &[InfoFlagSpec] = &[
     InfoFlagSpec { name: "backup",   max_level: 1, priority: 2 },
@@ -305,14 +307,16 @@ fn parse_info_flags_inner(
     Ok(settings)
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:474-510). The text is
-// reproduced byte-for-byte from upstream's runtime output so `--info=help`
-// matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
-// name is left-padded to 10 columns, followed by a single space and the
-// help text. ALL/NONE descriptions inline the sentinel's `--info` help
-// (options.c:489-495). The per-verbosity summary block is rendered by
-// upstream's `make_output_option` over `info_verbosity[]` (options.c:239-
-// 243) and emits one line per non-empty level in `info_words[]` order.
+/// Body of `--info=help`, reproduced byte-for-byte from upstream.
+///
+/// upstream: options.c output_item_help (rsync-3.4.1:474-510). The text is
+/// reproduced byte-for-byte from upstream's runtime output so `--info=help`
+/// matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
+/// name is left-padded to 10 columns, followed by a single space and the
+/// help text. ALL/NONE descriptions inline the sentinel's `--info` help
+/// (options.c:489-495). The per-verbosity summary block is rendered by
+/// upstream's `make_output_option` over `info_verbosity[]` (options.c:239-
+/// 243) and emits one line per non-empty level in `info_words[]` order.
 pub(crate) const INFO_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\
 \n\
