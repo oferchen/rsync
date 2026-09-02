@@ -6770,11 +6770,18 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
 }
 
 /// Sorted, wire-side relative names currently in the context's file list.
+///
+/// The name is derived by `path.strip_prefix(base)`, so it carries the host's
+/// separator - `sub\deep.txt` on Windows. That is correct in memory: the
+/// conversion to the wire's `/` happens at the encode boundary
+/// (`path_bytes_to_wire`, `protocol/src/flist/write/encoding.rs`), not in the
+/// walk. Normalising here is what makes this helper deliver the wire-side
+/// names its name promises, on every platform.
 fn entry_names(ctx: &GeneratorContext) -> Vec<String> {
     let mut names: Vec<String> = ctx
         .file_list()
         .iter()
-        .map(|e| e.name().to_string())
+        .map(|e| e.name().to_string().replace('\\', "/"))
         .collect();
     names.sort();
     names
