@@ -50,7 +50,20 @@ fn allocate_test_port() -> Option<(u16, TcpListener)> {
 /// `BufRead::read_line` into a `String`, which fails with `InvalidData` -
 /// a session error that is neither a broken pipe nor a reset, so
 /// `report_session_failure` logs it instead of treating it as a normal close.
-fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
+/// What the provoking client observed on its own socket.
+///
+/// The greeting is kept alongside the trailing lines because the assertion that
+/// fails is about which line the daemon treated as the module request - and that
+/// is unanswerable from the trailing lines alone.
+struct ProvokerOutcome {
+    /// The daemon's greeting line, as received.
+    greeting: String,
+    /// Everything the daemon sent after the request line. Must be empty: the
+    /// session error drops the connection rather than answering it.
+    trailing: Vec<String>,
+}
+
+fn run_provoker(port: u16, deadline: Instant) -> Result<ProvokerOutcome, String> {
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = loop {
         match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
@@ -75,6 +88,7 @@ fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
     reader
         .read_line(&mut greeting)
         .map_err(|err| format!("read greeting: {err}"))?;
+    let greeting = greeting.trim_end_matches(['\r', '\n']).to_owned();
     if !greeting.starts_with("@RSYNCD:") {
         return Err(format!("unexpected greeting: {greeting:?}"));
     }
@@ -86,7 +100,10 @@ fn run_provoker(port: u16, deadline: Instant) -> Result<Vec<String>, String> {
 
     let mut rest = String::new();
     let _ = reader.read_to_string(&mut rest);
-    Ok(rest.lines().map(str::to_owned).collect())
+    Ok(ProvokerOutcome {
+        greeting,
+        trailing: rest.lines().map(str::to_owned).collect(),
+    })
 }
 
 #[test]
@@ -175,10 +192,17 @@ fn session_error_does_not_stop_the_accept_loop() {
     // If the daemon ever starts answering a repeated banner cleanly this
     // fixture stops provoking anything, and the property above would pass
     // while proving nothing - so fail loudly here instead.
-    let provoker_trailing = provoker.expect("provoker client failed before it could provoke");
+    let provoker_outcome = provoker.expect("provoker client failed before it could provoke");
     assert!(
-        provoker_trailing.is_empty(),
-        "first client must be dropped mid-session, not answered; got {provoker_trailing:?}"
+        provoker_outcome.trailing.is_empty(),
+        "first client must be dropped mid-session, not answered.\n\
+         got trailing lines: {:?}\n\
+         greeting the provoker received: {:?}\n\
+         client_result: {client_result:?}\n\
+         daemon_result: {daemon_result:?}\n\
+         daemon log:\n{log_contents}",
+        provoker_outcome.trailing,
+        provoker_outcome.greeting,
     );
     let failure_lines: Vec<&str> = log_contents
         .lines()
