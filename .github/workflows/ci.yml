@@ -221,6 +221,48 @@ jobs:
         run: python3 tools/audit/unsafe_safety_comment_audit.py
 
   # ===========================================================================
+  # Rustdoc Intra-Doc Links
+  # ---------------------------------------------------------------------------
+  # `cargo doc` ran in exactly one place - pages.yml, on `push: branches:
+  # [master]` - so a broken intra-doc link was discoverable only after it
+  # landed and reddened master. Four PRs (#7264, #7489, #7555, #7618) repaired
+  # the same class post-merge before this job existed.
+  #
+  # The invocation mirrors pages.yml exactly, including RUSTDOCFLAGS: matching
+  # it is the whole point, since a divergent flag set would gate a different
+  # question than the one Pages asks. `crates/fast_io/src/io_uring` is
+  # cfg(all(target_os = "linux", feature = "io_uring")), so ubuntu +
+  # --all-features is the only combination that compiles those files at all.
+  #
+  # Informational: it reports the link before it lands without adding a
+  # merge-blocking context to the queue. Promote to required once it has run
+  # green for a while.
+  # ===========================================================================
+  rustdoc-links:
+    name: rustdoc links (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+
+    env:
+      RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build rustdoc (workspace, all features, no deps)
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+  # ===========================================================================
   # tools/ Unit Tests
   # ---------------------------------------------------------------------------
   # `tools/tests/` held unittest modules that no workflow ran, so a regression

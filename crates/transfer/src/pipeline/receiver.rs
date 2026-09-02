@@ -469,7 +469,7 @@ impl PipelinedReceiver {
     /// Permission-denied errors from the disk thread are treated as recoverable
     /// per-file errors - logged and added to `meta_errors` rather than aborting
     /// the transfer. A failed backup and every other disk error are propagated;
-    /// see [`Self::absorb_commit_error`] for the split.
+    /// see `absorb_commit_error` for the split.
     /// Verifies per-file checksums when the disk thread returns a computed digest.
     ///
     /// # Upstream Reference
@@ -521,7 +521,7 @@ impl PipelinedReceiver {
     /// Permission-denied errors from the disk thread are treated as recoverable
     /// per-file errors - logged and added to `meta_errors` rather than aborting
     /// the transfer. A failed backup and every other disk error are propagated;
-    /// see [`Self::absorb_commit_error`] for the split.
+    /// see `absorb_commit_error` for the split.
     /// Verifies per-file checksums when the disk thread returns a computed digest.
     ///
     /// # Upstream Reference
