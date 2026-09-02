@@ -3049,13 +3049,14 @@ fn entry_bytes_named(protocol: ProtocolVersion, name: &str, mode: u32) -> Vec<u8
 /// never part of the requested transfer. `--delete` is not needed.
 ///
 /// ⚠ This guard is the ONLY thing standing between a hostile sender and the
-/// destination root, and it was absent while `--force` was parsed-and-discarded
-/// - which made upstream's `malicious-dot-file-delete-scope` cell pass
-/// VACUOUSLY: oc reached the cell's expected outcome because the recursion was
-/// dead code, not because anything rejected the entry. Wiring `--force` is what
-/// made the missing guard reachable. A future change that narrows the obstacle
-/// recursion instead of keeping this check would re-open the hole for the
-/// `--delete` half.
+/// destination root, and it was absent while `--force` was
+/// parsed-and-discarded, which made upstream's
+/// `malicious-dot-file-delete-scope` cell pass VACUOUSLY: oc reached the
+/// cell's expected outcome because the recursion was dead code, not because
+/// anything rejected the entry. Wiring `--force` is what made the missing
+/// guard reachable. A future change that narrows the obstacle recursion
+/// instead of keeping this check would re-open the hole for the `--delete`
+/// half.
 ///
 /// # Upstream Reference
 ///
