@@ -29,15 +29,15 @@ pub const OC_CLIENT_PROGRAM_NAME: &str = workspace::metadata().client_program_na
 pub const OC_DAEMON_PROGRAM_NAME: &str = workspace::metadata().daemon_program_name();
 
 /// Directory that packages install for daemon configuration snippets.
-#[doc(alias = "/etc/oc-rsyncd")]
+#[doc(alias = "/etc/oc-rsync")]
 pub const OC_DAEMON_CONFIG_DIR: &str = workspace::metadata().daemon_config_dir();
 
 /// Default configuration file path consumed by the daemon when no override is provided.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.conf")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.conf")]
 pub const OC_DAEMON_CONFIG_PATH: &str = workspace::metadata().daemon_config_path();
 
 /// Default secrets file path consumed by the daemon when no override is provided.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.secrets")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.secrets")]
 pub const OC_DAEMON_SECRETS_PATH: &str = workspace::metadata().daemon_secrets_path();
 
 /// Legacy configuration file path supported for backwards compatibility with upstream deployments.

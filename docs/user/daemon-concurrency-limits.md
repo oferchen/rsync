@@ -151,7 +151,7 @@ The `acceptor threads` global directive binds N `SO_REUSEPORT` listener
 replicas per family instead of one:
 
 ```
-# /etc/oc-rsyncd.conf
+# /etc/oc-rsync/oc-rsyncd.conf
 acceptor threads = 4
 ```
 

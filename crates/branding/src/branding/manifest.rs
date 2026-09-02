@@ -42,7 +42,7 @@ pub struct BrandManifest {
 /// let manifest = manifest();
 /// let oc = manifest.summary_for(Brand::Oc);
 /// assert_eq!(oc.client_program_name(), "oc-rsync");
-/// assert_eq!(oc.daemon_config_path(), "/etc/oc-rsyncd/oc-rsyncd.conf");
+/// assert_eq!(oc.daemon_config_path(), "/etc/oc-rsync/oc-rsyncd.conf");
 /// assert!(oc.to_string().contains(&format!("version={}", oc.rust_version())));
 /// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
@@ -377,13 +377,10 @@ mod tests {
         assert_eq!(summary.brand(), Brand::Oc);
         assert_eq!(summary.client_program_name(), "oc-rsync");
         assert_eq!(summary.daemon_program_name(), "oc-rsync");
-        assert_eq!(
-            summary.daemon_config_path(),
-            "/etc/oc-rsyncd/oc-rsyncd.conf"
-        );
+        assert_eq!(summary.daemon_config_path(), "/etc/oc-rsync/oc-rsyncd.conf");
         assert_eq!(
             summary.daemon_secrets_path(),
-            "/etc/oc-rsyncd/oc-rsyncd.secrets"
+            "/etc/oc-rsync/oc-rsyncd.secrets"
         );
         assert_eq!(summary.rust_version(), manifest.rust_version());
         assert_eq!(summary.upstream_version(), manifest.upstream_version());

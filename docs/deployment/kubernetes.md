@@ -195,14 +195,14 @@ spec:
           args:
             - "--daemon"
             - "--no-detach"
-            - "--config=/etc/oc-rsyncd.conf"
+            - "--config=/etc/oc-rsync/oc-rsyncd.conf"
             - "--no-io-uring-sqpoll"
           ports:
             - name: rsync
               containerPort: 873
           volumeMounts:
             - name: config
-              mountPath: /etc/oc-rsyncd.conf
+              mountPath: /etc/oc-rsync/oc-rsyncd.conf
               subPath: oc-rsyncd.conf
               readOnly: true
             - name: data

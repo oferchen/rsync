@@ -5,10 +5,10 @@ After=network.target
 
 [Service]
 Type=simple
-Environment="OC_RSYNC_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
-Environment="OC_RSYNC_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
-Environment="RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
-Environment="RSYNCD_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
+Environment="OC_RSYNC_CONFIG=/etc/oc-rsync/oc-rsyncd.conf"
+Environment="OC_RSYNC_SECRETS=/etc/oc-rsync/oc-rsyncd.secrets"
+Environment="RSYNCD_CONFIG=/etc/oc-rsync/oc-rsyncd.conf"
+Environment="RSYNCD_SECRETS=/etc/oc-rsync/oc-rsyncd.secrets"
 EnvironmentFile=-/etc/default/oc-rsyncd
 ExecStart=/usr/bin/oc-rsync --daemon --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
 ExecReload=/bin/kill -HUP $MAINPID

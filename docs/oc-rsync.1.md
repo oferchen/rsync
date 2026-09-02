@@ -934,7 +934,7 @@ NEON) are used where available, with automatic scalar fallbacks.
 
 **--config**=*FILE*
 :   Specify alternate daemon configuration file. Default:
-    */etc/oc-rsyncd/oc-rsyncd.conf*.
+    */etc/oc-rsync/oc-rsyncd.conf*.
 
 **--detach**
 :   Detach from the terminal and run as a background daemon.
@@ -1284,7 +1284,7 @@ values, defaults, and required build features.
 **~/.rsync-filter**
 :   Per-user filter rules, read automatically when filter support is enabled.
 
-**/etc/oc-rsyncd/oc-rsyncd.conf**
+**/etc/oc-rsync/oc-rsyncd.conf**
 :   Default daemon configuration file. Specifies modules, access control,
     authentication, and other daemon parameters.
 

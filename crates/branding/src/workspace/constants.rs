@@ -22,7 +22,7 @@ pub const fn brand() -> &'static str {
 }
 
 /// Upstream rsync base version targeted by this build.
-#[doc(alias = "3.4.1")]
+#[doc(alias = "3.5.0")]
 pub const UPSTREAM_VERSION: &str = crate::generated::UPSTREAM_VERSION;
 
 /// Returns the upstream rsync base version targeted by this build.
@@ -136,11 +136,11 @@ pub const fn legacy_daemon_program_name() -> &'static str {
 pub const DAEMON_CONFIG_DIR: &str = crate::generated::DAEMON_CONFIG_DIR;
 
 /// Default daemon configuration file path for the branded binary.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.conf")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.conf")]
 pub const DAEMON_CONFIG_PATH: &str = crate::generated::DAEMON_CONFIG_PATH;
 
 /// Default daemon secrets file path for the branded binary.
-#[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.secrets")]
+#[doc(alias = "/etc/oc-rsync/oc-rsyncd.secrets")]
 pub const DAEMON_SECRETS_PATH: &str = crate::generated::DAEMON_SECRETS_PATH;
 
 /// Legacy configuration directory honoured for upstream compatibility.

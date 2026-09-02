@@ -459,7 +459,7 @@ jobs:
 
           install -Dm755 "${BINARY}" "${DATA_DIR}/usr/bin/oc-rsync"
           install -Dm644 packaging/alpine/oc-rsyncd.conf.default \
-            "${DATA_DIR}/etc/oc-rsyncd/oc-rsyncd.conf"
+            "${DATA_DIR}/etc/oc-rsync/oc-rsyncd.conf"
           install -Dm755 packaging/alpine/oc-rsyncd.initd \
             "${DATA_DIR}/etc/init.d/oc-rsyncd"
           install -Dm644 packaging/alpine/oc-rsyncd.confd \
