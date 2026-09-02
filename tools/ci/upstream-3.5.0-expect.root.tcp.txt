@@ -126,7 +126,7 @@ proto-cleared-ndx fail
 proto-hlink-flag-oob skip
 proto-hlink-gnum fail
 proto-msg-info-assert fail
-proto-parent-ndx-empty-dirflist fail
+proto-parent-ndx-empty-dirflist pass
 proto-sender-selftest fail
 proto-subflist-freed fail
 proxy-connect-request-too-long fail

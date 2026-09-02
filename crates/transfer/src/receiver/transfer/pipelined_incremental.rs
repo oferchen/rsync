@@ -437,6 +437,9 @@ impl ReceiverContext {
         // the client reconstructs the "Number of created files" breakdown.
         // upstream: receiver.c:733-746 - stats.created_* accumulated locally.
         stats.created_stats = self.created_stats.get();
+        // Rejoin the make-room deletions with the sweep's tally; upstream counts
+        // both into the same `stats.deleted_*` globals (delete.c:241-256).
+        stats.delete_stats = self.effective_del_stats();
 
         // Flush any trailing buffered `-v` directory names (those with no
         // transferred child to release them mid-loop), then drain the deferred

@@ -640,6 +640,12 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // for top-level source paths and --files-from entries.
     server_config.file_selection.ignore_missing_args = config.ignore_missing_args();
     server_config.file_selection.delete_missing_args = config.delete_missing_args();
+    // upstream: generator.c:2481 - `int del_opts = delete_mode || force_delete ?
+    // DEL_RECURSE : 0`. On a pull the local client IS the receiver, so the
+    // `--force` it forwards to the remote sender (options.c:3014-3015) has to
+    // land on this config too; otherwise the DEL_RECURSE term is only ever set
+    // on a push and a populated directory obstacle is refused locally at 23.
+    server_config.flags.force = config.force_replacements();
     // upstream: options.c:89 do_compression_threads, token.c:701 ZSTD_c_nbWorkers
     server_config.connection.compression_threads = config.compression_threads();
     // upstream: compat.c:819 parse_checksum_choice(1) - an explicit
@@ -1019,6 +1025,22 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
         assert!(server_config.file_selection.delete_missing_args);
+    }
+
+    /// upstream: generator.c:2481 - on a PULL the local client is the receiver,
+    /// so the `--force` it forwards to the remote sender must also land on the
+    /// local config; otherwise the `delete_mode || force_delete` term is only
+    /// ever set on a push and a populated directory obstacle is refused at 23.
+    #[test]
+    fn apply_common_server_flags_propagates_force_replacements() {
+        let config = ClientConfig::builder().force_replacements(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.force);
+
+        let mut plain = ServerConfig::default();
+        apply_common_server_flags(&ClientConfig::default(), &mut plain);
+        assert!(!plain.flags.force, "default must be false");
     }
 
     #[test]

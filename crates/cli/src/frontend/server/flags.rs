@@ -199,6 +199,15 @@ pub(super) struct ServerLongFlags {
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     pub(super) delete: bool,
+    /// Force removal of a directory obstacle (upstream: `--force`,
+    /// `force_delete`, long-form only).
+    ///
+    /// upstream: options.c:3014-3015 - `if (force_delete) args[ac++] =
+    /// "--force"`, emitted in the `am_sender` block so it reaches a server
+    /// acting as the receiver. It is the second term of the `DEL_RECURSE`
+    /// decision at generator.c:1629/2481 and of the `write_del_stats()` gate at
+    /// generator.c:2868/2913, so the receiver has to be told.
+    pub(super) force: bool,
     /// Defer the delete pass until after the transfer (upstream: `--delete-after`
     /// / `--delete-delay`, i.e. `delete_after` or `delete_during == 2`).
     ///
@@ -517,6 +526,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         modify_window: None,
         numeric_ids: false,
         delete: false,
+        force: false,
         late_delete: false,
         delete_after: false,
         delete_excluded: false,
@@ -602,17 +612,14 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // (missing_args == 1): a vanished top-level source arg is silently
             // dropped from the file list rather than raising an error.
             "--ignore-missing-args" => flags.ignore_missing_args = true,
-            // upstream: options.c:2848-2849 - `if (force_delete) args[ac++] =
+            // upstream: options.c:3014-3015 - `if (force_delete) args[ac++] =
             // "--force"`, emitted in the am_sender block so it reaches a server
-            // acting as the receiver. force_delete only changes behavior when a
-            // non-empty directory must be replaced by a non-directory while
-            // deletions are inactive (delete.c). Under an active --delete pass -
-            // the trigger server_options() ships it alongside - oc already
-            // removes extraneous non-empty directories recursively
-            // (receiver/directory/deletion.rs), matching upstream 2.6.7+
-            // (`--delete` no longer needs `--force`). Recognized here so the arg
-            // does not leak into the positional path list.
-            "--force" => {}
+            // acting as the receiver. It is the second term of the DEL_RECURSE
+            // decision (`generator.c:2481`: `delete_mode || force_delete`) that
+            // lets a POPULATED directory obstacle be cleared for a non-directory,
+            // and of the `write_del_stats()` gate (generator.c:2868). Discarding
+            // it here left the receiver refusing at 23 where 3.5.0 exits 0.
+            "--force" => flags.force = true,
             // upstream: options.c:2852-2853 - `if (am_root > 1) args[ac++] =
             // "--super"`, forcing super-user metadata semantics (chown/mknod)
             // even when the receiver is not literally uid 0. oc gates those

@@ -59,6 +59,16 @@ fn apply_long_form_args(
             "--delete-excluded" => {
                 config.flags.delete = true;
             }
+            // upstream: options.c:3014-3015 - `if (force_delete) args[ac++] =
+            // "--force"`. It is the second term of `int del_opts = delete_mode
+            // || force_delete ? DEL_RECURSE : 0` (generator.c:1629/2481), which
+            // lets a POPULATED directory obstacle be cleared for an incoming
+            // non-directory. The stdio server parser has its own arm
+            // (`cli/src/frontend/server/flags.rs`); a daemon receiver reaches
+            // this parser instead, so both have to set it.
+            "--force" => {
+                config.flags.force = true;
+            }
             // upstream: options.c:2856-2857 - --stats sets do_stats which causes
             // INFO_STATS to level 2+. Without this flag, the generator does not
             // emit NDX_DEL_STATS during the goodbye phase and the client sender's

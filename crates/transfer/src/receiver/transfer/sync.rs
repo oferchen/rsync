@@ -10,7 +10,6 @@ use std::io::{self, Read, Write};
 
 use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
-use protocol::stats::DeleteStats;
 
 use metadata::apply_metadata_with_cached_stat;
 
@@ -697,7 +696,9 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
-            delete_stats: DeleteStats::new(),
+            // No sweep runs on this path, but an obstacle cleared to make room
+            // still counts (delete.c:241-256).
+            delete_stats: self.effective_del_stats(),
             // Fold the per-type created tally reconstructed from ITEM_IS_NEW so
             // the client renders the "Number of created files" breakdown.
             // upstream: receiver.c:733-746.
