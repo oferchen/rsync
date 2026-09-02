@@ -19,7 +19,7 @@
 //! That is correct but slow. The kernel releases the pages only once the peer
 //! has consumed the data, so waiting for the notification couples the
 //! sender's rate to the receiver's drain rate and keeps exactly one send in
-//! flight. [`super::send_zc_pipeline::SendZcPipeline`] is the throughput
+//! flight. `send_zc_pipeline::SendZcPipeline` is the throughput
 //! path: it waits only for the transfer CQE and keeps a pool of owned buffers
 //! alive until their notifications land. Use [`try_send_zc`] when the payload
 //! is a caller-owned slice that must be released on return; use the pipeline
