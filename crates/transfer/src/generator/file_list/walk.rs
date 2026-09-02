@@ -142,7 +142,58 @@ impl GeneratorContext {
         base: &Path,
         path: &Path,
     ) -> io::Result<bool> {
-        self.try_walk_source_entry_dedup(base, path, None)
+        // upstream: options.c:2314-2320 - `xfer_dirs` resolves to `-d`, or `-r`
+        // (`else if (recurse) xfer_dirs = 1`), or `list_only` when neither was
+        // given. `--files-from` forces it on (options.c:2307-2308), which is
+        // why `build_file_list_with_base` passes `true` instead of this.
+        let xfer_dirs =
+            self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
+        self.try_walk_source_entry_dedup(base, path, None, xfer_dirs)
+    }
+
+    /// Upstream's `xfer_dirs` gate on a top-level directory argument.
+    ///
+    /// Without `-r`, `-d`, or a `--list-only`/`--files-from` equivalent,
+    /// upstream refuses a directory operand outright: it prints one FINFO line
+    /// and `continue`s the argument loop, so the directory contributes NO
+    /// file-list entry - not the directory, not one level of its children, and
+    /// not its `--relative` implied parents.
+    ///
+    /// The DOTDIR spellings (`dir/`, `dir/.`) are NOT exempt. They still stat
+    /// as a directory, so a trailing slash without `-r`/`-d` transfers nothing
+    /// at all; the marker only decides "contents of" once directories are being
+    /// transferred in the first place.
+    ///
+    /// `fbuf` at this point is the operand after upstream's `dir`/`fn` split,
+    /// which is `relative` here - except for the two spellings the split cannot
+    /// produce: a DOTDIR operand collapses to a bare `.`, and a `--relative`
+    /// absolute operand keeps its leading `/` (upstream only strips that on the
+    /// receiver, `flist.c:3071`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2719-2721` - the `ALL_FILTERS` exclusion runs FIRST and drops
+    ///   an excluded argument silently; `name_type != DOTDIR_NAME` exempts a
+    ///   DOTDIR operand from it.
+    /// - `flist.c:2723-2726` - `if (S_ISDIR(st.st_mode) && !xfer_dirs) {
+    ///   rprintf(FINFO, "skipping directory %s\n", fbuf); continue; }`
+    fn report_skipped_directory_arg(&mut self, base: &Path, path: &Path) {
+        let relative = path.strip_prefix(base).unwrap_or(path);
+        let is_dotdir = relative.as_os_str().is_empty();
+        if !is_dotdir && !self.filter_chain.allows(relative, true) {
+            return;
+        }
+        let name: PathBuf = if is_dotdir {
+            PathBuf::from(".")
+        } else if base == Path::new("/") {
+            path.components().collect()
+        } else {
+            relative.components().collect()
+        };
+        self.queue_flist_diagnostic(
+            SenderDiagnostic::Info,
+            format!("skipping directory {}\n", name.display()),
+        );
     }
 
     /// Like `try_walk_source_entry`, but consults `emitted_dirs` to skip
@@ -173,6 +224,7 @@ impl GeneratorContext {
         base: &Path,
         path: &Path,
         emitted_dirs: Option<&HashSet<PathBuf>>,
+        xfer_dirs: bool,
     ) -> io::Result<bool> {
         // Record the transfer root so per-directory merge files re-anchor their
         // leading-`/` rules to the merge file's own directory (upstream
@@ -189,6 +241,12 @@ impl GeneratorContext {
         // inside walk_path_with_metadata.
         match self.resolve_symlink_metadata(path, base) {
             Ok(metadata) => {
+                // upstream: flist.c:2723-2726 - a directory argument is dropped
+                // before any implied parent is emitted when `xfer_dirs` is off.
+                if metadata.is_dir() && !xfer_dirs {
+                    self.report_skipped_directory_arg(base, path);
+                    return Ok(false);
+                }
                 // If a prior pass already emitted this directory (e.g. the
                 // implied-parent loop in build_file_list_with_base), skip the
                 // top-level walk so we do not produce a duplicate file-list
