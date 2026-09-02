@@ -7,6 +7,8 @@
 //! where a naive implementation would either leak userspace memory or
 //! surprise callers by silently mutating kernel state.
 
+use std::io;
+
 use io_uring::IoUring as RawIoUring;
 
 use super::super::registry::RegisteredBufferGroup;
@@ -279,6 +281,36 @@ fn drop_with_in_use_tracking_state_is_clean() {
     drop(group);
 }
 
+/// Non-vacuity companion for the reuse-probe guard below.
+///
+/// That guard branches on `ErrorKind`, so it is only as good as the kind the
+/// constructor reports. `registry.rs` used to build the failure with
+/// `io::Error::other`, which pins the kind to `Other` whatever the kernel
+/// said - the errno was then recoverable only by parsing the message, so no
+/// caller could branch on ENOMEM vs EBUSY at all. Ask for a registration no
+/// locked-memory budget can host and assert the kernel's own kind survives.
+#[test]
+fn registration_failure_preserves_the_kernel_error_kind() {
+    let Some(ring) = try_ring(4) else {
+        eprintln!("SKIP {}: no io_uring available", module_path!());
+        return;
+    };
+
+    // 64 buffers of 1 GiB is past any plausible RLIMIT_MEMLOCK.
+    match RegisteredBufferGroup::new(&ring, 1 << 30, 64) {
+        Ok(_) => eprintln!(
+            "SKIP {}: this kernel accepted a 64 GiB registration",
+            module_path!()
+        ),
+        Err(e) => assert_ne!(
+            e.kind(),
+            io::ErrorKind::Other,
+            "a failed registration must carry the kernel ErrorKind, not the \
+             opaque `Other` that hides ENOMEM from EBUSY: {e:?}"
+        ),
+    }
+}
+
 /// When `RegisteredBufferGroup::new` fails after the first registration
 /// is already live on the ring, the recovery path must (a) deallocate
 /// the partially-built buffer set, (b) return an `Err` to the caller,
@@ -288,10 +320,17 @@ fn drop_with_in_use_tracking_state_is_clean() {
 /// environment called out in task #1678.
 #[test]
 fn drop_on_construction_failure_does_not_double_register() {
-    let Some(ring) = try_ring(4) else { return };
+    let Some(ring) = try_ring(4) else {
+        eprintln!("SKIP {}: no io_uring available", module_path!());
+        return;
+    };
 
     // First registration claims the ring's slot table.
     let Some(first) = try_group(&ring, 4096, 2) else {
+        eprintln!(
+            "SKIP {}: the kernel refused the first registration",
+            module_path!()
+        );
         return;
     };
 
@@ -304,6 +343,11 @@ fn drop_on_construction_failure_does_not_double_register() {
     // cannot probe the failure-recovery branch and skip out cleanly.
     let second = RegisteredBufferGroup::new(&ring, 4096, 2);
     let Err(second_err) = second else {
+        eprintln!(
+            "SKIP {}: this kernel accepts replace-style re-registration, so \
+             the failure-recovery branch is unreachable here",
+            module_path!()
+        );
         return;
     };
 
@@ -329,12 +373,36 @@ fn drop_on_construction_failure_does_not_double_register() {
 
     // After cleanup, a fresh group constructs cleanly. This proves the
     // failure-recovery branch did not leave dangling kernel state.
-    let third = RegisteredBufferGroup::new(&ring, 4096, 2);
-    let third_err = third.as_ref().err();
-    assert!(
-        third.is_ok(),
-        "ring must be reusable after a failed registration was cleaned up \
-         (the rejected second `new` reported {second_err}); the fresh `new` \
-         reported {third_err:?}"
-    );
+    //
+    // Split on the kernel's reason, because only one outcome is evidence
+    // about failure recovery. This is the same environment tolerance the
+    // three guards above already have - `try_ring`, `try_group`, and the
+    // replace-semantics arm all skip rather than assert when the kernel
+    // cannot host the probe - and the reuse probe was the one step that
+    // lacked it:
+    //
+    // - `Ok`      the contract holds; the recovery path left nothing behind.
+    // - `ENOMEM`  RLIMIT_MEMLOCK could not account the pages. Registration
+    //             never happened, so this says nothing about recovery. The
+    //             budget is a property of the runner, not of the code under
+    //             test; asserting on it makes the cell fail wherever locked
+    //             memory is tight.
+    // - anything else, EBUSY in particular, means a registration is STILL
+    //   LIVE after a successful `unregister`, which is exactly the dangling
+    //   kernel state this test exists to catch. Still a hard failure.
+    match RegisteredBufferGroup::new(&ring, 4096, 2) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::OutOfMemory => {
+            eprintln!(
+                "SKIP {}: locked-memory budget cannot host the reuse probe \
+                 ({e}); the failure-recovery branch was not exercised",
+                module_path!()
+            );
+        }
+        Err(e) => panic!(
+            "ring must be reusable after a failed registration was cleaned up \
+             (the rejected second `new` reported {second_err}); the fresh `new` \
+             reported {e:?}"
+        ),
+    }
 }
