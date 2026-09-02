@@ -121,6 +121,34 @@ fn write_secluded_arg<W: Write>(
     Ok(())
 }
 
+/// Upstream's ceiling on a single `read_args()` argument vector.
+///
+/// upstream: `rsync.h:202` - `#define MAX_ARGS 1000`
+pub const MAX_ARGS: usize = 1000;
+
+/// Upstream's ceiling on the argument vector a *daemon module* connection may
+/// send.
+///
+/// upstream: `io.c:1452` - `#define MAX_DAEMON_ARGS (MAX_ARGS * 16)`
+///
+/// This bounds a peer-controlled allocation: without it a client can make the
+/// daemon accumulate an unbounded argument vector before any of it is parsed.
+/// Upstream applies the ceiling only when serving a module (`io.c:1476`), so
+/// this constant must reach the reader as a caller-supplied bound rather than
+/// being enforced unconditionally - see [`recv_secluded_args`].
+pub const MAX_DAEMON_ARGS: usize = MAX_ARGS * 16;
+
+/// The refusal upstream emits when a daemon client sends too many arguments.
+///
+/// upstream: `io.c:1477-1478` - `rprintf(FERROR, "too many daemon arguments\n")`
+/// followed by `exit_cleanup(RERR_PROTOCOL)`.
+///
+/// The wording is upstream's verbatim, so a peer or a log reader sees the same
+/// string from either implementation.
+pub fn too_many_daemon_arguments() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "too many daemon arguments")
+}
+
 /// Deserializes a null-separated argument list from a reader.
 ///
 /// Reads bytes one at a time, collecting characters into arguments separated
@@ -135,18 +163,29 @@ fn write_secluded_arg<W: Write>(
 ///
 /// Returns `Ok(args)` with the parsed argument vector on success.
 ///
+/// `max_args` bounds how many arguments will be accumulated. It is
+/// `Some(MAX_DAEMON_ARGS)` for a daemon module connection and `None`
+/// everywhere else, mirroring upstream's `mod_name` gate: `read_args()`
+/// applies its ceiling only under `if (mod_name && ...)` (`io.c:1476`), so
+/// the rsh/server argument read is deliberately unbounded on both
+/// implementations. The bound is a parameter rather than a constant here for
+/// exactly that reason - the caller decides, because only the caller knows
+/// whether it is serving a module.
+///
 /// # Upstream Reference
 ///
 /// Mirrors the protected-args reading logic in upstream `io.c:1240-1289`
-/// `read_line()` with the `RL_CONVERT` flag.
+/// `read_line()` with the `RL_CONVERT` flag, plus the `MAX_DAEMON_ARGS`
+/// ceiling at `io.c:1476-1479`.
 ///
 /// # Errors
 ///
-/// Returns an error if the reader encounters an I/O error or reaches EOF
-/// before the terminating empty argument.
+/// Returns an error if the reader encounters an I/O error, reaches EOF
+/// before the terminating empty argument, or exceeds `max_args`.
 pub fn recv_secluded_args<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
+    max_args: Option<usize>,
 ) -> io::Result<Vec<String>> {
     let mut args = Vec::new();
     let mut current = Vec::new();
@@ -185,6 +224,14 @@ pub fn recv_secluded_args<R: Read>(
                     format!("invalid UTF-8 in secluded arg: {e}"),
                 )
             })?;
+            // upstream: io.c:1476-1479 - the ceiling is checked before the
+            // argument is appended, so the vector never exceeds the bound.
+            // Refusing here rather than after the loop is what makes this a
+            // memory bound and not just a report: a peer that keeps sending
+            // must be cut off while it is still sending.
+            if max_args.is_some_and(|max| args.len() >= max.saturating_sub(1)) {
+                return Err(too_many_daemon_arguments());
+            }
             args.push(arg);
         } else {
             current.push(byte[0]);
@@ -205,7 +252,7 @@ mod tests {
         send_secluded_args(&mut buf, &args, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(received, args);
     }
 
@@ -216,7 +263,7 @@ mod tests {
         send_secluded_args(&mut buf, &args, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert!(received.is_empty());
     }
 
@@ -235,7 +282,7 @@ mod tests {
         send_secluded_args(&mut buf, &args, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(received, args);
     }
 
@@ -270,7 +317,7 @@ mod tests {
         // Stream ends without terminator
         let buf = b"arg1\0arg2";
         let mut cursor = io::Cursor::new(&buf[..]);
-        let result = recv_secluded_args(&mut cursor, None);
+        let result = recv_secluded_args(&mut cursor, None, None);
         assert!(result.is_err());
     }
 
@@ -278,7 +325,7 @@ mod tests {
     fn recv_from_empty_stream_returns_error() {
         let buf = b"";
         let mut cursor = io::Cursor::new(&buf[..]);
-        let result = recv_secluded_args(&mut cursor, None);
+        let result = recv_secluded_args(&mut cursor, None, None);
         assert!(result.is_err());
     }
 
@@ -293,7 +340,7 @@ mod tests {
         send_secluded_args(&mut buf, &args, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(received, args);
     }
 
@@ -305,7 +352,7 @@ mod tests {
         send_secluded_args(&mut buf, &args_refs, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(received, args);
     }
 
@@ -352,7 +399,7 @@ mod tests {
 
         let mut cursor = io::Cursor::new(&wire);
         let received =
-            recv_secluded_args(&mut cursor, Some(&reader_iconv)).expect("recv with iconv");
+            recv_secluded_args(&mut cursor, Some(&reader_iconv), None).expect("recv with iconv");
         assert_eq!(received, args);
     }
 
@@ -363,10 +410,12 @@ mod tests {
         let wire: &[u8] = b"alpha\0beta\0gamma\0\0";
 
         let mut cursor_with = io::Cursor::new(wire);
-        let with = recv_secluded_args(&mut cursor_with, Some(&identity)).expect("recv with iconv");
+        let with =
+            recv_secluded_args(&mut cursor_with, Some(&identity), None).expect("recv with iconv");
 
         let mut cursor_without = io::Cursor::new(wire);
-        let without = recv_secluded_args(&mut cursor_without, None).expect("recv without iconv");
+        let without =
+            recv_secluded_args(&mut cursor_without, None, None).expect("recv without iconv");
 
         assert_eq!(with, without);
         assert_eq!(with, vec!["alpha", "beta", "gamma"]);
@@ -427,7 +476,7 @@ mod tests {
         send_secluded_args(&mut buf, &args, None).expect("send should succeed");
 
         let mut cursor = io::Cursor::new(buf);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(
             received,
             vec!["--server", ".", "."],
@@ -449,7 +498,7 @@ mod tests {
         wire.extend_from_slice(b"@RSYNCD");
 
         let mut cursor = io::Cursor::new(&wire);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert_eq!(received, vec!["alpha", ".", "omega"]);
 
         let mut leftover = Vec::new();
@@ -484,7 +533,7 @@ mod tests {
         let wire: &[u8] = b"--server\0--sender\0-logDtpr\0.\0/path\0\0";
         let mut cursor = io::Cursor::new(wire);
 
-        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let args = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
 
         assert_eq!(args.len(), 5);
         assert_eq!(args[0], "--server");
@@ -510,7 +559,7 @@ mod tests {
         let wire: &[u8] = b"\0";
         let mut cursor = io::Cursor::new(wire);
 
-        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let args = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
 
         assert!(args.is_empty());
         assert_eq!(
@@ -526,7 +575,7 @@ mod tests {
         let wire: &[u8] = b"arg1\0arg2";
         let mut cursor = io::Cursor::new(wire);
 
-        let err = recv_secluded_args(&mut cursor, None)
+        let err = recv_secluded_args(&mut cursor, None, None)
             .expect_err("recv should fail when terminator is missing");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
@@ -547,7 +596,7 @@ mod tests {
         let terminator_end = wire.len() - 1;
         let mut cursor = io::Cursor::new(wire);
 
-        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let args = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
 
         assert_eq!(args, vec!["--server", "--sender", ".", "/path"]);
         assert_eq!(
@@ -586,7 +635,7 @@ mod tests {
         let wire: &[u8] = b"--server\0-vlogDtpre.iLsfxCIvu\0.\0src/\0\0EXTRA";
         let mut cursor = io::Cursor::new(wire);
 
-        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let args = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
 
         assert_eq!(args, vec!["--server", "-vlogDtpre.iLsfxCIvu", ".", "src/"]);
 
@@ -609,7 +658,7 @@ mod tests {
         let wire: &[u8] = b"\0NEXT";
         let mut cursor = io::Cursor::new(wire);
 
-        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        let args = recv_secluded_args(&mut cursor, None, None).expect("recv should succeed");
         assert!(args.is_empty());
 
         let mut leftover = Vec::new();
@@ -620,5 +669,61 @@ mod tests {
             leftover, b"NEXT",
             "empty arg list must consume only the terminator NUL"
         );
+    }
+}
+
+#[cfg(test)]
+mod daemon_arg_ceiling_tests {
+    use super::*;
+
+    /// Encodes `count` one-byte args plus the empty-string terminator.
+    fn wire_with_args(count: usize) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(count * 2 + 1);
+        for _ in 0..count {
+            buf.extend_from_slice(b"a\0");
+        }
+        buf.push(0);
+        buf
+    }
+
+    #[test]
+    fn a_daemon_bound_refuses_a_vector_past_max_daemon_args() {
+        let wire = wire_with_args(MAX_DAEMON_ARGS + 10);
+        let mut cursor = io::Cursor::new(wire);
+
+        let err = recv_secluded_args(&mut cursor, None, Some(MAX_DAEMON_ARGS))
+            .expect_err("a daemon connection must refuse an oversized argument vector");
+
+        // upstream: io.c:1477 - the wording is upstream's, verbatim.
+        assert_eq!(err.to_string(), "too many daemon arguments");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// Non-vacuity companion: the SAME oversized wire is accepted when no
+    /// ceiling is supplied. Without this the refusal test would also pass if
+    /// the reader had simply become unable to read a long vector at all, and
+    /// it pins the deliberate rsh/server divergence - upstream gates the
+    /// ceiling on `mod_name` (`io.c:1476`), so the non-daemon read is
+    /// unbounded on both implementations.
+    #[test]
+    fn b_no_ceiling_accepts_the_same_oversized_vector() {
+        let wire = wire_with_args(MAX_DAEMON_ARGS + 10);
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None, None)
+            .expect("an unbounded read must accept the vector the daemon refuses");
+
+        assert_eq!(args.len(), MAX_DAEMON_ARGS + 10);
+    }
+
+    #[test]
+    fn c_a_vector_inside_the_ceiling_is_still_accepted() {
+        let wire = wire_with_args(8);
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None, Some(MAX_DAEMON_ARGS))
+            .expect("an ordinary argument vector must still be read");
+
+        assert_eq!(args.len(), 8);
     }
 }
