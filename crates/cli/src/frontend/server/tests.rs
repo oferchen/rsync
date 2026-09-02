@@ -2315,17 +2315,36 @@ fn long_flags_missing_args_variants() {
     assert!(is_known_server_long_flag("--ignore-missing-args"));
 }
 
-/// upstream: options.c:2848-2853 / 2990-2991 - `--force` (force_delete),
-/// `--super` (am_root > 1), and `--preallocate` (preallocate_files) are emitted
-/// in the am_sender block and reach a server acting as the receiver. oc has no
-/// content-affecting server sink for these (recursive delete already happens,
-/// root is already privileged, preallocation is content-invisible), but they
-/// MUST be recognised so they never surface as a positional destination path.
+/// upstream: options.c:3014-3015 / 3018-3019 / 2990-2991 - `--force`
+/// (force_delete), `--super` (am_root > 1), and `--preallocate`
+/// (preallocate_files) are emitted in the am_sender block and reach a server
+/// acting as the receiver. All three MUST be recognised so they never surface
+/// as a positional destination path; `--force` and `--preallocate` also carry a
+/// content-affecting sink (see the cells below), while `--super` needs none
+/// because oc's runtime `metadata::am_root()` check already reports true under
+/// the only condition that gives the flag any effect.
 #[test]
 fn force_super_preallocate_recognised_as_known_long_flags() {
     assert!(is_known_server_long_flag("--force"));
     assert!(is_known_server_long_flag("--super"));
     assert!(is_known_server_long_flag("--preallocate"));
+}
+
+/// upstream: options.c:3014-3015 / generator.c:2481 - a server receiver invoked
+/// with `--force` must set the second term of `int del_opts = delete_mode ||
+/// force_delete ? DEL_RECURSE : 0`, which is what lets a POPULATED directory
+/// obstacle be cleared for an incoming non-directory. The flag has no compact
+/// letter, so it arrives only as the long-form arg; parsing must set `force` so
+/// `run.rs` can carry it onto `config.flags.force`. Regression guard: the flag
+/// was previously recognised-but-dropped (`"--force" => {}`), which left the
+/// receiver refusing at 23 where 3.5.0 exits 0.
+#[test]
+fn parse_server_long_flags_sets_force() {
+    let without = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!without.force, "default must be false");
+
+    let with = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--force")]);
+    assert!(with.force, "--force must set the flag");
 }
 
 /// upstream: options.c:2990-2991 / receiver.c:320 - a server receiver invoked

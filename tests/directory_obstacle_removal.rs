@@ -503,3 +503,148 @@ fn a_regular_file_destination_with_no_obstacle_still_transfers() {
         SIBLING
     );
 }
+
+/// `--force` clears a POPULATED directory obstacle and completes at exit 0.
+///
+/// This is the `DEL_RECURSE` term the receiver could not see: `--force` was
+/// recognised by the server arg parser and thrown away (`"--force" => {}`),
+/// with no field on `ParsedServerFlags`, so the obstacle arm always took the
+/// bare-`rmdir` branch and refused at 23.
+///
+/// MEASURED against rsync 3.5.0 over the same `--server` shim: `--force`,
+/// `--delete`, and both together each give rc=0 with the symlink in place and
+/// `deleting obstacle/occupant` on the wire; the bare run gives 23. oc gave 23
+/// in all four cells.
+///
+/// upstream: `generator.c:2481` - `int del_opts = delete_mode || force_delete ?
+/// DEL_RECURSE : 0;`, handed to `delete_item()` and on to
+/// `delete_dir_contents()` (`delete.c:205-211`).
+#[test]
+fn force_clears_a_populated_directory_obstacle() {
+    let fx = fixture(Source::Symlink, true);
+
+    let (status, stdout, stderr) = push(&fx, &["--force"]);
+
+    assert_eq!(
+        status,
+        Some(0),
+        "rsync 3.5.0 exits 0 for this shape under --force. stdout: {stdout} stderr: {stderr}"
+    );
+    assert_eq!(
+        fs::read_link(obstacle(&fx)).expect("obstacle must now be a symlink"),
+        Path::new("../outside"),
+        "DEL_RECURSE removes the contents and then the directory; a surviving \
+         directory means the flag never reached the receiver"
+    );
+    let output = format!("{stdout}{stderr}");
+    assert!(
+        !output.contains("could not make way"),
+        "there is nothing to refuse once the contents are gone. output was: {output}"
+    );
+    assert!(
+        !output.contains("cannot delete non-empty directory"),
+        "delete_dir_contents() only reports DR_NOT_EMPTY when it did not \
+         recurse. output was: {output}"
+    );
+}
+
+/// `--delete` is the OTHER term of the same expression, and it was equally
+/// unreachable: `flags.delete` was already on the receiver config, but the
+/// obstacle arm never consulted it.
+///
+/// Kept separate from the `--force` cell on purpose: a fix that wired only the
+/// new flag would leave this one red, and a fix that only read `flags.delete`
+/// would leave the other one red.
+///
+/// upstream: `generator.c:2481` - `delete_mode || force_delete`.
+#[test]
+fn delete_clears_a_populated_directory_obstacle() {
+    let fx = fixture(Source::Symlink, true);
+
+    let (status, stdout, stderr) = push(&fx, &["--delete"]);
+
+    assert_eq!(
+        status,
+        Some(0),
+        "rsync 3.5.0 exits 0 for this shape under --delete too. \
+         stdout: {stdout} stderr: {stderr}"
+    );
+    assert_eq!(
+        fs::read_link(obstacle(&fx)).expect("obstacle must now be a symlink"),
+        Path::new("../outside")
+    );
+}
+
+/// The cleared contents are REPORTED and COUNTED like delete-pass victims,
+/// while the obstacle directory itself stays silent and uncounted.
+///
+/// `delete_dir_contents()` strips `DEL_MAKE_ROOM` before recursing
+/// (`delete.c:126-127`), so each child reaches the `log_delete()` /
+/// `stats.deleted_*` block at `delete.c:241-256`; the directory node keeps the
+/// flag and skips it. Upstream prints exactly one `deleting obstacle/occupant`
+/// and reports `Number of deleted files: 1 (reg: 1)` - not 2, and not 0.
+///
+/// Without this cell a fix could remove the subtree with a bare
+/// `remove_dir_all` and still pass every other assertion here.
+#[test]
+fn the_cleared_contents_are_itemized_and_counted_but_the_directory_is_not() {
+    let fx = fixture(Source::Symlink, true);
+
+    let (status, stdout, stderr) = push(&fx, &["-v", "--stats", "--force"]);
+
+    assert_eq!(status, Some(0), "stderr was: {stderr}");
+    let output = format!("{stdout}{stderr}");
+    assert!(
+        output.contains("deleting obstacle/occupant"),
+        "the child is logged like a delete-pass victim (DEL_MAKE_ROOM stripped \
+         for the recursion). output was: {output}"
+    );
+    assert!(
+        !output.contains("deleting obstacle\n"),
+        "the obstacle directory itself keeps DEL_MAKE_ROOM, so delete.c:241 \
+         skips its log_delete(). output was: {output}"
+    );
+    assert!(
+        output.contains("Number of deleted files: 1 (reg: 1)"),
+        "upstream counts the cleared child and not the directory. \
+         output was: {output}"
+    );
+}
+
+/// The `DEL_FOR_FILE` site (`generator.c:2148-2153`) computes the SAME
+/// `del_opts`, so a regular-file source clears a populated obstacle too.
+///
+/// The two sites reach `delete_item()` independently - one through
+/// `atomic_create()`, one directly - so a fix applied to only one of them
+/// leaves this cell red.
+#[test]
+fn force_clears_a_populated_directory_obstacle_for_a_regular_file() {
+    let fx = fixture(Source::Regular, true);
+
+    let (status, stdout, stderr) = push(&fx, &["--force"]);
+
+    assert_eq!(status, Some(0), "stdout: {stdout} stderr: {stderr}");
+    assert_eq!(
+        fs::read_to_string(obstacle(&fx)).expect("obstacle must now be a regular file"),
+        PAYLOAD
+    );
+}
+
+/// The non-vacuity control: with NEITHER flag the same fixture still refuses.
+///
+/// `delete_dir_contents()` without `DEL_RECURSE` only probes emptiness
+/// (`delete.c:115-118`), so the contents survive and the `rmdir` fails. A
+/// change that recursed unconditionally would turn this cell red, which is what
+/// separates "reads the flag" from "always removes the subtree".
+#[test]
+fn without_either_flag_the_populated_obstacle_is_still_refused() {
+    let fx = fixture(Source::Symlink, true);
+
+    let (status, stdout, stderr) = push(&fx, &[]);
+
+    assert_eq!(status, Some(23), "stdout: {stdout} stderr: {stderr}");
+    assert!(
+        obstacle(&fx).join("occupant").exists(),
+        "no DEL_RECURSE means the contents are never touched"
+    );
+}

@@ -715,6 +715,48 @@ impl FileListReader {
         // In --relative mode, leading slashes are stripped instead.
         let cleaned_name = self.clean_and_validate_name(converted_name)?;
 
+        // upstream: flist.c:1127-1134 recv_file_entry() -
+        //   /* "." is the synthetic transfer root.  Reinterpreting it as a file
+        //    * lets --force recursively remove the real destination directory
+        //    * before the receiver creates that file. */
+        //   if ((!strcmp(thisname, ".") || !strcmp(thisname, "/.")) && !S_ISDIR(mode)) {
+        //           rprintf(FERROR, "ERROR: rejecting non-directory transfer-root entry: %s\n", thisname);
+        //           exit_cleanup(RERR_PROTOCOL);
+        //   }
+        //
+        // The receiver exempts the synthetic `.` root from its requested-name
+        // filter, so a malicious sender that encodes `.` with regular-file mode
+        // gets an unfiltered entry whose destination path IS the transfer root.
+        // Every make-way site then sees a directory standing where a regular
+        // file must be written and, under `--force`/`--delete`, clears it
+        // recursively - erasing receiver-owned files that were never part of
+        // the requested transfer. `--delete` is not needed for the attack.
+        //
+        // A directory is the only legitimate encoding of this name, so the
+        // guard is a type check, not a scope narrowing: it must NOT be spelled
+        // as an exception inside the obstacle-removal path, because upstream
+        // keeps `del_opts` unconditional there and rejects the entry at the
+        // point of decode instead - which also protects every other consumer of
+        // the name (mkdir, rename, backup) from the same forgery.
+        //
+        // Checked on the CLEANED name, matching upstream: `thisname` at
+        // flist.c:1130 has already been through clean_fname() at :768-772.
+        // Both upstream spellings are honoured - `/.` survives cleaning in
+        // `--relative` mode, where leading slashes are stripped rather than
+        // refused.
+        if matches!(cleaned_name.as_slice(), b"." | b"/.")
+            && !matches!(
+                crate::flist::FileType::from_mode(metadata.mode),
+                Some(crate::flist::FileType::Directory)
+            )
+        {
+            // upstream: flist.c:1133 exit_cleanup(RERR_PROTOCOL) (exit 2).
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "rejecting non-directory transfer-root entry: {}",
+                String::from_utf8_lossy(&cleaned_name)
+            )));
+        }
+
         // Construct entry from raw bytes (avoids UTF-8 validation on Unix)
         let mut entry = FileEntry::from_raw_bytes(
             cleaned_name,

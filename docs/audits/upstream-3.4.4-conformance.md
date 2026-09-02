@@ -136,9 +136,9 @@ mirroring the upstream daemon-delete-stats harness. The fix:
 - Carries the per-type counters in `ReceiverContext::pending_del_stats`,
   populated by both `run_pipelined` and `run_pipelined_incremental`.
 - Emits `NDX_DEL_STATS` from the receiver's `handle_goodbye` whenever
-  `flags.delete` is set, matching upstream's
+  `flags.delete` or `flags.force` is set, matching upstream's
   `delete_mode || force_delete || read_batch` early-emission gate
-  (`force_delete` / `read_batch` not yet wired into `ParsedServerFlags`).
+  (`read_batch` is still not wired into `ParsedServerFlags`).
 - Surfaces the counter into `ClientSummary::items_deleted()` for both
   pull (local receiver) and upload (remote generator stats) so the
   `--stats` renderer reports the correct count regardless of direction.

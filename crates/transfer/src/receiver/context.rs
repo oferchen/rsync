@@ -262,6 +262,22 @@ pub struct ReceiverContext {
     /// - `generator.c:2393-2398` - early `write_del_stats` when `delete_mode || force_delete || read_batch`
     /// - `main.c:225-238` - `write_del_stats()` wire format
     pub(in crate::receiver) pending_del_stats: DeleteStats,
+    /// Deletions performed to make room for a replacement entry, rather than by
+    /// the `--delete` sweep.
+    ///
+    /// Upstream has no second counter: `delete_dir_contents()` strips
+    /// `DEL_MAKE_ROOM` before recursing, so the entries inside a cleared
+    /// directory obstacle bump the same `stats.deleted_*` globals as a
+    /// delete-pass victim (only the obstacle node itself stays uncounted). The
+    /// obstacle sites run behind `&self`, so the tally is accumulated in a
+    /// `Cell` - the same shape `created_stats` uses - and folded into
+    /// `pending_del_stats` wherever the receiver reports its deletions.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:126-127` - `DEL_MAKE_ROOM` stripped for the recursion
+    /// - `delete.c:241-256` - `log_delete()` / `stats.deleted_*` skipped only for `DEL_MAKE_ROOM`
+    pub(in crate::receiver) make_room_delete_stats: std::cell::Cell<DeleteStats>,
     /// Transfer pipeline FSM tracking the current protocol phase.
     ///
     /// Enforces the linear phase progression through the transfer lifecycle.
@@ -511,6 +527,7 @@ impl ReceiverContext {
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
             pending_del_stats: DeleteStats::new(),
+            make_room_delete_stats: std::cell::Cell::new(DeleteStats::new()),
             pipeline,
             dest_root_created: false,
             flist_eof: false,

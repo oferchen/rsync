@@ -3021,3 +3021,92 @@ mod leading_slash_parity {
         );
     }
 }
+
+/// Serializes a single entry with an arbitrary name and mode.
+///
+/// The `.` transfer-root guard needs both fields under test control, which
+/// `entry_bytes_with_mode` (fixed name `"x"`) cannot express.
+fn entry_bytes_named(protocol: ProtocolVersion, name: &str, mode: u32) -> Vec<u8> {
+    use crate::flist::write::FileListWriter;
+
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol);
+    let mut entry = FileEntry::new_file(name.into(), 0, 0o100644);
+    entry.set_mtime(1700000000, 0);
+    entry.set_mode(mode);
+    writer.write_entry(&mut data, &entry).unwrap();
+    data
+}
+
+/// A `.` entry encoded as anything but a directory is refused as protocol
+/// garbage.
+///
+/// `.` is the receiver's SYNTHETIC transfer-root entry and is exempted from the
+/// requested-name filter, so a forged one arrives unfiltered with the
+/// destination root as its path. Every make-way site then sees a directory
+/// standing where a non-directory must be written and, under `--force` or
+/// `--delete`, clears it recursively - erasing receiver-owned files that were
+/// never part of the requested transfer. `--delete` is not needed.
+///
+/// ⚠ This guard is the ONLY thing standing between a hostile sender and the
+/// destination root, and it was absent while `--force` was
+/// parsed-and-discarded, which made upstream's
+/// `malicious-dot-file-delete-scope` cell pass VACUOUSLY: oc reached the
+/// cell's expected outcome because the recursion was dead code, not because
+/// anything rejected the entry. Wiring `--force` is what made the missing
+/// guard reachable. A future change that narrows the obstacle recursion
+/// instead of keeping this check would re-open the hole for the `--delete`
+/// half.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1127-1134` - `if ((!strcmp(thisname, ".") || !strcmp(thisname, "/."))
+///   && !S_ISDIR(mode))` -> `"ERROR: rejecting non-directory transfer-root entry"`,
+///   `exit_cleanup(RERR_PROTOCOL)`
+#[test]
+fn read_entry_rejects_non_directory_transfer_root() {
+    let protocol = test_protocol();
+
+    for mode in [0o100644u32, 0o120777, 0o010644, 0o140644] {
+        let data = entry_bytes_named(protocol, ".", mode);
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+        let err = reader
+            .read_entry(&mut cursor)
+            .expect_err(&format!("mode 0{mode:o} on \".\" must be refused"));
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        // upstream flist.c:1133 exit_cleanup(RERR_PROTOCOL) (exit 2), not
+        // RERR_STREAMIO(12).
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+            "a forged transfer root must be tagged RERR_PROTOCOL (mode 0{mode:o})",
+        );
+        assert!(
+            err.to_string()
+                .contains("rejecting non-directory transfer-root entry"),
+            "diagnostic must name the rule, got: {err}",
+        );
+    }
+}
+
+/// The non-vacuity control: a `.` entry with DIRECTORY mode is the only
+/// legitimate encoding of the transfer root and must still be accepted.
+///
+/// Without this cell the guard above could be satisfied by refusing every `.`
+/// entry, which would break every ordinary recursive transfer - the synthetic
+/// root is present in essentially all of them.
+#[test]
+fn read_entry_accepts_a_directory_transfer_root() {
+    let protocol = test_protocol();
+    let data = entry_bytes_named(protocol, ".", 0o040755);
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let entry = reader
+        .read_entry(&mut cursor)
+        .expect("a directory `.` is the legitimate transfer root")
+        .expect("entry, not end-of-list");
+    assert_eq!(entry.path().as_os_str(), ".");
+    assert_eq!(entry.mode() & 0o170000, 0o040000);
+}

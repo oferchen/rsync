@@ -366,10 +366,6 @@ impl GeneratorContext {
     /// Accumulates deletion statistics from an NDX_DEL_STATS message.
     /// (upstream: main.c:238-247 - `read_del_stats()` adds to global counters)
     pub(super) fn accumulate_delete_stats(&mut self, stats: &DeleteStats) {
-        self.delete_stats.files = self.delete_stats.files.saturating_add(stats.files);
-        self.delete_stats.dirs = self.delete_stats.dirs.saturating_add(stats.dirs);
-        self.delete_stats.symlinks = self.delete_stats.symlinks.saturating_add(stats.symlinks);
-        self.delete_stats.devices = self.delete_stats.devices.saturating_add(stats.devices);
-        self.delete_stats.specials = self.delete_stats.specials.saturating_add(stats.specials);
+        self.delete_stats.merge(stats);
     }
 }
