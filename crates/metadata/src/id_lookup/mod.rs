@@ -24,6 +24,7 @@
 #[cfg(unix)]
 mod cache;
 mod converter;
+mod error;
 mod name_cache;
 #[cfg(unix)]
 mod nss;
@@ -34,7 +35,10 @@ mod nss_win;
 
 #[cfg(unix)]
 pub use cache::{map_gid, map_uid};
-pub use converter::{NameConverterCallbacks, clear_name_converter, set_name_converter};
+pub use converter::{
+    ConverterOutcome, NameConverterCallbacks, clear_name_converter, set_name_converter,
+};
+pub use error::{LookupError, LookupResult, no_id_unless_converter_failed};
 pub use name_cache::{lookup_group_name_cached, lookup_user_name_cached};
 #[cfg(unix)]
 pub use nss::{

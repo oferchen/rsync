@@ -125,19 +125,21 @@ impl GeneratorContext {
     /// when `--acls` is disabled, or when the sender-side ACL cache is
     /// unavailable.
     #[cfg(unix)]
-    pub(crate) fn collect_acl_id_mappings(&mut self) {
-        use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
+    pub(crate) fn collect_acl_id_mappings(&mut self) -> io::Result<()> {
+        use metadata::id_lookup::{
+            lookup_group_name_cached, lookup_user_name_cached, no_id_unless_converter_failed,
+        };
 
         // upstream: acls.c:593,595 - `name = numeric_ids ? NULL : add_uid(...)`;
         // the named-entry id is added (and later mapped) only when names are in
         // play, i.e. `numeric_ids == 0`. Both daemon-forced and explicit
         // numeric-ids suppress it (`numeric_ids != 0`).
         if self.config.flags.numeric_ids.maps_numeric() || !self.config.flags.acls {
-            return;
+            return Ok(());
         }
 
         let Some(writer) = self.incremental.flist_writer_cache.as_ref() else {
-            return;
+            return Ok(());
         };
 
         // Snapshot the (id, is_user) pairs so the borrow of the cache ends
@@ -152,19 +154,26 @@ impl GeneratorContext {
         for (id, is_user) in named {
             if is_user {
                 if !self.uid_list.contains(id) {
-                    let name = lookup_user_name_cached(id).ok().flatten();
+                    // As in `collect_id_mappings`: a converter that could not
+                    // answer ends the session rather than producing a nameless
+                    // entry the receiver would map by raw id.
+                    let name = no_id_unless_converter_failed(lookup_user_name_cached(id))?;
                     self.uid_list.add_id(id, name);
                 }
             } else if !self.gid_list.contains(id) {
-                let name = lookup_group_name_cached(id).ok().flatten();
+                let name = no_id_unless_converter_failed(lookup_group_name_cached(id))?;
                 self.gid_list.add_id(id, name);
             }
         }
+
+        Ok(())
     }
 
     /// No-op on non-Unix platforms - ACL ids are not remapped by numeric id.
     #[cfg(not(unix))]
-    pub(crate) fn collect_acl_id_mappings(&mut self) {}
+    pub(crate) fn collect_acl_id_mappings(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     /// Sends io_error flag for protocol < 30.
     ///

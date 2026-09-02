@@ -10,7 +10,9 @@ use std::io::{self, Read};
 use protocol::CompatibilityFlags;
 
 #[cfg(unix)]
-use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
+use metadata::id_lookup::{
+    lookup_group_by_name, lookup_user_by_name, no_id_unless_converter_failed,
+};
 
 use super::super::ReceiverContext;
 
@@ -57,7 +59,14 @@ impl ReceiverContext {
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Uid),
-                |name| lookup_user_by_name(name).ok().flatten(),
+                // upstream: uidlist.c:273-282 `recv_add_id()` - an unresolved
+                // name keeps the sender's numeric id, but only because
+                // `user_to_uid()` got an answer. A name converter that could
+                // not answer ends the session instead (clientserver.c:1333):
+                // mapping a name the operator's converter never approved onto
+                // the sender's own id is the failure `name converter` exists
+                // to prevent.
+                |name| no_id_unless_converter_failed(lookup_user_by_name(name)),
             )?;
         }
 
@@ -68,7 +77,8 @@ impl ReceiverContext {
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Gid),
-                |name| lookup_group_by_name(name).ok().flatten(),
+                // upstream: uidlist.c:273-282 - as for uids above.
+                |name| no_id_unless_converter_failed(lookup_group_by_name(name)),
             )?;
         }
 
@@ -113,7 +123,7 @@ impl ReceiverContext {
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Uid),
-                |_| None,
+                |_| Ok(None),
             )?;
         }
 
@@ -123,7 +133,7 @@ impl ReceiverContext {
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Gid),
-                |_| None,
+                |_| Ok(None),
             )?;
         }
 

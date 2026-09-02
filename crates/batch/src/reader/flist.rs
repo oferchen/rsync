@@ -202,13 +202,13 @@ impl BatchReader {
             // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_uid || flags.preserve_acls) && !numeric_ids {
                 let mut uid_list = IdList::new();
-                uid_list.read(reader, id0_names, proto_ver, |_| None)?;
+                uid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
             }
 
             // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_gid || flags.preserve_acls) && !numeric_ids {
                 let mut gid_list = IdList::new();
-                gid_list.read(reader, id0_names, proto_ver, |_| None)?;
+                gid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
             }
         }
 
