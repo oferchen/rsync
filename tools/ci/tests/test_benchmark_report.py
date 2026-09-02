@@ -145,11 +145,11 @@ def dual_baseline_results() -> dict:
     3.4.4 numbers going missing rather than as a crash.
     """
     up_350 = {"mean": 4.000, "min": 3.9, "max": 4.1, "spread_pct": 5.0,
-              "peak_rss_kb": 8192, "corpus_mibps": 25.0}
+              "runs": 3, "peak_rss_kb": 8192, "corpus_mibps": 25.0}
     up_344 = {"mean": 2.000, "min": 1.9, "max": 2.1, "spread_pct": 10.0,
-              "peak_rss_kb": 4096, "corpus_mibps": 50.0}
+              "runs": 3, "peak_rss_kb": 4096, "corpus_mibps": 50.0}
     oc = {"mean": 1.000, "min": 0.9, "max": 1.1, "spread_pct": 20.0,
-          "peak_rss_kb": 16384, "corpus_mibps": 100.0}
+          "runs": 3, "peak_rss_kb": 16384, "corpus_mibps": 100.0}
     return {
         "upstream_version": "3.5.0",
         "oc_rsync_version": "0.6.4",
@@ -230,6 +230,24 @@ class DualBaselineColumns(unittest.TestCase):
     def test_corpus_rate_is_published(self):
         self.assertIn("MiB/s", self.out)
         self.assertIn("100", self.out)
+
+    def test_the_sample_size_behind_each_median_is_published(self):
+        """A median over two samples must not read like one over five.
+
+        The harness records `runs` for exactly this reason, but the report
+        used to leave it in the JSON: a reset cell (3 runs, warm-up dropped)
+        and a no-change cell (6 runs) rendered identically.
+        """
+        self.assertIn("| Runs |", self.out)
+        self.assertIn("| Initial sync | 3 |", self.out)
+
+    def test_a_run_count_the_harness_did_not_record_degrades_to_a_dash(self):
+        """An archived results file predates the column; it must still render."""
+        data = dual_baseline_results()
+        for series in list(data["tests"][0]["upstreams"].values()):
+            series.pop("runs")
+        data["tests"][0]["oc_rsync"].pop("runs")
+        self.assertIn("| Initial sync | - |", render(data))
 
     def test_oc_rsync_is_labelled_with_its_own_release(self):
         """The published v0.6.4 results said `oc_rsync_version = '3.4.4'`."""
