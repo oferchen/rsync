@@ -947,7 +947,7 @@ fn open_output_file(
 /// length. A `do_fallocate()` failure warns and continues (`receiver.c:324`), so
 /// this never propagates an error - preallocation is a best-effort optimization
 /// and its failure must not abort the receive.
-// upstream: receiver.c:320 - preallocated_len = do_fallocate(fd, 0, total_size)
+/// upstream: receiver.c:320 - preallocated_len = do_fallocate(fd, 0, total_size)
 fn maybe_preallocate(
     file: &fs::File,
     config: &DiskCommitConfig,
@@ -1003,8 +1003,8 @@ fn maybe_preallocate(
 /// which upstream forbids together with `--whole-file` (`options.c:2400`). The
 /// truncate is best-effort: on failure the caller keeps the basis length and
 /// falls back to punching, which is equally correct.
-// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
-// fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
+/// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
+/// fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
 pub(super) fn truncate_for_whole_file_sparse(
     file: &fs::File,
     begin: &BeginMessage,

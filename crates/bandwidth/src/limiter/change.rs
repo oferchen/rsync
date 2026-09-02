@@ -106,7 +106,7 @@ impl FromIterator<LimiterChange> for LimiterChange {
 /// `true`, throttling is disabled entirely.
 ///
 /// Returns a [`LimiterChange`] describing the transition that occurred.
-// upstream: options.c:2392 - daemon_bwlimit override: strictest rate wins
+/// upstream: options.c:2392 - daemon_bwlimit override: strictest rate wins
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,

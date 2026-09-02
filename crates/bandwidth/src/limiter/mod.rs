@@ -27,11 +27,11 @@ pub(super) use backend::sleep_with_backend;
 pub(super) use sleep::{duration_from_microseconds, sleep_for};
 
 /// One million microseconds per second.
-// upstream: io.c:sleep_for_bwlimit() ONE_SEC macro
+/// upstream: io.c:sleep_for_bwlimit() ONE_SEC macro
 pub(super) const MICROS_PER_SECOND: u128 = 1_000_000;
 
 /// Minimum accumulated debt before the limiter actually sleeps.
-// upstream: io.c:sleep_for_bwlimit() - `ONE_SEC / 10` threshold
+/// upstream: io.c:sleep_for_bwlimit() - `ONE_SEC / 10` threshold
 pub(super) const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
 /// Largest microsecond value representable as a `Duration`.
@@ -42,7 +42,7 @@ pub(super) const MAX_REPRESENTABLE_MICROSECONDS: u128 =
 pub(super) const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
 
 /// Floor for the per-write chunk size.
-// upstream: options.c:2396 - `if (bwlimit_writemax < 512) bwlimit_writemax = 512`
+/// upstream: options.c:2396 - `if (bwlimit_writemax < 512) bwlimit_writemax = 512`
 pub(super) const MIN_WRITE_MAX: usize = 512;
 
 #[cfg(any(test, feature = "test-support"))]

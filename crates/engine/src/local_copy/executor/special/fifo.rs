@@ -31,7 +31,7 @@ use ::metadata::{
 ///
 /// Handles hard-link deduplication, `--existing`, directory replacement via
 /// `--force`, backup, and dry-run mode.
-// upstream: receiver.c - FIFO handling
+/// upstream: receiver.c - FIFO handling
 pub(crate) fn copy_fifo(
     context: &mut CopyContext,
     source: &Path,
@@ -482,7 +482,7 @@ pub(crate) fn copy_fifo(
 ///
 /// Encodes mode (with `S_IFMT` bits), uid, and gid so a later fake-super
 /// read can faithfully reconstruct the original node.
-// upstream: xattrs.c:set_stat_xattr()
+/// upstream: xattrs.c:set_stat_xattr()
 #[cfg(all(unix, feature = "xattr"))]
 fn store_fake_super_for_local_metadata(
     destination: &Path,

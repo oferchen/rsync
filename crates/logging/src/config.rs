@@ -21,7 +21,7 @@ use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 /// [`apply_info_flag`](Self::apply_info_flag) /
 /// [`apply_debug_flag`](Self::apply_debug_flag) for `--info=`/`--debug=`
 /// overrides.
-// upstream: options.c struct that backs info_levels[] + debug_levels[]
+/// upstream: options.c struct that backs info_levels[] + debug_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbosityConfig {
@@ -37,8 +37,8 @@ impl VerbosityConfig {
     /// Applies cumulative upstream rsync verbosity mapping. Each level adds flags
     /// from all lower levels, matching `set_output_verbosity()` which iterates
     /// `j = 0..=level` over the `info_verbosity[]` and `debug_verbosity[]` tables.
-    // upstream: options.c:513 set_output_verbosity()
-    // upstream: options.c:228-243 debug_verbosity[] / info_verbosity[]
+    /// upstream: options.c:513 set_output_verbosity()
+    /// upstream: options.c:228-243 debug_verbosity[] / info_verbosity[]
     #[must_use]
     pub fn from_verbose_level(level: u8) -> Self {
         let mut config = Self::default();
@@ -198,7 +198,7 @@ impl VerbosityConfig {
     /// Parses the token into a flag name and optional numeric level suffix
     /// (defaulting to 1), then sets that flag. This implements the per-flag
     /// override syntax used by `--info=FLAGS`.
-    // upstream: options.c:parse_output_words()
+    /// upstream: options.c:parse_output_words()
     pub fn apply_info_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 
@@ -232,7 +232,7 @@ impl VerbosityConfig {
     /// Parses the token into a flag name and optional numeric level suffix
     /// (defaulting to 1), then sets that flag. This implements the per-flag
     /// override syntax used by `--debug=FLAGS`.
-    // upstream: options.c:parse_output_words()
+    /// upstream: options.c:parse_output_words()
     pub fn apply_debug_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 

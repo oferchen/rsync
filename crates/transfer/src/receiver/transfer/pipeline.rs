@@ -167,7 +167,7 @@ fn sparse_enabled_for_pass(sparse: bool, append: bool, is_redo_pass: bool) -> bo
 /// `MSG_ERROR_XFER`, `MSG_WARNING` -> `MSG_INFO`, log.c:359-363) are not
 /// repeated here - they already live in the emitters, which gate on
 /// `supports_generator_messages()`.
-// upstream: log.c:358 rwrite() `enum msgcode msg = (enum msgcode)code;`
+/// upstream: log.c:358 rwrite() `enum msgcode msg = (enum msgcode)code;`
 const fn peer_message_code(code: logging::LogCode) -> Option<protocol::MessageCode> {
     match code {
         logging::LogCode::ErrorXfer => Some(protocol::MessageCode::ErrorXfer),

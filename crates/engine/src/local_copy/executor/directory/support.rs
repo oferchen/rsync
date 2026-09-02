@@ -204,7 +204,7 @@ fn read_directory_entries_sorted_parallel(
 ///
 /// On Unix, uses raw byte comparison for consistency with C `strcmp`.
 /// On Windows, uses wide-character comparison via `encode_wide`.
-// upstream: flist.c:file_compare() - filename ordering
+/// upstream: flist.c:file_compare() - filename ordering
 fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     #[cfg(unix)]
     {
@@ -239,7 +239,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
 /// dir/sub/`, ...). The directory type is taken from the lstat'd metadata, so
 /// an unfollowed symlink-to-directory is a non-directory here, matching
 /// upstream's `S_ISDIR` test on the flist entry.
-// upstream: flist.c:3299 f_name_cmp() - type-then-name ordering
+/// upstream: flist.c:3299 f_name_cmp() - type-then-name ordering
 fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> Ordering {
     // `false < true`, so non-directories (is_dir == false) sort first.
     a.metadata

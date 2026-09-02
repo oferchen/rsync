@@ -348,7 +348,7 @@ fn resolve_nobody_uid() -> io::Result<u32> {
 /// faithful mirror: it resolves to exactly what upstream would have baked in on
 /// the host actually running the daemon, and it keeps working if the binary is
 /// moved between distributions.
-// upstream: clientserver.c:873 `add_a_group(f_out, NOBODY_GROUP)`
+/// upstream: clientserver.c:873 `add_a_group(f_out, NOBODY_GROUP)`
 #[cfg(unix)]
 const NOBODY_GROUP_CANDIDATES: [&[u8]; 2] = [b"nobody", b"nogroup"];
 

@@ -163,7 +163,7 @@ fn reference_mtime_matches(
 /// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
 /// (`any_time_differs`), and, when `-X` is active, the transferable extended
 /// attributes (`xattrs_differ`), each gated on the corresponding preserve option.
-// upstream: generator.c:475-509 unchanged_attrs - perms/ownership/time/xattr.
+/// upstream: generator.c:475-509 unchanged_attrs - perms/ownership/time/xattr.
 pub(crate) fn reference_attrs_unchanged(
     basis: &Path,
     source: &Path,

@@ -46,7 +46,7 @@ impl From<SizeArgError> for BandwidthParseError {
 /// whitespace. `Ok(None)` denotes an unlimited transfer rate (users may specify
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
-// upstream: options.c:parse_size_arg() - suffix/multiplier/adjust parsing
+/// upstream: options.c:parse_size_arg() - suffix/multiplier/adjust parsing
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
     if text.as_bytes().iter().all(u8::is_ascii_whitespace) {
@@ -116,7 +116,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 /// configuration. Surrounding whitespace is rejected to match upstream rsync's
 /// strict parsing. Upstream has no `:BURST` component, so a colon is rejected as
 /// invalid size syntax.
-// upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+/// upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

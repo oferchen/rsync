@@ -300,9 +300,9 @@ fn apply_backup_dir_attrs(
 /// `backup.c:306-317`, where `make_backup` returns 3 and leaves no backup:
 /// a device without `am_root && --devices`, or a special without
 /// `--specials`).
-// upstream: backup.c:make_backup() - copy-tree fallback (COPY / SYMLINK /
-// DEVICE branches). Device and special nodes are recreated via do_mknod_at
-// (backup.c:278-285), gated on am_root+preserve_devices / preserve_specials.
+/// upstream: backup.c:make_backup() - copy-tree fallback (COPY / SYMLINK /
+/// DEVICE branches). Device and special nodes are recreated via do_mknod_at
+/// (backup.c:278-285), gated on am_root+preserve_devices / preserve_specials.
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,
@@ -358,9 +358,9 @@ pub(crate) fn copy_entry_to_backup(
 /// placing a backup). Under `--fake-super` the node is virtualised as a `0600`
 /// placeholder carrying the `%stat` xattr, matching `syscall.c:do_mknod()`'s
 /// `am_root < 0` branch.
-// upstream: backup.c:278 - `(am_root && preserve_devices && IS_DEVICE(mode))
-// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
-// non-zero for real root, --super, and --fake-super (options.c:90).
+/// upstream: backup.c:278 - `(am_root && preserve_devices && IS_DEVICE(mode))
+/// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
+/// non-zero for real root, --super, and --fake-super (options.c:90).
 #[cfg(unix)]
 fn copy_special_to_backup(
     source: &Path,
