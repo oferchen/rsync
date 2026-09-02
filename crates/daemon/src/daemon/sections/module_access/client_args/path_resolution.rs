@@ -70,14 +70,29 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// rather than `PathBuf::join`, which would emit `\` on Windows for a path that
 /// is about to be compared against module-relative wire names.
 ///
+/// ⚠ A dropped `.` or `..` component leaves the separator that PRECEDED it in
+/// place. Upstream does not walk components and rejoin them; it copies each one
+/// "through next slash" (`util1.c:1201`), so the slash is already in the output
+/// buffer by the time the next component is examined and discarded. That is why
+/// `sub/.` sanitizes to `sub/` and not to `sub`: the surviving trailing slash is
+/// upstream's DOTDIR marker, which `flist.c:2589-2594` turns into `DOTDIR_NAME`
+/// and `flist.c:2696` then reads as the `name_type != NORMAL_NAME` disjunct of
+/// `link_stat()`'s follow decision. Rejoining the kept components discards that
+/// slash, so `rsync://host/mod/sym-to-dir/.` was `lstat`ed and shipped as a
+/// symlink where upstream follows it and ships the directory's CONTENTS.
+/// Delegating to the shared `sanitize_path` keeps the two from drifting again.
+///
+/// The empty string, not `"."`, means "collapsed to nothing" here; upstream
+/// spells that case `"."` (`util1.c:1204-1206`) and the callers below turn the
+/// empty string into the module root, which is the same destination.
+///
 /// Deliberately NOT `lexically_normalize`, which walks the same components but
 /// PRESERVES an unpoppable leading `..` so its caller's `starts_with` containment
 /// check can reject an escaping alt-basis path. Four differences - input type,
 /// output type, separator policy, leading-`..` policy - so they are two
 /// functions with two contracts, not one to be deduplicated.
 fn collapse_module_relative(tail: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    // Splits on `/` ONLY. `tail` is a peer-supplied wire path, and the wire is
+    // Inspects `/` ONLY. `tail` is a peer-supplied wire path, and the wire is
     // `/`-separated on every host (upstream `pathjoin()`); upstream's own
     // `sanitize_path` tests `== '/'` at every separator check and has no `\`
     // arm at all, so a `\` is copied through as an ordinary byte of the
@@ -85,19 +100,21 @@ fn collapse_module_relative(tail: &str) -> String {
     // separator silently relocates a legitimately-named file - `a\b` becomes
     // `a/b` - and strips a trailing one. Contrast the `module_path` checks
     // below, which DO accept `\` because they inspect an operator-configured
-    // LOCAL path that may legitimately be Windows-style.
-    for segment in tail.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                // upstream util1.c:1183-1191 - back up one component, or drop
-                // the `..` outright when already at the start (depth 0).
-                out.pop();
-            }
-            other => out.push(other),
-        }
+    // LOCAL path that may legitimately be Windows-style. `sanitize_path`
+    // inspects only the ASCII `/` and `.` bytes, so it upholds that policy.
+    //
+    // `drop_dot_dirs` is on, matching upstream's `util1.c:1141`
+    // `!relative_paths || !(flags & SP_KEEP_DOT_DIRS)`: the daemon's
+    // `options.c:2405` call passes `SP_KEEP_DOT_DIRS`, but the flag only takes
+    // effect under `--relative`, and under `--relative` a surviving `sub/.`
+    // is reduced to the same `sub/` by `clean_fname(CFN_DROP_TRAILING_DOT_DIR
+    // | CFN_KEEP_TRAILING_SLASH)` at `flist.c:2634` anyway.
+    let collapsed = filters::sanitize_path::sanitize_path(tail);
+    if collapsed == "." {
+        String::new()
+    } else {
+        collapsed
     }
-    out.join("/")
 }
 
 /// Resolves the receiver's on-disk destination directory from the client's
@@ -146,16 +163,18 @@ fn resolve_receiver_dest(
     // make-a-directory branch on `file_total > 1 || trailing_slash`: it mkdirs
     // the dest, chdirs into it and returns a NULL local_name, so a single
     // source file lands INSIDE. Without the slash the dest names the file
-    // itself. `collapse_module_relative` splits on `/` and drops the empty
-    // trailing segment, so the signal dies here unless it is re-appended -
-    // and the receiver then silently writes a FILE where the peer asked for a
-    // directory. oc's local path already implements the upstream rule
-    // correctly (measured); only the daemon was losing the input to it.
+    // itself. oc's local path already implements the upstream rule correctly
+    // (measured); only the daemon was losing the input to it.
+    //
+    // The slash is read off `collapsed`, NOT off `tail`: upstream's
+    // `sanitize_path` is what decides whether the sanitized arg ends in `/`,
+    // and it emits one for shapes the raw tail does not end with - `sub/.` and
+    // `sub/x/..` both sanitize to `sub/`. Testing the raw tail dropped those.
     //
     // Built by pushing onto the OsString rather than `PathBuf::join`, which
     // normalises a trailing separator away, for the same reason
     // `resolve_sender_sources` below does it by hand.
-    if tail.ends_with('/') {
+    if collapsed.ends_with('/') {
         let mut buf = module_path.as_os_str().to_owned();
         if !buf
             .as_encoded_bytes()
@@ -165,7 +184,6 @@ fn resolve_receiver_dest(
             buf.push("/");
         }
         buf.push(&collapsed);
-        buf.push("/");
         return std::path::PathBuf::from(buf);
     }
     module_path.join(collapsed)
@@ -226,16 +244,21 @@ fn resolve_sender_sources(
             sources.push(module_root_dotdir(module_path));
             continue;
         }
-        // Preserve the trailing slash so the sender can detect a dotdir-style
-        // source (upstream flist.c:2312-2322 appends `.` and sets DOTDIR_NAME
-        // for any `fbuf[len-1] == '/'`). Upstream rsync joins module-relative
-        // paths with a literal `/` regardless of host OS (util1.c pathjoin()),
-        // so build the result the same way instead of going through
-        // PathBuf::join, which on Windows inserts `\` and on macOS leaves
-        // a trailing `/` that doubles when we re-append.
+        // `trimmed` already carries the trailing slash whenever upstream's
+        // sanitize would leave one, so the sender can detect a dotdir-style
+        // source (upstream flist.c:2589-2594 appends `.` and sets DOTDIR_NAME
+        // for any `fbuf[len-1] == '/'`). That covers the shapes the RAW tail
+        // does not end with: `sym-to-dir/.` and `sym-to-dir/x/..` both sanitize
+        // to `sym-to-dir/`, and without the marker flist.c:2696's
+        // `copy_dirlinks || name_type != NORMAL_NAME` follow decision fails
+        // over, so a symlinked directory ships as a symlink instead of its
+        // contents. Upstream rsync joins module-relative paths with a literal
+        // `/` regardless of host OS (util1.c pathjoin()), so build the result
+        // the same way instead of going through PathBuf::join, which on Windows
+        // inserts `\` and on macOS leaves a trailing `/` that doubles when we
+        // re-append.
         // upstream flist.c tests `fbuf[len-1] == '/'` only - a trailing `\` is
         // part of the NAME on Unix, not a dotdir marker.
-        let trailing = tail.ends_with('/');
         let mut buf = module_path.as_os_str().to_owned();
         let needs_leading_sep = !buf
             .as_encoded_bytes()
@@ -245,14 +268,6 @@ fn resolve_sender_sources(
             buf.push("/");
         }
         buf.push(trimmed);
-        if trailing
-            && !buf
-                .as_encoded_bytes()
-                .last()
-                .is_some_and(|b| *b == b'/' || *b == b'\\')
-        {
-            buf.push("/");
-        }
         sources.push(std::path::PathBuf::from(buf));
     }
     if all_empty {

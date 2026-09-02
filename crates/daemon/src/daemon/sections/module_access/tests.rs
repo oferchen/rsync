@@ -3423,6 +3423,103 @@ mod module_access_tests {
         assert_eq!(lossy, vec!["/srv/upload/d1/d2/".to_owned()]);
     }
 
+    // Upstream's `sanitize_path` copies each component THROUGH its trailing
+    // slash (util1.c:1201) and only then examines the next one, so discarding a
+    // `.` (util1.c:1163-1172) leaves that slash in the output: `d1/.` sanitizes
+    // to `d1/`, not `d1`. The surviving slash is upstream's DOTDIR marker
+    // (flist.c:2589-2594), and it is the `name_type != NORMAL_NAME` disjunct of
+    // `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`
+    // (flist.c:2696) - so losing it makes a symlinked directory ship as a
+    // symlink instead of its contents. oc split on `/`, dropped the `.` segment
+    // AND its separator, and re-attached a slash only when the RAW tail ended in
+    // one, which `d1/.` does not.
+    //
+    // ⚠ Asserts on the lossy STRING, not on PathBuf equality: `Path::new("a/")
+    // == Path::new("a")` is TRUE because Path compares components and discards
+    // a trailing separator, so a PathBuf assertion would pass both before and
+    // after the fix and could not see the thing under test.
+    #[test]
+    fn resolve_sender_sources_keeps_the_dotdir_marker_on_a_trailing_dot() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/.".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let lossy: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(lossy, vec!["/srv/upload/d1/d2/".to_owned()]);
+    }
+
+    // Same rule reached through the `..` arm: upstream backs `sanp` up to just
+    // past the previous separator (util1.c:1186-1190), so `d1/d2/..` also ends
+    // in a slash and also carries the marker.
+    #[test]
+    fn resolve_sender_sources_keeps_the_dotdir_marker_through_a_dotdot_collapse() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/..".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let lossy: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(lossy, vec!["/srv/upload/d1/".to_owned()]);
+    }
+
+    // Non-vacuity companion for the two cells above: the marker must be EARNED,
+    // never appended. Its verdict does not depend on the fix, so a green
+    // companion beside a red pin proves the assertion is about the marker and
+    // not about a resolver that decorates every source with a slash.
+    #[test]
+    fn resolve_sender_sources_does_not_invent_a_dotdir_marker() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/d2".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let lossy: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(lossy, vec!["/srv/upload/d1/d2".to_owned()]);
+    }
+
+    // The filed claim for the second defect was that every `.` operand is
+    // stripped and nothing transfers. It is not: a lone `.` is short-circuited
+    // to the module root WITH the marker before the collapse is ever reached.
+    // Pinned so the claim cannot become true later.
+    #[test]
+    fn resolve_sender_sources_bare_dot_operand_keeps_the_module_root_marker() {
+        let module_path = std::path::Path::new("/srv/upload");
+        for tail in ["upload/.", "upload/./", "upload/./."] {
+            let args = vec![".".to_owned(), tail.to_owned()];
+            let sources = resolve_sender_sources(module_path, &args, "upload");
+            let lossy: Vec<String> = sources
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(
+                lossy,
+                vec!["/srv/upload/".to_owned()],
+                "`{tail}` names the module root with upstream's DOTDIR marker \
+                 (flist.c:2601-2604); an empty list is the stripped-to-nothing \
+                 shape the note claimed"
+            );
+        }
+    }
+
+    // Receiver-side counterpart of the sender pin: the same `sanitize_path`
+    // rule feeds `get_local_name()`'s `trailing_slash` (main.c:741), which
+    // decides whether a single incoming file lands INSIDE the destination or
+    // renames it.
+    #[test]
+    fn resolve_receiver_dest_keeps_the_slash_through_a_trailing_dot_dir() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/realdir/.".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(
+            dest.as_os_str(),
+            std::ffi::OsStr::new("/srv/upload/realdir/")
+        );
+    }
+
     #[test]
     fn resolve_sender_sources_collapses_parent_dir_under_module_root() {
         // The escape clamps at the module root instead of being refused, which
