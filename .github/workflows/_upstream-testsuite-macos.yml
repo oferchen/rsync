@@ -1,0 +1,223 @@
+name: Upstream Testsuite (macOS)
+
+# Reusable workflow: the upstream rsync 3.5.0 Python testsuite on macOS.
+#
+# WHY A SEPARATE WORKFLOW RATHER THAN A `runs-on` INPUT ON
+# `_upstream-testsuite.yml`
+# ---------------------------------------------------------------------------
+# The shared runner script `tools/ci/run_upstream_testsuite.sh` IS
+# platform-agnostic - it carries only three Linux-isms, each of which degrades
+# safely on macOS (`mountpoint`/`/proc/mounts` probing behind a `command -v`
+# guard, and a tmpfs concern in `world_traversable_scratch_base()` that is
+# explicitly scoped to root-on-Linux). That script is the shared piece and this
+# workflow reuses it verbatim.
+#
+# The WORKFLOW is the part that is not portable. `_upstream-testsuite.yml`'s job
+# body is Linux-shaped throughout: the `APT_PACKAGES` env, two
+# `cache-apt-pkgs-action` steps, two `ensure_apt_packages.sh` verifications, and
+# a `sudo env` re-exec for the root leg. Threading a `runs-on` input through it
+# would mean guarding every one of those steps on the platform. It also carries
+# ten REQUIRED status contexts, so a mistake there breaks gates that have
+# nothing to do with macOS. Duplicating ~60 lines of YAML is the cheaper and
+# safer half of that trade.
+#
+# WHAT THIS LEG BUYS (measured 2026-09-03, full 345-cell nonroot/pipe run)
+# ---------------------------------------------------------------------------
+# 230 passed / 10 failed / 105 skipped, against 257 / 3 / 85 for the Linux
+# nonroot/pipe leg. Only TWO of the ten failures are shared with Linux; the
+# other EIGHT are divergences no existing required context can observe:
+#
+#   chmod-setid, daemon-scan-dir-escape, operator-path-partial-dir-daemon,
+#   sender-flist-symlink-leak, symlink-race-source   (pass on Linux)
+#   crtimes, macos-setgid-ordinary-mode-regression,
+#   partial-protected-regular-retry-policy           (SKIP on Linux)
+#
+# The last three skip on Linux, so they had never executed in this repo's CI at
+# all - including `macos-setgid-ordinary-mode-regression`, a cell named for the
+# platform that no leg was running.
+#
+# None of the ten appears in upstream's own `testsuite/skiplist/macos.txt`, so
+# none is a platform artefact upstream itself waives.
+#
+# COVERAGE THIS LEG DOES *NOT* BUY
+# ---------------------------------------------------------------------------
+# 23 cells skip here that run on Linux. Twenty are exactly upstream's own
+# macos.txt entries (acls-*, sparse, preallocate, simd-checksum, rrsync-*, ...)
+# and three (chown, devices, daemon-namecvt-empty-response) are privilege-keyed.
+# So the leg produces ~240 real outcomes, not 345 - do not read the row count as
+# the coverage figure.
+#
+# NON-ROOT ONLY, BY DESIGN
+# ---------------------------------------------------------------------------
+# There is no root leg here. `sudo` on a GitHub macOS runner is available but
+# the root-only cells this would unlock (chown/devices/dir-sgid) are already in
+# upstream's macos.txt skip set or privilege-keyed away, so a root leg would run
+# the same 240 outcomes at twice the cost. Add one only if a measurement shows
+# it moves cells.
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      upstream_rsync_version:
+        description: 'Upstream rsync version to build and test against'
+        type: string
+        default: '3.5.0'
+      expect_result_macos:
+        description: >-
+          Path to the per-leg expected-outcome manifest. ONLY the tests it names
+          run, and every outcome must match - an unexpected PASS included - so
+          the file is the coverage set as well as the oracle.
+        type: string
+        default: 'tools/ci/upstream-3.5.0-expect.macos.nonroot.txt'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-testsuite-macos:
+    # A literal, not an expression, for the same reason as the Linux legs: a job
+    # skipped by an `if:` reports the raw expression text as its name, which
+    # would break the status context this job publishes.
+    name: upstream testsuite (macOS)
+    runs-on: macos-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+      CACHE_VERSION: ${{ inputs.cache_version }}
+      UPSTREAM_RSYNC_VERSION: ${{ inputs.upstream_rsync_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: upstream-testsuite-macos
+          cache-on-failure: true
+
+      - name: Cache upstream rsync source
+        id: cache-upstream
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
+
+      # macOS runners ship Xcode CLT (cc, make) and autoconf/automake/libtool,
+      # which is what upstream's `./configure && make` needs. Recorded rather
+      # than installed: an unconditional `brew install` here would spend minutes
+      # on every run to re-assert what the image already provides, and a MISSING
+      # tool must surface as a build failure naming the tool, not as a silent
+      # capability difference in the rsync that gets built.
+      - name: Record the upstream build toolchain
+        run: |
+          set -euo pipefail
+          for tool in cc make autoconf automake libtool python3; do
+            printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo '<ABSENT>')"
+          done
+
+      - name: Build oc-rsync (release)
+        uses: ./.github/actions/build-oc-rsync
+
+      - name: Run upstream testsuite
+        id: testsuite
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          EXPECT_RESULT: ${{ inputs.expect_result_macos }}
+          # Always emit the manifest this run would hold itself to, for the same
+          # reason the Linux legs do: hand-curating the ledger is exactly how it
+          # drifts, and because --expect-result runs ONLY the tests it names,
+          # that drift shrinks coverage silently instead of failing. Uploaded as
+          # an artifact so a re-baseline is a reviewable diff of outcomes.
+          EMIT_EXPECT_RESULT: target/interop/expect-result.macos.nonroot.txt
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop
+          bash tools/ci/run_upstream_testsuite.sh 2>&1 | tee target/interop/upstream-testsuite-output.log
+        # No step-level continue-on-error: an UNEXPECTED FAIL or an unexpected
+        # PASS must reach the job conclusion, or the leg is decorative.
+
+      - name: Generate job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          OUTPUT_LOG="target/interop/upstream-testsuite-output.log"
+
+          echo "## Upstream Testsuite Results (macOS)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ! -f "$OUTPUT_LOG" ]]; then
+            echo "No test output found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^----/,$ p' "$OUTPUT_LOG" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          UPASS_LINES=$(grep '^UPASS' "$OUTPUT_LOG" || true)
+          if [[ -n "$UPASS_LINES" ]]; then
+            echo "### Unexpected Passes (UPASS)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "A cell the manifest expects to fail now passes. Re-baseline the manifest from this run's emitted artifact - do NOT edit it by hand." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$UPASS_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          FAIL_LINES=$(grep '^FAIL' "$OUTPUT_LOG" || true)
+          if [[ -n "$FAIL_LINES" ]]; then
+            echo "### Failures" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$FAIL_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "<details><summary>Full test results</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status | Test |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|------|" >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(PASS|FAIL|XFAIL|UPASS|SKIP)' "$OUTPUT_LOG" | while IFS= read -r line; do
+            STATUS=$(echo "$line" | awk '{print $1}')
+            TEST=$(echo "$line" | awk '{print $2}')
+            echo "| $STATUS | $TEST |" >> "$GITHUB_STEP_SUMMARY"
+          done || true
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-testsuite-logs-macos
+          path: |
+            target/interop/upstream-testsuite/
+            target/interop/upstream-testsuite-output.log
+            target/interop/expect-result.macos.nonroot.txt
+          if-no-files-found: ignore
+          retention-days: 14
