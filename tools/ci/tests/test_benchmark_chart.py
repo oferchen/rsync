@@ -299,6 +299,96 @@ class RenderedChart(unittest.TestCase):
         self.assertIn("no data", section)
 
 
+DUAL_BASELINE = {
+    "upstream_version": "3.5.0",
+    "oc_rsync_version": "0.6.4",
+    "baselines": [
+        {"label": "3.5.0", "version": "3.5.0", "path": "/a", "primary": True},
+        {"label": "3.4.4", "version": "3.4.4", "path": "/b", "primary": False},
+    ],
+    "test_data": {"size_mb": 100, "files": 1000},
+    "summary": {"avg_ratio": 0.5, "best_ratio": 0.25, "worst_ratio": 1.0,
+                "by_mode": {}},
+    "tests": [
+        {
+            "id": "local_initial",
+            "name": "Initial sync",
+            "mode": "local",
+            # 4.00s / 2.00s / 1.00s: three magnitudes no two of which can be
+            # confused, so a chart that plotted the legacy `upstream` twice
+            # would lose "2.00s" entirely.
+            "upstreams": {
+                "3.5.0": {"mean": 4.0, "min": 4.0, "max": 4.0},
+                "3.4.4": {"mean": 2.0, "min": 2.0, "max": 2.0},
+            },
+            "ratios": {"3.5.0": 0.25, "3.4.4": 0.5},
+            "upstream": {"mean": 4.0, "min": 4.0, "max": 4.0},
+            "oc_rsync": {"mean": 1.0, "min": 1.0, "max": 1.0},
+            "ratio": 0.25,
+        },
+        {
+            "id": "memory_initial",
+            "name": "Initial sync",
+            "mode": "memory",
+            "upstreams": {
+                "3.5.0": {"mean": 0.5, "peak_rss_kb": 8192},
+                "3.4.4": {"mean": 0.5, "peak_rss_kb": 16384},
+            },
+            "ratios": {"3.5.0": 0.5, "3.4.4": 0.5},
+            "upstream": {"mean": 0.5, "peak_rss_kb": 8192},
+            "oc_rsync": {"mean": 0.25, "peak_rss_kb": 65536},
+            "ratio": 0.5,
+        },
+    ],
+}
+
+
+class DualBaselineChart(unittest.TestCase):
+    """Every baseline the run measured must reach the published chart."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.svg = bc.generate_chart(DUAL_BASELINE)
+        cls.local = mode_section(cls.svg, "Local Copy", "Memory Usage")
+        cls.memory = mode_section(cls.svg, "Memory Usage", None)
+
+    def test_a_row_carries_one_bar_per_baseline_plus_oc_rsync(self):
+        labels = texts(self.local)
+        for magnitude in ("4.00s", "2.00s", "1.00s"):
+            self.assertIn(
+                magnitude, labels,
+                f"{magnitude} is missing: a baseline was dropped or plotted "
+                f"from the legacy single-upstream field",
+            )
+
+    def test_each_baseline_gets_its_own_ratio_annotation(self):
+        self.assertIn("vs 3.5.0 4.0x faster", self.local)
+        self.assertIn("vs 3.4.4 2.0x faster", self.local)
+
+    def test_the_legend_names_every_baseline(self):
+        self.assertIn("upstream rsync 3.5.0", self.svg)
+        self.assertIn("upstream rsync 3.4.4", self.svg)
+
+    def test_the_title_names_the_subject_and_both_baselines(self):
+        self.assertIn("oc-rsync 0.6.4 vs upstream rsync 3.5.0 and 3.4.4", self.svg)
+
+    def test_a_byte_row_derives_each_baselines_ratio_from_plotted_bytes(self):
+        """64 MiB against 8 MiB and 16 MiB: 8.0x and 4.0x, not the time ratio."""
+        self.assertIn("8.00 MiB", self.memory)
+        self.assertIn("16.00 MiB", self.memory)
+        self.assertIn("64.00 MiB", self.memory)
+        self.assertIn("vs 3.5.0 8.0x more memory", self.memory)
+        self.assertIn("vs 3.4.4 4.0x more memory", self.memory)
+        self.assertNotIn("faster", self.memory)
+
+    def test_a_single_baseline_run_keeps_its_unprefixed_annotation(self):
+        """The one-baseline shape must not grow a redundant `vs X` prefix."""
+        section = mode_section(
+            bc.generate_chart(SYNTHETIC), "Local Copy", "Memory Usage"
+        )
+        self.assertIn(">5.0x faster<", section)
+
+
 class RenderedReport(unittest.TestCase):
     """The markdown report already handled RSS correctly; pin that."""
 
