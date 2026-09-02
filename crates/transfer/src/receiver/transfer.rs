@@ -1582,4 +1582,173 @@ mod tests {
         assert_eq!(fs::read_to_string(&final_a).unwrap(), "staged-a");
         assert_eq!(fs::read_to_string(&final_b).unwrap(), "staged-b");
     }
+
+    /// The delayed sweep is a second CALLER of the backup ladder, so it must
+    /// hand the ladder the receiver's destination anchor - not a default,
+    /// unanchored [`BackupEnv`].
+    ///
+    /// Every other sweep test in this module passes `BackupEnv::default()`, so
+    /// none of them can tell a threaded env from a dropped one. This one can:
+    /// the destination root PATH is swapped for a symlink to an out-of-tree
+    /// directory after the [`fast_io::DirSandbox`] pinned its dirfd (program
+    /// order, no threads, no sleeps), which makes the two wirings differ by
+    /// observable PLACEMENT. Anchored, the pre-image is linked into the pinned
+    /// directory; unanchored, the path-based resolver follows the swap and the
+    /// pre-image leaves the tree.
+    ///
+    /// upstream: `receiver.c:694` - `if (make_backups > 0 && !make_backup(fname,
+    /// False)) continue;`. This is the same `make_backup()` `finish_transfer()`
+    /// calls, and `make_backup()` (`backup.c:437-448`) raises
+    /// `operator_path_resolve` for its whole body whichever caller entered it.
+    #[cfg(unix)]
+    #[test]
+    fn delayed_sweep_threads_the_destination_anchor_into_the_backup_ladder() {
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let staging = fs::canonicalize(dir.path()).expect("canon");
+
+        let dest_dir = staging.join("dest");
+        let pinned = staging.join("dest.pinned");
+        let outside = staging.join("outside");
+        fs::create_dir(&dest_dir).unwrap();
+        fs::create_dir(&outside).unwrap();
+
+        // Pin the real destination inode BEFORE the swap.
+        let sandbox = fast_io::DirSandbox::open_root(&dest_dir).expect("sandbox");
+        fs::rename(&dest_dir, &pinned).expect("move the real dest aside");
+        std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant the dest symlink");
+
+        // The pre-transfer destination the sweep must back up, reached through
+        // the swapped path exactly as the receiver's stored path string does.
+        let final_path = dest_dir.join("payload.bin");
+        fs::write(outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+        let staged_dir = staging.join("staged");
+        fs::create_dir(&staged_dir).unwrap();
+        let staged_path = staged_dir.join("payload.bin");
+        fs::write(&staged_path, b"replacement bytes, a different length").unwrap();
+
+        let backup_config = crate::disk_commit::BackupConfig {
+            dest_dir: dest_dir.clone(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        let env = BackupEnv {
+            sandbox: Some(&sandbox),
+            dest_dir: Some(&dest_dir),
+            metadata_opts: None,
+        };
+
+        let io_error = handle_delayed_updates(
+            &[(staged_path, final_path.clone())],
+            Some(backup_config),
+            env,
+            None,
+        );
+        assert_eq!(io_error, 0, "the sweep itself must succeed");
+
+        assert!(
+            !outside.join("payload.bin~").exists(),
+            "the sweep must not carry the pre-image out of tree through the \
+             swapped destination root"
+        );
+        let anchored_backup = pinned.join("payload.bin~");
+        assert!(
+            anchored_backup.exists(),
+            "the sweep must pass the destination anchor to make_backup; with a \
+             default BackupEnv the backup follows the swap instead"
+        );
+        assert_eq!(
+            fs::read(&anchored_backup).unwrap(),
+            b"pre-transfer bytes",
+            "the backup must carry the destination's pre-transfer bytes verbatim"
+        );
+
+        // Non-vacuity: the sweep really did run its rename, so "the backup is
+        // in the pinned directory" cannot be passing because nothing happened.
+        assert_eq!(
+            fs::read(outside.join("payload.bin")).unwrap(),
+            b"replacement bytes, a different length",
+            "the delayed rename must still land after a successful backup"
+        );
+    }
+
+    /// The receiver entry point that OWNS the anchor must put it in the
+    /// [`BackupEnv`] it builds: `finalize_delayed_updates_and_hardlinks`
+    /// receives `dest_dir` and the destination `sandbox` as parameters, and
+    /// those are exactly what the ladder needs.
+    ///
+    /// Same swapped-root fixture as
+    /// [`delayed_sweep_threads_the_destination_anchor_into_the_backup_ladder`],
+    /// one level up: that cell pins the sweep passing its `env` on to
+    /// `make_backup`, this one pins the caller constructing a real `env` from
+    /// its own arguments instead of a default. Both are needed - either half
+    /// alone can be dropped without the other cell noticing.
+    ///
+    /// upstream: `receiver.c:694-695` - `handle_delayed_updates()` runs at
+    /// `phase == 2` inside the receiver, with the same ambient
+    /// `operator_path_resolve` state `make_backup()` sets for itself
+    /// (`backup.c:437-448`).
+    #[cfg(unix)]
+    #[test]
+    fn delayed_update_finalizer_builds_the_backup_env_from_its_anchor() {
+        let dir = test_support::create_tempdir();
+        let staging = fs::canonicalize(dir.path()).expect("canon");
+
+        let dest_dir = staging.join("dest");
+        let pinned = staging.join("dest.pinned");
+        let outside = staging.join("outside");
+        fs::create_dir(&dest_dir).unwrap();
+        fs::create_dir(&outside).unwrap();
+
+        let sandbox = fast_io::DirSandbox::open_root(&dest_dir).expect("sandbox");
+        fs::rename(&dest_dir, &pinned).expect("move the real dest aside");
+        std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant the dest symlink");
+
+        let final_path = dest_dir.join("payload.bin");
+        fs::write(outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+        let staged_dir = staging.join("staged");
+        fs::create_dir(&staged_dir).unwrap();
+        let staged_path = staged_dir.join("payload.bin");
+        fs::write(&staged_path, b"replacement bytes, a different length").unwrap();
+
+        let mut ctx = replay_client_ctx();
+        ctx.config.flags.backup = true;
+
+        let mut writer = crate::writer::DiscardSink::new();
+        ctx.finalize_delayed_updates_and_hardlinks(
+            &dest_dir,
+            Some(&sandbox),
+            &[(staged_path, final_path)],
+            &mut writer,
+        )
+        .expect("the delayed-update finalizer must complete");
+
+        assert!(
+            !outside.join("payload.bin~").exists(),
+            "the finalizer must not let the pre-image leave the tree through \
+             the swapped destination root"
+        );
+        let anchored_backup = pinned.join("payload.bin~");
+        assert!(
+            anchored_backup.exists(),
+            "the finalizer must build the BackupEnv from the dest_dir and \
+             sandbox it was handed, not a default one"
+        );
+        assert_eq!(
+            fs::read(&anchored_backup).unwrap(),
+            b"pre-transfer bytes",
+            "the backup must carry the destination's pre-transfer bytes verbatim"
+        );
+
+        // Non-vacuity: the finalizer really did sweep, so the placement
+        // assertion is not passing on an untouched fixture.
+        assert_eq!(
+            fs::read(outside.join("payload.bin")).unwrap(),
+            b"replacement bytes, a different length",
+            "the delayed rename must still land after a successful backup"
+        );
+    }
 }

@@ -100,9 +100,6 @@ impl ReceiverContext {
             Vec::new()
         };
 
-        // upstream: generator.c:1329-1338 - make_path() for relative_paths
-        self.ensure_relative_parents(&setup.dest_dir);
-
         // A dry run reports its directories from the shared `plan_dry_run` pass
         // below, exactly like `run_pipelined`. Running this walk too would
         // record every directory row and created-dir tally twice; it creates
@@ -151,6 +148,18 @@ impl ReceiverContext {
             }
         }
 
+        // upstream: generator.c:1718-1725 - make_path() fills in a parent that
+        // is still absent after its own file-list entry would have created it.
+        // Must follow the directory walk above: running it first would pre-empt
+        // the classified, confined mkdir in `create_directory_incremental` and
+        // make a real run report an existing directory where its own --dry-run
+        // reports a created one.
+        self.ensure_relative_parents(
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        );
+
         #[cfg(unix)]
         self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
@@ -189,6 +198,8 @@ impl ReceiverContext {
         let files_to_transfer = self.build_files_to_transfer(
             writer,
             &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
             &setup.metadata_opts,
             Some(&failed_dirs),
             &mut metadata_errors,
@@ -567,6 +578,8 @@ mod itemize_order_tests {
         let _ = ctx.build_files_to_transfer(
             &mut writer,
             dest,
+            #[cfg(unix)]
+            None,
             &opts,
             Some(&failed_dirs),
             &mut metadata_errors,

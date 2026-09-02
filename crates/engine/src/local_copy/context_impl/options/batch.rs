@@ -568,13 +568,19 @@ impl<'a> CopyContext<'a> {
         // traversal-order entry ends up in the sorted flist.
         let traversal_to_sorted = self.build_batch_sort_mapping();
 
+        // upstream: hlink.c:113-194 match_gnums() - one member per hardlink
+        // cluster is transferred and the rest are linked to it, so the batch
+        // must carry the payload exactly once per cluster.
+        let suppressed = self.batch_hlink_suppressed_indices(&traversal_to_sorted);
+
+        let mut entries = std::mem::take(&mut self.batch_delta_entries);
+        entries.retain(|(traversal_idx, _)| !suppressed.contains(traversal_idx));
+
         // Write each file's delta data with the correct sorted NDX.
         let codec = self
             .batch_ndx_codec
             .as_mut()
             .expect("batch_ndx_codec must exist when batch_delta_buf is set");
-
-        let mut entries = std::mem::take(&mut self.batch_delta_entries);
         // Sort entries by their post-sort NDX so the delta stream is in
         // ascending NDX order, matching what upstream's recv_files() expects.
         entries.sort_by_key(|(traversal_idx, _)| {
@@ -685,6 +691,99 @@ impl<'a> CopyContext<'a> {
         traversal_to_sorted
     }
 
+    /// Returns the batch protocol version and whether the recorded stream
+    /// flags carry `--hard-links`.
+    ///
+    /// The flag is taken from the header this same writer already wrote, for
+    /// the reason spelled out on `build_batch_flist_writer`: the reader
+    /// configures itself from the header, so deriving it from the live options
+    /// here would let the two sides disagree.
+    pub(super) fn batch_hard_link_context(&self) -> Option<(i32, bool)> {
+        let guard = self.options.get_batch_writer()?.lock().ok()?;
+        Some((
+            guard.config().protocol_version,
+            guard.stream_flags().preserve_hard_links,
+        ))
+    }
+
+    /// Assigns the hardlink cluster of the flist entry about to be captured
+    /// and records its group number in traversal order.
+    ///
+    /// Returns `None` for an entry outside any cluster. Otherwise returns the
+    /// traversal index of the cluster leader together with whether this entry
+    /// *is* that leader - the first sighting of the inode.
+    ///
+    /// upstream: `flist.c:1628-1635 make_file()` remembers `(st_dev, st_ino)`
+    /// for every non-directory with `st_nlink > 1`, and
+    /// `flist.c:599-625 send_file_entry()` turns a first sighting into
+    /// `XMIT_HLINK_FIRST` (recording `first_ndx + ndx`) and every repeat into a
+    /// follower carrying the leader's index.
+    pub(super) fn assign_batch_hlink_group(
+        &mut self,
+        metadata: &fs::Metadata,
+        preserve_hard_links: bool,
+    ) -> Option<(i32, bool)> {
+        let ndx = self.batch_flist_index;
+        let assigned = batch_hlink_key(metadata, preserve_hard_links).map(|key| {
+            let leader = *self.batch_hlink_first_ndx.entry(key).or_insert(ndx);
+            (leader, leader == ndx)
+        });
+        self.batch_entry_hlink_gnum
+            .push(assigned.map(|(leader, _)| leader));
+        assigned
+    }
+
+    /// Traversal indices whose recorded delta data must not reach the batch
+    /// because a hardlink cluster mate carries it instead.
+    ///
+    /// upstream: `hlink.c:113-194 match_gnums()` marks the *sorted-first*
+    /// member of each group `FLAG_HLINK_FIRST`; `generator.c` then routes every
+    /// other member through `hlink.c:300 hard_link_check()`, which returns 1
+    /// (skip) so no data is ever requested for it. A batch that repeated the
+    /// payload for each mate would therefore not be one upstream could have
+    /// produced.
+    ///
+    /// Only members that actually recorded delta data are eligible to keep it:
+    /// under plain `--write-batch` the live copy hardlinks the mates instead of
+    /// reading them, so the payload sits on whichever member the walk reached
+    /// first and dropping it would leave the cluster with no content at all.
+    fn batch_hlink_suppressed_indices(&self, traversal_to_sorted: &[i32]) -> HashSet<i32> {
+        let mut leaders: HashMap<i32, (i32, i32)> = HashMap::new();
+        for (traversal_idx, _) in &self.batch_delta_entries {
+            let Some(Some(gnum)) = self
+                .batch_entry_hlink_gnum
+                .get(*traversal_idx as usize)
+                .copied()
+            else {
+                continue;
+            };
+            let sorted = traversal_to_sorted
+                .get(*traversal_idx as usize)
+                .copied()
+                .unwrap_or(*traversal_idx);
+            leaders
+                .entry(gnum)
+                .and_modify(|best| {
+                    if sorted < best.0 {
+                        *best = (sorted, *traversal_idx);
+                    }
+                })
+                .or_insert((sorted, *traversal_idx));
+        }
+
+        let keep: HashSet<i32> = leaders.values().map(|&(_, idx)| idx).collect();
+        self.batch_delta_entries
+            .iter()
+            .map(|(traversal_idx, _)| *traversal_idx)
+            .filter(|traversal_idx| {
+                matches!(
+                    self.batch_entry_hlink_gnum.get(*traversal_idx as usize),
+                    Some(Some(_))
+                ) && !keep.contains(traversal_idx)
+            })
+            .collect()
+    }
+
     /// Increments the batch flist index counter.
     ///
     /// Called after each flist entry is captured to the batch file.
@@ -784,4 +883,27 @@ fn batch_entry_compare(
 
         i += 1;
     }
+}
+
+/// The `(st_dev, st_ino)` key a batch flist entry contributes to hardlink
+/// grouping, or `None` when the entry cannot belong to a cluster.
+///
+/// upstream: `flist.c:1628-1635 make_file()` - under protocol 28 and above the
+/// candidate test is `!S_ISDIR(st.st_mode) && st.st_nlink > 1`.
+#[cfg(unix)]
+fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    if !preserve_hard_links || metadata.is_dir() || metadata.nlink() <= 1 {
+        return None;
+    }
+    Some((metadata.dev(), metadata.ino()))
+}
+
+/// Non-Unix platforms expose no inode identity through `fs::Metadata`, so no
+/// entry can be recognised as a cluster member.
+#[cfg(not(unix))]
+fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option<(u64, u64)> {
+    let _ = (metadata, preserve_hard_links);
+    None
 }
