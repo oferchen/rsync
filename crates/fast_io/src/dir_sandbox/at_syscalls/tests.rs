@@ -2028,11 +2028,12 @@ mod no_sandbox_tail {
 
     /// The DAEMON session, which is where this routing is live today.
     ///
-    /// `install_daemon_session` supplies `module.root`, so `root()` is `Some`
-    /// and the root half of the predicate fires - unlike
-    /// `install_local_session`, which leaves it `None`. Without this cell the
-    /// suite would pin only the shape that a test fixture arranges, never the
-    /// one production actually reaches first.
+    /// `install_daemon_session` always supplies `module.root`, so `root()` is
+    /// `Some` and the root half of the predicate fires - unlike
+    /// `install_local_session`, whose root is `None` unless the operator named
+    /// `--confine-root`. Without this cell the suite would pin only the shape
+    /// that a test fixture arranges, never the one production actually
+    /// reaches first.
     /// The open tail dropped `O_NOFOLLOW` silently, so a caller asking not to
     /// follow the leaf got a FOLLOWING open and no error.
     ///

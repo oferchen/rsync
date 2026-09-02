@@ -290,10 +290,13 @@ where
     // flag past the parser is what makes those two states distinguishable.
     logging::set_quiet(quiet);
 
-    // Publish `--insecure-links` for the operator-path ownership walk. Upstream
-    // reads its `insecure_links` global from inside `ona_open()`
-    // (syscall.c:301), so the answer reaches every operator-path open without
-    // any of them naming the flag; this is where oc gives that global a value.
+    // Publish `--insecure-links` and `--confine-root` for the operator-path
+    // ownership walk. Upstream reads its `insecure_links` and `confine_root`
+    // globals from inside `ona_open()` (syscall.c:300, :316-328), so the answer
+    // reaches every operator-path open without any of them naming the flags;
+    // this is where oc gives those globals a value. Without the root, a
+    // `--confine-root` transfer walks ownership but measures against nothing,
+    // so a peer-named merge file resolving outside the root is read.
     //
     // Client side only. The daemon arm of `optout_allowed` reads the served
     // module's `insecure links` directive, which is not known until a module is
@@ -302,6 +305,7 @@ where
     // daemon on the default keeps the confinement fully engaged there.
     fast_io::confinement::install_local_session(
         fast_io::confinement::LocalInsecureLinks::from_local_flag(insecure_links),
+        confine_root.clone(),
     );
 
     let rayon_thread_count = rayon_threads.and_then(|n| NonZeroUsize::new(n as usize));

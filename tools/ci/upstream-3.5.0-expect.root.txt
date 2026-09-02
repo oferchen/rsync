@@ -278,7 +278,7 @@ rrsync-copy-unsafe-links-denied pass
 rrsync-debug-denied pass
 rrsync-files-from-stdin pass
 rrsync-logfile-symlink pass
-rrsync-merge-file-confine fail
+rrsync-merge-file-confine pass
 rrsync-no-overwrite-backup-collision pass
 rrsync-no-overwrite-delay-updates pass
 rrsync-no-overwrite-logfile pass

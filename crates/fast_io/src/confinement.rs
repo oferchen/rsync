@@ -161,17 +161,28 @@ fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind) -> bool {
     kind == PathKind::Confined
 }
 
-/// Publish the opt-out for a non-daemon session: the local `--insecure-links`.
+/// Publish a non-daemon session: the local `--insecure-links` opt-out and the
+/// `--confine-root` boundary.
 ///
-/// upstream: `syscall.c:126` - the `am_daemon`-false arm of
-/// `symlink_optout_allowed()` is `return insecure_links;`, reading nothing
-/// else. So this takes nothing else.
-pub fn install_local_session(insecure_links: LocalInsecureLinks) {
+/// The two arrive together because upstream's non-daemon arms read exactly
+/// these two globals - `symlink_optout_allowed()` reads `insecure_links`,
+/// `confinement_root()` reads `confine_root` - and a session that published one
+/// without the other would answer half the question. Passing `None` for the
+/// root is the ordinary case: without `--confine-root` a non-daemon transfer
+/// confines nothing, exactly as upstream's NULL `confine_root` does.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:128-132` - the `am_daemon`-false arm of
+///   `symlink_optout_allowed()` is `return insecure_links;`.
+/// - `syscall.c:142-143` - the `am_daemon`-false arm of `confinement_root()`
+///   returns `confine_root`.
+pub fn install_local_session(insecure_links: LocalInsecureLinks, confine_root: Option<PathBuf>) {
     install_session(&Activation {
-        // Neither field is read by `optout_allowed`; they are the arm's
-        // don't-cares, spelled out here once rather than at every call site.
+        // `daemon` is this arm's don't-care, spelled out here once rather than
+        // at every call site.
         role: Role::Receiver,
-        confine_root: None,
+        confine_root,
         daemon: DaemonState::NotDaemon,
         insecure_links,
     });
