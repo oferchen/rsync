@@ -19,6 +19,18 @@
 # standing false positives cost nothing. A gate at zero would be switched off
 # the first time a legitimate citation tripped it.
 #
+# TWO POPULATIONS. The audit's line filter used to require the word `upstream`
+# on the citation line itself, so citations written as bullets under a
+# `/// # Upstream Reference` heading - where that word sits on the heading only
+# - were never scanned. That is 42% of the tree's citations. The filter now
+# reaches them, but the newly reached half is REPORTED, not gated: it lands in
+# the step summary as its own table plus a `::warning` carrying the count, and
+# the ratchet still sees only the population it always saw. No baseline is
+# written for the new half - several hundred unreviewed findings frozen into a
+# suppression file would read as accepted and would swallow the next real drift
+# whole. The step summary keeps the two tables apart and states the size of both
+# populations, so an empty report cannot be mistaken for a clean one.
+#
 # No cargo, no build lock: fetch a 1.2 MB tarball and scan text.
 
 name: Citation drift
