@@ -61,7 +61,7 @@ impl fmt::Display for Phase {
 pub struct DynamicProtocolState {
     phase: Phase,
     protocol_version: Option<u32>,
-    pub(crate) checksum_seed: Option<u32>,
+    pub(crate) checksum_seed: Option<i32>,
     file_count: Option<usize>,
     files_transferred: usize,
 }
@@ -89,7 +89,11 @@ impl DynamicProtocolState {
     }
 
     /// Set the checksum seed.
-    pub fn set_checksum_seed(&mut self, seed: u32) {
+    ///
+    /// upstream: `options.c:151` declares `int checksum_seed`, so the seed is
+    /// signed on the wire.
+    /// `compat.c:825` writes it with `write_int(f_out, checksum_seed)`.
+    pub fn set_checksum_seed(&mut self, seed: i32) {
         self.checksum_seed = Some(seed);
     }
 

@@ -55,7 +55,7 @@ impl ProtocolState<Negotiation> {
     /// let mut state = ProtocolState::<Negotiation>::new();
     /// state.set_checksum_seed(12345);
     /// ```
-    pub fn set_checksum_seed(&mut self, seed: u32) {
+    pub fn set_checksum_seed(&mut self, seed: i32) {
         self.phase.checksum_seed = Some(seed);
     }
 

@@ -156,7 +156,6 @@ impl LocalCopyOptionsBuilder {
             sparse_detect_strategy: self.sparse_detect_strategy,
             checksum: self.checksum,
             checksum_algorithm: self.checksum_algorithm,
-            checksum_seed: self.checksum_seed,
             size_only: self.size_only,
             ignore_times: self.ignore_times,
             ignore_existing: self.ignore_existing,
