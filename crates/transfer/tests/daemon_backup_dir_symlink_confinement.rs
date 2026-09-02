@@ -140,6 +140,11 @@ struct Outcome {
     outside: String,
     /// Contents the in-module backup directory received.
     inside_backup: io::Result<String>,
+    /// Contents at the `--backup-dir` path itself. For an ordinary directory
+    /// this is the ONLY probe that separates "the pre-image was backed up" from
+    /// "no backup was ever attempted": the destination, the exit code and the
+    /// out-of-module marker are identical under both.
+    backup: io::Result<String>,
     /// Contents of the destination after the push.
     destination: io::Result<String>,
     /// Whether the `--backup-dir` is still a symlink.
@@ -284,6 +289,7 @@ fn push_over_destination(plant: Plant, extra: &[&str], sandbox: Sandbox) -> Opti
     Some(Outcome {
         outside: fs::read_to_string(&outside).expect("the out-of-module file must still exist"),
         inside_backup: fs::read_to_string(inside_dir.join("payload")),
+        backup: fs::read_to_string(backup_dir.join("payload")),
         destination: fs::read_to_string(&destination),
         backup_dir_is_symlink: fs::symlink_metadata(&backup_dir)
             .map(|meta| meta.file_type().is_symlink())
@@ -446,6 +452,14 @@ fn an_ordinary_backup_dir_gets_the_pre_transfer_bytes() {
         outcome.diagnostics(),
     );
     assert_eq!(
+        outcome.backup.as_deref().ok(),
+        Some(PRE_IMAGE),
+        "the backup dir must hold the pre-transfer bytes - upstream \
+         rsync.c:739 `make_backup(fname, True)` runs before the file is \
+         replaced{}",
+        outcome.diagnostics(),
+    );
+    assert_eq!(
         outcome.outside, OUTSIDE_MARKER,
         "the unplanted run must leave the out-of-module file alone, or the \
          marker used by the pins above proves nothing",
@@ -475,6 +489,19 @@ fn an_ordinary_backup_dir_works_under_delay_updates() {
         Some(NEW_CONTENT),
         "the destination must have been updated by the delayed sweep\
          {}",
+        outcome.diagnostics(),
+    );
+    // The DISCRIMINATING assertion. Under `--delay-updates` the backup is not
+    // taken by the per-file commit at all - `commit.rs` defers it - so
+    // `handle_delayed_updates` is its ONLY caller, mirroring upstream
+    // receiver.c:694 `if (make_backups > 0 && !make_backup(fname, False))`.
+    // Every other pin in this cell holds just as well if the sweep never
+    // reached the ladder.
+    assert_eq!(
+        outcome.backup.as_deref().ok(),
+        Some(PRE_IMAGE),
+        "the delayed sweep must back the pre-image up before renaming the \
+         staged file over it{}",
         outcome.diagnostics(),
     );
     // The file an escape would overwrite must be untouched here too.
