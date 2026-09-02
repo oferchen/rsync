@@ -35,31 +35,62 @@ fn classify_ndx_lead(lead: u8) -> NdxLead {
     }
 }
 
+/// Narrows a decoded modern NDX to `i32`, rejecting a peer-supplied index that
+/// does not fit.
+///
+/// This is the single owner of upstream's bound. `read_ndx` accumulates every
+/// arm into a `uint32` and refuses anything above `MAX_INT32` before narrowing
+/// (`io.c:2582-2586`), because the result is used unchecked as a file-list
+/// index; upstream states that reason in its own comment at `io.c:2579-2581`.
+///
+/// The UNSIGNED accumulation is as load-bearing as the bound. Upstream's
+/// operands are `uint32` (`io.c:2574-2578`), where overflow is defined and
+/// wraps into the range this guard then rejects. Performing the same addition
+/// in `i32` panics under Rust's debug overflow checks on bytes a peer fully
+/// controls, so the arithmetic must be unsigned even though the result is not.
+///
+/// Tagged as a protocol violation so the exit-code mapper yields
+/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at `io.c:2585`.
+#[inline]
+fn ndx_from_unsigned(unum: u32) -> io::Result<i32> {
+    if unum > i32::MAX as u32 {
+        return Err(crate::protocol_violation(format!(
+            "Invalid file index: {unum}"
+        )));
+    }
+    Ok(unum as i32)
+}
+
 /// Reconstructs the full 4-byte modern NDX value from the `0xFE`/high-bit form.
 ///
 /// `tag` is the byte whose high bit was set; `b0`, `b1`, `b2` are the three
-/// following bytes. Upstream `io.c:2307-2311`.
+/// following bytes. Upstream `io.c:2570-2574`.
+///
+/// The masked tag caps this arm at `i32::MAX`, so the bound can never fire
+/// here; it is routed through [`ndx_from_unsigned`] anyway because upstream
+/// applies one check to `unum` after all three arms, and splitting that would
+/// leave the next arm added here unguarded.
 #[inline]
-fn decode_ndx_extended_full(tag: u8, b0: u8, b1: u8, b2: u8) -> i32 {
-    let high = (tag & !0x80) as i32;
-    (high << 24) | (b0 as i32) | ((b1 as i32) << 8) | ((b2 as i32) << 16)
+fn decode_ndx_extended_full(tag: u8, b0: u8, b1: u8, b2: u8) -> io::Result<i32> {
+    let high = (tag & !0x80) as u32;
+    ndx_from_unsigned((high << 24) | (b0 as u32) | ((b1 as u32) << 8) | ((b2 as u32) << 16))
 }
 
 /// Reconstructs a modern NDX value from the `0xFE` 2-byte diff form.
 ///
-/// Upstream `io.c:2312-2314`.
+/// Upstream `io.c:2576`.
 #[inline]
-fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> i32 {
-    let diff = ((hi as i32) << 8) | (lo as i32);
-    prev_val + diff
+fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> io::Result<i32> {
+    let diff = ((hi as u32) << 8) | (lo as u32);
+    ndx_from_unsigned(diff.wrapping_add(prev_val as u32))
 }
 
 /// Reconstructs a modern NDX value from the single-byte short-diff form.
 ///
-/// Upstream `io.c:2316`.
+/// Upstream `io.c:2578`.
 #[inline]
-fn decode_ndx_short(diff_byte: u8, prev_val: i32) -> i32 {
-    prev_val + diff_byte as i32
+fn decode_ndx_short(diff_byte: u8, prev_val: i32) -> io::Result<i32> {
+    ndx_from_unsigned((diff_byte as u32).wrapping_add(prev_val as u32))
 }
 
 /// Strategy trait for NDX encoding/decoding.
@@ -287,7 +318,7 @@ impl ModernNdxCodec {
             }
         } else {
             decode_ndx_short(b[0], prev_val)
-        };
+        }?;
 
         Ok(self.commit_ndx(is_negative, num))
     }
@@ -385,7 +416,7 @@ impl NdxCodec for ModernNdxCodec {
             }
         } else {
             decode_ndx_short(b[0], prev_val)
-        };
+        }?;
 
         Ok(self.commit_ndx(is_negative, num))
     }

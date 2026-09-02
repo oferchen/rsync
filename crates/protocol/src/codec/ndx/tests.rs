@@ -1174,3 +1174,51 @@ fn test_write_goodbye_roundtrip_all_versions() {
         read_goodbye(&mut cursor, version).unwrap();
     }
 }
+
+/// A peer-supplied diff that carries the running index past `i32::MAX` is
+/// refused, not wrapped and not panicked on.
+///
+/// The byte string is the minimal case `proptest` reduced
+/// `modern_ndx_sequential_never_panics` to. It first drives `prev_positive` to
+/// near `i32::MAX` through the `0xFE`/high-bit full form, then adds a `0xFE`
+/// 2-byte diff on top. Upstream accumulates that in `uint32` and rejects the
+/// result at `io.c:2582-2586`; oc summed it in `i32`, which is an overflow
+/// panic under debug assertions on bytes the peer chooses.
+#[test]
+fn modern_ndx_rejects_a_diff_that_overflows_the_index() {
+    let mut codec = ModernNdxCodec::new(32);
+    let mut cursor = Cursor::new(vec![254, 255, 0, 193, 255, 254, 63, 0]);
+
+    let first = codec
+        .read_ndx(&mut cursor)
+        .expect("the full form seeds prev_positive without overflowing");
+    assert!(
+        first > i32::MAX - 0xFFFF,
+        "the fixture must leave the running index within one 16-bit diff of \
+         the ceiling, else the second read cannot overflow and this test is \
+         vacuous; got {first}"
+    );
+
+    let err = codec
+        .read_ndx(&mut cursor)
+        .expect_err("the overflowing diff must be refused");
+    assert!(
+        err.to_string().contains("Invalid file index"),
+        "expected upstream's wording, got {err}"
+    );
+}
+
+/// Non-vacuity companion: an ordinary short diff on the same codec still
+/// decodes. Without this, narrowing the guard to reject everything would leave
+/// the test above passing.
+#[test]
+fn modern_ndx_still_accepts_an_ordinary_short_diff() {
+    let mut codec = ModernNdxCodec::new(32);
+    let mut cursor = Cursor::new(vec![1u8]);
+
+    assert_eq!(
+        codec.read_ndx(&mut cursor).expect("a 1-byte diff decodes"),
+        0,
+        "prev_positive starts at -1, so a diff of 1 yields index 0"
+    );
+}
