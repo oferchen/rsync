@@ -363,14 +363,10 @@ impl GeneratorContext {
     ///
     /// - `rsync.c:424` - `i = ndx - cur_flist->ndx_start`
     pub(crate) fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
-        let segments = &self.incremental.ndx_segments;
+        let map = &self.incremental.ndx_map;
         NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
-        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(segments.len()), Ordering::Relaxed);
-        let seg_idx = segments
-            .partition_point(|&(_, ndx_start)| ndx_start <= wire_ndx)
-            .saturating_sub(1);
-        let (flat_start, ndx_start) = segments[seg_idx];
-        flat_start + (wire_ndx - ndx_start) as usize
+        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(map.len()), Ordering::Relaxed);
+        map.wire_to_flat(wire_ndx)
     }
 
     /// Resolves a wire NDX read back from the receiver to the flat `file_list`
@@ -397,20 +393,7 @@ impl GeneratorContext {
     /// - `generator.c:2306-2313` - each sub-list (including the initial list
     ///   whose `parent_ndx >= 0`) itemizes its owning directory at `ndx_start - 1`.
     pub(crate) fn resolve_itemize_ndx(&self, wire_ndx: i32) -> usize {
-        let segments = &self.incremental.ndx_segments;
-        // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one sub-list;
-        // no regular entry's NDX can equal a sub-list start minus one (the +1
-        // gap is reserved, flist.c:2966). Binary search is valid because
-        // `ndx_start` values are strictly increasing.
-        if let Ok(seg_idx) =
-            segments.binary_search_by(|&(_, ndx_start)| ndx_start.cmp(&(wire_ndx + 1)))
-        {
-            let parent_flat = self.incremental.segment_parent_flat[seg_idx];
-            if parent_flat >= 0 {
-                return parent_flat as usize;
-            }
-        }
-        self.wire_to_flat_ndx(wire_ndx)
+        self.incremental.ndx_map.resolve_itemize(wire_ndx)
     }
 
     /// Converts a flat file list array index to a wire NDX value.
@@ -427,12 +410,10 @@ impl GeneratorContext {
     /// - `generator.c:2338` - `ndx = i + cur_flist->ndx_start`
     #[cfg(test)]
     pub(crate) fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
-        let segments = &self.incremental.ndx_segments;
+        let map = &self.incremental.ndx_map;
         NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
-        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(segments.len()), Ordering::Relaxed);
-        let seg_idx = segments.partition_point(|&(start, _)| start <= flat_idx) - 1;
-        let (flat_start, ndx_start) = segments[seg_idx];
-        ndx_start + (flat_idx - flat_start) as i32
+        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(map.len()), Ordering::Relaxed);
+        map.flat_to_wire(flat_idx)
     }
 
     /// Returns the negotiated protocol version.
@@ -1188,16 +1169,10 @@ impl GeneratorContext {
     /// - `flist.c:2980 flist_free()` - frees completed file list segments
     /// - `sender.c:248` - `flist_free(first_flist)` in sender transfer loop
     pub(crate) fn reclaim_oldest_segment(&mut self) {
-        let segments = &self.incremental.ndx_segments;
-        let first = self.incremental.first_segment_idx;
-
-        // Must have at least 2 segments to reclaim (keep the current one).
-        if first + 1 >= segments.len() {
+        let Some((start, end)) = self.incremental.ndx_map.reclaimable_range() else {
             return;
-        }
-
-        let start = segments[first].0;
-        let end = segments[first + 1].0;
+        };
+        let first = self.incremental.ndx_map.first_live();
 
         logging::debug_log!(
             Flist,
@@ -1214,7 +1189,7 @@ impl GeneratorContext {
         for base in &mut self.source_bases[start..end] {
             *base = Arc::clone(&empty);
         }
-        self.incremental.first_segment_idx += 1;
+        self.incremental.ndx_map.advance_reclaimed();
     }
 }
 
