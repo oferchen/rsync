@@ -911,10 +911,10 @@ mod tests {
     /// ⚠ This is the LOCAL path only, and the distinction is the whole point.
     /// Production installs one of two sessions, and they differ exactly here:
     ///
-    /// - `install_local_session` sets `confine_root: None` + `NotDaemon`, so
-    ///   `root()` is `None`, the root half never fires, and only the ownership
-    ///   half runs - which follows a euid-owned symlink by design. That is the
-    ///   state this cell pins, and task 1009 is what flips it.
+    /// - `install_local_session` with no `--confine-root` sets `confine_root:
+    ///   None` + `NotDaemon`, so `root()` is `None`, the root half never
+    ///   fires, and only the ownership half runs - which follows a euid-owned
+    ///   symlink by design. That is the state this cell pins.
     /// - `install_daemon_session` sets `Daemon(module)` with
     ///   `module.root = Some(..)`, so `root()` is `Some` and the root half
     ///   FIRES. Routing is fully live on that path today, with no dependency

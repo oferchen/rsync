@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 #![deny(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]

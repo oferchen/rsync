@@ -45,17 +45,6 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
-    /// Sets a fixed checksum seed for reproducible transfers.
-    ///
-    /// When `None` (the default), the checksum seed is chosen automatically.
-    /// Setting a specific value allows reproducible checksums across runs.
-    #[must_use]
-    #[doc(alias = "--checksum-seed")]
-    pub fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
-        self.checksum_seed = seed;
-        self
-    }
-
     /// Enables size-only comparison.
     #[must_use]
     pub fn size_only(mut self, enabled: bool) -> Self {

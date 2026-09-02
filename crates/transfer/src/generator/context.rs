@@ -1672,7 +1672,7 @@ mod confinement_root_tests {
     /// `--insecure-links` instead of a module directive.
     #[test]
     fn local_optout_releases_the_confine_root() {
-        install_local_session(LocalInsecureLinks::from_local_flag(true));
+        install_local_session(LocalInsecureLinks::from_local_flag(true), None);
         let connection = ConnectionConfig {
             confine_root: Some(PathBuf::from("/restricted")),
             ..Default::default()
@@ -1683,7 +1683,7 @@ mod confinement_root_tests {
     /// Non-vacuity companion for the non-daemon arm.
     #[test]
     fn a_local_session_without_the_optout_keeps_its_confine_root() {
-        install_local_session(LocalInsecureLinks::from_local_flag(false));
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
         let connection = ConnectionConfig {
             confine_root: Some(PathBuf::from("/restricted")),
             ..Default::default()
