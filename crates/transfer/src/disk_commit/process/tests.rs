@@ -493,10 +493,15 @@ fn cross_device_backup_carries_the_pre_image_timestamps() {
     //   passes there, so on macOS it is a REVERSION GUARD, not a live
     //   discriminator, and the copy tier is accidentally correct for every
     //   attribute a non-root process can observe.
+    // - Windows routes `fs::copy` through `CopyFileExW`, which copies the
+    //   timestamps as well, so it is a REVERSION GUARD there for the same
+    //   reason.
     //
-    // The guard below is what keeps that honest: if a NEW platform starts
-    // preserving the timestamp through a bare copy, the cell has gone vacuous
-    // there and this fires instead of going quietly green.
+    // The probe below pins that split rather than assuming it. It is asserted
+    // in BOTH directions: a platform that STARTS preserving the timestamp has
+    // gone vacuous here, and one that STOPS has changed a property this cell
+    // relies on. Either way the list must be re-derived from a measurement,
+    // never widened just to silence a red.
     let probe_src = dir.path().join("probe.bin");
     let probe_dst = dir.path().join("probe.copy");
     fs::write(&probe_src, b"probe").unwrap();
@@ -510,11 +515,16 @@ fn cross_device_backup_carries_the_pre_image_timestamps() {
     fs::copy(&probe_src, &probe_dst).unwrap();
     let bare_copy_keeps_mtime =
         fs::metadata(&probe_dst).unwrap().modified().unwrap() == probe_expected;
-    assert!(
-        !bare_copy_keeps_mtime || cfg!(target_os = "macos"),
-        "a bare fs::copy preserves mtime on this platform, so the assertion \
-         below cannot discriminate here - the cell is vacuous and needs a \
-         different observable. Only macOS is known to behave this way",
+    assert_eq!(
+        bare_copy_keeps_mtime,
+        cfg!(any(target_os = "macos", windows)),
+        "the platform's own mtime-on-copy behaviour is not what this cell was \
+         calibrated against. macOS (fclonefileat/fcopyfile) and Windows \
+         (CopyFileExW) carry the source timestamp through a bare fs::copy; \
+         Linux carries bytes and permission bits only. The assertion below can \
+         only discriminate the metadata apply from its absence where the copy \
+         does NOT preserve mtime, so re-derive this list by measuring the new \
+         platform rather than widening it to make this pass",
     );
 
     assert_eq!(
