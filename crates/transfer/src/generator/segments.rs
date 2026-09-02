@@ -14,6 +14,8 @@
 //! - `io.c:836-857` - `perform_io()` grows the window towards the maximum
 //!   whenever the sender would otherwise idle
 
+use super::ndx_map::NdxMap;
+
 /// Entries the sender keeps queued in sub-lists beyond the one the receiver is
 /// currently working through. Once the backlog reaches this many entries the
 /// sender stops emitting sub-lists and waits for the receiver to catch up, so a
@@ -280,46 +282,13 @@ pub(crate) struct IncrementalState {
     /// When set, `send_file_list()` only sends the first `initial_segment_count`
     /// entries. The remaining entries are sent via the segment scheduler.
     pub(crate) initial_segment_count: Option<usize>,
-    /// Segment boundary table for mapping wire NDX values to flat array indices.
+    /// Wire-NDX to flat-index map, plus the reclaim cursor.
     ///
-    /// With INC_RECURSE, the sender sends segmented file lists with +1 gaps
-    /// between segments (upstream `flist.c:2966`). When the receiver sends
-    /// wire NDX values back, this table maps them to flat array indices.
-    /// Each entry is `(flat_start, ndx_start)`.
-    ///
-    /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
-    pub(crate) ndx_segments: Vec<(usize, i32)>,
-    /// Flat `file_list` index of each sub-list's owning directory, aligned 1:1
-    /// with `ndx_segments`. Stores `-1` when a sub-list has no owning directory
-    /// entry to itemize (the initial list whose first entry is not `.`).
-    ///
-    /// Under INC_RECURSE the remote generator itemizes a directory by sending
-    /// the "gap NDX" `ndx_start - 1` of that directory's sub-list
-    /// (generator.c:2313 `ndx = cur_flist->ndx_start - 1`). The sender must map
-    /// that gap back to the owning directory entry rather than to a regular
-    /// file, mirroring `dir_flist->files[cur_flist->parent_ndx]`
-    /// (sender.c:269-272). oc keeps a single flat entry list rather than a
-    /// separate `dir_flist`, so this table records the flat index of each
-    /// sub-list's owning directory directly, letting `resolve_itemize_ndx`
-    /// return it without a second wire-NDX translation.
-    ///
-    /// The initial list's slot is the flat index of the `.` root when the
-    /// transfer root is `.` (upstream flist.c:2572 keeps `parent_ndx` when the
-    /// first sorted entry is `.`), so the root directory row is itemized rather
-    /// than dropped; otherwise it is `-1`.
-    pub(crate) segment_parent_flat: Vec<i32>,
-    /// Index into `ndx_segments` of the oldest unreclaimed segment.
-    ///
-    /// Advances by one each time a completed segment is reclaimed via
-    /// `reclaim_oldest_segment()`. Mirrors upstream's `first_flist`
-    /// pointer which advances through the circular list as segments
-    /// are freed by `flist_free()`.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:101` - `first_flist` pointer
-    /// - `sender.c:248` - `flist_free(first_flist)` advances `first_flist`
-    pub(crate) first_segment_idx: usize,
+    /// With INC_RECURSE the sender emits segmented file lists with `+1` gaps
+    /// between them (`flist.c:2966`); this resolves the NDX values the receiver
+    /// sends back. Without INC_RECURSE it holds a single segment and every
+    /// lookup is the identity.
+    pub(crate) ndx_map: NdxMap,
 }
 
 impl IncrementalState {
@@ -330,9 +299,7 @@ impl IncrementalState {
             flist_eof_sent: false,
             flist_writer_cache: None,
             initial_segment_count: None,
-            ndx_segments: vec![(0, initial_ndx_start)],
-            segment_parent_flat: vec![-1],
-            first_segment_idx: 0,
+            ndx_map: NdxMap::new(initial_ndx_start),
         }
     }
 }

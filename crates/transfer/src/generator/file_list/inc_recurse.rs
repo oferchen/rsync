@@ -297,12 +297,13 @@ impl GeneratorContext {
         // first sorted entry's basename differs from ".", in which case the root
         // has no directory row. `.` is always the first initial entry (flat 0)
         // when present, so resolve its slot to flat 0; otherwise leave it -1.
-        self.incremental.segment_parent_flat[0] =
+        self.incremental.ndx_map.set_initial_parent_flat(
             if self.file_list.get(0).is_some_and(|e| e.name() == ".") {
                 0
             } else {
                 -1
-            };
+            },
+        );
     }
 }
 
