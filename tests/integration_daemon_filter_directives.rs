@@ -8,11 +8,19 @@
 //! directive never land on disk - regardless of whether the client supplied
 //! any filter on its own.
 //!
-//! upstream: clientserver.c:874-893 - `rsync_module()` builds
+//! upstream: clientserver.c:934-951 - `rsync_module()` builds
 //! `daemon_filter_list` from `filter` / `include_from` / `include` /
 //! `exclude_from` / `exclude` in that order, then `check_filter()` at
-//! `receiver.c:711-714` and `generator.c:1273-1275` consults it before any
+//! `receiver.c:889` and `generator.c:1663` consults it before any
 //! per-file action.
+//!
+//! A refused file is never dropped in silence: `generator.c:1669-1671` reports
+//! it as `FERROR_XFER`, `log.c:337-338` sets `got_xfer_error` on receipt, and
+//! `cleanup.c:217-218` lifts the push's exit status to `RERR_PARTIAL` (23,
+//! `errcode.h:43`). Every test below asserts that status as well as the on-disk
+//! end state, because the status is the signal that the module directive
+//! actually fired: an absent `.log` file is equally consistent with a transfer
+//! that achieved nothing at all.
 //!
 //! Gated `#[cfg(unix)]` because the in-process client + daemon split uses
 //! POSIX TCP and the helper walks the destination with `read_dir`; the test
@@ -22,7 +30,7 @@
 
 #![cfg(unix)]
 
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::net::{Ipv4Addr, TcpListener};
@@ -40,6 +48,11 @@ use tempfile::tempdir;
 /// concurrently on a constrained CI runner.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Upstream's exit status for a transfer that lost files to an error.
+///
+/// upstream: errcode.h:43 - `#define RERR_PARTIAL    23`.
+const RERR_PARTIAL: i32 = 23;
+
 /// Allocates a free TCP port for the test daemon. Returns both the port and
 /// the bound `TcpListener` so the listener can be handed to the daemon via
 /// `pre_bound_listener` - this closes the TOCTOU window between port
@@ -50,10 +63,13 @@ fn allocate_test_port() -> Option<(u16, TcpListener)> {
     Some((port, listener))
 }
 
-/// Walks `root` recursively and returns the set of relative file paths. Used
-/// to assert the destination contains exactly the files we expect.
-fn collect_files(root: &Path) -> HashSet<String> {
-    let mut out = HashSet::new();
+/// Walks `root` recursively and maps each relative file path to its contents.
+///
+/// The contents travel with the names so that a kept file has to arrive intact
+/// to satisfy the positive assertions. Name-only presence would also be
+/// satisfied by an empty placeholder left behind by a half-finished transfer.
+fn collect_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut out = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -65,8 +81,8 @@ fn collect_files(root: &Path) -> HashSet<String> {
             if meta.is_dir() {
                 stack.push(path);
             } else if meta.is_file() {
-                if let Ok(rel) = path.strip_prefix(root) {
-                    out.insert(rel.to_string_lossy().into_owned());
+                if let (Ok(rel), Ok(contents)) = (path.strip_prefix(root), fs::read(&path)) {
+                    out.insert(rel.to_string_lossy().into_owned(), contents);
                 }
             }
         }
@@ -74,9 +90,47 @@ fn collect_files(root: &Path) -> HashSet<String> {
     out
 }
 
+/// Asserts that `name` landed under the destination carrying `expected`.
+fn assert_kept(files: &BTreeMap<String, Vec<u8>>, name: &str, expected: &[u8]) {
+    let actual = files.get(name).unwrap_or_else(|| {
+        panic!(
+            "{name} must be transferred, destination holds {:?}",
+            files.keys().collect::<Vec<_>>()
+        )
+    });
+    assert_eq!(
+        actual.as_slice(),
+        expected,
+        "{name} was transferred with the wrong contents"
+    );
+}
+
+/// Asserts the push reported upstream's exit status for a daemon refusal.
+///
+/// This is the positive half of every scenario below. `RERR_PARTIAL` can only
+/// appear once the module directive has matched a file and the receiver has
+/// refused it; a daemon that ignored the directive would transfer all four
+/// files and exit 0, and one that never served the module at all would fail
+/// with a different status.
+///
+/// upstream: generator.c:1669-1671 reports the refusal as `FERROR_XFER`,
+/// log.c:337-338 sets `got_xfer_error` on receipt, and cleanup.c:217-218 lifts
+/// the exit status to `RERR_PARTIAL`.
+fn assert_refused_exit_code(exit_code: Option<i32>) {
+    assert_eq!(
+        exit_code,
+        Some(RERR_PARTIAL),
+        "a push whose files the module refused must exit {RERR_PARTIAL} \
+         (cleanup.c:217-218), not report success"
+    );
+}
+
 /// Result of running one push-to-daemon scenario.
 struct ScenarioOutcome {
-    files: HashSet<String>,
+    /// Destination-relative path -> contents, for every file that landed.
+    files: BTreeMap<String, Vec<u8>>,
+    /// The push's effective exit status; `None` when the transfer exited 0.
+    exit_code: Option<i32>,
 }
 
 /// Configures a daemon with a single `[uploads]` module carrying the
@@ -128,6 +182,14 @@ fn run_filter_scenario(
             config_path.as_os_str().to_os_string(),
             OsString::from("--max-sessions"),
             OsString::from("1"),
+            // Mandatory. `RuntimeOptions::detach` defaults to `cfg!(unix)`, so
+            // `run_daemon` reaches `become_daemon()` in the accept loop; the
+            // parent of that fork is this very test process and it exits 0
+            // (`platform::daemonize::become_daemon`). Without the flag the test
+            // binary terminates successfully before a single assertion below
+            // runs and the harness records a pass - an unconditional `panic!`
+            // placed after this spawn still reported PASSED.
+            OsString::from("--no-detach"),
         ])
         .pre_bound_listener(held_listener)
         .build();
@@ -152,15 +214,20 @@ fn run_filter_scenario(
     // `run_daemon`'s return point after the single transfer drains.
     let daemon_result = daemon_handle.join().expect("daemon thread panicked");
 
-    if let Err(err) = client_result {
-        panic!("{test_name}: client push failed: {err}");
-    }
     if let Err(err) = daemon_result {
         panic!("{test_name}: daemon exited with error: {err:?}");
     }
+    // A refused file is reported through the summary, not as an `Err`: the
+    // status rides on `ClientSummary::io_error_exit_code`. An `Err` here means
+    // the session itself broke down rather than that a file was filtered.
+    let summary = match client_result {
+        Ok(summary) => summary,
+        Err(err) => panic!("{test_name}: client push failed: {err}"),
+    };
 
     Some(ScenarioOutcome {
         files: collect_files(&dst),
+        exit_code: summary.io_error_exit_code(),
     })
 }
 
@@ -179,26 +246,19 @@ fn daemon_filter_directive_excludes_match_pattern() {
         return;
     };
 
+    assert_kept(&outcome.files, "keep1.txt", b"keep me 1");
+    assert_kept(&outcome.files, "keep2.txt", b"keep me 2");
     assert!(
-        outcome.files.contains("keep1.txt"),
-        "keep1.txt must be transferred, got {:?}",
-        outcome.files
-    );
-    assert!(
-        outcome.files.contains("keep2.txt"),
-        "keep2.txt must be transferred, got {:?}",
-        outcome.files
-    );
-    assert!(
-        !outcome.files.contains("drop1.log"),
+        !outcome.files.contains_key("drop1.log"),
         "drop1.log must be excluded by `filter = - *.log`, got {:?}",
-        outcome.files
+        outcome.files.keys().collect::<Vec<_>>()
     );
     assert!(
-        !outcome.files.contains("drop2.log"),
+        !outcome.files.contains_key("drop2.log"),
         "drop2.log must be excluded by `filter = - *.log`, got {:?}",
-        outcome.files
+        outcome.files.keys().collect::<Vec<_>>()
     );
+    assert_refused_exit_code(outcome.exit_code);
 }
 
 /// `exclude = *.log` is the simple-exclude form upstream parses with
@@ -214,26 +274,19 @@ fn daemon_exclude_directive_excludes_match_pattern() {
         return;
     };
 
+    assert_kept(&outcome.files, "keep1.txt", b"keep me 1");
+    assert_kept(&outcome.files, "keep2.txt", b"keep me 2");
     assert!(
-        outcome.files.contains("keep1.txt"),
-        "keep1.txt missing: {:?}",
-        outcome.files
-    );
-    assert!(
-        outcome.files.contains("keep2.txt"),
-        "keep2.txt missing: {:?}",
-        outcome.files
-    );
-    assert!(
-        !outcome.files.contains("drop1.log"),
+        !outcome.files.contains_key("drop1.log"),
         "drop1.log must be excluded by `exclude = *.log`, got {:?}",
-        outcome.files
+        outcome.files.keys().collect::<Vec<_>>()
     );
     assert!(
-        !outcome.files.contains("drop2.log"),
+        !outcome.files.contains_key("drop2.log"),
         "drop2.log must be excluded by `exclude = *.log`, got {:?}",
-        outcome.files
+        outcome.files.keys().collect::<Vec<_>>()
     );
+    assert_refused_exit_code(outcome.exit_code);
 }
 
 /// `exclude from = <file>` loads patterns one-per-line. Upstream parses each
@@ -298,6 +351,14 @@ fn daemon_exclude_from_directive_loads_pattern_file() {
             config_path.as_os_str().to_os_string(),
             OsString::from("--max-sessions"),
             OsString::from("1"),
+            // Mandatory. `RuntimeOptions::detach` defaults to `cfg!(unix)`, so
+            // `run_daemon` reaches `become_daemon()` in the accept loop; the
+            // parent of that fork is this very test process and it exits 0
+            // (`platform::daemonize::become_daemon`). Without the flag the test
+            // binary terminates successfully before a single assertion below
+            // runs and the harness records a pass - an unconditional `panic!`
+            // placed after this spawn still reported PASSED.
+            OsString::from("--no-detach"),
         ])
         .pre_bound_listener(held_listener)
         .build();
@@ -316,22 +377,26 @@ fn daemon_exclude_from_directive_loads_pattern_file() {
     let client_result = core::client::run_client(client_config);
     let daemon_result = daemon_handle.join().expect("daemon thread panicked");
 
-    if let Err(err) = client_result {
-        panic!("client push failed: {err}");
-    }
     if let Err(err) = daemon_result {
         panic!("daemon exited with error: {err:?}");
     }
+    let summary = match client_result {
+        Ok(summary) => summary,
+        Err(err) => panic!("client push failed: {err}"),
+    };
 
     let files = collect_files(&dst);
-    assert!(files.contains("keep1.txt"), "keep1.txt missing: {files:?}");
-    assert!(files.contains("keep2.txt"), "keep2.txt missing: {files:?}");
+    assert_kept(&files, "keep1.txt", b"keep1");
+    assert_kept(&files, "keep2.txt", b"keep2");
     assert!(
-        !files.contains("drop1.log"),
-        "drop1.log must be excluded by exclude-from file, got {files:?}"
+        !files.contains_key("drop1.log"),
+        "drop1.log must be excluded by exclude-from file, got {:?}",
+        files.keys().collect::<Vec<_>>()
     );
     assert!(
-        !files.contains("drop2.log"),
-        "drop2.log must be excluded by exclude-from file, got {files:?}"
+        !files.contains_key("drop2.log"),
+        "drop2.log must be excluded by exclude-from file, got {:?}",
+        files.keys().collect::<Vec<_>>()
     );
+    assert_refused_exit_code(summary.io_error_exit_code());
 }

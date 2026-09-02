@@ -50,7 +50,10 @@ PENDING_CEILING=77
 # one is vacuous on Unix: the daemon forks, this test binary is the parent, and
 # it exits 0 before any assertion runs. Lower this as they are fixed; it must
 # never be raised.
-ROOT_DETACHING_CEILING=2
+#
+# Every root test now passes the flag, so the ceiling is 0: a new one that
+# forgets it fails this guard on its first run.
+ROOT_DETACHING_CEILING=0
 
 violations=0
 
