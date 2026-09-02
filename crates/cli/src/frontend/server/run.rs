@@ -249,6 +249,26 @@ where
     // a peer-supplied value cannot widen a module even if one arrives here.
     config.connection.confine_root = long_flags.confine_root.map(std::path::PathBuf::from);
     config.connection.io_timeout = forwarded_io_timeout(long_flags.timeout.as_deref());
+    // Publish the same root for the operator-path ownership walk. Upstream has
+    // one `confine_root` global that both `confinement_root()` (for the walk)
+    // and the sender's own opens read; oc keeps the transfer-config copy above
+    // and the walk's session copy, so the value has to reach both or the walk
+    // measures against nothing. A dir-merge rule arrives over the protocol
+    // rather than in the argv the wrapper validated, so this is the path that
+    // bounds `:-s ../outside-secret`.
+    //
+    // `--server --daemon` is dispatched before this function (`frontend::mod`),
+    // so this arm is never a daemon - which is why it may honour a root that
+    // came in on a peer-supplied argv. A daemon publishes its module root
+    // instead (`install_daemon_session`), matching upstream's
+    // `am_daemon ? module_dir : confine_root`.
+    //
+    // The server has no `--insecure-links`: leaving the opt-out off is
+    // upstream's default (`options.c:134`) and keeps the confinement engaged.
+    fast_io::confinement::install_local_session(
+        fast_io::confinement::LocalInsecureLinks::from_local_flag(false),
+        config.connection.confine_root.clone(),
+    );
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2400-2411 - append mode implies inplace. The promotion

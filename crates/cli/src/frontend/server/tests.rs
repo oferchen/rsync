@@ -458,9 +458,12 @@ fn parse_server_args_skips_split_partial_dir_flag() {
     ];
     let (flags, pos_args) = parse_server_flag_string_and_args(&args);
     assert_eq!(flags, "-vlKtpR");
-    assert!(
-        pos_args.is_empty(),
-        "split --partial-dir and value must not leak into positional args: {pos_args:?}",
+    assert_eq!(
+        pos_args,
+        vec![OsString::from(".")],
+        "split --partial-dir and value must not leak into positional args; the \
+         only operand is the second `.`, the destination (the first is the \
+         cwd placeholder): {pos_args:?}",
     );
 }
 
@@ -2886,6 +2889,40 @@ mod end_of_options {
         ])));
     }
 
+    /// A `.` in a LATER slot is a real transfer operand, not a second
+    /// placeholder. rrsync emits `-- . .` for `rsync host:. dest/`: the first
+    /// `.` is the chdir slot upstream consumes as `argv[0]`, the second is the
+    /// source the sender must enumerate.
+    ///
+    /// MEASURED before this: the sender sent an empty file list and the pull
+    /// completed rc=0 having delivered nothing - silent, so only an operand
+    /// assertion catches it.
+    ///
+    /// upstream: `main.c:966-975` `do_server_sender()` consumes ONE slot -
+    /// `dir = argv[0];` then `argc--; argv++;` - whatever it holds.
+    #[test]
+    fn only_the_first_dot_is_the_cwd_placeholder() {
+        let (_, after) = parse_server_flag_string_and_args(&argv(&["--", ".", "."]));
+        let (_, before) = parse_server_flag_string_and_args(&argv(&[".", "."]));
+
+        assert_eq!(
+            after,
+            vec![OsString::from(".")],
+            "the second `.` is the transfer operand"
+        );
+        assert_eq!(after, before, "the marker must not change the rule");
+    }
+
+    /// Non-vacuity companion: one lone `.` really is the placeholder and
+    /// really is dropped, so the cell above pins a one-slot rule rather than
+    /// "stop filtering `.`".
+    #[test]
+    fn a_lone_dot_is_still_the_placeholder() {
+        let (_, paths) = parse_server_flag_string_and_args(&argv(&["--", "."]));
+
+        assert!(paths.is_empty(), "the lone `.` is the chdir slot");
+    }
+
     /// Regression guard: an argv with no marker must parse exactly as before,
     /// so a peer that never sends one is unaffected.
     #[test]
@@ -2936,9 +2973,11 @@ fn parse_server_args_does_not_mistake_fake_super_for_the_flag_string() {
         flag_string.contains('r'),
         "the compact flag string must still carry recursion"
     );
-    assert!(
-        pos_args.is_empty(),
-        "both `.` operands are the cwd placeholder"
+    assert_eq!(
+        pos_args,
+        vec![OsString::from(".")],
+        "only the FIRST `.` is the cwd placeholder; the second is the transfer \
+         operand, which for a push to `host:.` is the destination"
     );
 }
 
@@ -2962,7 +3001,7 @@ fn parse_server_args_flag_string_is_unchanged_without_fake_super() {
     ];
     let (flag_string, pos_args) = parse_server_flag_string_and_args(&args);
     assert_eq!(flag_string, "-rlptgoDe.iLsfxC");
-    assert!(pos_args.is_empty());
+    assert_eq!(pos_args, vec![OsString::from(".")]);
 }
 
 /// Recognising the flag is only half of it: it must also reach the config the
