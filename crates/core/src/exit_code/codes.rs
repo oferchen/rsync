@@ -328,6 +328,9 @@ impl ExitCode {
     /// - `UnexpectedEof`, other `InvalidData` - `StreamIo`
     /// - `Unsupported` - `Unsupported`
     /// - `Interrupted` by signal - `Signal`
+    /// - A failed commit-path backup (tagged
+    ///   [`transfer::temp_guard::CommitOp::Backup`]) - `FileIo`, whatever the
+    ///   errno
     /// - All other I/O errors - `FileIo`
     ///
     /// A wire-protocol violation that upstream rsync exits with
@@ -337,51 +340,13 @@ impl ExitCode {
     /// [`ExitCode::Protocol`]; every other `InvalidData`/`UnexpectedEof`
     /// (truncated stream, corrupt frame, unexpected EOF) stays
     /// [`ExitCode::StreamIo`] (12), matching upstream's `RERR_STREAMIO`.
+    ///
+    /// The mapping itself lives in [`transfer::error::rerr_for_io_error`], one
+    /// crate below this one, because the server half needs the identical answer
+    /// when it writes the `MSG_ERROR_EXIT` payload that tells the peer which
+    /// `RERR_*` it is exiting with (upstream: cleanup.c:250).
     #[must_use]
     pub fn from_io_error(error: &std::io::Error) -> Self {
-        use std::io::ErrorKind;
-
-        // upstream: errcode.h RERR_PROTOCOL=2 - a tagged protocol violation
-        // outranks the generic InvalidData=>StreamIo(12) mapping below.
-        if error
-            .get_ref()
-            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
-        {
-            return Self::Protocol;
-        }
-
-        // upstream: errcode.h RERR_SYNTAX=1 - an option-usage refusal is tagged
-        // at its call site, exactly as the protocol-violation class above;
-        // without the tag it would fall through to the `_ => FileIo` arm.
-        if error
-            .get_ref()
-            .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>())
-        {
-            return Self::Syntax;
-        }
-
-        match error.kind() {
-            ErrorKind::NotFound | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists => {
-                Self::FileSelect
-            }
-
-            ErrorKind::ConnectionRefused
-            | ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::BrokenPipe
-            | ErrorKind::AddrInUse
-            | ErrorKind::AddrNotAvailable
-            | ErrorKind::NotConnected => Self::SocketIo,
-
-            ErrorKind::TimedOut => Self::Timeout,
-
-            ErrorKind::UnexpectedEof | ErrorKind::InvalidData => Self::StreamIo,
-
-            ErrorKind::Interrupted => Self::Signal,
-
-            ErrorKind::Unsupported => Self::Unsupported,
-
-            _ => Self::FileIo,
-        }
+        Self::from_i32(transfer::error::rerr_for_io_error(error)).unwrap_or(Self::FileIo)
     }
 }

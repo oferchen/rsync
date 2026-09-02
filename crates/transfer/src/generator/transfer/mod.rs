@@ -19,6 +19,8 @@ mod orchestrator;
 mod stats;
 mod transfer_loop;
 
+pub(in crate::generator) use goodbye::GoodbyeArrival;
+
 #[cfg(test)]
 mod send_debug_emission_tests {
     //! Wording tests for `--debug=send` producer emissions.

@@ -238,3 +238,44 @@ fn copy_as_clear() {
         .with_copy_as(None);
     assert!(options.copy_as_ids().is_none());
 }
+
+/// The `am_root` gate must read the identity oc-rsync believes it has, not the
+/// kernel's raw answer.
+///
+/// upstream: `main.c:1844` `our_uid = MY_UID()` - the **libc** `geteuid()`
+/// (`rsync.h:1455`) - and `become_copy_as_user()`, which re-samples it after
+/// the permanent `--copy-as` drop. Two consequences a raw `geteuid` syscall
+/// cannot reproduce: `fakeroot` interposes the libc symbol and not the
+/// syscall, so on the upstream testsuite's fakeroot legs a raw answer reports
+/// the real unprivileged uid while upstream believes it is root; and after the
+/// `--copy-as` drop the dropped identity has to be observed. Either way the
+/// local-copy privileged paths (`--super`, device creation, the fake-super
+/// placeholder branch) are gated on the wrong answer.
+///
+/// `set_process_identity` is that identity source, so driving it in both
+/// directions keeps this test non-vacuous whatever uid the test process
+/// actually runs at.
+#[cfg(unix)]
+#[test]
+fn am_root_follows_the_process_identity_not_the_raw_euid() {
+    ::metadata::identity::set_process_identity(0, 0);
+    assert!(
+        is_effective_root(),
+        "a process identity of uid 0 is upstream's am_root"
+    );
+    assert!(
+        effective_am_root(None, false),
+        "with no --super/--fake-super the gate defers to that same identity"
+    );
+
+    const NON_ROOT_UID: u32 = 65534;
+    ::metadata::identity::set_process_identity(NON_ROOT_UID, NON_ROOT_UID);
+    assert!(
+        !is_effective_root(),
+        "a dropped, non-root identity is not am_root"
+    );
+    assert!(
+        !effective_am_root(None, false),
+        "the gate must follow the drop, as upstream re-samples our_uid after it"
+    );
+}

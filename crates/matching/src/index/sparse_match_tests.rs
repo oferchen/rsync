@@ -41,10 +41,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/match.c:200-345` -
+//! - `target/interop/upstream-src/rsync-3.5.0/match.c:224-378` -
 //!   `hash_search()` two-stage gate (rolling sum then strong sum).
-//! - `target/interop/upstream-src/rsync-3.4.1/rsum.c:362-366` - zsync's
-//!   bithash probe expression that this fixture pins.
+//! - zsync `librcksum/rsum.c:362-366` - the bithash probe expression
+//!   that this fixture pins.
 
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};

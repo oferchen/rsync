@@ -116,13 +116,23 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
 /// planted non-symlink leaf were all silently skipped while the
 /// receiver exited `rc=0` with the symlink missing.
 ///
-/// This test plants a regular file at the destination leaf so the
-/// underlying `symlink` syscall returns `AlreadyExists` (EEXIST), a
-/// non-EACCES class. The fix must surface it as `Err`. EACCES is
-/// covered by the discrimination test in the deletion module - one
-/// fail-loud regression per site is sufficient because both sites
-/// share the same upstream-parity rule (`PermissionDenied` is the
-/// only non-fatal class).
+/// This test plants a regular file where the symlink's PARENT
+/// component has to be, so the underlying `symlink` syscall returns
+/// `ENOTDIR` - a non-EACCES class. The fix must surface it as `Err`.
+/// EACCES is covered by the discrimination test in the deletion
+/// module: one fail-loud regression per site is sufficient because
+/// both sites share the same upstream-parity rule (`PermissionDenied`
+/// is the only non-fatal class).
+///
+/// ⚠ The fixture used to plant an empty DIRECTORY at the leaf and rely
+/// on `symlinkat` returning EEXIST over it. That only worked because
+/// oc had no directory arm in its obstacle removal: upstream's
+/// `atomic_create` sets `dir_in_the_way` and `delete_item` `rmdir`s an
+/// empty directory (`generator.c:2469`, `delete.c:222-226`), so the
+/// symlink lands and there is no error to surface. The old fixture's
+/// closing assertion - "the planted directory must persist" - asserted
+/// the defect. A path COMPONENT is the right vehicle: `delete_item`
+/// only ever clears the leaf, so no removal can make way for this one.
 ///
 /// upstream: generator.c:1603 atomic_create -> do_symlink - EACCES is
 /// non-fatal (increment io_error and continue); every other class is
@@ -133,20 +143,17 @@ fn create_symlinks_surfaces_non_eacces_error() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dest = tmp.path();
 
-    // Plant a directory at the leaf path. `read_link` returns Err
-    // (not a symlink), `lstat` sees the directory, and the obstacle
-    // `unlink_via_sandbox_or_fallback(UnlinkFlags::File)` fails with
-    // EISDIR which is swallowed by the pre-existing `let _ = ...`
-    // obstacle-removal contract (the receiver is allowed to attempt
-    // the obstacle removal but is not required to succeed). The flow
-    // then reaches `symlinkat`, which returns AlreadyExists/EEXIST -
-    // a non-EACCES class the fix must surface.
-    std::fs::create_dir(dest.join("blocked")).expect("plant directory obstacle");
+    // A regular file standing in for the `blocked` directory component.
+    // `read_link` and `lstat` on `blocked/link` both return ENOTDIR, so
+    // the obstacle path is not entered at all; the `create_dir_all` of
+    // the parent cannot succeed either, and `symlinkat` then returns
+    // ENOTDIR - a non-EACCES class the fix must surface.
+    std::fs::write(dest.join("blocked"), b"not a directory\n").expect("plant file component");
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, plain_receiver_config());
     ctx.file_list = vec![FileEntry::new_symlink(
-        "blocked".into(),
+        "blocked/link".into(),
         "/etc/passwd".into(),
     )];
 
@@ -159,15 +166,15 @@ fn create_symlinks_surfaces_non_eacces_error() {
         err.kind(),
         std::io::ErrorKind::PermissionDenied,
         "EACCES is the upstream-parity non-fatal branch; this scenario \
-         plants a directory at the leaf to exercise the fail-loud branch \
-         via AlreadyExists/EEXIST",
+         plants a file where a path component belongs to exercise the \
+         fail-loud branch via ENOTDIR",
     );
-    // The on-disk obstacle must persist - the receiver did not silently
-    // delete the directory in lieu of the symlink.
+    // The on-disk obstruction must persist - the receiver did not
+    // silently consume it while reporting the symlink failure as `()`.
     assert!(
-        dest.join("blocked").is_dir(),
-        "the planted directory must persist - the receiver must not silently \
-         consume it while reporting the symlink failure as `()`",
+        dest.join("blocked").is_file(),
+        "the planted file must persist - the obstacle removal clears the \
+         leaf, never a path component",
     );
 }
 

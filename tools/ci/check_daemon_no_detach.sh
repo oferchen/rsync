@@ -21,6 +21,10 @@
 #      `*_pending_no_detach` helpers only ever shrinks. Those tests predate the
 #      foreground requirement and are migrated in separate slices; the ceiling
 #      below must be lowered as they are, never raised.
+#   4. Root-level integration tests that run the daemon in-process pass
+#      `--no-detach`. They live outside the daemon crate and cannot reach its
+#      test-support helpers, so checks 1-3 are blind to them - and the fork
+#      kills the whole test binary there just the same.
 #
 # Usage:
 #   tools/ci/check_daemon_no_detach.sh
@@ -36,10 +40,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 TESTS_DIR="${REPO_ROOT}/crates/daemon/src/tests"
 SUPPORT="${TESTS_DIR}/support.rs"
+ROOT_TESTS_DIR="${REPO_ROOT}/tests"
 
 # Lower this when a migration slice converts call sites to the guarded helpers.
 # It must never be raised.
 PENDING_CEILING=77
+
+# Root-level integration tests that call run_daemon() without --no-detach. Each
+# one is vacuous on Unix: the daemon forks, this test binary is the parent, and
+# it exits 0 before any assertion runs. Lower this as they are fixed; it must
+# never be raised.
+ROOT_DETACHING_CEILING=2
 
 violations=0
 
@@ -82,6 +93,26 @@ if [ "${pending}" -gt "${PENDING_CEILING}" ]; then
     printf 'FAIL: %s call sites still start a detaching daemon, ceiling is %s.\n' \
         "${pending}" "${PENDING_CEILING}" >&2
     printf '      New daemon tests must use start_daemon()/spawn_daemon().\n' >&2
+    violations=$((violations + 1))
+fi
+
+# 4. Root-level integration tests cannot reach the daemon crate's helpers, so
+#    they carry the flag themselves or they are vacuous.
+detaching=()
+while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    grep -q -- '--no-detach' "${file}" || detaching+=("${file#"${REPO_ROOT}/"}")
+done < <(grep -rl 'run_daemon(' "${ROOT_TESTS_DIR}" --include='*.rs' | sort)
+
+printf 'Root tests running a detaching daemon: %s (ceiling %s)\n' \
+    "${#detaching[@]}" "${ROOT_DETACHING_CEILING}"
+if [ "${#detaching[@]}" -gt "${ROOT_DETACHING_CEILING}" ]; then
+    printf 'FAIL: %s root integration test(s) call run_daemon() without --no-detach, ceiling is %s:\n' \
+        "${#detaching[@]}" "${ROOT_DETACHING_CEILING}" >&2
+    printf '  %s\n' "${detaching[@]}" >&2
+    printf '      The daemon forks and the test binary - its parent - exits 0\n' >&2
+    printf '      before any assertion runs, so the test reports a pass without\n' >&2
+    printf '      proving anything. Pass --no-detach in the daemon arguments.\n' >&2
     violations=$((violations + 1))
 fi
 

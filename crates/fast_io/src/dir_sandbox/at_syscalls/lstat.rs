@@ -43,6 +43,20 @@ impl LstatOutcome {
         }
     }
 
+    /// Reports whether the entry is a directory.
+    ///
+    /// The receiver's obstacle decision splits on exactly this test, so it has
+    /// to read the type from the same sandbox-anchored `fstatat` that observed
+    /// the entry rather than re-resolving the path: a swap in between would let
+    /// the removal act on a different inode from the one it classified.
+    #[must_use]
+    pub fn is_dir(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_dir(),
+            Self::Std(meta) => meta.is_dir(),
+        }
+    }
+
     /// Inode number of the entry.
     #[must_use]
     pub fn ino(&self) -> u64 {

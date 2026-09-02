@@ -158,6 +158,21 @@ pub struct ConnectionConfig {
     pub client_mode: bool,
     /// Indicates the transfer is over a daemon (rsync://) connection.
     pub is_daemon_connection: bool,
+    /// Effective I/O timeout in whole seconds; `None` means "no timeout".
+    ///
+    /// This is oc-rsync's `io_timeout` global for a server process started over
+    /// stdio: the CLI parses the client's forwarded `--timeout=N` into it, and
+    /// `run_server_stdio` hands it to the handshake so the generator/sender loop
+    /// derives its keep-alive half-interval from it. The daemon does not use
+    /// this field - it reconciles the module directive with the forwarded value
+    /// itself and puts the result straight on the `HandshakeResult`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2511` - `set_io_timeout(io_timeout)` at the end of
+    ///   `parse_arguments()`, which the server runs over the received argv.
+    /// - `io.c:1266` - `set_io_timeout()` derives `allowed_lull` from it.
+    pub io_timeout: Option<u32>,
     /// Name of the daemon module this server process is serving, when any.
     ///
     /// Mirrors upstream's `module_id` global: it is set exactly once, when the

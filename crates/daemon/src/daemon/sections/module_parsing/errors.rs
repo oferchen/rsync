@@ -170,13 +170,6 @@ fn accept_error(address: SocketAddr, error: io::Error) -> DaemonError {
     network_error("accept connection on", address, error)
 }
 
-fn stream_error(peer: Option<SocketAddr>, action: &str, error: io::Error) -> DaemonError {
-    match peer {
-        Some(addr) => network_error(action, addr, error),
-        None => network_error(action, "connection", error),
-    }
-}
-
 fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> DaemonError {
     let text = format!("failed to {action} {target}: {error}");
     DaemonError::new(
