@@ -85,9 +85,18 @@ pub(super) fn handle_directory_contents_copy(
     }
 
     if !recursion_enabled && !dirs_enabled {
-        let skip_relative = relative_root.and_then(|root| non_empty_path(root.as_path()));
+        // upstream: flist.c:2725 - `rprintf(FINFO, "skipping directory %s\n",
+        // fbuf)`, where `fbuf` is the operand AFTER the `dir`/`fn` split. A
+        // trailing-slash operand is split into `dir = <path>` and `fn = "."`
+        // (flist.c:2586-2594), so the name upstream prints is a bare `.` - not
+        // nothing. Without the fallback the whole line disappeared for every
+        // DOTDIR spelling (`dir/`, `dir/.`), which is the one shape this
+        // handler exists to serve.
+        let skip_relative = relative_root
+            .and_then(|root| non_empty_path(root.as_path()))
+            .unwrap_or_else(|| Path::new("."));
         context.summary_mut().record_directory_total();
-        context.record_skipped_directory(skip_relative);
+        context.record_skipped_directory(Some(skip_relative));
         return Ok(true);
     }
 

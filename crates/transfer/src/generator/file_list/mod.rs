@@ -412,7 +412,10 @@ impl GeneratorContext {
                 .filter(|(b, _)| b == &entry.base)
                 .map(|(_, rel)| rel.clone())
                 .collect();
-            if !self.try_walk_source_entry_dedup(&entry.base, &entry.path, Some(&scoped))? {
+            // upstream: options.c:2307-2308 - `if (files_from) { ... if
+            // (xfer_dirs < 0) xfer_dirs = 1; }`. A --files-from run always
+            // transfers directories, so the flist.c:2723 skip is inert here.
+            if !self.try_walk_source_entry_dedup(&entry.base, &entry.path, Some(&scoped), true)? {
                 continue;
             }
 
