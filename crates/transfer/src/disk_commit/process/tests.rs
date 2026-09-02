@@ -418,6 +418,114 @@ fn make_backup_returns_destination_relative_notice() {
     assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
 }
 
+/// The cross-device copy tier must carry the pre-image's TIMESTAMPS, not just
+/// its bytes and mode.
+///
+/// This is the assertion that separates a faithful copy tier from a bare
+/// content copy. The hard-link and rename tiers move the inode, so the clock
+/// travels with it and nothing needs restoring; the copy tier builds a brand
+/// new inode, and `fs::copy` stamps it with the CURRENT time. Upstream closes
+/// exactly that gap on exactly that branch:
+/// `set_file_attrs(buf, file, NULL, fname, ATTRS_ACCURATE_TIME)`
+/// (`backup.c:420`), reached only from the `copy_file()` arm at `backup.c:400`.
+///
+/// mtime is the discriminator rather than ownership because a non-root test
+/// process cannot chown, so an owner assertion would be untestable in CI while
+/// the timestamp is settable by the file's owner.
+///
+/// The sibling `make_backup_cross_device_uses_copy_fallback` deliberately does
+/// NOT assert this - it pins that the fallback runs at all. Both are needed:
+/// without that one this cell could pass because no backup was attempted, and
+/// without this one the tier could keep silently discarding the clock.
+#[test]
+fn cross_device_backup_carries_the_pre_image_timestamps() {
+    use std::ffi::OsString;
+    use std::fs::FileTimes;
+    use std::time::{Duration, SystemTime};
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("payload.bin");
+    fs::write(&file_path, b"pre-transfer content").unwrap();
+
+    // Backdate the pre-image well past any plausible test runtime, so "kept the
+    // original clock" and "stamped with now" cannot be confused.
+    let backdated = SystemTime::now() - Duration::from_secs(86_400);
+    {
+        let handle = fs::File::options().write(true).open(&file_path).unwrap();
+        handle
+            .set_times(FileTimes::new().set_modified(backdated))
+            .unwrap();
+    }
+    let expected = fs::metadata(&file_path).unwrap().modified().unwrap();
+
+    let config = BackupConfig {
+        dest_dir: dir.path().to_path_buf(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    // `-t`: without it upstream would not preserve times either, so the option
+    // has to be on for the cell to be asking about the backup tier at all.
+    let commit_config = DiskCommitConfig {
+        metadata_opts: Some(::metadata::MetadataOptions::default().preserve_times(true)),
+        ..DiskCommitConfig::default()
+    };
+
+    {
+        let _force = ForceExdev::new();
+        make_backup(&file_path, &config, commit_config.backup_env())
+            .expect("cross-device backup must succeed via the copy fallback")
+            .expect("notice produced when an existing file is backed up");
+    }
+
+    let backup_path = file_path.with_extension("bin~");
+    let actual = fs::metadata(&backup_path).unwrap().modified().unwrap();
+
+    // NON-VACUITY CONTROL, measured rather than assumed. Run the same fixture
+    // shape through a BARE `fs::copy` and observe what this platform's copy
+    // does on its own:
+    //
+    // - Linux copies bytes and permission bits only, so the timestamp is
+    //   dropped and the assertion below is LETHAL - removing the
+    //   `apply_copied_backup_metadata` call reddens this cell.
+    // - macOS routes `fs::copy` through `fclonefileat`/`fcopyfile`, which clone
+    //   the metadata too. MEASURED: with the apply removed, this cell still
+    //   passes there, so on macOS it is a REVERSION GUARD, not a live
+    //   discriminator, and the copy tier is accidentally correct for every
+    //   attribute a non-root process can observe.
+    //
+    // The guard below is what keeps that honest: if a NEW platform starts
+    // preserving the timestamp through a bare copy, the cell has gone vacuous
+    // there and this fires instead of going quietly green.
+    let probe_src = dir.path().join("probe.bin");
+    let probe_dst = dir.path().join("probe.copy");
+    fs::write(&probe_src, b"probe").unwrap();
+    {
+        let handle = fs::File::options().write(true).open(&probe_src).unwrap();
+        handle
+            .set_times(FileTimes::new().set_modified(backdated))
+            .unwrap();
+    }
+    let probe_expected = fs::metadata(&probe_src).unwrap().modified().unwrap();
+    fs::copy(&probe_src, &probe_dst).unwrap();
+    let bare_copy_keeps_mtime =
+        fs::metadata(&probe_dst).unwrap().modified().unwrap() == probe_expected;
+    assert!(
+        !bare_copy_keeps_mtime || cfg!(target_os = "macos"),
+        "a bare fs::copy preserves mtime on this platform, so the assertion \
+         below cannot discriminate here - the cell is vacuous and needs a \
+         different observable. Only macOS is known to behave this way",
+    );
+
+    assert_eq!(
+        actual, expected,
+        "the cross-device backup must keep the pre-image's mtime - upstream \
+         backup.c:420 set_file_attrs() on the copy branch. A bare fs::copy \
+         stamps the duplicate with the current time, silently making the \
+         backup look newer than the file it preserves",
+    );
+}
+
 /// Verifies the network regular-file basis backup takes upstream's hard-link
 /// tier and emits `make_backup: HLINK`, not `RENAME`.
 ///

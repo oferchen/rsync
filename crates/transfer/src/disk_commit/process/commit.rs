@@ -528,14 +528,55 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
 /// `fs::copy` + `fs::remove_file` mechanism the tmp->dest commit uses in
 /// [`rename_with_io_uring_fallback`] (`util1.c:robust_rename()`), so `fs::copy`
 /// carries the mode bits exactly as upstream's `copy_file(..., file->mode)`.
-fn backup_rename_or_copy(old_path: &Path, new_path: &Path) -> io::Result<bool> {
+/// Restores the pre-image's ownership, timestamps and mode onto a backup that
+/// was COPIED rather than moved.
+///
+/// The hard-link and rename tiers of the backup ladder move or share the inode,
+/// so its identity travels with it for free. The copy tier does not, which is
+/// why upstream applies the attributes explicitly on that branch alone:
+/// `set_file_attrs(buf, file, NULL, fname, ATTRS_ACCURATE_TIME)`
+/// (`backup.c:420`), reached only from the `copy_file()` arm at `backup.c:400`.
+/// Without it a cross-device `--backup-dir` keeps the bytes and the mode but
+/// SILENTLY loses owner, group and both timestamps - the backup stops being a
+/// faithful pre-image of what was replaced.
+///
+/// `source_meta` must be captured BEFORE the copy: the cross-device tier
+/// unlinks the pre-image once the duplicate is in place, so a stat afterwards
+/// would find nothing.
+///
+/// Best-effort, exactly like upstream: `set_file_attrs()` reports and continues
+/// rather than failing the transfer, so a backup that cannot take the owner -
+/// the ordinary non-root case - is still a valid backup. This mirrors the
+/// sibling `apply_backup_dir_attrs()` on the engine's backup-parent path, and
+/// the engine's own local-copy backup sites, which already do this.
+///
+/// The apply itself is confined: `metadata::apply` issues
+/// `fast_io::secure_{chmod,chown,utimes}_at`, which re-resolve the parent per
+/// call, so nothing here re-opens `backup_path` with libc path resolution.
+fn apply_copied_backup_metadata(
+    backup_path: &Path,
+    source_meta: &fs::Metadata,
+    env: BackupEnv<'_>,
+) {
+    let options = env.metadata_opts.cloned().unwrap_or_default();
+    let _ = metadata::apply_file_metadata_with_options(backup_path, source_meta, &options);
+}
+
+fn backup_rename_or_copy(old_path: &Path, new_path: &Path, env: BackupEnv<'_>) -> io::Result<bool> {
     match backup_rename_syscall(old_path, new_path) {
         Ok(()) => Ok(false),
         Err(e) if is_cross_device(&e) => {
             // upstream: backup.c:400-416 - the keep_backup copy tier duplicates
             // the pre-image with copy_file(); oc unlinks the source afterwards so
             // the backup ends up on the other filesystem.
+            //
+            // Stat BEFORE the copy: `remove_file` below destroys the pre-image,
+            // and `fs::copy` carries only content and permission bits, so the
+            // owner and timestamps have to be read while the inode still exists.
+            let source_meta = fs::symlink_metadata(old_path)?;
             fs::copy(old_path, new_path)?;
+            // upstream: backup.c:420 set_file_attrs() on the copy branch.
+            apply_copied_backup_metadata(new_path, &source_meta, env);
             fs::remove_file(old_path)?;
             Ok(true)
         }
@@ -680,16 +721,16 @@ fn backup_rename_sandboxed(
         )?;
         return Ok(false);
     }
-    backup_rename_or_copy(old_path, new_path)
+    backup_rename_or_copy(old_path, new_path, env)
 }
 
 #[cfg(not(unix))]
 fn backup_rename_sandboxed(
-    _env: BackupEnv<'_>,
+    env: BackupEnv<'_>,
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
-    backup_rename_or_copy(old_path, new_path)
+    backup_rename_or_copy(old_path, new_path, env)
 }
 
 /// Issues the backup hard link, dirfd-anchoring the backup endpoint against the
@@ -961,7 +1002,13 @@ pub(super) fn make_backup_copy(
     // The backup path is operator-named and resolves through the ownership
     // walk: generator.c:2283 raises `operator_path_resolve` around this copy
     // precisely because the in-place backup bypasses `make_backup()`.
+    // Stat before the copy so the read is of the pre-image, not of whatever a
+    // concurrent write may leave behind afterwards.
+    let source_meta = fs::symlink_metadata(file_path)?;
     copy_pre_image_to_backup(file_path, &backup_path)?;
+    // upstream: generator.c:2448 set_file_attrs(backupptr, back_file, ...) - the
+    // in-place backup is a COPY, so it carries no inode identity of its own.
+    apply_copied_backup_metadata(&backup_path, &source_meta, env);
 
     // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
