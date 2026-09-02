@@ -250,21 +250,19 @@ impl NameMapping {
     }
 
     /// Resolves an identifier to a name using the appropriate system lookup.
+    ///
+    /// A back end that could not answer stays an error here: a name-converter
+    /// failure must not present itself as an id with no name, which would
+    /// silently skip every name and wildcard rule.
     fn lookup_name(&self, identifier: u32) -> io::Result<Option<String>> {
-        match self.kind {
-            MappingKind::User => lookup_user_name(identifier as RawUid).map(|opt| {
-                opt.map(|bytes| match String::from_utf8(bytes) {
-                    Ok(s) => s,
-                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-                })
-            }),
-            MappingKind::Group => lookup_group_name(identifier as RawGid).map(|opt| {
-                opt.map(|bytes| match String::from_utf8(bytes) {
-                    Ok(s) => s,
-                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-                })
-            }),
-        }
+        let bytes = match self.kind {
+            MappingKind::User => lookup_user_name(identifier as RawUid)?,
+            MappingKind::Group => lookup_group_name(identifier as RawGid)?,
+        };
+        Ok(bytes.map(|bytes| match String::from_utf8(bytes) {
+            Ok(name) => name,
+            Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+        }))
     }
 
     /// Returns the number of mapping rules.

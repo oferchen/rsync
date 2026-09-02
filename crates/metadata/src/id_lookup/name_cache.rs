@@ -15,9 +15,9 @@
 //! upstream: uidlist.c:456-480 - add_uid()/add_gid() cache each id once.
 
 use super::converter::has_name_converter;
+use super::error::LookupResult;
 use super::{lookup_group_name, lookup_user_name};
 use std::collections::HashMap;
-use std::io;
 use std::sync::{LazyLock, RwLock};
 
 /// Id to resolved-name memo. The `None` value caches a "no such name" outcome.
@@ -52,7 +52,7 @@ fn record_nss_lookup() {}
 /// `None` result for unknown ids, but performs at most one NSS query per
 /// distinct uid for the lifetime of the process. Bypasses the cache when a
 /// thread-local name converter is installed.
-pub fn lookup_user_name_cached(uid: u32) -> Result<Option<Vec<u8>>, io::Error> {
+pub fn lookup_user_name_cached(uid: u32) -> LookupResult<Vec<u8>> {
     if has_name_converter() {
         return lookup_user_name(uid);
     }
@@ -79,7 +79,7 @@ pub fn lookup_user_name_cached(uid: u32) -> Result<Option<Vec<u8>>, io::Error> {
 /// `None` result for unknown ids, but performs at most one NSS query per
 /// distinct gid for the lifetime of the process. Bypasses the cache when a
 /// thread-local name converter is installed.
-pub fn lookup_group_name_cached(gid: u32) -> Result<Option<Vec<u8>>, io::Error> {
+pub fn lookup_group_name_cached(gid: u32) -> LookupResult<Vec<u8>> {
     if has_name_converter() {
         return lookup_group_name(gid);
     }

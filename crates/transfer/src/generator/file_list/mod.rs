@@ -195,7 +195,7 @@ impl GeneratorContext {
         }
 
         self.timing.flist_build_end = Some(Instant::now());
-        self.collect_id_mappings();
+        self.collect_id_mappings()?;
 
         let count = self.file_list.len();
         debug_log!(Flist, 2, "file list entries: {:?}", {
@@ -466,7 +466,7 @@ impl GeneratorContext {
         }
 
         self.timing.flist_build_end = Some(Instant::now());
-        self.collect_id_mappings();
+        self.collect_id_mappings()?;
 
         let count = self.file_list.len();
         debug_log!(Flist, 2, "file list entries: {:?}", {

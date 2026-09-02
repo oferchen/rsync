@@ -78,14 +78,16 @@ impl GeneratorContext {
     ///
     /// - `uidlist.c:add_uid()` / `add_gid()` - called during file list building
     #[cfg(unix)]
-    pub fn collect_id_mappings(&mut self) {
-        use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
+    pub fn collect_id_mappings(&mut self) -> std::io::Result<()> {
+        use metadata::id_lookup::{
+            lookup_group_name_cached, lookup_user_name_cached, no_id_unless_converter_failed,
+        };
 
         // upstream: flist.c:490 gates add_uid()/add_gid() on `!numeric_ids`, so
         // the id-list is populated only when names are active (`numeric_ids ==
         // 0`). Both daemon-forced and explicit numeric-ids leave it empty.
         if self.config.flags.numeric_ids.maps_numeric() {
-            return;
+            return Ok(());
         }
 
         self.uid_list.clear();
@@ -97,7 +99,11 @@ impl GeneratorContext {
                 if let Some(uid) = entry.uid() {
                     // Skip expensive lookup if we already have this UID
                     if !self.uid_list.contains(uid) {
-                        let name = lookup_user_name_cached(uid).ok().flatten();
+                        // A converter that could not answer is not "this uid
+                        // has no name": upstream exits rather than send a file
+                        // list whose ownership the operator's converter never
+                        // vouched for (clientserver.c:1326, :1333).
+                        let name = no_id_unless_converter_failed(lookup_user_name_cached(uid))?;
                         self.uid_list.add_id(uid, name);
                     }
                 }
@@ -108,15 +114,19 @@ impl GeneratorContext {
                 if let Some(gid) = entry.gid() {
                     // Skip expensive lookup if we already have this GID
                     if !self.gid_list.contains(gid) {
-                        let name = lookup_group_name_cached(gid).ok().flatten();
+                        let name = no_id_unless_converter_failed(lookup_group_name_cached(gid))?;
                         self.gid_list.add_id(gid, name);
                     }
                 }
             }
         }
+
+        Ok(())
     }
 
     /// No-op on non-Unix platforms - ownership is not preserved.
     #[cfg(not(unix))]
-    pub fn collect_id_mappings(&mut self) {}
+    pub fn collect_id_mappings(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
