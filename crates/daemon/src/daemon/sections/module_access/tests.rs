@@ -864,6 +864,26 @@ mod module_access_tests {
         );
     }
 
+    /// upstream: options.c:3014-3015 / generator.c:2481 - a daemon receiver
+    /// invoked with `--force` must set the second term of `delete_mode ||
+    /// force_delete`, which is what lets a POPULATED directory obstacle be
+    /// cleared. This is the SECOND server-arg parser: the stdio `--server` path
+    /// never reaches it, so wiring only that one leaves daemon uploads refusing
+    /// at 23.
+    #[test]
+    fn apply_long_form_args_parses_force() {
+        let mut without = ServerConfig::default();
+        let _ = apply_long_form_args(&["--server".to_owned(), ".".to_owned()], &mut without);
+        assert!(!without.flags.force, "default must be false");
+
+        let mut with = ServerConfig::default();
+        let _ = apply_long_form_args(
+            &["--server".to_owned(), "--force".to_owned(), ".".to_owned()],
+            &mut with,
+        );
+        assert!(with.flags.force, "--force must set the flag");
+    }
+
     #[test]
     fn apply_long_form_args_parses_temp_dir_separate_args() {
         let args = vec![

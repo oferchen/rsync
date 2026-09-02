@@ -157,6 +157,21 @@ pub struct ParsedServerFlags {
     /// Not part of the compact flag string; set via long-form args or explicit
     /// propagation. In upstream, `'d'` means `--dirs`, not delete.
     pub delete: bool,
+    /// Force removal of a directory that stands where a non-directory has to be
+    /// written (`--force`, upstream `force_delete`).
+    ///
+    /// Not part of the compact flag string; `server_options()` emits the long
+    /// form inside its `am_sender` block so it reaches a server acting as the
+    /// receiver. It is the second term of upstream's `DEL_RECURSE` decision -
+    /// `delete_mode || force_delete` - and of the `write_del_stats()` gate.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:746` - `{"force", 0, POPT_ARG_VAL, &force_delete, 1, 0, 0}`
+    /// - `options.c:3014-3015` - `if (force_delete) args[ac++] = "--force";`
+    /// - `generator.c:2481` - `int del_opts = delete_mode || force_delete ? DEL_RECURSE : 0;`
+    /// - `generator.c:2868` - `if (delete_mode || force_delete || read_batch) write_del_stats(f_out);`
+    pub force: bool,
     /// Dry-run / no-transfer mode (`n` flag, upstream: `!do_xfers`).
     pub dry_run: bool,
     /// List-only mode: render the received file list, suppress all destination
@@ -1358,6 +1373,12 @@ mod delivery_classification {
             msgs_to_stderr,
             numeric_ids,
             delete,
+            //    `force` is delivered the way `partial` is: `server_options()`
+            //    emits the long `--force` (options.c:3014-3015) and the server
+            //    long-flag parser decodes it onto the config, while a pull
+            //    bridges `ClientConfig::force_replacements()` onto the local
+            //    receiver alongside `delete`.
+            force,
             list_only,
             only_write_batch,
         } = ParsedServerFlags::default();

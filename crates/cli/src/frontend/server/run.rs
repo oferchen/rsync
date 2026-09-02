@@ -343,6 +343,10 @@ where
     }
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
+    // upstream: generator.c:2481 - `delete_mode || force_delete` is one decision
+    // with two terms, so the receiver needs both. Without this the DEL_RECURSE
+    // arm was unreachable on the wire path.
+    config.flags.force = long_flags.force;
     // upstream: generator.c:124 - --delete-after / --delete-delay both defer the
     // goodbye del-stats emission.
     config.deletion.late_delete = long_flags.late_delete;

@@ -77,6 +77,19 @@ impl DeleteStats {
             .saturating_add(self.specials)
     }
 
+    /// Folds another tally into this one, per counter.
+    ///
+    /// upstream keeps a single set of `stats.deleted_*` globals that every
+    /// removal site bumps, so a caller that collects a partial tally has to add
+    /// it back rather than overwrite.
+    pub const fn merge(&mut self, other: &Self) {
+        self.files = self.files.saturating_add(other.files);
+        self.dirs = self.dirs.saturating_add(other.dirs);
+        self.symlinks = self.symlinks.saturating_add(other.symlinks);
+        self.devices = self.devices.saturating_add(other.devices);
+        self.specials = self.specials.saturating_add(other.specials);
+    }
+
     /// Writes the delete stats to a stream in wire format.
     ///
     /// Encodes the five counters (files, dirs, symlinks, devices, specials)

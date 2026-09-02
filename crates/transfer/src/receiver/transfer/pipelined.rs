@@ -423,6 +423,9 @@ impl ReceiverContext {
         // into the returned stats so the client reconstructs the "Number of
         // created files" breakdown. upstream: receiver.c:733-746.
         stats.created_stats = self.created_stats.get();
+        // Rejoin the make-room deletions with the sweep's tally; upstream counts
+        // both into the same `stats.deleted_*` globals (delete.c:241-256).
+        stats.delete_stats = self.effective_del_stats();
 
         Ok(stats)
     }

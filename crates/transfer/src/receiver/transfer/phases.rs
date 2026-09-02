@@ -216,12 +216,14 @@ impl ReceiverContext {
         //   }`
         // Runs in the daemon-recv parent's `generate_files()`. We always
         // sweep before the transfer (EARLY case), so the early-emission gate
-        // applies whenever deletion was requested. `force_delete` and
-        // `read_batch` are not yet wired into `ParsedServerFlags`; `flags.delete`
-        // is the only term we evaluate today.
-        if self.protocol.supports_extended_goodbye() && self.config.flags.delete {
+        // applies whenever deletion was requested. `force_delete` is the second
+        // term and is now carried on `ParsedServerFlags`; `read_batch` is not,
+        // so it is still the one term we cannot evaluate.
+        if self.protocol.supports_extended_goodbye()
+            && (self.config.flags.delete || self.config.flags.force)
+        {
             ndx_write_codec.write_ndx(&mut *writer, NDX_DEL_STATS)?;
-            self.pending_del_stats.write_to(&mut *writer)?;
+            self.effective_del_stats().write_to(&mut *writer)?;
         }
 
         ndx_write_codec.write_ndx_done(&mut *writer)?;

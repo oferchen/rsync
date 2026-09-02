@@ -1287,7 +1287,7 @@ impl ReceiverContext {
         let mut state = CappedDeleteState {
             dest_dir,
             #[cfg(unix)]
-            sandbox,
+            sandbox: sandbox.map(std::sync::Arc::as_ref),
             #[cfg(unix)]
             boundary_dev,
             limit,
@@ -1429,6 +1429,107 @@ impl ReceiverContext {
         }
         Ok((combined, skipped > 0, io_err_bits))
     }
+
+    /// The receiver's complete deletion tally: the `--delete` sweep plus the
+    /// entries cleared to make room for a replacement.
+    ///
+    /// Upstream reports one set of counters because both sites bump the same
+    /// `stats.deleted_*` globals; oc collects the make-room half separately
+    /// (the obstacle sites run behind `&self`) and rejoins it here.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:241-256` - the single `stats.deleted_*` bump both paths reach
+    pub(in crate::receiver) fn effective_del_stats(&self) -> DeleteStats {
+        let mut stats = self.pending_del_stats;
+        stats.merge(&self.make_room_delete_stats.get());
+        stats
+    }
+
+    /// Empties the directory standing where a non-directory has to be written,
+    /// so the caller's `rmdir` can complete. Returns `true` when the directory
+    /// is now empty.
+    ///
+    /// This is the `DEL_RECURSE` half of upstream's obstacle removal.
+    /// `atomic_create()` and the `DEL_FOR_FILE` site both compute
+    /// `int del_opts = delete_mode || force_delete ? DEL_RECURSE : 0`, and
+    /// `delete_item()` hands that straight to `delete_dir_contents()`. Without
+    /// the flag the same call only probes emptiness, which is what the caller
+    /// does when neither `--delete` nor `--force` is in effect.
+    ///
+    /// The children are removed through the delete pass's own per-entry
+    /// decision, because upstream reaches them through the same
+    /// `delete_dir_contents()`: it strips `DEL_MAKE_ROOM` before recursing
+    /// (`delete.c:126-127`), so each child is itemized (`deleting NAME`),
+    /// counted into the delete stats, backed up under `--backup`, and capped by
+    /// `--max-delete` exactly like a delete-pass victim - while the directory
+    /// node itself stays silent and uncounted because the caller's `rmdir` keeps
+    /// `DEL_MAKE_ROOM` set (`delete.c:241`).
+    ///
+    /// Two deliberate narrowings against `delete_dir_contents()`: the
+    /// `--max-delete` counter starts at zero per obstacle rather than
+    /// continuing upstream's global `stats.deleted_files`, and a failed scan
+    /// raises no `io_error` bit of its own - the caller's `rmdir` then fails
+    /// `ENOTEMPTY` and reports the refusal at `FERROR_XFER`, which is what
+    /// lifts the exit code.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1629` / `generator.c:2481` - `delete_mode || force_delete ? DEL_RECURSE : 0`
+    /// - `delete.c:205-211` - `delete_item()` calls `delete_dir_contents()` first
+    /// - `delete.c:126-127` - `DEL_MAKE_ROOM` stripped for the recursion
+    #[cfg(any(unix, windows))]
+    pub(in crate::receiver) fn clear_obstacle_dir_contents<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        dest_dir: &Path,
+        relative: &Path,
+        path: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
+    ) -> io::Result<bool> {
+        // upstream: generator.c:310-321 - the `-x` boundary is the transfer
+        // root's device; a child on another device is a mount point that pins
+        // its parent non-empty.
+        #[cfg(unix)]
+        let boundary_dev: Option<u64> = if self.config.flags.one_file_system >= 1 {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(dest_dir).ok().map(|m| m.dev())
+        } else {
+            None
+        };
+
+        let mut state = CappedDeleteState {
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            boundary_dev,
+            limit: self.config.deletion.max_delete.unwrap_or(u64::MAX),
+            deleted: 0,
+            skipped: 0,
+            combined: DeleteStats::new(),
+            io_err_bits: 0,
+            emit_itemize: self.should_emit_itemize(),
+            server_mode: !self.config.connection.client_mode,
+            protocol: self.protocol.as_u8(),
+            backup: self.config.flags.backup,
+            backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
+            backup_suffix: self.config.effective_backup_suffix().to_owned(),
+            metadata_opts: self.build_metadata_options(),
+            writer,
+        };
+        let emptied = state.remove_dir_contents(relative, path)?;
+        let removed = state.combined;
+        // upstream: `stats.deleted_files` is one global counter, so the entries
+        // cleared to make room land in the same `--stats` breakdown and the same
+        // NDX_DEL_STATS frame as a delete-pass victim.
+        let mut total = self.make_room_delete_stats.get();
+        total.merge(&removed);
+        self.make_room_delete_stats.set(total);
+        Ok(emptied)
+    }
 }
 
 /// One extraneous destination entry awaiting a capped deletion decision.
@@ -1445,7 +1546,7 @@ struct CappedDeleteState<'w, W: ?Sized> {
     /// per-victim backup-path computation on every platform.
     dest_dir: &'w Path,
     #[cfg(unix)]
-    sandbox: Option<&'w std::sync::Arc<fast_io::DirSandbox>>,
+    sandbox: Option<&'w fast_io::DirSandbox>,
     /// `--one-file-system` boundary device (the transfer root's `st_dev`).
     /// `Some` only when `-x` is active; a directory entry whose device differs
     /// is a mount point that must be preserved and pins its parent as
@@ -1492,7 +1593,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         {
             let mut out = Vec::new();
             let iter = fast_io::read_dir_via_sandbox_or_fallback(
-                self.sandbox.map(|a| &**a),
+                self.sandbox,
                 self.dest_dir,
                 relative,
                 target_path,
@@ -1531,6 +1632,43 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         }
     }
 
+    /// Removes every child of `path` depth-first, leaving the directory node
+    /// itself in place. Returns `true` when the directory ended up empty.
+    ///
+    /// This is upstream's `delete_dir_contents()` body: the children are
+    /// visited in the reverse of the sorted dirlist order, and each one is
+    /// removed through the same per-entry decision the delete pass uses, so a
+    /// nested mount point, the `--max-delete` cap, and `--backup` all behave
+    /// identically whichever caller peeled the directory.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:91-181` - `delete_dir_contents()`
+    fn remove_dir_contents(&mut self, rel: &Path, path: &Path) -> io::Result<bool> {
+        let mut children = match self.scan_dir(rel, path) {
+            Ok(children) => children,
+            Err(e) => {
+                if let Some(err) = fail_loud_unlink_error(e) {
+                    return Err(err);
+                }
+                self.io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
+                return Ok(false);
+            }
+        };
+        children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
+        children.reverse();
+
+        let mut all_removed = true;
+        for (child_name, child_is_dir, child_is_symlink) in children {
+            let child_rel = rel.join(&child_name);
+            let child_path = path.join(&child_name);
+            if !self.remove_entry(&child_rel, &child_path, child_is_dir, child_is_symlink)? {
+                all_removed = false;
+            }
+        }
+        Ok(all_removed)
+    }
+
     /// Recursively removes one extraneous entry under the cap. Returns `true`
     /// when the entry was fully removed and `false` when it (or part of its
     /// subtree) was left in place because the cap was reached.
@@ -1563,29 +1701,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
             }
             // Peel the directory's contents depth-first before considering the
             // directory itself (upstream delete_dir_contents, reverse order).
-            let mut children = match self.scan_dir(rel, path) {
-                Ok(children) => children,
-                Err(e) => {
-                    if let Some(err) = fail_loud_unlink_error(e) {
-                        return Err(err);
-                    }
-                    self.io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
-                    return Ok(false);
-                }
-            };
-            children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
-            children.reverse();
-
-            let mut all_removed = true;
-            for (child_name, child_is_dir, child_is_symlink) in children {
-                let child_rel = rel.join(&child_name);
-                let child_path = path.join(&child_name);
-                if !self.remove_entry(&child_rel, &child_path, child_is_dir, child_is_symlink)? {
-                    all_removed = false;
-                }
-            }
-
-            if !all_removed {
+            if !self.remove_dir_contents(rel, path)? {
                 // upstream: delete.c:117 - one notice per non-empty directory,
                 // not counted and not an I/O error.
                 info_log!(
@@ -1666,7 +1782,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         {
             if is_dir {
                 return fast_io::unlink_via_sandbox_or_fallback(
-                    self.sandbox.map(|a| &**a),
+                    self.sandbox,
                     self.dest_dir,
                     rel,
                     path,
@@ -1680,7 +1796,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 path,
                 rel,
                 self.dest_dir,
-                self.sandbox.map(|a| &**a),
+                self.sandbox,
                 &self.metadata_opts,
             )
         }

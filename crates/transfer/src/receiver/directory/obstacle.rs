@@ -32,23 +32,23 @@
 //! - `delete.c:178-181` - `cannot delete non-empty directory: %s` at `FINFO`
 //! - `delete.c:273-286` - `could not make way for %s %s: %s` at `FERROR_XFER`
 //!
-//! # Known residual: `DEL_RECURSE`
+//! # `DEL_RECURSE`
 //!
-//! `generator.c:2481` computes `int del_opts = delete_mode || force_delete ?
-//! DEL_RECURSE : 0`, so under `--delete` or `--force` upstream removes a
-//! POPULATED directory obstacle recursively and completes at exit 0. Measured
-//! against 3.5.0 over a real `--server` child: `--force`, `--delete`, and both
-//! together each give `rc=0` with the symlink in place, where this arm refuses
-//! at 23.
+//! `generator.c:1629` and `generator.c:2481` both compute `int del_opts =
+//! delete_mode || force_delete ? DEL_RECURSE : 0`, so under `--delete` or
+//! `--force` upstream removes a POPULATED directory obstacle recursively and
+//! completes at exit 0. Measured against 3.5.0 over a real `--server` child:
+//! `--force`, `--delete`, and both together each give `rc=0` with the symlink
+//! in place and `deleting obstacle/occupant` on the wire, while the bare run
+//! refuses at 23.
 //!
-//! Neither flag is reachable from here. `--force` is parsed and discarded by
-//! the server arg parser (`cli/src/frontend/server/flags.rs:615`, `"--force"
-//! => {}`) and has no field in `ParsedServerFlags`, so the receiver cannot
-//! know it was asked for. Wiring it is a server-arg and config change, not an
-//! obstacle-removal one, and is deliberately out of scope here: before this
-//! module existed the same shape aborted the whole transfer at 12 with the
-//! sibling files unsent, so the refusal below is strictly closer to upstream,
-//! not a new divergence.
+//! Both terms reach `ReceiverContext` now: `--delete` as `flags.delete` and
+//! `--force` as `flags.force`, the latter decoded from the long arg
+//! `server_options()` emits (`options.c:3014-3015`) and bridged onto the local
+//! receiver on a pull. Neither term recurses on its own - the recursion lives
+//! in one place, `clear_obstacle_dir_contents`, which is the delete pass's own
+//! per-entry walk, so a nested mount point, `--max-delete`, and `--backup`
+//! behave the same whichever caller peeled the directory.
 
 #[cfg(any(unix, windows))]
 use std::io;
@@ -232,7 +232,7 @@ impl ReceiverContext {
         };
 
         if metadata.is_dir() {
-            return self.rmdir_obstacle(writer, existing, relative_path, make_way_for);
+            return self.rmdir_obstacle(writer, existing, relative_path, dest_dir, make_way_for);
         }
 
         match self.backup_existing_before_replace(existing, relative_path, dest_dir) {
@@ -247,16 +247,30 @@ impl ReceiverContext {
         }
     }
 
-    /// The directory arm: `rmdir`, plus upstream's two-line refusal when the
-    /// directory is not empty.
+    /// Whether the directory obstacle may be emptied before it is removed.
     ///
-    /// Upstream reaches `rmdir` for this shape because `atomic_create` passes
-    /// `del_opts` without `DEL_RECURSE` unless `--delete`/`--force` is in play,
-    /// so `delete_dir_contents` only probes emptiness and reports it; the
-    /// contents are never removed to make room.
+    /// This is upstream's `del_opts` computation verbatim, and it is the whole
+    /// difference between clearing a populated obstacle and refusing it: with
+    /// `DEL_RECURSE` set `delete_item()` hands the flag to
+    /// `delete_dir_contents()`, which removes the contents; without it the same
+    /// call only probes emptiness and reports `DR_NOT_EMPTY`.
     ///
     /// # Upstream Reference
     ///
+    /// - `generator.c:1629` - `int del_opts = delete_mode || force_delete ? DEL_RECURSE : 0;`
+    /// - `generator.c:2481` - the same expression inside `atomic_create()`
+    /// - `delete.c:115-118` - `if (!(flags & DEL_RECURSE)) { ret = DR_NOT_EMPTY; goto done; }`
+    fn del_recurse(&self) -> bool {
+        self.config.flags.delete || self.config.flags.force
+    }
+
+    /// The directory arm: empty the directory when `DEL_RECURSE` applies,
+    /// `rmdir` it, and emit upstream's two-line refusal when it is still not
+    /// empty.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:205-211` - `delete_dir_contents()` runs before the `rmdir`
     /// - `delete.c:222-226` - `what = "rmdir"; ok = do_rmdir_at(fbuf) == 0;`
     #[cfg(unix)]
     fn rmdir_obstacle<W>(
@@ -271,6 +285,20 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
+        if self.del_recurse() {
+            // upstream: delete.c:210-213 - a DR_NOT_EMPTY from
+            // delete_dir_contents() jumps to check_ret without attempting the
+            // rmdir. Here the rmdir below fails ENOTEMPTY instead and
+            // report_rmdir_failure() emits the same two lines, so the emptiness
+            // answer needs no branch of its own.
+            let _emptied = self.clear_obstacle_dir_contents(
+                dest_dir,
+                relative_path,
+                existing,
+                sandbox,
+                writer,
+            )?;
+        }
         match fast_io::unlink_via_sandbox_or_fallback(
             sandbox,
             dest_dir,
@@ -290,11 +318,17 @@ impl ReceiverContext {
         writer: &mut W,
         existing: &Path,
         relative_path: &Path,
+        dest_dir: &Path,
         make_way_for: MakeWayFor,
     ) -> io::Result<()>
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
+        if self.del_recurse() {
+            // See the Unix arm: the rmdir below re-reports the emptiness.
+            let _emptied =
+                self.clear_obstacle_dir_contents(dest_dir, relative_path, existing, writer)?;
+        }
         match std::fs::remove_dir(existing) {
             Ok(()) => Ok(()),
             Err(error) => self.report_rmdir_failure(writer, relative_path, make_way_for, error),
