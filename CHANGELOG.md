@@ -174,6 +174,16 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   `flist.c` applies unconditionally to a real files-from stream (#7460)
 - Don't let the sender widen the receiver's `--delete` scope through an implied
   parent directory (#7446)
+- Reject a non-directory encoding of the synthetic `.` transfer-root entry at
+  decode time, both spellings. The root is exempt from the requested-name
+  filter checks, so a sender that encoded it with regular-file mode made every
+  make-way site see a directory where a non-directory had to be written and,
+  under `--force`, clear the destination root recursively. Refused as a
+  protocol violation where upstream refuses it, in `recv_file_entry`
+  (`flist.c:1127-1134`), not in the obstacle arm - gating the arm would leave
+  the forged entry live for mkdir, rename and backup (#7625)
+- Reject a modern NDX that overflows a signed file index rather than wrapping
+  it (#7630)
 
 ### Added
 
@@ -365,6 +375,20 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   the whole run at `EISDIR`. All six call sites now share one
   `make_way_for_replacement`, which owns both the `rmdir` and the unlink arm
   (#7602)
+- Apply the pre-image's ownership, timestamps and mode to a backup made by the
+  copy tier. The hardlink and rename tiers move or share the inode so the
+  attributes travel with it; the copy tier builds a new one and carried none,
+  which is why upstream calls `set_file_attrs` on that branch alone
+  (`backup.c:420`, reached only from `backup.c:400`) (#7622)
+- Honour `--force` so a populated directory standing where a non-directory must
+  be written is cleared, matching upstream's
+  `delete_mode || force_delete ? DEL_RECURSE : 0`. `--force` was recognised by
+  the stdio server-arg parser and discarded, the daemon's long-form parser had
+  no arm for it, and the obstacle arm consulted neither term - so oc refused at
+  exit 23 in all four flag combinations where 3.5.0 replaces in three of them
+  (#7625)
+- Skip a directory operand instead of transferring it when directory transfer
+  is off, per `flist.c:2723-2726` (#7627)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -445,6 +469,13 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   `@ERROR: invalid gid nobody` behind on a module with a numeric `uid` and a
   defaulted `gid`. Only the three privilege-drop syscalls still run after the
   chroot (#7585)
+- Keep a dead `name converter` apart from an unknown name. The query returned
+  `Option<String>`, collapsing five outcomes into one `None`: no answer, an
+  empty answer, a name carrying a control byte, an over-long request, and a
+  converter whose stream had broken. Upstream can return a bare `BOOL` only
+  because two of those exit instead of returning (`clientserver.c:1324-1334`),
+  so merging them here failed open on exactly the mechanism an operator
+  installs to take ownership decisions away from the peer (#7629)
 
 **CLI and output**
 - Honour the `--` end-of-options marker in server-mode argv (#7402)
@@ -583,6 +614,13 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   recovery - from the `EBUSY` that means a registration is still live. The
   errno had survived only inside the message string, so no caller could branch
   on it and the probe could not be given its siblings' tolerance (#7619)
+- The backup-directory cells probe the directory they claim to check instead of
+  asserting a condition that held whether or not the backup landed (#7621)
+- The citation drift gate scans the 42% of citations its filter could not see,
+  reported non-blocking until the backlog it exposes is worked down (#7623)
+- The APT package cache verifies the packages are installed rather than
+  trusting a cache hit, so a restored-but-empty cache fails its own job instead
+  of reddening unrelated pull requests three jobs later (#7632)
 
 ### Documentation
 
@@ -655,6 +693,11 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   request. Four pull requests had repaired this class post-merge because
   `cargo doc` ran only on push-to-master, so a broken link was discoverable
   only after it landed (#7618)
+- README and SECURITY claims that no longer matched the tree are regrounded
+  against it (#7626)
+- The `io_uring` feature no longer promises 20-40% faster I/O. Measured on
+  kernel 7.1.5 it delivers +1.2% on bulk and -1.2% on fan-out, so the number
+  described an expectation rather than the build it was attached to (#7631)
 
 ### Maintenance
 
