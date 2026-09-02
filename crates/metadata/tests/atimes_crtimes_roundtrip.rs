@@ -1,6 +1,6 @@
 //! Round-trip coverage for the `--atimes` / `--crtimes` flags.
 //!
-//! Mirrors the upstream `testsuite/atimes.test` and `testsuite/crtimes.test`
+//! Mirrors the upstream `testsuite/atimes_test.py` and `testsuite/crtimes_test.py`
 //! scenarios end-to-end through the metadata application layer that wires
 //! the IFX-8 (access time) and IFX-9 (creation time) flist fields into the
 //! receiver. The upstream scripts stamp known timestamps on a source tree
@@ -10,8 +10,10 @@
 //! atime/crtime have been read off the wire.
 //!
 //! Upstream references:
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/atimes.test`
-//! - `target/interop/upstream-src/rsync-3.4.4/testsuite/crtimes.test`
+//! - `target/interop/upstream-src/rsync-3.5.0/testsuite/atimes_test.py`
+//! - `target/interop/upstream-src/rsync-3.5.0/testsuite/crtimes_test.py`
+//!   (3.5.0 replaced the 3.4.x shell `*.test` scripts with Python
+//!   rewrites of the same scenarios)
 //! - `rsync.c:set_file_attrs()` for the apply order (chown -> chmod ->
 //!   utimensat -> crtime).
 //!

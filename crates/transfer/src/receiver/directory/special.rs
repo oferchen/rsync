@@ -37,6 +37,8 @@ use protocol::flist::{FileEntry, FileType};
 #[cfg(unix)]
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
+#[cfg(unix)]
+use crate::receiver::directory::obstacle::MakeWayFor;
 
 impl ReceiverContext {
     /// Creates FIFO, socket, and device nodes from the file list entries.
@@ -181,44 +183,31 @@ impl ReceiverContext {
                     }
                 }
 
-                // upstream: generator.c:2018-2020 atomic_create - when --backup
-                // is set and an existing item is being replaced, preserve it to
-                // the backup location before it is removed. On backup-mechanism
-                // failure upstream returns 0 from atomic_create (skips the
-                // entry); mirror that by logging and continuing.
-                match self.backup_existing_before_replace(
-                    &node_path,
-                    relative_path,
-                    dest_dir,
-                    sandbox,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // SEC-1.g: route the obstacle unlink through the sandbox
-                        // dirfd when the destination parent is the sandbox root
-                        // so a TOCTOU swap between the stat above and this
-                        // unlink cannot redirect the syscall. Falls back to
-                        // path-based removal otherwise. The result is
-                        // intentionally ignored: a dangling obstacle simply
-                        // surfaces as a create failure below.
-                        let _ = fast_io::unlink_via_sandbox_or_fallback(
-                            sandbox,
-                            dest_dir,
-                            relative_path,
-                            &node_path,
-                            fast_io::UnlinkFlags::File,
-                        );
-                    }
-                    Err(error) => {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to back up existing special file {}: {}",
-                            node_path.display(),
-                            error
-                        );
-                        continue;
-                    }
+                // upstream: generator.c:2091 atomic_create(..., del_for_flag) -
+                // one decision for the obstacle: rmdir a directory, back up or
+                // unlink anything else. The refusal is reported inside, so a
+                // blocked entry no longer exits 0 in silence.
+                //
+                // upstream: generator.c:2041-2047 - the noun in the refusal
+                // comes from the NEW entry's type, DEL_FOR_DEVICE for a device
+                // and DEL_FOR_SPECIAL for a FIFO or socket.
+                let make_way_for = if is_device {
+                    MakeWayFor::Device
+                } else {
+                    MakeWayFor::Special
+                };
+                if self
+                    .make_way_for_replacement(
+                        writer,
+                        &node_path,
+                        relative_path,
+                        dest_dir,
+                        sandbox,
+                        make_way_for,
+                    )
+                    .is_err()
+                {
+                    continue;
                 }
 
                 // upstream: generator.c:1675 atomic_create -> do_mknod_at

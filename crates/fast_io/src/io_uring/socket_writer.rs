@@ -10,8 +10,19 @@
 //! The SEND_ZC opcode dispatch is preserved: when the `iouring-send-zc` cargo
 //! feature is enabled and the running kernel advertises `IORING_OP_SEND_ZC`,
 //! payloads at or above [`SEND_ZC_MIN_BYTES`] are submitted through the
-//! zero-copy primitive on the per-thread ring; sub-threshold payloads stay on
-//! regular `IORING_OP_SEND`.
+//! zero-copy primitive; sub-threshold payloads stay on regular
+//! `IORING_OP_SEND` over the per-thread ring.
+//!
+//! SEND_ZC sends split by buffer ownership, because the opcode's page-release
+//! notification is what makes it fast or slow:
+//!
+//! - [`IoUringSocketWriter::flush_buffer`] sends from the writer's own buffer,
+//!   so it hands that buffer to [`send_zc_pipeline::SendZcPipeline`], which
+//!   waits only for the transfer CQE and lets the page-release notification
+//!   land later. This is the path the bulk of a transfer takes.
+//! - [`IoUringSocketWriter::write`] with an oversized caller slice sends
+//!   memory the caller may free the moment `write` returns, so it stays on the
+//!   synchronous [`send_zc::try_send_zc`], which waits for both CQEs.
 //!
 //! Per-ring kernel state - fixed-file registration in particular - is tied to
 //! a specific ring fd and does not survive the move to a thread-shared ring.
@@ -26,6 +37,7 @@ use super::batching::{NO_FIXED_FD, sqe_fd, submit_send_batch};
 use super::config::IoUringConfig;
 use super::per_thread_ring::with_ring;
 use super::send_zc;
+use super::send_zc_pipeline::SendZcPipeline;
 
 /// Payload-length floor below which `IORING_OP_SEND_ZC` is skipped in favour
 /// of regular `IORING_OP_SEND`.
@@ -74,6 +86,15 @@ pub struct IoUringSocketWriter {
     /// kernel advertises `IORING_OP_SEND_ZC`. Resolved once at construction
     /// so the hot path never re-probes.
     send_zc_active: bool,
+    /// Pipelined SEND_ZC submission for [`Self::flush_buffer`], built on the
+    /// first zero-copy flush. `None` until then, and permanently `None` once
+    /// its ring cannot be created (the writer then stays on plain
+    /// `IORING_OP_SEND`).
+    ///
+    /// The pipeline owns the buffers it hands the kernel, and its own `Drop`
+    /// blocks until every one of them has been released, so the writer's
+    /// `buffer` field is never the memory the kernel still holds.
+    send_zc_pipeline: Option<SendZcPipeline>,
 }
 
 impl IoUringSocketWriter {
@@ -101,6 +122,7 @@ impl IoUringSocketWriter {
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
             send_zc_active,
+            send_zc_pipeline: None,
         })
     }
 
@@ -112,9 +134,15 @@ impl IoUringSocketWriter {
         self.send_zc_active
     }
 
-    /// Submits `data` via SEND_ZC when policy + kernel + payload size all
-    /// agree, falling back to the batched SEND path on `Unsupported` or
-    /// when SEND_ZC is disabled. Returns the byte count actually sent.
+    /// Submits `data` - a slice this writer does **not** own - via the
+    /// synchronous SEND_ZC primitive when policy + kernel + payload size all
+    /// agree, falling back to the batched SEND path on `Unsupported` or when
+    /// SEND_ZC is disabled. Returns the byte count actually sent.
+    ///
+    /// Both branches have released every kernel reference to `data` by the
+    /// time they return, which is what lets [`Write::write`] hand a caller's
+    /// slice straight through. The buffered flush path does not come here for
+    /// its zero-copy sends; see [`Self::flush_buffer_zero_copy`].
     fn submit_send(&mut self, data: &[u8]) -> io::Result<usize> {
         if self.send_zc_active && data.len() >= SEND_ZC_MIN_BYTES {
             let fd = self.fd;
@@ -145,13 +173,30 @@ impl IoUringSocketWriter {
         with_ring(|ring| submit_send_batch(ring, fd, data, buffer_size, sq_entries, NO_FIXED_FD))
     }
 
-    /// Flushes the internal buffer via SEND_ZC or batched SEND submissions.
+    /// Flushes the internal buffer via the SEND_ZC pipeline or batched SEND
+    /// submissions.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
         }
 
         let len = self.buffer_pos;
+        match self.flush_buffer_zero_copy(len) {
+            Ok(true) => {
+                self.buffer_pos = 0;
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(e) => {
+                // The staged bytes are no longer in `self.buffer`:
+                // `send_staged` swapped them into a pipeline-owned buffer
+                // before it failed. Forget them rather than let a later flush
+                // put the recycled buffer's stale contents on the wire.
+                self.buffer_pos = 0;
+                return Err(e);
+            }
+        }
+
         let mut sent_total = 0;
         while sent_total < len {
             // SAFETY: `as_ptr()` returns a pointer into `self.buffer`, whose
@@ -159,11 +204,13 @@ impl IoUringSocketWriter {
             // bounds are `sent_total..len`, both bounded by
             // `self.buffer_size`. We rebuild the slice on each iteration so
             // it does not alias the `&mut self` borrow consumed by
-            // `submit_send`. SEND_ZC's `try_send_zc` waits for the
-            // notification CQE before returning, so the kernel has released
-            // its page reference by the time we regain control; SEND
-            // copies bytes into kernel socket buffers synchronously and is
-            // similarly safe to call on a borrowed slice.
+            // `submit_send`. This path only reaches `submit_send_batch`,
+            // which copies the bytes into kernel socket buffers and has
+            // drained every CQE it submitted before returning, so no kernel
+            // reference to `self.buffer` outlives the call. The SEND_ZC path,
+            // which does leave a kernel page reference outstanding, never
+            // gets here: `flush_buffer_zero_copy` handled it above and moved
+            // the bytes into a buffer the pipeline owns.
             let chunk = unsafe {
                 std::slice::from_raw_parts(self.buffer.as_ptr().add(sent_total), len - sent_total)
             };
@@ -179,6 +226,39 @@ impl IoUringSocketWriter {
 
         self.buffer_pos = 0;
         Ok(())
+    }
+
+    /// Sends the first `len` buffered bytes through the SEND_ZC pipeline.
+    ///
+    /// Returns `Ok(false)` when the zero-copy path does not apply - policy or
+    /// kernel says no, the payload is below [`SEND_ZC_MIN_BYTES`], or the
+    /// pipeline's ring could not be created - leaving the buffer untouched for
+    /// the batched SEND path to handle.
+    ///
+    /// The pipeline takes the writer's buffer by swap rather than by copy, so
+    /// the bytes the kernel holds live in memory this writer no longer names.
+    /// That is what makes deferring the notification CQE sound here and not in
+    /// [`Write::write`]'s oversized-slice path.
+    fn flush_buffer_zero_copy(&mut self, len: usize) -> io::Result<bool> {
+        if !self.send_zc_active || len < SEND_ZC_MIN_BYTES {
+            return Ok(false);
+        }
+        if self.send_zc_pipeline.is_none() {
+            match SendZcPipeline::new(self.fd, self.buffer_size) {
+                Ok(pipeline) => self.send_zc_pipeline = Some(pipeline),
+                Err(_) => {
+                    // No ring, no zero-copy. Stop retrying so every later
+                    // flush goes straight to the batched SEND path.
+                    self.send_zc_active = false;
+                    return Ok(false);
+                }
+            }
+        }
+        let Some(pipeline) = self.send_zc_pipeline.as_mut() else {
+            return Ok(false);
+        };
+        pipeline.send_staged(&mut self.buffer, len)?;
+        Ok(true)
     }
 }
 
@@ -197,10 +277,14 @@ impl Write for IoUringSocketWriter {
         self.flush_buffer()?;
 
         if buf.len() >= self.buffer_size {
-            // Caller's slice is borrowed for the lifetime of this call;
-            // `submit_send` either copies via SEND or waits for the SEND_ZC
-            // notification CQE before returning, so the caller is free to
-            // reuse `buf` once we return.
+            // Caller's slice is borrowed for the lifetime of this call and may
+            // be reused or freed the moment we return, so this send must not
+            // outlive the call. `submit_send` either copies via SEND or routes
+            // through `send_zc::try_send_zc`, which waits for the notification
+            // CQE; both have surrendered every kernel reference to `buf` by
+            // the time they return. The pipelined SEND_ZC path deliberately
+            // does not apply here - it defers the notification, which is only
+            // sound for buffers the sender owns.
             let sent = self.submit_send(buf)?;
             return Ok(sent);
         }
@@ -216,7 +300,20 @@ impl Write for IoUringSocketWriter {
 }
 
 impl Drop for IoUringSocketWriter {
+    /// Flushes the buffer, then waits for the kernel to release every page the
+    /// SEND_ZC pipeline handed it.
+    ///
+    /// The drain is unconditional: `send_zc_pipeline` is dropped as part of
+    /// dropping `self` whatever happens here - including if `flush_buffer`
+    /// fails or panics - and [`SendZcPipeline::drop`] blocks until no buffer
+    /// is pinned, leaking the ones it cannot account for rather than freeing
+    /// memory the kernel may still be reading. Calling `drain` explicitly
+    /// first only makes the ordering visible at this level; it is not what
+    /// makes the drain safe.
     fn drop(&mut self) {
         let _ = self.flush_buffer();
+        if let Some(pipeline) = self.send_zc_pipeline.as_mut() {
+            let _ = pipeline.drain();
+        }
     }
 }

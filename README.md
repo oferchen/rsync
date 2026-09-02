@@ -173,9 +173,9 @@ See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
 
 ### Performance
 
-![Benchmark: oc-rsync vs upstream rsync 3.5.0](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
+![Benchmark: oc-rsync vs upstream rsync 3.5.0 and 3.4.4](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Benchmarked against upstream rsync 3.5.0 on each tagged release across local, SSH, and daemon transfer modes. Every mode reports both **elapsed time** and **peak RSS**, so a throughput win bought with memory is visible rather than hidden; the chart, a per-mode breakdown and the exact upstream build string are attached to every [GitHub release](https://github.com/oferchen/rsync/releases/latest).
+Benchmarked on each tagged release against **both** upstream rsync 3.5.0 (current) and 3.4.4 (what most distributions ship), across local, SSH, and daemon transfer modes. Every mode reports **elapsed time**, **peak RSS** and a **corpus rate** in MiB/s, each median figure carrying the run-to-run spread that produced it, so a throughput win bought with memory -- or resting on one lucky run -- is visible rather than hidden. The chart, a per-mode breakdown per baseline, the kernel the numbers were taken on and whether it advertises io_uring `IORING_OP_SEND_ZC` are attached to every [GitHub release](https://github.com/oferchen/rsync/releases/latest).
 
 Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported in `--version` output. See `oc-rsync(1)` for details.
 

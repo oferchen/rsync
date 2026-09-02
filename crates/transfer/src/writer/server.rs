@@ -311,6 +311,29 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::IoError, &io_error.to_le_bytes())
     }
 
+    /// Sends a `MSG_ERROR_EXIT` message carrying the `RERR_*` code this side is
+    /// about to exit with, so the peer exits with the same code instead of
+    /// inferring one from the connection dropping.
+    ///
+    /// The payload is the bare 4-byte little-endian exit code upstream's
+    /// `send_msg_int()` writes; a zero-length body is upstream's sibling
+    /// handshake reply, which oc never originates.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `cleanup.c:250`: `send_msg_int(MSG_ERROR_EXIT, exit_code)` from
+    ///   `_exit_cleanup()`, under `protocol_version >= 31 || am_receiver`.
+    /// - `io.c:1854-1892`: the peer's `read_a_msg()` handler ends in the
+    ///   NORETURN `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer is not in multiplex mode or the underlying
+    /// I/O operation fails.
+    pub fn send_error_exit(&mut self, exit_code: i32) -> io::Result<()> {
+        self.send_message(MessageCode::ErrorExit, &exit_code.to_le_bytes())
+    }
+
     /// Attaches a batch recorder for capturing compressed protocol data.
     ///
     /// The recorder is always attached to the `MultiplexWriter` so it captures

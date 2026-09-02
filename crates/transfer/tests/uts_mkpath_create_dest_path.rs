@@ -1,11 +1,11 @@
-//! Nextest port of the upstream `testsuite/mkpath.test` scenario.
+//! Nextest port of the upstream `testsuite/mkpath_test.py` scenario.
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/mkpath.test`.
+//! `testsuite/mkpath_test.py`.
 //!
 //! # Background
 //!
-//! Upstream's `mkpath.test` verifies the `--mkpath` option, which tells rsync
+//! Upstream's `mkpath_test.py` verifies the `--mkpath` option, which tells rsync
 //! to create any missing leading components of the destination path before
 //! transferring. Without `--mkpath`, rsync only creates the final destination
 //! directory (or none at all for a single-file copy); a multi-level missing
@@ -39,7 +39,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/mkpath.test` - the upstream script this file ports.
+//! - `testsuite/mkpath_test.py` - the upstream script this file ports.
 //! - `options.c` - `--mkpath` option wiring (`mkpath_dest_arg`).
 //! - `generator.c` - destination-prefix directory materialization.
 
