@@ -233,7 +233,7 @@ output-options pass
 ownership-depth pass
 partial pass
 partial-dir-abs-delta pass
-partial-protected-regular-retry-linux fail
+partial-protected-regular-retry-linux pass
 partial-protected-regular-retry-policy skip
 partial_nowrite pass
 password-file-symlink skip

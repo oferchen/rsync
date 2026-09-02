@@ -222,37 +222,71 @@ pub struct ResponseContext<'a> {
 /// existing content (append implies inplace, and the sender only transmits the
 /// data beyond the existing length).
 ///
-/// A `--partial-dir` resume is deliberately excluded. When the `I` capability is
-/// negotiated (`inplace_partial`) and the basis is the partial-dir file
-/// (`FNAMECMP_PARTIAL_DIR`), upstream's `one_inplace` (receiver.c:910) writes the
-/// reconstruction in place to the partial file itself (`partialptr`,
-/// receiver.c:969) and renames it onto the destination only once the transfer
-/// completes, so an interrupt leaves the grown partial inside the partial dir and
-/// never a truncated file at the live destination name. oc reaches the same
-/// observable end state by reconstructing from the partial-dir basis into a temp
-/// file and renaming on commit: keeping the transfer temp+rename
-/// (`needs_rename == true`) lets the disk thread relocate the in-flight temp back
-/// into the partial dir on interrupt (`retain_partial_file`'s `PartialDir` branch,
-/// cleanup.c:105-115). Taking the inplace path for the resume would instead write
-/// the reconstruction directly to the live destination and leave a full-size but
-/// incomplete file there on interrupt - a silent data-integrity hazard.
+/// A `--partial-dir` resume returns `false` here, and the reason is narrower
+/// than an earlier revision of this comment claimed.
 ///
-/// `--inplace`/`--append` never combine with `--partial-dir` (rejected during
-/// config validation), so the exclusion only ever suppresses the `one_inplace`
-/// case; it is defensive against the two being wired together in the future.
+/// That revision argued the exclusion on data-integrity grounds: that taking the
+/// in-place path for a partial-dir resume "would write the reconstruction
+/// directly to the live destination and leave a full-size but incomplete file
+/// there on interrupt". **That misread upstream.** Upstream's in-place target
+/// under `one_inplace` is not the destination at all:
+///
+/// ```c
+/// /* receiver.c:1195-1196 */
+/// if (inplace || one_inplace)  {
+///         fnametmp = one_inplace ? partialptr : fname;
+/// ```
+///
+/// `partialptr` is the file inside the `--partial-dir`, so the reconstruction
+/// grows there and only `finish_transfer(fname, fnametmp, ...)`
+/// (`receiver.c:1288`) puts it at the destination name. An interrupt therefore
+/// leaves the grown partial in the partial dir and never a truncated file at the
+/// live name - the hazard the old rationale described was a property of writing
+/// to `fname`, which upstream does not do on this branch. It is upstream's whole
+/// design goal, not a risk it takes.
+///
+/// What is actually true is that this receiver has no third output mode. It can
+/// open the destination (`is_inplace`) or a temp it renames, and nothing else;
+/// the partial-dir path reaches it only as an interrupt destination
+/// (`retain_partial_file`) and a `--delay-updates` staging dir. Returning `true`
+/// here would therefore be wrong - not because upstream's design is unsafe, but
+/// because oc would carry out the *other* half of upstream's ternary. Until the
+/// partial-dir staging target is threaded through `BeginMessage` and the disk
+/// commit, falling back to temp+rename is the correct subset: it reaches the
+/// same observable end state, and an interrupt still relocates the in-flight
+/// temp into the partial dir (`retain_partial_file`'s `PartialDir` branch,
+/// `cleanup.c:169-170`).
+///
+/// The local-copy executor does implement upstream's shape - see
+/// `engine::local_copy`'s `WriteStrategy::InplacePartialDir` and
+/// `DestinationWriteGuard::new_one_inplace`, which open `partialptr` through the
+/// three-arm chain with `InplaceResolution::OperatorWalk` and rename it onto the
+/// destination on commit. This function is the wire receiver's half of the same
+/// gap and is still open.
+///
+/// Note that the suppression is currently unreachable either way:
+/// `inplace_partial` is only ever set alongside `--partial-dir`
+/// (`transfer/src/lib.rs`), and `--inplace`/`--append` with `--partial-dir` is
+/// rejected during config validation, so `inplace` and `one_inplace_partial_dir`
+/// cannot both be true. Do not read a green suite as evidence that this arm
+/// works.
 ///
 /// # Upstream Reference
 ///
 /// `inplace` already carries `--append`: `ServerConfig::apply_append_implies_inplace`
 /// materialises upstream's `options.c:2410` promotion before the transfer starts,
-/// so this reads the single flag exactly as `receiver.c:968` does.
+/// so this reads the single flag exactly as `receiver.c:1195` does.
 ///
-/// # Upstream Reference
-///
-/// - `receiver.c:968` - `if (inplace || one_inplace)`.
-/// - `receiver.c:910` - `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`.
-/// - `receiver.c:969` - `fnametmp = one_inplace ? partialptr : fname`.
-/// - `cleanup.c:105-115` - `handle_partial_dir()` moves the temp into the partial dir.
+/// - `rsync-3.5.0/receiver.c:1195` - `if (inplace || one_inplace)`.
+/// - `rsync-3.5.0/receiver.c:1137-1138` - `one_inplace = inplace_partial &&
+///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
+/// - `rsync-3.5.0/receiver.c:1196` - `fnametmp = one_inplace ? partialptr : fname`.
+/// - `rsync-3.5.0/receiver.c:1288-1299` - `finish_transfer(fname, fnametmp, ...)`
+///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the
+///   `do_unlink_at(partialptr)` skipped under `one_inplace`.
+/// - `rsync-3.5.0/cleanup.c:169-170` - `_exit_cleanup()` calls
+///   `handle_partial_dir(cleanup_new_fname, PDIR_CREATE)` on the abort path; that
+///   is what moves an interrupted temp into the partial dir.
 fn resolve_use_inplace(
     inplace: bool,
     inplace_partial: bool,
