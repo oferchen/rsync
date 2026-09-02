@@ -68,7 +68,15 @@ parallel = ["cli/parallel", "checksums/parallel"]
 
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
 # Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
-# Benefits: 20-40% faster I/O on supported systems via syscall batching
+# Benefits: fewer I/O syscalls via submission batching. This buys syscall
+#   count, NOT throughput: an on/off A/B measured end-to-end transfer time at
+#   parity with standard read(2)/write(2) (within +/-2% on both bulk and
+#   high-fan-out shapes). Do not restate a throughput percentage here - the
+#   20-40% figure this line used to carry describes USER-TIME instruction
+#   count on a small-file workload, and is qualified as "<5% on disk-bound
+#   workloads" at its source in docs/audits/disk-commit-iouring-batching.md.
+#   Promoting that into an end-to-end "faster I/O" promise is what made this
+#   comment false. See the io_uring kernel-tier section in README.md.
 # Trade-offs: Linux-only, requires modern kernel, adds ~100KB to binary
 io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 

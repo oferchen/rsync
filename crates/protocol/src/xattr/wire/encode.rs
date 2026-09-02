@@ -205,7 +205,7 @@ pub fn send_sender_xattr_response<W: Write>(
 /// Upstream abbreviates values larger than `MAX_FULL_DATUM` with
 /// `sum_init(xattr_sum_nni, checksum_seed)` + `sum_update(value)` +
 /// `sum_end()`. For protocol versions 30-32 the negotiated `xattr_sum_nni`
-/// is always MD5 (`compat.c:824` hardcodes `parse_csum_name(NULL, 0)`, which
+/// is always MD5 (`compat.c:835` hardcodes `parse_csum_name(NULL, 0)`, which
 /// returns md5 for protocol >= 30), and the streaming `sum_init()` path for
 /// `CSUM_MD5` does `md5_begin()` only - it does NOT fold `checksum_seed` into
 /// the digest. Only the MD4-family cases feed the seed via
@@ -221,9 +221,9 @@ pub fn send_sender_xattr_response<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:275-281` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
-/// - `checksum.c:588-597` - `sum_init()` `CSUM_MD5` case: `md5_begin()`, no seed.
-/// - `compat.c:824-825` - `xattr_sum_nni` / `xattr_sum_len` fixed to md5 (16 bytes).
+/// - `xattrs.c:287-293` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
+/// - `checksum.c:615-617` - `sum_init()` `CSUM_MD5` case: `md5_begin()`, no seed.
+/// - `compat.c:835-836` - `xattr_sum_nni` / `xattr_sum_len` fixed to md5 (16 bytes).
 pub fn compute_xattr_checksum(data: &[u8], checksum_seed: i32) -> [u8; MAX_XATTR_DIGEST_LEN] {
     // upstream: the CSUM_MD5 branch of sum_init() ignores the seed; only the
     // MD4-family branches fold it in. Keep the parameter for signature parity.

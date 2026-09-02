@@ -37,11 +37,7 @@ impl GeneratorContext {
         // upstream: hlink.c:match_hard_links() stores flist->ndx_start + i
         // as the leader's gnum. Followers reference this wire NDX value so the
         // receiver can look up the leader at (received_value - ndx_start).
-        let ndx_start = self
-            .incremental
-            .ndx_segments
-            .first()
-            .map_or(0, |&(_, start)| start) as u32;
+        let ndx_start = self.incremental.ndx_map.first_ndx_start() as u32;
 
         for i in 0..self.file_list.len() {
             let entry = &self.file_list[i];

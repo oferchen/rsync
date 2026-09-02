@@ -756,12 +756,7 @@ impl GeneratorContext {
         // Set first_ndx so the writer can distinguish abbreviated vs
         // unabbreviated hardlink followers (leader in same vs previous segment).
         // upstream: flist.c:send_file_entry() uses first_ndx parameter
-        let initial_ndx_start = self
-            .incremental
-            .ndx_segments
-            .first()
-            .map_or(0, |&(_, ndx_start)| ndx_start);
-        flist_writer.set_first_ndx(initial_ndx_start);
+        flist_writer.set_first_ndx(self.incremental.ndx_map.first_ndx_start());
 
         // Wrap the wire writer in a first-byte latency probe. Cost is one
         // branch per buffered write call - no per-entry sampling.
@@ -859,25 +854,14 @@ impl GeneratorContext {
         flist_writer: &mut protocol::flist::FileListWriter,
         ndx_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
-        // Compute ndx_start for this sub-list.
-        // upstream: flist.c:2966 - flist->ndx_start = prev->ndx_start + prev->used + 1
-        let &(prev_flat_start, prev_ndx_start) = self
+        // Append the sub-list to the NDX map. The map owns the `+1` gap rule
+        // (flist.c:2966) and the owning directory's flat index, so the gap NDX
+        // `seg_ndx_start - 1` resolves to that directory rather than to the
+        // trailing file of the previous segment.
+        let seg_ndx_start = self
             .incremental
-            .ndx_segments
-            .last()
-            .expect("initial segment exists");
-        let prev_used = (segment.flist_start - prev_flat_start) as i32;
-        let seg_ndx_start = prev_ndx_start + prev_used + 1;
-        self.incremental
-            .ndx_segments
-            .push((segment.flist_start, seg_ndx_start));
-        // Record the owning directory's flat index so a directory itemize read
-        // back at the gap NDX `seg_ndx_start - 1` resolves to the directory
-        // entry rather than to the trailing file of the previous segment.
-        // upstream: sender.c:269-272 - `dir_flist->files[cur_flist->parent_ndx]`.
-        self.incremental
-            .segment_parent_flat
-            .push(segment.parent_flat_idx as i32);
+            .ndx_map
+            .push_sublist(segment.flist_start, segment.parent_flat_idx as i32);
 
         // Signal new sub-list to receiver.
         // upstream: flist.c:2152 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)

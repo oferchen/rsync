@@ -85,8 +85,8 @@ rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in pat
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 254 | 6 | 85 | 345 |
-| root, pipe | 282 | 7 | 56 | 345 |
+| non-root, pipe | 257 | 3 | 85 | 345 |
+| root, pipe | 286 | 3 | 56 | 345 |
 | non-root, tcp | 101 | 21 | 33 | 155 |
 | root, tcp | 113 | 27 | 15 | 155 |
 
@@ -98,7 +98,7 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
   tools/ci/upstream-3.5.0-expect.nonroot.txt
 ```
 
-The two pipe legs run the whole 345-test corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 155 tests that can observe the transport. **7 distinct tests** diverge across the two full-corpus legs, and **32** across all four (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
+The two pipe legs run the whole 345-test corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 155 tests that can observe the transport. **3 distinct tests** diverge across the two full-corpus legs, and **29** across all four (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
 
 **Highest-severity items and their oc-rsync bearing:**
 
@@ -129,7 +129,7 @@ rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs a
 - **Length-underflow guard in cumulative `snprintf()` callers** - oc-rsync uses `format!()`/`write!()` which do not underflow; the equivalent risk is `usize` subtraction, audited cleanly.
 - **Parent block-index bounds check on receiver** - addressed by CVE-2026-43620 entry above.
 - **NULL check in `read_delay_line()`** - oc-rsync uses `Option<&str>` so the C null-dereference is impossible.
-- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - audit confirmed our delete-stats reader (`crates/protocol/src/flist/delete_stats.rs` and surrounding) uses bounded `u32` varints capped well below the upstream lowered ceiling.
+- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - re-audited against the tree: the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:187`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
 - **Reject hyphen-prefixed remote-shell hostnames** - tracked under SEC-3 (`crates/rsync_io/src/ssh/operand.rs` + `parse.rs` already had hostname validation; verify it includes leading-hyphen rejection).
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
@@ -159,7 +159,7 @@ Additionally shipped since the last update:
 - **SEC-1.q2** (Receiver-deletion sandbox wiring): all receiver deletion call sites fully wired through `DirSandbox`.
 - **SEC-1.s** (`recursive_unlinkat` helper): recursive directory removal uses `unlinkat` throughout, closing the last TOCTOU window in directory tree deletion.
 - **SEC-MK.a..h** (`mknodat`/`mkfifoat` sandbox migration): device and FIFO node creation migrated to `*at` variants routed through `DirSandbox`. Previously deferred (closure doc #4694); now complete.
-- **SEC-1.p Landlock LSM defense-in-depth** - Linux 5.13+ kernel-side allowlist over the module root, engaged per-connection after `apply_module_privilege_restrictions` returns. Even a future regression that calls a path-based syscall directly (bypassing `DirSandbox`) is rejected by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve outside the module root are rejected at the wire-protocol layer (PR #5568, URV-5.b.1); the in-module subset is admitted to the Landlock allowlist alongside the module root so a default-on Landlock posture (URV-5.c.5) does not EACCES legitimate writes (URV-5.b.REOPEN). Best-effort ABI downgrade picks the highest level the running kernel exposes (v3 on 6.2+, v2 on 5.19+, v1 on 5.13+). Stub returns `Unavailable` on non-Linux targets so the SEC-1 `*at` chain remains the sole defense there.
+- **SEC-1.p Landlock LSM defense-in-depth** - Linux 5.13+ kernel-side allowlist over the module root, engaged per-connection after `apply_module_privilege_restrictions` returns. Even a future regression that calls a path-based syscall directly (bypassing `DirSandbox`) is rejected by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve outside the module root are rejected at the wire-protocol layer (PR #5568, URV-5.b.1); the in-module subset is admitted to the Landlock allowlist alongside the module root so a default-on Landlock posture (URV-5.c.5) does not EACCES legitimate writes (URV-5.b.REOPEN). The helper requests `AccessFs::from_all(ABI::V5)` and best-effort downgrade picks the highest level the running kernel exposes (v5 and v4 on recent kernels, v3 on 6.2+, v2 on 5.19+, v1 on 5.13+), naming the rights it had to drop. Stub returns `Unavailable` on non-Linux targets so the SEC-1 `*at` chain remains the sole defense there.
 - **SEC-1.t** (receiver pre-flight dest_root symlink refusal): `ensure_dest_root_exists` in `crates/transfer/src/receiver/mod.rs` uses `symlink_metadata()` (lstat) rather than `metadata()` (stat) so a symlink at the destination root is observed directly. The helper refuses with `InvalidInput` for any symlinked dest - broken or pointing at an existing directory, inside or outside the module - because `create_dir_all` against a stat-NotFound result would otherwise resolve through the link and materialize the directory at the symlink target, sidestepping the SEC-1 `*at` chain that protects every subsequent per-entry write. The receiver never auto-creates through a symlink; operators that genuinely need a symlinked dest must materialize the real directory themselves. Follow-up to PR #5567 which added the pre-flight mkdir path.
 
 **Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
@@ -259,7 +259,7 @@ These cover operationally relevant trade-offs in the current code base and how t
 
 ### io_uring buffer-group ID namespace
 
-io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns a typed error rather than wrapping - it is never silent. IDs are recycled rather than accumulated: a measured run of 100,000 sessions consumed a single bgid, so exhaustion is not an expected operational condition and no monitoring is required for it.
+io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns `BgidAllocError::Exhausted` rather than wrapping - it is never silent. Released ids go back to a free list rather than accumulating. No production caller allocates one today: `BufferRing` and `BgidAllocator` appear only inside `fast_io` and its tests, so an accepted connection consumes no bgid and the namespace is untouched in the steady state (`docs/audits/bgid-lifecycle.md`, section 5). Exhaustion is therefore not a live operational condition, and the audit's open follow-up - peak-occupancy telemetry, BGE-3 - becomes relevant when per-session rings are wired in, not before.
 
 ### SSH double compression
 

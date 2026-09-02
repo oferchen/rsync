@@ -85,6 +85,7 @@ mod filters;
 pub mod io_error_flags;
 mod item_flags;
 pub mod itemize;
+mod ndx_map;
 mod open_source;
 mod pending_removal;
 mod protocol_io;
