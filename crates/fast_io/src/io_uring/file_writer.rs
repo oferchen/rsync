@@ -34,7 +34,7 @@ use crate::traits::FileWriter;
 /// one `submit_and_wait` call. Batches do not overlap: the ring is drained to
 /// empty before the next one is built, so a batch of a single chunk gains no
 /// concurrency at all. Those go to a positional write instead; see
-/// [`super::batching::MIN_RING_BATCH_CHUNKS`].
+/// `batching::MIN_RING_BATCH_CHUNKS`.
 ///
 /// Submissions are issued against the calling thread's per-thread ring (see
 /// [`super::per_thread_ring`]). Fixed-file registration and registered-buffer
