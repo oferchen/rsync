@@ -418,7 +418,7 @@ fn find_destination(args: &[String]) -> Option<&str> {
 /// - `rsync://host/path` -> `path`
 /// - `/local/path`, `rel/path`, `dest` -> unchanged
 ///
-// upstream: options.c:check_for_hostspec / batch.c:300
+/// upstream: options.c:check_for_hostspec / batch.c:300
 fn strip_hostspec(dest: &str) -> &str {
     const URL_PREFIX: &str = "rsync://";
     // upstream: options.c:3134 - an rsync:// URL is matched case-insensitively.

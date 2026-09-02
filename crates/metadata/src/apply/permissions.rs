@@ -23,7 +23,7 @@ use std::os::fd::BorrowedFd;
 /// daemon chmod paths all compute one identical result (DRY). `am_root` is
 /// sampled through the same libc `geteuid` the ownership gate uses so
 /// `fakeroot`'s faked identity is honoured.
-// upstream: generator.c:1512-1520 fixup + generator.c:2107-2145 touch_up_dirs.
+/// upstream: generator.c:1512-1520 fixup + generator.c:2107-2145 touch_up_dirs.
 #[cfg(unix)]
 fn tweak_directory_transfer_mode(mode: u32, file_type: fs::FileType) -> u32 {
     if !file_type.is_dir() {
@@ -41,7 +41,7 @@ fn tweak_directory_transfer_mode(mode: u32, file_type: fs::FileType) -> u32 {
 /// its stat wrapper reports a stale mode and silently drops preserved
 /// permission bits. Routing chmod through libc keeps it consistent with chown,
 /// matching upstream (which drives every attribute through libc symbols).
-// upstream: syscall.c:do_fchmod() calls the fchmod(2) libc symbol.
+/// upstream: syscall.c:do_fchmod() calls the fchmod(2) libc symbol.
 #[cfg(unix)]
 fn fchmod_libc(
     fd: BorrowedFd<'_>,
@@ -334,7 +334,7 @@ fn dest_mode_for_existing_or_new(
 /// Windows, only the read-only flag is mirrored. The `options` carrier lets
 /// the Unix path honor `--keep-dirlinks` via [`chmod_path_honoring_keep_dirlinks`]
 /// instead of the dirfd sandbox that rejects symlinked parents.
-// upstream: rsync.c:set_file_attrs() - chmod path for direct permission copy
+/// upstream: rsync.c:set_file_attrs() - chmod path for direct permission copy
 pub(super) fn set_permissions_like(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -376,7 +376,7 @@ pub(super) fn set_permissions_like(
 
 /// Returns `true` when `target_mode` already matches the permission bits on
 /// `existing`, comparing only the lower 12 bits (suid/sgid/sticky + rwx).
-// upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
+/// upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
 #[cfg(unix)]
 pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -400,8 +400,8 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bo
 /// real attributes already match, upstream writes no shim and removes any stale
 /// `%stat` (`xattrs.c:1225-1237`), so an unprivileged same-owner copy of a
 /// plain 0755 dir / 0644 file leaves no `%stat` behind.
-// upstream: xattrs.c:1188-1237 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
-//           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
+/// upstream: xattrs.c:1188-1237 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
+///           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
 #[cfg(unix)]
 fn apply_fake_super_mode(
     destination: &Path,
@@ -491,7 +491,7 @@ fn apply_fake_super_mode(
 /// When chmod modifiers are configured, applies them on top of the base mode.
 /// Otherwise delegates to [`apply_permissions_without_chmod`] for direct
 /// permission copy or executability-only preservation.
-// upstream: rsync.c:set_file_attrs() - chmod with optional modifier chain
+/// upstream: rsync.c:set_file_attrs() - chmod with optional modifier chain
 pub(super) fn apply_permissions_with_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -820,7 +820,7 @@ pub(super) fn apply_symlink_permissions_like(
 /// [`compute_dest_mode`]) supplies the baseline. Chmod modifiers, when present,
 /// are layered last so the recorded xattr reflects the same mode a privileged
 /// transfer would have applied on disk.
-// upstream: rsync.c:495-519 set_file_attrs() new_mode / dest_mode + tweak_mode
+/// upstream: rsync.c:495-519 set_file_attrs() new_mode / dest_mode + tweak_mode
 #[cfg(unix)]
 fn intended_fake_super_mode(
     destination: &Path,
@@ -857,7 +857,7 @@ fn intended_fake_super_mode(
 /// executor uses this to detect a transfer-root directory whose tweaked mode
 /// strips owner execute and therefore self-locks (see
 /// [`crate::transfer_root_self_locks`]).
-// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1512 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1512 fixup.
 #[cfg(unix)]
 pub(super) fn chmod_directory_target_mode(
     destination: &Path,
@@ -1012,7 +1012,7 @@ fn apply_permissions_without_chmod(
 /// pre-transfer at this mode"; `None` means "no pre-transfer destination
 /// state available" - either the file is new or the caller cannot supply
 /// it.
-// upstream: rsync.c:set_file_attrs() - receiver-side permission application
+/// upstream: rsync.c:set_file_attrs() - receiver-side permission application
 pub(super) fn apply_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,

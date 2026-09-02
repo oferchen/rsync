@@ -42,7 +42,7 @@ pub fn create_device_node(
 ///
 /// Returns [`MetadataError`] if the placeholder cannot be created or if the
 /// underlying mknod call fails.
-// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
+/// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
 pub fn create_fifo_with_fake_super(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -69,7 +69,7 @@ pub fn create_fifo_with_fake_super(
 ///
 /// Returns [`MetadataError`] if the placeholder cannot be created or if the
 /// underlying mknod call fails.
-// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
+/// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
 pub fn create_device_node_with_fake_super(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -98,7 +98,7 @@ pub fn create_device_node_with_fake_super(
 /// # Errors
 ///
 /// Returns [`MetadataError`] if the node cannot be created.
-// upstream: generator.c recv_generator FT_SPECIAL -> syscall.c:do_mknod()
+/// upstream: generator.c recv_generator FT_SPECIAL -> syscall.c:do_mknod()
 pub fn create_fifo_node_from_parts(
     destination: &Path,
     mode_bits: u32,
@@ -131,7 +131,7 @@ pub fn create_fifo_node_from_parts(
 /// # Errors
 ///
 /// Returns [`MetadataError`] if the node cannot be created.
-// upstream: generator.c recv_generator FT_DEVICE -> syscall.c:do_mknod()
+/// upstream: generator.c recv_generator FT_DEVICE -> syscall.c:do_mknod()
 pub fn create_device_node_from_parts(
     destination: &Path,
     mode_bits: u32,
@@ -154,7 +154,7 @@ pub fn create_device_node_from_parts(
 /// pre-existing entry at `destination` is removed first to mirror the
 /// `unlink + create` semantics used by upstream when overwriting an existing
 /// special-file destination.
-// upstream: syscall.c:90-174 - do_mknod() routes to do_open when am_root < 0
+/// upstream: syscall.c:90-174 - do_mknod() routes to do_open when am_root < 0
 fn create_fake_super_placeholder(
     destination: &Path,
     context: &'static str,
@@ -616,8 +616,8 @@ fn mknod_device_raw(
 ///
 /// Mirrors the `xattr_stub::warn_xattr_unsupported` stderr convention used
 /// elsewhere in this crate for unsupported metadata operations.
-// WIND-2: skip-with-warn strategy for Windows device files.
-// docs/design/windows-device-file-strategy.md
+/// WIND-2: skip-with-warn strategy for Windows device files.
+/// docs/design/windows-device-file-strategy.md
 #[cfg(not(unix))]
 fn warn_skip_special(destination: &Path, kind_label: &'static str) {
     eprintln!("{}", format_skip_special_message(destination, kind_label));

@@ -222,7 +222,7 @@ impl FakeSuperStat {
     /// `%stat`-encoded mode. Mirrors upstream, where `x_lstat()` layers
     /// `get_stat_xattr()` over `lstat()` so hlink/generator see the recorded
     /// type rather than the placeholder's regular mode.
-    // upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+    /// upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
     pub const fn is_regular_file(&self) -> bool {
         const S_IFMT: u32 = 0o170000;
         const S_IFREG: u32 = 0o100000;
@@ -396,7 +396,7 @@ pub fn remove_fake_super_default_acl(path: &Path) -> io::Result<()> {
 /// This mirrors upstream rsync's `x_lstat()`, which layers `get_stat_xattr()`
 /// over the raw `lstat()` so the placeholder appears to have the recorded
 /// ownership/type on every subsequent read.
-// upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+/// upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
 #[cfg(all(unix, feature = "xattr"))]
 pub fn effective_source_stat(source: &Path, metadata: &Metadata) -> FakeSuperStat {
     match load_fake_super(source) {

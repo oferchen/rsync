@@ -29,7 +29,7 @@ use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 ///
 /// Handles hard-link deduplication, `--existing`, directory replacement via
 /// `--force`, backup, and dry-run mode.
-// upstream: receiver.c - device node handling
+/// upstream: receiver.c - device node handling
 pub(crate) fn copy_device(
     context: &mut CopyContext,
     source: &Path,
@@ -476,7 +476,7 @@ pub(crate) fn copy_device(
 /// Builds the WIND-2 skip-with-warn message for a device entry the Windows
 /// receiver cannot materialise. Exposed for regression tests so they can
 /// assert the wording without capturing stderr.
-// WIND-2: docs/design/windows-device-file-strategy.md
+/// WIND-2: docs/design/windows-device-file-strategy.md
 #[cfg(not(unix))]
 pub(crate) fn format_skip_device_message(destination: &Path) -> String {
     format!(
@@ -489,7 +489,7 @@ pub(crate) fn format_skip_device_message(destination: &Path) -> String {
 ///
 /// Encodes mode (with `S_IFMT` bits), uid, gid, and rdev so a later
 /// fake-super read can faithfully reconstruct the original node.
-// upstream: xattrs.c:set_stat_xattr()
+/// upstream: xattrs.c:set_stat_xattr()
 #[cfg(all(unix, feature = "xattr"))]
 fn store_fake_super_for_local_metadata(
     destination: &Path,

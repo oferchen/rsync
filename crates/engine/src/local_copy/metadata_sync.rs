@@ -251,7 +251,7 @@ pub(crate) fn sync_nfsv4_acls_if_requested(
 ///
 /// No-op unless `--fake-super` is active together with ownership preservation,
 /// matching `metadata::apply::ownership::set_owner_like`'s fake-super gate.
-// upstream: xattrs.c:set_stat_xattr() driven by x_lstat()/get_stat_xattr()
+/// upstream: xattrs.c:set_stat_xattr() driven by x_lstat()/get_stat_xattr()
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn store_effective_fake_super_if_requested(
     options: &::metadata::MetadataOptions,

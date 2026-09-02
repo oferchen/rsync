@@ -40,7 +40,7 @@ pub(crate) enum AppendMode {
 /// appended bytes on disk (receiver.c:1029, reached because `--append` implies
 /// `--inplace` - options.c:2400-2411) and redoes the file in phase 2 against
 /// that retained partial.
-// upstream: receiver.c:recv_files() - append mode size comparison
+/// upstream: receiver.c:recv_files() - append mode size comparison
 pub(crate) fn determine_append_mode(
     append_allowed: bool,
     append_verify: bool,

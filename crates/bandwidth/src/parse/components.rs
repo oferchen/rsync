@@ -129,7 +129,7 @@ impl BandwidthLimitComponents {
     /// the caller previously supplied a rate. This allows higher layers to reason about the
     /// effective limiter without materialising a [`BandwidthLimiter`] instance solely to combine
     /// configuration sources.
-    // upstream: options.c:2392 - min(client, daemon) wins
+    /// upstream: options.c:2392 - min(client, daemon) wins
     #[must_use]
     pub fn constrained_by(&self, override_components: &Self) -> Self {
         let mut rate = self.rate;

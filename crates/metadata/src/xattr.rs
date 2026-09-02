@@ -313,7 +313,7 @@ pub fn strip_source_xattrs(
 /// cannot access are excluded (`list_attributes` already applies the namespace
 /// filter). Used by the `--link-dest` match-level check to decide whether a
 /// basis file's xattrs already equal the source's.
-// upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
+/// upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
 pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
     let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
     for name in list_attributes(a, follow_symlinks, receiver_screen())? {
@@ -350,7 +350,7 @@ pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, M
 /// case, which never transfers them as -X data. Excluding them from the delete
 /// pass also protects the `%stat` that the fake-super metadata step writes on
 /// the destination independently of the xattr transfer.
-// upstream: xattrs.c:259-267 rsync_xal_get() - rsync.%FOO skipped for the sender.
+/// upstream: xattrs.c:259-267 rsync_xal_get() - rsync.%FOO skipped for the sender.
 pub fn sync_xattrs(
     source: &Path,
     destination: &Path,

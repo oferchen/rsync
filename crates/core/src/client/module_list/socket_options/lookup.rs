@@ -12,7 +12,7 @@ use super::types::SocketOptionKind;
 /// Resolves an option name to its `SocketOptionKind`.
 ///
 /// Returns `None` for unrecognized names.
-// upstream: socket.c:set_socket_options()
+/// upstream: socket.c:set_socket_options()
 pub(super) fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
     match name {
         "SO_KEEPALIVE" => Some(SocketOptionKind::Bool {

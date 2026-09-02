@@ -63,7 +63,7 @@ const TMPNAME_SUFFIX_LEN: usize = 7;
 ///
 /// `suffix` is the six-character unique component (upstream fills it via
 /// `mkstemp`; the caller supplies a candidate and retries on collision).
-// upstream: receiver.c:145 get_tmpname()
+/// upstream: receiver.c:145 get_tmpname()
 pub(crate) fn temp_name_with_suffix(
     destination: &Path,
     temp_dir: Option<&Path>,

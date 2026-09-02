@@ -28,7 +28,7 @@ use rustix::fs::{FallocateFlags, fallocate};
 /// `rsyserr(FWARNING, ...)` and continue: preallocation is an optimization, and
 /// its failure (an unsupported filesystem, `ENOSPC`, ...) must never abort the
 /// transfer.
-// upstream: syscall.c:1528 do_fallocate() / receiver.c:323
+/// upstream: syscall.c:1528 do_fallocate() / receiver.c:323
 #[cfg(target_os = "linux")]
 pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     // fallocate's offset/length args are signed; skip when length would
@@ -55,7 +55,7 @@ pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
 /// Non-Linux platforms lack `fallocate`; upstream compiles the preallocation
 /// path out entirely (`SUPPORT_PREALLOCATION` undefined), so this is a no-op
 /// that reports no reserved extent.
-// upstream: syscall.c - SUPPORT_PREALLOCATION guards the whole feature.
+/// upstream: syscall.c - SUPPORT_PREALLOCATION guards the whole feature.
 #[cfg(not(target_os = "linux"))]
 pub fn preallocate(_file: &File, _length: u64) -> io::Result<u64> {
     Ok(0)

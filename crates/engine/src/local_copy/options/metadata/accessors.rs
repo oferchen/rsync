@@ -140,10 +140,10 @@ impl LocalCopyOptions {
     /// result is forced to `false` so callers route privileged operations
     /// (chown, mknod, mkfifo) through the fake-super xattr placeholder
     /// path, mirroring upstream's `am_root < 0` sentinel.
-    // upstream: options.c:89 - am_root tri-state: 0 normal, 1 root, 2 --super,
-    //                          -1 --fake-super (negative is "fake")
-    // upstream: clientserver.c:1116-1119 - daemon `fake super = yes` forces am_root=-1
-    // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
+    /// upstream: options.c:89 - am_root tri-state: 0 normal, 1 root, 2 --super,
+    ///                          -1 --fake-super (negative is "fake")
+    /// upstream: clientserver.c:1116-1119 - daemon `fake super = yes` forces am_root=-1
+    /// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
     #[must_use]
     pub fn am_root(&self) -> bool {
         effective_am_root(self.super_mode, self.fake_super)
@@ -163,8 +163,8 @@ impl LocalCopyOptions {
 /// `am_root = -1` sentinel that demotes privileged paths to the
 /// fake-super xattr placeholder branch). Otherwise the explicit `--super`
 /// flag wins, falling back to the effective UID check.
-// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
-// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
+/// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
+/// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
 #[must_use]
 pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> bool {
     if fake_super {

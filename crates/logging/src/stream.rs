@@ -74,7 +74,7 @@ pub struct BadLogCode(pub LogCode);
 /// Returns [`BadLogCode`] for a code `rwrite` rejects. Callers that cannot
 /// abort should surface it; they must not silently pick a stream, which is the
 /// defect this function exists to prevent.
-// upstream: log.c:251-328 rwrite()
+/// upstream: log.c:251-328 rwrite()
 pub const fn message_stream(
     code: LogCode,
     ctx: StreamContext,

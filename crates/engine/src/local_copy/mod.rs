@@ -233,7 +233,7 @@ const CROSS_DEVICE_ERROR_CODE: i32 = 18;
 ///
 /// Delegates to `filters::collapse_dot_dot_dirs`, the single implementation of
 /// upstream's `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` rule.
-// upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS
+/// upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS
 pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
     filters::collapse_dot_dot_dirs(path)
 }

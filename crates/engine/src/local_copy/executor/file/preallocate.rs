@@ -26,8 +26,8 @@ use crate::local_copy::LocalCopyError;
 /// size - with `KEEP_SIZE` the reserved blocks sit beyond EOF and the punch
 /// silently does nothing, leaving the file fully allocated. So when holes will
 /// also be punched (`--sparse`), upstream reserves at full size instead.
-// upstream: syscall.c:2597 do_fallocate() - `int opts = (inplace ||
-// preallocate_files) && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0;`
+/// upstream: syscall.c:2597 do_fallocate() - `int opts = (inplace ||
+/// preallocate_files) && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0;`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Reservation {
     /// `opts == FALLOC_FL_KEEP_SIZE`: no holes will be punched.
@@ -39,7 +39,7 @@ pub(crate) enum Reservation {
 
 impl Reservation {
     /// Selects the reservation upstream would make for this sparse setting.
-    // upstream: syscall.c:2597 - `sparse_files <= 0` is what selects KEEP_SIZE.
+    /// upstream: syscall.c:2597 - `sparse_files <= 0` is what selects KEEP_SIZE.
     pub(crate) const fn for_sparse(sparse: bool) -> Self {
         if sparse {
             Self::FullSize
@@ -78,8 +78,8 @@ const fn available(reservation: Reservation) -> Reservation {
 /// run's start against it to choose `do_punch_hole()` over a plain `lseek()`, so
 /// a stray `0` here silently leaves `--preallocate --sparse` files fully
 /// allocated - the exact regression upstream records at syscall.c:2622.
-// upstream: syscall.c:2589 do_fallocate(); receiver.c:479
-// `preallocated_len = do_fallocate(fd, 0, total_size)`
+/// upstream: syscall.c:2589 do_fallocate(); receiver.c:479
+/// `preallocated_len = do_fallocate(fd, 0, total_size)`
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,

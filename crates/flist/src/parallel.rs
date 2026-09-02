@@ -37,10 +37,10 @@ use crate::file_list_walker::FileListWalker;
 /// let entries = collect_entries(walker)?;
 /// println!("Found {} entries", entries.len());
 /// ```
-// Enumeration is silent: upstream announces a completed file list only via the
-// `sending incremental file list` FCLIENT banner (flist.c:2252) or the
-// `building file list ... done` progress pair (flist.c:2250/2524), never as an
-// entry count, so a count emitted here would have no upstream analog on stdout.
+/// Enumeration is silent: upstream announces a completed file list only via the
+/// `sending incremental file list` FCLIENT banner (flist.c:2252) or the
+/// `building file list ... done` progress pair (flist.c:2250/2524), never as an
+/// entry count, so a count emitted here would have no upstream analog on stdout.
 pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     walker.collect()
 }

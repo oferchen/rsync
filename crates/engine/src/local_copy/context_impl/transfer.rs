@@ -884,7 +884,7 @@ impl<'a> CopyContext<'a> {
     /// zero runs beyond any preallocated extent become seeks (natural holes),
     /// while zero runs inside a preallocated extent are punched out so the
     /// reserved blocks are actually deallocated.
-    // upstream: fileio.c:write_sparse()
+    /// upstream: fileio.c:write_sparse()
     #[allow(clippy::too_many_arguments)]
     fn copy_file_contents_sparse(
         &mut self,

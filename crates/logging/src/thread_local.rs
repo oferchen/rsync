@@ -104,7 +104,7 @@ pub fn set_quiet(quiet: bool) {
 ///
 /// The single question a producer or renderer should ask before emitting an
 /// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
-// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
+/// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
 #[must_use]
 pub fn finfo_suppressed() -> bool {
     QUIET.with(Cell::get)
@@ -133,7 +133,7 @@ pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
 /// (client stdout, subject to verbosity) matches how the renderer treats
 /// every drained event today. Producers that mirror a different upstream
 /// `rprintf()` code use [`emit_info_coded`].
-// upstream: log.c:rwrite() dispatches FINFO messages
+/// upstream: log.c:rwrite() dispatches FINFO messages
 pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
     emit_info_coded(flag, level, LogCode::Info, message);
 }
@@ -168,7 +168,7 @@ pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String
 /// `rsync warning: … (code N) at file(line)` trailer upstream renders at
 /// `log.c:956` is deliberately not applied here; that formatting belongs to
 /// the single logcode-to-stream funnel, not to the emitter.
-// upstream: log.c:341 rwrite() `case FWARNING:`
+/// upstream: log.c:341 rwrite() `case FWARNING:`
 pub fn emit_warning(message: String) {
     emit_info_coded(InfoFlag::Misc, 0, LogCode::Warning, message);
 }
@@ -181,7 +181,7 @@ pub fn emit_warning(message: String) {
 /// The event is tagged [`LogCode::Info`]: upstream debug traces are emitted
 /// through `rprintf(FINFO, ...)` and share FINFO routing. Producers that
 /// mirror a different upstream code use [`emit_debug_coded`].
-// upstream: log.c:rwrite() dispatches FINFO debug messages
+/// upstream: log.c:rwrite() dispatches FINFO debug messages
 pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
     emit_debug_coded(flag, level, LogCode::Info, message);
 }
@@ -306,7 +306,7 @@ pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
 /// server's whole `--debug` output on the wire as a side effect of fixing a
 /// warning. `FLOG` is excluded because upstream returns before the switch
 /// (upstream: log.c:331-333); it belongs to [`drain_events_coded`].
-// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
+/// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
 pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
     drain_events_where(|code| {
         matches!(

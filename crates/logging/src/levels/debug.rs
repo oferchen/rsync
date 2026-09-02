@@ -11,7 +11,7 @@
 /// (verbose level 2) and increase through `-vvvvv` (level 5). Upstream
 /// defines these in `rsync.h` as `DEBUG_*` constants and indexes into
 /// the `debug_levels[]` array.
-// upstream: rsync.h DEBUG_ACL..DEBUG_TIME, options.c:237 debug_verbosity[]
+/// upstream: rsync.h DEBUG_ACL..DEBUG_TIME, options.c:237 debug_verbosity[]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugFlag {
@@ -78,7 +78,7 @@ pub enum DebugFlag {
 /// Each field holds the current verbosity level for its corresponding
 /// [`DebugFlag`]. A value of 0 means the flag is disabled. Upstream rsync
 /// stores these in the global `debug_levels[]` array (upstream: rsync.h).
-// upstream: rsync.h debug_levels[]
+/// upstream: rsync.h debug_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugLevels {

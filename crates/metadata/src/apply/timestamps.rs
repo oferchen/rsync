@@ -33,9 +33,9 @@ use std::os::fd::BorrowedFd;
 /// through the ambient namespace like upstream `generator.c:1344`'s
 /// `link_stat`. The syscall never opens the node, so a peerless FIFO cannot
 /// block it.
-// upstream: rsync.c:set_file_attrs()/util1.c:set_times() apply times through
-// utimensat on the path (never opening the node); rsync 3.4.3+ resolves under
-// the module dirfd (CVE-2026-29518).
+/// upstream: rsync.c:set_file_attrs()/util1.c:set_times() apply times through
+/// utimensat on the path (never opening the node); rsync 3.4.3+ resolves under
+/// the module dirfd (CVE-2026-29518).
 #[cfg(unix)]
 fn set_times_via(
     destination: &Path,
@@ -109,7 +109,7 @@ fn set_times_via(
 /// comparison is included in the skip check so that atime-only changes
 /// still trigger a `utimensat` call. Without `options` (or when atimes is
 /// disabled), only the mtime is compared.
-// upstream: rsync.c:set_file_attrs() - utimensat / lutimensat based on follow flag
+/// upstream: rsync.c:set_file_attrs() - utimensat / lutimensat based on follow flag
 pub(super) fn set_timestamp_like(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -212,7 +212,7 @@ fn is_tolerable_special_time_error(error: &io::Error) -> bool {
 ///
 /// When `options` is provided and `options.atimes()` is true, the atime
 /// comparison is included in the skip check.
-// upstream: rsync.c:set_file_attrs() - futimens path when fd is available
+/// upstream: rsync.c:set_file_attrs() - futimens path when fd is available
 #[cfg(unix)]
 pub(super) fn set_timestamp_with_fd(
     metadata: &fs::Metadata,
@@ -275,7 +275,7 @@ pub(super) fn set_timestamp_with_fd(
 /// Used in the local copy path when `--atimes` is active but `--times` is not,
 /// mirroring upstream's `set_file_attrs()` behavior where atime and mtime are
 /// governed independently by `ATTRS_SKIP_ATIME` / `ATTRS_SKIP_MTIME`.
-// upstream: rsync.c:604-612 - atime applied independently of mtime
+/// upstream: rsync.c:604-612 - atime applied independently of mtime
 pub(super) fn apply_atime_only_from_metadata(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -319,7 +319,7 @@ pub(super) fn apply_atime_only_from_metadata(
 ///
 /// Uses `futimens` on the open fd to set only the atime while preserving the
 /// destination's existing mtime.
-// upstream: rsync.c:604-612 - atime applied independently of mtime
+/// upstream: rsync.c:604-612 - atime applied independently of mtime
 #[cfg(unix)]
 pub(super) fn apply_atime_only_from_metadata_with_fd(
     metadata: &fs::Metadata,
@@ -371,7 +371,7 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
 /// When `--atimes` is not active, both atime and mtime are set to the entry's
 /// mtime value. Skips the syscall when both timestamps already match
 /// `cached_meta`.
-// upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
+/// upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
 pub(super) fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -429,7 +429,7 @@ pub(super) fn apply_timestamps_from_entry(
 /// symlinks, so they take the `AT_SYMLINK_NOFOLLOW` leaf. Tolerable
 /// special-file errnos are swallowed as best-effort, mirroring
 /// [`set_timestamp_like`].
-// upstream: rsync.c:set_file_attrs() - utimensat on the path, never opens the node
+/// upstream: rsync.c:set_file_attrs() - utimensat on the path, never opens the node
 fn set_entry_times(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -468,7 +468,7 @@ fn set_entry_times(
 /// the symlink's own mtime is updated instead of the link target's. The
 /// receiver invokes this after `do_symlink` so the on-disk link mtime
 /// matches the source-side value.
-// upstream: rsync.c:set_file_attrs() + set_times() - symlink path uses lutimes
+/// upstream: rsync.c:set_file_attrs() + set_times() - symlink path uses lutimes
 pub(super) fn apply_symlink_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -573,7 +573,7 @@ pub(super) fn apply_atime_only_from_entry(
 ///
 /// Reads the birth time via `metadata.created()` and applies it using
 /// `set_crtime`. On platforms where `created()` is unavailable, this is a no-op.
-// upstream: rsync.c:615 - crtime application after file transfer
+/// upstream: rsync.c:615 - crtime application after file transfer
 pub(super) fn apply_crtime_from_source_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -593,7 +593,7 @@ pub(super) fn apply_crtime_from_source_metadata(
 ///
 /// On macOS this uses `setattrlist(2)` with `ATTR_CMN_CRTIME`. On other
 /// platforms this is a no-op since creation time is not universally settable.
-// upstream: rsync.c:751 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
+/// upstream: rsync.c:751 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
 pub(super) fn apply_crtime_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -654,7 +654,7 @@ fn crtime_needs_update(
 }
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
-// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
+/// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
@@ -744,7 +744,7 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 /// is converted to a `FILETIME` (100-ns ticks since 1601-01-01). Pre-1601 or
 /// overflowing inputs leave the destination crtime untouched rather than write
 /// a bogus value.
-// upstream: rsync.c uses utimensat for mtime/atime; crtime uses SetFileTime on Windows
+/// upstream: rsync.c uses utimensat for mtime/atime; crtime uses SetFileTime on Windows
 #[cfg(windows)]
 #[allow(unsafe_code)]
 fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {

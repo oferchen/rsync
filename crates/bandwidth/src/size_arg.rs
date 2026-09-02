@@ -35,7 +35,7 @@ pub struct ParsedSize {
 }
 
 /// Checked integer exponentiation used to build the suffix multiplier.
-// upstream: options.c:parse_size_arg() - `while (reps--) size *= mult`
+/// upstream: options.c:parse_size_arg() - `while (reps--) size *= mult`
 pub fn pow_u128(base: u32, exponent: u32) -> Result<u128, SizeArgError> {
     let mut result = 1u128;
     let mut factor = u128::from(base);

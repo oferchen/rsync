@@ -82,9 +82,9 @@ impl<'a> CopyContext<'a> {
     /// arm alone is unreachable in exactly the case upstream prints. `--quiet`
     /// still suppresses it, at `rwrite()`'s FINFO arm, which
     /// `logging::message_stream` owns.
-    // upstream: flist.c:1338 and flist.c:2452 -
-    // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
-    // with no surrounding quotes and no trailing "(no recursion)" suffix.
+    /// upstream: flist.c:1338 and flist.c:2452 -
+    /// `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
+    /// with no surrounding quotes and no trailing "(no recursion)" suffix.
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             info_log!(Misc, 0, "skipping directory {}", path.display());
@@ -380,7 +380,7 @@ impl<'a> CopyContext<'a> {
     /// source mtime). It is intentionally retained here to keep this change
     /// scoped to one concern; folding it into the final pass is a deferred DRY
     /// cleanup. Both set the identical value, so the overlap is harmless.
-    // upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
+    /// upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         // Nothing queued means no delete pass ran, so there is no notice to
         // emit - upstream only prints the skip notice from inside delete_in_dir

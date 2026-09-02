@@ -54,8 +54,8 @@ fn batch_sum_head(index: &DeltaSignatureIndex) -> Result<protocol::wire::SumHead
 /// otherwise-matching block is punched into a hole instead of being seeked over
 /// with the rest of the block - that is precisely what `--inplace --sparse`
 /// relies on to keep a hole-y basis file sparse.
-// upstream: fileio.c:252-266 skip_matched() - `if (sparse_files > 0)
-// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, else flush + lseek.
+/// upstream: fileio.c:252-266 skip_matched() - `if (sparse_files > 0)
+/// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, else flush + lseek.
 fn consume_matched_in_place(
     writer: &mut fs::File,
     sparse_state: &mut SparseWriteState,

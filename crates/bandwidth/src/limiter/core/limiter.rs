@@ -26,7 +26,7 @@ use super::write_max::calculate_write_max;
 /// linearly with the rate so that pacing sleeps remain short and responsive,
 /// matching the `bwlimit_writemax = bwlimit * 128` formula in upstream rsync.
 ///
-// upstream: io.c:sleep_for_bwlimit()
+/// upstream: io.c:sleep_for_bwlimit()
 #[doc(alias = "--bwlimit")]
 #[derive(Clone, Debug)]
 pub struct BandwidthLimiter {
@@ -39,7 +39,7 @@ pub struct BandwidthLimiter {
 
 impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
-    // upstream: io.c:sleep_for_bwlimit() - initial setup
+    /// upstream: io.c:sleep_for_bwlimit() - initial setup
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
         let write_max = calculate_write_max(limit);
@@ -60,7 +60,7 @@ impl BandwidthLimiter {
     /// rate applies immediately without carryover from the previous period.
     /// This is also used when a daemon module overrides the client-supplied
     /// `--bwlimit`.
-    // upstream: options.c:2392 - daemon_bwlimit override reconfiguration
+    /// upstream: options.c:2392 - daemon_bwlimit override reconfiguration
     #[doc(alias = "--bwlimit")]
     pub fn update_limit(&mut self, limit: NonZeroU64) {
         let write_max = calculate_write_max(limit);
@@ -95,7 +95,7 @@ impl BandwidthLimiter {
     /// The value scales linearly with the configured rate so that pacing
     /// sleeps remain short and responsive. Callers should split writes
     /// larger than this threshold into chunks.
-    // upstream: options.c:2395 - bwlimit_writemax = bwlimit * 128
+    /// upstream: options.c:2395 - bwlimit_writemax = bwlimit * 128
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
@@ -125,7 +125,7 @@ impl BandwidthLimiter {
     /// and actual sleep durations.
     ///
     /// A zero-byte call is a no-op and returns immediately.
-    // upstream: io.c:sleep_for_bwlimit() - debt accumulation and sleep logic
+    /// upstream: io.c:sleep_for_bwlimit() - debt accumulation and sleep logic
     pub fn register(&mut self, bytes: usize) -> super::super::LimiterSleep {
         if bytes == 0 {
             return super::super::LimiterSleep::default();
