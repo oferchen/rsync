@@ -474,16 +474,16 @@ strip = false
 
 [workspace.metadata.oc_rsync]
 brand = "oc"
-upstream_version = "3.4.4"
+upstream_version = "3.5.0"
 rust_version = "0.6.4"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsync"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+daemon_config_dir = "/etc/oc-rsync"
+daemon_config = "/etc/oc-rsync/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsync/oc-rsyncd.secrets"
 legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
@@ -518,14 +518,14 @@ assets = [
     ["target/dist/oc-rsync", "usr/bin/oc-rsync", "755"],
     ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
-    ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
-    ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
+    ["packaging/etc/oc-rsync/oc-rsyncd.conf", "/etc/oc-rsync/oc-rsyncd.conf", "644"],
+    ["packaging/etc/oc-rsync/oc-rsyncd.secrets", "/etc/oc-rsync/oc-rsyncd.secrets", "600"],
     ["packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
     ["packaging/examples/oc-rsyncd.conf", "usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", "644"],
 ]
 conf-files = [
-    "etc/oc-rsyncd/oc-rsyncd.conf",
-    "etc/oc-rsyncd/oc-rsyncd.secrets",
+    "etc/oc-rsync/oc-rsyncd.conf",
+    "etc/oc-rsync/oc-rsyncd.secrets",
     "etc/default/oc-rsyncd",
 ]
 maintainer-scripts = "packaging/deb"
@@ -541,8 +541,8 @@ summary = "Rust implementation of the rsync-compatible client/daemon"
 assets = [
     { source = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "755" },
     { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "644" },
-    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "644", config = true },
-    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "600", config = true },
+    { source = "packaging/etc/oc-rsync/oc-rsyncd.conf", dest = "/etc/oc-rsync/oc-rsyncd.conf", mode = "644", config = true },
+    { source = "packaging/etc/oc-rsync/oc-rsyncd.secrets", dest = "/etc/oc-rsync/oc-rsyncd.secrets", mode = "600", config = true },
     { source = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "644", config = true },
     { source = "packaging/examples/oc-rsyncd.conf", dest = "/usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", mode = "644", doc = true },
 ]

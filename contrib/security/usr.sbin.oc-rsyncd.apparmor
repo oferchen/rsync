@@ -14,9 +14,7 @@
 
   # Read configuration
   /etc/rsyncd.conf r,
-  /etc/oc-rsyncd.conf r,
-  /etc/oc-rsyncd.secrets r,
-  /etc/oc-rsyncd.d/** r,
+  /etc/oc-rsync/** r,
 
   # PID file
   /run/oc-rsyncd.pid rwk,

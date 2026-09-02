@@ -74,8 +74,8 @@ use chroot = no
     filter = - *.tmp + *.rs - *.bak
     include = src/ tests/
     exclude = .git/ target/ node_modules/
-    include from = /etc/oc-rsyncd/include.txt
-    exclude from = /etc/oc-rsyncd/exclude.txt
+    include from = /etc/oc-rsync/include.txt
+    exclude from = /etc/oc-rsync/exclude.txt
 ```
 
 Client invocation (pull, with `--archive` and an arbitrary CLI filter):

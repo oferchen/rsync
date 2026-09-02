@@ -24,7 +24,7 @@ package() {
 		"$pkgdir/usr/bin/oc-rsync"
 
 	install -Dm644 "$startdir/oc-rsyncd.conf.default" \
-		"$pkgdir/etc/oc-rsyncd/oc-rsyncd.conf"
+		"$pkgdir/etc/oc-rsync/oc-rsyncd.conf"
 
 	install -Dm755 "$startdir/oc-rsyncd.initd" \
 		"$pkgdir/etc/init.d/oc-rsyncd"

@@ -549,12 +549,24 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
 ///
 /// Each entry is the canonical Cargo feature name as declared in the
 /// workspace `Cargo.toml`. Only features visible to the `core` crate
-/// (compression, ACL, xattr, iconv, async, embedded SSH, zlib-ng) are
-/// detectable here; bin-only features that do not propagate into `core`
-/// (`parallel`, `io_uring`, `iocp`, `copy_file_range`, `openssl`,
-/// `openssl-vendored`, `mmap-free-basis`, `sd-notify`, allocator) are
-/// surfaced via the existing `Capabilities` / `Optimizations` sections
-/// and the `Platform I/O` line above this one.
+/// Only features **declared on this crate** are visible to `cfg!` here; a test
+/// for a feature `core` does not declare is vacuously false, so it would report
+/// the feature as absent forever regardless of the build. That is why
+/// `iouring-send-zc` is reported by `fast_io::platform_io_capabilities()` (the
+/// crate that declares it) rather than added to the list below.
+///
+/// Reported here: `zstd`, `lz4`, `zlib-ng`, `acl`, `xattr`, `iconv`, `async`,
+/// `embedded-ssh`, `quic`, `sd-notify`.
+///
+/// Reported elsewhere because `core` cannot observe them: `parallel`,
+/// `io_uring`, `copy_file_range`, `openssl`, `mmap-free-basis` and the
+/// allocator via `Optimizations`; `iocp`, `vmsplice` and `send_zc` via
+/// `Platform I/O`.
+///
+/// ⚠ `daemon-seccomp` is reported by NO section today - it is declared on the
+/// workspace root and never reaches a crate that renders `--version`. Closing
+/// that needs the feature propagated (or a reporter in `crates/daemon`), not a
+/// `cfg!` here, which would be inert.
 #[must_use]
 pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
     let mut features: Vec<Cow<'static, str>> = Vec::new();
@@ -582,6 +594,12 @@ pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
     }
     if cfg!(feature = "embedded-ssh") {
         features.push(Cow::Borrowed("embedded-ssh"));
+    }
+    if cfg!(feature = "quic") {
+        features.push(Cow::Borrowed("quic"));
+    }
+    if cfg!(feature = "sd-notify") {
+        features.push(Cow::Borrowed("sd-notify"));
     }
 
     features

@@ -386,8 +386,9 @@ fn io_uring_status_detail_impl() -> String {
 ///
 /// # Platform-specific entries
 ///
-/// - **Linux**: `copy_file_range`, `sendfile`, `splice` (runtime-probed),
-///   `FICLONE`, `O_TMPFILE`, `io_uring` (runtime-probed)
+/// - **Linux**: `copy_file_range`, `sendfile`, `splice` and `vmsplice`
+///   (runtime-probed together), `FICLONE`, `O_TMPFILE`, `io_uring`
+///   (runtime-probed), `send_zc` (io_uring plus the `iouring-send-zc` feature)
 /// - **macOS**: `clonefile`, `fcopyfile`, `F_NOCACHE`, `writev`
 /// - **Windows**: `CopyFileEx`, `ReFS reflink`, `IOCP` (runtime-probed)
 #[must_use]
@@ -401,6 +402,12 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
 
         if is_splice_available() {
             caps.push("splice");
+            // `vmsplice` is the same splice-family syscall pair as `splice`
+            // (see `splice::syscalls::try_vmsplice_to_file`), so it rides the
+            // same kernel probe rather than a second one. It was implemented
+            // but never reported, which made the page-gifting write path
+            // invisible to operators reading `--version`.
+            caps.push("vmsplice");
         }
 
         caps.push("FICLONE");
@@ -408,6 +415,15 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
 
         if is_io_uring_available() {
             caps.push("io_uring");
+
+            // SEND_ZC is an opt-in build feature on top of io_uring. Reporting
+            // it here rather than in core's `compiled_build_features()` is
+            // deliberate: `iouring-send-zc` is declared on this crate, so the
+            // `cfg!` is live. The same test inside `core` would be vacuously
+            // false, because `core` never declares the feature.
+            if cfg!(feature = "iouring-send-zc") {
+                caps.push("send_zc");
+            }
         }
     }
 
@@ -446,6 +462,26 @@ mod tests {
             assert!(caps.contains(&"sendfile"));
             assert!(caps.contains(&"FICLONE"));
             assert!(caps.contains(&"O_TMPFILE"));
+
+            // `vmsplice` and `splice` are the same syscall family behind one
+            // probe, so they are reported together or not at all. A bare
+            // `contains` on either name would pass whether or not the other is
+            // emitted - which is exactly how `vmsplice` stayed implemented but
+            // unreported. Tying the two answers together is what makes this
+            // assertion able to fail.
+            assert_eq!(
+                caps.contains(&"vmsplice"),
+                caps.contains(&"splice"),
+                "vmsplice rides the splice probe and must be reported with it",
+            );
+
+            // SEND_ZC is only meaningful on top of io_uring, and only when the
+            // opt-in build feature is compiled in. Both halves must hold.
+            assert_eq!(
+                caps.contains(&"send_zc"),
+                caps.contains(&"io_uring") && cfg!(feature = "iouring-send-zc"),
+                "send_zc requires io_uring plus the iouring-send-zc feature",
+            );
         }
 
         #[cfg(target_os = "macos")]

@@ -53,7 +53,7 @@ impl TarballPlatform {
                 format!("{root}/lib/systemd"),
                 format!("{root}/lib/systemd/system"),
                 format!("{root}/etc"),
-                format!("{root}/etc/oc-rsyncd"),
+                format!("{root}/etc/oc-rsync"),
                 format!("{root}/etc/default"),
             ]);
         }
@@ -79,13 +79,13 @@ impl TarballPlatform {
                     0o644,
                 ),
                 (
-                    workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.conf"),
-                    String::from("etc/oc-rsyncd/oc-rsyncd.conf"),
+                    workspace.join("packaging/etc/oc-rsync/oc-rsyncd.conf"),
+                    String::from("etc/oc-rsync/oc-rsyncd.conf"),
                     0o644,
                 ),
                 (
-                    workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.secrets"),
-                    String::from("etc/oc-rsyncd/oc-rsyncd.secrets"),
+                    workspace.join("packaging/etc/oc-rsync/oc-rsyncd.secrets"),
+                    String::from("etc/oc-rsync/oc-rsyncd.secrets"),
                     0o600,
                 ),
                 (

@@ -43,7 +43,9 @@ pub(super) fn add_core_args(command: ClapCommand) -> ClapCommand {
             Arg::new("config")
                 .long("config")
                 .value_name("FILE")
-                .help("Specify alternate daemon config file (default: /etc/oc-rsyncd/oc-rsyncd.conf).")
+                .help(
+                    "Specify alternate daemon config file (default: /etc/oc-rsync/oc-rsyncd.conf).",
+                )
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),

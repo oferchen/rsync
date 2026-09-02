@@ -110,7 +110,7 @@ For each test scenario, we validate:
 When comparing output:
 - Replace `rsync` → `oc-rsync` in program names
 - Strip Rust source trailers: `at <path>:<line> [<role>=0.5.0]`
-- Normalize paths: `/etc/rsyncd.conf` vs `/etc/oc-rsyncd/oc-rsyncd.conf`
+- Normalize paths: `/etc/rsyncd.conf` vs `/etc/oc-rsync/oc-rsyncd.conf`
 - Ignore timing differences in progress output
 
 ### Binary Acquisition

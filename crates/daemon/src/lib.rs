@@ -29,7 +29,7 @@
 //!   `RSYNCD_CONFIG`/`RSYNCD_SECRETS` overrides when the branded values are
 //!   unset. When no explicit configuration path is provided via CLI or
 //!   environment variables, the daemon attempts to load
-//!   `/etc/oc-rsyncd/oc-rsyncd.conf` so packaged defaults align with production
+//!   `/etc/oc-rsync/oc-rsyncd.conf` so packaged defaults align with production
 //!   deployments. If that path is absent the daemon also checks the legacy
 //!   `/etc/rsyncd.conf` so existing installations continue to work during the
 //!   transition to the prefixed configuration layout.
