@@ -73,6 +73,12 @@ static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
 /// caller is without making it invent values for fields its arm ignores.
 pub fn install_session(activation: &Activation) {
     SESSION_OPTOUT.store(activation.optout_allowed(), Ordering::Relaxed);
+    // The pinned descriptor names the PREVIOUS root, so it stops being an
+    // answer the moment the root changes. Dropping it here keeps one
+    // invariant - the pin, when present, is always this root's - instead of
+    // letting a stale descriptor answer for a root it never named.
+    #[cfg(unix)]
+    clear_session_root_fd();
     *SESSION_ROOT
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = activation.root().map(physical_root);
@@ -113,6 +119,174 @@ fn physical_root(root: &Path) -> PathBuf {
 /// is the failure mode this exists to prevent. The value is a property of the
 /// session, not of the call - unlike [`PathKind`], which is.
 static SESSION_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// The session's root pinned *by identity* - the second half of
+/// [`SESSION_ROOT`], not a second root.
+///
+/// [`SESSION_ROOT`] answers *where* the boundary is. This answers *which
+/// directory* it is, as a descriptor obtained while the process could still
+/// reach it. The two are always the same directory: [`install_session`] drops
+/// the descriptor whenever it replaces the path, so a pin that is present is
+/// always this session's.
+///
+/// # Why a descriptor is needed at all
+///
+/// A daemon resolves the module root while privileged and then drops to the
+/// module's uid. Every later operation that re-walks the *absolute* module
+/// path re-traverses the module's ancestors as the dropped uid, so a module
+/// under a directory that uid cannot search (`path = /home/backup/data` with a
+/// 0700 home) fails with `EACCES` even though the module itself is
+/// world-readable. A descriptor opened before the drop is immune: the kernel
+/// checks the ancestors once, at open time.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:1059-1065` - `change_dir(module_chdir, CD_NORMAL)` then
+///   `module_dirfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)`, both
+///   above the `setgid`/`setuid` at `clientserver.c:1093+`.
+/// - `flist.c:2035-2059` `secure_opendir()` - the scan anchors on it.
+/// - `sender.c:293-295` - the content open anchors on it.
+/// - `syscall.c:85-90` `open_anchor_dirfd()` - `dup(module_dirfd)` instead of
+///   re-resolving the absolute root.
+#[cfg(unix)]
+static SESSION_ROOT_FD: RwLock<Option<PinnedRoot>> = RwLock::new(None);
+
+/// The pinned root: the descriptor, plus the spelling it was pinned under.
+///
+/// Two spellings of one directory, not two roots. [`SESSION_ROOT`] holds the
+/// *physical* one, because judging whether a resolved path landed outside the
+/// boundary has to compare in one namespace. The sender's absolute source
+/// paths are built from the *literal* one - the module path as the operator
+/// wrote it in `rsyncd.conf` - and the two differ wherever an ancestor is a
+/// symlink (`/var` -> `/private/var` on macOS, `/home` -> `/usr/home` on
+/// FreeBSD, any bind-mounted or symlinked module root). Keeping the literal
+/// here is what lets a lookup on such a deployment recognise its own root;
+/// without it the anchoring silently never fires and the module is back to the
+/// `EACCES` this exists to remove.
+#[cfg(unix)]
+#[derive(Clone)]
+struct PinnedRoot {
+    literal: PathBuf,
+    fd: std::sync::Arc<std::os::fd::OwnedFd>,
+}
+
+/// Pin `root` by identity.
+///
+/// Call while the process can still reach it - for a daemon that means after
+/// `chroot` and before the `setgid`/`setuid` drop, exactly where upstream
+/// opens `module_dirfd`. Calling it later still succeeds when the ancestors
+/// happen to be searchable, and fails with the same `EACCES` the pin exists to
+/// avoid when they are not.
+///
+/// `root` is the root as the caller names it; it should be the same value the
+/// caller published through [`install_session`], and both spellings of it are
+/// then recognised (see [`PinnedRoot`]).
+///
+/// # Errors
+///
+/// The `open(2)` error from opening the root as a directory, or `ELOOP` when
+/// the ownership walk refuses a component symlink owned by neither uid 0 nor
+/// our euid. A caller that cannot pin must fall back to the absolute path -
+/// which is what it did before a pin existed - and must not treat the pin as a
+/// confinement it can skip re-checking.
+#[cfg(unix)]
+pub fn pin_session_root_fd(root: &Path) -> std::io::Result<()> {
+    // upstream: clientserver.c:1065 - `open(".", O_RDONLY | O_DIRECTORY |
+    // O_CLOEXEC)`. A working directory descriptor, not `O_PATH`: `openat`
+    // anchoring, the `dup` in [`crate::open_trusted_dir`], and the Landlock
+    // rule all take it as-is, and `O_PATH` cannot serve the first two.
+    //
+    // Through the OWNERSHIP WALK, not a plain open, because upstream's `.` is
+    // already the directory `change_dir()` entered and `change_dir()` enters a
+    // non-chrooted daemon's module root with
+    // `open_no_attacker_symlinks(dir, O_RDONLY | O_DIRECTORY, 0)`
+    // (`util1.c:1254-1263`). A plain open here would resolve a symlink an
+    // attacker planted at a component of the configured `path =`, and the pin
+    // would then answer `link_stat(".")` with the escape target's directory -
+    // turning the ancestor-traversal fix into a module-root escape. The
+    // operator's own `/backup -> /mnt/disk` is still followed; only a
+    // foreign-owned one is refused.
+    let fd = crate::owner_walk::operator_open_dir(root)?;
+    *SESSION_ROOT_FD
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PinnedRoot {
+        literal: root.to_path_buf(),
+        fd: std::sync::Arc::new(fd),
+    });
+    Ok(())
+}
+
+/// Drop the pinned root descriptor.
+#[cfg(unix)]
+pub fn clear_session_root_fd() {
+    *SESSION_ROOT_FD
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+/// The pinned root descriptor when `path` names the pinned root itself, under
+/// either spelling of it.
+///
+/// This is the question [`crate::open_trusted_dir`] asks, and upstream asks it
+/// as `strcmp(path, module_dir)` (`syscall.c:87`).
+#[cfg(unix)]
+#[must_use]
+pub fn pinned_root_fd_for(path: &Path) -> Option<std::sync::Arc<std::os::fd::OwnedFd>> {
+    let (fd, relative) = pinned_root_relative(path)?;
+    (relative == Path::new(".")).then_some(fd)
+}
+
+/// Whether this session pinned a root at all.
+#[cfg(unix)]
+#[must_use]
+pub fn session_root_is_pinned() -> bool {
+    SESSION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+}
+
+/// Split `path` into the pinned root descriptor and the remainder to resolve
+/// beneath it, so a caller can reach `path` without re-walking the root's
+/// ancestors.
+///
+/// Returns `None` - meaning "resolve `path` the ordinary way" - when no root
+/// is pinned, or when `path` does not lie beneath the pinned root. A path
+/// equal to the root yields `.`, which is the name upstream's post-`change_dir`
+/// code uses for the same directory (`flist.c:2059`).
+#[cfg(unix)]
+#[must_use]
+pub fn pinned_root_relative(
+    path: &Path,
+) -> Option<(std::sync::Arc<std::os::fd::OwnedFd>, PathBuf)> {
+    let pinned = SESSION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()?;
+    let relative = path
+        .strip_prefix(&pinned.literal)
+        .ok()
+        .or_else(|| path.strip_prefix(session_confinement_root()?).ok())?;
+    // A `..` in the remainder would be resolved from the pin rather than from
+    // `/`, and `strip_prefix` is lexical so it cannot say where that lands.
+    // Upstream refuses the same component up front
+    // (`syscall.c` `path_has_dotdot_component`); here the answer is simply
+    // "not anchorable", which leaves the caller on the absolute path it used
+    // before. Anchoring is an optimisation of reach, never of policy, so
+    // declining is always a correct answer.
+    if relative
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return None;
+    }
+    let relative = if relative.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        relative.to_path_buf()
+    };
+    Some((pinned.fd, relative))
+}
 
 /// Whether an already-resolved absolute path must be refused for landing
 /// outside the session's confinement root.

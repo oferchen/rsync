@@ -121,6 +121,11 @@ pub fn is_supported() -> bool {
 ///
 /// Call exactly once per daemon connection, after privilege drop and any
 /// chroot have completed, before any user-controlled file operation begins.
+/// A root that names the session's pinned module root
+/// ([`pin_session_root_fd`](crate::confinement::pin_session_root_fd)), or lies
+/// beneath it, is opened through that descriptor - the rule path open runs
+/// post-drop, and re-resolving the absolute path there is what makes the
+/// ruleset fail to install on a module under an unsearchable ancestor.
 /// All roots must be absolute and must already exist - the helper does not
 /// create them. An empty `allowed_roots` slice denies every filesystem write
 /// once `restrict_self()` engages, which is the correct posture for a
@@ -158,9 +163,18 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
     };
 
     for root in allowed_roots {
-        let fd = match PathFd::new(root) {
+        // The rule path is opened HERE, which is after the daemon's privilege
+        // drop - so opening the module root by its absolute path re-traverses
+        // the module's ancestors as the dropped uid and returns `EACCES`
+        // whenever one of them is unsearchable (a 0700 home). The caller only
+        // warns on failure, so the module would then be served with no sandbox
+        // at all: the hardening would disappear on precisely the layout it
+        // exists for. Anchoring the open on the root the daemon pinned while
+        // still privileged (`clientserver.c:1059-1065`) is what keeps the rule
+        // installable there.
+        let fd = match crate::pinned_root::open_o_path(root) {
             Ok(fd) => fd,
-            Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
+            Err(err) => return LandlockOutcome::Error(err),
         };
         created = match created.add_rule(PathBeneath::new(fd, access)) {
             Ok(c) => c,

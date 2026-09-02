@@ -93,7 +93,25 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
 /// Ordinary `open(2)` errors only: `ENOENT`, `ENOTDIR`, `EACCES`, `EPERM`.
 /// Unlike [`secure_open_dir`] this never fails with `ELOOP` or `EXDEV`
 /// merely because a component is a symlink.
+///
+/// # The pinned session root is duplicated, not re-resolved
+///
+/// When `path` names the root a daemon pinned by identity before its
+/// privilege drop
+/// ([`pin_session_root_fd`](crate::confinement::pin_session_root_fd)), this
+/// hands back a duplicate of that descriptor instead of re-opening the
+/// absolute path. Functionally identical - same inode, same ordinary symlink
+/// resolution, already performed - but it does not re-traverse the root's
+/// ancestors as the dropped uid, which `EACCES`es whenever the module sits
+/// under a directory that uid cannot search (a 0700 home).
+///
+/// upstream: `syscall.c:85-90` `open_anchor_dirfd()` - `dup(module_dirfd)`
+/// under exactly this condition, plain `openat(AT_FDCWD, ...)` otherwise.
 pub fn open_trusted_dir(path: &Path) -> io::Result<OwnedFd> {
+    if let Some(pinned) = crate::confinement::pinned_root_fd_for(path) {
+        use std::os::fd::AsFd;
+        return pinned.as_fd().try_clone_to_owned();
+    }
     imp::open_trusted_dir(path)
 }
 
