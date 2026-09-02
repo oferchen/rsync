@@ -100,6 +100,23 @@ fn test_generator_for_path(
     (handshake, ctx)
 }
 
+/// Builds a generator for a trailing-slash (DOTDIR) source under `-d`.
+///
+/// upstream: flist.c:2723-2726 - a directory operand is skipped outright
+/// unless `xfer_dirs` is on, and `xfer_dirs` comes from `-r`, `-d`, or
+/// `--list-only` (options.c:2314-2320). A DOTDIR fixture with none of them
+/// builds an EMPTY file list, so a cell that means to describe "`.` plus the
+/// directory's children" must ask for `-d` - upstream's one-level form - and
+/// not lean on recursion being off.
+fn test_generator_for_dir_contents(base_path: &Path) -> (HandshakeResult, GeneratorContext) {
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.args = vec![OsString::from(base_path)];
+    config.flags.dirs = true;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    (handshake, ctx)
+}
+
 /// Parses filter rules and applies them to a generator context.
 fn apply_filters(ctx: &mut GeneratorContext, wire_rules: Vec<FilterRuleWireFormat>) {
     let (filter_set, merge_configs) = ctx.parse_received_filters(&wire_rules).unwrap();
@@ -813,7 +830,7 @@ fn filter_application_excludes_files() {
     ]);
     let base_path = temp_dir.path();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base_path);
     apply_filters(
         &mut ctx,
         vec![FilterRuleWireFormat::exclude("*.log".to_owned())],
@@ -843,7 +860,7 @@ fn filter_application_includes_only_matching() {
     ]);
     let base_path = temp_dir.path();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base_path);
     apply_filters(
         &mut ctx,
         vec![
@@ -899,7 +916,7 @@ fn filter_application_no_filters_includes_all() {
     ]);
     let base_path = temp_dir.path();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base_path);
 
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list is `.` + the directory's
@@ -2402,6 +2419,10 @@ fn walk_includes_fifo_as_special_entry_type() {
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.specials = true;
+    // upstream: flist.c:2723-2726 - `-d` is what lets a DOTDIR operand reach
+    // the walk at all; without any `xfer_dirs` source the operand is skipped
+    // and the list is empty (options.c:2314-2320).
+    config.flags.dirs = true;
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
     // Trailing-slash source enters upstream's DOTDIR_NAME branch
@@ -4527,7 +4548,7 @@ fn generator_skips_files_matching_per_directory_merge_rules() {
     fs::write(base.join("skip.log"), b"skip").unwrap();
     fs::write(base.join(".rsync-filter"), "- *.log\n").unwrap();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base);
 
     // Set up a DirMergeConfig for .rsync-filter
     ctx.filter_chain
@@ -4666,7 +4687,7 @@ fn generator_merge_filter_exclude_self() {
     fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
     fs::write(base.join("file.txt"), b"keep").unwrap();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base);
     ctx.filter_chain
         .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter").with_exclude_self(true));
 
@@ -4695,7 +4716,7 @@ fn generator_no_merge_configs_unchanged_behavior() {
     let temp_dir = create_test_files(&[("file1.txt", b"data1"), ("file2.log", b"data2")]);
     let base = temp_dir.path();
 
-    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+    let (_handshake, mut ctx) = test_generator_for_dir_contents(base);
     // No merge configs added - filter_chain is empty
 
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch

@@ -734,6 +734,14 @@ impl<R> MultiplexReader<R> {
             protocol::MessageCode::Data => return true,
             protocol::MessageCode::Info | protocol::MessageCode::Client => {
                 // upstream: log.c:rwrite() - FINFO and FCLIENT go to stdout
+                // (log.c:309 rewrites FCLIENT to FINFO first), and the FINFO
+                // arm returns early under `--quiet` (log.c:344-346). A frame
+                // arriving from the peer is delivered through `read_a_msg()` ->
+                // `rwrite()`, so it meets that same arm: `--quiet` silences a
+                // remote FINFO exactly as it silences a local one.
+                if logging::finfo_suppressed() {
+                    return false;
+                }
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                     sink.info(msg);
                 }

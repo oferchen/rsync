@@ -50,6 +50,9 @@ pub(crate) enum SenderDiagnostic {
     /// Upstream `FERROR_XFER`. `MSG_ERROR_XFER` exists at every supported
     /// protocol, so it never downgrades.
     ErrorXfer,
+    /// Upstream `FINFO`. Rides `MSG_INFO` at every supported protocol and
+    /// lands on the peer's STDOUT, not its stderr (`log.c:322-330`).
+    Info,
 }
 
 pub(super) struct NdxAttrs<'a> {
@@ -361,8 +364,25 @@ impl GeneratorContext {
         if kind == SenderDiagnostic::ErrorXfer {
             self.got_xfer_error = true;
         }
+        // upstream: log.c:344-346 - `case FINFO: if (quiet) return;` sits in
+        // rwrite's switch, which runs BEFORE the `am_server` send_msg() at
+        // log.c:357. A quiet server therefore never frames the message at all,
+        // rather than framing it and leaving the client to drop it.
+        if kind == SenderDiagnostic::Info && logging::finfo_suppressed() {
+            return Ok(());
+        }
         if self.config.connection.client_mode || !writer.is_multiplexed() {
-            eprint!("{text}");
+            // upstream: log.c:322-330 - `rwrite()` sends FINFO to the "out"
+            // stream (stdout) and FWARNING/FERROR_XFER to stderr, and `--quiet`
+            // is applied on the FINFO arm only. Routing Info through the
+            // logging facility keeps both of those, where `eprint!` would put
+            // the line on the wrong stream and defeat `--quiet`.
+            match kind {
+                SenderDiagnostic::Info => {
+                    logging::info_log!(Misc, 0, "{}", text.trim_end_matches('\n'));
+                }
+                _ => eprint!("{text}"),
+            }
             return Ok(());
         }
         match kind {
@@ -371,6 +391,7 @@ impl GeneratorContext {
             }
             SenderDiagnostic::Warning => writer.send_msg_warning(text.as_bytes()),
             SenderDiagnostic::ErrorXfer => writer.send_msg_error_xfer(text.as_bytes()),
+            SenderDiagnostic::Info => writer.send_msg_info(text.as_bytes()),
         }
     }
 
