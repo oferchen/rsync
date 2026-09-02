@@ -2015,7 +2015,7 @@ fn server_mode_merges_cmdline_and_stdin_secluded_args() {
     //   rsync\0.\0/home/ofer/reproA/from/\0\0
     let wire: &[u8] = b"rsync\0.\0/home/ofer/reproA/from/\0\0";
     let mut reader = Cursor::new(wire);
-    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None)
+    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None, None)
         .expect("recv should succeed");
     assert_eq!(
         received,
@@ -2058,7 +2058,7 @@ fn server_mode_merges_cmdline_and_stdin_standalone_s_flag() {
 
     let wire: &[u8] = b"rsync\0.\0/srv/data/\0\0";
     let mut reader = Cursor::new(wire);
-    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None)
+    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None, None)
         .expect("recv should succeed");
 
     let mut received_iter = received.into_iter();

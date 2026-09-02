@@ -114,7 +114,12 @@ where
     // re-runs parse_arguments() on the server side.
     let effective_args: Vec<OsString>;
     let effective_slice: &[OsString] = if secluded_args {
-        match protocol::secluded_args::recv_secluded_args(&mut stdin, None) {
+        // `None` for the argument ceiling is deliberate and matches upstream:
+        // `read_args()` applies MAX_DAEMON_ARGS only under `if (mod_name &&
+        // ...)` (`io.c:1476`), and this is the rsh/server path, where
+        // `mod_name` is NULL. The peer here is whoever already got a shell,
+        // so the daemon's anti-amplification bound does not apply.
+        match protocol::secluded_args::recv_secluded_args(&mut stdin, None, None) {
             Ok(received_args) => {
                 // Discard the synthetic "rsync" arg0 from the wire and
                 // prepend the command-line tail so the server-options
