@@ -413,16 +413,21 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
     );
 }
 
-// Why the receiver must never pick an inplace write for a --partial-dir resume.
+// Why this receiver must not report a --partial-dir resume as an inplace write.
 
-/// An inplace write (is_inplace == true, needs_rename == false) targets the live
-/// destination directly, and on interrupt the partial data is LEFT at the live
-/// destination name - it is never relocated into the partial dir. This is the
-/// exact data-integrity hazard the receiver's `resolve_use_inplace` avoids by
-/// keeping a `--partial-dir` resume a temp+rename transfer (see
-/// `crate::transfer_ops`): upstream's one_inplace writes to the partial file
-/// (partialptr), not the live destination (receiver.c:910,969), so the live name
-/// never holds a truncated file.
+/// This receiver's inplace mode (`is_inplace == true`, `needs_rename == false`)
+/// has exactly one target: the live destination. On interrupt the partial data
+/// is LEFT at the live destination name and is never relocated into the partial
+/// dir.
+///
+/// That is a property of THIS implementation, not of upstream's `one_inplace`.
+/// Upstream's in-place target under `one_inplace` is `partialptr` - the file in
+/// the partial dir - not `fname` (`rsync-3.5.0/receiver.c:1195-1196`), so the
+/// live name never holds a truncated file there either. What this test pins is
+/// that `resolve_use_inplace` must keep a `--partial-dir` resume on the
+/// temp+rename path for as long as the disk commit has no partial-dir staging
+/// target to write into; see `crate::transfer_ops` for the full reasoning and
+/// for the local-copy executor that does implement upstream's shape.
 #[test]
 fn inplace_partial_dir_would_leave_incomplete_file_at_live_dest() {
     let _registry_lock = test_support::cleanup_registry_test_guard();

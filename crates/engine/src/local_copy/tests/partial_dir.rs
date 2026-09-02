@@ -1528,3 +1528,139 @@ fn partial_dir_idempotent_transfer_with_existing_dest() {
     // At least one of the runs should succeed
     assert!(summary2.files_copied() + summary2.regular_files_matched() >= 1);
 }
+
+// upstream's `one_inplace`: an existing --partial-dir entry is the file the
+// reconstruction is written into, and it is renamed onto the destination on
+// commit (receiver.c:1195-1196, :1286-1300).
+
+/// Sets up `dest/pdir/<name>` holding `old`, and `source` holding `new`.
+fn one_inplace_fixture(
+    temp: &Path,
+    old: &[u8],
+    new: &[u8],
+) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let source = temp.join("source.bin");
+    let dest_dir = temp.join("dest");
+    let partial_dir = dest_dir.join("pdir");
+    fs::create_dir_all(&partial_dir).expect("create partial dir");
+    let destination = dest_dir.join("source.bin");
+    let partial_entry = partial_dir.join("source.bin");
+    fs::write(&source, new).expect("write source");
+    fs::write(&partial_entry, old).expect("write partial entry");
+    (source, destination, partial_dir, partial_entry)
+}
+
+fn run_one_inplace_copy(source: &Path, destination: &Path, whole_file: bool) {
+    let operands = vec![
+        source.to_path_buf().into_os_string(),
+        destination.to_path_buf().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_partial_directory(Some("pdir"))
+                .whole_file(whole_file),
+        )
+        .expect("copy succeeds");
+    assert_eq!(summary.files_copied(), 1);
+}
+
+/// Non-vacuity companion for the one_inplace staging: an ordinary
+/// `--partial-dir` resume, with nothing refusing any open, must still land the
+/// source bytes at the destination and clear the partial dir.
+///
+/// The old partial is deliberately LONGER than the source, so a staging path
+/// that reused the entry without sizing the result would leave a stale tail.
+#[test]
+fn partial_dir_one_inplace_staging_is_byte_correct() {
+    let temp = tempdir().expect("tempdir");
+    let old = vec![b'O'; 9000];
+    let new = vec![b'N'; 4096];
+    let (source, destination, partial_dir, _) = one_inplace_fixture(temp.path(), &old, &new);
+
+    run_one_inplace_copy(&source, &destination, true);
+
+    assert_eq!(fs::read(&destination).expect("read dest"), new);
+    // upstream: receiver.c:1299 - handle_partial_dir(partialptr, PDIR_DELETE)
+    // still runs under one_inplace, so the emptied relative dir goes away.
+    assert!(
+        !partial_dir.exists(),
+        "a completed one_inplace transfer removes the emptied partial dir"
+    );
+}
+
+/// The same with a delta pass rather than whole-file, so the open does not
+/// truncate and the final size comes from the transfer's own `set_len`.
+#[test]
+fn partial_dir_one_inplace_staging_is_byte_correct_with_delta() {
+    let temp = tempdir().expect("tempdir");
+    let old = vec![b'O'; 9000];
+    let new = vec![b'N'; 4096];
+    let (source, destination, partial_dir, _) = one_inplace_fixture(temp.path(), &old, &new);
+    fs::write(&destination, vec![b'D'; 7000]).expect("write existing destination");
+
+    run_one_inplace_copy(&source, &destination, false);
+
+    assert_eq!(fs::read(&destination).expect("read dest"), new);
+    assert!(!partial_dir.exists(), "partial dir removed after commit");
+}
+
+/// Anti-vacuity for the two tests above: prove the bytes travelled through the
+/// partial-dir entry rather than through a temp beside the destination.
+///
+/// `finish_transfer(fname, fnametmp, ...)` with `fnametmp == partialptr`
+/// (receiver.c:1288) is a rename, so the destination must end up wearing the
+/// inode the partial entry had. Before this staging existed the destination was
+/// a freshly created temp inode and the partial entry was unlinked, so this
+/// assertion fails on the old behaviour.
+#[cfg(unix)]
+#[test]
+fn partial_dir_one_inplace_renames_the_partial_entry_onto_the_destination() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let temp = tempdir().expect("tempdir");
+    let old = vec![b'O'; 2048];
+    let new = vec![b'N'; 2048];
+    let (source, destination, _, partial_entry) = one_inplace_fixture(temp.path(), &old, &new);
+    let staged_ino = fs::metadata(&partial_entry).expect("stat partial").ino();
+
+    run_one_inplace_copy(&source, &destination, true);
+
+    assert_eq!(
+        fs::metadata(&destination).expect("stat dest").ino(),
+        staged_ino,
+        "the committed destination must be the partial-dir entry renamed into place"
+    );
+    assert_eq!(fs::read(&destination).expect("read dest"), new);
+}
+
+/// A partial-dir leaf that is a symlink is not upstream's `partialptr`:
+/// `link_stat(partialptr, &st, 0)` is an lstat and `S_ISREG` refuses it
+/// (generator.c:2173-2179), so the transfer stays on the temp+rename path and
+/// the symlink target is never written through.
+#[cfg(unix)]
+#[test]
+fn partial_dir_symlink_leaf_is_not_a_one_inplace_target() {
+    let temp = tempdir().expect("tempdir");
+    let outside = temp.path().join("outside.bin");
+    fs::write(&outside, b"untouched").expect("write outside");
+
+    let source = temp.path().join("source.bin");
+    let dest_dir = temp.path().join("dest");
+    let partial_dir = dest_dir.join("pdir");
+    fs::create_dir_all(&partial_dir).expect("create partial dir");
+    fs::write(&source, b"payload").expect("write source");
+    std::os::unix::fs::symlink(&outside, partial_dir.join("source.bin")).expect("symlink");
+
+    let destination = dest_dir.join("source.bin");
+    run_one_inplace_copy(&source, &destination, true);
+
+    assert_eq!(fs::read(&destination).expect("read dest"), b"payload");
+    assert_eq!(
+        fs::read(&outside).expect("read outside"),
+        b"untouched",
+        "a symlinked partial-dir leaf must not receive the payload"
+    );
+}

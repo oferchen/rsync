@@ -480,6 +480,12 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
 
+    // upstream: generator.c:2173-2179 + receiver.c:1137 - a `--partial-dir`
+    // entry that already exists as a regular file is both the basis name and,
+    // under `one_inplace`, the file the reconstruction is written into.
+    let one_inplace_partial_file =
+        super::write_strategy::one_inplace_partial_file(context, destination);
+
     let strategy = select_write_strategy(
         append_offset,
         inplace_enabled,
@@ -487,6 +493,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         delay_updates_enabled,
         existing_metadata.is_some(),
         context.temp_directory_path().is_some(),
+        one_inplace_partial_file.is_some(),
         destination,
     );
 
@@ -528,6 +535,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         append_offset,
         partial_enabled,
         strategy,
+        one_inplace_partial_file.as_deref(),
         &mut guard,
         &mut staging_path,
     )?;
