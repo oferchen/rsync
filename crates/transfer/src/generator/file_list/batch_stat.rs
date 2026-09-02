@@ -27,10 +27,9 @@ pub(in crate::generator) struct StatResult {
 
 /// Collects `read_dir()` entries into paths and batch-resolves their metadata.
 ///
-/// When `follow_symlinks` is true, uses `fs::metadata()` (follows symlinks).
-/// Otherwise uses `fs::symlink_metadata()` (lstat). The caller is responsible
-/// for applying more nuanced symlink resolution (e.g. `--copy-unsafe-links`)
-/// after receiving the raw metadata.
+/// When `follow_symlinks` is true this stats (follows symlinks); otherwise it
+/// lstats. The caller is responsible for applying more nuanced symlink
+/// resolution (e.g. `--copy-unsafe-links`) after receiving the raw metadata.
 ///
 /// Uses [`map_blocking`] which dispatches to rayon's work-stealing pool when
 /// the entry count meets the configured stat threshold from [`ParallelThresholds`],
@@ -41,10 +40,14 @@ pub(in crate::generator) fn batch_stat_dir_entries(
     thresholds: &ParallelThresholds,
 ) -> Vec<StatResult> {
     map_blocking(paths, thresholds.for_op(ParallelOp::Stat), move |path| {
+        // Anchored on the daemon's pinned module root when the entry lies
+        // beneath it, so the per-child stat does not re-walk the module's
+        // ancestors as the dropped uid. The ordinary `lstat`/`stat` otherwise.
+        // upstream: `flist.c:2035-2059` `secure_opendir()`.
         let metadata = if follow_symlinks {
-            fs::metadata(&path)
+            fast_io::pinned_root::metadata(&path)
         } else {
-            fs::symlink_metadata(&path)
+            fast_io::pinned_root::symlink_metadata(&path)
         };
         StatResult { path, metadata }
     })

@@ -145,6 +145,8 @@ pub mod page_aligned;
 pub mod parallel;
 /// Total physical memory detection (for the buffer pool's RAM-derived cap).
 pub mod physical_memory;
+/// Source lookups anchored on the daemon's pinned module root.
+pub mod pinned_root;
 /// Unix-only: read-only in-place recovery, mirroring upstream
 /// `open_readonly_inplace` (`receiver.c:200`).
 #[cfg(unix)]
@@ -418,7 +420,7 @@ pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
 pub use owner_walk::{
     operator_create_dir_all, operator_link, operator_link_confined, operator_mkdir,
-    operator_open_append, operator_open_create_new, operator_open_read,
+    operator_open_append, operator_open_create_new, operator_open_dir, operator_open_read,
     operator_open_read_confined, operator_open_recv, operator_open_rw_create,
     operator_open_write_create, operator_open_write_create_confined, operator_read_to_string,
     operator_read_to_string_confined, operator_rename, operator_rename_confined,

@@ -46,12 +46,32 @@ pub fn read_dir_confined(root: &Path, relative: &Path) -> io::Result<Vec<OsStrin
     imp::read_dir_confined(root, relative)
 }
 
+/// Enumerates an already-open directory descriptor.
+///
+/// The descriptor is borrowed, never consumed: `fdopendir` takes ownership of
+/// whatever it is handed and `closedir` releases it, so this hands over a
+/// duplicate and leaves the caller's own descriptor untouched.
+///
+/// Shared with [`crate::pinned_root::read_dir`], which anchors the scan on the
+/// daemon's pinned module root rather than on a confined walk - the same
+/// enumeration of a descriptor either way, so it is written once.
+///
+/// # Errors
+///
+/// The `dup`/`fdopendir` error. A `readdir` error is indistinguishable from
+/// end-of-stream and is treated as the end, matching upstream's
+/// `while ((di = readdir(d)) != NULL)` scan loop (`flist.c` `send_directory()`).
+#[cfg(unix)]
+pub(crate) fn read_dir_names_at(dirfd: std::os::fd::BorrowedFd<'_>) -> io::Result<Vec<OsString>> {
+    imp::read_names(dirfd)
+}
+
 #[cfg(unix)]
 mod imp {
     use super::*;
 
     use std::ffi::CStr;
-    use std::os::fd::IntoRawFd;
+    use std::os::fd::{BorrowedFd, IntoRawFd};
     use std::os::unix::ffi::OsStrExt;
 
     use crate::dir_sandbox::{ConfinePolicy, DirSandbox};
@@ -64,22 +84,17 @@ mod imp {
             relative,
             ConfinePolicy::operator_trusted(),
         )?;
-        read_names(&sandbox)
+        read_names(sandbox.root_dirfd())
     }
 
-    /// Enumerates the sandbox's resolved directory from its descriptor.
-    ///
-    /// `fdopendir` takes ownership of the descriptor it is handed and
-    /// `closedir` releases it, while the sandbox keeps its own for the
-    /// caller's later use - so this hands over a duplicate, never the
-    /// sandbox's.
+    /// Enumerates `dirfd` from a duplicate of it.
     #[allow(unsafe_code)]
-    fn read_names(sandbox: &DirSandbox) -> io::Result<Vec<OsString>> {
-        let duplicate = sandbox.root_dirfd().try_clone_to_owned()?;
+    pub(super) fn read_names(dirfd: BorrowedFd<'_>) -> io::Result<Vec<OsString>> {
+        let duplicate = dirfd.try_clone_to_owned()?;
         let raw = duplicate.into_raw_fd();
 
         // SAFETY: `raw` is an open directory descriptor this function solely
-        // owns, freshly duplicated above and not shared with the sandbox.
+        // owns, freshly duplicated above and not shared with the caller's.
         // `fdopendir` takes that ownership on success; on failure it does not,
         // which is why the error arm closes `raw` itself.
         let dir = unsafe { libc::fdopendir(raw) };
