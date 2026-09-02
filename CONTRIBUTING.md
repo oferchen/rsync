@@ -189,11 +189,25 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
   `cargo xtask citations --write-manifest` when the pin moves - in the same
   change that moves `VER` in the drift auditor, never in a later one. The two
   read the same comments against different trees, so a half-moved pin makes
-  them contradict each other. Citations
-  qualified by a directory the rsync tarball does not ship - zsync's
-  `librcksum/`, an explicitly-versioned `rsync-3.4.1/` path - name a different
-  upstream and are out of scope; write a bare name only when you mean a file of
-  the pinned release.
+  them contradict each other. Citations qualified by a directory the rsync
+  tarball does not ship - zsync's `librcksum/` - name a different upstream and
+  are out of scope.
+- **Naming a release explicitly.** A citation may spell
+  `rsync-3.5.0/flist.c:2477` or `target/interop/upstream-src/rsync-3.5.0/flist.c:2477`;
+  the prefix is stripped and the line range is checked as if the bare name had
+  been written. Spelling any *other* release is a hard failure, so
+  `rsync-3.4.1/delete.c:130` fails - it names rsync at a release this tree no
+  longer builds against, which is a stale citation and not an out-of-scope one.
+  That closed a hole: 379 citations were being skipped outright, and 113 of
+  them named the PINNED release, so their line numbers had never been checked
+  by anything - including the ones the 3.5.0 retarget sweep had just written.
+  Prefer the bare name; it is what the rest of the tree writes.
+  Two exemptions, both scoped. This paragraph is one - the example above has to
+  be able to spell `rsync-3.4.1/` to show what the rule rejects, so
+  `CONTRIBUTING.md` and `xtask/src/commands/citations.rs`, the two files that
+  document the gate, may name a non-pinned release. `docs/` is the other: it
+  mixes live reference with historical record, and a note describing what
+  upstream looked like at 3.4.1 is accurate because it names the old release.
 
 ---
 

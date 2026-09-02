@@ -6683,3 +6683,80 @@ fn server_receiver_does_not_inject_cvs_excludes() {
          not inject its own",
     );
 }
+
+/// RED BASELINE for the lazy-flist work (tasks 723-728): the INC_RECURSE
+/// segment machinery is LIVE, but it partitions a list the scan has ALREADY
+/// fully materialised.
+///
+/// `partition_file_list_for_inc_recurse` builds `pending_segments`, the
+/// generator pushes each sub-list onto `ndx_segments` as it ships it
+/// (`protocol_io.rs`, citing `flist.c:2966`), and `reclaim_oldest_segment`
+/// runs from the transfer loop. None of that is missing.
+///
+/// What IS missing is upstream's lazy scan. `send_directory` / `send1extra`
+/// scan ONE directory and emit ONE segment, driven by
+/// `send_extra_file_list(f, at_least)`, so the whole tree is never resident.
+/// oc calls `build_file_list` first and slices the finished list afterwards,
+/// so peak residency is taken BEFORE the first segment ships - and no amount
+/// of downstream reclaim can lower a peak already reached.
+///
+/// This test pins that ordering so the producer work has a measurable target:
+/// when the lazy scan lands, the whole-tree assertion below must change. It is
+/// deliberately NOT a "reclaim works" test - the two existing reclaim tests
+/// hand-assign `ndx_segments`, so they pass whether or not production ever
+/// builds a second segment.
+#[test]
+fn inc_recurse_partitions_an_already_materialised_file_list() {
+    use protocol::CompatibilityFlags;
+
+    let temp = create_test_structure(&[
+        "alpha/a1.txt",
+        "alpha/a2.txt",
+        "beta/b1.txt",
+        "beta/b2.txt",
+        "gamma/g1.txt",
+        "gamma/g2.txt",
+    ]);
+    const SOURCE_FILES: usize = 6;
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    // INC_RECURSE only exists under a recursive transfer; without this the
+    // scan stops at the three top-level directories and never descends, which
+    // would make every assertion below vacuous.
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    let built = build_file_list_for_contents(&mut ctx, temp.path());
+
+    // (1) THE EAGER SCAN. Every source file is resident before any segment is
+    // partitioned, let alone sent. This is the assertion the lazy producer has
+    // to move: upstream would hold only the current directory's entries.
+    let resident_files = ctx
+        .file_list()
+        .iter()
+        .filter(|entry| !entry.is_dir())
+        .count();
+    assert_eq!(
+        resident_files, SOURCE_FILES,
+        "the whole tree is materialised by build_file_list before partitioning \
+         (built={built}); when the lazy scan lands this must no longer hold"
+    );
+    // `.` + the three directories + the six files. Pinned explicitly so the
+    // claim is "the whole tree", not just "the files".
+    assert_eq!(built, 1 + 3 + SOURCE_FILES);
+    assert_eq!(ctx.file_list().len(), built);
+
+    // (2) THE MACHINERY IS LIVE. Partitioning does produce more than one
+    // segment, so `reclaim_oldest_segment`'s `first + 1 >= len` guard is
+    // satisfiable on a real push. Recorded because an earlier reading of this
+    // code claimed the opposite.
+    ctx.partition_file_list_for_inc_recurse();
+    assert_eq!(
+        ctx.incremental.pending_segments.len(),
+        3,
+        "one sub-segment per directory - the same granularity upstream's \
+         send_directory emits, reached by slicing instead of by scanning"
+    );
+}
