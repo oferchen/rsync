@@ -107,7 +107,7 @@ fn low_byte_collision_pair_shares_rolling_digest() {
 }
 
 /// High-byte case: bytes `>= 0x80` exercise the signed-`schar` interpretation
-/// from upstream `checksum.c:285`. Without sign-extension the constructed
+/// from upstream `checksum.c:307`. Without sign-extension the constructed
 /// pair would produce divergent `s1`/`s2`, so this test is also a guard
 /// against any future regression of the unsigned-vs-signed bug fixed in
 /// PR #3560.

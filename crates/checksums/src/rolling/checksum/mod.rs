@@ -190,7 +190,7 @@ impl RollingChecksum {
     /// ```
     #[inline]
     pub fn update_byte(&mut self, byte: u8) {
-        // upstream: checksum.c:285 - schar *buf sign-extends bytes to int
+        // upstream: checksum.c:307 - schar *buf sign-extends bytes to int
         let b = ((byte as i8) as i32) as u32;
         self.s1 = (self.s1.wrapping_add(b)) & 0xffff;
         self.s2 = (self.s2.wrapping_add(self.s1)) & 0xffff;

@@ -697,7 +697,7 @@ fn golden_test_block_length_700() {
     checksum.update(&data);
     // Pre-computed golden value (architecture-independent), verified against
     // a signed-Adler reference matching upstream `schar *buf` semantics
-    // (see upstream `checksum.c:285`).
+    // (see upstream `checksum.c:307`).
     assert_eq!(checksum.value(), 0x01ea_fe96);
     assert_eq!(checksum.len(), 700);
 }
@@ -713,7 +713,7 @@ fn golden_test_block_length_4096() {
     checksum.update(&data);
     // Pre-computed golden value (architecture-independent), reverified against
     // a signed-Adler reference after the signed-byte fix
-    // (upstream `checksum.c:285` interprets bytes as `schar`).
+    // (upstream `checksum.c:307` interprets bytes as `schar`).
     assert_eq!(checksum.value(), 0x2000_f800);
     assert_eq!(checksum.len(), 4096);
 }

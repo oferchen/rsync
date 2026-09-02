@@ -62,7 +62,7 @@ use core::arch::aarch64::{
 use std::sync::OnceLock;
 
 const BLOCK_LEN: usize = 16;
-// upstream: checksum.c:285 - schar *buf treats bytes as signed [-128,127].
+// upstream: checksum.c:307 - schar *buf treats bytes as signed [-128,127].
 // Weights map byte i to (BLOCK_LEN - i) for the prefix-sum contribution to s2.
 const HIGH_WEIGHTS: [i16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
 const LOW_WEIGHTS: [i16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
