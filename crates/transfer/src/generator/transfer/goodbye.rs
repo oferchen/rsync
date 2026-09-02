@@ -1,6 +1,9 @@
 //! Goodbye handshake handling for the generator role.
 //!
-//! Contains `handle_goodbye` plus its helpers `should_send_del_stats`,
+//! The handshake is split into `read_receiver_goodbye` and
+//! `answer_goodbye_with_finalizer` so a caller can act in the gap between the
+//! two - the last point at which the sender can still write a diagnostic the
+//! peer will read. Helpers: `should_send_del_stats`,
 //! `read_ndx_skipping_del_stats`, and `accumulate_delete_stats`.
 //!
 //! # Upstream Reference
@@ -16,6 +19,21 @@ use protocol::stats::DeleteStats;
 use super::super::{GeneratorContext, is_early_close_error};
 use crate::receiver::ndx_stream::{FlistMarkerSink, NdxFrame, StreamRole, read_marker_aware_ndx};
 use crate::role_trailer::error_location;
+
+/// What the receiver's half of the goodbye handshake delivered.
+///
+/// Distinguishes "the peer said goodbye, answer it" from "there is nothing to
+/// answer" so the caller can run work in the gap between the two halves without
+/// having to re-derive whether the exchange is still live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::generator) enum GoodbyeArrival {
+    /// The receiver's goodbye `NDX_DONE` arrived and is waiting for the
+    /// sender's reply (upstream: `main.c:919-922` - the sender echoes it back).
+    Done,
+    /// This protocol version exchanges no goodbye, or the peer closed the
+    /// connection before sending one. Nothing is owed to the peer.
+    None,
+}
 
 /// The sender's view of the goodbye NDX stream.
 ///
@@ -128,21 +146,50 @@ impl GeneratorContext {
     /// `Z_FINISH` (`token.c:367 send_deflated_token()` performs the matching
     /// `deflateEnd()` at end of transfer) before the receiver tries to
     /// decompress past the in-flight block.
+    #[cfg(test)]
     pub(in crate::generator) fn handle_goodbye_with_finalizer<R, W, F>(
         &mut self,
         reader: &mut R,
         writer: &mut W,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_write_codec: &mut MonotonicNdxWriter,
-        mut finalize_between_write_and_read: F,
+        finalize_between_write_and_read: F,
     ) -> io::Result<()>
     where
         R: Read,
         W: Write,
         F: FnMut(&mut W) -> io::Result<()>,
     {
+        if self.read_receiver_goodbye(reader, ndx_read_codec)? == GoodbyeArrival::Done {
+            self.answer_goodbye_with_finalizer(
+                reader,
+                writer,
+                ndx_read_codec,
+                ndx_write_codec,
+                finalize_between_write_and_read,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Reads the receiver's goodbye `NDX_DONE`, the first half of the
+    /// handshake.
+    ///
+    /// Split from the answering half so the caller owns the gap between the
+    /// two, which is the last point in the run at which the sender can still
+    /// write a diagnostic the peer will read. The `--remove-source-files` drain
+    /// uses it (see `GeneratorContext::goodbye_draining_source_removals`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:916-919` - `read_final_goodbye()` reads the receiver's NDX first
+    pub(in crate::generator) fn read_receiver_goodbye<R: Read>(
+        &mut self,
+        reader: &mut R,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<GoodbyeArrival> {
         if !self.protocol.supports_goodbye_exchange() {
-            return Ok(());
+            return Ok(GoodbyeArrival::None);
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
@@ -152,7 +199,7 @@ impl GeneratorContext {
         let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
             Ok(ndx) => ndx,
             Err(e) if is_early_close_error(&e) => {
-                return Ok(());
+                return Ok(GoodbyeArrival::None);
             }
             Err(e) => return Err(e),
         };
@@ -165,7 +212,28 @@ impl GeneratorContext {
                 crate::role_trailer::sender()
             )));
         }
+        Ok(GoodbyeArrival::Done)
+    }
 
+    /// Answers the receiver's goodbye, the second half of the handshake.
+    ///
+    /// Called only after [`read_receiver_goodbye`](Self::read_receiver_goodbye)
+    /// reported [`GoodbyeArrival::Done`]. Writing the sender's `NDX_DONE` here
+    /// is the point after which the peer stops reading, so anything the sender
+    /// still owes the peer must already be on the wire.
+    pub(in crate::generator) fn answer_goodbye_with_finalizer<R, W, F>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        mut finalize_between_write_and_read: F,
+    ) -> io::Result<()>
+    where
+        R: Read,
+        W: Write,
+        F: FnMut(&mut W) -> io::Result<()>,
+    {
         // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
         //
         // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)

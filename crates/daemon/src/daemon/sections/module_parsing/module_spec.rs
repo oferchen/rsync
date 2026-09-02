@@ -6,8 +6,58 @@
 // TCP fast-open mode, bwlimit). Mirrors upstream `loadparm.c` /
 // `clientserver.c` per-module config handling.
 
-fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io::Result<()> {
-    if let Some(timeout) = module.timeout {
+/// Extracts the client's forwarded `--timeout=N` from the transfer argv.
+///
+/// upstream: `options.c` - `server_options()` emits `--timeout=%d` whenever the
+/// client has `io_timeout` set, and the daemon's own `parse_arguments()` run
+/// over the received argv lands it in the global `io_timeout`, which
+/// `options.c:2511 set_io_timeout(io_timeout)` then arms. oc's daemon has no
+/// such global, so the value is read back out of the argv here.
+///
+/// A non-positive or unparsable value yields `None`: upstream parses `--timeout`
+/// as a plain `int`, and `io.c:1266-1271 set_io_timeout()` clamps a negative to
+/// `0`, which is "no timeout" - the same thing `None` means here.
+fn client_io_timeout_from_args(client_args: &[String]) -> Option<NonZeroU64> {
+    client_args
+        .iter()
+        .rev()
+        .find_map(|arg| arg.strip_prefix("--timeout="))
+        .and_then(|value| value.parse::<i64>().ok())
+        .and_then(|secs| u64::try_from(secs).ok())
+        .and_then(NonZeroU64::new)
+}
+
+/// Reconciles the client's forwarded `--timeout` with the module's `timeout`.
+///
+/// upstream: `clientserver.c:1288-1289` in `rsync_module()`:
+///
+/// ```c
+/// if (lp_timeout(module_id) && (!io_timeout || lp_timeout(module_id) < io_timeout))
+///         set_io_timeout(lp_timeout(module_id));
+/// ```
+///
+/// `io_timeout` already holds the client's forwarded `--timeout` at that point,
+/// so the statement is a MINIMUM over the two values in which `0` - "no
+/// timeout", the default on both sides - reads as infinity: a module value of
+/// `0` leaves the client's setting alone, a client value of `0` adopts the
+/// module's, and two positive values resolve to the smaller. Taking the minimum
+/// rather than letting either side win is what stops a peer lengthening a short
+/// operator-set module timeout.
+fn effective_io_timeout(
+    client: Option<NonZeroU64>,
+    module: Option<NonZeroU64>,
+) -> Option<NonZeroU64> {
+    match (client, module) {
+        (Some(client), Some(module)) => Some(client.min(module)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    }
+}
+
+/// Arms the connection socket with `timeout`, or clears both deadlines when it
+/// is `None`.
+fn apply_io_timeout(stream: &DaemonStream, timeout: Option<NonZeroU64>) -> io::Result<()> {
+    if let Some(timeout) = timeout {
         let duration = Duration::from_secs(timeout.get());
         stream.set_read_timeout(Some(duration))?;
         stream.set_write_timeout(Some(duration))?;
@@ -23,6 +73,29 @@ fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io:
     }
 
     Ok(())
+}
+
+/// Arms the pre-argument phases with the module's own `timeout` directive.
+///
+/// The client's `--timeout` has not been read yet at this point; the data phase
+/// is re-armed with the reconciled value by `apply_effective_io_timeout` once
+/// the argv arrives.
+fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io::Result<()> {
+    apply_io_timeout(stream, module.timeout)
+}
+
+/// Re-arms the connection with `min(client --timeout, module timeout)` and
+/// returns the value, for the handshake's keep-alive and `MSG_IO_TIMEOUT`.
+///
+/// upstream: `clientserver.c:1288-1289` - see [`effective_io_timeout`].
+fn apply_effective_io_timeout(
+    stream: &DaemonStream,
+    module: &ModuleDefinition,
+    client_args: &[String],
+) -> io::Result<Option<NonZeroU64>> {
+    let timeout = effective_io_timeout(client_io_timeout_from_args(client_args), module.timeout);
+    apply_io_timeout(stream, timeout)?;
+    Ok(timeout)
 }
 
 fn missing_argument_value(option: &str) -> DaemonError {

@@ -1030,22 +1030,54 @@ fn zero_copy_large_payload_roundtrip() {
     );
 }
 
-// Auto/Disabled must NOT engage SEND_ZC: the factory returns the plain fd
-// `Std` writer, preserving the default socket write path. This is the
-// HARD default-path invariant at the fast_io boundary.
+// `Disabled` must NOT engage SEND_ZC on any build: the factory returns the
+// plain fd `Std` writer, preserving the default socket write path. This is the
+// HARD `--no-zero-copy` invariant at the fast_io boundary.
 #[test]
-fn zero_copy_auto_and_disabled_yield_std_writer() {
-    for policy in [crate::ZeroCopyPolicy::Auto, crate::ZeroCopyPolicy::Disabled] {
-        let (fd_a, fd_b) = make_socket_pair();
-        let writer = socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, policy).unwrap();
-        assert!(
-            matches!(writer, IoUringOrStdSocketWriter::Std(_)),
-            "{policy:?} must yield the plain Std writer, not a SEND_ZC writer"
+fn zero_copy_disabled_yields_std_writer() {
+    let (fd_a, fd_b) = make_socket_pair();
+    let writer =
+        socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Disabled).unwrap();
+    assert!(
+        matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+        "Disabled must yield the plain Std writer, not a SEND_ZC writer"
+    );
+    drop(writer);
+    close_fd(fd_a);
+    close_fd(fd_b);
+}
+
+// `Auto` follows the `iouring-send-zc` cargo feature, which is the IUS-4
+// release gate. Without it a stock build keeps the plain `Std` writer, so the
+// default transfer path is byte-identical; with it `Auto` reaches the io_uring
+// writer, whose own kernel probe then decides whether real SEND_ZC SQEs fly.
+//
+// A socketpair is AF_UNIX, where SEND_ZC's notification path is not wired, so
+// this asserts only which writer the factory picked - `zero_copy_large_payload_
+// roundtrip` covers the loopback-TCP opcode behaviour.
+#[test]
+fn zero_copy_auto_follows_the_send_zc_feature_gate() {
+    let (fd_a, fd_b) = make_socket_pair();
+    let writer =
+        socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Auto).unwrap();
+    let picked_io_uring = matches!(writer, IoUringOrStdSocketWriter::IoUring(_));
+    if cfg!(feature = "iouring-send-zc") {
+        assert_eq!(
+            picked_io_uring,
+            is_io_uring_available(),
+            "with the feature on, Auto must reach the io_uring writer whenever \
+             io_uring itself is available"
         );
-        drop(writer);
-        close_fd(fd_a);
-        close_fd(fd_b);
+    } else {
+        assert!(
+            !picked_io_uring,
+            "without the feature, Auto must keep the plain Std writer so a \
+             stock build's default path is unchanged"
+        );
     }
+    drop(writer);
+    close_fd(fd_a);
+    close_fd(fd_b);
 }
 
 /// Regression test for issue #1872: an `IORING_OP_SEND` on a back-pressured
@@ -1629,4 +1661,129 @@ fn test_registered_buffer_disabled_still_works() {
         let read_back = r.read_all().unwrap();
         assert_eq!(read_back, data);
     }
+}
+
+/// The routing decision itself, tabulated. A batch smaller than
+/// [`MIN_RING_BATCH_CHUNKS`] chunks goes to the positional write; anything at
+/// or above it keeps the ring.
+///
+/// The rows are the shapes the receiver actually produces on a daemon pull:
+/// `flush_buffer` passes `chunk_size == buffer_size` with at most a full
+/// buffer of data, so it can only ever build a single chunk, while
+/// `write_all_batched` is the one caller that can exceed one chunk.
+#[test]
+fn small_batches_bypass_the_ring_and_large_ones_do_not() {
+    use super::batching::{MIN_RING_BATCH_CHUNKS, batch_bypasses_ring, next_batch_chunks};
+
+    let chunk = 4096usize;
+    let sq = 64usize;
+
+    // A single chunk buys no concurrency: the ring is drained before the next
+    // batch is built, so this is a blocking round trip with extra bookkeeping.
+    assert_eq!(next_batch_chunks(1024, chunk, sq), 1);
+    assert!(batch_bypasses_ring(1024, chunk, sq));
+    assert!(batch_bypasses_ring(chunk, chunk, sq));
+
+    // Just under the threshold still bypasses.
+    let under = (MIN_RING_BATCH_CHUNKS - 1) * chunk;
+    assert_eq!(
+        next_batch_chunks(under, chunk, sq),
+        MIN_RING_BATCH_CHUNKS - 1
+    );
+    assert!(batch_bypasses_ring(under, chunk, sq));
+
+    // At the threshold and above, the ring keeps the batch.
+    let at = MIN_RING_BATCH_CHUNKS * chunk;
+    assert_eq!(next_batch_chunks(at, chunk, sq), MIN_RING_BATCH_CHUNKS);
+    assert!(!batch_bypasses_ring(at, chunk, sq));
+    assert!(!batch_bypasses_ring(at + 1, chunk, sq));
+
+    // The submission-queue depth caps the batch, so a shallow ring can never
+    // reach the threshold and always takes the positional write.
+    assert_eq!(next_batch_chunks(1 << 20, chunk, 2), 2);
+    assert!(batch_bypasses_ring(1 << 20, chunk, 2));
+}
+
+/// Both routes must land the same bytes at the same offsets. Payloads either
+/// side of the threshold go through the same entry point and are compared
+/// against what was asked for, including a non-zero base offset.
+#[test]
+fn both_write_routes_produce_identical_bytes_at_the_same_offsets() {
+    use std::fs::File;
+
+    use super::batching::MIN_RING_BATCH_CHUNKS;
+    use super::per_thread_ring::with_ring;
+
+    if with_ring(|_| Ok(())).is_err() {
+        return;
+    }
+
+    let dir = tempdir().expect("tempdir");
+    let chunk = 4096usize;
+
+    // Payloads below the threshold (positional route) and above it (ring
+    // route), each with and without a partial trailing chunk.
+    let sizes = [
+        1024usize,
+        chunk,
+        (MIN_RING_BATCH_CHUNKS - 1) * chunk + 17,
+        MIN_RING_BATCH_CHUNKS * chunk,
+        (MIN_RING_BATCH_CHUNKS + 3) * chunk + 91,
+    ];
+
+    for (i, len) in sizes.iter().copied().enumerate() {
+        let payload: Vec<u8> = (0..len).map(|b| (b % 251) as u8).collect();
+        let path = dir.path().join(format!("route-{i}.bin"));
+        let offset = 8192u64;
+
+        let file = File::create(&path).expect("create");
+        let mut writer = IoUringWriter::with_ring(file, chunk, 64, -1, false, 0);
+        writer
+            .write_all_batched(&payload, offset)
+            .expect("batched write");
+        drop(writer);
+
+        let written = std::fs::read(&path).expect("read back");
+        assert_eq!(
+            written.len() as u64,
+            offset + len as u64,
+            "len {len}: file must end exactly at offset + payload"
+        );
+        assert_eq!(
+            &written[offset as usize..],
+            &payload[..],
+            "len {len}: payload bytes must match at the requested offset"
+        );
+        assert!(
+            written[..offset as usize].iter().all(|&b| b == 0),
+            "len {len}: nothing may be written before the requested offset"
+        );
+    }
+}
+
+/// `write_all_positional` on its own: every byte lands at `base_offset`, and an
+/// empty slice is a no-op rather than a zero-length write.
+#[test]
+fn positional_write_places_every_byte_at_the_requested_offset() {
+    use std::fs::File;
+
+    use super::batching::write_all_positional;
+
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("positional.bin");
+    let file = File::create(&path).expect("create");
+
+    assert_eq!(write_all_positional(&file, b"", 0).expect("empty"), 0);
+
+    let payload: Vec<u8> = (0..9_973u32).map(|b| (b % 251) as u8).collect();
+    assert_eq!(
+        write_all_positional(&file, &payload, 4096).expect("write"),
+        payload.len()
+    );
+    drop(file);
+
+    let written = std::fs::read(&path).expect("read back");
+    assert_eq!(written.len(), 4096 + payload.len());
+    assert_eq!(&written[4096..], &payload[..]);
+    assert!(written[..4096].iter().all(|&b| b == 0));
 }

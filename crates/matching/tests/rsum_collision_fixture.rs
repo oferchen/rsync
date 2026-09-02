@@ -25,14 +25,14 @@
 //! - high-byte: `[0x80, 0x86, 0x80, 0x82]` / `[0x82, 0x80, 0x86, 0x80]`
 //!
 //! The high-byte case exercises the signed-byte path (`schar *buf` cast
-//! at upstream `checksum.c:285`); without sign-extension the s1/s2 values
+//! at upstream `checksum.c:307`); without sign-extension the s1/s2 values
 //! would diverge from upstream.
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/checksum.c:285` - signed
+//! - `target/interop/upstream-src/rsync-3.5.0/checksum.c:307` - signed
 //!   reinterpretation of buffer bytes for the rolling sum.
-//! - `target/interop/upstream-src/rsync-3.4.1/match.c:140-345` -
+//! - `target/interop/upstream-src/rsync-3.5.0/match.c:163-378` -
 //!   `hash_search()` consults strong checksum after a rolling-digest hit.
 
 use checksums::RollingChecksum;

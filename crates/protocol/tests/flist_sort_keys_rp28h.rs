@@ -3,7 +3,7 @@
 //!
 //! Upstream `flist.c:f_name_cmp()` picks its sort key at runtime via
 //! `t_path = protocol_version >= 29 ? t_PATH : t_ITEM`
-//! (upstream: `flist.c:3223` in `target/interop/upstream-src/rsync-3.4.1`).
+//! (upstream: `flist.c:3560` in `target/interop/upstream-src/rsync-3.5.0`).
 //!
 //! - `t_PATH` (protocol >= 29) introduces the file-before-directory rule at
 //!   each path level and treats directories as if they carry an implicit

@@ -40,15 +40,15 @@
 //!   the only block-aligned matches available are at offsets
 //!   `0, block_size, ..., (K-1) * block_size`. After matching each
 //!   planted block the generator jumps forward by `block_size` bytes
-//!   (upstream `match.c:265-310`), so non-aligned sliding windows
+//!   (upstream `match.c:297-343`), so non-aligned sliding windows
 //!   inside the planted prefix are never probed.
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/match.c:200-345` -
+//! - `target/interop/upstream-src/rsync-3.5.0/match.c:224-378` -
 //!   `hash_search()` two-stage gate (rolling sum then strong sum).
-//! - `target/interop/upstream-src/rsync-3.4.1/rsum.c:362-366` -
-//!   bithash probe before the hash-table descent (planned in #2059).
+//! - zsync `librcksum/rsum.c:362-366` - bithash probe before the
+//!   hash-table descent (planned in #2059).
 
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};

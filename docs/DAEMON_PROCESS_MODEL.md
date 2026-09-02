@@ -91,6 +91,18 @@ The `join_worker` function provides a second defense layer: if a panic somehow
 escapes `catch_unwind`, the `JoinHandle::join()` returns `Err(payload)` which
 is logged and swallowed rather than propagated.
 
+The same holds for an ordinary session error. A worker runs exactly one session
+against one accepted socket, so every outcome it can carry - an I/O failure on
+that socket, a rejected protocol state transition, an escaped panic - describes
+that connection and nothing else. `join_worker` therefore returns nothing at
+all: there is no fatal class for it to hand back. Failures of the *listening*
+socket travel a separate path (`bind_error` when a listener cannot be bound or
+made non-blocking, and the accept engine's `poll` result) and still end the
+daemon. This mirrors upstream, where the parent reaps its per-connection child
+with `waitpid(-1, NULL, WNOHANG)` (`socket.c:679`) - a NULL status pointer, so
+the session's outcome is discarded outright - and whose `while (1)` accept loop
+(`socket.c:724-778`) has no error exit at all.
+
 **Why `AssertUnwindSafe`?**  The session closure captures `Arc`-wrapped shared
 state (module list, MOTD lines, log sink).  These types are not inherently
 `UnwindSafe`, but the closure does not observe torn state because each session

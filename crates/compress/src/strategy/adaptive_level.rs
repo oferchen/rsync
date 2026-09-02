@@ -13,7 +13,7 @@
 //! adaptation is therefore opt-in and is never advertised as a protocol
 //! capability.
 //!
-//! Upstream rsync (`target/interop/upstream-src/rsync-3.4.1/token.c`) selects
+//! Upstream rsync (`target/interop/upstream-src/rsync-3.5.0/token.c`) selects
 //! a compression level once at session start via `do_compression_level` and
 //! does not adjust it at runtime - this strategy is a Rust-side optimisation
 //! layered on top of the upstream-compatible encoders.

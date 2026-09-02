@@ -24,11 +24,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-387`
+//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-400`
 //!   (`delete_in_dir`, `do_delete_pass`).
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:82-225`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
 //!   (`delete_item`).
-//! - `target/interop/upstream-src/rsync-3.4.1/flist.c:3217-3343`
+//! - `target/interop/upstream-src/rsync-3.5.0/flist.c:3554-3671`
 //!   (`f_name_cmp`).
 
 mod cohort_batcher;

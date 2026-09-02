@@ -162,10 +162,13 @@ macos-gcd = ["dep:block2"]
 adaptive-basis-dispatch = []
 
 # iouring-send-zc: Linux-only opt-in dispatch for IORING_OP_SEND_ZC on the
-# socket-send path. Requires the `io_uring` feature. When enabled, the
-# transport send path routes payloads >= 4 KiB through `ZeroCopySender`,
-# which submits the zero-copy send opcode against a registered buffer pool
-# so the kernel can DMA pages directly without a userspace copy. Default
+# socket-send path. Requires the `io_uring` feature. The feature is the
+# policy gate for the DEFAULT `ZeroCopyPolicy::Auto`: with it on, `Auto`
+# permits SEND_ZC (subject to the runtime opcode probe) and the dispatch
+# threshold drops from 16 KiB to 4 KiB; with it off, `Auto` keeps the plain
+# socket write path. An explicit `--zero-copy` (`Enabled`) is honoured either
+# way. It also exposes `ZeroCopySender`, the registered-buffer-pool wrapper
+# that lets the kernel DMA pages directly without a userspace copy. Default
 # off; IUS-4 (docs/design/ius-4-decision-2026-05-22.md) kept this opt-in
 # under the data-missing branch of the framing rule because the IUS-3
 # multi-kernel bench numbers have not been captured. Promotion to the
