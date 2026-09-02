@@ -79,7 +79,25 @@ impl ReceiverContext {
     /// destination symlink-to-directory would always be treated as an existing
     /// directory and never replaced, diverging from upstream when
     /// `--keep-dirlinks` is off.
-    fn classify_dir_destination(&self, dir_path: &Path) -> io::Result<DirDestination> {
+    ///
+    /// The removal is confined. The entry being unlinked is a symlink the peer
+    /// chose the target of, sitting on the receiver's destination path, so a
+    /// path-based `unlink(2)` here re-resolves every component under the peer's
+    /// influence. `sandbox` may be `None`: that is a supported arm of
+    /// [`fast_io::unlink_via_sandbox_or_fallback`], not a gap - it then applies
+    /// upstream's three-arm `do_unlink_at()` contract, which errors rather than
+    /// falling back to a plain syscall when the ownership walk refuses.
+    fn classify_dir_destination(
+        &self,
+        dir_path: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        dest_dir: &Path,
+        relative_path: &Path,
+    ) -> io::Result<DirDestination> {
+        // `dest_dir` / `relative_path` anchor the confined unlink, which only
+        // exists on Unix.
+        #[cfg(not(unix))]
+        let _ = (dest_dir, relative_path);
         match fs::symlink_metadata(dir_path) {
             Ok(existing) if existing.file_type().is_symlink() => {
                 let resolves_to_dir = fs::metadata(dir_path)
@@ -90,12 +108,23 @@ impl ReceiverContext {
                     // destination symlink-to-directory instead of replacing it.
                     Ok(DirDestination::Existing)
                 } else {
-                    // upstream: generator.c:1454 - delete_item(fname, ...,
-                    // DEL_FOR_DIR) removes the conflicting symlink before mkdir.
-                    // upstream: syscall.c do_unlink() - `if (dry_run) return 0;`,
-                    // so delete_item() reports success without unlinking and the
-                    // caller still proceeds as if the destination became absent.
+                    // upstream: generator.c:1841 - delete_item(fname, ...,
+                    // del_opts | DEL_FOR_DIR) removes the conflicting symlink
+                    // before mkdir. That reaches delete.c:71-78 del_unlink(),
+                    // which takes do_unlink_atfd() against a held dirfd or else
+                    // robust_unlink() -> util1.c:545 -> do_unlink_at() - the
+                    // CONFINED wrapper. Upstream issues no plain unlink() on
+                    // this path, so neither do we.
                     if !self.config.flags.skip_dest_writes() {
+                        #[cfg(unix)]
+                        fast_io::unlink_via_sandbox_or_fallback(
+                            sandbox,
+                            dest_dir,
+                            relative_path,
+                            dir_path,
+                            fast_io::UnlinkFlags::File,
+                        )?;
+                        #[cfg(not(unix))]
                         fs::remove_file(dir_path)?;
                     }
                     Ok(DirDestination::ReplacedSymlink)
@@ -104,8 +133,27 @@ impl ReceiverContext {
             // An existing real directory (or any other existing non-symlink
             // entry, matching the prior `.exists()` semantics) is reused.
             Ok(_) => Ok(DirDestination::Existing),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DirDestination::Missing),
-            Err(error) => Err(error),
+            // A stat failure of ANY errno class classifies as `Missing`; it is
+            // never raised from here.
+            //
+            // upstream: generator.c:1745-1746 - `statret = gen_entry_stat(...);
+            // stat_errno = errno;`. Every later branch tests `statret`, not the
+            // errno class, and `generator.c:1840` gates the obstruction removal
+            // on `statret == 0`. A stat that failed therefore never reaches
+            // `delete_item()`: it falls through to `gen_entry_mkdir()`
+            // (`generator.c:1831`/`1873`), and that mkdir's error is the one
+            // reported. `stat_errno` is consulted only by the `--existing`
+            // ENOENT test at generator.c:1758.
+            //
+            // Consequently the ONLY `Err` this function may return is the
+            // confined unlink above - upstream's `goto skipping_dir_contents`
+            // (`generator.c:1841-1842`), which the caller treats as a hard
+            // failure that skips the directory and its contents. Raising the
+            // stat error here instead would route ENOTDIR - the "a plain file
+            // sits where a parent directory should be" shape - into that same
+            // skip arm, laundering a hard mkdir failure into `Ok(None)` and
+            // hiding it from the caller's exit-code path.
+            Err(_) => Ok(DirDestination::Missing),
         }
     }
 
@@ -254,15 +302,48 @@ impl ReceiverContext {
             // upstream: generator.c:1356 / 1451-1455 - classify the destination
             // via lstat (not exists()) so a symlink-to-directory is replaced by
             // a real directory unless --keep-dirlinks is set, in which case it is
-            // followed. A remove failure is non-fatal (matches upstream
-            // skipping_dir_contents): fall back to the exists() probe.
-            let dir_dest = self.classify_dir_destination(dir_path).unwrap_or_else(|_| {
-                if dir_path.exists() {
-                    DirDestination::Existing
-                } else {
-                    DirDestination::Missing
+            // followed.
+            //
+            // upstream: generator.c:1840-1843 - a failed
+            // `delete_item(..., DEL_FOR_DIR)` does `goto skipping_dir_contents`;
+            // it does NOT re-probe and carry on. The previous
+            // `.unwrap_or_else(|_| if dir_path.exists() { .. })` recovery was
+            // wrong twice over: `exists()` FOLLOWS symlinks, so the very entry
+            // whose removal just failed reported as an existing directory, and
+            // the transfer then proceeded through a symlink the peer controls.
+            // It also swallowed the errno, which is how a denied unlink
+            // surfaced three layers later as an opaque EXDEV from the confined
+            // walk. upstream generator.c:1443-1467 states the rule for the
+            // whole family: a runtime denial is a real failure and is
+            // deliberately NOT retried unconfined.
+            let dir_dest = match self.classify_dir_destination(
+                dir_path,
+                #[cfg(unix)]
+                sandbox,
+                dest_dir,
+                relative_path,
+            ) {
+                Ok(dest) => dest,
+                Err(error) => {
+                    if self.config.flags.verbose && self.config.connection.client_mode {
+                        info_log!(
+                            Misc,
+                            1,
+                            "failed to prepare directory {}: {}",
+                            dir_path.display(),
+                            error
+                        );
+                    }
+                    emit_lsm_audit_hint_once();
+                    // Mirrors the mkdir-failure arm below: record the directory
+                    // as failed so the itemize and metadata passes skip it and
+                    // `dir_creation_errors` folds IOERR_GENERAL into the exit
+                    // code, matching upstream's "any errors get reported later".
+                    dir_was_new.push(false);
+                    failed_dir_paths.insert(dir_path.clone());
+                    continue;
                 }
-            });
+            };
             let is_new = dir_dest.needs_mkdir();
             dir_was_new.push(is_new);
             // upstream: generator.c:1401 - --existing (ignore_non_existing) only
@@ -541,24 +622,47 @@ impl ReceiverContext {
         Ok(all_errors)
     }
 
-    /// Creates implied parent directories for `--relative` path components.
+    /// Creates the still-missing implied parent directories of `--relative`
+    /// path components.
     ///
-    /// When `--relative` is active, the file list may contain entries with deep paths
-    /// (e.g., `a/b/c/file.txt`). If `--no-implied-dirs` was used, the intermediate
-    /// directories (`a/`, `a/b/`, `a/b/c/`) may not appear as explicit directory
-    /// entries in the file list. This method ensures all parent directories exist
-    /// before files, symlinks, or other entries are processed.
+    /// When `--relative` is active the file list may contain entries with deep
+    /// paths (`a/b/c/file.txt`). With `--no-implied-dirs` at protocol < 30 the
+    /// intermediate directories (`a/`, `a/b/`, `a/b/c/`) never appear as
+    /// directory entries, so nothing else would create them. This method fills
+    /// exactly that gap.
     ///
-    /// Uses a set to track already-created paths, avoiding redundant `mkdir` syscalls
-    /// when many entries share common parent directories.
+    /// It is a **fallback, not a pre-pass**: the caller must run it *after* the
+    /// file list's own directory entries have been created and itemized. That
+    /// ordering is upstream's. `recv_generator()` walks the file list in order;
+    /// a directory entry is created and itemized by `gen_entry_mkdir()`
+    /// (`generator.c:1873`) when its own entry is reached, and the parent
+    /// `make_path()` at `generator.c:1718-1725` fires only for an entry whose
+    /// `do_stat_at(dn, ...)` still reports the parent absent. Running it first
+    /// pre-empts the directory pass: the directories then already exist when
+    /// they are classified, so a real run reports `.d..t......` where its own
+    /// `--dry-run` (which skips destination writes) reports `cd+++++++++`, and
+    /// the unconfined `create_dir` displaces the confined `mkdirat` that the
+    /// classified path would have issued.
+    ///
+    /// Uses a set to track already-created paths, avoiding redundant `mkdir`
+    /// syscalls when many entries share common parent directories.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1329-1338` - `make_path()` for missing parents when
-    ///   `relative_paths && !implied_dirs`
-    /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()` when
-    ///   `relative_paths` and initial `mkdir` returns `ENOENT`
-    pub(in crate::receiver) fn ensure_relative_parents(&self, dest_dir: &Path) {
+    /// - `generator.c:1718-1725` - `make_path(fname, MKP_DROP_NAME |
+    ///   MKP_SKIP_SLASH)` for a parent that `do_stat_at()` reports missing
+    /// - `generator.c:1876-1878` - retry `gen_entry_mkdir()` after `make_path()`
+    ///   when `relative_paths` and the initial mkdir returns `ENOENT`
+    /// - `util1.c:238` / `util1.c:277` - every component `make_path()` creates
+    ///   goes through `do_mkdir_at()`, i.e. the confined mkdir, never a bare
+    ///   `mkdir(2)`. `syscall.c:2066 do_mkdir_at()` opens the parent with
+    ///   `owner_walk_parent()` and issues `mkdirat()` against that dirfd, so a
+    ///   symlinked component cannot redirect the create out of the module.
+    pub(in crate::receiver) fn ensure_relative_parents(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
             return;
         }
@@ -591,23 +695,34 @@ impl ReceiverContext {
 
             // Walk up the path to find the deepest ancestor that needs creation.
             // Build the list of paths to create from shallowest to deepest.
-            let mut ancestors_to_create: Vec<PathBuf> = Vec::new();
+            let mut ancestors_to_create: Vec<(PathBuf, &Path)> = Vec::new();
             let mut current = target;
             loop {
                 let abs_path = dest_dir.join(current);
                 if created.contains(&abs_path) || abs_path.exists() {
                     break;
                 }
-                ancestors_to_create.push(abs_path);
+                ancestors_to_create.push((abs_path, current));
                 match current.parent() {
                     Some(p) if !p.as_os_str().is_empty() => current = p,
                     _ => break,
                 }
             }
 
-            // Create from shallowest to deepest.
-            for dir_path in ancestors_to_create.into_iter().rev() {
-                if let Err(e) = fs::create_dir(&dir_path) {
+            // Create from shallowest to deepest. Each component goes through
+            // the confined mkdir, mirroring `make_path()`'s use of
+            // `do_mkdir_at()` (util1.c:238/277) rather than a bare `mkdir(2)`.
+            for (dir_path, rel_path) in ancestors_to_create.into_iter().rev() {
+                #[cfg(unix)]
+                let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
+                    sandbox, dest_dir, rel_path, &dir_path, 0o777,
+                );
+                #[cfg(not(unix))]
+                let create_result = {
+                    let _ = rel_path;
+                    fs::create_dir(&dir_path)
+                };
+                if let Err(e) = create_result {
                     if e.kind() != io::ErrorKind::AlreadyExists {
                         debug_log!(
                             Recv,
@@ -693,17 +808,38 @@ impl ReceiverContext {
         // `--relative` shapes.
         // upstream: generator.c:1356 / 1451-1455 - lstat-classify the
         // destination so a symlink-to-directory is replaced by a real directory
-        // unless --keep-dirlinks follows it. Non-fatal on error: fall back to
-        // the exists() probe (matches upstream's skipping_dir_contents path).
-        let dir_dest = self
-            .classify_dir_destination(&dir_path)
-            .unwrap_or_else(|_| {
-                if dir_path.exists() {
-                    DirDestination::Existing
-                } else {
-                    DirDestination::Missing
+        // unless --keep-dirlinks follows it.
+        //
+        // upstream: generator.c:1840-1843 - a failed
+        // `delete_item(..., DEL_FOR_DIR)` goes to `skipping_dir_contents`, so
+        // the directory and its contents are skipped and the error is reported.
+        // This is the incremental-recursion twin of the `create_directories`
+        // arm above; both previously recovered via a FOLLOWING `exists()`,
+        // which reports the un-removed symlink as an existing directory and
+        // walks the transfer straight through it.
+        let dir_dest = match self.classify_dir_destination(
+            &dir_path,
+            #[cfg(unix)]
+            sandbox,
+            dest_dir,
+            relative_path,
+        ) {
+            Ok(dest) => dest,
+            Err(error) => {
+                if self.config.flags.verbose && self.config.connection.client_mode {
+                    info_log!(
+                        Misc,
+                        1,
+                        "failed to prepare directory {}: {}",
+                        dir_path.display(),
+                        error
+                    );
                 }
-            });
+                emit_lsm_audit_hint_once();
+                failed_dirs.mark_failed(entry.name());
+                return Ok(None);
+            }
+        };
         let is_new = dir_dest.needs_mkdir();
         // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
         // a directory missing at the destination is never created; the dir is
@@ -1181,6 +1317,145 @@ mod touch_up_dirs_tests {
         );
     }
 
+    /// A refused obstruction removal must be REPORTED, not laundered into
+    /// "the destination already exists".
+    ///
+    /// upstream: generator.c:1840-1843 - when
+    /// `delete_item(..., del_opts | DEL_FOR_DIR)` fails, upstream does
+    /// `goto skipping_dir_contents`; it never re-probes the destination and
+    /// carries on. oc previously recovered with
+    /// `.unwrap_or_else(|_| if dir_path.exists() { Existing } else { Missing })`,
+    /// and `exists()` FOLLOWS symlinks - so the very entry whose removal had
+    /// just been denied reported back as an existing directory, the transfer
+    /// proceeded through a peer-controlled symlink, and the errno was
+    /// discarded. That discarded errno is what made a denied `unlink` surface
+    /// three layers later as an opaque EXDEV from the confined walk.
+    ///
+    /// The fixture denies the removal with a read-only parent, which is the
+    /// portable stand-in for any refusal - a confined-walk rejection or a
+    /// syscall-filter denial reaches the same arm.
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_obstruction_removal_is_reported_not_reclassified() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        if metadata::am_root() {
+            // root bypasses the directory write bit, so the fixture cannot
+            // deny the removal and the cell would pass vacuously.
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let target = dest.join("real");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, dest.join("d")).unwrap();
+
+        // Deny the unlink by removing write permission from the parent.
+        let original = fs::metadata(dest).unwrap().permissions();
+        fs::set_permissions(dest, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+        ctx.file_list = vec![FileEntry::new_directory("d".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let errors = ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        );
+
+        // Restore before asserting so a failure does not leave the tempdir
+        // undeletable.
+        fs::set_permissions(dest, original).unwrap();
+
+        let errors = errors.expect("create_directories returns the error set, not Err");
+        assert!(
+            !errors.is_empty(),
+            "a denied obstruction removal must be reported so io_error reaches \
+             the exit code; reclassifying it as an existing directory walks the \
+             transfer through the surviving symlink"
+        );
+        assert!(
+            fs::symlink_metadata(dest.join("d"))
+                .expect("the entry still exists")
+                .file_type()
+                .is_symlink(),
+            "the fixture is only meaningful while the removal actually failed"
+        );
+    }
+
+    /// The twin of `surfaces_non_permission_error_from_mkdir`, for the BATCH
+    /// pass: a stat failure is not an obstruction refusal, and the two must not
+    /// share an arm.
+    ///
+    /// `classify_dir_destination` can fail for two unrelated reasons, and only
+    /// one of them is upstream's `skipping_dir_contents` case:
+    ///
+    /// - the confined unlink of an obstructing symlink was refused - upstream
+    ///   `generator.c:1841-1842` `goto skipping_dir_contents`, pinned by
+    ///   `a_refused_obstruction_removal_is_reported_not_reclassified` above;
+    /// - the destination could not be stat'd at all - upstream
+    ///   `generator.c:1745` just records `statret = -1`, and because
+    ///   `generator.c:1840` gates `delete_item()` on `statret == 0`, the entry
+    ///   falls through to `gen_entry_mkdir()` and that mkdir's error is what
+    ///   gets reported.
+    ///
+    /// Collapsing the second into the first turns a hard failure into a silent
+    /// "directory skipped": ENOTDIR from a plain file sitting where a parent
+    /// directory belongs stopped propagating and was folded into the failed-dir
+    /// set instead. This fixture shapes exactly that - `afile` is a regular
+    /// file, so stat'ing `afile/sub` fails ENOTDIR, which is neither NotFound
+    /// (the parent-walk retry) nor PermissionDenied (upstream's non-fatal
+    /// class) - and pins the hard error to `Err`.
+    #[cfg(unix)]
+    #[test]
+    fn a_stat_failure_is_not_an_obstruction_refusal_and_still_fails_loud() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        // A regular file where a parent directory is expected forces ENOTDIR
+        // when the receiver stats and then creates `afile/sub` beneath it.
+        fs::write(dest.join("afile"), b"not a directory").expect("plant regular file");
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+        ctx.file_list = vec![FileEntry::new_directory("afile/sub".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let result = ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        );
+
+        let err = result.expect_err(
+            "a non-EACCES mkdir failure must propagate as Err from the batch pass, \
+             not be laundered into the failed-directory set",
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "EACCES takes upstream's non-fatal branch; this fixture avoids it"
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "NotFound would take the parent-walk retry, not the hard-error path"
+        );
+    }
+
     /// Regression: creating a child subdirectory inside an already-present
     /// transfer root bumps the root's on-disk mtime. The batch
     /// `create_directories` pass mkdir's every directory before it itemizes any,
@@ -1581,7 +1856,13 @@ mod touch_up_dirs_tests {
         let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(false));
 
         let decision = ctx
-            .classify_dir_destination(&link)
+            .classify_dir_destination(
+                &link,
+                #[cfg(unix)]
+                None,
+                dir.path(),
+                std::path::Path::new("d"),
+            )
             .expect("classify succeeds");
         assert_eq!(
             decision,
@@ -1613,7 +1894,13 @@ mod touch_up_dirs_tests {
         let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(true));
 
         let decision = ctx
-            .classify_dir_destination(&link)
+            .classify_dir_destination(
+                &link,
+                #[cfg(unix)]
+                None,
+                dir.path(),
+                std::path::Path::new("d"),
+            )
             .expect("classify succeeds");
         assert_eq!(
             decision,
@@ -1649,7 +1936,13 @@ mod touch_up_dirs_tests {
         let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(true));
 
         let decision = ctx
-            .classify_dir_destination(&link)
+            .classify_dir_destination(
+                &link,
+                #[cfg(unix)]
+                None,
+                dir.path(),
+                std::path::Path::new("d"),
+            )
             .expect("classify succeeds");
         assert_eq!(
             decision,
