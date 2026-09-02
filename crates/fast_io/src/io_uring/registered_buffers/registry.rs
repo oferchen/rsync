@@ -218,9 +218,16 @@ impl RegisteredBufferGroup {
             for ptr in &buffers {
                 unsafe { alloc::dealloc(*ptr, layout) };
             }
-            return Err(io::Error::other(format!(
-                "IORING_REGISTER_BUFFERS failed: {e}"
-            )));
+            // Carry `e`'s ErrorKind rather than flattening to `Other`. The
+            // kernel's reason is the whole signal here: ENOMEM means the
+            // RLIMIT_MEMLOCK budget could not account the pages, while EBUSY
+            // means a registration is still live. `io::Error::other` collapsed
+            // both into `Other` with the errno readable only by parsing the
+            // message, so no caller could branch on which one happened.
+            return Err(io::Error::new(
+                e.kind(),
+                format!("IORING_REGISTER_BUFFERS failed: {e}"),
+            ));
         }
 
         // Initialize free bitset - all slots start as free (bit = 1).
