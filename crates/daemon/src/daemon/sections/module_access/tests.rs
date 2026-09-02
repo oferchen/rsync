@@ -841,7 +841,7 @@ mod module_access_tests {
         assert!(has_secluded_args_flag(&phase1));
 
         // Read phase 2
-        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader, None)
+        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader, None, None)
             .expect("should read secluded args");
         assert_eq!(full_args[0], "rsync");
         let effective: Vec<&str> = full_args.iter().skip(1).map(String::as_str).collect();
@@ -4042,5 +4042,100 @@ mod module_access_tests {
         let mut cfg = ServerConfig::default();
         apply_module_transfer_directives(&module, &mut cfg);
         assert!(cfg.flags.numeric_ids.is_off());
+    }
+}
+
+/// Pins upstream's `MAX_DAEMON_ARGS` ceiling on the phase-1 argument read.
+///
+/// upstream: `io.c:1476-1479` - `if (mod_name && argc >= MAX_DAEMON_ARGS - 1)`
+/// then `rprintf(FERROR, "too many daemon arguments\n")` and
+/// `exit_cleanup(RERR_PROTOCOL)`.
+#[cfg(test)]
+mod daemon_argv_limit_tests {
+    use super::*;
+    use std::io::{BufReader, Cursor};
+
+    fn null_terminated_args(count: usize) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(count * 2 + 1);
+        for _ in 0..count {
+            buf.extend_from_slice(b"a\0");
+        }
+        buf.push(0);
+        buf
+    }
+
+    #[test]
+    fn read_client_arguments_refuses_past_the_daemon_ceiling() {
+        let input = null_terminated_args(protocol::secluded_args::MAX_DAEMON_ARGS + 10);
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let err = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect_err("the daemon must refuse an unbounded argument vector");
+
+        assert_eq!(err.to_string(), "too many daemon arguments");
+    }
+
+    /// Non-vacuity companion: an ordinary vector still reads. Without it the
+    /// refusal above would also pass if the reader had stopped working.
+    #[test]
+    fn read_client_arguments_still_accepts_an_ordinary_vector() {
+        let input = null_terminated_args(64);
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("an ordinary argument vector must still be read");
+
+        assert_eq!(args.len(), 64);
+    }
+}
+
+/// Pins that the daemon's client-argument log line carries the argument
+/// COUNT and never the argument bytes.
+///
+/// Upstream writes no argument vector to the daemon log at any verbosity, so
+/// there is no upstream line to mirror - the pin is that a peer cannot get its
+/// own bytes appended to the operator's log file.
+#[cfg(test)]
+mod daemon_client_arg_logging_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    const PEER: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
+
+    #[test]
+    fn the_log_line_reports_the_count_and_not_the_arguments() {
+        let payload = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let args = vec![
+            "--server".to_string(),
+            payload.to_string(),
+            payload.to_string(),
+        ];
+
+        let line = client_args_log_line("data", "client.example", PEER, &args);
+
+        assert!(
+            !line.contains(payload),
+            "a peer-supplied argument reached the daemon log: {line}"
+        );
+        assert!(
+            !line.contains("--server"),
+            "a peer-supplied argument reached the daemon log: {line}"
+        );
+        assert_eq!(
+            line,
+            "module 'data' from client.example (203.0.113.7): 3 client args"
+        );
+    }
+
+    /// Non-vacuity companion: the count is real, so the line above is not
+    /// merely constant text that would pass however the arguments were
+    /// handled.
+    #[test]
+    fn the_reported_count_tracks_the_vector_length() {
+        let empty: Vec<String> = Vec::new();
+        let one = vec!["-r".to_string()];
+
+        assert!(client_args_log_line("data", "h", PEER, &empty).ends_with("0 client args"));
+        assert!(client_args_log_line("data", "h", PEER, &one).ends_with("1 client args"));
     }
 }

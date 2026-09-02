@@ -105,6 +105,13 @@ fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
 /// For protocol >= 30: arguments are null-byte terminated
 /// For protocol < 30: arguments are newline terminated
 /// An empty argument marks the end of the list.
+///
+/// The argument count is bounded by
+/// [`protocol::secluded_args::MAX_DAEMON_ARGS`]. Upstream applies that ceiling
+/// inside this same loop (`io.c:1476-1479`) under `if (mod_name && ...)`, and
+/// every caller of this function is serving a module, so the bound is
+/// unconditional here. Without it a client can make the daemon accumulate an
+/// unbounded argument vector before a single argument is parsed.
 fn read_client_arguments<R: BufRead>(
     reader: &mut R,
     protocol: Option<ProtocolVersion>,
@@ -113,6 +120,13 @@ fn read_client_arguments<R: BufRead>(
     let mut arguments = Vec::new();
 
     loop {
+        // upstream: io.c:1476 - checked per read line, before the argument is
+        // appended, so the peer is cut off while it is still sending rather
+        // than after the whole vector is resident.
+        if arguments.len() >= protocol::secluded_args::MAX_DAEMON_ARGS - 1 {
+            return Err(protocol::secluded_args::too_many_daemon_arguments());
+        }
+
         if use_nulls {
             let mut buf = Vec::new();
             let bytes_read = reader.read_until(b'\0', &mut buf)?;
@@ -187,6 +201,34 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
     })
 }
 
+/// Renders the daemon's per-connection client-argument log line.
+///
+/// Takes the argument vector and renders only its LENGTH. Upstream never
+/// writes the client's argument vector to the daemon log at all. Echoing it
+/// verbatim turns a connection into a log-amplification primitive: every byte
+/// a peer sends before authentication is appended to the operator's log file,
+/// and neither the token count nor the per-token length is under the daemon's
+/// control. `MAX_DAEMON_ARGS` bounds the count but not the total bytes, so the
+/// bound alone does not close this - the payload has to go.
+///
+/// The count is retained because it is daemon-derived, is bounded by
+/// construction, and is what an operator actually needs in order to correlate
+/// a connection with a refusal.
+fn client_args_log_line(
+    request: &str,
+    host_display: &str,
+    peer_ip: IpAddr,
+    client_args: &[String],
+) -> String {
+    format!(
+        "module '{}' from {} ({}): {} client args",
+        request,
+        host_display,
+        peer_ip,
+        client_args.len()
+    )
+}
+
 /// Reads and logs client arguments, handling the two-phase secluded-args
 /// protocol when the client sends `--protect-args` / `-s`.
 ///
@@ -245,7 +287,11 @@ fn read_and_log_client_args(
         // the `if (!protect_args ...)` guard at `options.c:2551` skips
         // the WILD_CHARS escape when `protect_args` is set - so no
         // `unbackslash_arg()` pass is needed on either phase.
-        match protocol::secluded_args::recv_secluded_args(ctx.reader, None) {
+        match protocol::secluded_args::recv_secluded_args(
+            ctx.reader,
+            None,
+            Some(protocol::secluded_args::MAX_DAEMON_ARGS),
+        ) {
             Ok(full_args) => merge_secluded_args(phase1_args, full_args),
             Err(err) => {
                 let error = AtError::message(format!("failed to read secluded args: {err}"));
@@ -263,14 +309,7 @@ fn read_and_log_client_args(
     };
 
     if let Some(log) = ctx.log_sink {
-        let args_str = client_args.join(" ");
-        let text = format!(
-            "module '{}' from {} ({}): client args: {}",
-            ctx.request,
-            ctx.host_display(),
-            ctx.peer_ip,
-            args_str
-        );
+        let text = client_args_log_line(ctx.request, ctx.host_display(), ctx.peer_ip, &client_args);
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
     }

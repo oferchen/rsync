@@ -989,7 +989,7 @@ mod protect_args_daemon_tests {
         );
 
         let mut cursor = Cursor::new(wire);
-        let received = recv_secluded_args(&mut cursor, None).expect("recv");
+        let received = recv_secluded_args(&mut cursor, None, None).expect("recv");
         assert_eq!(received, sent);
     }
 
