@@ -628,10 +628,10 @@ fn collapse_relative_within_depth(path: &std::path::Path, depth: usize) -> std::
 /// differs is the CONSUMER, and that is why this cannot simply reuse
 /// [`clamp_basis_to_module`]:
 ///
-/// - an alt-basis dir and `--backup-dir` are anchored ONCE, at the destination,
-///   so pre-joining the destination onto a relative value (what
-///   `clamp_basis_to_module` does) reaches the same place upstream reaches when
-///   its consumer resolves the still-relative value against `curr_dir`;
+/// - an alt-basis dir is anchored ONCE, at the destination, so pre-joining the
+///   destination onto a relative value (what `clamp_basis_to_module` does)
+///   reaches the same place upstream reaches when its consumer resolves the
+///   still-relative value against `curr_dir`;
 /// - `--partial-dir` is anchored PER FILE at `dirname(fname)`
 ///   (`util1.c` `partial_dir_fname()`, mirrored by `temp_guard.rs`
 ///   `partial_dir_fname`). Pre-joining the destination would pin every entry's
@@ -667,6 +667,56 @@ fn sanitize_partial_dir(
         .components()
         .count();
     collapse_relative_within_depth(ref_path, depth)
+}
+
+/// Sanitises a client-supplied `--backup-dir` for a daemon receiver.
+///
+/// upstream: `options.c:2408-2409` -
+/// `backup_dir = sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`. That
+/// call has two arms and only the first re-roots: `util1.c:1145-1151` prefixes
+/// the rootdir (`module_dir`, because `rootdir` is `NULL`) **only** inside
+/// `if (*p == '/')`. An ABSOLUTE value therefore becomes module-anchored, while
+/// a RELATIVE one stays relative with its `..` collapsed at depth 0
+/// (`util1.c:1184-1197`: with `depth <= 0` every `..` is dropped rather than
+/// kept at the start).
+///
+/// The relative arm is why this cannot reuse [`clamp_basis_to_module`], for the
+/// same reason [`sanitize_partial_dir`] cannot: the clamp folds the DESTINATION
+/// OPERAND into a relative value and hands back an absolute path. That reaches
+/// upstream's answer only while the operand names a directory. Upstream anchors
+/// the still-relative value at the receiver's cwd, and `get_local_name()`
+/// (`main.c:832-859`) sets that cwd to the operand's PARENT when the
+/// destination names a single file - it returns `cp + 1`, the basename, after
+/// `change_dir()` on everything before the last slash. So
+/// `--backup-dir=bak` pushed to `rsync://host/mod/payload` backs up to
+/// `<module>/bak/payload` upstream, where the clamp produced
+/// `<module>/payload/bak` and the backup `mkdir` failed `ENOTDIR` on the
+/// destination file itself.
+///
+/// oc's receiver already anchors a relative value at its `dest_dir`
+/// (`engine::compute_backup_path`, `engine::create_backup_dir_parents`), and
+/// that `dest_dir` is upstream's post-`get_local_name()` cwd - the parent for a
+/// single-file operand, the operand itself for a directory one. Leaving the
+/// value relative therefore performs the join where the transfer knows what the
+/// operand turned out to name, instead of guessing before the file list has
+/// been received.
+fn sanitize_backup_dir(
+    ref_path: &std::path::Path,
+    resolve_base: &std::path::Path,
+    module_root_canonical: &std::path::Path,
+) -> std::path::PathBuf {
+    if ref_path.has_root() {
+        // upstream: util1.c:1145-1151 - the test is `*p == '/'` on the
+        // peer-supplied bytes, so `has_root()` not `is_absolute()`: the latter
+        // is FALSE on Windows for a leading-slash path and would skip the
+        // re-root. The rootdir replaces the leading slash and `depth` is forced
+        // to 0, which is exactly the absolute arm of `clamp_basis_to_module`.
+        return clamp_basis_to_module(ref_path, resolve_base, module_root_canonical);
+    }
+    // upstream: options.c:2409 passes the literal depth 0, unlike the
+    // `curr_dir_depth` that main.c:1239 passes for `--partial-dir`, so no
+    // leading `..` survives here at all.
+    collapse_relative_within_depth(ref_path, 0)
 }
 
 /// Whether an already-clamped basis directory resolves out of the module tree

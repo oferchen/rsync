@@ -225,6 +225,49 @@ is bounded by `depth * buffer_size`: 4 x 64 KiB = 256 KiB on the
 default config, 4 x 256 KiB = 1 MiB on the `for_large_files` preset
 at `crates/fast_io/src/io_uring_common.rs:132`-`crates/fast_io/src/io_uring_common.rs:145`.
 
+### 3.3 What shipped
+
+The pool described in section 3.1 exists as
+`crates/fast_io/src/io_uring/send_zc_pipeline.rs`. It keeps the
+shape this section specifies - submit, return, pin-count per
+submission, block on a notification CQE only when the pool is
+exhausted - with three deviations, all measured rather than
+assumed:
+
+- **Owned `Vec<u8>` buffers, not `RegisteredBufferSlot`.** A
+  `RegisteredBufferGroup` is registered against one specific ring,
+  the SEND_ZC submission never sets `buf_index`, so the
+  registration would buy nothing on this path, and routing through
+  a slot forces a memcpy into it. The socket writer already owns a
+  buffer the caller filled; the pipeline takes it by
+  `mem::swap` and hands back a released one, so the pooled
+  buffers cost no copy at all.
+- **A private ring per socket writer**, not the per-thread ring
+  from #2243. Deferred notifications stay queued across calls, and
+  `batching::submit_send_batch` drains the per-thread completion
+  queue unconditionally while demultiplexing on `user_data` alone,
+  so a notification left there would be misread as one of its own
+  completions. Nothing else submits to or reaps from the
+  pipeline's ring.
+- **The transfer CQE is still awaited.** Section 3.1 says the
+  writer "submits ... and returns immediately"; the shipped
+  pipeline returns after the transfer CQE and only defers the
+  notification. That CQE carries the byte count and `-errno`,
+  which is what handles short sends, and once it has been observed
+  the bytes sit in the socket's transmit queue - which is what
+  keeps wire ordering against `submit_send_batch` and the
+  synchronous `try_send_zc` on the same fd.
+
+Depth is 4, the floor section 3.2 derives, and the measurement
+supports it: over a 200 MB loopback daemon pull (6400 sends) a free
+buffer was available with no wait in more than 90% of sends, and
+the pool held four buffers at once in 7.6% of them.
+
+`Write::write` with a caller slice at or above `buffer_size`
+(assumption 2 in section 3) is unchanged: it still blocks on both
+CQEs via `send_zc::try_send_zc`, because the caller may free that
+slice the moment `write` returns.
+
 ## 4. Kernel version gate
 
 Two-stage probe, executed lazily at writer construction in

@@ -177,15 +177,20 @@ pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> b
 }
 
 /// Returns whether the current process is running as the effective root user.
-#[cfg(unix)]
+///
+/// Delegates to [`metadata::am_root`], the single answer to this question
+/// (also used by `may_attempt_node_creation` and the metadata-sync options),
+/// which reads the cached **libc** `geteuid` and honours the `--copy-as`
+/// privilege drop. It is `false` on Windows, matching upstream's `am_root = 0`
+/// on platforms without POSIX uid semantics.
+///
+/// upstream: `main.c:1844` `our_uid = MY_UID()` - the libc `geteuid()`
+/// (`rsync.h:1455`), re-sampled by `become_copy_as_user()` after the
+/// `--copy-as` drop. A raw `geteuid` syscall answers neither: `fakeroot`
+/// interposes the libc symbol and not the syscall, so it reports the real
+/// unprivileged uid in exactly the runs where upstream believes it is root.
 pub(super) fn is_effective_root() -> bool {
-    rustix::process::geteuid().is_root()
-}
-
-/// On non-Unix platforms, there is no concept of a root user.
-#[cfg(not(unix))]
-pub(super) fn is_effective_root() -> bool {
-    false
+    ::metadata::am_root()
 }
 
 #[cfg(all(any(unix, windows), feature = "xattr"))]

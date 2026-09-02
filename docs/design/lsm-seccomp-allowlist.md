@@ -166,13 +166,22 @@ Alternatives considered and rejected:
 
 1. Phase 5 landed the feature behind `--features daemon-seccomp`.
 2. 14-day bake completed with zero missing-syscall reports.
-3. The filter is now **default-ON** when the feature is compiled in.
-   Operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
-   `OC_RSYNC_DAEMON_SECCOMP=0`.
-4. Stdio daemon sessions (remote-shell mode via `lsh.sh` / SSH) are
+3. The filter is now **default-ON at runtime** when the feature is compiled
+   in. Operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
+   `OC_RSYNC_DAEMON_SECCOMP=0`. This says nothing about the build-time
+   default, which is covered next.
+4. The feature remains **off at build time**: it is not in the `default`
+   feature set of the root `bin` package that owns the `oc-rsync` binary, so
+   the release artefacts contain no filter at all. Reaching it requires an
+   explicit `--features daemon-seccomp` (the root package forwards to
+   `daemon/daemon-seccomp`). Flipping that build-time default is a separate,
+   gated decision: the allowlist is derived from a 3.5.0 syscall survey and
+   still has open gaps against parts of the tree, so a default flip would
+   `EPERM` legitimate operations.
+5. Stdio daemon sessions (remote-shell mode via `lsh.sh` / SSH) are
    excluded - the filter only applies to TCP worker threads, never to a
    whole stdio process where it would restrict post-transfer cleanup.
-5. The companion `landlock-feature-guidance.md` documents the layered
+6. The companion `landlock-feature-guidance.md` documents the layered
    defense story for distro packagers.
 
 ## Allowlist completeness criterion

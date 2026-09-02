@@ -36,20 +36,25 @@ acl = ["core/acl", "metadata/acl"]
 # Filename charset transcoding via the module `charset =` directive (iconv).
 iconv = ["core/iconv", "protocol/iconv"]
 # Seccomp BPF syscall allowlist applied to the post-fork worker on Linux,
-# layered above the SEC-1.p Landlock LSM defense. Opt-in until the 14-day bake
-# in `docs/design/lsm-seccomp-allowlist.md` completes. No-op on non-Linux
-# (the dependency is `cfg(target_os = "linux")`-gated).
+# layered above the SEC-1.p Landlock LSM defense. Two defaults, distinct: the
+# feature is opt-in at BUILD time (absent from every default feature set, so
+# release artefacts carry no filter), and the filter is ON at RUNTIME once the
+# feature is compiled in - `OC_RSYNC_NO_SECCOMP=1` or
+# `OC_RSYNC_DAEMON_SECCOMP=0` opts out. See
+# `docs/design/lsm-seccomp-allowlist.md`. Reach it from the `oc-rsync` binary
+# with the root package's `daemon-seccomp` forwarding feature. No-op on
+# non-Linux (the dependency is `cfg(target_os = "linux")`-gated).
 daemon-seccomp = ["dep:seccompiler"]
 # Opt-in (default-off): let the daemon-sender's socket write side dispatch
-# io_uring `IORING_OP_SEND_ZC` when the client sends `--zero-copy` and the
+# io_uring `IORING_OP_SEND_ZC` under the default `ZeroCopyPolicy::Auto` when the
 # running kernel advertises the opcode. Forwards the `iouring-send-zc` group
-# (which pulls `io_uring`) into `fast_io`. Default builds keep io_uring OUT of
-# the daemon's dependency graph, so `socket_writer_from_fd_zero_copy` resolves
-# to the fallback that degrades `--zero-copy` to the plain socket write path -
-# byte- and behavior-identical to the pre-feature daemon. On non-Linux the
-# `io-uring` crate dependency is target-gated, so enabling this feature there is
-# a no-op that still degrades to the plain writer. See
-# docs/design/iouring-send-zc.md for the buffer-lifetime contract.
+# (which pulls `io_uring`) into `fast_io`. Without it, `Auto` - the policy every
+# client arrives with, since the oc-invented `--zero-copy` flag is never
+# forwarded to a peer argv - keeps the plain socket write path, byte- and
+# behavior-identical to the pre-feature daemon. On non-Linux the `io-uring`
+# crate dependency is target-gated, so enabling this feature there is a no-op
+# that still degrades to the plain writer. See docs/design/iouring-send-zc.md
+# for the buffer-lifetime contract.
 daemon-zero-copy = ["fast_io/iouring-send-zc"]
 # QUIC daemon transport (default-off, opt-in oc extension). Gates parsing and
 # storage of the `quic cert file` / `quic key file` / `quic port` global

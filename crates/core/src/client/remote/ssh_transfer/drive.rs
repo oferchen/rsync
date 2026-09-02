@@ -463,6 +463,15 @@ fn run_server_over_ssh_connection(
             }
         }
         Err(transfer_error) => {
+            // upstream: io.c:1892 - a received `MSG_ERROR_EXIT` ends in the
+            // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
+            // exit code; upstream never reaches the child-status comparison
+            // below on that path. Without this arm the abort surfaces as a
+            // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
+            // the server actually exited with.
+            if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
+                return Err(remote_exit_error(ExitCode::from_raw(code), local_role));
+            }
             let transfer_exit = ExitCode::from_io_error(&transfer_error);
             if child_exit_code.as_i32() > transfer_exit.as_i32() {
                 Err(remote_exit_error(child_exit_code, local_role))

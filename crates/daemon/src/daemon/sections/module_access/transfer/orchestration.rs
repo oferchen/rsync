@@ -340,6 +340,12 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // upstream: clientserver.c:1288-1289 - the client's forwarded `--timeout`
+    // has now been read, so the connection is re-armed with the minimum of it
+    // and the module's `timeout` directive (0 on either side meaning "no
+    // timeout"). Before this point only the module value is known.
+    let io_timeout = apply_effective_io_timeout(ctx.reader.get_mut(), module, &client_args)?;
+
     // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
     // module's `refuse options` list against the actual client argv after the
     // post-OK `read_args()` round-trip. The earlier check at the OPTION-line
@@ -372,8 +378,8 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: main.c:1166-1169 `do_server_recv()` rejects a read-only push
-    // and main.c:934-936 `do_server_sender()` rejects a write-only pull, both
+    // upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
+    // and main.c:949-952 `do_server_sender()` rejects a write-only pull, both
     // via `rprintf(FERROR, "ERROR: module is ...\n")` + `exit_cleanup(
     // RERR_SYNTAX)`. When --sender is absent the client is pushing (server =
     // Receiver); a read-only module must reject pushes and a write-only module
@@ -623,10 +629,13 @@ fn process_approved_module(
     // `setup_transfer_streams`); arming the drain there would spawn a thread that
     // hangs on a half-closed socket clone on Windows.
     let arm_drain = should_arm_delta_drain(&client_args);
-    // The daemon-sender's socket write side opts into io_uring SEND_ZC only when
-    // the client sent `--zero-copy` (parsed into `config.write.zero_copy_policy`
-    // by `apply_long_form_args`). Auto/Disabled keep the current writer, so the
-    // default path is byte- and behavior-identical.
+    // The daemon-sender's socket write side opts into io_uring SEND_ZC when
+    // `fast_io::send_zc_policy_permits` accepts this policy (parsed into
+    // `config.write.zero_copy_policy` by `apply_long_form_args`). `Disabled`
+    // never does. `Auto` - what every client arrives with, since `--zero-copy`
+    // is a local knob no peer argv carries - does so only in builds with the
+    // `iouring-send-zc` cargo feature, so a stock build's default path is byte-
+    // and behavior-identical.
     let zero_copy_policy = config.write.zero_copy_policy;
     let mut streams = match setup_transfer_streams(ctx, arm_drain, zero_copy_policy)? {
         Some(s) => s,
@@ -776,8 +785,12 @@ fn process_approved_module(
         .transition(ConnectionState::Transferring)
         .map_err(transition_error)?;
 
-    let handshake =
-        build_handshake_result(ctx.reader, negotiated_protocol, client_args.clone(), module);
+    let handshake = build_handshake_result(
+        ctx.reader,
+        negotiated_protocol,
+        client_args.clone(),
+        io_timeout,
+    );
     let final_protocol = handshake.protocol;
 
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
@@ -968,10 +981,7 @@ fn process_approved_module(
     }
 
     // FSM: Transferring -> Closing - transfer and post-xfer hooks complete.
-    ctx.conn_state = ctx
-        .conn_state
-        .transition(ConnectionState::Closing)
-        .map_err(transition_error)?;
+    ctx.conn_state = ctx.conn_state.close();
 
     Ok(())
 }

@@ -3,9 +3,9 @@
 // per-module value is what `ModuleRuntime` enforces for connections to
 // that module, regardless of the higher global cap.
 //
-// upstream: target/interop/upstream-src/rsync-3.4.1/loadparm.c associates
+// upstream: target/interop/upstream-src/rsync-3.5.0/loadparm.c associates
 // `max connections` with each `[modulename]` section (Locals: in
-// `daemon-parm.txt:48`). Upstream has no daemon-global cap; oc-rsync's
+// `daemon-parm.txt:50`). Upstream has no daemon-global cap; oc-rsync's
 // `--max-connections` is an additional daemon-level admission limit and
 // must not override the per-module value when the module sets its own
 // (a per-module value of 1 must still cap that module at 1 even when

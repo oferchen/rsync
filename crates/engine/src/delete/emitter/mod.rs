@@ -30,18 +30,18 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:48-122`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:91-183`
 //!   (`delete_dir_contents`): recursive directory peel used when an
 //!   `rmdir` would fail with `ENOTEMPTY`.
-//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225`
+//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
 //!   (`delete_item`): dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
 //!   `IS_SPECIAL`, with `do_rmdir` for directories and `robust_unlink`
 //!   for everything else; `ENOTEMPTY` recurses, other errors are logged
 //!   and reported via `DR_FAILURE`.
-//! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`
+//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
 //!   (`delete_in_dir`): reverse iteration over the sorted destination
 //!   listing, one `delete_item` call per non-matched entry.
-//! - `target/interop/upstream-src/rsync-3.4.1/errcode.h`: `RERR_PARTIAL`
+//! - `target/interop/upstream-src/rsync-3.5.0/errcode.h`: `RERR_PARTIAL`
 //!   (23) and `RERR_VANISHED` (24).
 
 use std::io;
@@ -89,7 +89,7 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// segment. When `Some`, every successful delete dispatch records a
     /// cohort-tagged trace so callers can attach cohort information to
     /// itemize lines without re-statting. The dispatch itself is
-    /// unchanged - matching upstream `delete.c:130-225`, every extras
+    /// unchanged - matching upstream `delete.c:191-288`, every extras
     /// path is unlinked unconditionally and the kernel reconciles ref
     /// counts. The snapshot is wrapped in [`Arc`] so the same value can
     /// be shared with phase-1 workers.
@@ -212,7 +212,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// every dispatch.
     ///
     /// Wiring a [`CohortIndex`] does not change which paths get
-    /// unlinked - upstream `delete.c:130-225` always issues
+    /// unlinked - upstream `delete.c:191-288` always issues
     /// `do_unlink`, and the kernel reconciles ref counts. The snapshot
     /// powers the emitter's cohort log (see [`Self::cohort_records`]),
     /// which downstream itemize formatting consumes to tag deletions
@@ -312,7 +312,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a per-entry
     /// failure occurs. Under the default policy every failure other than
     /// ENOENT and dir-ENOTEMPTY sets [`Self::io_error`] and the drain
-    /// continues, matching upstream `delete.c:86-210` which never aborts the
+    /// continues, matching upstream `delete.c:141-273` which never aborts the
     /// pass on a per-entry errno.
     pub fn emit_all(&mut self) -> io::Result<()> {
         loop {
@@ -337,7 +337,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// configured [`EmitterErrorPolicy`]. Used by both the top-level
     /// drain and the ENOTEMPTY recursive fallback so a nested directory
     /// gets the same continue-on-error semantics as a top-level one,
-    /// matching upstream `delete_dir_contents` (`delete.c:86-109`) which
+    /// matching upstream `delete_dir_contents` (`delete.c:141-164`) which
     /// iterates the dirlist and keeps going after each per-entry
     /// failure.
     fn drain_plan(&mut self, plan: &DeletePlan) -> io::Result<()> {
@@ -430,10 +430,10 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     // it prints an FINFO notice once per such directory and
                     // neither records an I/O error nor counts the directory as
                     // deleted, so the exit code stays 0.
-                    // upstream: delete.c:117-119 (delete_dir_contents) and
-                    // delete.c:197-199 (delete_item) both
+                    // upstream: delete.c:178-180 (delete_dir_contents) and
+                    // delete.c:260-262 (delete_item) both
                     // `rprintf(FINFO, "cannot delete non-empty directory: %s\n", ...)`.
-                    // FINFO renders at the default verbosity (log.c:317-320,
+                    // FINFO renders at the default verbosity (log.c:344-347,
                     // shown unless `--quiet`); oc's only info category present
                     // at verbose level 0 is `NONREG` (info_verbosity[0]), the
                     // same channel the sibling "skipping non-regular file"
@@ -450,7 +450,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     );
                     return Ok(());
                 }
-                // upstream: delete.c:86-210 `delete_dir_contents` /
+                // upstream: delete.c:141-273 `delete_dir_contents` /
                 // `delete_item` never abort the pass on a per-entry errno.
                 // Every failure other than ENOENT (idempotent) and
                 // dir-ENOTEMPTY (DR_NOT_EMPTY) is logged via FERROR_XFER,
@@ -530,11 +530,11 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     }
 
     /// Handles a directory entry. Tries `rmdir` first (upstream
-    /// `delete.c:161-163`); on [`io::ErrorKind::DirectoryNotEmpty`] takes
+    /// `delete.c:222-226`); on [`io::ErrorKind::DirectoryNotEmpty`] takes
     /// the nested directory's published plan and drains it through the
     /// shared [`Self::drain_plan`] loop, or falls back to
     /// [`DeleteFs::remove_dir_all`] when no plan was published (upstream
-    /// `delete.c:48-122 delete_dir_contents`). The retried `rmdir` after
+    /// `delete.c:91-183 delete_dir_contents`). The retried `rmdir` after
     /// a successful drain matches `delete_item`'s second pass.
     #[cfg(unix)]
     fn dispatch_dir(
