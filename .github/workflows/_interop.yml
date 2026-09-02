@@ -23,6 +23,9 @@ on:
 permissions:
   contents: read
 
+env:
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+
 jobs:
   interop:
     name: interop with upstream rsync
@@ -52,8 +55,14 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+          packages: ${{ env.APT_PACKAGES }}
           version: ${{ inputs.cache_version }}
+
+      - name: Verify APT packages are installed
+        # The cache reports a hit from its own manifest, not from
+        # the machine, so a payload-less entry installs nothing
+        # and reports success. Ask dpkg instead. See the script.
+        run: tools/ci/ensure_apt_packages.sh $APT_PACKAGES
 
       - name: Cache upstream rsync
         id: cache-rsync

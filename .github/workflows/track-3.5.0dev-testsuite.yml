@@ -70,6 +70,9 @@ on:
 permissions:
   contents: read
 
+env:
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev python3 git
+
 jobs:
   track-3-5-0dev:
     # Full coverage of the 3.5.0dev suite is a privilege x transport matrix:
@@ -121,8 +124,14 @@ jobs:
         with:
           # Same autotools/dev set as the 3.4.4 gate, plus python3 for
           # runtests.py (the git-ref suite is Python) and git for the clone.
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev python3 git
+          packages: ${{ env.APT_PACKAGES }}
           version: v1
+
+      - name: Verify APT packages are installed
+        # The cache reports a hit from its own manifest, not from
+        # the machine, so a payload-less entry installs nothing
+        # and reports success. Ask dpkg instead. See the script.
+        run: tools/ci/ensure_apt_packages.sh $APT_PACKAGES
 
       - name: Build oc-rsync (release)
         run: cargo build --locked --release --bin oc-rsync
