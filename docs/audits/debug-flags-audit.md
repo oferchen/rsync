@@ -32,8 +32,7 @@ The **upstream max** column is the largest level `N` ever used in any
 `DEBUG_GTE(FLAG, N)` site in the upstream tree (so it bounds the useful
 range; upstream caps any user-supplied level at `MAX_OUT_LEVEL = 4`).
 The **our max** column is the level cap enforced in
-`crates/cli/src/frontend/execution/flags/debug.rs::apply` - tokens
-exceeding the cap return `invalid --debug flag '<token>'`.
+`crates/cli/src/frontend/execution/flags/debug.rs::apply`.
 "Yes" in the **parity** column means the cap matches upstream's
 documented range and our gating sites cover the levels actually used.
 
@@ -99,7 +98,7 @@ Our parser
 | `0`                | Treated as `NONE`                           | `disable_all()`.                                                                               | Yes |
 | `NONE` / `none`    | Zero every flag                             | `disable_all()` sets every flag to `Some(0)`.                                                  | Yes |
 | `no<flag>` / `-<flag>` | `parse_output_words` does not recognise these (level digits only) | `parse_flag_and_level` strips `no`/`-` prefix and forces level 0 (oc-rsync extension).    | Extension - upstream silently rejects, we accept. |
-| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1    | `invalid --debug flag '<tok>': use --debug=help for supported flags`, exit 1.                  | Functional parity (different wording). |
+| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1    | `Unknown --debug item: "<tok>"`, exit 1.                                                      | Yes. |
 
 ## Numbered subcategories (`FLIST3`, `DELTASUM4`, ...)
 

@@ -5,7 +5,7 @@ use core::{
     rsync_error,
 };
 
-use super::output_words::{self, OutputWord};
+use super::output_words::{self, OutputWord, TokenFlow};
 
 /// Parsed `--debug` flag settings controlling diagnostic output levels.
 #[derive(Debug, Default)]
@@ -112,22 +112,25 @@ impl DebugFlagSettings {
         self.iocp = Some(level);
     }
 
-    pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
-        let lower = token.to_ascii_lowercase();
-
-        let (normalized, level) = match output_words::classify(&lower) {
+    /// Applies one `--debug=` token.
+    ///
+    /// Returns [`TokenFlow::Stop`] for a `help` token: upstream prints the
+    /// word table and calls `exit_cleanup(0)` right there (options.c:465-468),
+    /// so every later token in the list is never examined.
+    pub(super) fn apply(&mut self, token: &str) -> Result<TokenFlow, Message> {
+        let (name, level) = match output_words::classify(token) {
             OutputWord::Help => {
                 self.help_requested = true;
-                return Ok(());
+                return Ok(TokenFlow::Stop);
             }
             OutputWord::Every(level) => {
                 self.set_all(level);
-                return Ok(());
+                return Ok(TokenFlow::Continue);
             }
             OutputWord::Named { name, level } => (name, level),
         };
 
-        match normalized {
+        match name.to_ascii_lowercase().as_str() {
             "acl" => self.acl = Some(level),
             "backup" => self.backup = Some(level),
             "bind" => self.bind = Some(level),
@@ -156,19 +159,24 @@ impl DebugFlagSettings {
             "clone" => self.clone = Some(level),
             "sockopt" => self.sockopt = Some(level),
             "iocp" => self.iocp = Some(level),
-            _ => return Err(debug_flag_error(display)),
+            _ => return Err(debug_flag_error(name)),
         }
 
-        Ok(())
+        Ok(TokenFlow::Continue)
     }
 }
 
-fn debug_flag_error(display: &str) -> Message {
-    rsync_error!(
-        1,
-        format!("invalid --debug flag '{display}': use --debug=help for supported flags")
-    )
-    .with_role(Role::Client)
+/// Builds the unknown-item diagnostic for `--debug=`.
+///
+/// upstream: options.c:484-488 -
+/// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
+/// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
+/// sentinel, whose `help` field is the literal `"--debug"` (options.c:333), and
+/// `len` is the token length with the level suffix already stripped. The text
+/// goes to `FERROR` (stderr) and the exit code is `RERR_SYNTAX` = 1
+/// (errcode.h:25).
+fn debug_flag_error(name: &str) -> Message {
+    rsync_error!(1, format!("Unknown --debug item: \"{name}\"")).with_role(Role::Client)
 }
 
 /// Parses `--debug` flag values into resolved settings.
@@ -177,7 +185,13 @@ pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings
 
     for value in values {
         let text = value.to_string_lossy();
-        output_words::for_each_token(&text, |token| settings.apply(token, token))?;
+        // A `help` token stops the walk here as well as inside the value:
+        // upstream exits from `parse_output_words` itself, so a later
+        // `--debug=` argument is never parsed.
+        let flow = output_words::for_each_token(&text, |token| settings.apply(token))?;
+        if matches!(flow, TokenFlow::Stop) {
+            break;
+        }
     }
 
     Ok(settings)

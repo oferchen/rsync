@@ -114,7 +114,7 @@ fn info_rejects_unknown_flag() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     let rendered = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(rendered.contains("invalid --info flag"));
+    assert!(rendered.contains(r#"Unknown --info item: ""#));
 }
 
 #[test]
@@ -551,7 +551,7 @@ fn info_unknown_flag_exit_code_1() {
     let (code, _stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("--info=notaflag")]);
     assert_eq!(code, 1);
     let rendered = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(rendered.contains("invalid --info flag"));
+    assert!(rendered.contains(r#"Unknown --info item: ""#));
     assert!(rendered.contains("notaflag"));
 }
 
@@ -561,7 +561,50 @@ fn debug_rejects_unknown_flag() {
         run_with_args([OsStr::new(RSYNC), OsStr::new("--debug=notaflag")]);
     assert_eq!(code, 1);
     let rendered = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(rendered.contains("invalid --debug flag"));
+    assert!(rendered.contains(r#"Unknown --debug item: ""#));
+}
+
+// End-to-end companion for the parser-level pin in
+// `execution::flags::tests::a_whitespace_padded_word_is_an_unknown_item_not_a_trimmed_one`:
+// no layer between argv and `parse_debug_flags` may re-introduce a trim.
+//
+// upstream: options.c:448-454 skips only ZERO-LENGTH comma segments and
+// options.c:475 then compares the raw bytes, so ` flist` is an unknown item.
+// MEASURED: `rsync --debug=" flist"` from rsync 3.5.0 prints
+// `Unknown --debug item: " flist"` and exits 1.
+#[test]
+fn debug_rejects_a_whitespace_padded_flag_through_the_cli() {
+    let (code, _stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("--debug= flist")]);
+    assert_eq!(code, 1);
+    let rendered = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(
+        rendered.contains(r#"Unknown --debug item: " flist""#),
+        "padded item must be reported verbatim: {rendered:?}"
+    );
+}
+
+// Non-vacuity companion: the unpadded spelling must still reach the parser and
+// be accepted, so the pin above cannot be met by rejecting every `--debug`.
+//
+// The trailing `--debug=help` is what makes the cell exit rather than start a
+// transfer; it is parsed AFTER `flist`, so `--debug=bogus --debug=help` exits 1
+// on this same path. (`--version` would NOT work here: it short-circuits before
+// `--debug` is parsed at all, which would make this control vacuous.)
+#[test]
+fn debug_still_accepts_the_unpadded_flag_through_the_cli() {
+    let (code, _stdout, stderr) = run_with_args([
+        OsStr::new(RSYNC),
+        OsStr::new("--debug=flist"),
+        OsStr::new("--debug=help"),
+    ]);
+    assert_eq!(code, 0, "stderr: {:?}", String::from_utf8_lossy(&stderr));
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsStr::new(RSYNC),
+        OsStr::new("--debug=bogus"),
+        OsStr::new("--debug=help"),
+    ]);
+    assert_eq!(code, 1, "the control must discriminate an unknown item");
 }
 
 #[test]
