@@ -4121,7 +4121,10 @@ mod daemon_client_arg_logging_tests {
             !line.contains("--server"),
             "a peer-supplied argument reached the daemon log: {line}"
         );
-        assert_eq!(line, "module 'data' from client.example (203.0.113.7): 3 client args");
+        assert_eq!(
+            line,
+            "module 'data' from client.example (203.0.113.7): 3 client args"
+        );
     }
 
     /// Non-vacuity companion: the count is real, so the line above is not
