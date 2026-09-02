@@ -63,6 +63,45 @@ pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.0-lines.tsv";
 /// The pinned upstream source, present only where the interop tarball was fetched.
 pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.0";
 
+/// The pinned release, as the `rsync-<VER>/` component of a cited path spells it.
+pub const PINNED_VERSION: &str = "3.5.0";
+
+/// Where `tools/ci/run_interop.sh` unpacks the tarball. Citations written while
+/// reading the unpacked tree routinely paste this whole prefix, so the resolver
+/// has to see past it; see [`split_release_prefix`].
+const UNPACK_PREFIX: &str = "target/interop/upstream-src/";
+
+/// Sources permitted to spell a citation at a release the gate does not pin.
+///
+/// A RULE with exactly two members, not a list that grows: these are the two
+/// files that *document this gate*, and both have to be able to write a
+/// rejected citation verbatim to show what the rule rejects. `CONTRIBUTING.md`
+/// illustrates the out-of-scope form for contributors and
+/// `xtask/src/commands/citations.rs` is this file, whose own prose names the
+/// historical `rsync-3.4.1/` audit notes. Retargeting either at the pin would
+/// destroy the example it exists to give. The exemption covers only
+/// [`Violation::UnpinnedRelease`]: a phantom file or an out-of-range line in
+/// these two files still fails.
+const RULE_DOCUMENTATION_SOURCES: [&str; 2] =
+    ["CONTRIBUTING.md", "xtask/src/commands/citations.rs"];
+
+/// Whether `source` may cite a non-pinned release without it being a defect.
+///
+/// Two clauses. [`RULE_DOCUMENTATION_SOURCES`] carries the first.
+///
+/// The second is `docs/`, and it is a scope statement rather than debt swept
+/// under a rug. Documentation there mixes live reference with historical
+/// record, and a note recording what upstream looked like at 3.4.1 - a design
+/// review, an audit write-up, a decision log - is accurate *because* it names
+/// the old release; retargeting it at the pin would falsify it. Measured, so
+/// the size of the exemption is stated rather than discovered later: 253
+/// citations across 70 files under `docs/` name a non-pinned release. Deciding
+/// which of those are live reference and which are record needs a reader per
+/// file, which is a separate change from widening the gate.
+fn unpinned_release_is_permitted(source: &str) -> bool {
+    source.starts_with("docs/") || RULE_DOCUMENTATION_SOURCES.contains(&source)
+}
+
 /// Extensions a citation may name. Upstream carries protocol logic in C and its
 /// test and release harness in Python and shell, and citations reach all four -
 /// `runtests.py`, `support/lsh.sh` and `packaging/release.py` are cited by the
@@ -107,6 +146,24 @@ pub enum Violation {
         /// The line number that was cited, echoed so the site is greppable.
         cited: usize,
     },
+    /// The citation spells out a release, and it is not the one this gate pins.
+    ///
+    /// These were invisible before: a path carrying a directory component fell
+    /// straight into `ForeignUpstream` and was skipped without even being
+    /// counted, so a citation naming a release the tree no longer builds
+    /// against passed a gate that never opened it.
+    UnpinnedRelease {
+        /// Workspace-relative file carrying the citation.
+        source: String,
+        /// Line in the citing file.
+        line: usize,
+        /// The upstream path with the release prefix stripped.
+        upstream: String,
+        /// The line number that was cited, echoed so the site is greppable.
+        cited: usize,
+        /// The release the citation names.
+        version: String,
+    },
 }
 
 impl std::fmt::Display for Violation {
@@ -130,6 +187,18 @@ impl std::fmt::Display for Violation {
             } => write!(
                 f,
                 "{source}:{line}: cites {upstream}:{cited} but rsync 3.5.0 has no {upstream}"
+            ),
+            Self::UnpinnedRelease {
+                source,
+                line,
+                upstream,
+                cited,
+                version,
+            } => write!(
+                f,
+                "{source}:{line}: cites rsync-{version}/{upstream}:{cited}, but the pin is \
+                 rsync {PINNED_VERSION}; re-locate the construct in {PINNED_SOURCE_DIR} and \
+                 cite it as {upstream}:<line> there"
             ),
         }
     }
@@ -170,19 +239,79 @@ pub enum Resolution {
     /// RULE, not an allow-list: a path qualified by a directory rsync does not
     /// ship is a citation to a *different* upstream and is out of scope for a
     /// gate that only knows rsync. The zsync references in `crates/matching`
-    /// are written `librcksum/rsum.c:262`; the historical audit notes cite
-    /// `target/interop/upstream-src/rsync-3.4.1/flist.c:713`, a release this
-    /// gate does not pin. Both are excluded by the same sentence, and neither
-    /// is named anywhere in this file.
+    /// are written `librcksum/rsum.c:262`, and that is the whole of what this
+    /// arm now covers.
+    ///
+    /// It used to cover far more. An explicitly-versioned
+    /// `target/interop/upstream-src/rsync-3.4.1/flist.c:713` also landed here,
+    /// on the reading that any unshipped directory means a different project -
+    /// which swallowed every citation of rsync that happened to name its own
+    /// release. Measured when this arm was narrowed: 379 citations were being
+    /// skipped, and 113 of them named the PINNED release, so their line numbers
+    /// had never been checked by anything. A release directory is now split off
+    /// before this arm is ever reached; see [`Resolution::UnpinnedRelease`].
     ForeignUpstream,
+    /// The path spells `rsync-<VER>/` for a release other than the pin.
+    ///
+    /// This used to be folded into [`Resolution::ForeignUpstream`] on the
+    /// reasoning that a versioned path names "a different upstream". It does
+    /// not: it names *this* upstream at a release the tree no longer builds
+    /// against, which is the definition of a stale citation rather than an
+    /// out-of-scope one. `librcksum/rsum.c` is still foreign;
+    /// `rsync-3.4.1/delete.c:130` is a defect.
+    UnpinnedRelease {
+        /// The release the path spells.
+        version: String,
+        /// The path with the release prefix stripped.
+        path: String,
+    },
+}
+
+/// Splits a leading `[target/interop/upstream-src/]rsync-<VER>/` off a cited path.
+///
+/// Both spellings occur and mean the same thing: a comment written while
+/// reading the unpacked tarball pastes the whole workspace-relative path, one
+/// written from memory keeps only the release directory. Returns
+/// `(version, remainder)`; `None` when there is no release prefix at all.
+fn split_release_prefix(cited: &str) -> Option<(&str, &str)> {
+    let rest = cited.strip_prefix(UNPACK_PREFIX).unwrap_or(cited);
+    let (version, tail) = rest.strip_prefix("rsync-")?.split_once('/')?;
+    let numeric = !version.is_empty()
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'.' || b == b'-');
+    numeric.then_some((version, tail))
 }
 
 /// Resolves a cited path against the manifest.
 ///
-/// Resolution is by exact path first so `lib/wildmatch.c` beats a bare-name
+/// A release prefix is stripped first, so `rsync-3.5.0/flist.c:2477` is checked
+/// exactly as `flist.c:2477` is instead of being skipped as foreign; naming a
+/// release other than the pin is a violation rather than a skip. Resolution of
+/// what is left is by exact path first so `lib/wildmatch.c` beats a bare-name
 /// guess, then by unique basename so the common `flist.c:2477` form keeps
 /// working.
 pub fn resolve_upstream_path(cited: &str, manifest: &BTreeMap<String, usize>) -> Resolution {
+    if let Some((version, tail)) = split_release_prefix(cited) {
+        if version != PINNED_VERSION {
+            return Resolution::UnpinnedRelease {
+                version: version.to_owned(),
+                path: tail.to_owned(),
+            };
+        }
+        // The prefix names the pinned release outright, so a tail that resolves
+        // nowhere is a phantom file - it cannot be a reference to some other
+        // project the way a bare `librcksum/rsum.c` can.
+        return match resolve_within_release(tail, manifest) {
+            Resolution::ForeignUpstream => Resolution::Missing,
+            other => other,
+        };
+    }
+    resolve_within_release(cited, manifest)
+}
+
+/// Resolves a cited path that carries no release prefix.
+fn resolve_within_release(cited: &str, manifest: &BTreeMap<String, usize>) -> Resolution {
     if manifest.contains_key(cited) {
         return Resolution::Pinned(cited.to_owned());
     }
@@ -288,7 +417,28 @@ pub fn scan_contents(
         }
         for (cited_path, nums) in citations_in_line(line) {
             let resolution = resolve_upstream_path(&cited_path, manifest);
+            // Counted BEFORE the skip, not after. The bug this replaces
+            // incremented `names_checked` below the `continue`, so a skipped
+            // citation left no trace at all: 379 of them were invisible in a
+            // report whose whole purpose is to distinguish "clean" from
+            // "examined nothing".
             if matches!(resolution, Resolution::ForeignUpstream) {
+                tally.foreign_skipped += 1;
+                continue;
+            }
+            if let Resolution::UnpinnedRelease { version, path } = resolution {
+                if unpinned_release_is_permitted(source) {
+                    tally.unpinned_permitted += 1;
+                    continue;
+                }
+                tally.names_checked += 1;
+                out.push(Violation::UnpinnedRelease {
+                    source: source.to_owned(),
+                    line: lineno + 1,
+                    upstream: path,
+                    cited: nums[0],
+                    version,
+                });
                 continue;
             }
             tally.names_checked += 1;
@@ -305,7 +455,9 @@ pub fn scan_contents(
                     });
                     continue;
                 }
-                Resolution::ForeignUpstream => unreachable!("filtered above"),
+                Resolution::ForeignUpstream | Resolution::UnpinnedRelease { .. } => {
+                    unreachable!("filtered above")
+                }
             };
             tally.ranges_checked += 1;
             let actual = manifest[&resolved];
@@ -333,6 +485,15 @@ pub struct ScanTally {
     pub names_checked: usize,
     /// Citations that resolved to one pinned file and were range-checked.
     pub ranges_checked: usize,
+    /// Citations skipped as naming a project that is not rsync.
+    ///
+    /// Reported, not silent. A skip nobody counts is how 379 citations, 113 of
+    /// them naming the pinned release itself, sat unexamined inside a green
+    /// gate; publishing the number means the next time the skipped population
+    /// grows, it grows in the open.
+    pub foreign_skipped: usize,
+    /// Non-pinned-release citations allowed by [`unpinned_release_is_permitted`].
+    pub unpinned_permitted: usize,
 }
 
 /// What one full scan of the workspace saw.
@@ -449,10 +610,15 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
     if report.violations.is_empty() {
         eprintln!(
             "citations: {} name(s) and {} line range(s) checked across {} \
-             file(s) - every citation names a file rsync 3.5.0 has, at a line \
-             that file has. This does NOT mean the cited line says what the \
-             comment claims; nothing here checks that.",
-            report.tally.names_checked, report.tally.ranges_checked, report.files_read
+             file(s); {} skipped as not-rsync and {} permitted at a non-pinned \
+             release - every checked citation names a file rsync {PINNED_VERSION} has, \
+             at a line that file has. This does NOT mean the cited line says \
+             what the comment claims; nothing here checks that.",
+            report.tally.names_checked,
+            report.tally.ranges_checked,
+            report.files_read,
+            report.tally.foreign_skipped,
+            report.tally.unpinned_permitted,
         );
         return Ok(());
     }
@@ -490,7 +656,9 @@ mod tests {
     /// The cited line number of a violation, whichever kind it is.
     fn cited_line(v: &Violation) -> usize {
         match v {
-            Violation::OutOfRange { cited, .. } | Violation::MissingFile { cited, .. } => *cited,
+            Violation::OutOfRange { cited, .. }
+            | Violation::MissingFile { cited, .. }
+            | Violation::UnpinnedRelease { cited, .. } => *cited,
         }
     }
 
@@ -550,16 +718,126 @@ mod tests {
     #[test]
     fn a_foreign_upstream_is_out_of_scope() {
         // RULE: a directory the rsync tarball does not ship means the citation
-        // is to some other project. zsync's `librcksum/` and the audit notes'
-        // explicitly-versioned `rsync-3.4.1/` paths are both excluded by it,
-        // and neither is named in the gate.
-        let m = manifest();
+        // is to some other project. That is now zsync's `librcksum/` and
+        // nothing else - an explicitly-versioned rsync path is a citation of
+        // rsync, and is handled by the release-prefix arm below.
         assert_eq!(
-            resolve_upstream_path("librcksum/rsum.c", &m),
+            resolve_upstream_path("librcksum/rsum.c", &manifest()),
             Resolution::ForeignUpstream
         );
+    }
+
+    #[test]
+    fn a_pinned_release_prefix_is_stripped_and_the_range_is_checked() {
+        // THE HOLE THIS CLOSES, half one. `rsync-3.5.0/rsync.c:954` names the
+        // pinned release, yet the old resolver saw a `/` in a path that is not
+        // a manifest key and skipped it as foreign - so the range check, the
+        // entire point of the gate, never ran on it.
+        let m = manifest();
+        for spelling in [
+            "rsync-3.5.0/rsync.c",
+            "target/interop/upstream-src/rsync-3.5.0/rsync.c",
+        ] {
+            assert_eq!(
+                resolve_upstream_path(spelling, &m),
+                Resolution::Pinned("rsync.c".to_owned()),
+                "{spelling}"
+            );
+        }
+        let v = scan(
+            "a.rs",
+            &cite("target/interop/upstream-src/rsync-3.5.0/rsync.c", "954-965"),
+            &m,
+        );
+        assert_eq!(v.len(), 1);
+        assert!(
+            matches!(v[0], Violation::OutOfRange { actual: 831, .. }),
+            "{:?}",
+            v[0]
+        );
+    }
+
+    #[test]
+    fn a_non_pinned_release_is_a_violation_not_a_skip() {
+        // THE HOLE THIS CLOSES, half two. A 3.4.1 line number is a citation of
+        // rsync at a release this tree no longer builds against; the old
+        // resolver called that "a different upstream" and let it through.
+        let m = manifest();
         assert_eq!(
             resolve_upstream_path("target/interop/upstream-src/rsync-3.4.1/flist.c", &m),
+            Resolution::UnpinnedRelease {
+                version: "3.4.1".to_owned(),
+                path: "flist.c".to_owned(),
+            }
+        );
+        let v = scan(
+            "crates/x/src/lib.rs",
+            &cite("target/interop/upstream-src/rsync-3.4.1/flist.c", "713"),
+            &m,
+        );
+        assert_eq!(v.len(), 1);
+        assert!(
+            matches!(v[0], Violation::UnpinnedRelease { .. }),
+            "{:?}",
+            v[0]
+        );
+        assert_eq!(cited_line(&v[0]), 713);
+        let msg = v[0].to_string();
+        // Assembled rather than written out, so this file's own scan does not
+        // see a citation in the assertion.
+        let stale_coordinate = format!("rsync-3.4.1/flist.c{}713", ":");
+        assert!(
+            msg.contains(&stale_coordinate) && msg.contains(PINNED_VERSION),
+            "the message must name both the stale release and the pin: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_non_pinned_release_is_permitted_only_where_the_rule_is_documented() {
+        // The exemption is scoped, and the scope is the point: `docs/` mixes
+        // live reference with historical record, and the two files that
+        // document this gate have to be able to write the rejected form.
+        let m = manifest();
+        let stale = cite("target/interop/upstream-src/rsync-3.4.1/flist.c", "713");
+        for permitted in [
+            "docs/audits/flist-3.4.1.md",
+            "CONTRIBUTING.md",
+            "xtask/src/commands/citations.rs",
+        ] {
+            assert!(
+                scan(permitted, &stale, &m).is_empty(),
+                "{permitted} must be allowed to name a non-pinned release"
+            );
+        }
+        for gated in [
+            "crates/engine/src/delete/mod.rs",
+            "tools/ci/x.sh",
+            "docsite/index.md",
+        ] {
+            assert_eq!(
+                scan(gated, &stale, &m).len(),
+                1,
+                "{gated} must not inherit the exemption"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pinned_prefix_over_a_phantom_file_is_missing_not_foreign() {
+        // The prefix asserts the pinned release outright, so an unresolvable
+        // tail cannot be "some other project" the way `librcksum/rsum.c` can.
+        assert_eq!(
+            resolve_upstream_path("rsync-3.5.0/nowhere/phantom.c", &manifest()),
+            Resolution::Missing
+        );
+    }
+
+    #[test]
+    fn a_release_shaped_directory_that_is_not_a_release_stays_foreign() {
+        // `rsync-` followed by something that is not a version number is not a
+        // release directory, and must not be silently stripped.
+        assert_eq!(
+            resolve_upstream_path("rsync-patches/flist.c", &manifest()),
             Resolution::ForeignUpstream
         );
     }
@@ -785,7 +1063,13 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_citation_is_counted_under_neither_rule() {
+    fn a_foreign_citation_is_counted_under_neither_rule_but_is_not_invisible() {
+        // ORDERING. The skip used to `continue` above every tally increment, so
+        // a skipped citation left no trace anywhere in the report - which is
+        // how 379 of them, 113 of those naming the pin itself, hid in a green gate
+        // whose stated job is telling "clean" apart from "examined nothing".
+        // `names_checked` still excludes it, because nothing was checked; the
+        // skip itself is what gets counted.
         let mut tally = ScanTally::default();
         let v = scan_contents(
             "a.rs",
@@ -796,6 +1080,21 @@ mod tests {
         assert!(v.is_empty());
         assert_eq!(tally.names_checked, 0);
         assert_eq!(tally.ranges_checked, 0);
+        assert_eq!(tally.foreign_skipped, 1, "the skip must be counted");
+    }
+
+    #[test]
+    fn a_permitted_non_pinned_citation_is_counted_as_permitted() {
+        let mut tally = ScanTally::default();
+        let v = scan_contents(
+            "docs/audits/old.md",
+            &cite("target/interop/upstream-src/rsync-3.4.1/flist.c", "713"),
+            &manifest(),
+            &mut tally,
+        );
+        assert!(v.is_empty());
+        assert_eq!(tally.unpinned_permitted, 1);
+        assert_eq!(tally.foreign_skipped, 0);
     }
 
     /// Proves the committed manifest still describes the real pinned source.

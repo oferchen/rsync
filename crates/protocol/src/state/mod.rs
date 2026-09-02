@@ -320,4 +320,47 @@ mod tests {
         assert_eq!(summary.total_files, 100);
         assert_eq!(summary.files_transferred, 3);
     }
+
+    /// upstream: `options.c:151` declares `int checksum_seed`, so half the
+    /// seed domain is negative.
+    /// `options.c:861` parses --checksum-seed with POPT_ARG_INT.
+    /// `compat.c:825` puts it on the wire with `write_int(f_out, checksum_seed)`.
+    /// `compat.c:823` guards with `if (!checksum_seed)`, so every non-zero
+    /// seed - negative ones included - is treated as explicit.
+    ///
+    /// A seed with the high bit set is the discriminating input: `-1` is
+    /// `0xFFFF_FFFF` and `i32::MIN` is `0x8000_0000`. Neither is expressible
+    /// once the phase carries the seed as `u32`, so this pin fails to build
+    /// against an unsigned seed while `test_typestate_full_lifecycle` (seed
+    /// `12345`, high bit clear) still passes.
+    #[test]
+    fn typestate_carries_a_high_bit_checksum_seed() {
+        for seed in [-1_i32, i32::MIN, 0x8000_0000_u32 as i32] {
+            let mut state = ProtocolState::<Negotiation>::new();
+            state.set_protocol_version(31);
+            state.set_checksum_seed(seed);
+            assert_eq!(state.phase.checksum_seed, Some(seed));
+
+            let file_list = state.begin_file_list().unwrap();
+            assert_eq!(file_list.phase.checksum_seed, seed);
+
+            let mut file_list = file_list;
+            file_list.set_file_count(1);
+            let transfer = file_list.begin_transfer().unwrap();
+            assert_eq!(transfer.phase.checksum_seed, seed);
+        }
+    }
+
+    /// Companion to [`typestate_carries_a_high_bit_checksum_seed`] on the
+    /// runtime tracker. See that test for the upstream citations.
+    #[test]
+    fn dynamic_state_carries_a_high_bit_checksum_seed() {
+        for seed in [-1_i32, i32::MIN, 0x8000_0000_u32 as i32] {
+            let mut state = DynamicProtocolState::new();
+            state.set_protocol_version(31);
+            state.set_checksum_seed(seed);
+            assert_eq!(state.checksum_seed, Some(seed));
+            assert_eq!(state.advance().unwrap(), Phase::FileList);
+        }
+    }
 }

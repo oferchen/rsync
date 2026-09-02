@@ -16,7 +16,12 @@ pub struct Negotiation {
     /// The negotiated protocol version, if set.
     pub protocol_version: Option<u32>,
     /// The checksum seed, if set.
-    pub checksum_seed: Option<u32>,
+    ///
+    /// upstream: `options.c:151` declares `int checksum_seed`, so the seed is
+    /// signed end to end and half its domain is negative.
+    /// `options.c:861` parses it with POPT_ARG_INT.
+    /// `compat.c:825` puts it on the wire with `write_int(f_out, checksum_seed)`.
+    pub checksum_seed: Option<i32>,
 }
 
 /// FileList phase - file list exchange between sender and receiver.
@@ -25,7 +30,9 @@ pub struct FileList {
     /// The negotiated protocol version.
     pub protocol_version: u32,
     /// The checksum seed for the session.
-    pub checksum_seed: u32,
+    ///
+    /// upstream: `options.c:151` `int checksum_seed` - signed.
+    pub checksum_seed: i32,
     /// The number of files in the list, if known.
     pub file_count: Option<usize>,
 }
@@ -36,7 +43,9 @@ pub struct Transfer {
     /// The negotiated protocol version.
     pub protocol_version: u32,
     /// The checksum seed for the session.
-    pub checksum_seed: u32,
+    ///
+    /// upstream: `options.c:151` `int checksum_seed` - signed.
+    pub checksum_seed: i32,
     /// The total number of files to transfer.
     pub file_count: usize,
     /// The number of files transferred so far.

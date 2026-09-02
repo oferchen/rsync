@@ -92,6 +92,73 @@ fn allocate_test_port() -> u16 {
     port
 }
 
+/// The digest name list a protocol > 31 client must advertise.
+///
+/// Upstream's daemon table is written strongest-first and is never filtered by
+/// protocol version, so a client offering all five leaves the choice to the
+/// daemon's own preference order.
+///
+/// upstream: compat.c:868-871 - `negotiate_daemon_auth()` walks the client's
+/// list; checksum.c `valid_auth_checksums_items[]` holds the names.
+const CLIENT_DIGEST_LIST: &str = "sha512 sha256 sha1 md5 md4";
+
+/// Builds the client half of the `@RSYNCD:` exchange for `protocol`.
+///
+/// The digest name list is attached only above protocol 31. That gate is not
+/// cosmetic: `exchange_protocols()` refuses a greeting that omits the list with
+/// `@ERROR: your client omitted the digest name list` and returns -1, so a bare
+/// `@RSYNCD: 32.0` never reaches the module request and every assertion past it
+/// tests the refusal instead of the feature under test. At or below protocol 31
+/// upstream leaves `daemon_auth_choices` NULL on purpose and
+/// `negotiate_daemon_auth()` substitutes `protocol_version >= 30 ? "md5" :
+/// "md4"`, which is the legacy path the protocol-29/30 tests below exercise.
+///
+/// upstream: clientserver.c:229-241 - the `remote_protocol > 31` arm of
+/// `exchange_protocols()`; compat.c:868-871 - the no-list substitution.
+fn client_greeting(protocol: u32) -> String {
+    if protocol > 31 {
+        format!("@RSYNCD: {protocol}.0 {CLIENT_DIGEST_LIST}\n")
+    } else {
+        format!("@RSYNCD: {protocol}.0\n")
+    }
+}
+
+/// Sends the client greeting for `protocol` and flushes it.
+///
+/// Mandatory before any module request or `#list`: `handle_daemon_connection()`
+/// runs `exchange_protocols()` at clientserver.c:1534 and only then reads the
+/// command line at :1538. A test that jumps straight to `#list` is answered
+/// with a startup error, not a listing.
+fn send_client_greeting(stream: &mut TcpStream, protocol: u32) {
+    stream
+        .write_all(client_greeting(protocol).as_bytes())
+        .expect("send client greeting");
+    stream.flush().expect("flush client greeting");
+}
+
+/// The argument that keeps a test-started daemon in the foreground.
+///
+/// Mandatory at every daemon site in this file. `RuntimeOptions::detach`
+/// defaults to `cfg!(unix)`, so `run_daemon` reaches `become_daemon()` in the
+/// accept loop; the parent of that fork is this test binary and it exits 0
+/// (`platform::daemonize::become_daemon`). The harness records the resulting
+/// clean exit as a pass, so every assertion in the file was unreachable.
+///
+/// The window is not the spawn itself - `thread::spawn` returns before the
+/// daemon thread reaches the fork. It is the first blocking socket call:
+/// `connect_with_retries` parks the test thread for exactly as long as the
+/// daemon needs to detach. An unconditional `panic!` placed straight after the
+/// spawn therefore still fires, while the same `panic!` placed one line later,
+/// after the connect, never runs - all 25 tests reported PASSED with 14 such
+/// panics in place.
+///
+/// upstream: clientserver.c:1758-1761 - `if (no_detach) create_pid_file(); else
+/// become_daemon();` runs before the listener is set up, which is why
+/// `--no-detach` is the daemon's own opt-out rather than a test-only knob.
+fn no_detach() -> OsString {
+    OsString::from("--no-detach")
+}
+
 /// Connect to daemon with retries.
 ///
 /// Uses aggressive initial retries (10ms) ramping to 200ms, with a 60s
@@ -143,6 +210,7 @@ fn server_lists_modules_on_request() {
             OsString::from("--module"),
             OsString::from("logs=/var/log"),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -159,26 +227,31 @@ fn server_lists_modules_on_request() {
         "expected @RSYNCD greeting, got: {line}"
     );
 
-    // Send list request (no version handshake needed for #list)
+    // The version exchange is not optional, for `#list` either:
+    // `handle_daemon_connection()` runs `exchange_protocols()` (clientserver.c:1534)
+    // and only reads the command line afterwards (:1538).
+    send_client_greeting(&mut stream, 32);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    // Read capabilities
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert!(line.contains("CAP"), "expected CAP line, got: {line}");
-
-    // Read OK
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert!(line.contains("OK"), "expected OK line, got: {line}");
-
-    // Read modules
+    // Read modules. `send_listing()` writes one `"%-15s\t%s\n"` row per listed
+    // module and then `@RSYNCD: EXIT`; there is no capability or OK line in the
+    // listing at all, so the reads that used to expect them consumed the module
+    // rows this test then failed to find.
+    //
+    // upstream: clientserver.c:1374-1386 - `send_listing()`.
     let mut modules = Vec::new();
+    let mut got_exit = false;
     loop {
         line.clear();
-        reader.read_line(&mut line).expect("module line");
+        // A zero-length read is end-of-file. Without this arm the loop spins on
+        // a closed socket instead of ending, which is how a listing that never
+        // reached the terminator turned into a hang rather than a failure.
+        if reader.read_line(&mut line).expect("module line") == 0 {
+            break;
+        }
         if line.contains("EXIT") {
+            got_exit = true;
             break;
         }
         let module_name = line.split('\t').next().unwrap_or(&line).trim().to_string();
@@ -186,6 +259,10 @@ fn server_lists_modules_on_request() {
             modules.push(module_name);
         }
     }
+    assert!(
+        got_exit,
+        "listing must end with @RSYNCD: EXIT, got {modules:?}"
+    );
 
     // Verify modules
     assert!(
@@ -216,6 +293,7 @@ fn server_lists_empty_when_no_modules() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -228,38 +306,25 @@ fn server_lists_empty_when_no_modules() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send list request
+    send_client_greeting(&mut stream, 32);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Read response lines until EXIT (may have CAP, OK, then EXIT)
-    let mut modules = Vec::new();
-    let mut got_exit = false;
-    for _ in 0..10 {
-        line.clear();
-        if reader.read_line(&mut line).is_err() {
-            break;
-        }
-        if line.is_empty() {
-            break;
-        }
-        if line.contains("EXIT") {
-            got_exit = true;
-            break;
-        }
-        // Skip CAP and OK lines
-        if line.contains("CAP") || line.contains("OK") {
-            continue;
-        }
-        // Any other non-@ line is a module
-        let module_name = line.split('\t').next().unwrap_or(&line).trim().to_string();
-        if !module_name.is_empty() && !module_name.starts_with('@') {
-            modules.push(module_name);
-        }
-    }
-
-    assert!(got_exit, "should eventually get EXIT");
-    assert!(modules.is_empty(), "should have no modules: {modules:?}");
+    // With no modules configured, `send_listing()` writes no rows at all and
+    // the terminator is the very first line. Asserting that directly - rather
+    // than scanning up to ten lines and tolerating whatever arrives - is what
+    // makes "no modules" distinguishable from "some modules we failed to
+    // parse": the previous loop skipped any line containing "OK", which
+    // `@RSYNCD: OK` and a module named `ok` both satisfy.
+    //
+    // upstream: clientserver.c:1374-1386 - `send_listing()`.
+    line.clear();
+    reader.read_line(&mut line).expect("listing terminator");
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@RSYNCD: EXIT",
+        "an empty module set must list nothing before the terminator"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -298,6 +363,7 @@ fn server_filters_unlisted_modules() {
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -311,21 +377,25 @@ fn server_filters_unlisted_modules() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send list request
+    send_client_greeting(&mut stream, 32);
     stream.write_all(b"#list\n").expect("send list");
     stream.flush().expect("flush");
 
-    // Read CAP and OK
-    line.clear();
-    reader.read_line(&mut line).expect("cap");
-    line.clear();
-    reader.read_line(&mut line).expect("ok");
-
-    // Read modules until EXIT
+    // Read module rows until the terminator. There is no capability or OK line
+    // to skip - `send_listing()` writes rows then `@RSYNCD: EXIT`
+    // (clientserver.c:1374-1386) - and the two reads that used to consume them
+    // swallowed the single `public` row plus the terminator, after which this
+    // loop spun on end-of-file forever. `read_line` returning 0 is EOF, not a
+    // blank line, so the terminator check alone could never end the loop.
     let mut modules = Vec::new();
+    let mut got_exit = false;
     loop {
         line.clear();
-        reader.read_line(&mut line).expect("line");
+        if reader.read_line(&mut line).expect("listing line") == 0 {
+            break;
+        }
         if line.contains("EXIT") {
+            got_exit = true;
             break;
         }
         let module_name = line.split('\t').next().unwrap_or(&line).trim().to_string();
@@ -333,6 +403,10 @@ fn server_filters_unlisted_modules() {
             modules.push(module_name);
         }
     }
+    assert!(
+        got_exit,
+        "listing must end with @RSYNCD: EXIT, got {modules:?}"
+    );
 
     // Only public should be listed
     assert!(
@@ -362,6 +436,7 @@ fn server_sends_protocol_greeting_first() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -397,6 +472,7 @@ fn server_greeting_includes_version() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -435,6 +511,7 @@ fn server_greeting_includes_digests_for_protocol_31_plus() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -488,6 +565,7 @@ fn server_accepts_older_protocol_version() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -500,11 +578,9 @@ fn server_accepts_older_protocol_version() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send older protocol version
-    stream
-        .write_all(b"@RSYNCD: 29.0\n")
-        .expect("send old version");
-    stream.flush().expect("flush");
+    // Protocol 29 is at or below the digest-list gate, so the greeting
+    // deliberately carries no list - that is the path under test.
+    send_client_greeting(&mut stream, 29);
 
     // Request list (should still work)
     stream.write_all(b"#list\n").expect("send list");
@@ -537,6 +613,7 @@ fn server_returns_error_for_unknown_module() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -550,8 +627,7 @@ fn server_returns_error_for_unknown_module() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Request non-existent module
     stream
@@ -559,18 +635,19 @@ fn server_returns_error_for_unknown_module() {
         .expect("send module");
     stream.flush().expect("flush");
 
-    // Should receive error
+    // Should receive the refusal, naming the module the client asked for. A
+    // bare `contains("@ERROR:")` would also be satisfied by the digest-list
+    // refusal that this fixture used to trip on before it sent a valid
+    // greeting, so the payload is pinned rather than the prefix.
+    //
+    // upstream: clientserver.c:1570 - `@ERROR: Unknown module '%s'`.
     line.clear();
     reader.read_line(&mut line).expect("error response");
-    assert!(
-        line.contains("@ERROR:"),
-        "should get error for unknown module: {line}"
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@ERROR: Unknown module 'nonexistent_module_xyz'",
+        "unknown-module refusal must name the requested module"
     );
-
-    // Should receive EXIT
-    line.clear();
-    reader.read_line(&mut line).expect("exit");
-    assert!(line.contains("EXIT"), "should get EXIT after error: {line}");
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -605,6 +682,7 @@ fn server_returns_error_for_access_denied() {
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -618,8 +696,7 @@ fn server_returns_error_for_access_denied() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Request restricted module from localhost (should be denied)
     stream.write_all(b"restricted\n").expect("send module");
@@ -628,10 +705,14 @@ fn server_returns_error_for_access_denied() {
     // Should receive access denied
     line.clear();
     reader.read_line(&mut line).expect("response");
-    let lower = line.to_lowercase();
+    // Pin the module name too: a refusal that named a different module, or a
+    // generic error, would satisfy a bare "access denied" substring.
+    //
+    // upstream: clientserver.c:780 -
+    // `@ERROR: access denied to %s from %s (%s)`.
     assert!(
-        line.contains("@ERROR:") && lower.contains("access denied"),
-        "should get access denied: {line}"
+        line.starts_with("@ERROR: access denied to restricted from "),
+        "hosts-deny refusal must match clientserver.c:780, got: {line}"
     );
 
     drop(reader);
@@ -640,7 +721,7 @@ fn server_returns_error_for_access_denied() {
 }
 
 #[test]
-fn server_sends_exit_after_error() {
+fn server_closes_connection_after_error() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
@@ -653,6 +734,7 @@ fn server_sends_exit_after_error() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -666,8 +748,7 @@ fn server_sends_exit_after_error() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Request non-existent module
     stream.write_all(b"fake_module\n").expect("send module");
@@ -676,15 +757,23 @@ fn server_sends_exit_after_error() {
     // Read error
     line.clear();
     reader.read_line(&mut line).expect("error");
-    assert!(line.contains("@ERROR:"));
-
-    // Read EXIT
-    line.clear();
-    reader.read_line(&mut line).expect("exit");
     assert_eq!(
-        line.trim(),
-        "@RSYNCD: EXIT",
-        "expected EXIT after error: {line}"
+        line.trim_end_matches(['\r', '\n']),
+        "@ERROR: Unknown module 'fake_module'",
+        "unknown-module refusal must match clientserver.c:1570"
+    );
+
+    // Then EOF, not `@RSYNCD: EXIT`. That terminator has exactly one producer
+    // upstream - `send_listing()` at clientserver.c:1385 - and the
+    // unknown-module arm at :1567-1572 writes the error and returns -1, which
+    // drops the connection. Asserting a zero-length read is the discriminating
+    // check: a daemon that kept the session open for more commands after
+    // refusing one would block here instead.
+    line.clear();
+    let trailing = reader.read_line(&mut line).expect("read after error");
+    assert_eq!(
+        trailing, 0,
+        "daemon must close the connection after the refusal, got: {line}"
     );
 
     drop(reader);
@@ -706,6 +795,7 @@ fn server_handles_empty_module_request() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -719,19 +809,25 @@ fn server_handles_empty_module_request() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Send empty line
     stream.write_all(b"\n").expect("send empty");
     stream.flush().expect("flush");
 
-    // Should receive some response (error or daemon message)
+    // An empty command line is not an error - it is a listing request.
+    // `if (!*line || strcmp(line, "#list") == 0)` sends the module listing and
+    // returns, so with no modules configured the reply is the bare terminator.
+    // The old assertion accepted `@ERROR:` *or* `@RSYNCD:`, which every line
+    // the daemon can emit satisfies; it could not tell a listing from a refusal.
+    //
+    // upstream: clientserver.c:1554-1558.
     line.clear();
     reader.read_line(&mut line).expect("response");
-    assert!(
-        line.contains("@ERROR:") || line.contains("@RSYNCD:"),
-        "should get error or daemon response for empty: {line}"
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@RSYNCD: EXIT",
+        "an empty module request must be answered with a listing"
     );
 
     drop(reader);
@@ -753,6 +849,7 @@ fn server_handles_early_disconnect() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -808,6 +905,7 @@ fn server_requests_auth_for_protected_module() {
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -821,8 +919,7 @@ fn server_requests_auth_for_protected_module() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Request protected module
     stream.write_all(b"secure\n").expect("send module");
@@ -836,7 +933,12 @@ fn server_requests_auth_for_protected_module() {
         "should get AUTHREQD challenge: {line}"
     );
 
+    // Both halves of the socket must go before the join. The daemon session is
+    // parked reading the credentials this test deliberately never sends, so a
+    // still-open `stream` - `reader` holds only a dup of it - leaves the
+    // `--once` daemon waiting and `join()` never returns.
     drop(reader);
+    drop(stream);
     let _ = handle.join();
 }
 
@@ -873,6 +975,7 @@ fn server_enforces_max_connections() {
             config_path.as_os_str().to_os_string(),
             OsString::from("--max-sessions"),
             OsString::from("2"),
+            no_detach(),
         ])
         .build();
 
@@ -885,10 +988,7 @@ fn server_enforces_max_connections() {
     let mut line = String::new();
     reader1.read_line(&mut line).expect("greeting1");
 
-    stream1
-        .write_all(b"@RSYNCD: 32.0\n")
-        .expect("send version1");
-    stream1.flush().expect("flush1");
+    send_client_greeting(&mut stream1, 32);
 
     stream1.write_all(b"limited\n").expect("send module1");
     stream1.flush().expect("flush module1");
@@ -896,35 +996,45 @@ fn server_enforces_max_connections() {
     line.clear();
     reader1.read_line(&mut line).expect("response1");
 
-    // First should get OK
-    if line.contains("OK") {
-        // Try second connection while first is active
-        let mut stream2 = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect2");
-        stream2.set_read_timeout(Some(Duration::from_secs(5))).ok();
-        let mut reader2 = BufReader::new(stream2.try_clone().expect("clone2"));
+    // The first client must be admitted, and unconditionally so. Guarding the
+    // rest of this test with `if line.contains("OK")` made the cap assertion
+    // optional: any outcome that was not an admission - including the
+    // digest-list refusal this fixture used to provoke - skipped straight to
+    // the join and reported a pass having probed nothing.
+    assert!(
+        line.contains("@RSYNCD: OK"),
+        "first client must occupy the single connection slot, got: {line}"
+    );
 
-        line.clear();
-        reader2.read_line(&mut line).expect("greeting2");
+    // Second connection, while the first still holds the slot.
+    let mut stream2 = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect2");
+    stream2.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let mut reader2 = BufReader::new(stream2.try_clone().expect("clone2"));
 
-        stream2
-            .write_all(b"@RSYNCD: 32.0\n")
-            .expect("send version2");
-        stream2.flush().expect("flush2");
+    line.clear();
+    reader2.read_line(&mut line).expect("greeting2");
 
-        stream2.write_all(b"limited\n").expect("send module2");
-        stream2.flush().expect("flush module2");
+    send_client_greeting(&mut stream2, 32);
 
-        line.clear();
-        reader2.read_line(&mut line).expect("response2");
+    stream2.write_all(b"limited\n").expect("send module2");
+    stream2.flush().expect("flush module2");
 
-        // Second should get max connections error
-        let lower = line.to_lowercase();
-        assert!(
-            line.contains("@ERROR:") || lower.contains("max connections"),
-            "second connection should be limited: {line}"
-        );
-    }
+    line.clear();
+    reader2.read_line(&mut line).expect("response2");
 
+    // The exact refusal, not merely "some @ERROR". `max connections = 1` is in
+    // the module config, so the payload carries that limit.
+    //
+    // upstream: clientserver.c:799 -
+    // `@ERROR: max connections (%d) reached -- try again later`.
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@ERROR: max connections (1) reached -- try again later",
+        "second client must be refused with the upstream cap payload"
+    );
+
+    drop(reader2);
+    drop(stream2);
     drop(reader1);
     drop(stream1);
     let _ = handle.join();
@@ -946,6 +1056,7 @@ fn server_lists_modules_with_comments() {
             OsString::from("--module"),
             OsString::from("docs=/srv/docs,Documentation files"),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -959,29 +1070,34 @@ fn server_lists_modules_with_comments() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send list request
+    send_client_greeting(&mut stream, 32);
     stream.write_all(b"#list\n").expect("send list");
     stream.flush().expect("flush");
 
-    // Read CAP and OK
+    // Read the single module row. The two reads that used to precede this one
+    // consumed a capability and an OK line the listing never contains
+    // (clientserver.c:1374-1386), so this read landed on end-of-file and the
+    // `if line.contains('\t')` guard below silently skipped every assertion -
+    // the test went on passing while checking nothing at all.
     line.clear();
-    reader.read_line(&mut line).expect("cap");
-    line.clear();
-    reader.read_line(&mut line).expect("ok");
+    reader.read_line(&mut line).expect("module row");
+    let row = line.trim_end_matches(['\r', '\n']);
+    let (name, comment) = row
+        .split_once('\t')
+        .unwrap_or_else(|| panic!("listing row must be tab-separated, got: {row:?}"));
+    assert_eq!(name.trim_end(), "docs", "module name should be 'docs'");
+    assert_eq!(
+        comment, "Documentation files",
+        "listing row must carry the module comment"
+    );
 
-    // Read module line
     line.clear();
-    reader.read_line(&mut line).expect("module");
-
-    // Module listing should include comment (tab-separated)
-    if line.contains('\t') {
-        let parts: Vec<&str> = line.trim().split('\t').collect();
-        assert_eq!(parts[0].trim(), "docs", "module name should be 'docs'");
-        assert_eq!(
-            parts.get(1).copied(),
-            Some("Documentation files"),
-            "comment should be included"
-        );
-    }
+    reader.read_line(&mut line).expect("terminator");
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@RSYNCD: EXIT",
+        "listing must end with the terminator"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -1002,6 +1118,7 @@ fn server_handles_invalid_greeting_response() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -1020,17 +1137,21 @@ fn server_handles_invalid_greeting_response() {
         .expect("send garbage");
     stream.flush().expect("flush");
 
-    // Daemon should handle gracefully
+    // A line that does not parse as `@RSYNCD: %d.%d` is refused with one exact
+    // message. The previous form asserted nothing twice over: the whole check
+    // sat behind `if result.is_ok() && !line.is_empty()`, so a dropped
+    // connection skipped it, and the surviving disjunction accepted any line
+    // the daemon is capable of writing.
+    //
+    // upstream: clientserver.c:209-215 - the `sscanf(...) < 1` arm of
+    // `exchange_protocols()` writes `@ERROR: protocol startup error`.
     line.clear();
-    let result = reader.read_line(&mut line);
-
-    if result.is_ok() && !line.is_empty() {
-        // Should get error or treated as module name
-        assert!(
-            line.contains("@ERROR:") || line.contains("@RSYNCD:"),
-            "should handle invalid input: {line}"
-        );
-    }
+    reader.read_line(&mut line).expect("refusal");
+    assert_eq!(
+        line.trim_end_matches(['\r', '\n']),
+        "@ERROR: protocol startup error",
+        "an unparseable greeting must be refused with the upstream text"
+    );
 
     drop(reader);
     let _ = handle.join();
@@ -1050,6 +1171,7 @@ fn server_sanitizes_module_name_in_error() {
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -1063,8 +1185,7 @@ fn server_sanitizes_module_name_in_error() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send version
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     // Send module with control characters
     stream
@@ -1121,6 +1242,7 @@ fn start_auth_daemon() -> (
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
             OsString::from("--once"),
+            no_detach(),
         ])
         .build();
 
@@ -1148,8 +1270,17 @@ fn perform_auth_handshake(
         "expected greeting, got: {line}"
     );
 
-    // Send client version
-    let version_line = format!("@RSYNCD: {client_protocol}.0\n");
+    // Advertise exactly the digest under test above protocol 31, so the
+    // daemon's negotiated choice is the one this handshake then computes with.
+    // Sending no list would leave the daemon on the legacy fallback
+    // (compat.c:868-871) and the `digest` argument would only ever describe the
+    // client's own arithmetic - which is how these cases could name a digest
+    // they never actually negotiated.
+    let version_line = if client_protocol > 31 {
+        format!("@RSYNCD: {client_protocol}.0 {}\n", digest.name())
+    } else {
+        format!("@RSYNCD: {client_protocol}.0\n")
+    };
     stream
         .write_all(version_line.as_bytes())
         .expect("send version");
@@ -1266,11 +1397,17 @@ fn auth_flow_protocol_29_md4_succeeds() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
+    // `Md4Old`, not `Md4`. A protocol-29 client sends no digest list, so
+    // `negotiate_daemon_auth()` takes the `md4` fallback with `md4_is_old = 1`
+    // and then rewrites the negotiated item to `CSUM_MD4_OLD`
+    // (compat.c:888-891), which `sum_init()` seeds with four zero bytes that an
+    // explicitly negotiated `md4` never gets. Computing plain `Md4` here
+    // produces a response the daemon is correct to reject.
     let (port, _temp, handle) = start_auth_daemon();
-    let result = perform_auth_handshake(port, 29, daemon::auth::DaemonAuthDigest::Md4);
+    let result = perform_auth_handshake(port, 29, daemon::auth::DaemonAuthDigest::Md4Old);
     assert!(
         result.contains("OK"),
-        "protocol 29 with MD4 should succeed: {result}"
+        "protocol 29 must authenticate with the seeded legacy MD4: {result}"
     );
     let _ = handle.join();
 }
@@ -1326,8 +1463,7 @@ fn auth_flow_wrong_password_rejected() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
-    stream.flush().expect("flush");
+    send_client_greeting(&mut stream, 32);
 
     stream.write_all(b"authmod\n").expect("send module");
     stream.flush().expect("flush");
