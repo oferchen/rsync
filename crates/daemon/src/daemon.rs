@@ -53,6 +53,7 @@ use core::{
     },
 };
 use logging_sink::MessageSink;
+use metadata::id_lookup::ConverterOutcome;
 use protocol::{
     AdvertisedDigests, EARLY_INPUT_CMD, EARLY_INPUT_MAX_SIZE, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion, filters::FilterRuleWireFormat,

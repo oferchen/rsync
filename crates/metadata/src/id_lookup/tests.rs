@@ -456,17 +456,17 @@ fn cached_lookup_distinct_ids_each_look_up() {
 struct FixedConverter;
 
 impl NameConverterCallbacks for FixedConverter {
-    fn uid_to_name(&mut self, _uid: u32) -> Option<String> {
-        Some("converted-user".to_string())
+    fn uid_to_name(&mut self, _uid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Resolved("converted-user".to_string())
     }
-    fn gid_to_name(&mut self, _gid: u32) -> Option<String> {
-        Some("converted-group".to_string())
+    fn gid_to_name(&mut self, _gid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Resolved("converted-group".to_string())
     }
-    fn name_to_uid(&mut self, _name: &str) -> Option<u32> {
-        None
+    fn name_to_uid(&mut self, _name: &str) -> ConverterOutcome<u32> {
+        ConverterOutcome::Unknown
     }
-    fn name_to_gid(&mut self, _name: &str) -> Option<u32> {
-        None
+    fn name_to_gid(&mut self, _name: &str) -> ConverterOutcome<u32> {
+        ConverterOutcome::Unknown
     }
 }
 
@@ -507,21 +507,100 @@ struct DisclaimingConverter;
 
 #[cfg(unix)]
 impl NameConverterCallbacks for DisclaimingConverter {
-    fn uid_to_name(&mut self, _uid: u32) -> Option<String> {
-        None
+    fn uid_to_name(&mut self, _uid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Unknown
     }
 
-    fn gid_to_name(&mut self, _gid: u32) -> Option<String> {
-        None
+    fn gid_to_name(&mut self, _gid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Unknown
     }
 
-    fn name_to_uid(&mut self, name: &str) -> Option<u32> {
-        (name == "mapped-only").then_some(4242)
+    fn name_to_uid(&mut self, name: &str) -> ConverterOutcome<u32> {
+        (name == "mapped-only").then_some(4242).into()
     }
 
-    fn name_to_gid(&mut self, name: &str) -> Option<u32> {
-        (name == "mapped-only").then_some(4243)
+    fn name_to_gid(&mut self, name: &str) -> ConverterOutcome<u32> {
+        (name == "mapped-only").then_some(4243).into()
     }
+}
+
+/// A converter whose request/answer stream has broken.
+///
+/// upstream: clientserver.c:1329-1334 - a converter that cannot be written to
+/// ends the session; it never reports a name as merely absent.
+#[cfg(unix)]
+struct DeadConverter;
+
+#[cfg(unix)]
+impl NameConverterCallbacks for DeadConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Failed(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn gid_to_name(&mut self, _gid: u32) -> ConverterOutcome<String> {
+        ConverterOutcome::Failed(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn name_to_uid(&mut self, _name: &str) -> ConverterOutcome<u32> {
+        ConverterOutcome::Failed(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn name_to_gid(&mut self, _name: &str) -> ConverterOutcome<u32> {
+        ConverterOutcome::Failed(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
+/// A dead converter must be distinguishable from a name it does not know.
+///
+/// The contrast with [`DisclaimingConverter`] is the whole point: that one
+/// answers "no such name" and this one cannot answer at all, and before the
+/// outcome type existed both arrived at the call site as the same `None`. The
+/// host database is left in place as the second discriminator - a fall-through
+/// would resolve `root`, and the failure must not become that either.
+#[cfg(unix)]
+#[test]
+fn a_converter_that_cannot_answer_is_not_a_name_that_does_not_resolve() {
+    clear_name_converter();
+    assert!(
+        lookup_user_by_name(b"root").expect("host lookup").is_some(),
+        "this host cannot resolve `root`, so this test cannot discriminate"
+    );
+
+    set_name_converter(Box::new(DisclaimingConverter));
+    assert_eq!(
+        lookup_user_by_name(b"root").expect("a disclaimed name is not an error"),
+        None,
+        "a converter that answers `unknown` yields `None`"
+    );
+
+    set_name_converter(Box::new(DeadConverter));
+    for outcome in [
+        lookup_user_by_name(b"root").map(|id| id.is_some()),
+        lookup_group_by_name(b"root").map(|id| id.is_some()),
+    ] {
+        let err = outcome.expect_err("a dead converter must not read as `no such name`");
+        assert!(err.is_converter_failure(), "{err}");
+    }
+    assert!(
+        lookup_user_name(0)
+            .expect_err("a dead converter must not read as `this uid has no name`")
+            .is_converter_failure()
+    );
+    assert!(
+        lookup_group_name(0)
+            .expect_err("a dead converter must not read as `this gid has no name`")
+            .is_converter_failure()
+    );
+
+    // A host-database failure keeps its tolerance; only the converter's is
+    // fatal. Without this contrast the helper could simply propagate
+    // everything and still pass the assertions above.
+    assert!(
+        no_id_unless_converter_failed(lookup_user_by_name(b"root")).is_err(),
+        "a converter failure survives the database-failure tolerance"
+    );
+
+    clear_name_converter();
 }
 
 /// An installed converter REPLACES the host user database; it is not merely
@@ -573,20 +652,33 @@ fn installed_converter_replaces_the_host_database() {
     clear_name_converter();
 }
 
-/// upstream: uidlist.c:146 `user_to_uid()` / :172 `group_to_gid()` -
+/// upstream: uidlist.c:146-147 `user_to_uid()` / :172-173 `group_to_gid()` -
 /// `if (!name || !*name) return 0;`. An empty name is decided before either the
 /// converter or the host database is consulted, so no request is framed for it.
+///
+/// The converter is one that FAILS every query it is given. A converter that
+/// merely answered "unknown" would return `None` for the empty name whether or
+/// not the guard exists, which is how a missing guard passes a test: the
+/// discriminator is that reaching the converter at all must be observable.
 #[cfg(unix)]
 #[test]
 fn an_empty_name_resolves_to_nothing_without_consulting_the_converter() {
-    set_name_converter(Box::new(DisclaimingConverter));
-    assert_eq!(lookup_user_by_name(b"").expect("lookup"), None);
-    assert_eq!(lookup_group_by_name(b"").expect("lookup"), None);
-    // Non-vacuity: the same converter still answers a real name, so the two
-    // `None`s above are the empty-name rule and not a broken fixture.
+    set_name_converter(Box::new(DeadConverter));
+
     assert_eq!(
-        lookup_user_by_name(b"mapped-only").expect("lookup"),
-        Some(4242)
+        lookup_user_by_name(b"").expect("an empty name is decided before the converter"),
+        None
     );
+    assert_eq!(
+        lookup_group_by_name(b"").expect("an empty name is decided before the converter"),
+        None
+    );
+
+    // Non-vacuity: this converter IS installed and IS reached by a non-empty
+    // name, so the two `Ok(None)`s above are the empty-name rule and not an
+    // inert fixture.
+    assert!(lookup_user_by_name(b"anything").is_err());
+    assert!(lookup_group_by_name(b"anything").is_err());
+
     clear_name_converter();
 }

@@ -307,10 +307,13 @@ impl GeneratorContext {
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
             // Without names, the receiver can't map uid->name on the remote.
             if self.config.flags.numeric_ids.is_off() {
-                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_user_name_cached(uid) {
-                    if let Ok(name) = String::from_utf8(name_bytes) {
-                        entry.set_user_name(name);
-                    }
+                // A name converter that could not answer stops the file list
+                // here; only a host-database miss is "this uid has no name".
+                if let Some(name_bytes) = metadata::id_lookup::no_id_unless_converter_failed(
+                    metadata::id_lookup::lookup_user_name_cached(uid),
+                )? && let Ok(name) = String::from_utf8(name_bytes)
+                {
+                    entry.set_user_name(name);
                 }
             }
         }
@@ -323,10 +326,12 @@ impl GeneratorContext {
             // upstream: flist.c:488-492 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
             if self.config.flags.numeric_ids.is_off() {
-                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name_cached(gid) {
-                    if let Ok(name) = String::from_utf8(name_bytes) {
-                        entry.set_group_name(name);
-                    }
+                // As above: only a host-database miss means "no name".
+                if let Some(name_bytes) = metadata::id_lookup::no_id_unless_converter_failed(
+                    metadata::id_lookup::lookup_group_name_cached(gid),
+                )? && let Ok(name) = String::from_utf8(name_bytes)
+                {
+                    entry.set_group_name(name);
                 }
             }
         }

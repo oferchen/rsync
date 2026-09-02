@@ -73,7 +73,7 @@ struct IdEntry {
 /// ```ignore
 /// let mut id_list = IdList::new();
 /// // Read the list from sender
-/// id_list.read(&mut reader, false, |name| lookup_user_by_name(name).ok().flatten())?;
+/// id_list.read(&mut reader, false, |name| Ok(lookup_user_by_name(name).ok().flatten()))?;
 /// // Later, when applying ownership:
 /// let local_uid = id_list.match_id(remote_uid);
 /// ```
@@ -262,7 +262,10 @@ impl IdList {
     /// * `reader` - The source of encoded data
     /// * `id0_names` - Whether to read id=0's name (ID0_NAMES compat flag)
     /// * `protocol_version` - The negotiated protocol version (affects decoding)
-    /// * `name_to_id` - Function to resolve a name to a local ID
+    /// * `name_to_id` - Function to resolve a name to a local ID. Returning
+    ///   `Ok(None)` is upstream's "no such name" (the sender's numeric id is
+    ///   kept); returning `Err` ends the transfer, which is what a name
+    ///   converter that could not answer must do.
     ///
     /// # Upstream Reference
     ///
@@ -276,7 +279,7 @@ impl IdList {
         name_to_id: F,
     ) -> io::Result<()>
     where
-        F: Fn(&[u8]) -> Option<u32>,
+        F: Fn(&[u8]) -> io::Result<Option<u32>>,
     {
         self.read_with_kind(reader, id0_names, protocol_version, None, name_to_id)
     }
@@ -301,7 +304,7 @@ impl IdList {
         name_to_id: F,
     ) -> io::Result<()>
     where
-        F: Fn(&[u8]) -> Option<u32>,
+        F: Fn(&[u8]) -> io::Result<Option<u32>>,
     {
         // Read (id, name) pairs until id=0
         let mut count = 0usize;
@@ -357,7 +360,7 @@ impl IdList {
         name_to_id: &F,
     ) -> io::Result<(Option<Vec<u8>>, u32)>
     where
-        F: Fn(&[u8]) -> Option<u32>,
+        F: Fn(&[u8]) -> io::Result<Option<u32>>,
     {
         let mut len_buf = [0u8; 1];
         reader.read_exact(&mut len_buf)?;
@@ -370,8 +373,10 @@ impl IdList {
         let mut name = vec![0u8; len];
         reader.read_exact(&mut name)?;
 
-        // Try to resolve the name to a local ID
-        let local_id = name_to_id(&name).unwrap_or(remote_id);
+        // Try to resolve the name to a local ID. A resolver that cannot answer
+        // (upstream: a name converter that has died, clientserver.c:1333)
+        // propagates instead of degrading into "keep the sender's id".
+        let local_id = name_to_id(&name)?.unwrap_or(remote_id);
 
         Ok((Some(name), local_id))
     }
@@ -476,7 +481,7 @@ mod tests {
     fn read_empty_list_proto30() {
         let data = vec![0u8]; // Just terminator (varint)
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, 30, |_| None)
+        list.read(&mut data.as_slice(), false, 30, |_| Ok(None))
             .unwrap();
         assert!(list.is_empty());
     }
@@ -485,7 +490,7 @@ mod tests {
     fn read_empty_list_proto29() {
         let data = vec![0u8, 0, 0, 0]; // Just terminator (4-byte int)
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, 29, |_| None)
+        list.read(&mut data.as_slice(), false, 29, |_| Ok(None))
             .unwrap();
         assert!(list.is_empty());
     }
@@ -495,7 +500,7 @@ mod tests {
         // varint(1), len(4), "root", varint(0)
         let data = vec![1, 4, b'r', b'o', b'o', b't', 0];
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, 30, |_| Some(0))
+        list.read(&mut data.as_slice(), false, 30, |_| Ok(Some(0)))
             .unwrap();
         assert_eq!(list.len(), 1);
         // Name resolved to 0
@@ -507,7 +512,7 @@ mod tests {
         // int32(1), len(4), "root", int32(0)
         let data = vec![1, 0, 0, 0, 4, b'r', b'o', b'o', b't', 0, 0, 0, 0];
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, 29, |_| Some(0))
+        list.read(&mut data.as_slice(), false, 29, |_| Ok(Some(0)))
             .unwrap();
         assert_eq!(list.len(), 1);
         // Name resolved to 0
@@ -519,7 +524,7 @@ mod tests {
         // varint(0) terminator, len(4), "root"
         let data = vec![0, 4, b'r', b'o', b'o', b't'];
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), true, 30, |_| Some(0))
+        list.read(&mut data.as_slice(), true, 30, |_| Ok(Some(0)))
             .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list.match_id(0), 0);
@@ -535,7 +540,7 @@ mod tests {
         crate::write_varint(&mut data, 0).unwrap(); // terminator
 
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, 30, |_| None)
+        list.read(&mut data.as_slice(), false, 30, |_| Ok(None))
             .unwrap();
         // Name not resolved, falls back to remote ID
         assert_eq!(list.match_id(50), 50);
@@ -553,9 +558,9 @@ mod tests {
         let mut receiver = IdList::new();
         receiver
             .read(&mut buf.as_slice(), false, 30, |name| match name {
-                b"root" => Some(0),
-                b"user" => Some(500),
-                _ => None,
+                b"root" => Ok(Some(0)),
+                b"user" => Ok(Some(500)),
+                _ => Ok(None),
             })
             .unwrap();
 
@@ -575,9 +580,9 @@ mod tests {
         let mut receiver = IdList::new();
         receiver
             .read(&mut buf.as_slice(), false, 29, |name| match name {
-                b"root" => Some(0),
-                b"user" => Some(500),
-                _ => None,
+                b"root" => Ok(Some(0)),
+                b"user" => Ok(Some(500)),
+                _ => Ok(None),
             })
             .unwrap();
 
@@ -622,7 +627,11 @@ mod tests {
         let data = vec![1, 4, b'r', b'o', b'o', b't', 0, 4, b'r', b'o', b'o', b't'];
         let mut list = IdList::new();
         list.read_with_kind(&mut data.as_slice(), true, 30, Some(IdKind::Uid), |name| {
-            if name == b"root" { Some(0) } else { None }
+            if name == b"root" {
+                Ok(Some(0))
+            } else {
+                Ok(None)
+            }
         })
         .unwrap();
 
@@ -660,7 +669,7 @@ mod tests {
 
         let data = vec![1, 4, b'r', b'o', b'o', b't', 0];
         let mut list = IdList::new();
-        list.read_with_kind(&mut data.as_slice(), false, 30, None, |_| Some(0))
+        list.read_with_kind(&mut data.as_slice(), false, 30, None, |_| Ok(Some(0)))
             .unwrap();
 
         let messages: Vec<String> = drain_events()
@@ -696,7 +705,7 @@ mod tests {
         crate::write_varint(&mut data, 0).unwrap();
 
         let mut list = IdList::new();
-        let result = list.read(&mut data.as_slice(), false, 30, |_| None);
+        let result = list.read(&mut data.as_slice(), false, 30, |_| Ok(None));
         assert!(result.is_err(), "oversized ID list should be rejected");
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -718,7 +727,7 @@ mod tests {
         crate::write_varint(&mut data, 0).unwrap();
 
         let mut list = IdList::new();
-        let result = list.read(&mut data.as_slice(), false, 30, |_| None);
+        let result = list.read(&mut data.as_slice(), false, 30, |_| Ok(None));
         assert!(
             result.is_ok(),
             "ID list at cap should be accepted, got: {result:?}"

@@ -277,3 +277,111 @@ fn remap_falls_back_to_local_name_resolution_when_no_rule_matches() {
         "with no matching rule, ownership follows the local getpwnam(name)"
     );
 }
+
+/// A converter that answers exactly one name and disclaims the rest.
+#[cfg(unix)]
+struct DisclaimingConverter;
+
+#[cfg(unix)]
+impl metadata::id_lookup::NameConverterCallbacks for DisclaimingConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+    fn gid_to_name(&mut self, _gid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+    fn name_to_uid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+    fn name_to_gid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+}
+
+/// A converter whose request/answer stream has broken.
+#[cfg(unix)]
+struct DeadConverter;
+
+#[cfg(unix)]
+impl metadata::id_lookup::NameConverterCallbacks for DeadConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Failed(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        ))
+    }
+    fn gid_to_name(&mut self, _gid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Failed(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        ))
+    }
+    fn name_to_uid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Failed(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        ))
+    }
+    fn name_to_gid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Failed(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        ))
+    }
+}
+
+/// One uid list carrying `1000 -> "alice"`, as the sender writes it.
+#[cfg(unix)]
+fn uid_list_wire() -> Vec<u8> {
+    let mut list = protocol::idlist::IdList::new();
+    list.add_id(1000, Some(b"alice".to_vec()));
+    let mut wire = Vec::new();
+    list.write(&mut wire, false, 32).expect("write id list");
+    wire
+}
+
+/// A name the converter does not know keeps the sender's numeric id - the
+/// tolerated outcome, and the control that makes the next test discriminating.
+///
+/// upstream: uidlist.c:273-282 `recv_add_id()` - an unresolved name leaves the
+/// sender's id in place.
+#[cfg(unix)]
+#[test]
+fn an_unknown_name_keeps_the_senders_id() {
+    let handshake = test_handshake();
+    let config = config_with_flags(true, false, NumericIds::Off);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    metadata::id_lookup::set_name_converter(Box::new(DisclaimingConverter));
+    let wire = uid_list_wire();
+    let result = ctx.receive_id_lists(&mut Cursor::new(wire.as_slice()));
+    metadata::id_lookup::clear_name_converter();
+
+    assert!(result.is_ok(), "an unknown name is not a transfer error");
+    assert_eq!(
+        ctx.uid_list.match_id(1000),
+        1000,
+        "the sender's id is kept when the converter does not know the name"
+    );
+}
+
+/// THE FAIL-CLOSED CASE. A name converter that could not answer must not be
+/// read as "this name has no local id": that verdict silently installs the
+/// SENDER's numeric id for every named owner in the transfer, which is the
+/// ownership decision the operator configured a converter to take away from
+/// the sender.
+///
+/// upstream: clientserver.c:1329-1334 - a converter that cannot be spoken to
+/// is `exit_cleanup(RERR_SOCKETIO)`; the session never proceeds to map names
+/// without it.
+#[cfg(unix)]
+#[test]
+fn a_dead_converter_aborts_instead_of_keeping_the_senders_id() {
+    let handshake = test_handshake();
+    let config = config_with_flags(true, false, NumericIds::Off);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    metadata::id_lookup::set_name_converter(Box::new(DeadConverter));
+    let wire = uid_list_wire();
+    let result = ctx.receive_id_lists(&mut Cursor::new(wire.as_slice()));
+    metadata::id_lookup::clear_name_converter();
+
+    let err = result.expect_err("a dead converter must end the transfer");
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
+}
