@@ -116,6 +116,9 @@ pub mod registered_buffers;
 pub mod renameat2;
 /// `IORING_OP_SEND_ZC` zero-copy socket-send primitive (Linux 6.0+).
 pub mod send_zc;
+/// Pipelined `IORING_OP_SEND_ZC` submission that defers the page-release
+/// notification instead of blocking on it.
+mod send_zc_pipeline;
 /// Pool of long-lived io_uring instances shared across consumers in a session.
 pub mod session_pool;
 /// Single io_uring ring shared by a reader fd and a writer fd in one session.
