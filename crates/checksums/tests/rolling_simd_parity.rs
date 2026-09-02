@@ -17,7 +17,7 @@
 //! - `match.c:hash_search()` - sliding-window consumer
 //!
 //! Bytes are reinterpreted as signed (`schar *buf = (schar *)buf1` in
-//! upstream `checksum.c:285`), so values >= 0x80 contribute `byte - 256`.
+//! upstream `checksum.c:307`), so values >= 0x80 contribute `byte - 256`.
 //! The rsync formula over a block of length `n` is:
 //!
 //! ```text
