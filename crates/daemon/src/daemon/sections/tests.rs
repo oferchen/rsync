@@ -1352,3 +1352,180 @@ fn refuse_compress_message_mentions_compress() {
         "refusal payload must name the refused option literally, got: {payload}"
     );
 }
+
+/// Opens a connected loopback TCP pair and wraps the server end as a
+/// `DaemonStream`, so the socket deadlines `apply_io_timeout` sets are
+/// observable through `TcpStream::read_timeout`.
+#[cfg(unix)]
+fn connected_daemon_stream() -> (DaemonStream, std::net::TcpStream) {
+    use std::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let addr = listener.local_addr().expect("listener address");
+    let client = TcpStream::connect(addr).expect("connect to listener");
+    let (server, _) = listener.accept().expect("accept the loopback connection");
+    (DaemonStream::plain(server), client)
+}
+
+/// `--timeout=N` is read back out of the forwarded argv.
+///
+/// upstream: `options.c` - `server_options()` emits `--timeout=%d`, and the
+/// daemon's own `parse_arguments()` over that argv is what sets `io_timeout`.
+#[test]
+fn client_timeout_is_read_from_the_forwarded_argv() {
+    let args = vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "-vlogDtpre.iLsfxCIvu".to_owned(),
+        "--timeout=17".to_owned(),
+        ".".to_owned(),
+    ];
+    assert_eq!(
+        client_io_timeout_from_args(&args).map(NonZeroU64::get),
+        Some(17)
+    );
+}
+
+/// A forwarded `--timeout=0` (upstream's "no timeout") and a negative or
+/// unparsable value all read as "no timeout".
+///
+/// upstream: `io.c:1266-1271` `set_io_timeout()` clamps a negative to `0`, and
+/// `0` short-circuits every timeout check.
+#[test]
+fn non_positive_client_timeout_reads_as_no_timeout() {
+    for value in ["--timeout=0", "--timeout=-5", "--timeout=x"] {
+        let args = vec![value.to_owned()];
+        assert_eq!(
+            client_io_timeout_from_args(&args),
+            None,
+            "{value} must read as no timeout"
+        );
+    }
+}
+
+/// Upstream's `clientserver.c:1288-1289` minimum, with `0` on either side
+/// meaning infinity. The table is exhaustive over the five shapes.
+#[test]
+fn effective_io_timeout_takes_the_minimum_treating_zero_as_infinite() {
+    let nz = NonZeroU64::new;
+    let rows = [
+        // (client, module, expected)
+        (nz(5), nz(9), nz(5)),
+        (nz(9), nz(5), nz(5)),
+        (nz(7), None, nz(7)),
+        (None, nz(7), nz(7)),
+        (None, None, None),
+    ];
+    for (client, module, expected) in rows {
+        assert_eq!(
+            effective_io_timeout(client, module),
+            expected,
+            "client={client:?} module={module:?}"
+        );
+    }
+}
+
+/// The daemon ARMS the connection with the client's forwarded `--timeout` even
+/// when the module carries no `timeout` directive.
+///
+/// This is the defect: before the fix the socket was armed from
+/// `module.timeout` alone, so a default `rsyncd.conf` left a wedged peer able
+/// to hold the connection indefinitely against a client `--timeout=N`.
+///
+/// upstream: `clientserver.c:1288-1289`.
+#[cfg(unix)]
+#[test]
+fn client_timeout_arms_the_socket_when_the_module_sets_none() {
+    let (stream, _client) = connected_daemon_stream();
+    let module = ModuleDefinition::default();
+    assert!(
+        module.timeout.is_none(),
+        "fixture precondition: the module must carry no `timeout` directive"
+    );
+    let args = vec!["--timeout=5".to_owned()];
+
+    let effective = apply_effective_io_timeout(&stream, &module, &args).expect("arm the socket");
+
+    assert_eq!(effective.map(NonZeroU64::get), Some(5));
+    let DaemonStream::Plain(socket) = &stream else {
+        panic!("fixture must produce a plain TCP stream");
+    };
+    assert_eq!(
+        socket.read_timeout().expect("read the socket deadline"),
+        Some(Duration::from_secs(5)),
+        "the forwarded --timeout must reach the socket"
+    );
+}
+
+/// A client `--timeout` LONGER than a short module `timeout` must not lengthen
+/// it: upstream takes the minimum, so the operator's value still governs.
+///
+/// Without this cell a "client wins" implementation would pass every other
+/// test here while letting a peer defeat a short operator-set timeout.
+///
+/// upstream: `clientserver.c:1288-1289`.
+#[cfg(unix)]
+#[test]
+fn a_longer_client_timeout_does_not_lengthen_a_short_module_timeout() {
+    let (stream, _client) = connected_daemon_stream();
+    let module = ModuleDefinition {
+        timeout: NonZeroU64::new(3),
+        ..Default::default()
+    };
+    let args = vec!["--timeout=600".to_owned()];
+
+    let effective = apply_effective_io_timeout(&stream, &module, &args).expect("arm the socket");
+
+    assert_eq!(effective.map(NonZeroU64::get), Some(3));
+    let DaemonStream::Plain(socket) = &stream else {
+        panic!("fixture must produce a plain TCP stream");
+    };
+    assert_eq!(
+        socket.read_timeout().expect("read the socket deadline"),
+        Some(Duration::from_secs(3)),
+        "the module's shorter timeout must still govern"
+    );
+}
+
+/// The module-only cell: with no forwarded `--timeout` the module directive
+/// must still arm the socket, so the fix cannot regress the operator's lever.
+#[cfg(unix)]
+#[test]
+fn a_module_timeout_still_arms_the_socket_without_a_client_timeout() {
+    let (stream, _client) = connected_daemon_stream();
+    let module = ModuleDefinition {
+        timeout: NonZeroU64::new(5),
+        ..Default::default()
+    };
+
+    let effective = apply_effective_io_timeout(&stream, &module, &[]).expect("arm the socket");
+
+    assert_eq!(effective.map(NonZeroU64::get), Some(5));
+    let DaemonStream::Plain(socket) = &stream else {
+        panic!("fixture must produce a plain TCP stream");
+    };
+    assert_eq!(
+        socket.read_timeout().expect("read the socket deadline"),
+        Some(Duration::from_secs(5))
+    );
+}
+
+/// Neither side sets a timeout: the connection carries no deadline, matching
+/// upstream's `io_timeout = 0` default.
+#[cfg(unix)]
+#[test]
+fn no_timeout_on_either_side_leaves_the_socket_untimed() {
+    let (stream, _client) = connected_daemon_stream();
+    let module = ModuleDefinition::default();
+
+    let effective = apply_effective_io_timeout(&stream, &module, &[]).expect("clear the deadlines");
+
+    assert_eq!(effective, None);
+    let DaemonStream::Plain(socket) = &stream else {
+        panic!("fixture must produce a plain TCP stream");
+    };
+    assert_eq!(
+        socket.read_timeout().expect("read the socket deadline"),
+        None
+    );
+}

@@ -8,8 +8,8 @@
 //!
 //! # Upstream reference
 //!
-//! upstream: `token.c:send_deflated_token()` lines 463-484 in
-//! `target/interop/upstream-src/rsync-3.4.1/token.c`:
+//! upstream: `token.c:send_deflated_token()` lines 475-511 in
+//! `target/interop/upstream-src/rsync-3.5.0/token.c`:
 //!
 //! ```c
 //! } else if (token != -2 && do_compression == CPRES_ZLIB) {
@@ -20,10 +20,12 @@
 //!         tx_strm.avail_in = n1;
 //!         if (protocol_version >= 31) /* Newer protocols avoid a data-duplicating bug */
 //!             offset += n1;
-//!         tx_strm.next_out = (Bytef *) obuf;
-//!         tx_strm.avail_out = AVAIL_OUT_SIZE(CHUNK_SIZE);
-//!         r = deflate(&tx_strm, Z_INSERT_ONLY);
-//!         ...
+//!         do {
+//!             tx_strm.next_out = (Bytef *) obuf;
+//!             tx_strm.avail_out = AVAIL_OUT_SIZE(CHUNK_SIZE);
+//!             r = deflate(&tx_strm, Z_INSERT_ONLY);
+//!             ...
+//!         } while (tx_strm.avail_in != 0 || tx_strm.avail_out == 0);
 //!     } while (toklen > 0);
 //! }
 //! ```

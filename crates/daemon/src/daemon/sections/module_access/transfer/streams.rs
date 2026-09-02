@@ -72,17 +72,21 @@ fn should_arm_delta_drain(_client_args: &[String]) -> bool {
 ///
 /// Wraps a plaintext TCP write clone into the daemon-sender's byte sink.
 ///
-/// When `zero_copy_policy` is
-/// [`ZeroCopyPolicy::Enabled`](fast_io::ZeroCopyPolicy::Enabled) on Unix, the
-/// socket fd is handed to [`fast_io::socket_writer_from_fd_zero_copy`], which
-/// returns an `IORING_OP_SEND_ZC` writer when the running kernel advertises the
-/// opcode and otherwise degrades to a plain fd writer. The `TcpStream` is kept
-/// alive alongside the returned writer (the factory borrows the fd but does not
-/// take ownership), so the fd stays valid for the transfer's lifetime.
+/// When `zero_copy_policy` permits SEND_ZC on Unix - which
+/// [`fast_io::send_zc_policy_permits`] answers - the socket fd is handed to
+/// [`fast_io::socket_writer_from_fd_zero_copy`], which returns an
+/// `IORING_OP_SEND_ZC` writer when the running kernel advertises the opcode and
+/// otherwise degrades to a plain fd writer. The `TcpStream` is kept alive
+/// alongside the returned writer (the factory borrows the fd but does not take
+/// ownership), so the fd stays valid for the transfer's lifetime.
 ///
-/// For every other case - `Auto`/`Disabled`, or non-Unix - the current
-/// `TcpStream` writer is returned unchanged, keeping the default path
-/// byte-identical.
+/// The policy gate has two arms, not one. `Disabled` (`--no-zero-copy`) never
+/// reaches the factory. `Auto` - the default every client arrives with, since
+/// the oc-invented `--zero-copy` flag is deliberately never forwarded to a peer
+/// argv - reaches it only in builds carrying the `iouring-send-zc` cargo
+/// feature; that feature is the IUS-4 release gate which raises the socket-send
+/// kernel floor from 5.6 to 6.0. A stock build therefore keeps `Auto` on the
+/// unchanged `TcpStream` writer. On non-Unix there is no raw-fd path at all.
 #[cfg(unix)]
 fn daemon_socket_writer(
     write_stream: TcpStream,
@@ -90,7 +94,7 @@ fn daemon_socket_writer(
 ) -> Box<dyn Write + Send> {
     use std::os::unix::io::AsRawFd;
 
-    if !matches!(zero_copy_policy, fast_io::ZeroCopyPolicy::Enabled) {
+    if !fast_io::send_zc_policy_permits(zero_copy_policy) {
         return Box::new(write_stream);
     }
 
@@ -258,7 +262,7 @@ fn build_handshake_result(
     reader: &BufReader<DaemonStream>,
     negotiated_protocol: Option<ProtocolVersion>,
     client_args: Vec<String>,
-    module: &ModuleRuntime,
+    io_timeout: Option<NonZeroU64>,
 ) -> HandshakeResult {
     let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
     let buffered_data = reader.buffer().to_vec();
@@ -268,7 +272,10 @@ fn build_handshake_result(
         buffered: buffered_data,
         compat_exchanged: false,
         client_args: Some(client_args),
-        io_timeout: module.timeout.map(|t| t.get()),
+        // upstream: clientserver.c:1288-1289 - the reconciled minimum of the
+        // client's forwarded `--timeout` and the module's `timeout` directive,
+        // which is what `main.c:1295` then advertises as `MSG_IO_TIMEOUT`.
+        io_timeout: io_timeout.map(NonZeroU64::get),
         negotiated_algorithms: None,
         compat_flags: None,
         checksum_seed: 0,

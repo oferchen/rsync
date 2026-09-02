@@ -3,13 +3,13 @@
 //!
 //! Upstream rsync gates ACL transfer on two layers:
 //!
-//! 1. **Protocol-version gate** (`compat.c:655-661`): if the negotiated
+//! 1. **Protocol-version gate** (`compat.c:667-673`): if the negotiated
 //!    protocol is `< 30`, the sender errors out with
 //!    `"--acls requires protocol 30 or higher (negotiated %d)."`.
-//! 2. **Local-binary feature gate** (`options.c:1842-1857`): when the
+//! 2. **Local-binary feature gate** (`options.c:1965-1980`): when the
 //!    server-side rsync was compiled without `--enable-acl-support`
 //!    (`#ifdef SUPPORT_ACLS`), the entire `acls.c` compilation unit
-//!    is empty (acls.c:25,1141) and the resulting binary will never
+//!    is empty (acls.c:29,1510) and the resulting binary will never
 //!    advertise `-A` in the compact server flag string emitted from
 //!    `options.c`. There is no dedicated capability bit for ACLs on
 //!    the wire - the absence of `-A` in the server flags is the
@@ -25,9 +25,9 @@
 //! - sending ACL bytes on the wire when the peer cannot decode them.
 //!
 //! Upstream references:
-//! - `target/interop/upstream-src/rsync-3.4.1/compat.c:655-661`
-//! - `target/interop/upstream-src/rsync-3.4.1/options.c:1842-1857`
-//! - `target/interop/upstream-src/rsync-3.4.1/acls.c:25,1141`
+//! - `compat.c:667-673`
+//! - `options.c:1965-1980`
+//! - `acls.c:29,1510`
 
 #![deny(unsafe_code)]
 
@@ -44,9 +44,9 @@ const SERVER_FLAGS_NO_ACL_NO_XATTR: &str = "-logDtpre.iLsfxC";
 
 /// Compact flag string from a modern peer that DOES support ACLs and xattrs.
 ///
-/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2695-2703,
+/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2861-2869,
 /// well ahead of `maybe_add_e_option`, which appends the `e.<caps>` suffix last
-/// (options.c:2727). The `-e` argument is the tail of the bundle by
+/// (options.c:2894). The `-e` argument is the tail of the bundle by
 /// construction, so no peer - upstream or oc - ever places a transfer letter
 /// after it. `crates/core/.../flags.rs` emits the same order.
 const SERVER_FLAGS_WITH_ACL_AND_XATTR: &str = "-logDtpAXre.iLsfxC";
@@ -92,7 +92,7 @@ fn server_flag_string_with_a_and_x_yields_acls_and_xattrs_true() {
 /// only gets cleared by the wire-flag layer when parsing the server's
 /// reply.
 ///
-/// This mirrors upstream `compat.c:655-661`, which is conditional on
+/// This mirrors upstream `compat.c:667-673`, which is conditional on
 /// `protocol_version < 30` and entirely silent for newer protocols.
 #[test]
 fn protocol_30_plus_does_not_reject_acls_at_restriction_layer() {
@@ -165,7 +165,7 @@ fn end_to_end_remote_without_acl_support_at_protocol_32() {
 /// but the negotiated protocol is `< 30`. The restriction layer must
 /// reject this with the exact upstream error message format.
 ///
-/// upstream: compat.c:655-661
+/// upstream: compat.c:667-673
 /// ```c
 /// if (preserve_acls && !local_server) {
 ///     rprintf(FERROR, "--acls requires protocol 30 or higher "
@@ -187,13 +187,13 @@ fn end_to_end_protocol_below_30_rejects_acls_with_upstream_message() {
         let expected = format!("--acls requires protocol 30 or higher (negotiated {version}).");
         assert_eq!(
             message, expected,
-            "error message must match upstream compat.c:657-659 format byte-for-byte",
+            "error message must match upstream compat.c:668-670 format byte-for-byte",
         );
     }
 }
 
 /// Local-server transfers (no remote at all) bypass the protocol-version
-/// gate for ACLs. This matches upstream `compat.c:655` which guards the
+/// gate for ACLs. This matches upstream `compat.c:667` which guards the
 /// error with `!local_server`.
 ///
 /// Even at protocol 27, a `--acls` local copy proceeds because there is

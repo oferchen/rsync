@@ -42,6 +42,23 @@ fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> 
         .or_else(|| dest.parent().and_then(|parent| parent.canonicalize().ok()))
 }
 
+/// Converts the client's forwarded `--timeout=N` into this server process's
+/// effective I/O timeout in seconds, or `None` for "no timeout".
+///
+/// upstream: `options.c` - `server_options()` emits `--timeout=%d` from the
+/// client's `io_timeout`, and the server's own `parse_arguments()` over the
+/// received argv ends in `set_io_timeout(io_timeout)` (`options.c:2511`), so a
+/// client `--timeout` arms the server process too.
+///
+/// A non-positive or unparsable value is "no timeout": upstream parses
+/// `--timeout` as a plain `int`, and `io.c:1266-1271` `set_io_timeout()` clamps
+/// a negative to `0`, which every timeout check short-circuits on.
+pub(super) fn forwarded_io_timeout(raw: Option<&str>) -> Option<u32> {
+    raw.and_then(|value| value.parse::<i64>().ok())
+        .and_then(|secs| u32::try_from(secs).ok())
+        .filter(|secs| *secs > 0)
+}
+
 /// Runs the native server implementation when `--server` is requested.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
@@ -231,6 +248,7 @@ where
     // (`GeneratorContext::source_open`), which prefers the module directory, so
     // a peer-supplied value cannot widen a module even if one arrives here.
     config.connection.confine_root = long_flags.confine_root.map(std::path::PathBuf::from);
+    config.connection.io_timeout = forwarded_io_timeout(long_flags.timeout.as_deref());
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2400-2411 - append mode implies inplace. The promotion
@@ -604,11 +622,25 @@ where
     // FD (lsh.sh, the parent shell, still holds an inherited copy), so the
     // peer never sees EOF and the drain loops forever. Match upstream and
     // let process exit do the work.
+    //
+    // upstream: cleanup.c:282 `_exit_cleanup()` exits with the `RERR_*` the
+    // failing site handed `exit_cleanup()`, never a flat 1. oc carries one
+    // `io::Error` up instead of a per-site code, so the class is recovered with
+    // the same mapping the client applies to its own local failures. The peer
+    // learns the code from the `MSG_ERROR_EXIT` the transfer body already sent
+    // (transfer::announce_error_exit); this is the process status the remote
+    // shell reports on top of it.
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
-            write_server_error(stderr, program_brand, format!("server error: {e}"));
-            1
+            let exit_code = core::exit_code::ExitCode::from_io_error(&e);
+            write_server_error_with_code(
+                stderr,
+                program_brand,
+                exit_code,
+                format!("server error: {e}"),
+            );
+            exit_code.as_i32()
         }
     }
 }
@@ -916,8 +948,22 @@ fn apply_value_flags<Err: Write>(
 }
 
 fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
+    write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
+}
+
+/// Renders a server-side `rsync error:` trailer carrying an explicit `RERR_*`.
+///
+/// upstream: log.c:912 `log_exit()` prints the code the process is exiting with,
+/// so a transfer-body failure must not be labelled `(code 1)` while the process
+/// leaves with a different status.
+fn write_server_error_with_code<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+    code: core::exit_code::ExitCode,
+    text: impl fmt::Display,
+) {
     let mut sink = MessageSink::with_brand(stderr, brand);
-    let mut message = rsync_error!(1, "{}", text);
+    let mut message = rsync_error!(code.as_i32(), "{}", text);
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");

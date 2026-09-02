@@ -1,12 +1,12 @@
-//! Nextest port of upstream `testsuite/atimes.test` (local-copy leg).
+//! Nextest port of upstream `testsuite/atimes_test.py` (local-copy leg).
 //!
 //! Upstream test source:
-//! `target/interop/upstream-src/rsync-3.4.4/testsuite/atimes.test`.
+//! `testsuite/atimes_test.py`.
 //!
 //! # Background
 //!
 //! `-U` / `--atimes` tells rsync to preserve each file's access time in
-//! addition to its modification time. Upstream's atimes.test backdates
+//! addition to its modification time. Upstream's atimes_test.py backdates
 //! `$fromdir/foo`'s atime to a fixed timestamp, runs `rsync -rtUgvvv`, and
 //! `checkit()` confirms the destination tree matches with atimes compared.
 //!
@@ -26,7 +26,7 @@
 //!
 //! # Upstream References
 //!
-//! - `testsuite/atimes.test` - the upstream script this file ports.
+//! - `testsuite/atimes_test.py` - the upstream script this file ports.
 //! - `rsync.c` / `generator.c` - `--atimes` restores `st_atime` alongside
 //!   `st_mtime` when the receiver commits the file.
 

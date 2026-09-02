@@ -27,7 +27,7 @@ pub(crate) struct RuntimeOptions {
     /// than picking one. The accept-loop interprets this as "iterate IPv6
     /// then IPv4, surface per-family bind failures as warnings, succeed as
     /// long as at least one family bound." See
-    /// `target/interop/upstream-src/rsync-3.4.4/socket.c:402-499`
+    /// `target/interop/upstream-src/rsync-3.5.0/socket.c:552-650`
     /// (`open_socket_in`) for the family-iteration loop oc-rsync reproduces.
     pub(crate) dual_stack: bool,
     bind_address_overridden: bool,

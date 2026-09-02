@@ -612,7 +612,7 @@ pub use policy::{
     BackendPolicy, BasisReadBackend, CowPolicy, IoUringPolicy, IocpPolicy,
     MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
-    mmap_to_sqpoll_threshold_bytes,
+    mmap_to_sqpoll_threshold_bytes, send_zc_policy_permits,
 };
 pub use sqpoll_basis::{
     MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,

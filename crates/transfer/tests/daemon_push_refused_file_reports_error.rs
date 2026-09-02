@@ -5,13 +5,13 @@
 //! Upstream's receiver-side generator checks every entry against
 //! `daemon_filter_list` and, on a match, reports
 //! `ERROR: daemon refused to receive file "<name>"` as `FERROR_XFER`
-//! (`generator.c:1275-1287`) before dropping the entry. Three consequences
+//! (`generator.c:1664-1676`) before dropping the entry. Three consequences
 //! follow, and all three are asserted here:
 //!
 //! 1. The pushing client renders the line. `FERROR_XFER` from a server is
-//!    framed as `MSG_ERROR_XFER` (`log.c:330-346`) instead of being written to
+//!    framed as `MSG_ERROR_XFER` (`log.c:357-373`) instead of being written to
 //!    the daemon's own stderr, so the message travels to whoever ran the push.
-//! 2. The push exits 23. `log.c:310-311` sets `got_xfer_error` on the frame and
+//! 2. The push exits 23. `log.c:337-338` sets `got_xfer_error` on the frame and
 //!    `cleanup.c:217-218` lifts a zero exit to `RERR_PARTIAL`. A silent skip
 //!    would exit 0 and tell the user nothing was wrong while the module kept
 //!    none of the refused files.
@@ -33,12 +33,12 @@
 //!
 //! # Upstream References
 //!
-//! - `generator.c:1273-1287` - `check_filter(&daemon_filter_list, ...)` and the
+//! - `generator.c:1662-1676` - `check_filter(&daemon_filter_list, ...)` and the
 //!   `ERROR: daemon refused to receive %s "%s"` report
-//! - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
-//! - `log.c:330-346` - `am_server` frames the text instead of printing it
+//! - `log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
+//! - `log.c:357-373` - `am_server` frames the text instead of printing it
 //! - `cleanup.c:217-218` - `got_xfer_error` -> `RERR_PARTIAL` (23)
-//! - `clientserver.c:874-893` - `rsync_module()` builds `daemon_filter_list`
+//! - `clientserver.c:933-952` - `rsync_module()` builds `daemon_filter_list`
 //!   from the module's `exclude` / `include` / `filter` directives
 
 #![cfg(unix)]
@@ -54,13 +54,13 @@ use tempfile::{TempDir, tempdir};
 
 /// The exact upstream text, minus the trailing newline.
 ///
-/// upstream: generator.c:1281-1283.
+/// upstream: generator.c:1670-1672.
 const REFUSAL: &str = r#"ERROR: daemon refused to receive file "top.secret""#;
 
 /// Writes an `rsyncd.conf` with one writable module that excludes `*.secret`.
 ///
 /// `use chroot = false` keeps the daemon runnable unprivileged. `exclude` is
-/// the directive that feeds `daemon_filter_list` (clientserver.c:891).
+/// the directive that feeds `daemon_filter_list` (clientserver.c:950).
 fn write_daemon_config(
     config_path: &Path,
     pid_path: &Path,
@@ -259,13 +259,13 @@ fn assert_push_is_refused(client: &Path, extra: &[&str]) {
 
     assert!(
         stderr.contains(REFUSAL),
-        "the client must render the daemon's refusal (upstream generator.c:1281-1283); \
+        "the client must render the daemon's refusal (upstream generator.c:1670-1672); \
          a silent skip leaves the user with no diagnostic at all.\nargs: {args:?}\nstderr:\n{stderr}",
     );
     assert_eq!(
         code, 23,
         "a refused file must exit 23 (RERR_PARTIAL): FERROR_XFER sets got_xfer_error \
-         (log.c:310-311) and cleanup.c:217-218 lifts the zero exit.\nargs: {args:?}\nstderr:\n{stderr}",
+         (log.c:337-338) and cleanup.c:217-218 lifts the zero exit.\nargs: {args:?}\nstderr:\n{stderr}",
     );
     assert!(
         scratch.module.join("allowed.txt").is_file(),
@@ -280,7 +280,7 @@ fn assert_push_is_refused(client: &Path, extra: &[&str]) {
     assert!(
         !daemon_stderr.contains("daemon refused"),
         "the refusal must be framed to the client, not written to the daemon's own \
-         stderr (upstream log.c:330-346 returns after send_msg under am_server)\n\
+         stderr (upstream log.c:357-373 returns after send_msg under am_server)\n\
          daemon stderr:\n{daemon_stderr}",
     );
 }

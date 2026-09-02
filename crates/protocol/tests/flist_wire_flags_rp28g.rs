@@ -14,8 +14,8 @@
 //! # Upstream Reference
 //!
 //! The flag-byte encoding is implemented in upstream
-//! `flist.c:send_file_entry()` between lines 544 and 563 of
-//! `target/interop/upstream-src/rsync-3.4.1/flist.c`:
+//! `flist.c:send_file_entry()` between lines 639 and 658 of
+//! `target/interop/upstream-src/rsync-3.5.0/flist.c`:
 //!
 //! ```c
 //! if (xfer_flags_as_varint)
