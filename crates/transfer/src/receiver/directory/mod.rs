@@ -8,13 +8,17 @@
 
 mod backup;
 mod creation;
-// `pub(in crate::receiver)` so the receiver context can name `DeletedEntry`
-// for its deferred `--delete-delay` victim queue.
+/// Directory deletion, including the deferred `--delete-delay` queue.
+///
+/// `pub(in crate::receiver)` so the receiver context can name `DeletedEntry`
+/// for its deferred `--delete-delay` victim queue.
 pub(in crate::receiver) mod deletion;
 mod links;
 mod missing_args;
-// `pub(in crate::receiver)` so the regular-file candidate pass can name
-// `MakeWayFor` for its `DEL_FOR_FILE` removal (generator.c:2149).
+/// Removal of a destination entry obstructing the incoming one.
+///
+/// `pub(in crate::receiver)` so the regular-file candidate pass can name
+/// `MakeWayFor` for its `DEL_FOR_FILE` removal (generator.c:2149).
 pub(in crate::receiver) mod obstacle;
 mod special;
 

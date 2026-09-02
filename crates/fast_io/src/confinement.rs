@@ -180,7 +180,8 @@ struct PinnedRoot {
 ///
 /// `root` is the root as the caller names it; it should be the same value the
 /// caller published through [`install_session`], and both spellings of it are
-/// then recognised (see [`PinnedRoot`]).
+/// then recognised (see the private `PinnedRoot`, named without a link because
+/// a public item cannot resolve one to a private type).
 ///
 /// # Errors
 ///
