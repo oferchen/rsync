@@ -266,7 +266,10 @@ def baseline_labels(data: dict) -> list[str]:
     declared = data.get("baselines")
     if declared:
         return [b["label"] for b in declared]
-    return [data.get("upstream_version") or "3.4.4"]
+    # Same fallback as benchmark_report.py. The two renderers read one file,
+    # so a different literal here would let the chart and the report name
+    # different upstream releases for the same run.
+    return [data.get("upstream_version") or "3.5.0"]
 
 
 def upstream_series(t: dict, label: str) -> dict:

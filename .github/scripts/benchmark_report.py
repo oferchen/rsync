@@ -260,12 +260,31 @@ def rss_cells(t, primary):
     )
 
 
+def row_runs(t, primary):
+    """How many timed runs stand behind this row's figures.
+
+    `compare()` hands the same `runs` count to every series in a row, so one
+    column states it for the whole row rather than repeating it per cell. It
+    is worth stating: a cell that resets its destination per run is timed
+    three times and one of those is discarded as the warm-up, so its published
+    median rests on two samples, while a no-change cell's rests on five. The
+    harness has always recorded the count for exactly this reason; until now
+    it stayed in the JSON, and a reader of the report could not tell the two
+    apart.
+    """
+    for series in (upstream_series(t, primary), t.get("oc_rsync") or {}):
+        count = series.get("runs")
+        if count:
+            return str(count)
+    return "-"
+
+
 def comparison_table(tests, labels, *, with_rss):
     """Render one upstream-comparison table across every baseline."""
     primary = labels[0]
     split_oc = any(per_baseline_oc(t) for t in tests)
 
-    headers = ["Test"] + [f"rsync {label}" for label in labels]
+    headers = ["Test", "Runs"] + [f"rsync {label}" for label in labels]
     if split_oc:
         headers += [f"oc-rsync vs {label}" for label in labels]
     else:
@@ -285,7 +304,7 @@ def comparison_table(tests, labels, *, with_rss):
             # A ratio against a binary that errored out is not a comparison.
             # Say so on the row rather than letting the number stand.
             name = f"{name} **(failed: {', '.join(broken)})**"
-        cells = [name]
+        cells = [name, row_runs(t, primary)]
         cells += [fmt_secs(upstream_series(t, label)) for label in labels]
         if split_oc:
             cells += [fmt_secs(oc_series(t, label)) for label in labels]
@@ -526,9 +545,12 @@ def main():
 
     print("\n_Ratio < 1.0 = oc-rsync faster, > 1.0 = upstream faster._")
     print(
-        "_Elapsed figures are the warm-up-discarded median of the timed runs; "
-        "`±N%` is the min-to-max spread of that cell. `oc-rsync MiB/s` is "
-        "corpus bytes over elapsed seconds, not bytes on the wire._"
+        "_Elapsed figures are the median of the timed runs after the first is "
+        "discarded as the warm-up, so a `Runs` count of N rests on N-1 "
+        "samples; `±N%` is the min-to-max spread over every run, warm-up "
+        "included, so a cold first run shows up rather than hiding behind the "
+        "median. `oc-rsync MiB/s` is corpus bytes over elapsed seconds, not "
+        "bytes on the wire._"
     )
 
 
