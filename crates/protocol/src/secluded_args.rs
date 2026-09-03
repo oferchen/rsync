@@ -726,4 +726,63 @@ mod daemon_arg_ceiling_tests {
 
         assert_eq!(args.len(), 8);
     }
+
+    /// Builds the wire form of an argument vector: each argument
+    /// NUL-terminated, then one empty argument as the terminator.
+    fn secluded_wire(args: &[&str]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for arg in args {
+            buf.extend_from_slice(arg.as_bytes());
+            buf.push(0);
+        }
+        buf.push(0);
+        buf
+    }
+
+    /// `max_args` must admit at most `max - 1` arguments: the ceiling reserves
+    /// one slot, and the reservation is the whole point of the bound.
+    ///
+    /// upstream: `io.c:1476-1479` bounds `read_args()` at `MAX_DAEMON_ARGS`,
+    /// but `glob_expand()` reserves room only for the entry it appends
+    /// (`ENSURE_MEMSPACE(..., glob.argc + 1)`) and not for the trailing NULL
+    /// that `read_args()` stores after the loop - so an argument vector landing
+    /// exactly on `maxargs` puts `argv[argc] = NULL` one slot past the
+    /// allocation. oc cannot reproduce that write, but it inherits the
+    /// BOUNDARY: `saturating_sub(1)` is oc's reservation of the same slot, and
+    /// nothing tested it. Dropping the `- 1` left the whole protocol suite
+    /// green (3785 passed, 0 failed), which is what identifies the arithmetic
+    /// as unpinned rather than merely untested by name.
+    ///
+    /// Live path: the daemon's phase-2 read passes
+    /// `Some(MAX_DAEMON_ARGS)` (`arg_reading.rs`), so the ceiling is reachable
+    /// by any daemon client.
+    #[test]
+    fn max_args_reserves_one_slot_below_the_ceiling() {
+        // With max = 4 the reader must accept 3 and refuse the 4th.
+        let wire = secluded_wire(&["one", "two", "three", "four"]);
+        let mut cursor = io::Cursor::new(wire);
+
+        let err = recv_secluded_args(&mut cursor, None, Some(4))
+            .expect_err("a 4th argument must be refused when max_args is 4");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("too many daemon arguments"),
+            "refusal must be the daemon-argument ceiling, got: {err}",
+        );
+    }
+
+    /// Positive control for `max_args_reserves_one_slot_below_the_ceiling`:
+    /// exactly `max - 1` arguments are accepted. Without this the boundary test
+    /// would also pass against a reader that refused every bounded read.
+    #[test]
+    fn max_args_accepts_exactly_one_below_the_ceiling() {
+        let wire = secluded_wire(&["one", "two", "three"]);
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None, Some(4))
+            .expect("max - 1 arguments must be accepted");
+
+        assert_eq!(args, vec!["one", "two", "three"]);
+    }
 }
