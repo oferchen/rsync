@@ -251,10 +251,10 @@ only spelling shown to users.
 
 oc-rsync surfaces unknown info tokens with `rsync_error!(1, ...)` at
 `info.rs:194-200`. Upstream uses `RERR_SYNTAX` (1) at
-`options.c:466-468`. Same numeric code, but the message string differs:
+`options.c:484-488`. Both the numeric code and the message string match:
 
 - Upstream: `Unknown --info item: "FOO"`.
-- oc-rsync: `invalid --info flag 'FOO': use --info=help for supported flags`.
+- oc-rsync: `Unknown --info item: "FOO"`.
 
 ### 4.5 Server-side tolerance
 
@@ -296,7 +296,7 @@ re-evaluated and the implementation already matches upstream.
 | I11 | All       | Medium   | OPEN   | `should_show_*` and the parse-cap layer collapse level 2/3 to level 1 because no production code differentiates levels beyond `> 0`. Closing I1-I10 individually addresses this category. |
 | I12 | All       | Low      | RESOLVED | `--info=N` (bare digit) now accepted as a usability extension; oc-rsync's `apply()` in `info.rs` delegates to `enable_all_at_level(N)` with the same per-flag caps as upstream's `all<N>` token (`options.c parse_output_words`). |
 | I13 | All       | Low      | RESOLVED | `--info=no<flag>` / `--info=-<flag>` are an internal-only extension not advertised in `--info=help`; the parser still accepts them for backwards compatibility and server-mode token forwarding, but the user-facing surface only shows the upstream suffix form. |
-| I14 | All       | Low      | OPEN   | Unknown-token message text differs: upstream `Unknown --info item: "FOO"`, oc-rsync `invalid --info flag 'FOO': use --info=help for supported flags`. Same exit code (1). |
+| I14 | All       | Low      | RESOLVED | Unknown-token message text now matches upstream verbatim: `Unknown --info item: "FOO"` on stderr, exit 1 (`options.c:484-488`). The level suffix is stripped before the token is reported, as upstream's `"%.*s"` does. |
 | I15 | All       | Low      | OPEN   | Server-side mode (`am_server`) should suppress unknown-token errors (`options.c:465`); oc-rsync errors unconditionally. |
 | I16 | All       | Low      | RESOLVED | `InfoFlagSpec::priority` on every `INFO_FLAG_SPECS` entry now mirrors upstream's `info_verbosity[]` group index (`options.c:239-243`); a daemon-side `limit_output_verbosity()` consumer can read priorities from the spec table without re-deriving them. |
 | I17 | Help text | Low      | RESOLVED | `INFO_HELP_TEXT` in `crates/cli/src/frontend/execution/flags/info.rs` now reproduces upstream's `output_item_help()` (`options.c:474-509`) byte-for-byte: the `"%-10s %s\n"` table, the ALL/NONE/HELP synthetic rows that quote the sentinel's `--info` help, and the per-verbosity summary block driven by `info_verbosity[]`. C3 done. |

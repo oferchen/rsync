@@ -6,6 +6,17 @@
 //! same syntax and differ only in which names they recognise. This module is
 //! that tokenizer; each caller keeps its own table and applies the result.
 
+/// Whether the token walk should carry on to the next comma-separated item.
+///
+/// upstream: options.c:465-468 - a `help` item prints the word table and calls
+/// `exit_cleanup(0)` from inside `parse_output_words()`, so nothing after it is
+/// ever examined.
+#[derive(Debug)]
+pub(super) enum TokenFlow {
+    Continue,
+    Stop,
+}
+
 /// Largest level any `word<N>` token may select.
 ///
 /// upstream: options.c `#define MAX_OUT_LEVEL 4`. Upstream clamps to this
@@ -23,15 +34,19 @@ pub(super) enum OutputWord<'a> {
     /// to 0 so the table loop matches every entry, with `none` additionally
     /// forcing the level to 0 regardless of any suffix.
     Every(u8),
-    /// A category name and its level. The caller resolves the name against its
-    /// own table and reports an unknown name.
+    /// A category name and its level. `name` is the token with its level
+    /// suffix removed but its case preserved, because upstream matches the
+    /// table with `strncasecmp` yet reports an unknown item with `"%.*s"` over
+    /// the original bytes (options.c:475, 485-486): `--debug=BOGUS2` is
+    /// reported as `BOGUS`. The caller resolves it case-insensitively against
+    /// its own table and reports an unknown name verbatim.
     Named { name: &'a str, level: u8 },
 }
 
-/// Classifies one already-trimmed token.
+/// Classifies one comma-delimited token, verbatim.
 ///
-/// upstream: options.c `parse_output_words()`. The trailing-digit scan is
-/// skipped when the token itself starts with a digit (`if (!isDigit(str))`),
+/// upstream: options.c:455-472 `parse_output_words()`. The trailing-digit scan
+/// is skipped when the token itself starts with a digit (`if (!isDigit(str))`),
 /// so a bare integer such as `2` stays its own name and falls through to the
 /// unknown-item error rather than selecting a level.
 pub(super) fn classify(token: &str) -> OutputWord<'_> {
@@ -65,19 +80,29 @@ pub(super) fn classify(token: &str) -> OutputWord<'_> {
 
 /// Splits one `--info=`/`--debug=` value into tokens, dropping empty ones.
 ///
-/// upstream: options.c `parse_output_words()` walks the comma list and does
-/// `if (!len) continue;`, so `--info=`, `--info=,` and `--info=name,` are all
-/// accepted no-ops rather than errors.
+/// upstream: options.c:448-454 `parse_output_words()` walks the comma list and
+/// does `if (!len) continue;`, so `--info=`, `--info=,` and `--info=name,` are
+/// all accepted no-ops rather than errors.
+///
+/// Tokens are passed on verbatim. Upstream compares `str` against the word
+/// table with `strncasecmp` over the raw segment bytes and never trims
+/// surrounding whitespace, so `--debug= flist` is the unknown item `" flist"`
+/// and exits `RERR_SYNTAX` (options.c:484-488) rather than selecting `flist`.
+///
+/// `apply` returns [`TokenFlow::Stop`] to end the walk, which is how a `help`
+/// token short-circuits the rest of the list the way upstream's
+/// `exit_cleanup(0)` does at options.c:465-468.
 pub(super) fn for_each_token<E>(
     value: &str,
-    mut apply: impl FnMut(&str) -> Result<(), E>,
-) -> Result<(), E> {
+    mut apply: impl FnMut(&str) -> Result<TokenFlow, E>,
+) -> Result<TokenFlow, E> {
     for token in value.split(',') {
-        let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
         if token.is_empty() {
             continue;
         }
-        apply(token)?;
+        if matches!(apply(token)?, TokenFlow::Stop) {
+            return Ok(TokenFlow::Stop);
+        }
     }
-    Ok(())
+    Ok(TokenFlow::Continue)
 }

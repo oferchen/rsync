@@ -92,9 +92,7 @@ The **upstream max** column is the largest `N` ever passed to
 range; upstream silently clamps user-supplied levels at
 `MAX_OUT_LEVEL = 4` regardless). The **oc-rsync cap** column is the
 level cap enforced in
-`crates/cli/src/frontend/execution/flags/debug.rs::apply` - tokens
-exceeding the cap return `invalid --debug flag '<tok>': use
---debug=help for supported flags` (`flags/debug.rs:317-322`). The
+`crates/cli/src/frontend/execution/flags/debug.rs::apply`. The
 **oc-rsync status** column is one of:
 
 - **impl** - parser accepts the flag, at least one production
@@ -170,14 +168,14 @@ tokens before consulting the `debug_words[]` lookup:
 |--------------------|--------------------|--------------------|--------|
 | `help`             | `output_item_help`, then `exit_cleanup(0)` (`options.c:446-449`) | `parse_debug_flags` sets `settings.help_requested = true` (`flags/debug.rs:343-345`); the drive layer prints `DEBUG_HELP_TEXT` (`flags/debug.rs:354-384`) before exiting 0. | yes (different help layout - see section 5) |
 | `ALL` / `all`      | `len = 0` after `strncasecmp(..., "all", 3)`; loop body assigns level 1 (or trailing digit if present) to every entry (`options.c:452-453`, `:454-463`) | `apply` recognises bare `all`/`1` and calls `enable_all()` (`flags/debug.rs:128-131`) | yes |
-| `ALL2` ... `ALL4`  | Trailing digit parsed as level, clamped to 4 (`options.c:443-445`); every entry set to that level (`options.c:454-460`) | Falls through `parse_flag_and_level` (`flags/debug.rs:291-310`), which trims trailing digits but rejects `all` because `KNOWN_FLAGS` does not include it; the per-flag arm in `apply` returns `invalid --debug flag` (`flags/debug.rs:279`) | **gap (G1)** |
+| `ALL2` ... `ALL4`  | Trailing digit parsed as level, clamped to 4 (`options.c:455-464`); every entry set to that level (`options.c:471-483`) | `output_words::classify` strips the trailing digit and returns `OutputWord::Every(level)`; `DebugFlagSettings::set_all` applies it | yes |
 | `1`                | Parsed as `lev = 1, len = 0` (`options.c:439-443`), behaves like `ALL` (level 1) | `apply` recognises bare `1` and calls `enable_all()` (`flags/debug.rs:128-131`) | yes |
 | `0`                | `len = 0, lev = 0`, zeroes every flag (`options.c:454-463`) | `apply` recognises bare `0` and calls `disable_all()` (`flags/debug.rs:133-136`) | yes |
 | `NONE` / `none`    | `len = lev = 0`; loop body zeroes every entry (`options.c:450-451`, `:454-463`) | `apply` recognises bare `none`/`0` and calls `disable_all()` (`flags/debug.rs:133-136`) | yes |
-| `NONE0`            | Trailing `0` accepted, equivalent to `NONE` (`options.c:443-445`, `:450-451`) | Falls through `parse_flag_and_level`; `none` not in `KNOWN_FLAGS`, rejected | **gap (G1)** |
+| `NONE0`            | Trailing `0` accepted, equivalent to `NONE` (`options.c:455-464`, `:469-470`) | `output_words::classify` returns `OutputWord::Every(0)` for `none` with or without a suffix | yes |
 | `no<flag>` / `-<flag>` | Not recognised; upstream `parse_output_words` does not strip these prefixes. The token reaches the loop, fails the `strncasecmp` against every `debug_words[].name`, and falls into the `Unknown --debug item` error at `options.c:465-469`. | `parse_flag_and_level` strips `no` or `-` prefix and forces level 0 (`flags/debug.rs:303-307`); the per-flag arm then sets the flag to 0 | **extension** (oc-rsync accepts, upstream rejects; documented in `DEBUG_HELP_TEXT` at `flags/debug.rs:382`) |
 | `<flag><digit>`    | Trailing digits parsed as level; clamped at `MAX_OUT_LEVEL = 4` (`options.c:443-445`) | `parse_flag_and_level` trims trailing digits, validates the base against `KNOWN_FLAGS`, and parses the suffix as `u8` (`flags/debug.rs:292-298`); the per-flag arm in `apply` enforces the per-flag cap | yes for flags whose upstream max is documented; **gap (G2)** for flags whose upstream max is 1 (`acl`, `bind`, `chdir`, `dup`, `genr`, `hash`, `nstr`, `proto`, `recv`, `send`) - oc-rsync accepts any `u8` value while upstream silently clamps to 4. |
-| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1 (`options.c:465-469`) | `invalid --debug flag '<tok>': use --debug=help for supported flags`, exit 1 (`flags/debug.rs:317-322`) | functional parity (different wording) |
+| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1 (`options.c:484-488`) | `Unknown --debug item: "<tok>"`, exit 1 (`flags/debug.rs` `debug_flag_error`) | yes |
 
 ## 4. `-v` cumulative ladder
 
@@ -298,7 +296,7 @@ requested level before the event materialises.
 
 | ID | Severity | Status | Description |
 |----|----------|--------|-------------|
-| G1 | Low | open | `ALL<N>` and `NONE0` syntactic forms are rejected as unknown tokens (`flags/debug.rs:279`). Upstream accepts them (`options.c:443-445`, `:452-453`, `:450-451`) and applies the trailing digit. Fix: extend `DebugFlagSettings::apply` to detect `all<digit>` and `none<digit>` before falling through to `parse_flag_and_level`, then call `enable_all_to_level(N)` / `disable_all()`. Cap N at 4 to match `MAX_OUT_LEVEL`. |
+| G1 | Low | resolved | `ALL<N>` and `NONE<N>` are handled by `output_words::classify`, which strips the trailing digit, clamps it at `MAX_OUT_LEVEL = 4` and returns `OutputWord::Every` (`options.c:455-464`, `:469-472`). Verified against `target/interop/upstream-src/rsync-3.5.0/rsync`: `--debug=ALL2`, `--debug=all9` and `--debug=none2` all exit 0 on both. |
 | G2 | Low | open | Per-flag cap missing for upstream-max-1 flags. `acl`, `bind`, `chdir`, `dup`, `genr`, `hash`, `nstr`, `proto`, `recv`, `send` accept any `u8` value (no `if level > N` guard in `flags/debug.rs::apply`). Upstream silently clamps to `MAX_OUT_LEVEL = 4`. Fix: add `if level > 4 { return Err(debug_flag_error(display)); }` guards on those arms, or a single shared cap before the per-flag dispatch. |
 | G3 | High | open | 2 flags have no production producer (FUZZY, HLINK). The previously listed ACL, BACKUP, BIND, CHDIR, CMD, GENR, HASH, ICONV, NSTR, OWN, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, OWN follow-up, D13 RESOLVED, BACKUP RESOLVED, HASH RESOLVED, CMD RESOLVED, CHDIR RESOLVED, BIND RESOLVED, NSTR RESOLVED with byte-for-byte helpers in `crates/protocol/src/nstr/trace.rs` plus the daemon-auth-checksum sites in `crates/core/src/client/remote/daemon_transfer/connection/mod.rs`). Owning crates for the remaining producers: `metadata` (HLINK), `engine` (FUZZY). |
 | G4 | Low | open | `limit_output_verbosity` (upstream `options.c:527-553`) is not implemented. User-supplied per-flag levels are not clamped to the peer's `-v` ceiling during option exchange. Mitigation: implement on `server_options` parsing path and re-run the ladder with `LIMIT_PRIORITY` to compute the cap. |

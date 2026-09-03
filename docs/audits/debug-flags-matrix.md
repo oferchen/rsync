@@ -111,7 +111,7 @@ entry in `debug_words[]` services every level for the flag.
 | `NONE0`            | Same as `NONE`                                        | Falls through `apply_flag_and_level` and is rejected as unknown token                           | Gap    |
 | `no<flag>` / `-<flag>` | Not recognised by `parse_output_words`            | `parse_flag_and_level` strips `no`/`-` and forces level 0 (oc-rsync extension)                  | Extension |
 | `<flag><digit>`    | Trailing digits parse as level, clamp at `MAX_OUT_LEVEL` | `parse_flag_and_level` trims trailing digits and parses suffix as `u8`; per-flag arm in `apply` enforces the documented per-flag cap | Yes (with caveats below) |
-| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1               | `invalid --debug flag '<tok>': use --debug=help for supported flags`, exit 1                    | Functional parity (different wording) |
+| Unknown token      | `Unknown --debug item: "<tok>"`, exit 1               | `Unknown --debug item: "<tok>"`, exit 1                                                        | Yes |
 
 ## `-v` ladder
 

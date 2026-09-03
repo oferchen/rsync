@@ -6,7 +6,7 @@ use core::{
 };
 
 use super::super::super::progress::{NameOutputLevel, ProgressSetting};
-use super::output_words::{self, OutputWord};
+use super::output_words::{self, OutputWord, TokenFlow};
 
 /// Per-flag descriptor for an `--info=` token.
 ///
@@ -172,8 +172,12 @@ impl InfoFlagSettings {
         apply("symsafe", self.symsafe);
     }
 
+    /// upstream: options.c:475 matches the table with `strncasecmp`, so the
+    /// lookup is case-insensitive.
     fn spec_for(name: &str) -> Option<&'static InfoFlagSpec> {
-        INFO_FLAG_SPECS.iter().find(|spec| spec.name == name)
+        INFO_FLAG_SPECS
+            .iter()
+            .find(|spec| spec.name.eq_ignore_ascii_case(name))
     }
 
     /// Returns the explicitly-set `(name, level)` info categories in upstream
@@ -219,30 +223,34 @@ impl InfoFlagSettings {
     }
 
     #[cfg(test)]
-    pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
-        self.apply_with_mode(token, display, false)
+    pub(super) fn apply(&mut self, token: &str) -> Result<TokenFlow, Message> {
+        self.apply_with_mode(token, false)
     }
 
     /// Applies a single `--info` token.
     ///
     /// When `am_server` is `true`, an unrecognised token is silently
     /// accepted instead of producing an error, mirroring upstream rsync's
-    /// `parse_output_words()` (`options.c:465`) where the
+    /// `parse_output_words()` (options.c:484) where the
     /// `if (len && !words[j].name && !am_server)` guard skips the
     /// `RERR_SYNTAX` exit. This preserves cross-version compatibility when a
     /// newer client forwards info tokens this server build does not know.
     ///
-    /// upstream: options.c parse_output_words
+    /// Returns [`TokenFlow::Stop`] for a `help` token: upstream prints the
+    /// word table and calls `exit_cleanup(0)` right there (options.c:465-468),
+    /// so every later token in the list is never examined.
+    ///
+    /// upstream: options.c:443-490 parse_output_words
     pub(super) fn apply_with_mode(
         &mut self,
         token: &str,
-        display: &str,
         am_server: bool,
-    ) -> Result<(), Message> {
-        let lower = token.to_ascii_lowercase();
-
-        match output_words::classify(&lower) {
-            OutputWord::Help => self.help_requested = true,
+    ) -> Result<TokenFlow, Message> {
+        match output_words::classify(token) {
+            OutputWord::Help => {
+                self.help_requested = true;
+                return Ok(TokenFlow::Stop);
+            }
             OutputWord::Every(level) => self.enable_all_at_level(level),
             OutputWord::Named { name, level } => {
                 // The `am_server` branch mirrors upstream's
@@ -253,25 +261,30 @@ impl InfoFlagSettings {
                 // at the source.
                 let Some(spec) = Self::spec_for(name) else {
                     return if am_server {
-                        Ok(())
+                        Ok(TokenFlow::Continue)
                     } else {
-                        Err(info_flag_error(display))
+                        Err(info_flag_error(name))
                     };
                 };
                 self.assign(spec.name, level);
             }
         }
 
-        Ok(())
+        Ok(TokenFlow::Continue)
     }
 }
 
-fn info_flag_error(display: &str) -> Message {
-    rsync_error!(
-        1,
-        format!("invalid --info flag '{display}': use --info=help for supported flags")
-    )
-    .with_role(Role::Client)
+/// Builds the unknown-item diagnostic for `--info=`.
+///
+/// upstream: options.c:484-488 -
+/// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
+/// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
+/// sentinel, whose `help` field is the literal `"--info"` (options.c:301), and
+/// `len` is the token length with the level suffix already stripped. The text
+/// goes to `FERROR` (stderr) and the exit code is `RERR_SYNTAX` = 1
+/// (errcode.h:25).
+fn info_flag_error(name: &str) -> Message {
+    rsync_error!(1, format!("Unknown --info item: \"{name}\"")).with_role(Role::Client)
 }
 
 /// Parses `--info` flag values into resolved settings.
@@ -299,9 +312,15 @@ fn parse_info_flags_inner(
     let mut settings = InfoFlagSettings::default();
     for value in values {
         let text = value.to_string_lossy();
-        output_words::for_each_token(&text, |token| {
-            settings.apply_with_mode(token, token, am_server)
+        // A `help` token stops the walk here as well as inside the value:
+        // upstream exits from `parse_output_words` itself, so a later
+        // `--info=` argument is never parsed.
+        let flow = output_words::for_each_token(&text, |token| {
+            settings.apply_with_mode(token, am_server)
         })?;
+        if matches!(flow, TokenFlow::Stop) {
+            break;
+        }
     }
 
     Ok(settings)
