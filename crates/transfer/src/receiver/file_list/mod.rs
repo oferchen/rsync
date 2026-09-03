@@ -20,6 +20,7 @@
 //!   protocol 30+ and pre-30 normalization from (dev, ino) pairs.
 //! - `incremental` - the streaming [`IncrementalFileListReceiver`] type.
 
+mod dir_flist;
 mod filter_recheck;
 mod hardlinks;
 mod id_lists;
@@ -29,4 +30,5 @@ mod prune;
 mod receive;
 mod sanitize;
 
+pub(in crate::receiver) use dir_flist::DirFlist;
 pub use incremental::IncrementalFileListReceiver;
