@@ -591,3 +591,57 @@ fn extend_run_rejects_short_target() {
 
     assert_eq!(index.extend_run(0, &target, 4), 0);
 }
+
+/// The adjacent-match hint must refuse a block whose declared length differs
+/// from the index block length, even when that block's own rolling and strong
+/// sums match the bytes it is handed.
+///
+/// upstream: `match.c` `hash_search()` - the `check_want_i` optimisation
+/// substitutes `i = want_i` after matching sum1 and sum2 but, unlike the main
+/// chain loop and the `aligned_i` path, did not re-check
+/// `s->sums[want_i].len == l`. A hostile generator pulling from a
+/// daemon-as-sender forges a sum header whose blocks disagree in length, so the
+/// substituted block describes `remainder` bytes while the caller is positioned
+/// for a full `blength` window; `map_ptr(..., 0)` then returns NULL and
+/// upstream dereferences it - a remote unauthenticated crash of the
+/// per-connection daemon child. oc's `check_block_match_slices` carries the
+/// re-check; this pins it.
+///
+/// The short FINAL block is the reachable shape: every signature of a file
+/// whose length is not a whole multiple of the block length has one, so no
+/// forged header is needed to reach the guard - only to exploit its absence.
+#[test]
+fn hint_refuses_a_block_shorter_than_the_index_block_length() {
+    const BLOCK_LEN: usize = 700;
+    const REMAINDER: usize = 300;
+    let data: Vec<u8> = (0..(BLOCK_LEN + REMAINDER))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let params = SignatureLayoutParams::new(
+        data.len() as u64,
+        Some(std::num::NonZeroU32::new(BLOCK_LEN as u32).unwrap()),
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+        .expect("signature");
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
+
+    // Fixture precondition: without a genuinely short final block the call
+    // below could not discriminate, and the assertion would hold vacuously.
+    assert_eq!(index.block_count(), 2, "fixture must produce two blocks");
+    assert_eq!(index.block_length, BLOCK_LEN, "full block length");
+    assert_eq!(index.block(1).len(), REMAINDER, "final block must be short");
+
+    // The short block's OWN digest over its OWN bytes: every check downstream
+    // of the length guard would succeed, so a `true` here means the guard is
+    // gone rather than that some other predicate rejected the block.
+    let tail = &data[BLOCK_LEN..];
+    assert!(
+        !index.check_block_match_slices(1, index.block(1).rolling(), tail, &[]),
+        "a block shorter than block_length must not match through the hint path"
+    );
+}
