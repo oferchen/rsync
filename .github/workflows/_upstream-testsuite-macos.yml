@@ -120,7 +120,13 @@ jobs:
         with:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
-          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
+          # This workflow file is part of the key because it now supplies the
+          # CPPFLAGS/LDFLAGS that decide which checksum libraries upstream's
+          # ./configure finds. `run_upstream_testsuite.sh` skips ./configure
+          # when `shconfig` is present, so a tree cached under a different
+          # flag set would be reused with its ORIGINAL feature set and no
+          # step would notice.
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', '.github/workflows/_upstream-testsuite-macos.yml') }}-${{ runner.os }}
 
       # macOS runners ship Xcode CLT (cc, make) and autoconf/automake/libtool,
       # which is what upstream's `./configure && make` needs. Recorded rather
@@ -135,6 +141,94 @@ jobs:
             printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo '<ABSENT>')"
           done
 
+      # The libraries are a different case from the tools above, and the first
+      # run of this leg is what showed the difference: ./configure ABORTED with
+      #
+      #   - Failed to find openssl/md4.h and openssl/md5.h for openssl crypto
+      #   - Failed to find xxhash.h for xxhash checksum support
+      #   configure.sh: error: Aborting configure run
+      #
+      # so the leg never ran a single test. That is upstream's deliberate
+      # design (configure.ac:629-643 aborts whenever `no_lib` is non-empty, so a
+      # missing library is never silently compiled out) and it is the behaviour
+      # the step above asks for. It leaves exactly two ways forward, and they
+      # produce DIFFERENT ORACLES:
+      #
+      #   (a) install the libraries        -> oracle matches the Linux legs
+      #   (b) --disable-openssl --xxhash   -> oracle diverges from the Linux legs
+      #
+      # (a) is what this does. `_upstream-testsuite.yml` installs libxxhash-dev
+      # (APT_PACKAGES) and the ubuntu image supplies openssl, so BOTH Linux legs
+      # build an oracle with openssl and xxhash ENABLED. Disabling them here
+      # would mean the macOS oracle advertises a different checksum list from
+      # the Linux one, and a macOS-only divergence could then be the oracle
+      # rather than oc - which is precisely the comparison this leg exists to
+      # make.
+      #
+      # MEASURED, and the reason CPPFLAGS/LDFLAGS are set rather than just
+      # installing: macOS `cc` does not search the Homebrew prefix, and
+      # `openssl@3` is keg-only so its headers are not linked into that prefix
+      # at all. A bare `cc` over both headers fails on `xxhash.h`; adding
+      # `-I$(brew --prefix)/include` compiles; adding the openssl prefix too
+      # compiles AND links. A `brew install` on its own would leave ./configure
+      # aborting exactly as before.
+      #
+      # The install is CONDITIONAL for the same reason the step above declines
+      # to install: re-asserting what the image already provides costs minutes
+      # per run and buys nothing.
+      - name: Provide the checksum libraries upstream's configure requires
+        run: |
+          set -euo pipefail
+          for formula in openssl@3 xxhash; do
+            if brew list --versions "$formula" >/dev/null 2>&1; then
+              printf '%-10s present\n' "$formula"
+            else
+              printf '%-10s installing\n' "$formula"
+              brew install "$formula"
+            fi
+          done
+
+          BREW_PREFIX=$(brew --prefix)
+          OPENSSL_PREFIX=$(brew --prefix openssl@3)
+          printf 'brew prefix     %s\n' "$BREW_PREFIX"
+          printf 'openssl@3       %s\n' "$OPENSSL_PREFIX"
+
+          CPPFLAGS="-I${BREW_PREFIX}/include -I${OPENSSL_PREFIX}/include"
+          LDFLAGS="-L${BREW_PREFIX}/lib -L${OPENSSL_PREFIX}/lib"
+
+          # Prove the flags actually resolve the headers AND the symbols
+          # ./configure probes (configure.ac AC_SEARCH_LIBS XXH64_createState /
+          # EVP_MD_CTX_copy). Without this the next observable symptom would be
+          # a silently feature-poor oracle, which is the failure mode this leg
+          # is least able to detect.
+          #
+          # Written with printf rather than a heredoc: a quoted heredoc
+          # terminator has to sit at column 0 of the shell script, which inside
+          # a YAML block scalar would close the block instead.
+          probe=$(mktemp -d)
+          printf '%s\n' \
+            '#include <xxhash.h>' \
+            '#include <openssl/md4.h>' \
+            '#include <openssl/md5.h>' \
+            '#include <openssl/evp.h>' \
+            'int main(void) { XXH64_createState(); EVP_MD_CTX_new(); return 0; }' \
+            >"${probe}/probe.c"
+          # shellcheck disable=SC2086
+          cc $CPPFLAGS $LDFLAGS "${probe}/probe.c" -lxxhash -lcrypto -o "${probe}/probe"
+          echo "checksum library probe: compiled and linked"
+
+          # Published under UPSTREAM_-prefixed names, NOT as CPPFLAGS/LDFLAGS.
+          # $GITHUB_ENV is process-wide for every later step, and bare
+          # CPPFLAGS/LDFLAGS naming the Homebrew prefix would also reach `Build
+          # oc-rsync (release)`, where cc-crate build scripts honour them - it
+          # could change which zlib/openssl the binary under test links against.
+          # The testsuite step maps these onto CPPFLAGS/LDFLAGS in its own
+          # `env:`, so only upstream's ./configure sees them.
+          {
+            echo "UPSTREAM_CPPFLAGS=${CPPFLAGS}"
+            echo "UPSTREAM_LDFLAGS=${LDFLAGS}"
+          } >> "$GITHUB_ENV"
+
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
 
@@ -143,6 +237,11 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          # Scoped to THIS step so upstream's ./configure finds the Homebrew
+          # headers without the Rust build having seen them - see the step that
+          # computes these.
+          CPPFLAGS: ${{ env.UPSTREAM_CPPFLAGS }}
+          LDFLAGS: ${{ env.UPSTREAM_LDFLAGS }}
           EXPECT_RESULT: ${{ inputs.expect_result_macos }}
           # Always emit the manifest this run would hold itself to, for the same
           # reason the Linux legs do: hand-curating the ledger is exactly how it
