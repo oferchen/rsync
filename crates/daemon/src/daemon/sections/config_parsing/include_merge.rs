@@ -162,6 +162,10 @@ fn merge_included_globals(state: &mut GlobalParseState, included: GlobalParseSta
     merge_optional_directive(&mut state.listen_backlog, included.listen_backlog);
     merge_optional_directive(&mut state.socket_options, included.socket_options);
     merge_optional_directive(&mut state.proxy_protocol, included.proxy_protocol);
+    merge_optional_directive(
+        &mut state.proxy_protocol_hosts,
+        included.proxy_protocol_hosts,
+    );
     merge_optional_directive(&mut state.rsync_port, included.rsync_port);
     merge_optional_directive(&mut state.daemon_chroot, included.daemon_chroot);
 }

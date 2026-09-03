@@ -393,6 +393,144 @@ const fn is_wildmatch_metachar(byte: u8) -> bool {
     matches!(byte, b'*' | b'?' | b'[' | b'\\')
 }
 
+/// Warns the operator that `proxy protocol = true` with no trusted-proxy list
+/// rejects every connection.
+///
+/// upstream: clientserver.c:1747-1756
+///
+/// ```c
+/// /* "proxy protocol = true" with no trusted-proxy list rejects every
+///  * connection as an untrusted proxy peer (fail-closed).  That is intended,
+///  * but silent at startup, so warn the operator while stderr is still open. */
+/// if (lp_proxy_protocol()
+///  && (!lp_proxy_protocol_hosts() || !*lp_proxy_protocol_hosts())) {
+///         rprintf(FWARNING, "\"proxy protocol = true\" but \"proxy protocol hosts\" is unset:" ...);
+/// }
+/// ```
+///
+/// The fail-closed default is deliberate, which is exactly why it needs a
+/// voice: without this line the operator sees a daemon that accepts a TCP
+/// connection and then drops every one of them, with the reason recorded only
+/// per-connection.
+pub(in crate::daemon) fn warn_if_proxy_protocol_trusts_nobody(
+    policy: &ProxyProtocolPolicy,
+    log_sink: Option<&SharedLogSink>,
+) {
+    if !policy.rejects_every_peer() {
+        return;
+    }
+
+    let text = concat!(
+        "\"proxy protocol = true\" but \"proxy protocol hosts\" is unset:",
+        " all connections will be rejected as untrusted proxy peers.",
+        "  Set \"proxy protocol hosts\" to your trusted proxy's address."
+    )
+    .to_owned();
+    let message = rsync_warning!(text).with_role(Role::Daemon);
+    if let Some(log) = log_sink {
+        log_message(log, &message);
+    } else {
+        eprintln!("{message}");
+    }
+}
+
+/// What the daemon must do with an incoming connection's PROXY protocol
+/// header, given the configured policy and the peer's real address.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::daemon) enum ProxyHeaderDecision {
+    /// `proxy protocol = false`: no header is expected, so read none.
+    NotRequired,
+    /// The peer is a listed trusted proxy; believe the header it sends.
+    Trusted,
+    /// A header is required but this peer may not supply one. Upstream logs
+    /// the refusal and drops the connection (clientserver.c:1393-1396,
+    /// 1443-1446).
+    Untrusted,
+}
+
+/// The daemon's PROXY protocol configuration as one value.
+///
+/// upstream keeps `proxy protocol` and `proxy protocol hosts` as two
+/// directives (daemon-parm.h) but reads them at one site: `rsync_module()`
+/// consults `lp_proxy_protocol()` and, if set, calls `proxy_peer_allowed()`,
+/// which consults `lp_proxy_protocol_hosts()` (clientserver.c:1443-1446). The
+/// two are only ever meaningful together - a trusted-proxy list with the
+/// feature off decides nothing, and the feature on without a list rejects
+/// everyone - so oc carries them as one value rather than as a bool and a
+/// list that could drift apart while being threaded to the session handler.
+#[derive(Clone, Debug, Default)]
+pub(in crate::daemon) enum ProxyProtocolPolicy {
+    /// `proxy protocol = false` (upstream's default).
+    #[default]
+    Disabled,
+    /// `proxy protocol = true`, carrying the `proxy protocol hosts` list. An
+    /// empty list is legal configuration and trusts nobody.
+    Enabled(Arc<Vec<HostPattern>>),
+}
+
+impl ProxyProtocolPolicy {
+    /// Builds the policy from the two parsed directives.
+    pub(in crate::daemon) fn new(enabled: bool, trusted: Vec<HostPattern>) -> Self {
+        if enabled {
+            Self::Enabled(Arc::new(trusted))
+        } else {
+            Self::Disabled
+        }
+    }
+
+    /// Decides how to treat a connection arriving from `addr`.
+    pub(in crate::daemon) fn decide(&self, addr: IpAddr) -> ProxyHeaderDecision {
+        match self {
+            Self::Disabled => ProxyHeaderDecision::NotRequired,
+            Self::Enabled(trusted) if allow_proxy_protocol_peer(trusted, addr) => {
+                ProxyHeaderDecision::Trusted
+            }
+            Self::Enabled(_) => ProxyHeaderDecision::Untrusted,
+        }
+    }
+
+    /// Returns whether `proxy protocol = true` was set with no trusted-proxy
+    /// list - the fail-closed combination upstream warns about at startup.
+    ///
+    /// upstream: clientserver.c:1750-1751.
+    pub(in crate::daemon) fn rejects_every_peer(&self) -> bool {
+        matches!(self, Self::Enabled(trusted) if trusted.is_empty())
+    }
+}
+
+/// Returns whether `addr` is a trusted proxy allowed to supply a PROXY
+/// protocol header.
+///
+/// upstream: access.c:300-306
+///
+/// ```c
+/// int allow_proxy_protocol_peer(const char *list, const char *addr, const char **host_ptr)
+/// {
+///         if (!list || !*list)
+///                 return 0;
+///         allow_forward_dns = 0;
+///         return access_match(list, addr, host_ptr, 0);
+/// }
+/// ```
+///
+/// Two properties of that body are the whole gate, and both are deliberate:
+///
+/// 1. **An empty list rejects every peer.** It is not "unset means allow" -
+///    `proxy protocol = true` with no trusted-proxy list fail-closes, which is
+///    why upstream warns about that combination at startup
+///    (clientserver.c:1750-1755).
+/// 2. **No DNS is consulted.** `allow_forward_dns = 0` disables the
+///    forward-resolve half, and the caller passes the `UNDETERMINED` sentinel
+///    rather than a resolved name (clientserver.c:1390-1393), so
+///    `match_hostname` can only compare a token against that sentinel. In
+///    practice the list is matched numerically - a name-based trusted-proxy
+///    token cannot match a real peer. Passing the sentinel here reproduces that
+///    exactly, and costs no lookup.
+fn allow_proxy_protocol_peer(list: &[HostPattern], addr: IpAddr) -> bool {
+    list.iter()
+        .any(|pattern| pattern.matches(addr, module_state::UNDETERMINED_HOSTNAME))
+}
+
 /// Parses a host allow/deny list from a config directive value.
 ///
 /// Splits the value by commas and whitespace, parses each token as a

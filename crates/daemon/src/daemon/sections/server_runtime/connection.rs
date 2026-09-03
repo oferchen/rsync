@@ -26,7 +26,7 @@ struct AcceptLoopState<'a> {
     client_socket_options: Arc<Vec<SocketOption>>,
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
-    proxy_protocol: bool,
+    proxy_policy: ProxyProtocolPolicy,
 }
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
@@ -206,7 +206,7 @@ fn spawn_connection_worker(
         Arc::clone(&state.client_socket_options),
         state.bandwidth_limit,
         state.reverse_lookup,
-        state.proxy_protocol,
+        state.proxy_policy.clone(),
     );
     let conn_guard = state.connection_counter.acquire();
 

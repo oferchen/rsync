@@ -984,7 +984,7 @@ fn test_accept_loop_state<'a>(
         client_socket_options: Arc::new(Vec::new()),
         bandwidth_limit: None,
         reverse_lookup: false,
-        proxy_protocol: false,
+        proxy_policy: ProxyProtocolPolicy::Disabled,
     }
 }
 

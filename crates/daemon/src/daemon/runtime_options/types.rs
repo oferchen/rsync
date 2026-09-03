@@ -115,6 +115,12 @@ pub(crate) struct RuntimeOptions {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
     proxy_protocol: bool,
+    /// Addresses whose PROXY protocol header the daemon is willing to believe.
+    ///
+    /// upstream: daemon-parm.h - `proxy_protocol_hosts` STRING, P_GLOBAL,
+    /// default "". Empty means trust nobody, not trust everybody
+    /// (access.c:302-303).
+    proxy_protocol_hosts: Vec<HostPattern>,
     /// Directory the daemon chroots into before forking children.
     ///
     /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
@@ -184,6 +190,7 @@ impl Default for RuntimeOptions {
             socket_options_from_config: false,
             tcp_fastopen: TcpFastOpenMode::Auto,
             proxy_protocol: false,
+            proxy_protocol_hosts: Vec::new(),
             daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
