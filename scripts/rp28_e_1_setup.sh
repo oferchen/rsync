@@ -117,6 +117,13 @@ for _ in $(seq 1 1024); do
   cat "${DAEMON_SHARE}/d10/payload.bin.chunk" >> "${DAEMON_SHARE}/d10/payload.bin"
 done
 rm -f "${DAEMON_SHARE}/d10/payload.bin.chunk"
+# Backdate the seed - same reason as f10 in rp28_f_1_setup.sh. D10 mutates this
+# file mid-file between two pulls without changing its size, so if the seed
+# write and the mutation land in the same whole second the quick check
+# (generator.c quick_check_ok: size + mtime) skips the file and the cell
+# verifies an unmodified destination. A fixed past timestamp removes the
+# dependency on how fast the harness runs.
+touch -t 200109090146.40 "${DAEMON_SHARE}/d10/payload.bin"
 
 # Daemon config. The `[test]` module is read+write because the matrix
 # exercises both directions through the same module. `use chroot = no`

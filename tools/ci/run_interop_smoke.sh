@@ -182,6 +182,21 @@ pick_port() {
 # /dev/tcp where available (Linux/macOS) and falls back to invoking
 # upstream rsync's `--list-only` against the daemon on Windows/MSYS2
 # (where /dev/tcp is not exposed by Cygwin's bash).
+#
+# Both probes MUST be individually bounded. The `deadline` is only
+# consulted between iterations, so a single probe that blocks forever
+# defeats it entirely - the loop never gets back to the test. That is
+# not hypothetical: on Windows this function reaches the rsync probe on
+# every iteration (the comment above says why), and a SYN to a port
+# nothing is listening on is DROPPED rather than refused when the
+# runner's firewall is in the way, so `connect()` hangs instead of
+# returning ECONNREFUSED. The job then sits in this loop until the
+# workflow cancels it, ~25 minutes later, with no output.
+#
+# `--contimeout` bounds the connect itself (options.c:831 declares it;
+# socket.c:422 arms a SIGALRM around the connect) and `--timeout` bounds
+# everything after it, so each iteration costs at most a couple of
+# seconds and the 15-second deadline means what it says.
 wait_for_port() {
   local port=$1
   local deadline=$(( SECONDS + 15 ))
@@ -190,7 +205,7 @@ wait_for_port() {
       exec 3>&- 2>/dev/null || true
       return 0
     fi
-    if "${UPSTREAM_RSYNC}" \
+    if "${UPSTREAM_RSYNC}" --contimeout=2 --timeout=2 \
          "rsync://127.0.0.1:${port}/" >/dev/null 2>&1; then
       return 0
     fi

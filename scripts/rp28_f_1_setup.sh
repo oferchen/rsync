@@ -124,6 +124,17 @@ for _ in $(seq 1 1024); do
   cat "${DAEMON_SHARE}/f10/payload.bin.chunk" >> "${DAEMON_SHARE}/f10/payload.bin"
 done
 rm -f "${DAEMON_SHARE}/f10/payload.bin.chunk"
+# Backdate the seed. The runner mutates this file MID-FILE between two pulls,
+# which changes neither its size nor - at proto 29's whole-second mtime
+# granularity - necessarily its timestamp. If the seed write and the mutation
+# land in the same whole second, the quick check (generator.c quick_check_ok:
+# size + mtime, nothing else) reports the destination up to date, no delta is
+# sent, and the cell's verify_diff fails on an unmodified destination. That is
+# a wall-clock coin flip, not a behaviour: MEASURED on CI 2026-09-03, the same
+# commit's F10.pull passed when the two landed in different seconds and failed
+# when they landed in the same one. A fixed past timestamp makes the mutation
+# unambiguously newer regardless of how fast the harness runs.
+touch -t 200109090146.40 "${DAEMON_SHARE}/f10/payload.bin"
 
 # F11: capability-string back-negotiation (push). Single small file is
 # enough; the assertion lives in the runner (client must succeed against a
