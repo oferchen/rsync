@@ -94,6 +94,23 @@ pub(crate) fn establish_proxy_tunnel(
         )));
     }
 
+    // upstream: socket.c:77-81 refuses before base64-encoding, on the length
+    // the encoding *would* reach. Upstream writes that as `(len*8 + 5) / 6`,
+    // which is `(len*8).div_ceil(6)` - the same value, and the spelling clippy
+    // requires. The comparison is `>= PROXY_BUF_SIZE - 3`,
+    // where `len` is the plaintext `user:pass`. oc keeps that plaintext length
+    // so the predicate is upstream's exactly - comparing oc's stored value
+    // instead would compare a PADDED encoding against an unpadded threshold
+    // and refuse up to two bytes early.
+    if proxy
+        .credentials_plaintext_len()
+        .is_some_and(|plain_len| (plain_len * 8).div_ceil(6) >= PROXY_BUF_SIZE - 3)
+    {
+        return Err(proxy_configuration_error(
+            "authentication information is too long",
+        ));
+    }
+
     let mut request = format!("CONNECT {}:{} HTTP/1.0\r\n", addr.host(), addr.port());
 
     if let Some(header) = proxy.authorization_header() {
@@ -104,6 +121,21 @@ pub(crate) fn establish_proxy_tunnel(
 
     request.push_str("\r\n");
 
+    // upstream: socket.c:90-94 assembles the request with `snprintf(buffer,
+    // PROXY_BUF_SIZE, ...)` and refuses on the WOULD-BE length before the
+    // `write()` at socket.c:95, so an oversized request never reaches the
+    // proxy. Without this the peer closes mid-negotiation and oc reports the
+    // close - the peer's symptom - instead of its own refusal.
+    //
+    // oc assembles the same bytes in a different order (request line + CRLF,
+    // then the auth header + CRLF, then the blank line) as upstream's
+    // `"CONNECT %s:%d HTTP/1.0%s%s\r\n\r\n"` with `%s%s` = `"\r\nProxy-
+    // Authorization: Basic "` + payload, so the assembled length is identical
+    // and the same bound applies.
+    if request.len() >= PROXY_BUF_SIZE {
+        return Err(proxy_configuration_error("proxy CONNECT request too long"));
+    }
+
     stream
         .write_all(request.as_bytes())
         .map_err(|error| socket_error("write to", proxy.display(), error))?;
@@ -112,7 +144,7 @@ pub(crate) fn establish_proxy_tunnel(
         .map_err(|error| socket_error("flush", proxy.display(), error))?;
 
     let mut line = Vec::with_capacity(128);
-    read_proxy_line(stream, &mut line, proxy.display())?;
+    read_proxy_line(stream, &mut line, proxy.display(), ProxyLineKind::Status)?;
     let status = String::from_utf8(line.clone())
         .map_err(|_| proxy_response_error("proxy status line contained invalid UTF-8"))?;
     line.clear();
@@ -140,7 +172,7 @@ pub(crate) fn establish_proxy_tunnel(
     }
 
     loop {
-        read_proxy_line(stream, &mut line, proxy.display())?;
+        read_proxy_line(stream, &mut line, proxy.display(), ProxyLineKind::Header)?;
         if line.is_empty() {
             break;
         }
@@ -249,11 +281,23 @@ impl ProxyConfig {
             .as_ref()
             .map(ProxyCredentials::authorization_value)
     }
+
+    /// Length of the plaintext `user:pass` the credentials were built from, if
+    /// any - the input to upstream's `authentication information is too long`
+    /// predicate (socket.c:77-81).
+    fn credentials_plaintext_len(&self) -> Option<usize> {
+        self.credentials
+            .as_ref()
+            .map(ProxyCredentials::plaintext_len)
+    }
 }
 
 /// HTTP proxy credentials with a cached `Proxy-Authorization` header value.
 pub(crate) struct ProxyCredentials {
     authorization: String,
+    /// Byte length of the `user:pass` plaintext, retained because upstream's
+    /// length refusal is stated on the plaintext, not on the encoding.
+    plaintext_len: usize,
 }
 
 impl ProxyCredentials {
@@ -262,8 +306,17 @@ impl ProxyCredentials {
         bytes.extend_from_slice(username.as_bytes());
         bytes.push(b':');
         bytes.extend_from_slice(password.as_bytes());
+        let plaintext_len = bytes.len();
         let authorization = STANDARD.encode(bytes);
-        Self { authorization }
+        Self {
+            authorization,
+            plaintext_len,
+        }
+    }
+
+    /// Byte length of the `user:pass` plaintext behind this header.
+    fn plaintext_len(&self) -> usize {
+        self.plaintext_len
     }
 
     /// Returns the cached `Proxy-Authorization` header payload.
@@ -272,18 +325,50 @@ impl ProxyCredentials {
     }
 }
 
+/// Upstream's single stack buffer for the whole CONNECT exchange: the request
+/// it writes and every response line it reads are all bounded by this size.
+///
+/// upstream: socket.c:52 `#define PROXY_BUF_SIZE 1024`.
+const PROXY_BUF_SIZE: usize = 1024;
+
 /// Maximum size of a single CONNECT response line, matching upstream rsync's
 /// `PROXY_BUF_SIZE - 1` loop bound in `establish_proxy_connection()`
 /// (socket.c:86). Upstream's stack buffer is 1024 bytes, but its read loop
 /// (`cp < &buffer[PROXY_BUF_SIZE - 1]`) writes at most positions 0..=1022,
 /// then rejects when the post-loop cursor lands at `&buffer[1023]`. The
 /// effective cap is therefore 1023 non-newline bytes.
-const MAX_PROXY_LINE_BYTES: usize = 1023;
+const MAX_PROXY_LINE_BYTES: usize = PROXY_BUF_SIZE - 1;
+
+/// Which line of the CONNECT response is being read.
+///
+/// Upstream reads the status line and the header lines in two separate loops
+/// that share the `PROXY_BUF_SIZE - 1` bound but report *different*
+/// diagnostics on overflow (socket.c:110 vs socket.c:141). Only the message
+/// differs, so the read itself stays a single owner and the caller names the
+/// line it asked for.
+#[derive(Clone, Copy)]
+enum ProxyLineKind {
+    /// The `HTTP/1.x NNN` status line - upstream socket.c:100-112.
+    Status,
+    /// One line of the response header block - upstream socket.c:130-146.
+    Header,
+}
+
+impl ProxyLineKind {
+    /// Upstream's verbatim over-length diagnostic for this line kind.
+    fn too_long_diagnostic(self) -> &'static str {
+        match self {
+            Self::Status => "proxy response line too long",
+            Self::Header => "proxy response header line too long",
+        }
+    }
+}
 
 fn read_proxy_line(
     stream: &mut TcpStream,
     buffer: &mut Vec<u8>,
     proxy: SocketAddrDisplay<'_>,
+    kind: ProxyLineKind,
 ) -> Result<(), ClientError> {
     buffer.clear();
 
@@ -305,7 +390,8 @@ fn read_proxy_line(
                 }
                 if buffer.len() >= MAX_PROXY_LINE_BYTES {
                     return Err(proxy_response_error(format!(
-                        "proxy response line too long (exceeded {MAX_PROXY_LINE_BYTES} bytes)"
+                        "{} (exceeded {MAX_PROXY_LINE_BYTES} bytes)",
+                        kind.too_long_diagnostic()
                     )));
                 }
             }
@@ -330,6 +416,9 @@ fn proxy_response_error(text: impl Into<String>) -> ClientError {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
 
     #[test]
@@ -604,7 +693,7 @@ mod tests {
             host: "proxy.test",
             port: addr.port(),
         };
-        let error = read_proxy_line(&mut stream, &mut buffer, display)
+        let error = read_proxy_line(&mut stream, &mut buffer, display, ProxyLineKind::Status)
             .expect_err("oversized proxy line must be rejected");
 
         assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
@@ -654,7 +743,7 @@ mod tests {
             host: "proxy.test",
             port: addr.port(),
         };
-        let error = read_proxy_line(&mut stream, &mut buffer, display)
+        let error = read_proxy_line(&mut stream, &mut buffer, display, ProxyLineKind::Status)
             .expect_err("cap-sized newline-free proxy line must be rejected");
 
         assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
@@ -692,7 +781,7 @@ mod tests {
             host: "proxy.test",
             port: addr.port(),
         };
-        let result = read_proxy_line(&mut stream, &mut buffer, display);
+        let result = read_proxy_line(&mut stream, &mut buffer, display, ProxyLineKind::Status);
         handle.join().expect("server thread");
         (result, buffer)
     }
@@ -767,6 +856,177 @@ mod tests {
                 "{host} must not trip the control-byte guard"
             );
         }
+    }
+
+    /// A loopback proxy that answers every CONNECT with a caller-chosen
+    /// response and reports each byte the client sent it.
+    ///
+    /// WHY it answers unconditionally: the before-write tests assert that a
+    /// refusal happens *before any write*, so on the correct path the client
+    /// writes nothing and reads nothing - the response is never consumed. It
+    /// exists for the mutated path. With the bound removed the client writes
+    /// its request and then waits for a response; a server that only read
+    /// would leave both sides blocked and the test would HANG rather than
+    /// fail. A hang is a worse oracle than no test at all: it reports nothing
+    /// and stalls the suite. Answering makes a removed bound surface
+    /// immediately, as `expect_err` on a tunnel that succeeded.
+    ///
+    /// WHY it drains before closing: on Windows a socket closed while its
+    /// receive buffer still holds unread bytes is reset (RST) rather than
+    /// shut down (FIN), and the peer's next read then fails with
+    /// WSAECONNRESET even for a response that was already delivered. Reading
+    /// the client's request to EOF is what makes the shutdown orderly on
+    /// every platform.
+    struct RecordingProxy {
+        addr: SocketAddr,
+        handle: thread::JoinHandle<Vec<u8>>,
+    }
+
+    impl RecordingProxy {
+        /// Answers with upstream's successful CONNECT response.
+        fn start() -> Self {
+            Self::responding_with(b"HTTP/1.0 200 Connection established\r\n\r\n".to_vec())
+        }
+
+        /// Answers with `response`, then drains whatever the client sent.
+        fn responding_with(response: Vec<u8>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+            let addr = listener.local_addr().expect("listener address");
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+                let mut seen = Vec::new();
+                let _ = stream.read_to_end(&mut seen);
+                seen
+            });
+            Self { addr, handle }
+        }
+
+        fn config(&self, credentials: Option<ProxyCredentials>) -> ProxyConfig {
+            ProxyConfig {
+                host: self.addr.ip().to_string(),
+                port: self.addr.port(),
+                credentials,
+            }
+        }
+
+        /// Every byte the client sent, once it has closed its end.
+        fn bytes_received(self) -> Vec<u8> {
+            self.handle.join().expect("server thread")
+        }
+    }
+
+    /// An oversized CONNECT request must be refused before any write.
+    ///
+    /// WHY: upstream assembles the request with `snprintf(buffer,
+    /// PROXY_BUF_SIZE, ...)` and rejects on the WOULD-BE length at
+    /// socket.c:90-94, *before* the `write()` at socket.c:95. Without that
+    /// bound oc sends the oversized request, the proxy closes on it, and oc
+    /// reports "proxy closed the connection during CONNECT negotiation" - the
+    /// peer's symptom rather than its own refusal. Asserting the socket saw
+    /// ZERO bytes is what makes this a before-write oracle; a message-only
+    /// check would still pass while the request went out on the wire.
+    #[test]
+    fn oversized_connect_request_is_refused_before_any_write() {
+        let server = RecordingProxy::start();
+        let mut stream = TcpStream::connect(server.addr).expect("connect to listener");
+        // The upstream cell uses 1500 'a's plus ".invalid"; any host that pushes
+        // the assembled request to PROXY_BUF_SIZE reaches the same branch.
+        let addr = DaemonAddress::new(format!("{}.invalid", "a".repeat(1500)), 873);
+
+        let err = establish_proxy_tunnel(&mut stream, &addr, &server.config(None))
+            .expect_err("an oversized CONNECT request must be refused");
+        assert!(
+            err.to_string().contains("proxy CONNECT request too long"),
+            "expected upstream's request-too-long refusal, got: {err}"
+        );
+
+        drop(stream);
+        let seen = server.bytes_received();
+        assert!(
+            seen.is_empty(),
+            "nothing may be written once the request is rejected; saw {:?}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    /// Oversized credentials must be refused before the request is built.
+    ///
+    /// WHY: upstream checks the length the base64 encoding *would* reach and
+    /// bails at socket.c:77-81, before `base64_encode`. The predicate is stated
+    /// on the `user:pass` plaintext, which is why oc retains that length rather
+    /// than measuring its own stored (padded) encoding - a padded measurement
+    /// would refuse up to two bytes earlier than upstream.
+    #[test]
+    fn oversized_proxy_credentials_are_refused_before_any_write() {
+        let server = RecordingProxy::start();
+        let mut stream = TcpStream::connect(server.addr).expect("connect to listener");
+        let addr = DaemonAddress::new("proxy.test".to_owned(), 873);
+        let credentials = ProxyCredentials::new("u".repeat(800), "p".repeat(800));
+
+        let err = establish_proxy_tunnel(&mut stream, &addr, &server.config(Some(credentials)))
+            .expect_err("oversized proxy credentials must be refused");
+        assert!(
+            err.to_string()
+                .contains("authentication information is too long"),
+            "expected upstream's auth-too-long refusal, got: {err}"
+        );
+
+        drop(stream);
+        let seen = server.bytes_received();
+        assert!(
+            seen.is_empty(),
+            "nothing may be written once the credentials are rejected; saw {:?}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    /// Runs a full tunnel negotiation against a proxy serving `response`.
+    ///
+    /// Routed through [`RecordingProxy`] so one type owns the peer's
+    /// behaviour: the response is written before the client's request is
+    /// read, so neither side can block on the other, and the request is
+    /// drained before close so the shutdown is orderly rather than a reset.
+    fn negotiate_against_response(response: Vec<u8>) -> Result<(), ClientError> {
+        let server = RecordingProxy::responding_with(response);
+        let mut stream = TcpStream::connect(server.addr).expect("connect to listener");
+        let addr = DaemonAddress::new("proxy.test".to_owned(), 873);
+        establish_proxy_tunnel(&mut stream, &addr, &server.config(None))
+    }
+
+    /// An over-long *header* line must report upstream's header diagnostic.
+    ///
+    /// WHY: upstream reads the status line and the header lines in two loops
+    /// sharing one bound but reporting different messages - "proxy response
+    /// line too long" (socket.c:110) versus "proxy response header line too
+    /// long" (socket.c:141). oc had a single bound serving both, so an
+    /// over-long header reported the *status-line* text. This is the test that
+    /// separates them; `read_proxy_line` still owns the read and the bound.
+    #[test]
+    fn oversized_response_header_line_reports_the_header_diagnostic() {
+        let mut response = b"HTTP/1.0 200 Connection established\r\n".to_vec();
+        response.extend(std::iter::repeat_n(b'H', MAX_PROXY_LINE_BYTES + 1));
+
+        let err = negotiate_against_response(response)
+            .expect_err("an over-long response header must be refused");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("proxy response header line too long"),
+            "an over-long HEADER must not report the status-line text: {rendered}"
+        );
+    }
+
+    /// Negative control for the header bound: ordinary headers still succeed.
+    ///
+    /// WHY: without this, the test above would also pass if the header loop
+    /// rejected *every* header line, or never terminated on the blank line.
+    #[test]
+    fn ordinary_response_headers_complete_the_tunnel() {
+        let response = b"HTTP/1.0 200 Connection established\r\nX-Proxy: test\r\n\r\n".to_vec();
+
+        negotiate_against_response(response)
+            .expect("a well-formed CONNECT response must establish the tunnel");
     }
 
     /// Deterministic xorshift64 stream so failures are reproducible from `seed`.
