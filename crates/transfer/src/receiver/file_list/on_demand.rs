@@ -479,6 +479,17 @@ mod tests {
     /// the `dir_ndx` is caller-chosen so a malformed/out-of-range index can be
     /// forced onto the wire.
     fn encode_segment_with_dir_ndx(dir_ndx: i32, entries: &[(&str, u64)]) -> Vec<u8> {
+        let entries: Vec<FileEntry> = entries
+            .iter()
+            .map(|(name, size)| FileEntry::new_file(PathBuf::from(name), *size, 0o100644))
+            .collect();
+        encode_entries_with_dir_ndx(dir_ndx, &entries)
+    }
+
+    /// Frames an INC_RECURSE sub-list around caller-built entries, so a test can
+    /// ship directories as well as regular files. `encode_segment_with_dir_ndx`
+    /// is the regular-file shorthand over this.
+    fn encode_entries_with_dir_ndx(dir_ndx: i32, entries: &[FileEntry]) -> Vec<u8> {
         let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
         let mut writer = FileListWriter::new(protocol);
         let mut ndx_codec = create_ndx_codec(PROTOCOL);
@@ -486,8 +497,8 @@ mod tests {
         ndx_codec
             .write_ndx(&mut wire, NDX_FLIST_OFFSET - dir_ndx)
             .unwrap();
-        for (name, size) in entries {
-            let mut e = FileEntry::new_file(PathBuf::from(name), *size, 0o100644);
+        for entry in entries {
+            let mut e = entry.clone();
             e.set_mtime(1_700_000_000, 0);
             writer.write_entry(&mut wire, &e).unwrap();
         }
@@ -635,6 +646,47 @@ mod tests {
             active,
             vec!["x/dup.txt".to_owned(), "x/z.txt".to_owned()],
             "the repeated name is dropped, leaving two active entries"
+        );
+    }
+
+    /// The `file_list` tombstone above keeps NDX aligned, but `dir_flist` is a
+    /// SECOND, independent numbering - and a tombstoned DIRECTORY is invisible
+    /// to it, because both `count_directories` and `record_dir_flist_names`
+    /// select on `is_dir()` and `clear_file()` zeroes the mode.
+    ///
+    /// Upstream keeps the slot: the receiver appends every directory to
+    /// `dir_flist` as it READS it (`flist.c:2996-2998`, before any clean), and
+    /// `dir_flist->files[]` holds POINTERS into the same `file_struct`s as the
+    /// transfer list. When `flist_sort_and_clean()` later `clear_file()`s the
+    /// duplicate, the shared struct is zeroed but the `dir_flist` slot remains,
+    /// now inactive - which is precisely the slot `flist.c:2911-2918` refuses
+    /// with "refusing flist for cleared dir_ndx %d".
+    ///
+    /// This test measures whether oc's `dir_flist` numbering retains that slot.
+    #[test]
+    fn duplicate_directory_keeps_its_dir_flist_slot() {
+        let entries = [
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_file(PathBuf::from("x/z.txt"), 20, 0o100644),
+        ];
+        let wire = encode_entries_with_dir_ndx(0, &entries);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        ctx.dir_flist_names = vec![PathBuf::from("x")];
+
+        ctx.receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("legitimate sub-list must be accepted");
+
+        // Upstream: the parent `x` plus BOTH `x/d` slots (the second inactive).
+        assert_eq!(
+            ctx.dir_flist_used, 3,
+            "the tombstoned duplicate directory must keep its dir_flist slot"
+        );
+        assert_eq!(
+            ctx.dir_flist_names.len(),
+            ctx.dir_flist_used,
+            "the name vector must stay index-aligned with dir_flist_used"
         );
     }
 
