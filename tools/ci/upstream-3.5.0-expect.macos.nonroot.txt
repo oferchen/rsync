@@ -346,7 +346,7 @@ symlink-ignore pass
 symlink-mknod-fakesuper-symlink-race pass
 symlink-race-dest skip
 symlink-race-relative-dest skip
-symlink-race-source fail
+symlink-race-source pass
 temp-dir pass
 temp-dir-symlink-injection skip
 trimslash pass

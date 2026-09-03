@@ -24,6 +24,7 @@ use crate::local_copy::{
 
 use super::super::TransferFlags;
 use super::super::finalize::finalize_guard_and_metadata;
+use super::super::open::open_source_file;
 
 /// Returns whether the current transfer satisfies every clonefile precondition.
 ///
@@ -131,9 +132,29 @@ pub(super) fn try_clone(
     // always stages into a temp and commits with `do_rename_at()`, inheriting
     // confinement from the rename. This keeps oc's optimisation on the same
     // invariant rather than beside it.
+    // The clone READS the source, so the source side takes the SAME confined
+    // open the standard copy path uses (`open_source_file`, which honours the
+    // transfer-root anchor and the leaf policy). Handing `confined_clone_file`
+    // a PATH instead would let it re-resolve the source with the libc
+    // resolver, which follows every parent component - so a parent flipped to
+    // a symlink pointing outside the transfer root would be followed and its
+    // contents cloned into the destination. That is a measured defect, not a
+    // hypothetical one: it is what made the upstream `symlink-race-source`
+    // cell leak on macOS while the confined open refused the same shape.
+    //
+    // upstream: `rsync-3.5.0/sender.c:206-248` `sender_open_confined()` - the
+    // sender's content read is confined, and this CoW fast path is an oc
+    // extension that must not weaken that invariant.
     #[cfg(unix)]
-    let clone_method =
-        match fast_io::confined_clone_file(context.destination_root(), source, destination) {
+    let clone_method = {
+        let reader = open_source_file(
+            source,
+            context.open_noatime_enabled(),
+            context.source_anchor(),
+            context.follow_source_symlinks(),
+        )
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+        match fast_io::confined_clone_file(context.destination_root(), &reader, destination) {
             Ok(fast_io::CloneAttempt::Cloned) => Some(
                 context
                     .options()
@@ -142,7 +163,8 @@ pub(super) fn try_clone(
             ),
             Ok(fast_io::CloneAttempt::Unsupported) => None,
             Err(error) => return Err(LocalCopyError::io("copy file", destination, error)),
-        };
+        }
+    };
     #[cfg(not(unix))]
     let clone_method =
         match context
