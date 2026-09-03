@@ -858,30 +858,43 @@ mod tests {
         }
     }
 
-    /// A loopback proxy that answers every CONNECT successfully and reports
-    /// each byte the client sent it.
+    /// A loopback proxy that answers every CONNECT with a caller-chosen
+    /// response and reports each byte the client sent it.
     ///
-    /// WHY it answers unconditionally: the tests below assert that a refusal
-    /// happens *before any write*, so on the correct path the client writes
-    /// nothing and reads nothing - the response is never consumed. It exists
-    /// for the mutated path. With the bound removed the client writes its
-    /// request and then waits for a response; a server that only read would
-    /// leave both sides blocked and the test would HANG rather than fail.
-    /// A hang is a worse oracle than no test at all: it reports nothing and
-    /// stalls the suite. Answering makes a removed bound surface immediately,
-    /// as `expect_err` on a tunnel that succeeded.
+    /// WHY it answers unconditionally: the before-write tests assert that a
+    /// refusal happens *before any write*, so on the correct path the client
+    /// writes nothing and reads nothing - the response is never consumed. It
+    /// exists for the mutated path. With the bound removed the client writes
+    /// its request and then waits for a response; a server that only read
+    /// would leave both sides blocked and the test would HANG rather than
+    /// fail. A hang is a worse oracle than no test at all: it reports nothing
+    /// and stalls the suite. Answering makes a removed bound surface
+    /// immediately, as `expect_err` on a tunnel that succeeded.
+    ///
+    /// WHY it drains before closing: on Windows a socket closed while its
+    /// receive buffer still holds unread bytes is reset (RST) rather than
+    /// shut down (FIN), and the peer's next read then fails with
+    /// WSAECONNRESET even for a response that was already delivered. Reading
+    /// the client's request to EOF is what makes the shutdown orderly on
+    /// every platform.
     struct RecordingProxy {
         addr: SocketAddr,
         handle: thread::JoinHandle<Vec<u8>>,
     }
 
     impl RecordingProxy {
+        /// Answers with upstream's successful CONNECT response.
         fn start() -> Self {
+            Self::responding_with(b"HTTP/1.0 200 Connection established\r\n\r\n".to_vec())
+        }
+
+        /// Answers with `response`, then drains whatever the client sent.
+        fn responding_with(response: Vec<u8>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
             let addr = listener.local_addr().expect("listener address");
             let handle = thread::spawn(move || {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let _ = stream.write_all(b"HTTP/1.0 200 Connection established\r\n\r\n");
+                let _ = stream.write_all(&response);
                 let _ = stream.flush();
                 let mut seen = Vec::new();
                 let _ = stream.read_to_end(&mut seen);
@@ -969,26 +982,17 @@ mod tests {
         );
     }
 
-    /// Writes `response` to one accepted connection, then runs a full tunnel
-    /// negotiation against it. The server never reads, so the client's write
-    /// completes into the socket buffer and cannot deadlock against us.
+    /// Runs a full tunnel negotiation against a proxy serving `response`.
+    ///
+    /// Routed through [`RecordingProxy`] so one type owns the peer's
+    /// behaviour: the response is written before the client's request is
+    /// read, so neither side can block on the other, and the request is
+    /// drained before close so the shutdown is orderly rather than a reset.
     fn negotiate_against_response(response: Vec<u8>) -> Result<(), ClientError> {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
-        let listen_addr = listener.local_addr().expect("listener address");
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let _ = stream.write_all(&response);
-            let _ = stream.flush();
-        });
-
-        let mut stream = TcpStream::connect(listen_addr).expect("connect to listener");
+        let server = RecordingProxy::responding_with(response);
+        let mut stream = TcpStream::connect(server.addr).expect("connect to listener");
         let addr = DaemonAddress::new("proxy.test".to_owned(), 873);
-        let proxy = ProxyConfig {
-            host: listen_addr.ip().to_string(),
-            port: listen_addr.port(),
-            credentials: None,
-        };
-        establish_proxy_tunnel(&mut stream, &addr, &proxy)
+        establish_proxy_tunnel(&mut stream, &addr, &server.config(None))
     }
 
     /// An over-long *header* line must report upstream's header diagnostic.
