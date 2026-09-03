@@ -7,7 +7,7 @@ bare-do-open-symlink-race pass
 basis-xname-traversal fail
 batch-mode pass
 chdir-symlink-race pass
-checksum-zero-blocklen fail
+checksum-zero-blocklen pass
 chmod-option pass
 chroot-alt-dest-inner-module skip
 chroot-basis-forge-inner-module skip
