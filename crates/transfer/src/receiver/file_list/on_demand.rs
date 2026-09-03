@@ -177,7 +177,11 @@ mod tests {
     use std::io::Cursor;
     use std::path::PathBuf;
 
-    use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
+    use protocol::codec::{
+        NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec,
+    };
+
+    use super::super::dir_flist::{DirFlist, DirSlot};
     use protocol::flist::{FileEntry, FileListWriter};
     use protocol::{CompatibilityFlags, ProtocolVersion};
 
@@ -262,8 +266,8 @@ mod tests {
         let mut ctx = inc_recurse_receiver();
         // Stand in for an initial flist that already carried the three parent
         // directories (dir0..dir2), so each sub-list's dir_ndx (0..2) passes the
-        // fail-closed `dir_ndx >= dir_flist_used` range check.
-        ctx.dir_flist_used = segments.len();
+        // fail-closed `dir_ndx >= dir_flist.used()` range check.
+        ctx.dir_flist = DirFlist::with_active((0..segments.len()).map(|i| format!("dir{i}")));
         // A fresh INC_RECURSE receiver has no entries yet and is not at EOF.
         assert_eq!(ctx.file_list().len(), 0);
         assert!(!ctx.flist_eof);
@@ -314,9 +318,9 @@ mod tests {
         let (wire, total) = encode_segments(&segments);
 
         let mut ctx = inc_recurse_receiver();
-        // Two parent dirs (s0, s1) were in the initial flist; seed the count so
+        // Two parent dirs (s0, s1) were in the initial flist; seed them so
         // dir_ndx 0 and 1 pass the fail-closed range check.
-        ctx.dir_flist_used = segments.len();
+        ctx.dir_flist = DirFlist::with_active((0..segments.len()).map(|i| format!("s{i}")));
         let mut reader = Cursor::new(wire);
         let mut codec = create_ndx_codec(PROTOCOL);
 
@@ -479,24 +483,51 @@ mod tests {
     /// the `dir_ndx` is caller-chosen so a malformed/out-of-range index can be
     /// forced onto the wire.
     fn encode_segment_with_dir_ndx(dir_ndx: i32, entries: &[(&str, u64)]) -> Vec<u8> {
+        let entries: Vec<FileEntry> = entries
+            .iter()
+            .map(|(name, size)| FileEntry::new_file(PathBuf::from(name), *size, 0o100644))
+            .collect();
+        encode_entries_with_dir_ndx(dir_ndx, &entries)
+    }
+
+    /// Frames an INC_RECURSE sub-list around caller-built entries, so a test can
+    /// ship directories as well as regular files. `encode_segment_with_dir_ndx`
+    /// is the regular-file shorthand over this.
+    fn encode_entries_with_dir_ndx(dir_ndx: i32, entries: &[FileEntry]) -> Vec<u8> {
         let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
         let mut writer = FileListWriter::new(protocol);
         let mut ndx_codec = create_ndx_codec(PROTOCOL);
         let mut wire = Vec::new();
-        ndx_codec
-            .write_ndx(&mut wire, NDX_FLIST_OFFSET - dir_ndx)
-            .unwrap();
-        for (name, size) in entries {
-            let mut e = FileEntry::new_file(PathBuf::from(name), *size, 0o100644);
-            e.set_mtime(1_700_000_000, 0);
-            writer.write_entry(&mut wire, &e).unwrap();
-        }
-        writer.write_end(&mut wire, None).unwrap();
+        append_segment(&mut wire, &mut writer, &mut ndx_codec, dir_ndx, entries);
         ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
         wire
     }
 
-    /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist_used` is
+    /// Appends one sub-list segment (header `dir_ndx` + entries + end marker)
+    /// WITHOUT the stream terminator, so a caller can frame several segments
+    /// back to back. The writer and NDX codec are borrowed rather than created
+    /// per segment because both carry incremental-encoding state that upstream
+    /// also carries across the whole sub-list stream; a fresh codec per segment
+    /// would encode bytes no real sender emits.
+    fn append_segment(
+        wire: &mut Vec<u8>,
+        writer: &mut FileListWriter,
+        ndx_codec: &mut NdxCodecEnum,
+        dir_ndx: i32,
+        entries: &[FileEntry],
+    ) {
+        ndx_codec
+            .write_ndx(wire, NDX_FLIST_OFFSET - dir_ndx)
+            .unwrap();
+        for entry in entries {
+            let mut e = entry.clone();
+            e.set_mtime(1_700_000_000, 0);
+            writer.write_entry(wire, &e).unwrap();
+        }
+        writer.write_end(wire, None).unwrap();
+    }
+
+    /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist.used()` is
     /// untrusted wire data that references a directory the receiver never saw.
     ///
     /// WHY: upstream `flist.c:2622-2626` aborts with `exit_cleanup(RERR_PROTOCOL)`
@@ -509,7 +540,7 @@ mod tests {
             let wire = encode_segment_with_dir_ndx(bad, &[("x/a.txt", 1)]);
             let mut ctx = inc_recurse_receiver();
             // Only dir_ndx 0 would be in range.
-            ctx.dir_flist_used = 1;
+            ctx.dir_flist = DirFlist::with_active(["x"]);
             let err = ctx
                 .receive_extra_file_lists(&mut Cursor::new(wire))
                 .expect_err("out-of-range dir_ndx must be rejected, not appended");
@@ -557,7 +588,7 @@ mod tests {
         ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
 
         let mut ctx = inc_recurse_receiver();
-        ctx.dir_flist_used = 1;
+        ctx.dir_flist = DirFlist::with_active(["dir0"]);
         let err = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect_err("duplicate sub-list for dir 0 must be rejected");
@@ -580,8 +611,7 @@ mod tests {
     fn in_range_sublist_dir_ndx_is_accepted() {
         let wire = encode_segment_with_dir_ndx(0, &[("dir0/a.txt", 3u64), ("dir0/b.txt", 4)]);
         let mut ctx = inc_recurse_receiver();
-        ctx.dir_flist_used = 1;
-        ctx.dir_flist_names = vec![PathBuf::from("dir0")];
+        ctx.dir_flist = DirFlist::with_active(["dir0"]);
         let n = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect("in-range dir_ndx must be accepted");
@@ -609,8 +639,7 @@ mod tests {
             &[("x/dup.txt", 10u64), ("x/dup.txt", 10), ("x/z.txt", 20)],
         );
         let mut ctx = inc_recurse_receiver();
-        ctx.dir_flist_used = 1;
-        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        ctx.dir_flist = DirFlist::with_active(["x"]);
         let n = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect("legitimate sub-list must be accepted");
@@ -638,6 +667,101 @@ mod tests {
         );
     }
 
+    /// The `file_list` tombstone above keeps NDX aligned, and `dir_flist` - a
+    /// SECOND, independent numbering - must keep its own slot for the same
+    /// tombstoned directory.
+    ///
+    /// Upstream keeps the slot: the receiver appends every directory to
+    /// `dir_flist` as it READS it (`flist.c:2996-2998`, before any clean), and
+    /// `dir_flist->files[]` holds POINTERS into the same `file_struct`s as the
+    /// transfer list. When `flist_sort_and_clean()` later `clear_file()`s the
+    /// duplicate, the shared struct is zeroed but the `dir_flist` slot remains,
+    /// now inactive - which is precisely the slot `flist.c:2911-2918` refuses
+    /// with "refusing flist for cleared dir_ndx %d".
+    ///
+    /// [`DirFlist`] reproduces that by recording the directories BEFORE the
+    /// clean and marking the ones it tombstoned.
+    #[test]
+    fn duplicate_directory_keeps_its_dir_flist_slot() {
+        let entries = [
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_file(PathBuf::from("x/z.txt"), 20, 0o100644),
+        ];
+        let wire = encode_entries_with_dir_ndx(0, &entries);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["x"]);
+
+        ctx.receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("legitimate sub-list must be accepted");
+
+        // Upstream: the parent `x` plus BOTH `x/d` slots, the second inactive.
+        assert_eq!(
+            ctx.dir_flist.used(),
+            3,
+            "the tombstoned duplicate directory must keep its dir_flist slot"
+        );
+        assert_eq!(
+            ctx.dir_flist.resolve(1),
+            Some(&DirSlot::Active(PathBuf::from("x/d"))),
+            "the surviving duplicate keeps the slot"
+        );
+        assert_eq!(
+            ctx.dir_flist.resolve(2),
+            Some(&DirSlot::Cleared),
+            "the tombstoned duplicate's slot survives as inactive"
+        );
+    }
+
+    /// The dense numbering above is not merely a missing diagnostic: when the
+    /// tombstoned directory is NOT the last one, every later `dir_ndx` shifts
+    /// down by one, so a hostile index that upstream refuses as CLEARED lands on
+    /// a DIFFERENT, live directory in oc and the sub-list is accepted.
+    ///
+    /// Fixture: parent `x` (dir_ndx 0) with children `a`, `d`, `d`, `z`.
+    ///
+    /// | dir_ndx | upstream receiver | oc receiver |
+    /// |---|---|---|
+    /// | 0 | `x`            | `x`   |
+    /// | 1 | `x/a`          | `x/a` |
+    /// | 2 | `x/d`          | `x/d` |
+    /// | 3 | `x/d` CLEARED  | `x/z` |
+    ///
+    /// Upstream refuses `dir_ndx` 3 at `flist.c:2911-2918`. oc's bounds check
+    /// (`flist.c:2906-2909`) cannot: 3 is in range. The peer's entries are
+    /// grafted under `x/z` instead. The `proto-cleared-dirflist` cell happens to
+    /// put the duplicate LAST, where the bounds check does catch it - so that
+    /// cell alone understates the defect.
+    #[test]
+    fn a_cleared_directory_before_others_shifts_every_later_dir_ndx() {
+        let entries = [
+            FileEntry::new_directory(PathBuf::from("x/a"), 0o755),
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_directory(PathBuf::from("x/d"), 0o755),
+            FileEntry::new_directory(PathBuf::from("x/z"), 0o755),
+        ];
+        let wire = encode_entries_with_dir_ndx(0, &entries);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["x"]);
+
+        ctx.receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("legitimate sub-list must be accepted");
+
+        // Upstream: 5 slots, index 3 inactive. Measuring what oc resolves index
+        // 3 to is the whole point - a name here means the hostile index was
+        // silently re-pointed rather than refused.
+        assert_eq!(
+            ctx.dir_flist.resolve(3),
+            Some(&DirSlot::Cleared),
+            "dir_ndx 3 must still be the cleared duplicate, not a later sibling"
+        );
+        assert_eq!(
+            ctx.dir_flist.resolve(4),
+            Some(&DirSlot::Active(PathBuf::from("x/z"))),
+            "the sibling keeps its own, later slot"
+        );
+    }
+
     /// A sub-list entry whose dirname escapes its declared parent must be rejected.
     ///
     /// WHY: upstream `flist.c:2719-2730` compares every sub-list entry's dirname
@@ -652,9 +776,8 @@ mod tests {
     fn sublist_entry_escaping_parent_is_rejected() {
         let wire = encode_segment_with_dir_ndx(0, &[("y/evil.txt", 9u64)]);
         let mut ctx = inc_recurse_receiver();
-        ctx.dir_flist_used = 1;
         // dir_ndx 0 is the legitimate parent "x"; the entry claims "y".
-        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        ctx.dir_flist = DirFlist::with_active(["x"]);
         let err = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect_err("an entry escaping its parent must be rejected");
@@ -684,8 +807,7 @@ mod tests {
     fn sublist_entry_under_parent_is_accepted() {
         let wire = encode_segment_with_dir_ndx(0, &[("x/a.txt", 1u64), ("x/b.txt", 2)]);
         let mut ctx = inc_recurse_receiver();
-        ctx.dir_flist_used = 1;
-        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        ctx.dir_flist = DirFlist::with_active(["x"]);
         let n = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect("entries under their parent must be accepted");

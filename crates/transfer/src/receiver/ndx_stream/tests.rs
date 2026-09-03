@@ -27,6 +27,7 @@ use protocol::{CompatibilityFlags, ProtocolVersion};
 use super::*;
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
+use crate::receiver::file_list::DirFlist;
 use crate::role::ServerRole;
 
 const PROTOCOL: u8 = 32;
@@ -63,8 +64,7 @@ fn inc_recurse_receiver(dirs: &[&str]) -> ReceiverContext {
         &test_handshake(Some(CompatibilityFlags::INC_RECURSE)),
         test_config(),
     );
-    ctx.dir_flist_used = dirs.len();
-    ctx.dir_flist_names = dirs.iter().map(PathBuf::from).collect();
+    ctx.dir_flist = DirFlist::with_active(dirs.iter().copied());
     ctx
 }
 
