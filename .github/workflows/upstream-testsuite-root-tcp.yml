@@ -30,3 +30,19 @@ jobs:
       variant: 'root'
       transport: 'tcp'
       expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
+      # The only leg that can run daemon-symlink-escape-matrix (it needs root
+      # AND a real TCP peer), and that test takes the expected value of 100 of
+      # its 200 cells from a live rsync 3.2.7 daemon when one is on disk and
+      # from a hand-written prediction of 3.2.7 when one is not - reporting PASS
+      # either way. So this leg builds the archive rather than asserting a
+      # prediction, and it is the leg where the change is affordable: nightly,
+      # not a required check, and already carrying 26 known failures.
+      #
+      # EXPECTED, NOT YET MEASURED: the same binary un-skips
+      # daemon-max-alloc-zero, which stats old_versions/rsync_3.2.7 and calls
+      # test_skipped() when it is missing, and enables the md5-downgrade half of
+      # daemon-auth-digest-floor (old_versions/rsync_3.1.3). Both rows in
+      # upstream-3.5.0-expect.root.tcp.txt will move. Re-baseline them from this
+      # workflow's EMIT_EXPECT_RESULT artifact after the first run - never by
+      # guessing the new outcome here.
+      legacy_oracles: 'on'
