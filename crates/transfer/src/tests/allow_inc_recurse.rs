@@ -5,8 +5,7 @@
 //! exceeds upstream's `MIN_FILECNT_LOOKAHEAD` window.
 //!
 //! upstream: compat.c:161-179 set_allow_inc_recurse,
-//! sender.c:228-232 send_extra_file_list throttle,
-//! io.c:1740-1760 receiver inline sub-list dispatch.
+//! sender.c:228-232 send_extra_file_list throttle.
 
 use crate::{ServerRole, compute_allow_inc_recurse};
 
@@ -37,11 +36,12 @@ fn generator_with_qsort_does_not_advertise() {
     ));
 }
 
-/// Receiver MUST never advertise INC_RECURSE - drives the upstream
-/// testsuite `hardlinks` test deadlock fix. Without this restriction,
-/// upstream's sender throttles extra sub-lists at MIN_FILECNT_LOOKAHEAD
-/// (1000 entries) while oc-rsync's `receive_extra_file_lists` keeps
-/// reading sub-lists upfront, deadlocking on any tree > 1000 entries.
+/// Receiver MUST never advertise INC_RECURSE. Measured: dropping the role term
+/// deadlocks the upstream testsuite `hardlinks` cell on a source tree of 1024
+/// entries while 961 still passes, so the boundary is upstream's
+/// MIN_FILECNT_LOOKAHEAD of 1000. See `compute_allow_inc_recurse` for the full
+/// A/B table and for why the receiver-side blocking site is deliberately left
+/// unnamed.
 #[test]
 fn receiver_never_advertises_inc_recurse() {
     assert!(!compute_allow_inc_recurse(

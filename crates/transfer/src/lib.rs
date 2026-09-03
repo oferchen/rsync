@@ -457,15 +457,36 @@ fn requires_multiplex_output(
 
 /// Decides whether the local side may advertise INC_RECURSE in its compat
 /// flags response. Mirrors upstream `compat.c:161-179 set_allow_inc_recurse`
-/// with one local restriction: the receiver role never advertises INC_RECURSE
-/// because `receive_extra_file_lists` drains the entire sub-list stream
-/// upfront, which deadlocks against upstream's
-/// `MIN_FILECNT_LOOKAHEAD`-throttled `send_extra_file_list` (sender.c:228-232)
-/// on source trees larger than the lookahead window.
+/// with one local restriction upstream does not have: the receiver role never
+/// advertises INC_RECURSE.
+///
+/// That restriction is load-bearing, and the reason is measured rather than
+/// argued. Dropping the role term deadlocks the upstream 3.5.0 testsuite
+/// `hardlinks` cell - an `-aHivv --debug=HLINK5` push over `support/lsh.sh` -
+/// with both peers blocked on I/O at 0% CPU. Bisecting the source tree by
+/// entry count puts the boundary at exactly upstream's `MIN_FILECNT_LOOKAHEAD`
+/// of 1000:
+///
+/// | entries | role term kept | role term dropped |
+/// |---------|----------------|-------------------|
+/// |     400 | pass           | pass              |
+/// |     961 | pass           | pass              |
+/// |    1024 | pass           | deadlock          |
+/// |    1296 | pass           | deadlock          |
+///
+/// So oc-rsync's receiver cannot keep up with an upstream-shaped sender that
+/// paces sub-lists on that window. Which receiver-side site blocks is NOT yet
+/// attributed to a named function - do not restate the mechanism more
+/// precisely than that. In particular `receive_extra_file_lists` is *not* the
+/// culprit: every one of its call sites is inside a `#[cfg(test)]` module, so
+/// it is unreachable on the live path and cannot drain anything in production.
+///
+/// Removing this restriction is the INC_RECURSE-on-pull work, and it needs the
+/// receiver's sub-list consumption to become throttle-safe first. It is not a
+/// one-line change.
 ///
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
-/// sender.c:228-232 (send_extra_file_list throttle),
-/// io.c:1740-1760 (receiver's inline sub-list dispatch oc-rsync does not implement).
+/// sender.c:228-232 (send_extra_file_list throttle).
 pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: ServerRole) -> bool {
     recursive && !qsort && role == ServerRole::Generator
 }
