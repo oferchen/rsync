@@ -62,6 +62,16 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
         self.0.file_list().len() as i32 - 1
     }
 
+    fn ndx_is_active(&self, ndx: i32) -> bool {
+        // upstream: sender.c:558-563 - `send_files()` tests F_IS_ACTIVE on the
+        // entry the peer named. An out-of-range index is a different fault and
+        // is owned by `last_file_ndx`, so it is not reported as cleared here.
+        usize::try_from(ndx)
+            .ok()
+            .and_then(|flat| self.0.file_list().get(flat))
+            .is_none_or(protocol::flist::FileEntry::is_active)
+    }
+
     fn begin_frame(&mut self) {}
 
     fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {
