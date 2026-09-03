@@ -1015,6 +1015,33 @@ jobs:
       expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
 
   # ===========================================================================
+  # Upstream testsuite - macOS (3.5.0, nonroot/pipe)
+  # ---------------------------------------------------------------------------
+  # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
+  # platform-conditional divergence. MEASURED on a full 345-cell run: this leg
+  # produces 10 failures, and only TWO are shared with the Linux nonroot/pipe
+  # leg. The other EIGHT are divergences no existing context sees - five pass on
+  # Linux, and three (crtimes, macos-setgid-ordinary-mode-regression,
+  # partial-protected-regular-retry-policy) SKIP there, so they had never
+  # executed in CI at all.
+  #
+  # Uses its own reusable workflow rather than a `runs-on` input on
+  # `_upstream-testsuite.yml`; the reasoning is in that file's header. The
+  # platform-agnostic half - `tools/ci/run_upstream_testsuite.sh` - IS shared.
+  #
+  # Not yet a required status check: registering a context in branch protection
+  # is a repo-admin action. The manifest makes it non-vacuous from the first
+  # run regardless - it records the 10 failures as EXPECTED, so the gate fires
+  # on drift, exactly as the Linux legs do with their own `fail` rows.
+  # ===========================================================================
+  upstream-testsuite-macos:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+
+  # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)
   # ---------------------------------------------------------------------------
   # Runs the 1000-thread x 10K-iter stress in
