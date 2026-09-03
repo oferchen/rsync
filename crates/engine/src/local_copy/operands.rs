@@ -244,9 +244,21 @@ fn detect_marker_components_unix(operand: &OsStr) -> Option<usize> {
             if start != index {
                 let component = &bytes[start..index];
                 if component == b"." {
-                    return Some(count);
+                    // upstream: `flist.c:2623` - the `--relative` root pivot
+                    // keys on the literal `/./` sequence, so the dot only
+                    // moves the root when a separator FOLLOWS it. A trailing
+                    // `/.` is a different decision: `flist.c:2603-2604` sets
+                    // `name_type = DOTDIR_NAME`, which feeds filtering, and
+                    // leaves the relative path whole. Conflating the two sends
+                    // `tree/.` to `dst/` instead of `dst/tree/`.
+                    if index < len {
+                        return Some(count);
+                    }
+                    // A trailing `.` names the same directory as its parent,
+                    // so it adds no component to the preserved relative path.
+                } else {
+                    count += 1;
                 }
-                count += 1;
             }
 
             while index < len && bytes[index] == b'/' {
@@ -312,9 +324,16 @@ fn detect_marker_components_windows(operand: &OsStr) -> Option<usize> {
             if start != index {
                 let component = &units[start..index];
                 if is_single_dot(component) {
-                    return Some(count);
+                    // Same rule as the unix scan: upstream's `--relative` root
+                    // pivot needs the dot to be FOLLOWED by a separator
+                    // (`flist.c:2623`, the literal `/./`). A trailing `\.` or
+                    // `/.` only sets `DOTDIR_NAME` (`flist.c:2603-2604`).
+                    if index < len {
+                        return Some(count);
+                    }
+                } else {
+                    count += 1;
                 }
-                count += 1;
             }
 
             while index < len && is_separator(units[index]) {
@@ -582,6 +601,49 @@ mod tests {
         assert!(!spec.has_dot_dir_marker());
         let spec = SourceSpec::from_operand(&OsString::from("a/b/c")).unwrap();
         assert!(!spec.has_dot_dir_marker());
+    }
+
+    /// A TRAILING `/.` is not a `--relative` root pivot.
+    ///
+    /// Upstream makes two separate decisions about a `.` component, and only
+    /// one of them moves the relative root:
+    ///
+    /// - `flist.c:2603-2604` sets `name_type = DOTDIR_NAME` for a trailing `/.`.
+    ///   That feeds filtering, not the root.
+    /// - `flist.c:2623` performs the root pivot, and it keys on
+    ///   `strstr(fbuf, "/./")` - the literal three-character sequence, which
+    ///   requires a separator AFTER the dot.
+    ///
+    /// `tree/.` satisfies the first and not the second, so upstream preserves
+    /// the whole relative path. Measured against rsync 3.5.0: `-aR tree/.`
+    /// lands at `dst/tree/sub/f`, and `-aR tree/sub/.` at `dst/tree/sub/f`.
+    /// Treating the trailing dot as a pivot dropped the leading components and
+    /// wrote to `dst/sub/f` and `dst/f` respectively - a placement defect, not
+    /// a cosmetic one.
+    #[test]
+    fn a_trailing_dot_is_not_a_relative_root_pivot() {
+        for operand in ["tree/.", "tree/sub/.", "/src/a/."] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            assert!(
+                !spec.has_dot_dir_marker(),
+                "trailing `/.` must not pivot the --relative root: {operand}"
+            );
+        }
+    }
+
+    /// The companion to [`a_trailing_dot_is_not_a_relative_root_pivot`]: a dot
+    /// FOLLOWED by a separator is upstream's real `/./` marker and must keep
+    /// pivoting. Without this the fix above would silently disable the pivot
+    /// altogether, including the empty-remainder `tree/./` shape.
+    #[test]
+    fn a_dot_followed_by_a_separator_still_pivots() {
+        for operand in ["tree/./", "tree/./sub", "./a/b", "/src/./a"] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            assert!(
+                spec.has_dot_dir_marker(),
+                "`/./` must pivot the --relative root: {operand}"
+            );
+        }
     }
 
     #[cfg(unix)]
