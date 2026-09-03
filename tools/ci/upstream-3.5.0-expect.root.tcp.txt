@@ -154,5 +154,5 @@ symlink-exclude-leaf pass
 symlink-exclude-meta pass
 symlink-exclude-xattr pass
 variety pass
-xattr-wire-cap fail
+xattr-wire-cap pass
 xrsync pass

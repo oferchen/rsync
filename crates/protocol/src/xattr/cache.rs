@@ -289,14 +289,21 @@ impl XattrCache {
             let name_len = checked_wire_len(read_varint(reader)?, "xattr name_len")?;
             let datum_len = checked_wire_len(read_varint(reader)?, "xattr datum_len")?;
 
-            // upstream: xattrs.c:839 - a single value above the hard per-value
-            // ceiling is a protocol error, not a truncation.
+            // upstream: xattrs.c:839-842 - a single value above the hard
+            // per-value ceiling is a protocol error, not a truncation:
+            //
+            //     rprintf(FERROR, "xattr datum_len exceeds per-value limit [%s]\n", ...);
+            //     exit_cleanup(RERR_PROTOCOL);
+            //
+            // The text is upstream's verbatim and is load-bearing: the 3.5.0
+            // `xattr-wire-cap` cell greps the receiver's output for this exact
+            // literal, so interpolating the two lengths into the middle of it
+            // would refuse the header correctly and still fail the cell.
+            // Upstream reports neither number here.
             if datum_len > MAX_XATTR_VALUE_BYTES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!(
-                        "xattr datum_len {datum_len} exceeds per-value limit {MAX_XATTR_VALUE_BYTES}"
-                    ),
+                    "xattr datum_len exceeds per-value limit",
                 ));
             }
 
@@ -1205,5 +1212,54 @@ mod tests {
         assert_eq!(cache.find(&list_from(&[(b"user.k", b"aaaa")])), Some(0));
         assert_eq!(cache.find(&list_from(&[(b"user.k", b"bbbb")])), Some(1));
         assert_eq!(cache.find(&list_from(&[(b"user.k", b"cccc")])), None);
+    }
+
+    /// Builds a one-entry literal xattr header that DECLARES `datum_len`
+    /// without supplying that many bytes. A datum over `MAX_FULL_DATUM`
+    /// travels as a digest rather than as the value, so an oversized length is
+    /// expressible in a handful of bytes - which is exactly how a malicious
+    /// peer sends it, and why the guard must fire before any allocation.
+    fn header_declaring_datum_len(name: &[u8], datum_len: usize) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap(); // ndx = 0: a literal list follows
+        write_varint(&mut buf, 1).unwrap(); // count
+        write_varint(&mut buf, (name.len() + 1) as i32).unwrap();
+        write_varint(&mut buf, datum_len as i32).unwrap();
+        buf.extend_from_slice(name);
+        buf.push(0);
+        buf.extend_from_slice(&[0xAA; MAX_XATTR_DIGEST_LEN]);
+        buf
+    }
+
+    /// upstream: xattrs.c:839-842 reports an oversized per-value datum length
+    /// as `xattr datum_len exceeds per-value limit [%s]`, carrying neither the
+    /// offending length nor the ceiling. The 3.5.0 `xattr-wire-cap` cell greps
+    /// the receiver's output for that literal, so refusing the header is
+    /// necessary but not sufficient - the refusal has to name itself in
+    /// upstream's words.
+    #[test]
+    fn the_per_value_refusal_carries_upstreams_literal() {
+        let buf = header_declaring_datum_len(b"user.wirecap", MAX_XATTR_VALUE_BYTES + 1);
+        let mut cache = XattrCache::new();
+        let err = cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect_err("a datum_len above the per-value ceiling must be refused");
+
+        assert_eq!(err.to_string(), "xattr datum_len exceeds per-value limit");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// Non-vacuity companion for the pin above: at EXACTLY the ceiling the
+    /// entry is accepted. Without this, the pin would also pass if the fixture
+    /// were simply malformed, or if a coarser bound (`checked_wire_len`, which
+    /// clamps to `effective_max_alloc` and is far larger) were the one
+    /// deciding. Upstream's test is `>`, not `>=` - xattrs.c:839.
+    #[test]
+    fn a_datum_len_at_the_ceiling_is_accepted() {
+        let buf = header_declaring_datum_len(b"user.wirecap", MAX_XATTR_VALUE_BYTES);
+        let mut cache = XattrCache::new();
+        cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect("a datum_len exactly at the ceiling is legal");
     }
 }
