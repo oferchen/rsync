@@ -562,6 +562,11 @@ impl ReceiverContext {
             //
             // upstream: io.c perform_io() uses select() for bidirectional I/O,
             // naturally batching writes until the output buffer is full.
+            // Snapshot the operator inputs the wire-basis resolver reads. They
+            // are per-session, not per-file, and the response loop borrows
+            // `self` mutably, so the borrow cannot be held across it.
+            let wire_basis_dirs = self.config.reference_directories.clone();
+            let wire_basis_fuzzy_level = self.config.flags.fuzzy_level;
             let mut flushed_pending: usize = 0;
 
             loop {
@@ -765,6 +770,11 @@ impl ReceiverContext {
                     sandbox: setup.sandbox.as_ref(),
                     #[cfg(unix)]
                     dest_dir: Some(setup.dest_dir.as_path()),
+                    wire_basis: crate::transfer_ops::wire_basis::WireBasis {
+                        entry_relative_path: file_entry.path(),
+                        basis_dirs: &wire_basis_dirs,
+                        fuzzy_level: wire_basis_fuzzy_level,
+                    },
                 };
 
                 let xattr_list = self.resolve_xattr_list(&file_entry);
