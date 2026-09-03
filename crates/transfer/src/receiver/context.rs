@@ -7,7 +7,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU8;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -26,6 +25,7 @@ use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPipeline;
 
 use super::basis::BasisFileConfig;
+use super::file_list::DirFlist;
 use super::{
     NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, ParallelThresholds, compile_daemon_filter_set,
     partition_point_depth,
@@ -76,22 +76,19 @@ pub struct ReceiverContext {
     /// - `flist.c:101` - `first_flist` pointer
     /// - `receiver.c:683` - `flist_free(first_flist)` advances `first_flist`
     pub(in crate::receiver) first_segment_idx: usize,
-    /// Count of directory entries received so far across the initial file list
-    /// and every INC_RECURSE sub-list, mirroring upstream's `dir_flist->used`.
+    /// The receiver's directory numbering, addressed by the wire `dir_ndx` of an
+    /// INC_RECURSE sub-list header (`NDX_FLIST_OFFSET - dir_ndx`).
     ///
-    /// The sender frames each sub-list header as `NDX_FLIST_OFFSET - dir_ndx`,
-    /// where `dir_ndx` indexes the directories in reception (growth) order. A
-    /// header referencing a directory that has not been received yet
-    /// (`dir_ndx >= dir_flist_used`) is malformed or malicious and is rejected
-    /// fail-closed. The count is taken pre-prune (the `--prune-empty-dirs` pass
-    /// is receiver-only; the sender numbers `dir_ndx` over every directory it
-    /// ships), so a valid transfer never trips the bound.
+    /// A SECOND numbering, independent of the transfer list's NDX. See
+    /// [`DirFlist`] for why a cleared duplicate directory must keep its slot:
+    /// dropping it shifts every later `dir_ndx` and re-points a hostile sub-list
+    /// at a live sibling instead of refusing it.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2622-2626` - `if (dir_ndx >= dir_flist->used) ... "refusing
-    ///   invalid dir_ndx %u >= %u" ... exit_cleanup(RERR_PROTOCOL)`.
-    pub(in crate::receiver) dir_flist_used: usize,
+    /// - `flist.c:2993-2999` - the read-loop append that builds it.
+    /// - `flist.c:2906-2918` - the bounds and cleared-slot refusals it serves.
+    pub(in crate::receiver) dir_flist: DirFlist,
     /// Set of `dir_ndx` values that have already been served a sub-list,
     /// mirroring upstream's per-directory `FLAG_GOT_DIR_FLIST`. A second
     /// sub-list for the same directory is a malicious duplicate and is rejected
@@ -103,19 +100,6 @@ pub struct ReceiverContext {
     ///   "refusing malicious duplicate flist for dir %d" ...
     ///   exit_cleanup(RERR_PROTOCOL)`.
     pub(in crate::receiver) served_dir_flists: HashSet<i32>,
-    /// Full relative path of each directory in wire `dir_ndx` order, mirroring
-    /// upstream's `dir_flist->files[]` array. Built from the sorted (and, under
-    /// non-iconv, deduped) file list of the initial flist and each INC_RECURSE
-    /// sub-list, in the exact order the sender assigns `dir_ndx`: initial-list
-    /// directories (including `.`) first, then each sub-list's directories in
-    /// depth-first reception order. Indexed by the wire `dir_ndx` so a received
-    /// sub-list entry can be validated against its declared parent directory.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:2720` - `f_name(dir_flist->files[dir_ndx], NULL)` names the
-    ///   parent that every entry in the sub-list must live under.
-    pub(in crate::receiver) dir_flist_names: Vec<PathBuf>,
     /// Cached file list reader for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `recv_file_entry()` that persist
@@ -508,9 +492,8 @@ impl ReceiverContext {
             checksum_seed: handshake.checksum_seed,
             ndx_segments: vec![(0, initial_ndx_start)],
             first_segment_idx: 0,
-            dir_flist_used: 0,
+            dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
-            dir_flist_names: Vec::new(),
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),

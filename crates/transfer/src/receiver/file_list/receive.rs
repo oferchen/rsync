@@ -11,9 +11,10 @@ use std::path::Path;
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_OFFSET, create_ndx_codec};
-use protocol::flist::{FileEntry, IncrementalFileListBuilder, sort_and_clean_file_list};
+use protocol::flist::{IncrementalFileListBuilder, sort_and_clean_file_list};
 
 use super::super::ReceiverContext;
+use super::dir_flist::{DirFlist, DirSlot};
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
 use super::incremental::IncrementalFileListReceiver;
 use super::prune::prune_empty_dirs_pass;
@@ -68,14 +69,15 @@ impl ReceiverContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        // upstream: flist.c:2695-2701 - every received directory is appended to
-        // dir_flist as the read loop runs, so dir_flist->used counts all dirs in
-        // this list. We track the equivalent count only under INC_RECURSE (the
-        // sole mode that frames sub-list headers by dir_ndx) and take it before
-        // the receiver-only prune pass so it matches the sender's numbering.
-        if inc_recurse {
-            self.dir_flist_used += count_directories(&self.file_list[seg_start..]);
-        }
+        // upstream: flist.c:2993-2999 - every received directory is appended to
+        // dir_flist as the read loop runs, BEFORE flist_sort_and_clean() can
+        // collapse duplicates. Snapshot here, at the same point, and only under
+        // INC_RECURSE (the sole mode that frames sub-list headers by dir_ndx).
+        // The clean below tombstones a duplicate directory by zeroing its mode,
+        // so a snapshot taken afterwards could not tell it from a tombstoned
+        // regular file - see `DirFlist`.
+        let pending_dirs =
+            inc_recurse.then(|| DirFlist::record_pre_clean(&self.file_list, seg_start));
 
         // Without INC_RECURSE the whole list arrives in this single call, so the
         // file list is complete. With INC_RECURSE the sender streams per-directory
@@ -164,16 +166,12 @@ impl ReceiverContext {
             self.file_list = cleaned;
         }
 
-        // upstream: flist.c:recv_file_list() appends every directory to
-        // `dir_flist` as it is read, so a later INC_RECURSE sub-list header's
-        // `dir_ndx` resolves to that directory's full path (flist.c:2685). Record
-        // the same mapping in wire `dir_ndx` order - sorted here (or sender scan
-        // order under iconv) and taken before the receiver-only prune pass, so it
-        // stays aligned with the sender's `dir_ndx` numbering over every shipped
-        // directory. `receive_one_extra_segment()` uses it to reject a sub-list
-        // entry that does not live under its declared parent.
-        if inc_recurse {
-            self.record_dir_flist_names(0);
+        // upstream: flist.c:3049 orders the appended dir_flist range, and the
+        // clean above has now marked which of those directories survived. Commit
+        // both facts together so a cleared duplicate keeps its slot as an
+        // inactive one, exactly as upstream's shared `file_struct` does.
+        if let Some(pending) = pending_dirs {
+            self.dir_flist.append(pending, &self.file_list[seg_start..]);
         }
 
         // upstream: flist.c:3121-3184 - flist_sort_and_clean() runs the
@@ -326,6 +324,11 @@ impl ReceiverContext {
             segment_count += 1;
         }
 
+        // upstream: flist.c:2993-2999 - snapshot this sub-list's directories at
+        // the read loop, before the per-segment sort/clean below tombstones any
+        // duplicate. See `DirFlist` for why the snapshot cannot wait.
+        let pending_dirs = DirFlist::record_pre_clean(&self.file_list, flat_start);
+
         // upstream: flist.c:2684-2695 - every entry in a sub-list must live under
         // the directory named by its header `dir_ndx`; a mismatch is an attempt
         // by a hostile sender to inject a path that escapes its declared parent,
@@ -388,13 +391,12 @@ impl ReceiverContext {
             normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
         }
 
-        // upstream: flist.c:2695-2701 - directories in this sub-list are appended
-        // to dir_flist, so a later sub-list may legitimately reference them by
-        // dir_ndx. Fold them into the running count and record their full paths in
-        // the same wire dir_ndx order so a deeper sub-list's path-belongs check
-        // resolves this segment's directories.
-        self.dir_flist_used += count_directories(&self.file_list[flat_start..]);
-        self.record_dir_flist_names(flat_start);
+        // upstream: flist.c:3049 - the appended dir_flist range is ordered, and
+        // the clean above has now settled which of those directories survived.
+        // Commit both together so a cleared duplicate keeps its slot as an
+        // inactive one, and a later sub-list's dir_ndx stays aligned.
+        self.dir_flist
+            .append(pending_dirs, &self.file_list[flat_start..]);
 
         // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
@@ -449,7 +451,7 @@ impl ReceiverContext {
     /// [`protocol::protocol_violation()`]:
     ///
     /// 1. **Range** - a `dir_ndx` that references a directory not yet received
-    ///    (`dir_ndx >= dir_flist_used`) cannot belong to any real sender tree and
+    ///    (`dir_ndx >= dir_flist.used()`) cannot belong to any real sender tree and
     ///    is rejected. `dir_ndx` is always `>= 0` (see the caller), so the single
     ///    `>=` test also covers the negative case upstream checks separately.
     /// 2. **Duplicate** - a second sub-list for a directory already served is a
@@ -460,21 +462,35 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2622-2626` - `if (dir_ndx >= dir_flist->used) ... "refusing
+    /// - `flist.c:2906-2909` - `if (dir_ndx >= dir_flist->used) ... "refusing
     ///   invalid dir_ndx %u >= %u" ... exit_cleanup(RERR_PROTOCOL)`.
-    /// - `flist.c:2627-2632` - `FLAG_GOT_DIR_FLIST` duplicate guard, "refusing
+    /// - `flist.c:2910-2918` - `if (!F_IS_ACTIVE(file)) ... "refusing flist for
+    ///   cleared dir_ndx %d"`. The clean pass can `clear_file()` a duplicate
+    ///   directory while its `dir_flist` slot survives, and naming that slot
+    ///   would put a NULL `f_name()` into the dirname comparison below.
+    /// - `flist.c:2919-2922` - `FLAG_GOT_DIR_FLIST` duplicate guard, "refusing
     ///   malicious duplicate flist for dir %d", `exit_cleanup(RERR_PROTOCOL)`.
     pub(in crate::receiver) fn validate_extra_segment_dir_ndx(
         &mut self,
         dir_ndx: i32,
     ) -> io::Result<()> {
-        if dir_ndx < 0 || dir_ndx as usize >= self.dir_flist_used {
-            return Err(protocol::protocol_violation(format!(
-                "refusing invalid dir_ndx {dir_ndx} >= {} {}{}",
-                self.dir_flist_used,
-                crate::role_trailer::error_location!(),
-                crate::role_trailer::receiver()
-            )));
+        match self.dir_flist.resolve(dir_ndx) {
+            None => {
+                return Err(protocol::protocol_violation(format!(
+                    "refusing invalid dir_ndx {dir_ndx} >= {} {}{}",
+                    self.dir_flist.used(),
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                )));
+            }
+            Some(DirSlot::Cleared) => {
+                return Err(protocol::protocol_violation(format!(
+                    "refusing flist for cleared dir_ndx {dir_ndx} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                )));
+            }
+            Some(DirSlot::Active(_)) => {}
         }
         if !self.served_dir_flists.insert(dir_ndx) {
             return Err(protocol::protocol_violation(format!(
@@ -486,24 +502,6 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Records the full relative path of every directory in `file_list[from..]`
-    /// into `dir_flist_names`,
-    /// in the order they appear. Called after each list/sub-list is sorted (and,
-    /// under non-iconv, deduped) so the vector index matches the wire `dir_ndx`
-    /// the sender assigns to that directory.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:2704` - `dir_flist->files[dir_flist->used++] = file` appends
-    ///   each directory so `dir_flist->files[dir_ndx]` names it later.
-    pub(in crate::receiver) fn record_dir_flist_names(&mut self, from: usize) {
-        for entry in &self.file_list[from..] {
-            if entry.is_dir() {
-                self.dir_flist_names.push(entry.path().clone());
-            }
-        }
-    }
-
     /// Validates that every entry in the just-read INC_RECURSE sub-list
     /// (`file_list[flat_start..]`) lives directly under the directory named by
     /// the header's `dir_ndx`. A hostile sender that frames a sub-list for a
@@ -513,8 +511,8 @@ impl ReceiverContext {
     /// offending segment's entries are dropped so nothing escapes into the
     /// transfer.
     ///
-    /// The parent name is looked up in `dir_flist_names` built by
-    /// [`record_dir_flist_names`](Self::record_dir_flist_names). Leading slashes
+    /// The parent name is looked up in the [`DirFlist`] built across the two
+    /// phases of each list's reception. Leading slashes
     /// (present only under `--relative`, where upstream defers stripping to
     /// `flist_sort_and_clean(..., strip_root)`) are ignored on both sides so a
     /// legitimate relative transfer is never falsely rejected.
@@ -528,11 +526,11 @@ impl ReceiverContext {
         dir_ndx: i32,
         flat_start: usize,
     ) -> io::Result<()> {
-        // The range check in validate_extra_segment_dir_ndx guarantees
-        // `dir_ndx < dir_flist_used`; the name vector is kept in lockstep with
-        // that count, so a present entry is expected. If it is somehow absent we
-        // cannot name the parent, so skip rather than falsely abort.
-        let Some(parent) = self.dir_flist_names.get(dir_ndx as usize) else {
+        // validate_extra_segment_dir_ndx has already refused an out-of-range or
+        // cleared `dir_ndx`, so an Active slot is expected here. If it is
+        // somehow absent we cannot name the parent, so skip rather than falsely
+        // abort - refusing on a name we could not read would be a guess.
+        let Some(DirSlot::Active(parent)) = self.dir_flist.resolve(dir_ndx) else {
             return Ok(());
         };
         let parent = strip_leading_slashes(parent);
@@ -664,23 +662,9 @@ impl ReceiverContext {
     }
 }
 
-/// Counts the directory entries in a received file-list slice.
-///
-/// Mirrors upstream's `dir_flist` accounting: every `S_ISDIR` entry read in a
-/// list is appended to `dir_flist`, so this count is what `dir_flist->used`
-/// grows by for that list.
-///
-/// # Upstream Reference
-///
-/// - `flist.c:2695-2701` - `if (S_ISDIR(file->mode)) { ... dir_flist->files[
-///   dir_flist->used++] = file; }`.
-pub(super) fn count_directories(entries: &[FileEntry]) -> usize {
-    entries.iter().filter(|e| e.is_dir()).count()
-}
-
 /// Strips leading path separators so a `--relative` dirname - which carries a
 /// leading `/` until upstream's `strip_root` pass runs - compares equal to the
-/// slash-free parent path recorded in `dir_flist_names`.
+/// slash-free parent path recorded in the [`DirFlist`].
 ///
 /// # Upstream Reference
 ///
