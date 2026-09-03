@@ -40,6 +40,7 @@ mod request;
 mod response;
 mod streaming;
 mod token_loop;
+pub mod wire_basis;
 
 use std::io::{self, Read};
 use std::num::NonZeroU8;
@@ -212,6 +213,12 @@ pub struct ResponseContext<'a> {
     /// keep the path-based fallback. `None` when no anchor is available.
     #[cfg(unix)]
     pub dest_dir: Option<&'a std::path::Path>,
+    /// Operator inputs for resolving a peer-supplied alternate-basis selector.
+    ///
+    /// upstream: `receiver.c:1009-1046` - `recv_files()` rebuilds the basis path
+    /// from the wire `(fnamecmp_type, xname)` pair for the fuzzy and alt-dest
+    /// types. See [`wire_basis::WireBasis`].
+    pub wire_basis: wire_basis::WireBasis<'a>,
 }
 
 /// Decides whether the receiver writes this file straight to its final
@@ -297,6 +304,23 @@ fn resolve_use_inplace(
     inplace && !one_inplace_partial_dir
 }
 
+/// Keeps a wire-named basis only if it opens as a regular file.
+///
+/// Upstream opens the selected basis and then drops it unless `fstat` reports a
+/// regular file, falling back to a no-basis (whole-file) update rather than
+/// failing the transfer. The open itself is the confined
+/// [`fast_io::open_basis_nofollow`] the local basis selection already uses, so a
+/// symlinked leaf is refused here exactly as it is there.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:1141-1143` - `fd1 == -1` leaves `st.st_size = 0`, i.e. no basis
+/// - `receiver.c:1174-1177` - `!S_ISREG(st.st_mode)` closes the fd and clears it
+fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let file = fast_io::open_basis_nofollow(path).ok()?;
+    file.metadata().ok()?.is_file().then(|| path.to_path_buf())
+}
+
 /// Reads and validates the echoed NDX and sum_head from the sender response.
 ///
 /// Returns the file path, basis path, signature, target size, sender attributes,
@@ -378,7 +402,20 @@ fn read_response_header<R: Read>(
     // The echoed sum_head carries the existing file length used for the append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
 
-    let (file_path, basis_path, signature, target_size) = pending.into_parts();
+    let (file_path, local_basis_path, signature, target_size) = pending.into_parts();
+
+    // upstream: receiver.c:1009-1046 - a fuzzy or alt-dest selector names the
+    // basis on the wire, and the receiver joins the sanitized xname to the
+    // operator's basedir rather than reusing its own choice. Every other basis
+    // type keeps the locally selected path.
+    let basis_path = match ctx.wire_basis.resolve(
+        sender_attrs.fnamecmp_type,
+        sender_attrs.xname.as_deref(),
+        &file_path,
+    )? {
+        Some(named) => usable_basis(&named).or(local_basis_path),
+        None => local_basis_path,
+    };
 
     let use_inplace = resolve_use_inplace(
         ctx.config.inplace,
@@ -828,6 +865,11 @@ mod tests {
             sandbox: None,
             #[cfg(unix)]
             dest_dir: None,
+            wire_basis: wire_basis::WireBasis {
+                entry_relative_path: std::path::Path::new(""),
+                basis_dirs: &[],
+                fuzzy_level: 0,
+            },
         };
         let mut reader = crate::reader::ServerReader::new_plain(std::io::Cursor::new(wire));
         let mut ndx_codec = MonotonicNdxWriter::new(31);

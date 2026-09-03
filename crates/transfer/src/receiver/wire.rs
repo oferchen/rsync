@@ -15,6 +15,36 @@ use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
 /// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1944-1960).
 const MAX_XNAME_LEN: usize = 4096;
 
+/// Confines a peer-supplied basis xname to the basedir the receiver joins it to.
+///
+/// For a basis type (`FNAMECMP_FUZZY` and the alt-dest `FNAMECMP_FUZZY + N`) the
+/// xname is a peer-supplied leaf name that the receiver joins to an
+/// operator-chosen basedir (`--link-dest` / `--compare-dest` / `--copy-dest`, or
+/// the fuzzy dir) and opens as the delta basis. It must never contain a `..` (or
+/// a leading `/`) that escapes that dir: a malicious sender could otherwise walk
+/// the receiver's filesystem - e.g. `--link-dest=/backup` with an xname of
+/// `../../etc/shadow` - and read an out-of-tree file as the basis.
+///
+/// Upstream sanitizes it ALWAYS, not only in the daemon (`sanitize_paths`) case,
+/// because a *client* receiver has `sanitize_paths == 0` and is exactly the
+/// victim: `rsync.c:407-427`. The depth budget is 0, so no leading `..`
+/// survives.
+///
+/// Only the basis types use the xname as a path. The other
+/// `ITEM_XNAME_FOLLOWS` use - the hard-link `"=> target"` display name - is not
+/// a path and is left byte-for-byte.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:407-427` - `if (fnamecmp_type >= FNAMECMP_FUZZY) sanitize_path(buf, buf, "", 0, SP_DEFAULT)`
+fn sanitize_basis_xname(fnamecmp_type: Option<protocol::FnameCmpType>, xname: Vec<u8>) -> Vec<u8> {
+    if fnamecmp_type.is_some_and(|kind| kind.is_fuzzy()) {
+        filters::sanitize_path::sanitize_path_bytes_default(&xname, 0)
+    } else {
+        xname
+    }
+}
+
 /// Validates and wraps a sender-echoed basis-type byte.
 ///
 /// Used by [`SenderAttrs::read_with_codec_xattr`] to decode the `fnamecmp_type`.
@@ -444,7 +474,7 @@ impl SenderAttrs {
             if xname_len > 0 {
                 let mut xname_buf = vec![0u8; xname_len];
                 reader.read_exact(&mut xname_buf)?;
-                Some(xname_buf)
+                Some(sanitize_basis_xname(fnamecmp_type, xname_buf))
             } else {
                 None
             }

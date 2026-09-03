@@ -4,7 +4,7 @@
 acl-symlink-race pass
 alt-dest-symlink-race pass
 bare-do-open-symlink-race pass
-basis-xname-traversal fail
+basis-xname-traversal pass
 batch-mode pass
 chdir-symlink-race pass
 checksum-zero-blocklen pass

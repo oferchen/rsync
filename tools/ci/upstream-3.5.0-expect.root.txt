@@ -24,7 +24,7 @@ backup-dir-repeated-separator-delete pass
 backup-dir-symlink-race pass
 backup-incremental pass
 bare-do-open-symlink-race pass
-basis-xname-traversal fail
+basis-xname-traversal pass
 batch-file-symlink pass
 batch-mode pass
 batch-only-remove-source-regression pass
