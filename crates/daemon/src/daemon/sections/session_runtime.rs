@@ -9,7 +9,7 @@ struct SessionParams<'a> {
     daemon_limit: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
-    proxy_protocol: bool,
+    proxy_policy: ProxyProtocolPolicy,
 }
 
 /// Parameters for the legacy `@RSYNCD:` session handler.
@@ -50,7 +50,7 @@ fn handle_session(
         daemon_limit,
         log_sink,
         reverse_lookup,
-        proxy_protocol,
+        proxy_policy,
     } = params;
 
     // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
@@ -70,11 +70,41 @@ fn handle_session(
     // "Connection reset by peer". The per-module `timeout` directive still
     // governs the data phase via apply_module_timeout once the module is known.
 
-    // upstream: clientserver.c:1312 - read PROXY protocol header before any
-    // rsync protocol data when `proxy protocol = true` in the config.
+    // upstream: clientserver.c:1443-1446 - `if (lp_proxy_protocol())` reads the
+    // header before any rsync protocol data, but ONLY after the peer clears the
+    // trusted-proxy gate:
+    //
+    //     if (lp_proxy_protocol()) {
+    //             if (!proxy_peer_allowed(f_in) || !read_proxy_protocol_header(f_in))
+    //                     return -1;
+    //     }
+    //
+    // The gate is the security property, not a nicety. A PROXY header names
+    // the address the daemon then treats as the peer - it feeds `hosts allow`
+    // / `hosts deny`, `%h`, and every log line - so believing one from an
+    // arbitrary direct connection lets that connection choose its own source
+    // address. Upstream fail-closes: an unset trusted-proxy list rejects
+    // everyone (access.c:302-303).
     let mut stream = stream;
-    let peer_addr = if proxy_protocol {
-        match parse_proxy_header(&mut stream) {
+    let peer_addr = match proxy_policy.decide(peer_addr.ip()) {
+        ProxyHeaderDecision::NotRequired => peer_addr,
+        ProxyHeaderDecision::Untrusted => {
+            // upstream: clientserver.c:1394 - `rprintf(FLOG, "proxy protocol
+            // rejected from untrusted peer %s (%s)\n", host, addr)`. The
+            // wording is upstream's verbatim; the 3.5.0
+            // `proxy-protocol-trusted-peer` cell greps the daemon log for it.
+            if let Some(log) = log_sink.as_ref() {
+                let host = peer_host_display(None, reverse_lookup);
+                let text = format!(
+                    "proxy protocol rejected from untrusted peer {host} ({})",
+                    peer_addr.ip()
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            return Ok(());
+        }
+        ProxyHeaderDecision::Trusted => match parse_proxy_header(&mut stream) {
             Ok(Some(proxied_addr)) => proxied_addr,
             Ok(None) => peer_addr,
             Err(error) => {
@@ -86,9 +116,7 @@ fn handle_session(
                 }
                 return Err(error);
             }
-        }
-    } else {
-        peer_addr
+        },
     };
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
@@ -605,13 +633,13 @@ mod session_runtime_tests {
             daemon_limit: None,
             log_sink: None,
             reverse_lookup: false,
-            proxy_protocol: false,
+            proxy_policy: ProxyProtocolPolicy::Disabled,
         };
         assert!(params.modules.is_empty());
         assert!(params.motd_lines.is_empty());
         assert!(params.daemon_limit.is_none());
         assert!(!params.reverse_lookup);
-        assert!(!params.proxy_protocol);
+        assert!(matches!(params.proxy_policy, ProxyProtocolPolicy::Disabled));
     }
 
     #[test]
@@ -625,7 +653,7 @@ mod session_runtime_tests {
             daemon_limit: limit,
             log_sink: None,
             reverse_lookup: true,
-            proxy_protocol: false,
+            proxy_policy: ProxyProtocolPolicy::Disabled,
         };
         assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
         assert!(params.reverse_lookup);

@@ -74,6 +74,12 @@ pub(crate) struct ParsedConfigModules {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
+    /// Addresses whose PROXY protocol header the daemon is willing to believe.
+    ///
+    /// upstream: daemon-parm.h - `proxy_protocol_hosts` STRING, P_GLOBAL,
+    /// default "". Read by `allow_proxy_protocol_peer()` (access.c:300), which
+    /// returns 0 for an empty list, so an unset directive rejects every peer.
+    proxy_protocol_hosts: Option<(Vec<HostPattern>, ConfigDirectiveOrigin)>,
     /// TCP port the daemon listens on.
     /// upstream: daemon-parm.txt - `port` INTEGER, P_GLOBAL, default 0.
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,

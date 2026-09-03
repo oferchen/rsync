@@ -39,6 +39,7 @@ struct GlobalParseState {
     acceptor_threads: Option<(NonZeroU32, ConfigDirectiveOrigin)>,
     socket_options: Option<(String, ConfigDirectiveOrigin)>,
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
+    proxy_protocol_hosts: Option<(Vec<HostPattern>, ConfigDirectiveOrigin)>,
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
     daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// Module sections read so far, still unfinalized: a string-typed P_LOCAL
@@ -89,6 +90,7 @@ impl GlobalParseState {
             acceptor_threads: None,
             socket_options: None,
             proxy_protocol: None,
+            proxy_protocol_hosts: None,
             rsync_port: None,
             daemon_chroot: None,
             modules: Vec::new(),
@@ -191,6 +193,7 @@ impl GlobalParseState {
             acceptor_threads: self.acceptor_threads,
             socket_options: self.socket_options,
             proxy_protocol: self.proxy_protocol,
+            proxy_protocol_hosts: self.proxy_protocol_hosts,
             rsync_port: self.rsync_port,
             daemon_chroot: self.daemon_chroot,
         })

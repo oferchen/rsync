@@ -73,6 +73,7 @@ fn serve_connections(
         daemon_gid,
         daemon_chroot,
         proxy_protocol,
+        proxy_protocol_hosts,
         ..
     } = options;
 
@@ -81,6 +82,9 @@ fn serve_connections(
     } else {
         None
     };
+
+    let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
+    warn_if_proxy_protocol_trusts_nobody(&proxy_policy, log_sink.as_ref());
 
     // Apply Linux-only defense-in-depth startup hardenings before the
     // listener binds or any pre-xfer-exec hook is spawned. PR_SET_NO_NEW_PRIVS
@@ -377,7 +381,7 @@ fn serve_connections(
         client_socket_options,
         bandwidth_limit,
         reverse_lookup,
-        proxy_protocol,
+        proxy_policy,
     };
 
     // Select the accept engine once from the bound listener topology, then run
