@@ -29,13 +29,21 @@
 //!
 //! # `ZeroCopySender`
 //!
-//! [`ZeroCopySender`] is the higher-level wrapper exposed when the
+//! `ZeroCopySender` is the higher-level wrapper exposed when the
 //! `iouring-send-zc` cargo feature is enabled. It wraps an existing socket
 //! fd, an `Arc<Mutex<IoUring>>` ring, and an optional
 //! [`RegisteredBufferGroup`] so payload pages can be DMA'd directly from
 //! pinned kernel-registered memory without an extra userspace copy.
 //!
-//! See the [`ZeroCopySender::send_zc`] rustdoc for the buffer-lifetime
+//! ⚠ `ZeroCopySender` is deliberately NOT an intra-doc link here. The type is
+//! `#[cfg(feature = "iouring-send-zc")]`, so in a DEFAULT build it does not
+//! exist and no path can resolve to it. This `//!` block is also concatenated
+//! onto the `///` comment that `io_uring/mod.rs` puts on `pub mod send_zc;`,
+//! which makes rustdoc resolve these links in the OUTER module's scope - where
+//! the re-export is cfg-gated off too. An `--all-features` doc build cannot
+//! see either half of that, which is why the broken link reached master.
+//!
+//! See the `ZeroCopySender::send_zc` rustdoc for the buffer-lifetime
 //! contract (the kernel does not release its page reference until the
 //! notification CQE arrives; the wrapper blocks for that CQE before
 //! returning so callers may reuse or drop the slice immediately).

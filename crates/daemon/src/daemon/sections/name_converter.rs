@@ -418,10 +418,25 @@ mod name_converter_tests {
         // The child exits immediately: the answer pipe is at EOF.
         let mut nc = NameConverter::spawn("exit 0").expect("spawn should succeed");
 
+        // Which cause is recorded is a RACE, and both arms are legitimate: if
+        // the child has already exited and closed the pipe, the request WRITE
+        // fails with EPIPE; if it has not, the write lands and the answer READ
+        // hits EOF. Pinning one of them makes this cell fail on whichever host
+        // loses the race - it pinned `UnexpectedEof` and CI measured
+        // `BrokenPipe` on all three nextest retries. What the test is actually
+        // for is that the cause is RECORDED and REPLAYED, so capture whichever
+        // one won and assert the stickiness against it.
         let first = nc.uid_to_name(1000);
+        let recorded = match &first {
+            ConverterOutcome::Failed(err) => err.kind(),
+            other => panic!("EOF from the converter must be a failure, not `unknown`: {other:?}"),
+        };
         assert!(
-            is_failure(&first),
-            "EOF from the converter must be a failure, not `unknown`: {first:?}"
+            matches!(
+                recorded,
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+            ),
+            "a dead converter must fail from the pipe, not some unrelated cause: {recorded:?}"
         );
 
         // Sticky: the death is recorded in the type, so every later lookup
@@ -444,7 +459,7 @@ mod name_converter_tests {
         match nc.uid_to_name(1002) {
             ConverterOutcome::Failed(err) => assert_eq!(
                 err.kind(),
-                io::ErrorKind::UnexpectedEof,
+                recorded,
                 "the recorded cause must be reported, not a fresh one: {err}"
             ),
             other => panic!("a dead converter must keep failing: {other:?}"),
