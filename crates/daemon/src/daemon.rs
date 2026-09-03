@@ -556,6 +556,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         reverse_lookup,
         lock_file,
         proxy_protocol,
+        proxy_protocol_hosts,
         daemon_uid,
         daemon_gid,
         daemon_chroot,
@@ -622,6 +623,12 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
             Arc::new(Vec::new())
         };
 
+    // The async accept path carries the same trust gate as the sync one: a
+    // PROXY header is read only from a listed trusted proxy, and an enabled
+    // feature with no list warns once at startup (clientserver.c:1747-1756).
+    let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
+    warn_if_proxy_protocol_trusts_nobody(&proxy_policy, log_sink.as_ref());
+
     let context = ConnectionContext::new(
         modules,
         Arc::new(motd_lines),
@@ -629,7 +636,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         client_socket_options,
         bandwidth_limit,
         reverse_lookup,
-        proxy_protocol,
+        proxy_policy,
     );
 
     let bind_addr = std::net::SocketAddr::new(bind_address, port);

@@ -494,6 +494,25 @@ fn apply_global_directive(
 
             store_global_directive(&mut state.proxy_protocol, parsed, canonical, line_number);
         }
+        "proxyprotocolhosts" => {
+            // upstream: access.c:300-306 `allow_proxy_protocol_peer()` reads
+            // the list with `if (!list || !*list) return 0;`, so an empty
+            // value is legal config that trusts nobody. `parse_host_list`
+            // rejects an empty list for `hosts allow`/`hosts deny`, where
+            // emptiness really is a mistake; here it is upstream's default.
+            let patterns = if value.trim().is_empty() {
+                Vec::new()
+            } else {
+                parse_host_list(value, path, line_number, "proxy protocol hosts")?
+            };
+
+            store_global_directive(
+                &mut state.proxy_protocol_hosts,
+                patterns,
+                canonical,
+                line_number,
+            );
+        }
         "daemonchroot" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {

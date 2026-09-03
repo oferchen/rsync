@@ -23,7 +23,7 @@ struct ConnectionContext {
     client_socket_options: Arc<Vec<SocketOption>>,
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
-    proxy_protocol: bool,
+    proxy_policy: ProxyProtocolPolicy,
 }
 
 impl ConnectionContext {
@@ -37,7 +37,7 @@ impl ConnectionContext {
         client_socket_options: Arc<Vec<SocketOption>>,
         bandwidth_limit: Option<NonZeroU64>,
         reverse_lookup: bool,
-        proxy_protocol: bool,
+        proxy_policy: ProxyProtocolPolicy,
     ) -> Self {
         Self {
             modules,
@@ -46,7 +46,7 @@ impl ConnectionContext {
             client_socket_options,
             bandwidth_limit,
             reverse_lookup,
-            proxy_protocol,
+            proxy_policy,
         }
     }
 
@@ -79,7 +79,7 @@ impl ConnectionContext {
                     daemon_limit: self.bandwidth_limit,
                     log_sink: log_for_worker.clone(),
                     reverse_lookup: self.reverse_lookup,
-                    proxy_protocol: self.proxy_protocol,
+                    proxy_policy: self.proxy_policy.clone(),
                 },
             )
         }));

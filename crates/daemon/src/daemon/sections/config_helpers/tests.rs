@@ -622,4 +622,91 @@ mod config_helpers_tests {
         assert!(pattern.matches("www.example.com"));
         assert!(!pattern.matches("example.com"));
     }
+
+    fn trusted_proxy_policy(tokens: &[&str]) -> ProxyProtocolPolicy {
+        let patterns = tokens
+            .iter()
+            .map(|token| HostPattern::parse(token).expect("valid trusted-proxy token"))
+            .collect();
+        ProxyProtocolPolicy::new(true, patterns)
+    }
+
+    #[test]
+    fn an_unlisted_direct_peer_may_not_supply_a_proxy_header() {
+        let policy = trusted_proxy_policy(&["10.0.0.1"]);
+
+        assert_eq!(
+            policy.decide("127.0.0.1".parse().unwrap()),
+            ProxyHeaderDecision::Untrusted
+        );
+    }
+
+    #[test]
+    fn a_listed_trusted_proxy_may_supply_a_proxy_header() {
+        let policy = trusted_proxy_policy(&["10.0.0.1"]);
+
+        assert_eq!(
+            policy.decide("10.0.0.1".parse().unwrap()),
+            ProxyHeaderDecision::Trusted
+        );
+    }
+
+    #[test]
+    fn proxy_protocol_with_no_trusted_hosts_rejects_every_peer() {
+        // upstream: access.c:302-303 `if (!list || !*list) return 0;` - the
+        // empty list is fail-closed, and clientserver.c:1750 warns about it
+        // precisely because it is silent otherwise.
+        let policy = ProxyProtocolPolicy::new(true, Vec::new());
+
+        assert!(policy.rejects_every_peer());
+        assert_eq!(
+            policy.decide("10.0.0.1".parse().unwrap()),
+            ProxyHeaderDecision::Untrusted
+        );
+    }
+
+    #[test]
+    fn the_gate_is_inert_when_proxy_protocol_is_off() {
+        // The availability half: with the feature off no header is expected,
+        // so the trust gate must not refuse anyone. Upstream reaches
+        // `proxy_peer_allowed()` only inside `if (lp_proxy_protocol())`
+        // (clientserver.c:1443-1444).
+        let policy = ProxyProtocolPolicy::new(false, Vec::new());
+
+        assert!(!policy.rejects_every_peer());
+        assert_eq!(
+            policy.decide("203.0.113.9".parse().unwrap()),
+            ProxyHeaderDecision::NotRequired
+        );
+    }
+
+    #[test]
+    fn a_cidr_trusted_proxy_token_admits_its_range_and_nothing_else() {
+        let policy = trusted_proxy_policy(&["10.0.0.0/24"]);
+
+        assert_eq!(
+            policy.decide("10.0.0.7".parse().unwrap()),
+            ProxyHeaderDecision::Trusted
+        );
+        assert_eq!(
+            policy.decide("10.0.1.7".parse().unwrap()),
+            ProxyHeaderDecision::Untrusted
+        );
+    }
+
+    #[test]
+    fn a_hostname_trusted_proxy_token_matches_no_real_peer() {
+        // upstream: access.c:302 sets `allow_forward_dns = 0` and
+        // clientserver.c:1391-1393 passes the `UNDETERMINED` sentinel rather
+        // than a resolved name, so `match_hostname` can only ever compare a
+        // token against that sentinel. A name-based trusted-proxy token is
+        // therefore inert - and oc must reproduce that rather than resolve,
+        // or the gate would consult DNS where upstream deliberately does not.
+        let policy = trusted_proxy_policy(&["proxy.example.com"]);
+
+        assert_eq!(
+            policy.decide("10.0.0.1".parse().unwrap()),
+            ProxyHeaderDecision::Untrusted
+        );
+    }
 }

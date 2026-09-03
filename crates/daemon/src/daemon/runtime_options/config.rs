@@ -125,6 +125,10 @@ impl RuntimeOptions {
             self.proxy_protocol = enabled;
         }
 
+        if let Some((patterns, _origin)) = parsed.proxy_protocol_hosts {
+            self.proxy_protocol_hosts = patterns;
+        }
+
         if let Some((chroot_path, _origin)) = parsed.daemon_chroot {
             self.daemon_chroot = Some(chroot_path);
         }
