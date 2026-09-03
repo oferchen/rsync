@@ -129,10 +129,10 @@ proto-msg-info-assert fail
 proto-parent-ndx-empty-dirflist pass
 proto-sender-selftest fail
 proto-subflist-freed fail
-proxy-connect-request-too-long fail
+proxy-connect-request-too-long pass
 proxy-host-crlf pass
 proxy-protocol-trusted-peer fail
-proxy-response-header-too-long fail
+proxy-response-header-too-long pass
 proxy-response-line-too-long pass
 readonly-partial-abort-mode-regression pass
 recv-discard-nullderef pass
