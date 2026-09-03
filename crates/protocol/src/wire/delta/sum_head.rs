@@ -68,15 +68,34 @@ pub enum SumHeadError {
         count: i32,
     },
 
-    /// The block length is negative, past [`MAX_BLOCK_SIZE`], or zero while
-    /// blocks are advertised - which would make every block empty.
+    /// The block length is negative or past [`MAX_BLOCK_SIZE`].
     ///
-    /// upstream: `io.c:2050-2054`.
+    /// upstream: `io.c:2219-2223` - `Invalid block length %ld`.
     #[error("invalid block length {blength}")]
     InvalidBlockLength {
         /// The rejected block length.
         blength: i32,
     },
+
+    /// Blocks are advertised while the block length is zero, which would make
+    /// every block empty.
+    ///
+    /// upstream: `io.c:2224-2228` - a SECOND, separately worded guard that
+    /// runs only after the range check above has passed:
+    ///
+    /// ```c
+    /// if (sum->count && sum->blength == 0) {
+    ///         rprintf(FERROR, "Invalid zero block length [%s]\n", who_am_i());
+    ///         exit_cleanup(RERR_PROTOCOL);
+    /// }
+    /// ```
+    ///
+    /// The wording is upstream's verbatim and is load-bearing: the 3.5.0
+    /// `checksum-zero-blocklen` cell greps the sender's output for this exact
+    /// literal, so folding the case back into [`Self::InvalidBlockLength`]
+    /// would refuse the header correctly and still fail the cell.
+    #[error("Invalid zero block length")]
+    ZeroBlockLength,
 
     /// The strong-sum width is negative or past [`MAX_STRONG_SUM_LEN`].
     ///
@@ -182,12 +201,20 @@ impl SumHead {
                 count: self.count as i32,
             });
         }
-        // upstream: io.c:2050-2054 - blength in (0, MAX_BLOCK_SIZE]; a zero
-        // block length with blocks advertised would make every block empty.
-        if self.blength > MAX_BLOCK_SIZE || (self.count > 0 && self.blength == 0) {
+        // upstream: io.c:2219-2223 - blength in [0, max_blength]. This is the
+        // RANGE check only; upstream words the zero case separately below and
+        // reaches it only once the range check has passed, so the two must
+        // stay ordered and must not be folded into one condition.
+        if self.blength > MAX_BLOCK_SIZE {
             return Err(SumHeadError::InvalidBlockLength {
                 blength: self.blength as i32,
             });
+        }
+        // upstream: io.c:2224-2228 - `if (sum->count && sum->blength == 0)`,
+        // reported as "Invalid zero block length". Blocks advertised over a
+        // zero-length block would make every block empty.
+        if self.count > 0 && self.blength == 0 {
+            return Err(SumHeadError::ZeroBlockLength);
         }
         // upstream: io.c:2056-2060 - s2length in [0, xfer_sum_len].
         if self.s2length > MAX_STRONG_SUM_LEN {
@@ -474,15 +501,55 @@ mod tests {
 
     /// Blocks without a block length would each be empty, so the geometry is
     /// refused at both construction and decode.
+    ///
+    /// The rejection must be [`SumHeadError::ZeroBlockLength`], not the
+    /// neighbouring range check: upstream words these two cases differently
+    /// (`io.c:2219-2228`) and the 3.5.0 `checksum-zero-blocklen` cell greps the
+    /// sender's output for `Invalid zero block length` specifically.
     #[test]
     fn blocks_without_a_block_length_are_malformed() {
         assert_eq!(
             SumHead::with_blocks(147, 0, 2, 0),
-            Err(SumHeadError::InvalidBlockLength { blength: 0 })
+            Err(SumHeadError::ZeroBlockLength)
         );
         let mut bytes = [0u8; SumHead::WIRE_LEN];
         bytes[0] = 0x93;
-        assert!(SumHead::decode(bytes).is_err());
+        assert_eq!(SumHead::decode(bytes), Err(SumHeadError::ZeroBlockLength));
+    }
+
+    /// The rendered text is upstream's verbatim literal.
+    ///
+    /// Pinning the geometry alone would not catch a reworded message, and the
+    /// wording is the whole reason the testsuite cell can observe the guard:
+    /// `checksum-zero-blocklen_test.py` fails the sender if the refusal does
+    /// not carry this string, even when the header is correctly rejected.
+    ///
+    /// upstream: `io.c:2226` - `rprintf(FERROR, "Invalid zero block length
+    /// [%s]\n", who_am_i())`. oc carries no `who_am_i()` suffix; the cell
+    /// tests containment, so the bare literal satisfies it.
+    #[test]
+    fn the_zero_block_length_refusal_carries_upstreams_literal() {
+        let err = SumHead::with_blocks(1, 0, 2, 0).expect_err("count>0 blength=0 must be refused");
+        assert_eq!(err.to_string(), "Invalid zero block length");
+
+        let wrapped = io::Error::from(err).to_string();
+        assert!(
+            wrapped.contains("Invalid zero block length"),
+            "the io::Error the sender surfaces must still carry the literal, got: {wrapped}",
+        );
+    }
+
+    /// Non-vacuity companion: the sibling RANGE check keeps its own distinct
+    /// wording, so the test above cannot pass by both arms collapsing onto one
+    /// message.
+    #[test]
+    fn the_range_check_keeps_its_own_distinct_wording() {
+        let err = SumHead::with_blocks(1, MAX_BLOCK_SIZE + 1, 2, 0)
+            .expect_err("an over-range blength must be refused");
+        assert_eq!(
+            err.to_string(),
+            format!("invalid block length {}", (MAX_BLOCK_SIZE + 1) as i32),
+        );
     }
 
     /// Negative fields arrive as huge unsigned values and must be rejected by
