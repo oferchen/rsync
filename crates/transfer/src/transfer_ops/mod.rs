@@ -351,6 +351,20 @@ fn read_response_header<R: Read>(
         )
     })?;
 
+    // upstream: receiver.c:871-881 - `recv_files()` tests `F_IS_ACTIVE` on the
+    // entry the peer's index resolves to, before doing anything else with it. A
+    // peer that sent a duplicate name had one of the two slots `clear_file()`d
+    // by `flist_sort_and_clean()`; naming that slot again yields an entry with
+    // no name, which upstream would deref. This gate sits ABOVE the ordering
+    // comparison so the specific fault wins over the generic one: a cleared
+    // index is reported as cleared, not as "echoed the wrong NDX".
+    if !flist_sink.ndx_is_active(echoed_ndx) {
+        return Err(crate::receiver::ndx_stream::cleared_file_index(
+            echoed_ndx,
+            flist_sink.role(),
+        ));
+    }
+
     // upstream: sender.c emits responses in NDX order; out-of-order is a protocol violation.
     if echoed_ndx != expected_ndx {
         return Err(io::Error::new(
@@ -742,6 +756,133 @@ mod tests {
                 .windows(2)
                 .any(|w| w == [0x00, 0x98] || w == [0x00, 0x90]),
             "FNAME request must not set ITEM_XNAME_FOLLOWS: {bytes:02x?}"
+        );
+    }
+
+    /// Builds a protocol-31 receiver whose file list holds `names`, with the
+    /// entry at `cleared_ndx` (if any) turned into the tombstone
+    /// `flist_sort_and_clean()` leaves behind for a dropped duplicate.
+    fn receiver_with_file_list(
+        names: &[&str],
+        cleared_ndx: Option<usize>,
+    ) -> crate::receiver::ReceiverContext {
+        use crate::config::ServerConfig;
+        use crate::handshake::HandshakeResult;
+        use protocol::flist::FileEntry;
+
+        let protocol = ProtocolVersion::from_supported(31).expect("31 is supported");
+        let handshake = HandshakeResult {
+            protocol,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: crate::role::ServerRole::Receiver,
+            protocol,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        let mut entries: Vec<FileEntry> = names
+            .iter()
+            .map(|name| FileEntry::new_file(std::path::PathBuf::from(*name), 0, 0o100644))
+            .collect();
+        if let Some(ndx) = cleared_ndx {
+            entries[ndx].tombstone();
+        }
+        let mut ctx = crate::receiver::ReceiverContext::new_for_test(&handshake, config);
+        ctx.set_file_list_for_test(entries);
+        ctx
+    }
+
+    /// Encodes one per-file echo (NDX + iflags + an all-zero `sum_head`) as the
+    /// sender writes it, so `read_response_header` reads a complete frame.
+    fn echo_bytes(ndx: i32) -> Vec<u8> {
+        use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+        let mut wire = Vec::new();
+        let mut codec = MonotonicNdxWriter::new(31);
+        codec.write_ndx(&mut wire, ndx).expect("ndx encodes");
+        wire.extend_from_slice(&0x8000_u16.to_le_bytes());
+        crate::receiver::SumHead::new(0, 0, 0, 0)
+            .write(&mut wire)
+            .expect("sum_head encodes");
+        wire
+    }
+
+    /// Drives `read_response_header` over `wire` with `expected_ndx` outstanding.
+    fn read_header_for(
+        receiver: &mut crate::receiver::ReceiverContext,
+        wire: Vec<u8>,
+        expected_ndx: i32,
+    ) -> io::Result<ResponseHeader> {
+        use protocol::codec::MonotonicNdxWriter;
+        let config = iflags_request_config();
+        let ctx = ResponseContext {
+            config: &config,
+            #[cfg(unix)]
+            sandbox: None,
+            #[cfg(unix)]
+            dest_dir: None,
+        };
+        let mut reader = crate::reader::ServerReader::new_plain(std::io::Cursor::new(wire));
+        let mut ndx_codec = MonotonicNdxWriter::new(31);
+        let pending = crate::pipeline::PendingTransfer::new_full_transfer(
+            expected_ndx,
+            std::path::PathBuf::from("data.txt"),
+            0,
+        );
+        read_response_header(&mut reader, &mut ndx_codec, pending, &ctx, receiver)
+    }
+
+    /// A sender that names a CLEARED file-list slot is refused with upstream's
+    /// wording, even though the echo arrives in the expected order.
+    ///
+    /// WHY: a peer that sent a duplicate name had one of the two slots
+    /// `clear_file()`d by `flist_sort_and_clean()`. The slot stays indexable, so
+    /// the index resolves, but the entry has no name - upstream refuses rather
+    /// than dereferencing it. Keeping `echoed_ndx == expected_ndx` here is the
+    /// point: it isolates the new guard from the pre-existing ordering check, so
+    /// a pass cannot be produced by the wrong error.
+    ///
+    /// upstream: receiver.c:871-881 - `recv_files()` `!F_IS_ACTIVE(file)`.
+    #[test]
+    fn cleared_file_index_is_refused_with_upstream_wording() {
+        let mut receiver = receiver_with_file_list(&["a.txt", "dup.txt"], Some(1));
+        let Err(err) = read_header_for(&mut receiver, echo_bytes(1), 1) else {
+            panic!("a cleared slot must be refused");
+        };
+        assert!(
+            err.to_string()
+                .contains("refusing transfer of cleared file index 1"),
+            "unexpected diagnostic: {err}"
+        );
+    }
+
+    /// NON-VACUITY COMPANION: a LIVE entry echoed out of order still produces the
+    /// ordering error, not the cleared-entry one.
+    ///
+    /// Without this, the guard could be written to reject every mismatched echo
+    /// and the test above would still pass - the fixture alone would not prove
+    /// that "cleared" is what is being detected.
+    #[test]
+    fn live_entry_echoed_out_of_order_still_reports_the_ordering_violation() {
+        let mut receiver = receiver_with_file_list(&["a.txt", "b.txt"], None);
+        let Err(err) = read_header_for(&mut receiver, echo_bytes(1), 0) else {
+            panic!("an out-of-order echo must be refused");
+        };
+        let text = err.to_string();
+        assert!(
+            text.contains("sender echoed NDX 1 but expected 0"),
+            "unexpected diagnostic: {text}"
+        );
+        assert!(
+            !text.contains("cleared file index"),
+            "the ordering fault must not be reported as a cleared entry: {text}"
         );
     }
 }
