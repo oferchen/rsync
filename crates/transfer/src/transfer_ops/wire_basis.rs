@@ -13,7 +13,7 @@
 //! basedir comes from the entry's own directory or from `basis_dir[]`. Honouring
 //! them is what makes oc's receiver behave like upstream's against any peer -
 //! and the reason the xname is sanitized before it ever reaches here
-//! ([`crate::receiver::wire`], `rsync.c:407-427`).
+//! (`receiver::wire::sanitize_basis_xname`, `rsync.c:407-427`).
 
 use std::io;
 use std::path::{Path, PathBuf};
