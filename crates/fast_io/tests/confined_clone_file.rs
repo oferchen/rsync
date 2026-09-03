@@ -22,6 +22,14 @@ use std::fs;
 use fast_io::CloneAttempt;
 use tempfile::TempDir;
 
+/// `confined_clone_file` takes an already-OPEN source descriptor, so the caller
+/// owns the source-side confinement decision and cannot have it re-resolved by
+/// the libc resolver behind its back. These tests therefore supply the
+/// descriptor the caller's confined open would have produced.
+fn open_source(path: &std::path::Path) -> fs::File {
+    fs::File::open(path).expect("open source")
+}
+
 /// Non-vacuity companion: with no symlink in play the call reaches the platform
 /// and reports a real outcome rather than failing. Without this, the refusal
 /// tests below would also pass if `confined_clone_file` errored for every input.
@@ -33,7 +41,9 @@ fn confined_clone_file_reaches_the_platform_for_a_plain_destination() {
     fs::write(&src, b"payload").expect("write source");
     let dest = root.path().join("sub").join("f0");
 
-    match fast_io::confined_clone_file(root.path(), &src, &dest).expect("no confinement refusal") {
+    match fast_io::confined_clone_file(root.path(), &open_source(&src), &dest)
+        .expect("no confinement refusal")
+    {
         CloneAttempt::Cloned => {
             assert_eq!(fs::read(&dest).expect("read clone"), b"payload");
         }
@@ -58,8 +68,9 @@ fn confined_clone_file_follows_a_relative_in_tree_parent_symlink() {
     let src = root.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
 
-    let outcome = fast_io::confined_clone_file(root.path(), &src, &root.path().join("sub/f0"))
-        .expect("a relative in-tree parent symlink must not be refused");
+    let outcome =
+        fast_io::confined_clone_file(root.path(), &open_source(&src), &root.path().join("sub/f0"))
+            .expect("a relative in-tree parent symlink must not be refused");
 
     if outcome == CloneAttempt::Cloned {
         assert_eq!(
@@ -85,13 +96,69 @@ fn confined_clone_file_refuses_a_parent_symlinked_outside() {
     let src = base.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
 
-    let err = fast_io::confined_clone_file(&root, &src, &root.join("sub").join("f0"))
+    let err = fast_io::confined_clone_file(&root, &open_source(&src), &root.join("sub").join("f0"))
         .expect_err("a symlinked destination parent must be refused, not reported Unsupported");
 
     assert!(
         !outside.join("f0").exists(),
         "the clone escaped the destination tree: {err}"
     );
+}
+
+/// The clone must read the descriptor it was HANDED, never re-resolve the
+/// source path. This is the sender TOCTOU the upstream `symlink-race-source`
+/// cell catches: the caller's confined open is what decides the source, and a
+/// re-open by path afterwards can be pointed anywhere in between - including
+/// outside the transfer root.
+///
+/// Taking `&File` makes the escape unspellable, so this is a REVERSION GUARD:
+/// restoring the `&Path` signature and the `File::open(src)` inside `clone_at`
+/// makes it read `OUTSIDE-SECRET` and fail.
+///
+/// upstream: `rsync-3.5.0/syscall.c:2896-2961` - the confined walk refuses an
+/// absolute symlink target, and that refusal is worthless if a later syscall
+/// resolves the same name again with the libc resolver.
+#[test]
+fn confined_clone_file_clones_the_handed_descriptor_not_the_path() {
+    let base = TempDir::new().expect("tempdir");
+    let root = base.path().join("dest");
+    let outside = base.path().join("outside");
+    fs::create_dir(&root).expect("mkdir dest");
+    fs::create_dir(&outside).expect("mkdir outside");
+
+    let src = base.path().join("payload.bin");
+    fs::write(&src, b"IN-TREE").expect("write source");
+    let source = open_source(&src);
+
+    // The window opens here: the descriptor is already resolved, and the name
+    // it came from now points at content outside the tree.
+    fs::remove_file(&src).expect("unlink source");
+    let secret = outside.join("secret.bin");
+    fs::write(&secret, b"OUTSIDE-SECRET").expect("write secret");
+    std::os::unix::fs::symlink(&secret, &src).expect("plant symlink");
+
+    // Non-vacuity control: the fixture only discriminates while the NAME and
+    // the DESCRIPTOR disagree. Reading the name must reach the outside secret;
+    // if the plant silently failed, every assertion below would be empty.
+    assert_eq!(
+        fs::read(&src).expect("read through the planted name"),
+        b"OUTSIDE-SECRET",
+        "the fixture is inert - the source name still resolves in-tree"
+    );
+
+    let dest = root.join("f0");
+    match fast_io::confined_clone_file(&root, &source, &dest).expect("no confinement refusal") {
+        CloneAttempt::Cloned => assert_eq!(
+            fs::read(&dest).expect("read clone"),
+            b"IN-TREE",
+            "the clone re-resolved the source NAME and copied content from \
+             outside the transfer root"
+        ),
+        CloneAttempt::Unsupported => assert!(
+            !dest.exists(),
+            "an Unsupported result must leave nothing behind"
+        ),
+    }
 }
 
 /// An existing destination loses the race rather than being replaced, matching
@@ -104,7 +171,7 @@ fn confined_clone_file_refuses_an_existing_destination() {
     let dest = root.path().join("f0");
     fs::write(&dest, b"original").expect("seed destination");
 
-    let result = fast_io::confined_clone_file(root.path(), &src, &dest);
+    let result = fast_io::confined_clone_file(root.path(), &open_source(&src), &dest);
 
     assert!(
         !matches!(result, Ok(CloneAttempt::Cloned)),

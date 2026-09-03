@@ -506,11 +506,26 @@ pub enum CloneAttempt {
 ///   fall back to a path-based copy.
 /// - `EEXIST` when `dest` already exists - the same race semantics `O_EXCL`
 ///   gives the plain create.
-/// - Any other error from opening `src` or anchoring `dest`'s parent.
+/// - Any other error from anchoring `dest`'s parent.
 ///
 /// A filesystem that simply cannot reflink reports `Ok(CloneAttempt::Unsupported)`,
 /// never an error.
-pub fn confined_clone_file(root: &Path, src: &Path, dest: &Path) -> io::Result<CloneAttempt> {
+///
+/// # Source confinement
+///
+/// `source` arrives as an ALREADY-OPEN descriptor, and that is load-bearing:
+/// the caller's confined open is what resolved it, so the source side inherits
+/// exactly the walk `open_source_confined` performs. Taking a `&Path` here
+/// instead would make this function re-resolve the source with the libc
+/// resolver, which follows every parent component - the caller's confinement
+/// would be bypassed rather than inherited, and a parent flipped to a symlink
+/// pointing outside the transfer root would be followed. That is not
+/// hypothetical: it is the defect this signature exists to prevent.
+pub fn confined_clone_file(
+    root: &Path,
+    source: &std::fs::File,
+    dest: &Path,
+) -> io::Result<CloneAttempt> {
     use super::rename::anchor_confined_endpoint;
 
     let endpoint = anchor_confined_endpoint(root, dest)?;
@@ -518,7 +533,7 @@ pub fn confined_clone_file(root: &Path, src: &Path, dest: &Path) -> io::Result<C
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
-    clone_at(src, dirfd, &c_name)
+    clone_at(source, dirfd, &c_name)
 }
 
 /// macOS: `fclonefileat(2)` publishes the clone under the anchored dirfd.
@@ -528,9 +543,12 @@ pub fn confined_clone_file(root: &Path, src: &Path, dest: &Path) -> io::Result<C
 /// whether the source may be a symlink is the source-confinement decision made
 /// by the caller before it opens the file.
 #[cfg(target_os = "macos")]
-fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
-    let source = std::fs::File::open(src)?;
-    // SAFETY: `source` is owned here and outlives the call; `dirfd` is the
+fn clone_at(
+    source: &std::fs::File,
+    dirfd: BorrowedFd<'_>,
+    name: &CString,
+) -> io::Result<CloneAttempt> {
+    // SAFETY: `source` is borrowed for the call and outlives it; `dirfd` is the
     // walked parent held by the caller's endpoint; `name` is a valid
     // NUL-terminated string borrowed for the duration of the call.
     #[allow(unsafe_code)]
@@ -557,10 +575,13 @@ fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<Clo
 /// behind - the caller is entitled to treat `Unsupported` as "nothing was
 /// created" and fall through to a data copy that expects to create the file.
 #[cfg(target_os = "linux")]
-fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
+fn clone_at(
+    source: &std::fs::File,
+    dirfd: BorrowedFd<'_>,
+    name: &CString,
+) -> io::Result<CloneAttempt> {
     use std::os::fd::FromRawFd;
 
-    let source = std::fs::File::open(src)?;
     let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // SAFETY: `dirfd` outlives the call and `name` is a valid NUL-terminated
     // string; the returned descriptor is owned here and closed exactly once by
