@@ -122,7 +122,7 @@ operator-path-traversal-partial-dir-daemon pass
 password-file-symlink pass
 peer-legacy-implied-delete-scope pass
 proto-cleared-dirflist fail
-proto-cleared-ndx fail
+proto-cleared-ndx pass
 proto-hlink-flag-oob skip
 proto-hlink-gnum fail
 proto-msg-info-assert fail

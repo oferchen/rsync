@@ -114,6 +114,26 @@ pub(crate) trait FlistMarkerSink {
     /// on rejection (`rsync.c:344-350`).
     fn last_file_ndx(&self) -> i32;
 
+    /// Whether `ndx` names a *live* entry - upstream's `F_IS_ACTIVE(file)`
+    /// test.
+    ///
+    /// A peer that sends duplicate file-list entries gets one of them
+    /// `clear_file()`d by `flist_sort_and_clean()`, which zeroes the basename
+    /// and mode but leaves the slot indexable. Upstream refuses a transfer-phase
+    /// index naming such a slot rather than dereferencing the cleared struct,
+    /// because `f_name()` on it returns NULL.
+    ///
+    /// This is deliberately **not** defaulted: only a sink that owns a file list
+    /// can answer, and a blanket `true` default would silently carry the guard
+    /// past every future sink that forgets to override it. Sinks with no list of
+    /// their own state that explicitly.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:871-881` - `recv_files()` refuses the inactive entry.
+    /// - `sender.c:558-563` - `send_files()` refuses it identically.
+    fn ndx_is_active(&self, ndx: i32) -> bool;
+
     /// Captures [`Self::FrameMark`] before the NDX is read.
     fn begin_frame(&mut self) -> Self::FrameMark;
 
@@ -199,6 +219,13 @@ impl FlistMarkerSink for NoLazyFlist {
         self.last_file_ndx
     }
 
+    fn ndx_is_active(&self, _ndx: i32) -> bool {
+        // This sink carries a bound, not a list, so it cannot see a cleared
+        // slot. Reporting every index active leaves the decision to the range
+        // guard above, which is the only one it has the state to make.
+        true
+    }
+
     fn begin_frame(&mut self) {}
 
     fn on_del_stats(&mut self, _stats: &DeleteStats) -> io::Result<()> {
@@ -244,6 +271,26 @@ pub(crate) enum NdxFrame {
 pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
         "Invalid file index: {ndx} ({NDX_DONE} - {last}) {}{}",
+        crate::role_trailer::error_location!(),
+        role.trailer()
+    ))
+}
+
+/// Builds upstream's cleared-entry rejection.
+///
+/// Upstream prints the bare `rsync: refusing transfer of cleared file index %d`
+/// at both sites; oc appends its source location and the `[role=VERSION]`
+/// trailer that stands in for `who_am_i()`, as every other diagnostic in this
+/// module does. Tagged as a protocol violation so the exit-code mapper yields
+/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at both sites.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:871-881` - `recv_files()`.
+/// - `sender.c:558-563` - `send_files()`.
+pub(crate) fn cleared_file_index(ndx: i32, role: StreamRole) -> io::Error {
+    protocol::protocol_violation(format!(
+        "rsync: refusing transfer of cleared file index {ndx} {}{}",
         crate::role_trailer::error_location!(),
         role.trailer()
     ))
@@ -426,6 +473,16 @@ impl FlistMarkerSink for ReceiverContext {
             .expect("initial segment always exists");
         let used = self.file_list.len().saturating_sub(flat_start) as i32;
         ndx_start + used - 1
+    }
+
+    fn ndx_is_active(&self, ndx: i32) -> bool {
+        // upstream: receiver.c:871-881 - `recv_files()` tests F_IS_ACTIVE on
+        // the entry the peer's index resolves to. An NDX outside every segment
+        // is a range fault, not a cleared entry, so it is deferred to the guard
+        // that owns that diagnostic rather than reported as cleared here.
+        self.wire_to_flat_ndx(ndx)
+            .and_then(|flat| self.file_list.get(flat))
+            .is_none_or(protocol::flist::FileEntry::is_active)
     }
 
     fn begin_frame(&mut self) -> u64 {

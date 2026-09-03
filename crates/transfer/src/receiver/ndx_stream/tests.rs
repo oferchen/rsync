@@ -265,6 +265,12 @@ fn sender_drains_del_stats_and_receives_the_counters() {
             9
         }
 
+        fn ndx_is_active(&self, _ndx: i32) -> bool {
+            // No file list here; the cleared-entry test is exercised by the
+            // sinks that own one.
+            true
+        }
+
         fn begin_frame(&mut self) {}
 
         fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {
@@ -380,6 +386,12 @@ fn marker_rejected_by_sender_with_upstream_text() {
 
         fn last_file_ndx(&self) -> i32 {
             5
+        }
+
+        fn ndx_is_active(&self, _ndx: i32) -> bool {
+            // No file list here; the cleared-entry test is exercised by the
+            // sinks that own one.
+            true
         }
 
         fn begin_frame(&mut self) {}

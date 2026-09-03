@@ -636,6 +636,17 @@ impl ReceiverContext {
         Self::new(handshake, config, pipeline)
     }
 
+    /// Installs `entries` as the receiver's initial file-list segment.
+    ///
+    /// `file_list` is `pub(in crate::receiver)`, so the transfer-phase drivers
+    /// that consume this context as a [`FlistMarkerSink`](super::ndx_stream::FlistMarkerSink)
+    /// cannot build one from their own test modules. Exposed at crate scope so
+    /// they can, without widening the field itself.
+    #[cfg(test)]
+    pub(crate) fn set_file_list_for_test(&mut self, entries: Vec<FileEntry>) {
+        self.file_list = entries;
+    }
+
     /// Advances the pipeline FSM to `DeltaTransfer` for tests that need to
     /// exercise [`finalize_transfer`](Self::finalize_transfer) directly.
     ///
