@@ -53,6 +53,22 @@ on:
           contexts they declare - are unchanged.
         type: string
         default: 'pipe'
+      legacy_oracles:
+        description: >-
+          `on` builds the historical rsync binaries the 3.5.0 testsuite looks
+          for in old_versions/ (see tools/ci/run_upstream_testsuite.sh,
+          ensure_legacy_oracles) so the tests that name a release assert
+          against that release. `off` (default) builds none, and the harness
+          NAMES every test that will therefore assert against a static fallback
+          instead - the degradation stays visible either way.
+
+          Off by default because putting those binaries on disk un-skips
+          daemon-max-alloc-zero, i.e. it MOVES rows in this leg's
+          --expect-result manifest. Manifest rows may only be re-baselined from
+          a measured run, so a leg opts in when someone is ready to measure the
+          move, never as a side effect of an unrelated change.
+        type: string
+        default: 'off'
 
 permissions:
   contents: read
@@ -86,6 +102,7 @@ jobs:
       TRANSPORT: ${{ inputs.transport }}
       USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
       DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
+      LEGACY_ORACLES: ${{ inputs.legacy_oracles }}
 
     steps:
       - name: Validate transport input
@@ -128,11 +145,16 @@ jobs:
 
       - name: Cache upstream rsync source
         id: cache-upstream
+        # The cached tree also carries old_versions/rsync_<ver>, the legacy
+        # daemon oracle the harness builds for the tests that assert against a
+        # real old rsync rather than a static prediction of one - so
+        # build_old_rsync_oracle.sh is part of the key: change how the oracle is
+        # built and the tree holding it must be rebuilt, not restored.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
-          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', 'tools/ci/build_old_rsync_oracle.sh') }}-${{ runner.os }}
 
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
@@ -265,6 +287,7 @@ jobs:
       TRANSPORT: ${{ inputs.transport }}
       USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
       DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || 'no' }}
+      LEGACY_ORACLES: ${{ inputs.legacy_oracles }}
 
     steps:
       - name: Validate transport input
@@ -304,11 +327,16 @@ jobs:
 
       - name: Cache upstream rsync source
         id: cache-upstream
+        # The cached tree also carries old_versions/rsync_<ver>, the legacy
+        # daemon oracle the harness builds for the tests that assert against a
+        # real old rsync rather than a static prediction of one - so
+        # build_old_rsync_oracle.sh is part of the key: change how the oracle is
+        # built and the tree holding it must be rebuilt, not restored.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
-          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', 'tools/ci/build_old_rsync_oracle.sh') }}-${{ runner.os }}
 
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
@@ -336,6 +364,7 @@ jobs:
             "EMIT_EXPECT_RESULT=${EMIT_EXPECT_RESULT:-}" \
             "USE_TCP=${USE_TCP:-no}" \
             "DAEMON_TESTS_ONLY=${DAEMON_TESTS_ONLY:-no}" \
+            "LEGACY_ORACLES=${LEGACY_ORACLES:-off}" \
             "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
             "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \

@@ -389,6 +389,7 @@ These scenarios produce different behavior between oc-rsync and upstream rsync:
 | `tools/ci/run_interop.sh` | Primary CI interop runner (11K+ lines, all versions/features) |
 | `tools/ci/run_interop_smoke.sh` | Portable smoke harness (macOS, Windows) |
 | `tools/ci/run_upstream_testsuite.sh` | Upstream testsuite runner against oc-rsync |
+| `tools/ci/build_old_rsync_oracle.sh` | Builds a historical rsync release into an upstream tree's `old_versions/`, for the tests that assert against a real old daemon |
 | `tools/ci/known_failures.conf` | Known failure registry for interop suite |
 | `tools/ci/upstream_testsuite_known_failures.conf` | Known failure registry for upstream testsuite |
 
@@ -413,3 +414,16 @@ bash tools/ci/run_upstream_testsuite.sh
 
 Upstream rsync source is downloaded to `target/interop/upstream-src/`. If
 already present, the scripts reuse the cached build.
+
+Some upstream tests take their expected value from a REAL old rsync in the
+tree's `old_versions/` directory and fall back to a static prediction of it when
+the binary is absent - which the release tarball always is, since it ships that
+directory's README and build script but no binaries. `LEGACY_ORACLES=on` makes
+`run_upstream_testsuite.sh` build what those tests ask for; off (the default) it
+names each test that will therefore assert against its fallback. Which releases
+and which tests is not listed anywhere - `ensure_legacy_oracles()` reads it out
+of the extracted testsuite, so it cannot drift from what the tests do.
+
+Enabling it on a leg moves that leg's `--expect-result` rows (a test that skips
+for want of the binary starts running), so re-baseline from the run's
+`EMIT_EXPECT_RESULT` artifact rather than editing the manifest by hand.

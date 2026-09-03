@@ -774,6 +774,223 @@ python_suite_available() {
     compgen -G "${upstream_src_dir}/testsuite/*_test.py" >/dev/null 2>&1
 }
 
+# --------------------------------------------------------------------------
+# Legacy-behaviour oracles (upstream's old_versions/ archive).
+#
+# The 3.5.0 suite ships tests that pin a behaviour against a REAL old rsync
+# when one is on disk and degrade when it is not. MEASURED over the 345 tests
+# of the 3.5.0 tarball, three consult the archive from CODE (the rest only
+# mention it in a docstring), and they degrade three different ways:
+#
+#   daemon-symlink-escape-matrix  old_versions/rsync_3.2.7  root + tcp
+#       100 of its 200 cells (`insecure links = yes`) take their expected
+#       value from a live 3.2.7 daemon when the binary is there and from
+#       static_followed(), a hand-written prediction of 3.2.7, when it is not:
+#           want, src = attempt(url_oracle, ...)[0], '327'
+#           want, src = static_followed(...),        'contract'
+#       SILENT: which one ran is printed only on the test's own stdout, and
+#       runtests.py shows that just when a test does NOT pass (3.5.0
+#       runtests.py:621 `show_log = always_log or (result not in (Exit.PASS,
+#       Exit.SKIP, Exit.XFAIL))`). A green leg therefore cannot be read to say
+#       which contract it enforced.
+#
+#   daemon-auth-digest-floor      old_versions/rsync_3.1.3  any leg
+#       SILENT in the same way: `raise SystemExit(0)` drops the md5-downgrade
+#       case and the test still reports PASS.
+#
+#   daemon-max-alloc-zero         old_versions/rsync_3.2.7  any leg
+#       COUNTED: `test_skipped(f"{OLD_CLIENT} not present")`, which lands in
+#       the run's skip column and in the expect manifests. This is the outcome
+#       the other two should have had.
+#
+# The absence is not an edge case, it is every run: upstream ships
+# old_versions/README.md and old_versions/build_static.sh but no binaries -
+# MEASURED on a pristine 3.5.0 extraction, that directory holds exactly those
+# two files - and build_static.sh wants a local rsync git worktree
+# (RSYNC_REPO, default ../rsync.4) that CI does not have.
+#
+# LEGACY_ORACLES=on builds what the reachable consumers ask for, so those cells
+# assert against the release instead of a prediction of it. Off, the same
+# enumeration still runs and every degraded consumer is NAMED, because the one
+# thing worse than a weak assertion is a weak assertion nobody can see.
+#
+# Off by DEFAULT, and per leg: putting a binary in old_versions/ un-skips
+# daemon-max-alloc-zero, i.e. it MOVES expect-manifest rows. Those rows may
+# only be re-baselined from a measured run (EMIT_EXPECT_RESULT), so a leg opts
+# in when someone is ready to measure the move - never as a side effect.
+# --------------------------------------------------------------------------
+
+# on: build every oracle a consumer on this leg can reach. off: build none and
+# report which consumers are running degraded.
+legacy_oracles_mode="${LEGACY_ORACLES:-off}"
+case "$legacy_oracles_mode" in
+    on | off) ;;
+    *)
+        echo "ERROR: LEGACY_ORACLES must be 'on' or 'off', got '${legacy_oracles_mode}'." >&2
+        exit 1
+        ;;
+esac
+
+# Emit a GitHub Actions warning annotation. Same shape as gha_annotate_fail,
+# and a no-op outside GHA. Used where a degradation must be visible without
+# failing the leg.
+gha_annotate_warn() {
+    [[ -z "${GITHUB_ACTIONS:-}" ]] && return 0
+    local title=$1 message=$2
+    local sanitized=${message//$'\n'/ }
+    sanitized=${sanitized//$'\r'/ }
+    sanitized=${sanitized//%/%25}
+    printf '::warning file=tools/ci/run_upstream_testsuite.sh,title=%s::%s\n' \
+        "$title" "$sanitized"
+}
+
+# One TSV row per (oracle version, consuming test): version, test base name,
+# whether that test needs the TCP transport, whether it needs root.
+#
+# DISCOVERED from the tests, never listed here. A second copy of "3.2.7" in
+# this file would drift the moment upstream retargets the oracle, and the drift
+# is exactly the invisible kind: the consumer would degrade to its fallback and
+# keep passing. Reading the version out of the test that stats it makes the two
+# unable to disagree. Same for the preconditions - `require_tcp()` and the
+# `os.geteuid()` gate are the test's own, so a future consumer with different
+# ones is classified by ITS source, not by this leg's assumptions.
+#
+# The scan is over the AST, not the file text. MEASURED: a plain grep for
+# `old_versions` + `rsync_<ver>` over the 3.5.0 testsuite returns 10 files, and
+# 7 of them only say "Cross-version: expected identical against
+# --rsync-bin=old_versions/rsync_3.2.7" in a DOCSTRING - they never stat it. A
+# text scan would build oracles for tests that cannot consume them and, worse,
+# would report those tests as degraded when they are not. Docstrings are
+# excluded explicitly and comments never enter the AST, so what is left is the
+# string literals real code evaluates.
+legacy_oracle_requirements() {
+    (cd "$upstream_src_dir" && python3 - <<'PY'
+import ast
+import glob
+import os
+import re
+import sys
+
+BINARY = re.compile(r'^rsync_(\d+\.\d+(?:\.\d+)?)$')
+
+def code_string_literals(tree):
+    """Every str constant the module evaluates, minus its docstrings."""
+    docstrings = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, 'body', None)
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            docstrings.add(id(body[0].value))
+    return [n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docstrings]
+
+rows = []
+for path in sorted(glob.glob(os.path.join('testsuite', '*_test.py'))):
+    with open(path, encoding='utf-8') as fh:
+        text = fh.read()
+    if 'old_versions' not in text:
+        continue
+    try:
+        tree = ast.parse(text, filename=path)
+    except SyntaxError as exc:
+        sys.exit('%s: cannot parse to find its legacy-oracle use: %s' % (path, exc))
+    literals = code_string_literals(tree)
+    if 'old_versions' not in literals:
+        continue                      # docstring/comment mention only
+    versions = sorted({m.group(1) for m in
+                       (BINARY.match(lit) for lit in literals) if m})
+    if not versions:
+        # The test evaluates 'old_versions' but names no rsync_<version>
+        # literal, so the binary it wants cannot be derived - e.g. it moved to
+        # an f-string. Guessing would build the wrong oracle and the test would
+        # degrade exactly as if none had been built, silently.
+        sys.exit('%s uses old_versions/ but names no rsync_<version> literal; '
+                 'the oracle it wants cannot be derived from its source' % path)
+    needs_tcp = 'yes' if 'require_tcp(' in text else 'no'
+    needs_root = 'yes' if 'geteuid()' in text else 'no'
+    base = os.path.basename(path)[:-len('_test.py')]
+    for version in versions:
+        rows.append('\t'.join((version, base, needs_tcp, needs_root)))
+print('\n'.join(rows))
+PY
+    )
+}
+
+# Put every legacy oracle a test on THIS leg can reach onto disk, or - with
+# LEGACY_ORACLES=off - name the consumers that will run degraded.
+#
+# Scoped to reachable consumers: an oracle no selected test can consult buys
+# nothing, and a build is not free. Each skip is announced with its reason, so
+# "not built" is never confused with "built and unused".
+ensure_legacy_oracles() {
+    local requirements
+    if ! requirements=$(legacy_oracle_requirements); then
+        echo "ERROR: could not enumerate the testsuite's legacy-oracle needs." >&2
+        echo "       Refusing to continue: an unreadable requirement list would" >&2
+        echo "       build nothing and hand every oracle-backed cell to its" >&2
+        echo "       fallback, which is the failure this enumeration exists to" >&2
+        echo "       prevent." >&2
+        exit 1
+    fi
+    if [[ -z "$requirements" ]]; then
+        echo "==> Legacy oracles: no test in this tree consults old_versions/." >&2
+        return 0
+    fi
+
+    local old_versions_dir="${upstream_src_dir}/old_versions"
+    local oracle_workdir="${workspace_root}/target/interop/old-versions-build"
+    local euid=${EUID:-$(id -u)}
+    local built=0 unreachable=0 degraded=0
+    local degraded_names=""
+    local version test_name needs_tcp needs_root reason
+    while IFS=$'\t' read -r version test_name needs_tcp needs_root; do
+        [[ -n "$version" ]] || continue
+        reason=""
+        if [[ "$needs_tcp" == "yes" && "${USE_TCP:-no}" != "yes" ]]; then
+            reason="it needs the TCP transport, this leg runs the stdio-pipe default"
+        elif [[ "$needs_root" == "yes" && "$euid" -ne 0 ]]; then
+            reason="it needs root, this leg runs as uid ${euid}"
+        elif [[ -n "$expect_result_file" ]] \
+            && ! grep -qE "^[[:space:]]*${test_name}[[:space:]]" "$expect_result_file"; then
+            reason="the expected-outcome manifest does not name it, so it will not run"
+        fi
+        if [[ -n "$reason" ]]; then
+            echo "==> Legacy oracle rsync ${version}: not needed - ${test_name} cannot run on this leg (${reason})." >&2
+            unreachable=$((unreachable + 1))
+            continue
+        fi
+        if [[ "$legacy_oracles_mode" == "off" ]]; then
+            echo "==> Legacy oracle rsync ${version}: NOT BUILT (LEGACY_ORACLES=off) - ${test_name} runs on this leg and will assert against its fallback, not against rsync ${version}." >&2
+            degraded=$((degraded + 1))
+            degraded_names+="${degraded_names:+, }${test_name} (rsync ${version})"
+            continue
+        fi
+        echo "==> Legacy oracle rsync ${version}: ${test_name} runs on this leg and asserts against it." >&2
+        if ! bash "${workspace_root}/tools/ci/build_old_rsync_oracle.sh" \
+            "$version" "$old_versions_dir" "$oracle_workdir" >&2; then
+            echo "ERROR: could not put the rsync ${version} oracle on disk for ${test_name}." >&2
+            echo "       This is fatal ON PURPOSE. Missing, that test does not fail:" >&2
+            echo "       it swaps the live oracle for its fallback, asserts the weaker" >&2
+            echo "       contract and still reports PASS - so the leg would report" >&2
+            echo "       success over a contract it never checked." >&2
+            gha_annotate_fail "legacy rsync oracle unavailable" \
+                "${test_name} asserts against a real rsync ${version} daemon; the build of ${old_versions_dir}/rsync_${version} failed, and without it the test degrades to its fallback and still passes."
+            exit 1
+        fi
+        built=$((built + 1))
+    done <<< "$requirements"
+    if (( degraded > 0 )); then
+        gha_annotate_warn "legacy rsync oracles not built" \
+            "LEGACY_ORACLES=off on this leg, so ${degraded} test(s) assert against a static fallback rather than the release they name: ${degraded_names}. Set legacy_oracles: 'on' for this leg once its expect manifest can be re-measured."
+    fi
+    echo "==> Legacy oracles: ${built} on disk, ${degraded} consumer(s) running degraded, ${unreachable} not needed on this leg." >&2
+}
+
 # Drive upstream's own runtests.py against oc-rsync.
 #
 # Used for any tree shipping the Python suite - the 3.5.0 release tarball and
@@ -804,6 +1021,10 @@ run_python_suite_mode() {
         # tools runtests.py needs (upstream Makefile.in:381).
         make check-progs >make.log 2>&1 || { tail -120 make.log; exit 1; }
     )
+
+    # After the tree is extracted (the requirements are read out of it) and
+    # before runtests.py runs (the tests stat the binary at import time).
+    ensure_legacy_oracles
 
     rm -rf "$log_root"
     mkdir -p "$log_root"
@@ -1162,6 +1383,13 @@ cleanup_run() {
     cleanup_published_bin
 }
 
-trap cleanup_run EXIT
-
-main "$@"
+# Executed: install the cleanup trap and run. Sourced: define the functions and
+# stop, so tools/tests/ can drive one of them (ensure_legacy_oracles) against a
+# synthetic tree without launching a 45-minute suite - and without the EXIT trap
+# tearing down the sourcing shell's mounts. `$0` is the sourcing program when
+# sourced and this file when executed, so the comparison distinguishes the two
+# without a mode flag anyone has to remember to pass.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    trap cleanup_run EXIT
+    main "$@"
+fi
