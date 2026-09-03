@@ -3110,3 +3110,135 @@ fn read_entry_accepts_a_directory_transfer_root() {
     assert_eq!(entry.path().as_os_str(), ".");
     assert_eq!(entry.mode() & 0o170000, 0o040000);
 }
+
+/// A peer that sets `XMIT_HLINKED` while the receiver is not preserving hard
+/// links must not cause a single byte of hard-link payload to be consumed.
+///
+/// upstream: `flist.c:1335` `recv_file_entry()` gates the whole hard-link read
+/// on `preserve_hard_links && xflags & XMIT_HLINKED` - the local option is
+/// checked FIRST, so the peer's bit is never consulted on its own. Without that
+/// conjunct the receiver reads a varint the sender never wrote, and every
+/// subsequent field in the stream decodes from the wrong offset: a
+/// remote-controlled desync of the whole file list from one flag bit.
+///
+/// The assertion is on BYTES CONSUMED, not on the returned value. `None` alone
+/// cannot discriminate - an ungated reader that swallowed the varint and then
+/// discarded it would also return `None`. Only the cursor position proves the
+/// stream was left untouched.
+#[test]
+fn hardlink_idx_is_not_read_when_hard_links_are_not_preserved() {
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED};
+
+    let mut payload = Vec::new();
+    crate::encode_varint_to_vec(7, &mut payload);
+    assert!(
+        !payload.is_empty(),
+        "fixture must carry a hard-link index for the guard to skip",
+    );
+
+    let flags = FileFlags::new(0, XMIT_HLINKED);
+    let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(false);
+
+    let mut cursor = Cursor::new(&payload[..]);
+    let idx = reader.read_hardlink_idx(&mut cursor, flags).unwrap();
+
+    assert_eq!(idx, None, "no hard-link index without preserve_hard_links");
+    assert_eq!(
+        cursor.position(),
+        0,
+        "the peer's XMIT_HLINKED bit must not consume stream bytes",
+    );
+}
+
+/// Positive control for `hardlink_idx_is_not_read_when_hard_links_are_not_preserved`:
+/// the SAME bytes and the SAME flags, with `preserve_hard_links` on, must be
+/// decoded. Without this the guard test would also pass against a reader that
+/// could never parse the payload at all.
+#[test]
+fn hardlink_idx_is_read_when_hard_links_are_preserved() {
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED};
+
+    let mut payload = Vec::new();
+    crate::encode_varint_to_vec(7, &mut payload);
+
+    let flags = FileFlags::new(0, XMIT_HLINKED);
+    let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
+
+    let mut cursor = Cursor::new(&payload[..]);
+    let idx = reader.read_hardlink_idx(&mut cursor, flags).unwrap();
+
+    assert_eq!(idx, Some(7), "the index must decode when preserving links");
+    assert_eq!(
+        cursor.position() as usize,
+        payload.len(),
+        "the whole index must be consumed when preserving links",
+    );
+}
+
+/// The protocol 28-29 dev/ino form of the same gate. Here the ungated read is
+/// TWO longints rather than one varint, so the desync it would open is wider.
+///
+/// upstream: `flist.c:recv_file_entry()` - the pre-30 dev/ino read sits under
+/// the same `preserve_hard_links && xflags & XMIT_HLINKED` conjunct as the
+/// protocol 30+ index.
+#[test]
+fn hardlink_dev_ino_is_not_read_when_hard_links_are_not_preserved() {
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED};
+
+    let protocol = ProtocolVersion::try_from(29u8).unwrap();
+    let mut payload = Vec::new();
+    crate::varint::write_longint(&mut payload, 41).unwrap(); // dev, stored as dev + 1
+    crate::varint::write_longint(&mut payload, 99).unwrap(); // ino
+    assert!(
+        !payload.is_empty(),
+        "fixture must carry dev/ino for the guard to skip",
+    );
+
+    let flags = FileFlags::new(0, XMIT_HLINKED);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(false);
+
+    let mut cursor = Cursor::new(&payload[..]);
+    let dev_ino = reader
+        .read_hardlink_dev_ino(&mut cursor, flags, 0o100644)
+        .unwrap();
+
+    assert_eq!(dev_ino, None, "no dev/ino without preserve_hard_links");
+    assert_eq!(
+        cursor.position(),
+        0,
+        "the peer's XMIT_HLINKED bit must not consume dev/ino bytes",
+    );
+}
+
+/// Positive control for the pre-30 gate: the same bytes decode when the option
+/// is on, so the guard test above cannot pass merely because the fixture is
+/// unparseable.
+#[test]
+fn hardlink_dev_ino_is_read_when_hard_links_are_preserved() {
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED};
+
+    let protocol = ProtocolVersion::try_from(29u8).unwrap();
+    let mut payload = Vec::new();
+    crate::varint::write_longint(&mut payload, 41).unwrap();
+    crate::varint::write_longint(&mut payload, 99).unwrap();
+
+    let flags = FileFlags::new(0, XMIT_HLINKED);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let mut cursor = Cursor::new(&payload[..]);
+    let dev_ino = reader
+        .read_hardlink_dev_ino(&mut cursor, flags, 0o100644)
+        .unwrap();
+
+    // upstream stores dev + 1 on the wire, so 41 decodes to 40.
+    assert_eq!(
+        dev_ino,
+        Some((40, 99)),
+        "dev/ino must decode when preserving"
+    );
+    assert_eq!(
+        cursor.position() as usize,
+        payload.len(),
+        "the whole dev/ino pair must be consumed when preserving links",
+    );
+}
