@@ -6,6 +6,7 @@ use super::{
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
 use filters::{FilterRule, RuleSource};
+use std::borrow::Cow;
 use std::fmt;
 
 #[derive(Default)]
@@ -219,6 +220,77 @@ pub(crate) fn directive_takes_argument(token: &str) -> bool {
 /// prefix accepted four spellings upstream rejects.
 const SINGLE_LETTER_PREFIXES: &str = "SHRP";
 
+/// Parses a single line of a per-directory merge file, discarding a rule whose
+/// pattern reaches `MAXPATHLEN`.
+///
+/// See [`classify_filter_directive_line`] for the grammar; this wrapper adds
+/// upstream's over-long refusal, which sits in `parse_filter_str`'s token loop
+/// (exclude.c:1533-1538) and therefore governs every rule kind the loop can
+/// produce - including the ones a merge file yields.
+pub(crate) fn parse_filter_directive_line(
+    text: &str,
+    source: RuleSource<'_>,
+) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    Ok(classify_filter_directive_line(text, source)?
+        .and_then(|directive| discard_over_long(directive, source)))
+}
+
+/// Reports and drops a directive whose pattern reaches `MAXPATHLEN`.
+///
+/// upstream: exclude.c:1533-1538, in `parse_filter_str`'s token loop. It
+/// measures `pat_len` - the pattern *alone*, since `parse_rule_tok` has already
+/// consumed the action prefix and any modifiers (exclude.c:1456-1464) - then
+/// `continue`s, so the rule contributes nothing and parsing exits 0. `Ok(None)`
+/// is oc's `continue`: this parser already uses it for a line that yields no
+/// rule.
+///
+/// Consulting the CONSTRUCTED directive reads that same quantity without
+/// duplicating the prefix stripping, the shape the CLI parser already uses
+/// (`crates/cli/.../filter_rules/parsing/entry.rs`). The merge name is measured
+/// as WRITTEN: `parse_merge_directive` stores the token verbatim and
+/// `resolve_dir_merge_path` resolves it later, so this is upstream's `pat_len`
+/// and not a resolved path of a different length.
+///
+/// MEASURED against rsync 3.5.0 on a `.rsync-filter` holding `- ` plus 1100
+/// `*`: upstream discards the rule and transfers all three files; oc RETAINED
+/// it, and since a long `*` run matches everything the whole transfer was
+/// silently suppressed at exit 0. The missing diagnostic was the visible half
+/// of a data divergence, not a cosmetic gap.
+///
+/// `Clear` carries no pattern, so upstream's check can never fire for it.
+/// `ExcludeIfPresent` is an oc directive with no upstream counterpart in this
+/// loop, so it is deliberately left alone rather than given a bound upstream
+/// does not impose.
+fn discard_over_long(
+    directive: ParsedFilterDirective,
+    source: RuleSource<'_>,
+) -> Option<ParsedFilterDirective> {
+    let pattern: Cow<'_, str> = match &directive {
+        ParsedFilterDirective::Rule(rule) => Cow::Borrowed(rule.pattern()),
+        ParsedFilterDirective::Merge { path, .. } => path.to_string_lossy(),
+        ParsedFilterDirective::DirMerge { pattern, .. } => pattern.to_string_lossy(),
+        ParsedFilterDirective::ExcludeIfPresent(_) | ParsedFilterDirective::Clear => {
+            return Some(directive);
+        }
+    };
+
+    if !filters::is_over_long(&pattern) {
+        return Some(directive);
+    }
+
+    // The rule text crosses `rule_text` (exclude.c:88-123): upstream passes a
+    // NULL template here, which falls back to the am-I-parsing-a-file state
+    // (exclude.c:67-69) - the fact oc carries explicitly on `source`.
+    logging::emit_info_coded(
+        logging::InfoFlag::Misc,
+        0,
+        logging::LogCode::Error,
+        filters::over_long_filter(&source.rule_text(&pattern)),
+    );
+
+    None
+}
+
 /// Parses a single line of a per-directory merge file.
 ///
 /// `source` is where this line came from, and it decides how an unparsable
@@ -232,7 +304,7 @@ const SINGLE_LETTER_PREFIXES: &str = "SHRP";
 /// directives, `exclude-if-present`, the `+`/`-` short-form rule prefixes,
 /// and the `include`/`exclude`/`show`/`hide`/`protect`/`risk` keywords with
 /// their `,modifier` suffix. Trailing whitespace is trimmed from patterns.
-pub(crate) fn parse_filter_directive_line(
+fn classify_filter_directive_line(
     text: &str,
     source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
