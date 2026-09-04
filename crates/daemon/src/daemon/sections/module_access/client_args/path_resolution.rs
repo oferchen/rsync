@@ -208,15 +208,30 @@ fn resolve_receiver_dest(
 /// Sub-paths containing `..`, and host-absolute sub-paths, are COLLAPSED
 /// against the module root rather than refused - see
 /// [`collapse_module_relative`]. A crafted `rsync://host/mod/../etc/...` URL
-/// therefore resolves to `<module>/etc/...` and cannot enumerate outside the
-/// module root, which is the same containment upstream gets from
-/// `sanitize_path` at depth 0.
+/// therefore resolves to `<module>/etc/...`, which is the same containment
+/// upstream gets from `sanitize_path` at depth 0.
+///
+/// ⚠ That collapse is LEXICAL, so it contains exactly the shapes it folds -
+/// `.`, `..` and a host-absolute spelling - and nothing else. It is NOT a
+/// statement about where the returned path RESOLVES: a symlink is resolved by
+/// the kernel at syscall time and no string operation can see it. Upstream
+/// does not rely on the collapse alone either; it also enters the module with
+/// `change_dir(module_chdir, CD_NORMAL)` (clientserver.c:992) and scans
+/// through the confined `secure_opendir()` (flist.c:2028-2059).
+///
+/// Resolved containment for these operands is therefore owned by the sender,
+/// not by this function: the content open goes through the confined source
+/// open, and the file-list scan is anchored on the transfer's confinement root
+/// rather than read by absolute path. Do not read this collapse as a reason to
+/// leave a downstream operation unconfined - it was read that way once, and an
+/// out-of-module directory reached by a module-root symlink was enumerated
+/// into the file list.
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:804 glob_expand_module()` - strips the module name from each arg
-/// - `clientserver.c:992 change_dir(module_chdir, CD_NORMAL)` - relativises args
-/// - `flist.c:2338-2349 send_file_list()` - `dir/fn` split per positional
+/// - `util1.c:881 glob_expand_module()` - strips the module name from each arg
+/// - `clientserver.c:1059 change_dir(module_chdir, CD_NORMAL)` - relativises args
+/// - `flist.c:2610-2621 send_file_list()` - `dir/fn` split per positional
 fn resolve_sender_sources(
     module_path: &std::path::Path,
     client_args: &[String],
@@ -236,8 +251,10 @@ fn resolve_sender_sources(
         }
         all_empty = false;
         // Collapse `.` and `..` exactly as upstream's `sanitize_path` does at
-        // depth 0 - see [`collapse_module_relative`]. The result cannot escape
-        // the module root, so there is nothing left to refuse.
+        // depth 0 - see [`collapse_module_relative`]. The result is LEXICALLY
+        // beneath the module root, so there is no traversing spelling left to
+        // refuse; where it RESOLVES is decided by the sender's confined open
+        // and its anchored directory scan, not here.
         let collapsed = collapse_module_relative(tail.trim_start_matches('/'));
         let trimmed = collapsed.as_str();
         if trimmed.is_empty() {
