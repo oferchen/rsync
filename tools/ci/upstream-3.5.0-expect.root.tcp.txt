@@ -76,7 +76,7 @@ daemon-scan-cwd-desync pass
 daemon-scan-dir-escape pass
 daemon-secrets-file-symlink pass
 daemon-size-arg-overflow pass
-daemon-standalone-detach fail
+daemon-standalone-detach pass
 daemon-strict-modes-matrix pass
 daemon-subdir-climb-symlink pass
 daemon-symlink-escape-matrix fail
@@ -131,7 +131,7 @@ proto-sender-selftest fail
 proto-subflist-freed fail
 proxy-connect-request-too-long pass
 proxy-host-crlf pass
-proxy-protocol-trusted-peer fail
+proxy-protocol-trusted-peer pass
 proxy-response-header-too-long pass
 proxy-response-line-too-long pass
 readonly-partial-abort-mode-regression skip
