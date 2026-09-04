@@ -31,7 +31,7 @@ daemon-chroot fail
 daemon-chroot-acl pass
 daemon-chroot-munge-default fail
 daemon-config pass
-daemon-config-symlink fail
+daemon-config-symlink pass
 daemon-copy-links-symlink pass
 daemon-copylinks-intree pass
 daemon-copylinks-parent-escape pass
