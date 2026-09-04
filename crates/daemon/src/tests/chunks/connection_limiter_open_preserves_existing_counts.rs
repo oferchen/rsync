@@ -4,7 +4,7 @@ fn connection_limiter_open_preserves_existing_counts() {
     let lock_path = temp.path().join("daemon.lock");
     fs::write(&lock_path, b"docs 1\nother 2\n").expect("seed lock file");
 
-    let limiter = ConnectionLimiter::open(lock_path.clone()).expect("open lock file");
+    let limiter = ConnectionLimiter::open(lock_path.clone());
     drop(limiter);
 
     let contents = fs::read_to_string(&lock_path).expect("read lock file");
