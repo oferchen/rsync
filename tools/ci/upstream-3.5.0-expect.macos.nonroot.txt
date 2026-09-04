@@ -15,20 +15,19 @@
 # run's emitted `expect-result.macos.nonroot.txt` artifact and say so; do NOT
 # edit individual rows to make the job green.
 #
-# The 4 `fail` rows were classified 2026-09-04 by running each cell twice on
+# The 3 `fail` rows were classified 2026-09-04 by running each cell twice on
 # one host, varying ONLY $RSYNC between oc and the real 3.5.0 binary. That
 # upstream arm is the control; without it a failure cannot be attributed.
 #
 #   chmod-setid                             upstream FAILS too - unsatisfiable here
 #   partial-protected-regular-retry-policy  upstream FAILS too - unsatisfiable here
-#   operator-path-partial-dir-daemon        upstream PASSES - real oc defect
 #   filter-merge-content-echo               owned by task 1011
 #
-# Two of the four are therefore NOT oc divergences: the platform (or this
+# Two of the three are therefore NOT oc divergences: the platform (or this
 # host's sysctl state) refuses what the cell asserts, and real rsync lands on
 # the same result. They stay `fail` because the assertion is unsatisfiable
 # here, not because oc is right - re-baselining them would hide the row rather
-# than resolve it. None of the four appears in upstream's own
+# than resolve it. None of the three appears in upstream's own
 # testsuite/skiplist/macos.txt.
 00-hello pass
 acl-symlink-race skip
@@ -250,7 +249,7 @@ operator-path-insecure-links-refused pass
 operator-path-link-dest pass
 operator-path-log-file pass
 operator-path-partial-dir pass
-operator-path-partial-dir-daemon fail
+operator-path-partial-dir-daemon pass
 operator-path-partial-dir-exclude-daemon pass
 operator-path-temp-dir pass
 operator-path-traversal-backup-dir-daemon pass
