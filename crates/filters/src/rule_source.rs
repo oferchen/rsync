@@ -27,6 +27,8 @@
 
 use std::borrow::Cow;
 
+use crate::action::FilterAction;
+
 /// Where the text of a filter rule came from.
 ///
 /// upstream: the `TEXT_FROM_FILE` predicate (`exclude.c:67-69`) plus the four
@@ -129,6 +131,45 @@ impl<'a> RuleSource<'a> {
     pub fn rule_detail<'d>(&self, detail: &'d str) -> &'d str {
         if self.is_from_file() { "" } else { detail }
     }
+}
+
+/// The action prefix upstream renders ahead of a rule's text.
+///
+/// upstream: `get_rule_prefix` (`exclude.c`), whose result `add_rule` passes to
+/// `rule_detail`. The trailing space belongs to the prefix, so a redacted rule
+/// renders as `add_rule(<rule from ...>)` with no leading gap.
+fn action_prefix(action: FilterAction) -> &'static str {
+    match action {
+        FilterAction::Include => "+ ",
+        FilterAction::Exclude => "- ",
+        FilterAction::Protect => "P ",
+        FilterAction::Risk => "R ",
+        FilterAction::Clear => "! ",
+        FilterAction::Merge => "merge ",
+        FilterAction::DirMerge => "dir-merge ",
+    }
+}
+
+/// Logs a parsed rule at `--debug=FILTER2`, redacting text that came from a
+/// file's contents.
+///
+/// upstream: `add_rule` (`exclude.c:259-275`) routes *both* halves through
+/// redactors - `rule_text_len` replaces a file-sourced pattern with
+/// `<rule from ...>`, and `rule_detail` drops the action prefix that would
+/// otherwise describe the text it no longer shows.
+///
+/// This is called from the parser rather than from rule compilation because
+/// that is where upstream calls it: `add_rule` runs with the rule's provenance
+/// in hand. Emitting downstream of the parse, where provenance has already been
+/// dropped, is what made this trace echo merged-file contents verbatim.
+pub fn trace_add_rule(action: FilterAction, pattern: &str, source: &RuleSource<'_>) {
+    logging::debug_log!(
+        Filter,
+        2,
+        "add_rule({}{})",
+        source.rule_detail(action_prefix(action)),
+        source.rule_text(pattern)
+    );
 }
 
 #[cfg(test)]

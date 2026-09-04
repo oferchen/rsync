@@ -181,6 +181,23 @@ pub(crate) struct DirMergeEntries {
 
 impl DirMergeEntries {
     fn push_rule(&mut self, rule: FilterRule) {
+        // upstream: exclude.c:259-275 add_rule() logs every parsed rule at
+        // `DEBUG_GTE(FILTER, 2)`, routing the text through `rule_text_len` and
+        // the action prefix through `rule_detail`. Every rule reaching this
+        // funnel came out of a merge file's *contents*, which upstream
+        // describes as `a file read earlier` (exclude.c:78) - the naming rule
+        // was read and closed long ago and its origin is not retained.
+        //
+        // Emitting here rather than at rule compilation is upstream's
+        // placement: `add_rule` runs with the provenance in hand, which is what
+        // decides whether the text may be shown. Compiling is downstream of the
+        // parse, where provenance has been dropped - so a trace emitted there
+        // echoed merged-file contents verbatim.
+        filters::trace_add_rule(
+            rule.action(),
+            rule.pattern(),
+            &filters::RuleSource::FileReadEarlier,
+        );
         self.rules.push(rule);
     }
 

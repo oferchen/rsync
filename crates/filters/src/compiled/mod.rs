@@ -58,22 +58,11 @@ impl CompiledRule {
         );
 
         // upstream: exclude.c:add_rule() logs every parsed rule at
-        // `DEBUG_GTE(FILTER, 2)` so the active rule set is observable.
-        logging::debug_log!(
-            Filter,
-            2,
-            "add_rule({} {})",
-            match action {
-                FilterAction::Include => "+",
-                FilterAction::Exclude => "-",
-                FilterAction::Protect => "P",
-                FilterAction::Risk => "R",
-                FilterAction::Clear => "!",
-                FilterAction::Merge => "merge",
-                FilterAction::DirMerge => "dir-merge",
-            },
-            pattern
-        );
+        // `DEBUG_GTE(FILTER, 2)`. That trace is emitted by the *parser*
+        // (`rule_source::trace_add_rule`), where the rule's provenance is still
+        // in hand - it is what decides whether the text may be shown. Emitting
+        // it here, downstream of the parse, echoed merged-file contents
+        // verbatim because provenance had already been dropped.
 
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
