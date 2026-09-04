@@ -59,27 +59,45 @@ impl ModuleDefinitionBuilder {
         // no-chroot only when the operator did not demand it.
         let use_chroot_explicit = self.use_chroot.is_some() || default_use_chroot.is_some();
 
-        // Windows has no chroot(2), so the absolute-path enforcement gated on
-        // `use chroot` does not apply there. The check uses `Path::is_absolute()`
-        // which rejects Unix-style paths (e.g. `/srv/docs`) on Windows for lack
-        // of a drive letter. Mirrors the sibling fix in `module_parsing.rs`.
+        // A relative module `path` is RESOLVED against the daemon's current
+        // directory, never refused.
         //
-        // The bare root `/` is `is_absolute()` and is accepted intentionally:
-        // upstream loadparm.c (P_PATH) preserves a single-slash module path
-        // verbatim, and clientserver.c serves from it both with and without
-        // chroot (the chroot("/") path is a no-op). See the upstream
-        // daemon-path-root-read scenario.
-        #[cfg(unix)]
-        if use_chroot && !path.is_absolute() {
-            return Err(config_parse_error(
-                config_path,
-                self.declaration_line,
-                format!(
-                    "module '{}' requires an absolute path when 'use chroot' is enabled",
-                    self.name
-                ),
-            ));
-        }
+        // upstream: `normalize_path` (util1.c:1405-1426) opens with
+        // `if (*path != '/') { /* Make path absolute. */ ... }`, joining the
+        // value onto `curr_dir` before cleaning it. `rsync_module()` routes
+        // every module path through it on BOTH arms - the chroot arm at
+        // clientserver.c:898-916 and the no-chroot arm at :916-918 - so neither
+        // arm can observe a relative path by the time it chroots or serves.
+        // There is no absolute-path requirement anywhere in upstream's config
+        // parser; refusing here rejected a configuration upstream serves.
+        //
+        // Resolution runs on every platform and is not gated on `use chroot`,
+        // because upstream normalizes both arms identically. Doing it here also
+        // preserves the invariant the rest of the daemon relies on - that a
+        // `ModuleDefinition::path` is absolute - rather than merely dropping a
+        // check and letting a relative path travel further.
+        //
+        // The bare root `/` is already absolute and is preserved verbatim:
+        // upstream loadparm.c (P_PATH) keeps a single-slash module path as-is,
+        // and clientserver.c serves from it both with and without chroot (the
+        // chroot("/") is a no-op). See the upstream daemon-path-root-read
+        // scenario.
+        let path = if path.is_absolute() {
+            path
+        } else {
+            let current_dir = std::env::current_dir().map_err(|err| {
+                config_parse_error(
+                    config_path,
+                    self.declaration_line,
+                    format!(
+                        "module '{}' has a relative 'path' and the current directory \
+                         could not be read: {err}",
+                        self.name
+                    ),
+                )
+            })?;
+            current_dir.join(path)
+        };
 
         if self.auth_users.as_ref().is_some_and(Vec::is_empty) {
             return Err(config_parse_error(
