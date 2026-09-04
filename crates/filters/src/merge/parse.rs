@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::FilterRule;
 use crate::RuleSource;
 use crate::clear_token::{ClearToken, classify_clear_token};
+use crate::rule_source::trace_add_rule;
 
 use super::error::MergeFileError;
 
@@ -52,7 +53,17 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
             continue;
         }
 
-        rules.push(parse_rule_line(line, source_path, line_num)?);
+        let rule = parse_rule_line(line, source_path, line_num)?;
+        let name = source_path.display().to_string();
+        trace_add_rule(
+            rule.action,
+            &rule.pattern,
+            &RuleSource::File {
+                name: &name,
+                line: line_num,
+            },
+        );
+        rules.push(rule);
     }
 
     Ok(rules)
@@ -78,24 +89,31 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
 /// literal pattern.
 pub(crate) fn parse_rules_no_prefixes(
     content: &str,
-    _source_path: &Path,
+    source_path: &Path,
     force_include: bool,
     cvs_ignore: bool,
     word_split: bool,
 ) -> Vec<FilterRule> {
     let mut rules = Vec::new();
 
+    // Every rule here comes out of a merged file's *contents*, so its text is
+    // never the operator's own and must be redacted in the FILTER2 trace.
+    let name = source_path.display().to_string();
+    let source = RuleSource::FileWordSplit { name: &name };
+
     let mut push_token = |token: &str| {
         // upstream: exclude.c:1123-1124 - when FILTRULE_CVS_IGNORE is set on
         // the template, a bare `!` becomes FILTRULE_CLEAR_LIST. Without
         // CVS_IGNORE the `!` is taken literally per the no-prefixes contract.
-        if cvs_ignore && token == "!" {
-            rules.push(FilterRule::clear());
+        let rule = if cvs_ignore && token == "!" {
+            FilterRule::clear()
         } else if force_include {
-            rules.push(FilterRule::include(token));
+            FilterRule::include(token)
         } else {
-            rules.push(FilterRule::exclude(token));
-        }
+            FilterRule::exclude(token)
+        };
+        trace_add_rule(rule.action, &rule.pattern, &source);
+        rules.push(rule);
     };
 
     if word_split {
@@ -134,8 +152,12 @@ pub(crate) fn parse_rules_word_split(
     source_path: &Path,
 ) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
+    let name = source_path.display().to_string();
+    let source = RuleSource::FileWordSplit { name: &name };
     for token in content.split_whitespace() {
-        rules.push(parse_rule_line(token, source_path, 0)?);
+        let rule = parse_rule_line(token, source_path, 0)?;
+        trace_add_rule(rule.action, &rule.pattern, &source);
+        rules.push(rule);
     }
     Ok(rules)
 }

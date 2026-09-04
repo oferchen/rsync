@@ -81,6 +81,18 @@ impl FilterProgram {
         for entry in entries {
             match entry {
                 FilterProgramEntry::Rule(rule) => {
+                    // upstream: exclude.c:259-275 add_rule(). These entries are
+                    // the operator's own arguments, which upstream shows
+                    // verbatim "because it is the user's own and hiding it only
+                    // makes typos harder to fix" (exclude.c:90-95) - so the
+                    // source is `Argument` and `rule_text` returns it unchanged.
+                    // Merge-file contents take the redacting path in
+                    // `DirMergeEntries::push_rule`.
+                    filters::trace_add_rule(
+                        rule.action(),
+                        rule.pattern(),
+                        &filters::RuleSource::Argument,
+                    );
                     #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         if rule.is_xattr_only() {
