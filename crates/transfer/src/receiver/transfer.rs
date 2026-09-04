@@ -466,7 +466,7 @@ pub(in crate::receiver) enum DeletePassPhase {
 /// glibc's `rename()` lowers to on x86_64.
 #[cfg(unix)]
 fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
-    fast_io::operator_rename(old_path, new_path, true)
+    fast_io::operator_rename_confined(old_path, new_path, true)
 }
 
 #[cfg(not(unix))]
