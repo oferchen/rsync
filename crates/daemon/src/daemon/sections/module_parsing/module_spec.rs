@@ -237,21 +237,32 @@ fn parse_module_definition(
         apply_inline_module_options(options_text, &mut module)?;
     }
 
-    // Windows has no chroot(2), so suppress the absolute-path check there:
-    // upstream rsync's `use chroot` semantics simply don't apply on Windows,
-    // and rejecting Unix-style absolute paths (e.g. `/srv/docs`, which Windows
-    // `Path::is_absolute()` treats as non-absolute because they lack a drive
-    // letter) would block every cross-platform daemon config file.
+    // A relative module path is RESOLVED against the current directory, never
+    // refused - the same rule `ModuleDefinitionBuilder::finish` applies to a
+    // config-file module, kept in step here so the two parse entry points
+    // cannot disagree about what a relative `path` means.
     //
-    // The bare root `/` is accepted intentionally: upstream rsync treats it as
-    // a legitimate module path under either `use chroot` setting (loadparm.c
-    // P_PATH preserves it; clientserver.c serves from it directly when chroot
-    // is off and chroot's into it as a no-op when on).
-    #[cfg(unix)]
-    if module.use_chroot && !module.path.is_absolute() {
-        return Err(config_error(format!(
-            "module path '{path_text}' must be absolute when 'use chroot' is enabled"
-        )));
+    // upstream: `normalize_path` (util1.c:1405-1426) makes a non-`/` path
+    // absolute by joining it onto `curr_dir`, and `rsync_module()` routes both
+    // the chroot and no-chroot arms through it (clientserver.c:898-918).
+    // Upstream's config parser has no absolute-path requirement at all.
+    //
+    // The bare root `/` is already absolute and is preserved verbatim:
+    // upstream treats it as a legitimate module path under either `use chroot`
+    // setting (loadparm.c P_PATH preserves it; clientserver.c serves from it
+    // directly when chroot is off and chroots into it as a no-op when on).
+    if !module_path_is_absolute(&module.path) {
+        let current_dir = std::env::current_dir().map_err(|err| {
+            config_error(format!(
+                "module path '{path_text}' is relative and the current directory \
+                 could not be read: {err}"
+            ))
+        })?;
+        // `normalize_path` cleans after it joins: `clean_fname(path,
+        // CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR)`
+        // (util1.c:1420). Without it `path = ./data` would resolve to
+        // `<cwd>/./data` and carry the `.` into every derived path.
+        module.path = filters::collapse_dot_dot_dirs(&current_dir.join(&module.path));
     }
 
     if module.auth_users.is_empty() {

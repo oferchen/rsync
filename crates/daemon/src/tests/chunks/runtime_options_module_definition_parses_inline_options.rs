@@ -12,7 +12,14 @@ fn runtime_options_module_definition_parses_inline_options() {
     assert_eq!(modules.len(), 1);
     let module = &modules[0];
     assert_eq!(module.name(), "mirror");
-    assert_eq!(module.path, PathBuf::from("./data"));
+    // `./data` is resolved against the current directory and cleaned, so the
+    // leading `.` does not survive: upstream `normalize_path` joins onto
+    // `curr_dir` and then runs `clean_fname(..., CFN_COLLAPSE_DOT_DOT_DIRS |
+    // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1409-1420).
+    assert_eq!(
+        module.path,
+        std::env::current_dir().expect("current dir").join("data")
+    );
     assert!(module.read_only());
     assert!(module.write_only());
     assert!(!module.listable());

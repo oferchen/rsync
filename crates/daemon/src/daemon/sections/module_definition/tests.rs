@@ -565,24 +565,42 @@ fn finish_fails_without_path() {
     assert!(result.is_err());
 }
 
+/// A relative path under `use chroot` is RESOLVED against the current
+/// directory, not refused. upstream: `normalize_path` (util1.c:1409-1416)
+/// makes a non-`/` path absolute by joining it onto `curr_dir`, and
+/// `rsync_module()` routes the chroot arm through it (clientserver.c:898-916).
 #[test]
-fn finish_requires_absolute_path_with_chroot() {
+fn finish_resolves_a_relative_path_with_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("relative/path"));
     // use_chroot defaults to true
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
-    assert!(result.is_err());
+    let def = builder
+        .finish(&test_config_path(), None, None, None, None, &defaults)
+        .expect("a relative path is resolved under chroot, not refused");
+    let expected = std::env::current_dir()
+        .expect("current directory")
+        .join("relative/path");
+    assert_eq!(def.path, expected);
 }
 
+/// The no-chroot arm takes the SAME rule: upstream normalizes both arms
+/// identically (clientserver.c:916-918), so resolution is not gated on
+/// `use chroot`. Keeping both arms asserted is what stops the two from
+/// drifting apart again.
 #[test]
-fn finish_allows_relative_path_without_chroot() {
+fn finish_resolves_a_relative_path_without_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("relative/path"));
     builder.set_use_chroot(false);
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
-    assert!(result.is_ok());
+    let def = builder
+        .finish(&test_config_path(), None, None, None, None, &defaults)
+        .expect("a relative path is resolved without chroot too");
+    let expected = std::env::current_dir()
+        .expect("current directory")
+        .join("relative/path");
+    assert_eq!(def.path, expected);
 }
 
 /// Root path `/` is a legitimate module root: upstream loadparm.c P_PATH
