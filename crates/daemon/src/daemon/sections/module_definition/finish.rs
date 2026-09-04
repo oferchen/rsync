@@ -4,6 +4,26 @@
 // applying defaults for unset fields and enforcing cross-field constraints
 // (e.g., `auth users` requires `secrets file`).
 
+/// Reports whether a configured module `path` is already absolute in upstream's
+/// sense, so it must be served verbatim rather than resolved against the
+/// current directory.
+///
+/// upstream: `normalize_path()` (util1.c:1405-1426) branches on the LEADING
+/// BYTE - `if (*path != '/')` - and only then joins onto `curr_dir`. That is a
+/// property of how the operator spelled the path in rsyncd.conf, not of the
+/// host platform.
+///
+/// ⚠ Deliberately [`Path::has_root`], NOT [`Path::is_absolute`]. On Windows
+/// `is_absolute()` additionally demands a drive prefix, so it reports `false`
+/// for `/srv/docs` - the ordinary spelling in every rsyncd.conf - and the
+/// caller would then join an already-absolute module path onto the current
+/// directory, yielding `D:\srv\docs`. `has_root()` is exactly upstream's test
+/// on Unix and keeps a rooted POSIX path verbatim on Windows, while still
+/// classifying a genuinely relative `data/docs` as relative.
+fn module_path_is_absolute(path: &Path) -> bool {
+    path.has_root()
+}
+
 /// Built-in `dont compress` suffix list a daemon module inherits when neither
 /// the module nor the global section sets the directive.
 ///
@@ -59,27 +79,50 @@ impl ModuleDefinitionBuilder {
         // no-chroot only when the operator did not demand it.
         let use_chroot_explicit = self.use_chroot.is_some() || default_use_chroot.is_some();
 
-        // Windows has no chroot(2), so the absolute-path enforcement gated on
-        // `use chroot` does not apply there. The check uses `Path::is_absolute()`
-        // which rejects Unix-style paths (e.g. `/srv/docs`) on Windows for lack
-        // of a drive letter. Mirrors the sibling fix in `module_parsing.rs`.
+        // A relative module `path` is RESOLVED against the daemon's current
+        // directory, never refused.
         //
-        // The bare root `/` is `is_absolute()` and is accepted intentionally:
-        // upstream loadparm.c (P_PATH) preserves a single-slash module path
-        // verbatim, and clientserver.c serves from it both with and without
-        // chroot (the chroot("/") path is a no-op). See the upstream
-        // daemon-path-root-read scenario.
-        #[cfg(unix)]
-        if use_chroot && !path.is_absolute() {
-            return Err(config_parse_error(
-                config_path,
-                self.declaration_line,
-                format!(
-                    "module '{}' requires an absolute path when 'use chroot' is enabled",
-                    self.name
-                ),
-            ));
-        }
+        // upstream: `normalize_path` (util1.c:1405-1426) opens with
+        // `if (*path != '/') { /* Make path absolute. */ ... }`, joining the
+        // value onto `curr_dir` before cleaning it. `rsync_module()` routes
+        // every module path through it on BOTH arms - the chroot arm at
+        // clientserver.c:898-916 and the no-chroot arm at :916-918 - so neither
+        // arm can observe a relative path by the time it chroots or serves.
+        // There is no absolute-path requirement anywhere in upstream's config
+        // parser; refusing here rejected a configuration upstream serves.
+        //
+        // Resolution runs on every platform and is not gated on `use chroot`,
+        // because upstream normalizes both arms identically. Doing it here also
+        // preserves the invariant the rest of the daemon relies on - that a
+        // `ModuleDefinition::path` is absolute - rather than merely dropping a
+        // check and letting a relative path travel further.
+        //
+        // The bare root `/` is already absolute and is preserved verbatim:
+        // upstream loadparm.c (P_PATH) keeps a single-slash module path as-is,
+        // and clientserver.c serves from it both with and without chroot (the
+        // chroot("/") is a no-op). See the upstream daemon-path-root-read
+        // scenario.
+        let path = if module_path_is_absolute(&path) {
+            path
+        } else {
+            let current_dir = std::env::current_dir().map_err(|err| {
+                config_parse_error(
+                    config_path,
+                    self.declaration_line,
+                    format!(
+                        "module '{}' has a relative 'path' and the current directory \
+                         could not be read: {err}",
+                        self.name
+                    ),
+                )
+            })?;
+            // upstream `normalize_path` does not stop at the join: it feeds the
+            // result through `clean_fname(path, CFN_COLLAPSE_DOT_DOT_DIRS |
+            // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1420), so `path = ./data`
+            // becomes `<cwd>/data`, not `<cwd>/./data`. Joining alone would
+            // leave the `.` in every derived path the module reports.
+            filters::collapse_dot_dot_dirs(&current_dir.join(path))
+        };
 
         if self.auth_users.as_ref().is_some_and(Vec::is_empty) {
             return Err(config_parse_error(
