@@ -4,6 +4,7 @@ use logging::debug_log;
 
 use super::pattern::CompiledPattern;
 use crate::FilterAction;
+use crate::rule_source::OwnedRuleSource;
 
 /// A compiled filter rule with pre-built glob matchers for efficient matching.
 ///
@@ -50,6 +51,14 @@ pub(crate) struct CompiledRule {
     /// built outside `from_rules` (per-dir implied includes), which never mix
     /// the two chains against one path.
     pub(crate) order: usize,
+    /// Provenance of [`Self::pattern`], carried from the parse so the match
+    /// trace can decide whether the text may be shown.
+    ///
+    /// upstream keeps the same thing on its own rule (`ent->rflags &
+    /// FILTRULE_FROM_FILE`, `exclude.c:259-275`) precisely because
+    /// `report_filter_result` (`exclude.c:1099`) runs at MATCH time, when the
+    /// merge file that supplied the rule is long closed.
+    pub(crate) source: OwnedRuleSource,
 }
 
 impl CompiledRule {
@@ -194,6 +203,7 @@ impl CompiledRule {
 
 #[cfg(test)]
 mod tests {
+    use crate::rule_source::OwnedRuleSource;
     use std::path::Path;
 
     use crate::compiled::CompiledRule;
@@ -216,6 +226,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.bak"), false, true));
@@ -240,6 +251,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), false, true));
@@ -263,6 +275,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("node_modules"), true, true));
@@ -286,6 +299,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), true, true));
@@ -310,6 +324,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Protect);
@@ -333,6 +348,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Risk);
@@ -355,6 +371,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -378,6 +395,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build/main.o"), false, true));
@@ -407,6 +425,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -442,6 +461,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -467,6 +487,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.txt"), false, true));
@@ -487,6 +508,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled_negated = CompiledRule::new(rule_negated).unwrap();
         assert!(!compiled_negated.matches(Path::new("file.txt"), false, true));
@@ -510,6 +532,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -537,6 +560,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -567,6 +591,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -604,6 +629,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -636,6 +662,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -673,6 +700,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -709,6 +737,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 

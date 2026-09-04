@@ -195,15 +195,22 @@ impl FilterSetInner {
             let allowed = matches!(rule.action, FilterAction::Include);
             decision.transfer_allowed = allowed;
 
-            // upstream: exclude.c:report_filter_result() names the matched
-            // pattern in the `--debug=FILTER` line.
+            // upstream: exclude.c:1099 report_filter_result() names the matched
+            // pattern in the `--debug=FILTER` line, but routes it through
+            // `rule_text()` first - the same redaction `add_rule` applies. This
+            // one fires at MATCH time, so the provenance has to come off the
+            // rule; the parse that supplied it is long finished. Without the
+            // redaction a peer-chosen per-directory merge file's contents are
+            // echoed at plain `-vv`, because upstream sets this trace's level
+            // to 1 for a sender or generator (`exclude.c:1093`).
+            let shown = rule.source.as_source().rule_text(&rule.pattern);
             if allowed {
                 debug_log!(
                     Filter,
                     1,
                     "including {:?} because of pattern {}",
                     path,
-                    rule.pattern
+                    shown
                 );
             } else {
                 debug_log!(
@@ -211,7 +218,7 @@ impl FilterSetInner {
                     1,
                     "excluding {:?} because of pattern {}",
                     path,
-                    rule.pattern
+                    shown
                 );
             }
         }
@@ -646,6 +653,7 @@ impl Default for FilterDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rule_source::OwnedRuleSource;
 
     #[test]
     fn filter_decision_default() {
@@ -738,6 +746,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         inner
             .include_exclude

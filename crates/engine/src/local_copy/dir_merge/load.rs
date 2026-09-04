@@ -198,7 +198,13 @@ impl DirMergeEntries {
             rule.pattern(),
             &filters::RuleSource::FileReadEarlier,
         );
-        self.rules.push(rule);
+        // The same provenance is RETAINED ON THE RULE, not just consumed here:
+        // the match trace (`report_filter_result`, exclude.c:1099) fires when
+        // this rule matches a path, long after this parse returns, and it needs
+        // the identical redaction. upstream keeps it as the rule's
+        // `FILTRULE_FROM_FILE` bit for exactly that reason.
+        self.rules
+            .push(rule.with_source(filters::OwnedRuleSource::FileReadEarlier));
     }
 
     fn push_exclude_if_present(&mut self, rule: ExcludeIfPresentRule) {

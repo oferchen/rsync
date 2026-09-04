@@ -133,6 +133,89 @@ impl<'a> RuleSource<'a> {
     }
 }
 
+/// An owned [`RuleSource`], retained on a rule so its provenance outlives the
+/// parse that produced it.
+///
+/// upstream keeps the same information on the rule itself - the
+/// `FILTRULE_FROM_FILE` bit plus the retained `elt` location
+/// (`exclude.c:259-275`) - and it has to live there because the redaction
+/// decision is not always made at parse time. `report_filter_result`
+/// (`exclude.c:1099`) runs when a rule MATCHES A PATH, long after the file that
+/// supplied the rule was read and closed; a deferred per-directory merge is
+/// parsed later still. [`RuleSource`] borrows its strings from the parse, so it
+/// cannot serve either case.
+///
+/// This type is storage only. Every redaction decision stays in [`RuleSource`],
+/// reached through [`Self::as_source`], so the two cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum OwnedRuleSource {
+    /// See [`RuleSource::Argument`].
+    #[default]
+    Argument,
+    /// See [`RuleSource::File`].
+    File {
+        /// The merge file's name.
+        name: String,
+        /// 1-indexed physical line.
+        line: usize,
+    },
+    /// See [`RuleSource::FileWordSplit`].
+    FileWordSplit {
+        /// The merge file's name.
+        name: String,
+    },
+    /// See [`RuleSource::FileNamedAt`].
+    FileNamedAt {
+        /// Description of the location that named this file.
+        location: String,
+    },
+    /// See [`RuleSource::FileReadEarlier`].
+    FileReadEarlier,
+}
+
+impl OwnedRuleSource {
+    /// Borrows this provenance as a [`RuleSource`], which owns every redaction
+    /// rule - storage and policy each stay in exactly one place.
+    #[must_use]
+    pub fn as_source(&self) -> RuleSource<'_> {
+        match self {
+            Self::Argument => RuleSource::Argument,
+            Self::File { name, line } => RuleSource::File { name, line: *line },
+            Self::FileWordSplit { name } => RuleSource::FileWordSplit { name },
+            Self::FileNamedAt { location } => RuleSource::FileNamedAt { location },
+            Self::FileReadEarlier => RuleSource::FileReadEarlier,
+        }
+    }
+
+    /// Reports whether the text came from a file's contents.
+    ///
+    /// upstream: `TEXT_FROM_FILE` (`exclude.c:67-69`) read through the rule's
+    /// own `FILTRULE_FROM_FILE` bit rather than the parser's module state.
+    #[must_use]
+    pub fn is_from_file(&self) -> bool {
+        self.as_source().is_from_file()
+    }
+}
+
+impl From<RuleSource<'_>> for OwnedRuleSource {
+    fn from(source: RuleSource<'_>) -> Self {
+        match source {
+            RuleSource::Argument => Self::Argument,
+            RuleSource::File { name, line } => Self::File {
+                name: name.to_owned(),
+                line,
+            },
+            RuleSource::FileWordSplit { name } => Self::FileWordSplit {
+                name: name.to_owned(),
+            },
+            RuleSource::FileNamedAt { location } => Self::FileNamedAt {
+                location: location.to_owned(),
+            },
+            RuleSource::FileReadEarlier => Self::FileReadEarlier,
+        }
+    }
+}
+
 /// The action prefix upstream renders ahead of a rule's text.
 ///
 /// upstream: `get_rule_prefix` (`exclude.c`), whose result `add_rule` passes to
