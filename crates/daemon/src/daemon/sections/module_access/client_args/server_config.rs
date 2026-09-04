@@ -154,19 +154,25 @@ fn build_server_config(
         .cloned()
         .unwrap_or_default();
 
-    // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
+    // upstream: io.c:1497 + util1.c:881 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
     // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
     // Senders (pull requests) split each positional the same way so the
-    // sender's per-source `dir/fn` (flist.c:2338-2349) walks the requested
+    // sender's per-source `dir/fn` (flist.c:2610-2621) walks the requested
     // sub-tree instead of the entire module root. The original argv[0] is
     // always the module root; legacy tests that push straight into the module
     // root keep that behaviour.
     // Both resolvers are total: they collapse `..` the way upstream's
-    // `sanitize_path` does at depth 0, so the result is confined to the module
-    // root by construction and there is no "resolves outside module root"
-    // rejection to represent. Upstream has no such daemon error either - a
-    // traversing tail is rewritten and served (util1.c:1183).
+    // `sanitize_path` does at depth 0, so no traversing SPELLING survives and
+    // there is no "resolves outside module root" rejection to represent.
+    // Upstream has no such daemon error either - a traversing tail is
+    // rewritten and served (util1.c:1183).
+    // ⚠ Total is not confined. The collapse is a string operation and says
+    // nothing about where the path resolves; a symlink beneath the module root
+    // still points wherever it points. Resolved containment is enforced where
+    // the syscalls are issued - the confined source open and the file-list
+    // scan anchored on the transfer's confinement root - not by these
+    // resolvers.
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
         let dest = resolve_receiver_dest(
             std::path::Path::new(&module.path),

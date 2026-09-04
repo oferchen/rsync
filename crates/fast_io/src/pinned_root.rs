@@ -107,6 +107,68 @@ pub fn read_dir(path: &Path) -> io::Result<ReadDir> {
     Ok(ReadDir(Source::Std(std::fs::read_dir(path)?)))
 }
 
+/// Like [`read_dir`], but anchored on a root the CALLER supplies instead of the
+/// ambient session pin.
+///
+/// [`read_dir`] reads its anchor from the process-global session root, which is
+/// only ever correct when the process serves one confinement domain at a time -
+/// upstream's situation, because it forks a child per connection. oc serves
+/// each daemon connection on a worker thread of one process, so a per-connection
+/// root cannot live in a global without two concurrent connections overwriting
+/// each other's boundary. Passing the root in makes the anchor a parameter of
+/// the call rather than ambient state, which is what keeps it correct under
+/// threads.
+///
+/// The walk beneath `root` is the confined one: an absolute symlink target, a
+/// `..` above the anchor, or an excluded component is REFUSED rather than
+/// followed, so a refused scan can never be mistaken for an empty directory.
+///
+/// ⚠ `strip_prefix` is LEXICAL, so "does not lie beneath `root`" here means
+/// NOT ANCHORABLE, never "escapes the root". A relative operand resolves
+/// against the process cwd - which is typically inside the root, since that is
+/// how a restricted shell invokes rsync - and an absolute path can be spelled
+/// differently from the root it is under. Both fall back to the ordinary read,
+/// exactly as [`crate::confinement::pinned_root_relative`] already decides for
+/// the ambient pin: "Returns `None` - meaning resolve `path` the ordinary way -
+/// when no root is pinned, or when `path` does not lie beneath the pinned
+/// root."
+///
+/// Treating a failed `strip_prefix` as an escape and refusing would be the same
+/// error this anchoring exists to fix: a lexical test standing in for a
+/// resolution decision. It refuses directories that were never outside
+/// anything - measured, as `opendir "sub" failed: Cross-device link`.
+///
+/// # Errors
+///
+/// - The walk's refusal (`ELOOP` for an absolute or escaping symlink target,
+///   `..` above the anchor), or the underlying `opendir` error.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:2028-2059` `secure_opendir()` - the confined open that
+///   produces `scan_dirfd` for a daemon's directory scan.
+/// - `rsync-3.5.0/syscall.c:136` `confinement_root()` - `am_daemon ? module_dir
+///   : confine_root`, the value this parameter carries.
+#[cfg(unix)]
+pub fn read_dir_under(root: &Path, path: &Path) -> io::Result<ReadDir> {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return read_dir(path);
+    };
+    // `strip_prefix` yields an empty path when `path` IS the root; the walk
+    // spells that directory `.`, matching what upstream's post-`change_dir`
+    // code uses for the same directory (`flist.c:2059`).
+    let relative = if relative.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        relative
+    };
+    let names = crate::confined_readdir::read_dir_confined(root, relative)?;
+    Ok(ReadDir(Source::Names {
+        dir: path.to_path_buf(),
+        names: names.into_iter(),
+    }))
+}
+
 /// Open `path` as an `O_PATH` descriptor, anchored on the pinned root when it
 /// applies.
 ///
