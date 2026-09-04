@@ -81,10 +81,11 @@ impl CompressionAlgorithm {
         }
     }
 
-    // upstream: compat.c:valid_compressions_items[] - zstd first, then lz4, zlibx, zlib
     /// Returns the default compression algorithm used when callers enable `--compress`.
     ///
-    /// Matches upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib.
+    /// upstream: `valid_compressions_items[]` (compat.c) lists the negotiation
+    /// precedence in table order - zstd, lz4, zlibx, zlib, none - and that
+    /// order is unchanged in 3.5.0.
     #[must_use]
     pub const fn default_algorithm() -> Self {
         #[cfg(feature = "zstd")]

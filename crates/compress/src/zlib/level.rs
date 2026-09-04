@@ -5,9 +5,11 @@ use std::num::NonZeroU8;
 use flate2::Compression;
 use thiserror::Error;
 
-// upstream: token.c:init_compression_level() - zlib range 0..=9,
-// default 6 (Z_DEFAULT_COMPRESSION is -1 but upstream remaps to 6).
 /// Compression levels recognised by the zlib encoder.
+///
+/// upstream: `init_compression_level()` (token.c) accepts the zlib range
+/// `0..=9` and defaults to 6 - `Z_DEFAULT_COMPRESSION` is -1, which upstream
+/// remaps to 6 rather than passing through.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompressionLevel {
     /// No compression (level 0) - data is stored without deflation.
