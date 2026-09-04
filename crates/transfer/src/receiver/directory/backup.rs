@@ -266,6 +266,10 @@ fn place_report_and_clear(
     metadata_opts: &MetadataOptions,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
+    // upstream: backup.c:402-403 reports BOTH operands - `keep_backup failed:
+    // %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`.
+    // `backup_path` is chosen here and nowhere else, so the failure is tagged
+    // with it at the raising site; the reporter cannot recompute it.
     let placement = place_existing_backup(
         existing,
         &backup_path,
@@ -273,7 +277,15 @@ fn place_report_and_clear(
         dest_dir,
         backup_dir,
         metadata_opts,
-    )?;
+    )
+    .map_err(|e| {
+        crate::temp_guard::attach_commit_op_between(
+            crate::temp_guard::CommitOp::Backup,
+            existing,
+            Some(&backup_path),
+            e,
+        )
+    })?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         // upstream: delete.c:169-170 - the hard-link tier is upstream's `ok == 2`
@@ -302,6 +314,10 @@ fn place_report_and_clear(
     metadata_opts: &MetadataOptions,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
+    // upstream: backup.c:402-403 reports BOTH operands - `keep_backup failed:
+    // %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`.
+    // `backup_path` is chosen here and nowhere else, so the failure is tagged
+    // with it at the raising site; the reporter cannot recompute it.
     let placement = place_existing_backup(
         existing,
         &backup_path,
@@ -309,7 +325,15 @@ fn place_report_and_clear(
         dest_dir,
         backup_dir,
         metadata_opts,
-    )?;
+    )
+    .map_err(|e| {
+        crate::temp_guard::attach_commit_op_between(
+            crate::temp_guard::CommitOp::Backup,
+            existing,
+            Some(&backup_path),
+            e,
+        )
+    })?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         let _ = fs::remove_file(existing);

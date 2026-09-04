@@ -273,7 +273,7 @@ rename-mixed-parent-transfer skip
 reverse-daemon-delta pass
 rrsync-alt-dest-inband-pivot pass
 rrsync-archive-mode pass
-rrsync-backup-dir-inband-pivot fail
+rrsync-backup-dir-inband-pivot pass
 rrsync-copy-unsafe-links-denied pass
 rrsync-debug-denied pass
 rrsync-files-from-stdin pass
