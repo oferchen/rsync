@@ -258,7 +258,11 @@ fn parse_module_definition(
                  could not be read: {err}"
             ))
         })?;
-        module.path = current_dir.join(&module.path);
+        // `normalize_path` cleans after it joins: `clean_fname(path,
+        // CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR)`
+        // (util1.c:1420). Without it `path = ./data` would resolve to
+        // `<cwd>/./data` and carry the `.` into every derived path.
+        module.path = filters::collapse_dot_dot_dirs(&current_dir.join(&module.path));
     }
 
     if module.auth_users.is_empty() {

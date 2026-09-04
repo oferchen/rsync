@@ -96,7 +96,12 @@ impl ModuleDefinitionBuilder {
                     ),
                 )
             })?;
-            current_dir.join(path)
+            // upstream `normalize_path` does not stop at the join: it feeds the
+            // result through `clean_fname(path, CFN_COLLAPSE_DOT_DOT_DIRS |
+            // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1420), so `path = ./data`
+            // becomes `<cwd>/data`, not `<cwd>/./data`. Joining alone would
+            // leave the `.` in every derived path the module reports.
+            filters::collapse_dot_dot_dirs(&current_dir.join(path))
         };
 
         if self.auth_users.as_ref().is_some_and(Vec::is_empty) {
