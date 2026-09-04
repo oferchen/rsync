@@ -21,7 +21,7 @@
 #
 #   chmod-setid                             upstream FAILS too - unsatisfiable here
 #   partial-protected-regular-retry-policy  upstream FAILS too - unsatisfiable here
-#   operator-path-partial-dir-daemon        upstream PASSES - real oc defect
+#   operator-path-partial-dir-daemon        upstream PASSES - policy fork, task 1140
 #   filter-merge-content-echo               owned by task 1011
 #
 # Two of the four are therefore NOT oc divergences: the platform (or this
@@ -30,6 +30,17 @@
 # here, not because oc is right - re-baselining them would hide the row rather
 # than resolve it. None of the four appears in upstream's own
 # testsuite/skiplist/macos.txt.
+#
+# operator-path-partial-dir-daemon needs a sharper note, because the obvious
+# way to green it is WRONG. Its security oracle passes: a symlink standing at
+# the --partial-dir name is cleared rather than staged through. What remains is
+# the cell's first oracle, which wants a non-zero exit - and upstream's non-zero
+# exit comes from somewhere else entirely. options.c:2402-2430 sanitizes argv,
+# tmpdir and backup_dir and NEVER partial_dir, so on a daemon an absolute
+# `/blink` stays absolute, names the filesystem root, and cannot be created. oc
+# re-roots it under the served module instead (tasks 971/973/1032). Matching
+# upstream here would let a peer name an absolute staging path outside the
+# module, so this row is a confinement-policy question, not a bug to patch out.
 00-hello pass
 acl-symlink-race skip
 acls pass
