@@ -53,7 +53,16 @@ pub(crate) fn append_filter_rules_from_files(
         let mut local: Vec<FilterRuleSpec> = Vec::new();
         for pattern in patterns {
             if honor_old_prefixes {
-                match parse_old_prefix_rule(&pattern, kind)? {
+                // ⚠ RESIDUAL: these are the CONTENTS of an
+                // `--exclude-from`/`--include-from` file, which upstream also
+                // redacts - `rule_src_file` is set for the whole read, so
+                // `TEXT_FROM_FILE` holds and the text is replaced by
+                // `FILE line N` (exclude.c:56-68, :103-124). oc does not carry a
+                // line number through `load_filter_file_patterns`, and naming the
+                // file without one would claim upstream's word-split arm
+                // (`rule_src_line < 0`) for a line-counted read. Left as
+                // `Argument` - unchanged behaviour, not a claim that it is right.
+                match parse_old_prefix_rule(&pattern, kind, RuleSource::Argument)? {
                     FilterDirective::Rule(rule) => local.push(rule),
                     FilterDirective::Clear => local.clear(),
                     // A blank line in an exclude-from/include-from file is skipped.

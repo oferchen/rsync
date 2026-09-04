@@ -12,10 +12,14 @@ use core::rsync_error;
 
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::merge::parse_merge_modifiers;
+use super::rule_line::RuleLine;
 
 /// Parses a long-form `merge[,MODS] FILE` directive. Returns `None` when the
 /// text does not start with `merge`, or an error when the file path is missing.
-pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
+pub(super) fn parse_long_merge_directive(
+    line: RuleLine<'_>,
+) -> Option<Result<FilterDirective, Message>> {
+    let text = line.text();
     let remainder = text.strip_prefix("merge")?;
     let mut remainder =
         remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
@@ -28,7 +32,7 @@ pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDire
             .unwrap_or("")
             .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     }
-    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, text, false) {
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, false) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
@@ -40,7 +44,10 @@ pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDire
         } else {
             let message = rsync_error!(
                 1,
-                format!("filter merge directive '{text}' is missing a file path")
+                format!(
+                    "filter merge directive '{}' is missing a file path",
+                    line.shown()
+                )
             )
             .with_role(Role::Client);
             return Some(Err(message));
@@ -60,7 +67,10 @@ pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDire
 
 /// Parses a long-form `dir-merge[,MODS] FILE` directive. Returns `None` when
 /// the keyword does not match, or an error when the file name is missing.
-pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
+pub(super) fn parse_dir_merge_alias(
+    line: RuleLine<'_>,
+) -> Option<Result<FilterDirective, Message>> {
+    let trimmed = line.text();
     // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
     // strncmp reached via `case 'd'`, so `DIR-MERGE`/`Dir-Merge` never match the
     // keyword. Compare bytes exactly; "dir-merge" is ASCII, so a matching prefix
@@ -80,7 +90,7 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
             .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     }
 
-    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, trimmed, true) {
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, true) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
@@ -90,7 +100,10 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
         if assume_cvsignore {
             path_text = ".cvsignore";
         } else {
-            let text = format!("filter rule '{trimmed}' is missing a file name after '{KEYWORD}'");
+            let text = format!(
+                "filter rule '{}' is missing a file name after '{KEYWORD}'",
+                line.shown()
+            );
             return Some(Err(rsync_error!(1, text).with_role(Role::Client)));
         }
     }

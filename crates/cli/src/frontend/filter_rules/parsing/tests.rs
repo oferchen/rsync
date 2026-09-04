@@ -1,10 +1,17 @@
 //! Unit tests for the filter-rule parsing submodules.
 
 use super::*;
+use filters::RuleSource;
+
+/// These are all ARGUMENT-sourced rules: the operator typed them, so
+/// `rule_text` returns the text unchanged (exclude.c:110-116).
+fn arg(text: &str) -> rule_line::RuleLine<'_> {
+    rule_line::RuleLine::new(text, RuleSource::Argument)
+}
 
 #[test]
 fn parse_include_short() {
-    let result = parse_filter_directive(OsStr::new("+ *.txt"));
+    let result = parse_filter_directive(OsStr::new("+ *.txt"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -16,7 +23,7 @@ fn parse_include_short() {
 
 #[test]
 fn parse_exclude_short() {
-    let result = parse_filter_directive(OsStr::new("- *.log"));
+    let result = parse_filter_directive(OsStr::new("- *.log"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -28,14 +35,14 @@ fn parse_exclude_short() {
 
 #[test]
 fn parse_clear_exclamation() {
-    let result = parse_filter_directive(OsStr::new("!"));
+    let result = parse_filter_directive(OsStr::new("!"), RuleSource::Argument);
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), FilterDirective::Clear));
 }
 
 #[test]
 fn parse_clear_keyword() {
-    let result = parse_filter_directive(OsStr::new("clear"));
+    let result = parse_filter_directive(OsStr::new("clear"), RuleSource::Argument);
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), FilterDirective::Clear));
 }
@@ -46,19 +53,19 @@ fn parse_clear_keyword_uppercase_is_error() {
     // strncmp reached only via `case 'c'`. `CLEAR` misses it, reaches the inner
     // switch default, and raises "Unknown filter rule" (RERR_SYNTAX). A drop-in
     // must reject it, not silently coerce the case into a clear directive.
-    let result = parse_filter_directive(OsStr::new("CLEAR"));
+    let result = parse_filter_directive(OsStr::new("CLEAR"), RuleSource::Argument);
     assert!(result.is_err());
 }
 
 #[test]
 fn parse_clear_keyword_mixed_case_is_error() {
-    let result = parse_filter_directive(OsStr::new("Clear"));
+    let result = parse_filter_directive(OsStr::new("Clear"), RuleSource::Argument);
     assert!(result.is_err());
 }
 
 #[test]
 fn parse_include_keyword() {
-    let result = parse_filter_directive(OsStr::new("include *.rs"));
+    let result = parse_filter_directive(OsStr::new("include *.rs"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -70,7 +77,7 @@ fn parse_include_keyword() {
 
 #[test]
 fn parse_exclude_keyword() {
-    let result = parse_filter_directive(OsStr::new("exclude *.bak"));
+    let result = parse_filter_directive(OsStr::new("exclude *.bak"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -84,19 +91,19 @@ fn parse_exclude_keyword() {
 fn parse_empty_is_noop() {
     // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
     // string, so a blank `--filter` value adds nothing and exits 0.
-    let result = parse_filter_directive(OsStr::new(""));
+    let result = parse_filter_directive(OsStr::new(""), RuleSource::Argument);
     assert!(matches!(result, Ok(FilterDirective::Noop)));
 }
 
 #[test]
 fn parse_whitespace_only_returns_error() {
-    let result = parse_filter_directive(OsStr::new("   "));
+    let result = parse_filter_directive(OsStr::new("   "), RuleSource::Argument);
     assert!(result.is_err());
 }
 
 #[test]
 fn rule_directive_protect() {
-    let result = parse_rule_directive("P *.keep");
+    let result = parse_rule_directive(arg("P *.keep"));
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -108,7 +115,7 @@ fn rule_directive_protect() {
 
 #[test]
 fn rule_directive_hide() {
-    let result = parse_rule_directive("H .hidden");
+    let result = parse_rule_directive(arg("H .hidden"));
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -121,7 +128,7 @@ fn rule_directive_hide() {
 
 #[test]
 fn rule_directive_show() {
-    let result = parse_rule_directive("S visible");
+    let result = parse_rule_directive(arg("S visible"));
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -134,7 +141,7 @@ fn rule_directive_show() {
 
 #[test]
 fn rule_directive_risk() {
-    let result = parse_rule_directive("R deletable");
+    let result = parse_rule_directive(arg("R deletable"));
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -146,19 +153,19 @@ fn rule_directive_risk() {
 
 #[test]
 fn rule_directive_clear_with_trailing() {
-    let result = parse_rule_directive("! trailing");
+    let result = parse_rule_directive(arg("! trailing"));
     assert!(result.is_err());
 }
 
 #[test]
 fn rule_directive_unsupported_keyword() {
-    let result = parse_rule_directive("foobar *.txt");
+    let result = parse_rule_directive(arg("foobar *.txt"));
     assert!(result.is_err());
 }
 
 #[test]
 fn exclude_if_present_basic() {
-    let result = parse_exclude_if_present("exclude-if-present .nobackup");
+    let result = parse_exclude_if_present(arg("exclude-if-present .nobackup"));
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -171,41 +178,41 @@ fn exclude_if_present_basic() {
 
 #[test]
 fn exclude_if_present_with_equals() {
-    let result = parse_exclude_if_present("exclude-if-present = marker.txt");
+    let result = parse_exclude_if_present(arg("exclude-if-present = marker.txt"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn exclude_if_present_case_insensitive() {
-    let result = parse_exclude_if_present("EXCLUDE-IF-PRESENT .skip");
+    let result = parse_exclude_if_present(arg("EXCLUDE-IF-PRESENT .skip"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn exclude_if_present_missing_pattern() {
-    let result = parse_exclude_if_present("exclude-if-present");
+    let result = parse_exclude_if_present(arg("exclude-if-present"));
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn exclude_if_present_empty_pattern() {
-    let result = parse_exclude_if_present("exclude-if-present   ");
+    let result = parse_exclude_if_present(arg("exclude-if-present   "));
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn exclude_if_present_non_matching() {
-    let result = parse_exclude_if_present("other-directive");
+    let result = parse_exclude_if_present(arg("other-directive"));
     assert!(result.is_none());
 }
 
 #[test]
 fn short_include_basic() {
-    let result = parse_short_include_rule("+ *.rs", '+', FilterRuleSpec::include);
+    let result = parse_short_include_rule(arg("+ *.rs"), '+', FilterRuleSpec::include);
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -218,7 +225,7 @@ fn short_include_basic() {
 
 #[test]
 fn short_exclude_basic() {
-    let result = parse_short_include_rule("- *.tmp", '-', FilterRuleSpec::exclude);
+    let result = parse_short_include_rule(arg("- *.tmp"), '-', FilterRuleSpec::exclude);
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -231,27 +238,27 @@ fn short_exclude_basic() {
 
 #[test]
 fn short_include_missing_pattern() {
-    let result = parse_short_include_rule("+ ", '+', FilterRuleSpec::include);
+    let result = parse_short_include_rule(arg("+ "), '+', FilterRuleSpec::include);
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn short_include_empty_after_prefix() {
-    let result = parse_short_include_rule("+", '+', FilterRuleSpec::include);
+    let result = parse_short_include_rule(arg("+"), '+', FilterRuleSpec::include);
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn short_include_non_matching_prefix() {
-    let result = parse_short_include_rule("- foo", '+', FilterRuleSpec::include);
+    let result = parse_short_include_rule(arg("- foo"), '+', FilterRuleSpec::include);
     assert!(result.is_none());
 }
 
 #[test]
 fn dir_merge_basic() {
-    let result = parse_dir_merge_alias("dir-merge .rsync-filter");
+    let result = parse_dir_merge_alias(arg("dir-merge .rsync-filter"));
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -267,9 +274,9 @@ fn per_dir_is_not_a_keyword() {
     // upstream: exclude.c recognizes only "dir-merge" (case 'd' RULE_STRCMP);
     // there is no "per-dir" spelling. oc must decline it (returns None) so the
     // caller rejects the unknown rule, rather than accepting an oc-only alias.
-    assert!(parse_dir_merge_alias("per-dir filter-file").is_none());
+    assert!(parse_dir_merge_alias(arg("per-dir filter-file")).is_none());
     // The canonical keyword still parses as a dir-merge directive.
-    let ok = parse_dir_merge_alias("dir-merge filter-file");
+    let ok = parse_dir_merge_alias(arg("dir-merge filter-file"));
     assert!(ok.is_some());
     assert!(ok.unwrap().is_ok());
 }
@@ -280,24 +287,24 @@ fn dir_merge_uppercase_is_not_keyword() {
     // strncmp reached via `case 'd'`. `DIR-MERGE` never matches, so this parser
     // must decline it (returns None) and let the caller error, rather than
     // treating a mixed-case spelling as the dir-merge directive.
-    assert!(parse_dir_merge_alias("DIR-MERGE .filter").is_none());
-    assert!(parse_dir_merge_alias("Dir-Merge .filter").is_none());
+    assert!(parse_dir_merge_alias(arg("DIR-MERGE .filter")).is_none());
+    assert!(parse_dir_merge_alias(arg("Dir-Merge .filter")).is_none());
     // The lowercase keyword still parses as the dir-merge directive.
-    let ok = parse_dir_merge_alias("dir-merge .filter");
+    let ok = parse_dir_merge_alias(arg("dir-merge .filter"));
     assert!(ok.is_some());
     assert!(ok.unwrap().is_ok());
 }
 
 #[test]
 fn dir_merge_missing_filename() {
-    let result = parse_dir_merge_alias("dir-merge");
+    let result = parse_dir_merge_alias(arg("dir-merge"));
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn dir_merge_non_matching() {
-    let result = parse_dir_merge_alias("other-command file");
+    let result = parse_dir_merge_alias(arg("other-command file"));
     assert!(result.is_none());
 }
 
@@ -310,7 +317,7 @@ fn dir_merge_leading_slash_strips_filename_without_anchoring_rules() {
     // and driven by the `/` MODIFIER, not the filename slash. Setting anchor_root
     // here regressed the filter-depth test: `- secret*` in `d1/d2/.rsync-filter`
     // became `/d1/d2/secret*` and stopped matching `d1/d2/d3/secret.deeper`.
-    let result = parse_dir_merge_alias("dir-merge /.rsync-filter");
+    let result = parse_dir_merge_alias(arg("dir-merge /.rsync-filter"));
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -331,7 +338,7 @@ fn dir_merge_slash_modifier_still_anchors_rules() {
     // The `/` MODIFIER (after the comma) IS the real anchor_root source and
     // must keep working: `dir-merge,/ .rsync-filter` anchors loaded rules to
     // the transfer root (upstream FILTRULE_ABS_PATH via the '/' modifier).
-    let result = parse_dir_merge_alias("dir-merge,/ .rsync-filter");
+    let result = parse_dir_merge_alias(arg("dir-merge,/ .rsync-filter"));
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     match directive {
@@ -346,37 +353,37 @@ fn dir_merge_slash_modifier_still_anchors_rules() {
 
 #[test]
 fn keyword_include() {
-    let result = parse_keyword_rule("include *.txt");
+    let result = parse_keyword_rule(arg("include *.txt"));
     assert!(result.is_ok());
 }
 
 #[test]
 fn keyword_exclude() {
-    let result = parse_keyword_rule("exclude *.bak");
+    let result = parse_keyword_rule(arg("exclude *.bak"));
     assert!(result.is_ok());
 }
 
 #[test]
 fn keyword_show() {
-    let result = parse_keyword_rule("show pattern");
+    let result = parse_keyword_rule(arg("show pattern"));
     assert!(result.is_ok());
 }
 
 #[test]
 fn keyword_hide() {
-    let result = parse_keyword_rule("hide pattern");
+    let result = parse_keyword_rule(arg("hide pattern"));
     assert!(result.is_ok());
 }
 
 #[test]
 fn keyword_protect() {
-    let result = parse_keyword_rule("protect important");
+    let result = parse_keyword_rule(arg("protect important"));
     assert!(result.is_ok());
 }
 
 #[test]
 fn keyword_risk() {
-    let result = parse_keyword_rule("risk disposable");
+    let result = parse_keyword_rule(arg("risk disposable"));
     assert!(result.is_ok());
 }
 
@@ -387,30 +394,30 @@ fn keyword_mixed_case_is_error() {
     // first byte (exclude.c:1147/1155). `INCLUDE`/`Exclude` never match; they
     // reach the inner switch default and raise "Unknown filter rule". A drop-in
     // must error rather than coerce the case into the include/exclude rule.
-    assert!(parse_keyword_rule("INCLUDE *.rs").is_err());
-    assert!(parse_keyword_rule("Include *.rs").is_err());
-    assert!(parse_keyword_rule("EXCLUDE *.bak").is_err());
-    assert!(parse_keyword_rule("Merge foo").is_err());
+    assert!(parse_keyword_rule(arg("INCLUDE *.rs")).is_err());
+    assert!(parse_keyword_rule(arg("Include *.rs")).is_err());
+    assert!(parse_keyword_rule(arg("EXCLUDE *.bak")).is_err());
+    assert!(parse_keyword_rule(arg("Merge foo")).is_err());
     // Lowercase keywords still parse as their rule.
-    assert!(parse_keyword_rule("include *.rs").is_ok());
-    assert!(parse_keyword_rule("exclude *.bak").is_ok());
+    assert!(parse_keyword_rule(arg("include *.rs")).is_ok());
+    assert!(parse_keyword_rule(arg("exclude *.bak")).is_ok());
 }
 
 #[test]
 fn keyword_missing_pattern() {
-    let result = parse_keyword_rule("include");
+    let result = parse_keyword_rule(arg("include"));
     assert!(result.is_err());
 }
 
 #[test]
 fn keyword_unknown() {
-    let result = parse_keyword_rule("unknown_keyword pattern");
+    let result = parse_keyword_rule(arg("unknown_keyword pattern"));
     assert!(result.is_err());
 }
 
 #[test]
 fn long_merge_basic() {
-    let result = parse_long_merge_directive("merge filter.rules");
+    let result = parse_long_merge_directive(arg("merge filter.rules"));
     assert!(result.is_some());
     let directive = result.unwrap().unwrap();
     assert!(matches!(directive, FilterDirective::Merge(_)));
@@ -418,14 +425,14 @@ fn long_merge_basic() {
 
 #[test]
 fn long_merge_missing_path() {
-    let result = parse_long_merge_directive("merge");
+    let result = parse_long_merge_directive(arg("merge"));
     assert!(result.is_some());
     assert!(result.unwrap().is_err());
 }
 
 #[test]
 fn long_merge_non_matching() {
-    let result = parse_long_merge_directive("include pattern");
+    let result = parse_long_merge_directive(arg("include pattern"));
     assert!(result.is_none());
 }
 
@@ -435,9 +442,9 @@ fn long_merge_mixed_case_is_not_keyword() {
     // strncmp reached via `case 'm'`. `Merge`/`MERGE` never match the merge
     // directive, so this parser declines them (returns None); the lowercase
     // keyword still parses as a merge directive.
-    assert!(parse_long_merge_directive("Merge filter.rules").is_none());
-    assert!(parse_long_merge_directive("MERGE filter.rules").is_none());
-    assert!(parse_long_merge_directive("merge filter.rules").is_some());
+    assert!(parse_long_merge_directive(arg("Merge filter.rules")).is_none());
+    assert!(parse_long_merge_directive(arg("MERGE filter.rules")).is_none());
+    assert!(parse_long_merge_directive(arg("merge filter.rules")).is_some());
 }
 
 #[test]
@@ -453,46 +460,46 @@ fn filter_directive_mixed_case_keywords_are_errors() {
         "CLEAR",
     ] {
         assert!(
-            parse_filter_directive(OsStr::new(rule)).is_err(),
+            parse_filter_directive(OsStr::new(rule), RuleSource::Argument).is_err(),
             "mixed-case keyword `{rule}` must be rejected"
         );
     }
-    assert!(parse_filter_directive(OsStr::new("merge foo")).is_ok());
-    assert!(parse_filter_directive(OsStr::new("include bar")).is_ok());
-    assert!(parse_filter_directive(OsStr::new("clear")).is_ok());
+    assert!(parse_filter_directive(OsStr::new("merge foo"), RuleSource::Argument).is_ok());
+    assert!(parse_filter_directive(OsStr::new("include bar"), RuleSource::Argument).is_ok());
+    assert!(parse_filter_directive(OsStr::new("clear"), RuleSource::Argument).is_ok());
 }
 
 #[test]
 fn shorthand_protect() {
-    let result = parse_shorthand_rules("P *.important");
+    let result = parse_shorthand_rules(arg("P *.important"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn shorthand_hide() {
-    let result = parse_shorthand_rules("H .hidden");
+    let result = parse_shorthand_rules(arg("H .hidden"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn shorthand_show() {
-    let result = parse_shorthand_rules("S visible");
+    let result = parse_shorthand_rules(arg("S visible"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn shorthand_risk() {
-    let result = parse_shorthand_rules("R temp");
+    let result = parse_shorthand_rules(arg("R temp"));
     assert!(result.is_some());
     assert!(result.unwrap().is_ok());
 }
 
 #[test]
 fn shorthand_non_matching() {
-    let result = parse_shorthand_rules("+ pattern");
+    let result = parse_shorthand_rules(arg("+ pattern"));
     assert!(result.is_none());
 }
 
@@ -501,7 +508,7 @@ fn leading_whitespace_is_rejected() {
     // upstream: exclude.c:1100-1213 parse_rule_tok - a top-level rule never
     // carries FILTRULE_WORD_SPLIT, so leading whitespace is not skipped; it
     // reaches the prefix `switch` default and errors. It must not be trimmed.
-    let result = parse_filter_directive(OsStr::new("   + *.txt"));
+    let result = parse_filter_directive(OsStr::new("   + *.txt"), RuleSource::Argument);
     assert!(result.is_err());
 }
 
@@ -510,7 +517,7 @@ fn trailing_whitespace_is_kept_in_pattern() {
     // upstream: exclude.c:1313 - trailing whitespace is part of the pattern
     // (strlen length), so `- *.o ` keeps its trailing space and `x.o` stays
     // included.
-    let result = parse_filter_directive(OsStr::new("- *.o "));
+    let result = parse_filter_directive(OsStr::new("- *.o "), RuleSource::Argument);
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
@@ -525,7 +532,7 @@ fn multiple_spaces_in_pattern() {
     // upstream: exclude.c:1290-1291,1313 - exactly one separator is consumed
     // after the rule char, so `+   *.txt` (three spaces) keeps the two extra
     // leading spaces in the pattern.
-    match parse_filter_directive(OsStr::new("+   *.txt")).unwrap() {
+    match parse_filter_directive(OsStr::new("+   *.txt"), RuleSource::Argument).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Include);
             assert_eq!(spec.pattern(), "  *.txt");
@@ -538,7 +545,7 @@ fn multiple_spaces_in_pattern() {
 fn single_space_separator_consumed_short_rule() {
     // `-  x` (two spaces) keeps one leading space; verified against rsync 3.4.4
     // which excludes only a file literally named " x".
-    match parse_filter_directive(OsStr::new("-  x")).unwrap() {
+    match parse_filter_directive(OsStr::new("-  x"), RuleSource::Argument).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
             assert_eq!(spec.pattern(), " x");
@@ -550,7 +557,7 @@ fn single_space_separator_consumed_short_rule() {
 #[test]
 fn one_space_separator_leaves_no_leading_space() {
     // `- x` (one space) consumes the single separator; pattern is `x`.
-    match parse_filter_directive(OsStr::new("- x")).unwrap() {
+    match parse_filter_directive(OsStr::new("- x"), RuleSource::Argument).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
             assert_eq!(spec.pattern(), "x");
@@ -563,7 +570,7 @@ fn one_space_separator_leaves_no_leading_space() {
 fn underscore_separator_leaves_following_space() {
     // `-_ x` uses `_` as the single separator, leaving the following space in
     // the pattern (` x`), matching rsync 3.4.4.
-    match parse_filter_directive(OsStr::new("-_ x")).unwrap() {
+    match parse_filter_directive(OsStr::new("-_ x"), RuleSource::Argument).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
             assert_eq!(spec.pattern(), " x");
@@ -576,7 +583,7 @@ fn underscore_separator_leaves_following_space() {
 fn keyword_rule_keeps_extra_separator_in_pattern() {
     // The keyword and its pattern are split on the first whitespace only, so
     // `exclude   x` (three spaces) keeps the two extra leading spaces verbatim.
-    match parse_keyword_rule("exclude   x").unwrap() {
+    match parse_keyword_rule(arg("exclude   x")).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
             assert_eq!(spec.pattern(), "  x");
@@ -588,7 +595,7 @@ fn keyword_rule_keeps_extra_separator_in_pattern() {
 #[test]
 fn shorthand_rule_keeps_extra_separator_in_pattern() {
     // `P  x` (two spaces) consumes one separator, keeping one leading space.
-    match parse_shorthand_rules("P  x").unwrap().unwrap() {
+    match parse_shorthand_rules(arg("P  x")).unwrap().unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Protect);
             assert_eq!(spec.pattern(), " x");
@@ -599,7 +606,7 @@ fn shorthand_rule_keeps_extra_separator_in_pattern() {
 
 #[test]
 fn exclude_negate_modifier_short() {
-    let result = parse_filter_directive(OsStr::new("-! */"));
+    let result = parse_filter_directive(OsStr::new("-! */"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -613,7 +620,7 @@ fn exclude_negate_modifier_short() {
 
 #[test]
 fn exclude_negate_modifier_keyword() {
-    let result = parse_filter_directive(OsStr::new("exclude,! */"));
+    let result = parse_filter_directive(OsStr::new("exclude,! */"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -627,7 +634,7 @@ fn exclude_negate_modifier_keyword() {
 
 #[test]
 fn include_negate_modifier() {
-    let result = parse_filter_directive(OsStr::new("+! *.txt"));
+    let result = parse_filter_directive(OsStr::new("+! *.txt"), RuleSource::Argument);
     assert!(result.is_ok());
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
@@ -640,7 +647,8 @@ fn include_negate_modifier() {
 
 #[test]
 fn old_prefix_minus_space_flips_to_exclude() {
-    let result = parse_old_prefix_rule("- to", FilterRuleKind::Include).unwrap();
+    let result =
+        parse_old_prefix_rule("- to", FilterRuleKind::Include, RuleSource::Argument).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
@@ -652,7 +660,8 @@ fn old_prefix_minus_space_flips_to_exclude() {
 
 #[test]
 fn old_prefix_plus_space_flips_to_include() {
-    let result = parse_old_prefix_rule("+ *.rs", FilterRuleKind::Exclude).unwrap();
+    let result =
+        parse_old_prefix_rule("+ *.rs", FilterRuleKind::Exclude, RuleSource::Argument).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Include);
@@ -673,11 +682,11 @@ fn old_prefix_plus_space_flips_to_include() {
 #[test]
 fn old_prefix_clear_requires_an_exact_bang() {
     assert!(matches!(
-        parse_old_prefix_rule("!", FilterRuleKind::Exclude).unwrap(),
+        parse_old_prefix_rule("!", FilterRuleKind::Exclude, RuleSource::Argument).unwrap(),
         FilterDirective::Clear
     ));
     for line in ["! ", "!  ", "!\t", "!   "] {
-        match parse_old_prefix_rule(line, FilterRuleKind::Exclude).unwrap() {
+        match parse_old_prefix_rule(line, FilterRuleKind::Exclude, RuleSource::Argument).unwrap() {
             FilterDirective::Rule(spec) => assert_eq!(spec.pattern(), line),
             other => panic!("`{line}` must be a literal pattern, got {other:?}"),
         }
@@ -689,7 +698,8 @@ fn old_prefix_bang_with_pattern_is_raw_pattern() {
     // upstream: `!pattern` is NOT a clear - `len > 1` demotes the tentative
     // FILTRULE_CLEAR_LIST back to a literal pattern. Whitespace does not
     // rescue it either; see old_prefix_clear_requires_an_exact_bang.
-    let result = parse_old_prefix_rule("!keepme", FilterRuleKind::Exclude).unwrap();
+    let result =
+        parse_old_prefix_rule("!keepme", FilterRuleKind::Exclude, RuleSource::Argument).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
@@ -701,7 +711,8 @@ fn old_prefix_bang_with_pattern_is_raw_pattern() {
 
 #[test]
 fn old_prefix_bare_pattern_uses_default_kind() {
-    let result = parse_old_prefix_rule("*.log", FilterRuleKind::Include).unwrap();
+    let result =
+        parse_old_prefix_rule("*.log", FilterRuleKind::Include, RuleSource::Argument).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Include);
@@ -715,7 +726,8 @@ fn old_prefix_bare_pattern_uses_default_kind() {
 fn old_prefix_minus_without_space_is_raw_pattern() {
     // upstream: `-` without a trailing space is not the exclude prefix -
     // it's a literal pattern character. Same for `+`.
-    let result = parse_old_prefix_rule("-foo", FilterRuleKind::Exclude).unwrap();
+    let result =
+        parse_old_prefix_rule("-foo", FilterRuleKind::Exclude, RuleSource::Argument).unwrap();
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
@@ -730,7 +742,7 @@ fn old_prefix_empty_is_noop() {
     // upstream: exclude.c:1107 - a blank `--exclude`/`--include` value adds
     // nothing (exit 0), so an empty old-prefix rule is a no-op, not an error.
     assert!(matches!(
-        parse_old_prefix_rule("", FilterRuleKind::Exclude),
+        parse_old_prefix_rule("", FilterRuleKind::Exclude, RuleSource::Argument),
         Ok(FilterDirective::Noop)
     ));
 }
@@ -739,8 +751,8 @@ fn old_prefix_empty_is_noop() {
 fn old_prefix_short_prefix_only_is_error() {
     // upstream: `parse_rule_tok` reports "unexpected end of filter rule"
     // when no pattern follows the prefix.
-    assert!(parse_old_prefix_rule("- ", FilterRuleKind::Include).is_err());
-    assert!(parse_old_prefix_rule("+ ", FilterRuleKind::Exclude).is_err());
+    assert!(parse_old_prefix_rule("- ", FilterRuleKind::Include, RuleSource::Argument).is_err());
+    assert!(parse_old_prefix_rule("+ ", FilterRuleKind::Exclude, RuleSource::Argument).is_err());
 }
 
 #[test]
@@ -770,15 +782,15 @@ fn parse_cvs_convenience_rule_emits_cvs_defaults() {
     // `-C` / `+C` as a filter rule expand to the global CVS default
     // excludes rather than a literal pattern "C".
     assert_eq!(
-        parse_filter_directive(OsStr::new("-C")).unwrap(),
+        parse_filter_directive(OsStr::new("-C"), RuleSource::Argument).unwrap(),
         FilterDirective::CvsDefaults
     );
     assert_eq!(
-        parse_filter_directive(OsStr::new("+C")).unwrap(),
+        parse_filter_directive(OsStr::new("+C"), RuleSource::Argument).unwrap(),
         FilterDirective::CvsDefaults
     );
     assert_eq!(
-        parse_filter_directive(OsStr::new("-,C")).unwrap(),
+        parse_filter_directive(OsStr::new("-,C"), RuleSource::Argument).unwrap(),
         FilterDirective::CvsDefaults
     );
 }
@@ -787,7 +799,7 @@ fn parse_cvs_convenience_rule_emits_cvs_defaults() {
 fn parse_literal_dash_pattern_is_not_cvs() {
     // `- C` (with a space) is an ordinary exclude of the pattern "C", not
     // the cvs-convenience rule.
-    match parse_filter_directive(OsStr::new("- C")).unwrap() {
+    match parse_filter_directive(OsStr::new("- C"), RuleSource::Argument).unwrap() {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
             assert_eq!(spec.pattern(), "C");
@@ -806,15 +818,18 @@ fn short_prefix_uppercase_modifier_is_rejected() {
     // upstream: `+S` / `-R` -> "invalid modifier 'S'/'R'" (exclude.c:1226). The
     // byte after a `+`/`-` prefix is a modifier, matched case-sensitively, so the
     // uppercase form is not silently remapped to a sender/receiver rule.
-    let _ = parse_filter_directive(OsStr::new("+S")).expect_err("+S must be rejected");
-    let _ = parse_filter_directive(OsStr::new("-R")).expect_err("-R must be rejected");
+    let _ = parse_filter_directive(OsStr::new("+S"), RuleSource::Argument)
+        .expect_err("+S must be rejected");
+    let _ = parse_filter_directive(OsStr::new("-R"), RuleSource::Argument)
+        .expect_err("-R must be rejected");
 }
 
 #[test]
 fn merge_prefix_lowercase_c_modifier_is_rejected() {
     // upstream: `:c` -> "invalid modifier 'c'" (exclude.c:1226). The cvs-ignore
     // merge modifier is the uppercase `C`; the lowercase `c` is invalid.
-    let _ = parse_filter_directive(OsStr::new(":c")).expect_err(":c must be rejected");
+    let _ = parse_filter_directive(OsStr::new(":c"), RuleSource::Argument)
+        .expect_err(":c must be rejected");
 }
 
 #[test]
@@ -823,17 +838,19 @@ fn lowercase_single_char_side_prefix_is_unknown_rule() {
     // single-char side prefixes are the uppercase S/H/P/R; a lowercase spelling
     // is only ever the first byte of a long keyword, so a bare `s`/`h` is not a
     // rule and must be rejected rather than treated as show/hide.
-    let _ = parse_filter_directive(OsStr::new("s foo")).expect_err("s foo must be rejected");
-    let _ = parse_filter_directive(OsStr::new("h foo")).expect_err("h foo must be rejected");
+    let _ = parse_filter_directive(OsStr::new("s foo"), RuleSource::Argument)
+        .expect_err("s foo must be rejected");
+    let _ = parse_filter_directive(OsStr::new("h foo"), RuleSource::Argument)
+        .expect_err("h foo must be rejected");
 }
 
 #[test]
 fn keyword_uppercase_modifier_is_rejected() {
     // upstream: `include,X foo` / `exclude,S foo` -> "invalid modifier 'X'/'S'"
     // (exclude.c:1226). Keyword modifiers are case-sensitive too.
-    let _ = parse_filter_directive(OsStr::new("include,X foo"))
+    let _ = parse_filter_directive(OsStr::new("include,X foo"), RuleSource::Argument)
         .expect_err("include,X must be rejected");
-    let _ = parse_filter_directive(OsStr::new("exclude,S foo"))
+    let _ = parse_filter_directive(OsStr::new("exclude,S foo"), RuleSource::Argument)
         .expect_err("exclude,S must be rejected");
 }
 
@@ -843,11 +860,14 @@ fn side_keyword_rejects_s_and_r_modifiers() {
     // prefix_specifies_side, so the `s`/`r` modifiers are invalid there
     // ("invalid modifier", exclude.c:1226). These were previously accepted as a
     // silent side-flip.
-    let _ = parse_filter_directive(OsStr::new("show,r foo")).expect_err("show,r must be rejected");
-    let _ = parse_filter_directive(OsStr::new("protect,s foo"))
+    let _ = parse_filter_directive(OsStr::new("show,r foo"), RuleSource::Argument)
+        .expect_err("show,r must be rejected");
+    let _ = parse_filter_directive(OsStr::new("protect,s foo"), RuleSource::Argument)
         .expect_err("protect,s must be rejected");
-    let _ = parse_filter_directive(OsStr::new("hide,s foo")).expect_err("hide,s must be rejected");
-    let _ = parse_filter_directive(OsStr::new("risk,r foo")).expect_err("risk,r must be rejected");
+    let _ = parse_filter_directive(OsStr::new("hide,s foo"), RuleSource::Argument)
+        .expect_err("hide,s must be rejected");
+    let _ = parse_filter_directive(OsStr::new("risk,r foo"), RuleSource::Argument)
+        .expect_err("risk,r must be rejected");
 }
 
 #[test]
@@ -855,11 +875,14 @@ fn side_keyword_accepts_perishable_modifier() {
     // upstream: exclude.c:1265-1267 - `p` (perishable) carries no side guard, so
     // it is valid on protect/show/etc. (upstream `protect,p foo` exits 0). This
     // was previously rejected as an unsupported modifier.
-    match parse_filter_directive(OsStr::new("protect,p foo")).expect("protect,p foo must parse") {
+    match parse_filter_directive(OsStr::new("protect,p foo"), RuleSource::Argument)
+        .expect("protect,p foo must parse")
+    {
         FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Protect),
         other => panic!("expected protect Rule, got {other:?}"),
     }
-    parse_filter_directive(OsStr::new("show,p foo")).expect("show,p foo must parse");
+    parse_filter_directive(OsStr::new("show,p foo"), RuleSource::Argument)
+        .expect("show,p foo must parse");
 }
 
 #[test]
@@ -867,14 +890,20 @@ fn lowercase_modifiers_and_uppercase_prefixes_still_parse() {
     // Regression guard: the case-sensitivity fix must not reject the forms that
     // upstream accepts. Lowercase `s`/`x` modifiers on include/exclude, and the
     // uppercase single-char S/P prefixes, all remain valid (upstream exit 0).
-    parse_filter_directive(OsStr::new("+s foo")).expect("+s foo must parse");
-    parse_filter_directive(OsStr::new("include,s foo")).expect("include,s foo must parse");
-    parse_filter_directive(OsStr::new("include,x foo")).expect("include,x foo must parse");
-    match parse_filter_directive(OsStr::new("S public/**")).expect("S shorthand must parse") {
+    parse_filter_directive(OsStr::new("+s foo"), RuleSource::Argument).expect("+s foo must parse");
+    parse_filter_directive(OsStr::new("include,s foo"), RuleSource::Argument)
+        .expect("include,s foo must parse");
+    parse_filter_directive(OsStr::new("include,x foo"), RuleSource::Argument)
+        .expect("include,x foo must parse");
+    match parse_filter_directive(OsStr::new("S public/**"), RuleSource::Argument)
+        .expect("S shorthand must parse")
+    {
         FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Include),
         other => panic!("expected show(include) Rule, got {other:?}"),
     }
-    match parse_filter_directive(OsStr::new("P backups/**")).expect("P shorthand must parse") {
+    match parse_filter_directive(OsStr::new("P backups/**"), RuleSource::Argument)
+        .expect("P shorthand must parse")
+    {
         FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Protect),
         other => panic!("expected protect Rule, got {other:?}"),
     }
@@ -942,7 +971,7 @@ enum OldPrefix {
 #[test]
 fn clear_token_grid_matches_upstream_in_full_filter_syntax() {
     for (spelling, expected, _) in CLEAR_TOKEN_GRID {
-        let result = parse_filter_directive(OsStr::new(spelling));
+        let result = parse_filter_directive(OsStr::new(spelling), RuleSource::Argument);
         match (expected, result) {
             (FullSyntax::Clear, Ok(FilterDirective::Clear)) => {}
             (FullSyntax::TrailingCharacters, Err(message)) => {
@@ -970,7 +999,7 @@ fn clear_token_grid_matches_upstream_in_full_filter_syntax() {
 #[test]
 fn clear_token_grid_matches_upstream_in_old_prefix_syntax() {
     for (spelling, _, expected) in CLEAR_TOKEN_GRID {
-        let result = parse_old_prefix_rule(spelling, FilterRuleKind::Exclude)
+        let result = parse_old_prefix_rule(spelling, FilterRuleKind::Exclude, RuleSource::Argument)
             .unwrap_or_else(|e| panic!("`--exclude={spelling}` must parse: {e}"));
         match (expected, result) {
             (OldPrefix::Clear, FilterDirective::Clear) => {}

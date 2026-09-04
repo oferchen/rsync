@@ -1,6 +1,8 @@
 use core::message::{Message, Role};
 use core::rsync_error;
 
+use super::rule_line::RuleLine;
+
 /// Consumes exactly one rule separator (a single space, `_`, or `,`) that
 /// terminates the rule character and its modifiers, returning the rest of the
 /// line verbatim.
@@ -34,17 +36,30 @@ pub(super) struct InvalidModifier {
 impl InvalidModifier {
     /// Renders upstream's diagnostic for this byte.
     ///
-    /// upstream: exclude.c:1371-1379 - `invalid modifier '%c' at position %d in
-    /// filter rule: %s`, where the position is
-    /// `(int)(s - (const uchar *)*rulestr_ptr)`, i.e. a 0-based byte offset from
-    /// the start of the whole rule. `rule_offset` is where the scanned slice
-    /// begins within `rule`, so a one-character prefix passes 1.
-    pub(super) fn into_message(self, rule_offset: usize, rule: &str) -> Message {
+    /// upstream: exclude.c:1371-1379 - `invalid modifier%s in filter rule: %s`,
+    /// where the position is `(int)(s - (const uchar *)*rulestr_ptr)`, i.e. a
+    /// 0-based byte offset from the start of the whole rule. `rule_offset` is
+    /// where the scanned slice begins within `rule`, so a one-character prefix
+    /// passes 1.
+    ///
+    /// BOTH halves cross a provenance chokepoint. The rule text goes through
+    /// `rule_text` (exclude.c:88-123) and the `'%c' at position %d` detail
+    /// through `rule_detail` (exclude.c:126-131), which upstream describes as
+    /// "the extra detail some messages add ABOUT the text - a character of it,
+    /// an offset into it. Dropped along with the text it describes." Reporting
+    /// the character while hiding the line would still leak it one byte at a
+    /// time.
+    pub(super) fn into_message(self, rule_offset: usize, line: RuleLine<'_>) -> Message {
         let position = rule_offset + self.offset;
         let ch = self.ch;
+        let detail = format!(" '{ch}' at position {position}");
         rsync_error!(
             1,
-            format!("invalid modifier '{ch}' at position {position} in filter rule: {rule}")
+            format!(
+                "invalid modifier{} in filter rule: {}",
+                line.detail(&detail),
+                line.shown()
+            )
         )
         .with_role(Role::Client)
     }
@@ -125,6 +140,12 @@ pub(super) fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
+
+    use filters::RuleSource;
+
+    fn arg(text: &str) -> super::RuleLine<'_> {
+        super::RuleLine::new(text, RuleSource::Argument)
+    }
     use super::*;
 
     #[test]
@@ -286,7 +307,7 @@ mod tests {
         // `invalid modifier '%c' at position %d in filter rule: %s`.
         let invalid =
             split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
-        let rendered = invalid.into_message(1, ":n.rsync-filter").to_string();
+        let rendered = invalid.into_message(1, arg(":n.rsync-filter")).to_string();
         assert!(
             rendered.contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter"),
             "rendered message diverges from upstream: {rendered}"

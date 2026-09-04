@@ -11,6 +11,7 @@ mod entry;
 mod helpers;
 mod merge;
 mod modifiers;
+mod rule_line;
 mod rules;
 mod shorthand;
 
@@ -19,9 +20,22 @@ mod tests;
 
 pub(crate) use entry::{parse_filter_directive, parse_old_prefix_rule};
 
-// Only re-exported for the parent module's `#[cfg(test)]` re-export.
+/// Argument-sourced entry point for `parse_merge_modifiers`, used by the
+/// frontend's test shim. Production callers inside this module pass the
+/// `RuleLine` they are already parsing, so the provenance travels with the
+/// text; only a directive the operator typed can be re-paired here.
 #[cfg(test)]
-pub(crate) use merge::parse_merge_modifiers;
+pub(crate) fn parse_merge_modifiers_from_argument(
+    modifiers: &str,
+    directive: &str,
+    is_dir_merge: bool,
+) -> Result<(core::client::DirMergeOptions, bool), core::message::Message> {
+    merge::parse_merge_modifiers(
+        modifiers,
+        rule_line::RuleLine::new(directive, filters::RuleSource::Argument),
+        is_dir_merge,
+    )
+}
 
 // Brought into the hub so the `tests` submodule's `use super::*` resolves the
 // same names that were in scope when the tests lived alongside the parsers.
