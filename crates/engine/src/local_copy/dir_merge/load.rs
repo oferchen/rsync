@@ -5,10 +5,55 @@ use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, ExcludeIfPresentRule, FilterProgramError,
 };
-use filters::FilterRule;
+use filters::{FilterRule, RuleSource};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+/// How the merge file being parsed was NAMED.
+///
+/// This is upstream's `template` argument to `parse_filter_file()`, reduced to
+/// the single bit `rule_src_where()` reads out of it. Upstream computes
+/// `named_by_file = TEXT_FROM_FILE(template)` and then chooses at
+/// exclude.c:1753:
+///
+/// ```c
+/// rule_src_file = named_by_file ? NULL : src_name;
+/// ```
+///
+/// so a merge file the OPERATOR named is reported by path and line, while one
+/// named by another file's contents is not. The distinction is a security
+/// boundary, not a formatting preference: the second path's name is itself
+/// peer-controlled text.
+///
+/// upstream: exclude.c:60 TEXT_FROM_FILE + exclude.c:1750-1760
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MergeFileOrigin {
+    /// Named by an argument - `-F`, or a `--filter=': NAME'` rule. Upstream's
+    /// `named_by_file == 0` arm, which shows the file's own path and line.
+    Argument,
+    /// Named by another merge file's contents. Upstream's `named_by_file != 0`
+    /// arm; the naming file was read and closed, so it reports
+    /// `a file read earlier` (exclude.c:78) and never the path.
+    NamedByFile,
+}
+
+impl MergeFileOrigin {
+    /// The provenance to report for a rule read out of this merge file.
+    ///
+    /// `line` is the 1-based physical line number, or `None` for a
+    /// whitespace-split file - upstream sets `rule_src_line = -1` there
+    /// (exclude.c:1754) because a word has no line to name.
+    fn rule_source<'a>(self, name: &'a str, line: Option<usize>) -> RuleSource<'a> {
+        match self {
+            Self::Argument => match line {
+                Some(line) => RuleSource::File { name, line },
+                None => RuleSource::FileWordSplit { name },
+            },
+            Self::NamedByFile => RuleSource::FileReadEarlier,
+        }
+    }
+}
 
 /// Wraps a `FilterProgramError` as a `LocalCopyError` with file path context,
 /// reporting the failure through the standard `compile filter file` operation
@@ -348,6 +393,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     options: &DirMergeOptions,
     delete_excluded: bool,
     visited: &mut Vec<PathBuf>,
+    origin: MergeFileOrigin,
 ) -> Result<DirMergeEntries, LocalCopyError> {
     // upstream: exclude.c:1619-1627 parse_filter_file() bounds the nesting
     // DEPTH at MAX_MERGE_DEPTH (exclude.c:168) rather than detecting a cycle.
@@ -402,6 +448,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
     // RERR_SYNTAX (1), not RERR_PARTIAL (23).
     let map_error = |error: FilterParseError| LocalCopyError::filter_syntax(error.to_string());
 
+    // upstream: exclude.c:1723-1727 - `strlcpy(src_name, fname, ...)` captures
+    // the name BEFORE dirbuf is cut back, so the reported location is the merge
+    // file as given, not the directory it was found in.
+    let src_name = path.display().to_string();
+
     let mut contents = String::new();
     io::BufReader::new(file)
         .read_to_string(&mut contents)
@@ -449,7 +500,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     directive.push_str(next);
                 }
 
-                match parse_filter_directive_line(&directive) {
+                match parse_filter_directive_line(&directive, origin.rule_source(&src_name, None)) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         if dir_merge_side_conflict(&rule, options) {
                             return Err(map_error(FilterParseError::new(format!(
@@ -487,6 +538,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 &options_override,
                                 delete_excluded,
                                 visited,
+                                MergeFileOrigin::NamedByFile,
                             )?;
                             entries.extend(nested_entries);
                         } else {
@@ -495,6 +547,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 options,
                                 delete_excluded,
                                 visited,
+                                MergeFileOrigin::NamedByFile,
                             )?;
                             entries.extend(nested_entries);
                         }
@@ -529,7 +582,10 @@ pub(crate) fn load_dir_merge_rules_recursive(
         } => {
             let enforce_kind = *enforce_kind;
             let allow_comments = *allow_comments;
-            for line in contents.lines() {
+            // upstream: exclude.c:1759-1760 - rule_src_line counts EVERY
+            // physical line, so blanks and comments still advance it.
+            for (index, line) in contents.lines().enumerate() {
+                let line_number = index + 1;
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
@@ -563,7 +619,10 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                match parse_filter_directive_line(trimmed) {
+                match parse_filter_directive_line(
+                    trimmed,
+                    origin.rule_source(&src_name, Some(line_number)),
+                ) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         if dir_merge_side_conflict(&rule, options) {
                             return Err(map_error(FilterParseError::new(format!(
@@ -595,6 +654,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 &options_override,
                                 delete_excluded,
                                 visited,
+                                MergeFileOrigin::NamedByFile,
                             )?;
                             entries.extend(nested_entries);
                         } else {
@@ -603,6 +663,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 options,
                                 delete_excluded,
                                 visited,
+                                MergeFileOrigin::NamedByFile,
                             )?;
                             entries.extend(nested_entries);
                         }
@@ -975,5 +1036,43 @@ mod tests {
 
         assert_eq!(inherited.sender_side_override(), None);
         assert_eq!(inherited.receiver_side_override(), None);
+    }
+
+    /// The full truth table of upstream's `rule_src_where` split
+    /// (exclude.c:1750-1760), which is the decision this type owns.
+    ///
+    /// It is a table rather than one case because each arm is separately
+    /// load-bearing: the `Argument` rows are what tell the operator which file
+    /// to fix, and the `NamedByFile` row is what keeps a peer-controlled
+    /// merge-file NAME out of the diagnostic. A test covering only one arm is
+    /// satisfied by collapsing both, in either direction.
+    #[test]
+    fn the_reported_provenance_follows_upstreams_named_by_file_split() {
+        // named_by_file == 0: rule_src_file = src_name, rule_src_line = N.
+        assert_eq!(
+            MergeFileOrigin::Argument.rule_source("d/.rsync-filter", Some(7)),
+            RuleSource::File {
+                name: "d/.rsync-filter",
+                line: 7,
+            }
+        );
+
+        // Same arm, whitespace-split file: upstream sets rule_src_line = -1,
+        // which renders the name with no line (exclude.c:1754).
+        assert_eq!(
+            MergeFileOrigin::Argument.rule_source("d/.rsync-filter", None),
+            RuleSource::FileWordSplit {
+                name: "d/.rsync-filter"
+            }
+        );
+
+        // named_by_file != 0: rule_src_file = NULL, so the path is withheld
+        // however the file was read.
+        for line in [Some(7), None] {
+            assert_eq!(
+                MergeFileOrigin::NamedByFile.rule_source("d/.rsync-filter", line),
+                RuleSource::FileReadEarlier
+            );
+        }
     }
 }

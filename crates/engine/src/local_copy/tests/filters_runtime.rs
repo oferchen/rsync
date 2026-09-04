@@ -265,8 +265,14 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
 
     let mut visited = Vec::new();
     let options = DirMergeOptions::default();
-    let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
-        .expect("parse filter");
+    let entries = load_dir_merge_rules_recursive(
+        &filter,
+        &options,
+        false,
+        &mut visited,
+        MergeFileOrigin::Argument,
+    )
+    .expect("parse filter");
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.rules.iter().any(|rule| {
@@ -290,8 +296,14 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     let options = DirMergeOptions::default()
         .use_whitespace()
         .allow_list_clearing(true);
-    let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
-        .expect("parse filter");
+    let entries = load_dir_merge_rules_recursive(
+        &filter,
+        &options,
+        false,
+        &mut visited,
+        MergeFileOrigin::Argument,
+    )
+    .expect("parse filter");
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.exclude_if_present.is_empty());
@@ -331,7 +343,13 @@ fn dir_merge_clear_keyword_is_case_sensitive_in_both_parser_modes() {
         let filter = temp.path().join(name);
         fs::write(&filter, body).expect("write filter");
         let mut visited = Vec::new();
-        match load_dir_merge_rules_recursive(&filter, &options, false, &mut visited) {
+        match load_dir_merge_rules_recursive(
+            &filter,
+            &options,
+            false,
+            &mut visited,
+            MergeFileOrigin::Argument,
+        ) {
             Ok(_) => panic!("{name}: an upper-case CLEAR is neither a directive nor a pattern"),
             Err(error) => assert!(
                 error.to_string().contains("Unknown filter rule"),
@@ -365,8 +383,14 @@ fn dir_merge_lower_case_clear_still_clears_in_both_parser_modes() {
         let filter = temp.path().join(name);
         fs::write(&filter, body).expect("write filter");
         let mut visited = Vec::new();
-        let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
-            .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+        let entries = load_dir_merge_rules_recursive(
+            &filter,
+            &options,
+            false,
+            &mut visited,
+            MergeFileOrigin::Argument,
+        )
+        .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
         assert!(
             entries.rules.is_empty() && entries.clear_inherited,
             "{name}: lower-case clear must discard the earlier rule"

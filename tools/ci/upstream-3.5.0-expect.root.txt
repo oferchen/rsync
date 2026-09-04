@@ -148,7 +148,7 @@ files-from-leak skip
 files-from-path-clamp pass
 filter-depth pass
 filter-leak skip
-filter-merge-content-echo fail
+filter-merge-content-echo pass
 filter-merge-recursion pass
 filter-merge-symlink pass
 fuzzy pass
