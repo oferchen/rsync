@@ -560,3 +560,63 @@ fn perdir_merge_delete_during_matches_upstream_no_protection() {
     assert!(dest.join("keep.txt").exists());
     assert!(dest.join("sub/keep2.txt").exists());
 }
+
+/// A merge file's over-long rule must be DISCARDED, not retained.
+///
+/// upstream: exclude.c:1533-1538 in `parse_filter_str`'s token loop -
+/// `if (pat_len >= MAXPATHLEN) { rprintf(FERROR, "discarding over-long
+/// filter: %s\n", ...); free_filter(rule); continue; }`. The `continue` is the
+/// substance: the rule contributes nothing and parsing exits 0.
+///
+/// MEASURED against the real rsync 3.5.0 binary, with a `.rsync-filter`
+/// holding `- ` plus 1100 `*` and a `-aF` local copy of two files:
+///   upstream: prints the diagnostic, dst gets `.rsync-filter a.txt b.txt`
+///   oc before: silent, dst EMPTY, exit 0
+/// A long run of `*` MATCHES EVERYTHING, so retaining the rule upstream drops
+/// suppressed the entire transfer. The missing message was the visible half of
+/// a data divergence, which is why this asserts on the RULE SET rather than on
+/// the diagnostic text.
+#[test]
+fn a_merge_files_over_long_rule_is_discarded() {
+    let temp = tempdir().expect("tempdir");
+    let filter = temp.path().join("overlong.rules");
+    let pattern = "*".repeat(fast_io::path_limit::max_path_len() + 76);
+    fs::write(&filter, format!("- {pattern}\n")).expect("write filter");
+
+    let mut visited = Vec::new();
+    let entries = load_dir_merge_rules_recursive(
+        &filter,
+        &DirMergeOptions::default(),
+        false,
+        &mut visited,
+        MergeFileOrigin::Argument,
+    )
+    .expect("an over-long rule is discarded, not a syntax error");
+
+    assert!(
+        entries.rules.is_empty(),
+        "upstream discards the rule; retaining it would exclude every file",
+    );
+}
+
+/// The non-vacuity companion: an ORDINARY rule from the same loader must
+/// survive. Without it the pin above would also pass if the loader had simply
+/// stopped producing rules at all.
+#[test]
+fn a_merge_files_ordinary_rule_is_kept() {
+    let temp = tempdir().expect("tempdir");
+    let filter = temp.path().join("ordinary.rules");
+    fs::write(&filter, b"- *.tmp\n").expect("write filter");
+
+    let mut visited = Vec::new();
+    let entries = load_dir_merge_rules_recursive(
+        &filter,
+        &DirMergeOptions::default(),
+        false,
+        &mut visited,
+        MergeFileOrigin::Argument,
+    )
+    .expect("parse filter");
+
+    assert_eq!(entries.rules.len(), 1, "an ordinary rule must be kept");
+}
