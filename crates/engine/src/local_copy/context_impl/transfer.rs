@@ -323,14 +323,13 @@ impl<'a> CopyContext<'a> {
                 }
             }
 
-            if rule.options().excludes_self() {
-                let pattern = rule.pattern().to_string_lossy().into_owned();
-                if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
-                    ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
-                    return Err(filter_program_local_error(&candidate, &error));
-                }
-            }
+            // The `:e` self-exclude is NOT synthesised here. upstream builds it
+            // at REGISTRATION into the enclosing list (exclude.c:1558-1571), so
+            // it exists whether or not this directory holds a file by that
+            // name; oc mirrors that at the two registration seams
+            // (core `client/run/filters.rs` for a `--filter=:e`, and
+            // `dir_merge::load` for a `:e` nested in a merge file). Adding it
+            // again on this load path would exclude the name twice.
 
             let has_segment = !segment.is_empty();
             let markers = entries.exclude_if_present;
@@ -494,12 +493,10 @@ impl<'a> CopyContext<'a> {
                 .map_err(|error| filter_program_local_error(&candidate, &error))?;
         }
 
-        if rule.options.excludes_self() {
-            let pattern = rule.pattern.to_string_lossy().into_owned();
-            segment
-                .push_rule(FilterRule::exclude(pattern))
-                .map_err(|error| filter_program_local_error(&candidate, &error))?;
-        }
+        // No self-exclude here either - see the note on the sibling load site
+        // above. This function is reached only after the named file is found,
+        // which is exactly the condition upstream does NOT place the rule
+        // behind.
 
         Ok(Some(LoadedNestedDirMerge {
             segment: (!segment.is_empty()).then_some(segment),
