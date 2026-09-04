@@ -17,6 +17,31 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 
 ### Security
 
+**Daemon and client input hardening**
+- The `proxy protocol hosts` daemon directive now gates who may supply a PROXY
+  header. A direct peer that is not on the trusted list is refused, and an
+  empty or unset list rejects every peer rather than accepting any - upstream's
+  `allow_proxy_protocol_peer()` fails closed the same way, and warns at startup
+  on the `proxy protocol = true`-with-no-list combination (#7648)
+- Refuse an over-long proxy CONNECT request, authorization header and response
+  header before writing them. Upstream has four length refusals where oc-rsync
+  had one, and an over-long *header* was reporting the *status-line* wording;
+  the 1023-byte bound is now derived from `PROXY_BUF_SIZE` rather than typed
+  twice (#7650)
+- Confine a peer-supplied alternate-basis xname to its basedir, with the
+  sanitiser and its wire-driven consumer landing together so the guard cannot
+  ship inert (#7651)
+- The macOS `clonefile` fast path bypassed the confined source open; it now
+  inherits it, so the fast path cannot resolve a component the slow path would
+  refuse (#7653)
+- Bound the client argument vector the daemon accepts, and stop logging it
+  verbatim (#7633)
+- Confine the `--delay-updates` staging path to the module. The staging path
+  was resolved to its canonical spelling while the module root was carried
+  unresolved, so a module under a symlinked ancestor escaped the guard - on
+  Linux only Landlock stopped it, leaving any pre-Landlock kernel,
+  `OC_RSYNC_NO_LANDLOCK`, or non-Linux platform exposed (#7659)
+
 **Path confinement (CVE-2026-53795 family)**
 - Confine the destination write and the source read against symlink races, and
   route the confined source open onto one shared per-component resolver instead
@@ -231,8 +256,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - rsync 3.5.0 now runs the full interop scenario matrix as a gating peer,
   alongside 3.0.9, 3.1.3 and 3.4.4 (#7290, #7337)
 - The required upstream-testsuite gate runs the rsync 3.5.0 Python corpus
-  instead of the 3.4.4 shell corpus, as four legs: privilege {non-root, root} x
-  daemon transport {stdio pipe, loopback TCP}. Each leg carries an expected-
+  instead of the 3.4.4 shell corpus, as four Linux legs: privilege
+  {non-root, root} x daemon transport {stdio pipe, loopback TCP}, plus a
+  non-root/pipe leg on macOS. Each leg carries an expected-
   outcome manifest generated from a real run, so only a change in outcome - a
   regression, or an unexpected pass - fails the gate (#7387, #7339, #7405,
   #7408, #7392, #7391)
@@ -277,6 +303,27 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Three source files that nothing compiled were removed (#7543)
 
 ### Fixed
+
+**3.5.0 testsuite divergences**
+- `keep_backup failed` named the source file rather than the backup
+  destination it failed to create - at both emitting sites (#7658)
+- A directory's creation time is preserved under `--crtimes` (#7656)
+- Apply the set-group-ID mode `chmod(2)` would apply: macOS `fchmodat` refuses
+  the bit that `chmod` silently masks, so the two calls disagreed (#7655)
+- Anchor the sender's directory scan on the transfer root. The daemon's flist
+  walk read a process-global root that nothing installs; the anchor is now a
+  parameter, which fixed two macOS cells with one change (#7654)
+- A trailing `/.` must not pivot the `--relative` root - two upstream
+  decisions had been conflated into one (#7652)
+- Keep the DOTDIR marker on a module operand ending in `/.` (#7635)
+- Reject an unknown `--info` / `--debug` item the way upstream does, instead
+  of accepting it silently (#7637)
+- Keep a cleared directory's `dir_flist` slot and refuse it, and refuse a
+  transfer-phase NDX naming a cleared file entry (#7641, #7642)
+- Report an oversized xattr datum and a zero block length with upstream's own
+  wording (#7647, #7646)
+- Clear the master red: a rustdoc link, a racing-converter cause, and a
+  pre-mangled log operand (#7639)
 
 **Filters**
 - Reject invalid filter-rule modifiers instead of stopping at the first one
@@ -532,6 +579,19 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 
 ### Testing and CI
 
+- The rsync 3.5.0 upstream testsuite now runs on **macOS** as a fifth leg
+  (non-root, stdio pipe, full 345-cell corpus), with its own committed
+  expect-manifest. It is the only leg that can observe a platform-conditional
+  divergence: three of its cells *skip* on Linux, so they had never executed in
+  this repository's CI at all (#7638)
+- Build the old-rsync oracle binaries the 3.5.0 testsuite asserts against,
+  rather than silently falling back to a weaker substitute (#7636)
+- Bound the interop smoke harness's readiness probe so its deadline is real
+  (#7640)
+- Pin the `want_i` adjacent-match length re-check, the `preserve_hard_links`
+  gate on both wire encodings, and the reserved slot below the daemon-argument
+  ceiling (#7643, #7644, #7645)
+
 - The 3.5.0 expect-manifest gate is proven non-vacuous on outcomes, with a
   whole-suite coverage guard so a silently deleted row cannot pass (#7387)
 - Guard-page over-read harness for the SIMD rolling checksum, carrying its own
@@ -623,6 +683,21 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   of reddening unrelated pull requests three jobs later (#7632)
 
 ### Documentation
+
+- The upstream-testsuite figures in `README.md` and `SECURITY.md` were stale in
+  every row. Both files are re-derived from the committed manifests - the pipe
+  legs are at one divergence, not three; the distinct-failure count across all
+  manifests is 23, not 29; all four Linux legs are required contexts, not two;
+  and the macOS leg was missing from both tables entirely. `SECURITY.md` also
+  described `proxy protocol hosts` as unimplemented after it had shipped. The
+  two macOS-leg rationale comments in the workflows carried the same pre-fix
+  figures and are recounted from the same source
+- Replace the INC_RECURSE gate's stale rationale with the measured one. The
+  comment named a mechanism that cannot apply - every call site of the function
+  it blamed is inside `cfg(test)` - while its conclusion was nonetheless
+  correct: the deadlock boundary is exactly upstream's `MIN_FILECNT_LOOKAHEAD`
+  of 1000, bisected by entry count (#7649)
+- Document the public items rustdoc could not see (#7634)
 
 - Corrected stale upstream-version and CI-gate claims across the contributor
   docs: five required checks where the ruleset returns eight, a claim of one
