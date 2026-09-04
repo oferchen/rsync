@@ -345,8 +345,11 @@ mod runtime_options_tests {
     #[test]
     fn global_log_file_directive_opens_the_daemon_log() {
         let mut file = NamedTempFile::new().expect("config file");
-        writeln!(file, "log file = /var/log/global.log\n\n[share]\npath = /srv")
-            .expect("write config");
+        writeln!(
+            file,
+            "log file = /var/log/global.log\n\n[share]\npath = /srv"
+        )
+        .expect("write config");
 
         let args = vec![
             OsString::from("--config"),
@@ -369,8 +372,11 @@ mod runtime_options_tests {
     #[test]
     fn cli_log_file_overrides_the_config_global_in_either_order() {
         let mut file = NamedTempFile::new().expect("config file");
-        writeln!(file, "log file = /var/log/global.log\n\n[share]\npath = /srv")
-            .expect("write config");
+        writeln!(
+            file,
+            "log file = /var/log/global.log\n\n[share]\npath = /srv"
+        )
+        .expect("write config");
         let config = OsString::from(file.path().as_os_str());
         let cli = PathBuf::from("/var/log/cli.log");
 
@@ -430,8 +436,11 @@ mod runtime_options_tests {
         writeln!(first, "log file = /var/log/first.log\n\n[a]\npath = /srv/a")
             .expect("write config");
         let mut second = NamedTempFile::new().expect("config file");
-        writeln!(second, "log file = /var/log/second.log\n\n[b]\npath = /srv/b")
-            .expect("write config");
+        writeln!(
+            second,
+            "log file = /var/log/second.log\n\n[b]\npath = /srv/b"
+        )
+        .expect("write config");
 
         let args = vec![
             OsString::from("--config"),
