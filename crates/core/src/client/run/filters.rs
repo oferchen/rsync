@@ -64,6 +64,10 @@ pub(crate) fn compile_filter_program(
                     .with_xattr_only(rule.is_xattr_only())
                     .with_negate(rule.is_negated()),
             )),
+            // The `:e` self-exclude is NOT synthesised here. `FilterProgram`
+            // owns it, so a program built by any route - this one, or a caller
+            // assembling entries directly - registers it identically
+            // (exclude.c:1558-1571).
             FilterRuleKind::DirMerge => {
                 entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
                     rule.pattern().to_owned(),

@@ -286,6 +286,26 @@ impl DirMergeEntries {
     }
 
     fn push_nested_dir_merge(&mut self, nested: NestedDirMerge) {
+        // upstream: exclude.c:1558-1571 - a `:e` directive synthesises an
+        // exclude for the merge file's own BASENAME at REGISTRATION, into the
+        // ENCLOSING list, then clears FILTRULE_EXCLUDE_SELF so it is added
+        // exactly once. `self.rules` is that enclosing list: it holds the rules
+        // of the merge file this directive was read out of. Pushing it here,
+        // ahead of the nested registration, keeps upstream's order (the exclude
+        // precedes the merge rule's own add_rule at :1590) and - crucially -
+        // makes the exclude exist whether or not a file by that name is ever
+        // found in any directory. Deferring it to the load of that file, as oc
+        // did, meant a `:e` naming an absent file excluded nothing.
+        //
+        // push_rule stamps `FileReadEarlier`, which is the provenance upstream
+        // gives it: `excl_self->rflags = rule->rflags & FILTRULE_FROM_FILE`.
+        // The bracketed literal of a `:e excl-self-[x]9` therefore stays
+        // withheld from the match trace, as it must - it came out of a file.
+        if nested.options.excludes_self() {
+            let name = nested.pattern.to_string_lossy();
+            let excluded = filters::merge_self_exclude_name(&name).to_owned();
+            self.push_rule(FilterRule::exclude(excluded));
+        }
         self.nested_dir_merges.push(nested);
     }
 

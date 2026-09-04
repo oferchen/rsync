@@ -150,8 +150,8 @@ pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{
-    MAX_MERGE_DEPTH, MergeFileError, depth_limit_exceeded, merge_name_overflows, parse_rules,
-    read_rules, read_rules_recursive,
+    MAX_MERGE_DEPTH, MergeFileError, depth_limit_exceeded, merge_name_overflows,
+    merge_self_exclude_name, parse_rules, read_rules, read_rules_recursive,
 };
 pub use overlong::{is_over_long, over_long_filter};
 pub use rule::FilterRule;
