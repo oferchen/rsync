@@ -77,7 +77,35 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 
 ### Upstream rsync 3.5.0 (13 Aug 2026) - triage in progress
 
-rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. Unlike the 3.4.2/3.4.3 batches below, this set is **not yet fully audited against oc-rsync**, and this section states that plainly rather than implying coverage that does not exist.
+rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. That figure is upstream's own: "This release fixes 33 security issues found during a focused audit of rsync's..." (`NEWS.md:37` in the 3.5.0 tarball). Unlike the 3.4.2/3.4.3 batches below, this set is **not yet fully audited against oc-rsync**, and this section states that plainly rather than implying coverage that does not exist.
+
+**How much is audited: 10 of them.** A disclaimer that does not carry a number cannot be checked, so here is the count. Ten of the 3.5.0 CVEs have a per-CVE finding recorded in this document; the twenty-two below have **no entry yet** - they are neither claimed fixed nor claimed inapplicable:
+
+```
+CVE-2026-53785  CVE-2026-53786  CVE-2026-53788  CVE-2026-53789
+CVE-2026-53792  CVE-2026-53793  CVE-2026-53796  CVE-2026-53797
+CVE-2026-53798  CVE-2026-53799  CVE-2026-53800  CVE-2026-53801
+CVE-2026-53802  CVE-2026-53803  CVE-2026-70454  CVE-2026-70456
+CVE-2026-70457  CVE-2026-70458  CVE-2026-70459  CVE-2026-70460
+CVE-2026-70461  CVE-2026-70462
+```
+
+Re-derive the roster from the pinned tarball rather than trusting this list. Note
+the predicate: an id counts as assessed only when it has a **table row** here, not
+merely a mention - the roster above mentions all twenty-two, so a plain `grep` for
+CVE ids in this file matches them and reports nothing missing:
+
+```sh
+sed -n '1,451p' target/interop/upstream-src/rsync-3.5.0/NEWS.md \
+  | grep -o 'CVE-2026-[0-9]*' | sort -u > /tmp/batch
+grep -o '^| CVE-2026-[0-9]*' SECURITY.md | sed 's/^| //' | sort -u > /tmp/assessed
+comm -23 /tmp/batch /tmp/assessed          # ids with no per-CVE row
+```
+
+That prints 23 lines. Twenty-two are the roster above; the twenty-third,
+`CVE-2026-53794`, is a back-reference - it appears in upstream's 3.5.0 section but
+also in an older one, alongside `CVE-2026-43617` and `CVE-2026-43620`, and
+`CVE-2024-12084` is cited there only as prior art. Upstream's own sentence, not this subtraction, is the authority for **33**; the discrepancy is in how back-references are counted, not in the roster of untriaged ids.
 
 **What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, which means neither "inherited" nor "not applicable" can be assumed for any of them - each needs its own evidence.
 
