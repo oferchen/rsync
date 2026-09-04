@@ -327,6 +327,121 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
+    /// A global `log file` must reach the daemon-wide sink, not just the
+    /// per-module default.
+    ///
+    /// upstream: `log file` is `P_LOCAL` (daemon-parm.h:289), but
+    /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
+    /// at `module_id < 0` and `daemon_main` calls `log_init(0)`
+    /// (clientserver.c:1768) before accepting anything. So the global value
+    /// opens a log at startup, and every diagnostic emitted before a module is
+    /// selected - the listening banner, the proxy-protocol rejection at
+    /// clientserver.c:1394 - lands in it.
+    ///
+    /// Recording the directive only as a module default left `log_file` `None`,
+    /// so the sink was never opened and those lines went to stderr or nowhere.
+    /// Measured against rsync 3.5.0 on the same config: upstream wrote three
+    /// lines to the file and nothing to stderr; oc created no file at all.
+    #[test]
+    fn global_log_file_directive_opens_the_daemon_log() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "log file = /var/log/global.log\n\n[share]\npath = /srv")
+            .expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(file.path().as_os_str()),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+
+        assert_eq!(
+            options.log_file(),
+            Some(&PathBuf::from("/var/log/global.log")),
+            "the global `log file` must open the daemon-wide log"
+        );
+    }
+
+    /// `--log-file` outranks the config global, in either argument order.
+    ///
+    /// upstream: log.c:215 - `if (am_daemon && !logfile_name) logfile_name =
+    /// lp_log_file(module_id)`. The command line fills `logfile_name` first and
+    /// the config value only fills a still-empty slot, so order cannot matter.
+    #[test]
+    fn cli_log_file_overrides_the_config_global_in_either_order() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "log file = /var/log/global.log\n\n[share]\npath = /srv")
+            .expect("write config");
+        let config = OsString::from(file.path().as_os_str());
+        let cli = PathBuf::from("/var/log/cli.log");
+
+        for args in [
+            vec![
+                OsString::from("--config"),
+                config.clone(),
+                OsString::from("--log-file"),
+                OsString::from(&cli),
+            ],
+            vec![
+                OsString::from("--log-file"),
+                OsString::from(&cli),
+                OsString::from("--config"),
+                config.clone(),
+            ],
+        ] {
+            let options = RuntimeOptions::parse(&args).expect("parse");
+            assert_eq!(
+                options.log_file(),
+                Some(&cli),
+                "--log-file must win over the config global regardless of order"
+            );
+        }
+    }
+
+    /// A repeated global `log file` inside ONE file is last-wins, not an error.
+    ///
+    /// upstream: params.c:Parse assigns each directive as it is read, so a
+    /// second occurrence simply overwrites the first. Mirrors the same rule the
+    /// other global path directives follow through `store_global_directive`.
+    #[test]
+    fn a_repeated_global_log_file_in_one_file_is_last_wins() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "log file = /var/log/first.log\nlog file = /var/log/second.log\n\n[share]\npath = /srv"
+        )
+        .expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(file.path().as_os_str()),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(
+            options.log_file(),
+            Some(&PathBuf::from("/var/log/second.log"))
+        );
+    }
+
+    /// Two `--config` files naming DIFFERENT global `log file` paths are a
+    /// config error, the same way `lock file` and `pid file` treat the shape.
+    #[test]
+    fn conflicting_global_log_file_directives_across_configs_are_rejected() {
+        let mut first = NamedTempFile::new().expect("config file");
+        writeln!(first, "log file = /var/log/first.log\n\n[a]\npath = /srv/a")
+            .expect("write config");
+        let mut second = NamedTempFile::new().expect("config file");
+        writeln!(second, "log file = /var/log/second.log\n\n[b]\npath = /srv/b")
+            .expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(first.path().as_os_str()),
+            OsString::from("--config"),
+            OsString::from(second.path().as_os_str()),
+        ];
+        assert!(RuntimeOptions::parse(&args).is_err());
+    }
+
     #[test]
     fn parse_lock_file_option() {
         let args = vec![

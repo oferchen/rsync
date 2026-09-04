@@ -31,6 +31,15 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
+        // upstream: clientserver.c:1768 - `daemon_main` calls `log_init(0)`
+        // before accepting anything, and `log_init` resolves the name through
+        // `lp_log_file(module_id)` at `module_id < 0`, i.e. the global value.
+        // Without this the daemon-wide log is never opened and the startup
+        // banner plus every pre-module diagnostic goes nowhere.
+        if let Some((log_file, origin)) = parsed.log_file {
+            self.set_config_log_file(log_file, &origin)?;
+        }
+
         // QUIC listener identity (oc extension). Directive parsing already
         // resolved the paths config-relative and rejected any module-scoped use;
         // a later occurrence overwrites an earlier one, matching the last-wins
@@ -399,6 +408,37 @@ impl RuntimeOptions {
 
         self.lock_file = Some(path);
         self.lock_file_from_config = true;
+        Ok(())
+    }
+
+    /// Adopts the config file's global `log file` as the daemon-wide log,
+    /// unless `--log-file` already named one.
+    ///
+    /// Mirrors `set_config_lock_file`: a repeated global directive is a config
+    /// error unless it repeats the same path, and a CLI-sourced value is left
+    /// untouched so `--log-file` keeps precedence (log.c:215).
+    fn set_config_log_file(
+        &mut self,
+        path: PathBuf,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.log_file {
+            if self.log_file_from_config {
+                if existing == &path {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'log file' directive in global section",
+                ));
+            }
+
+            return Ok(());
+        }
+
+        self.log_file = Some(path);
+        self.log_file_from_config = true;
         Ok(())
     }
 

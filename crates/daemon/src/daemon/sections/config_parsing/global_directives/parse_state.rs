@@ -14,6 +14,14 @@ struct GlobalParseState {
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// Global `log file` path, kept separately from the per-module default it
+    /// also seeds. Upstream's `log file` is `P_LOCAL` (daemon-parm.h:289) but
+    /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
+    /// at `module_id < 0`, and `daemon_main` calls `log_init(0)`
+    /// (clientserver.c:1768) at STARTUP - so the global value opens a
+    /// daemon-wide log before any module is selected. Recording it only as a
+    /// module default would lose every pre-module diagnostic.
+    log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// QUIC listener certificate/key paths from the `quic cert file` /
     /// `quic key file` global directives (oc extension, feature-gated).
     #[cfg(feature = "quic")]
@@ -70,6 +78,7 @@ impl GlobalParseState {
             pid_file: None,
             reverse_lookup: None,
             lock_file: None,
+            log_file: None,
             #[cfg(feature = "quic")]
             quic_cert_file: None,
             #[cfg(feature = "quic")]
@@ -174,6 +183,7 @@ impl GlobalParseState {
             pid_file: self.pid_file,
             reverse_lookup: self.reverse_lookup,
             lock_file: self.lock_file,
+            log_file: self.log_file,
             #[cfg(feature = "quic")]
             quic_cert_file: self.quic_cert_file,
             #[cfg(feature = "quic")]
