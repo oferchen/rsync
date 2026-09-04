@@ -161,7 +161,7 @@ Non-obvious protocol and wire behaviour is annotated with a citation to the
 upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
 
 - **One pinned baseline.** Every citation line number is anchored to the single
-  pinned upstream tree at `target/interop/upstream-src/rsync-3.4.4/`. Do **not**
+  pinned upstream tree at `target/interop/upstream-src/rsync-3.5.0/`. Do **not**
   append a version to each citation - the baseline is recorded once, in
   `tools/ci/citation_drift_audit.py` (`VER`) and `docs/UPSTREAM_COMPARISON.md`.
   Repeating it across thousands of comments would turn a version bump into a

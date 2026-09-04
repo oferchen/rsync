@@ -351,7 +351,7 @@ Start with `crates/transfer/src/lib.rs` for the overview, then:
 
 ## Upstream Reference
 
-The upstream C source at `target/interop/upstream-src/rsync-3.4.4/` is the
+The upstream C source at `target/interop/upstream-src/rsync-3.5.0/` is the
 single source of truth for protocol behaviour. Key files to cross-reference:
 
 | Upstream File | Corresponds To |

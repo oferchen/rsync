@@ -136,7 +136,7 @@ Explicit states with validated transitions:
 
 ## How to Add a Feature
 
-1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.4.4/` - the release `workspace.metadata.oc_rsync.upstream_version` pins - is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
+1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.5.0/` - the release `workspace.metadata.oc_rsync.upstream_version` pins - is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
 
 2. **Create a feature branch:**
    ```sh
@@ -179,9 +179,13 @@ All of these must pass before a PR can merge:
 | interop / interop with upstream rsync | Wire compatibility against every pinned upstream release |
 | upstream-testsuite / upstream testsuite | Upstream's own testsuite, unprivileged |
 | upstream-testsuite / upstream testsuite (root) | Upstream's own testsuite, privileged (ownership, devices) |
+| upstream-testsuite-tcp / upstream testsuite | Upstream's own testsuite over a TCP daemon, unprivileged |
+| upstream-testsuite-tcp / upstream testsuite (root) | Upstream's own testsuite over a TCP daemon, privileged |
 
 Master is protected, so every change lands through a pull request. No approving
-review is required - the checks above are the gate.
+review is required - the checks above are the gate. The branch ruleset is the
+authority for this list; [TESTING.md](TESTING.md) carries the command to
+re-derive it, because a hand-maintained copy is what drifts.
 
 ## Upstream Rsync Reference
 
@@ -191,10 +195,10 @@ The upstream C source is the authoritative reference for all protocol behavior.
 
 ```sh
 mkdir -p target/interop/upstream-src && cd target/interop/upstream-src
-curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
+curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz | tar xz
 ```
 
-`3.4.4` is the version `workspace.metadata.oc_rsync.upstream_version` pins, and the
+`3.5.0` is the version `workspace.metadata.oc_rsync.upstream_version` pins, and the
 one every `// upstream:` citation resolves against.
 
 Or run the interop harness, which downloads every tested version - the set lives in
