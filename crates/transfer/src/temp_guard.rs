@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// Upstream emits one message per site, each naming its own operation:
 /// `mkstemp %s failed` (`rsync-3.5.0/receiver.c:452-453`),
 /// `rename failed for %s (from %s)` (`rsync-3.5.0/receiver.c:710-712`) and
-/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.0/backup.c:401-402`). oc runs
+/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.0/backup.c:402-403`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
 /// the error to survive the trip back to the reporting thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,7 @@ pub enum CommitOp {
 struct CommitOpError {
     op: CommitOp,
     operand: PathBuf,
+    destination: Option<PathBuf>,
     source: io::Error,
 }
 
@@ -99,14 +100,42 @@ pub fn commit_op_failure(error: &io::Error) -> Option<(CommitOp, &Path)> {
         .map(|e| (e.op, e.operand.as_path()))
 }
 
+/// Returns the second path the failing operation named, for the operations
+/// whose upstream diagnostic prints two operands.
+///
+/// upstream `backup.c:402-403` reports `keep_backup failed: %s -> "%s"` -
+/// `full_fname(fname)` and the backup destination `buf`. Only the code that
+/// chose that destination knows it, so it is attached at the raising site
+/// rather than reconstructed by the reporter. `None` whenever the operation
+/// has a single operand, so callers render the one-operand form.
+pub fn commit_op_destination(error: &io::Error) -> Option<&Path> {
+    error
+        .get_ref()?
+        .downcast_ref::<CommitOpError>()?
+        .destination
+        .as_deref()
+}
+
 /// Tags `source` with the operation that raised it, preserving its
 /// [`io::ErrorKind`] so existing predicates keep classifying it unchanged.
 pub fn attach_commit_op(op: CommitOp, operand: &Path, source: io::Error) -> io::Error {
+    attach_commit_op_between(op, operand, None, source)
+}
+
+/// [`attach_commit_op`] for an operation that moved `operand` to
+/// `destination`, so the reporter can print both halves the way upstream does.
+pub fn attach_commit_op_between(
+    op: CommitOp,
+    operand: &Path,
+    destination: Option<&Path>,
+    source: io::Error,
+) -> io::Error {
     io::Error::new(
         source.kind(),
         CommitOpError {
             op,
             operand: operand.to_path_buf(),
+            destination: destination.map(Path::to_path_buf),
             source,
         },
     )
@@ -322,6 +351,8 @@ fn open_tmpfile_inner(
                     CommitOpError {
                         op: CommitOp::Mkstemp,
                         operand: concrete_path,
+                        // `mkstemp %s failed` names one operand.
+                        destination: None,
                         source: e,
                     },
                 ));

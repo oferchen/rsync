@@ -458,7 +458,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `backup.c:400-401` - `rsyserr(FERROR, errno, "keep_backup failed: %s -> \"%s\"", ...)`
+    /// - `backup.c:402-403` - `rsyserr(FERROR, errno, "keep_backup failed: %s -> \"%s\"", ...)`
     /// - `generator.c:2478-2479` - `if (!make_backup(fname, skip_atomic)) return 0;`
     fn report_backup_failure<W>(
         &self,
@@ -469,14 +469,19 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        let _ = self.emit_error_line(
-            writer,
-            &format!(
-                "rsync: [receiver] keep_backup failed: {}: {}\n",
-                relative_path.display(),
-                upstream_errno_text(&error)
-            ),
+        // `place_report_and_clear` attaches the backup destination it chose, so
+        // both operands upstream prints are available here. The line is built by
+        // the shared owner the commit path also uses, so the two receiver paths
+        // that can fail a backup cannot drift apart.
+        let line = format!(
+            "{}\n",
+            crate::pipeline::receiver::keep_backup_failed_line(
+                &relative_path.display().to_string(),
+                &error,
+                &upstream_errno_text(&error),
+            )
         );
+        let _ = self.emit_error_line(writer, &line);
         Err(error)
     }
 }

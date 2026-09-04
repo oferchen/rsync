@@ -313,11 +313,8 @@ impl PipelinedReceiver {
             Some(crate::temp_guard::CommitOp::Mkstemp) | None => {
                 format!("rsync: [receiver] mkstemp {name} failed: {reason}")
             }
-            // upstream: rsync-3.5.0/backup.c:401-402 `keep_backup failed: %s -> "%s"`.
-            // oc names the pre-image only; the backup destination is chosen
-            // inside make_backup and is not carried back on the error.
             Some(crate::temp_guard::CommitOp::Backup) => {
-                format!("rsync: [receiver] keep_backup failed: {name}: {reason}")
+                keep_backup_failed_line(&name, error, &reason)
             }
             // upstream: rsync-3.5.0/receiver.c:710-712 `rename failed for %s
             // (from %s)`. oc names the destination only; the `from` operand is
@@ -761,6 +758,29 @@ impl PipelinedReceiver {
 fn is_permission_error(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::PermissionDenied
 }
+/// Renders upstream's `keep_backup failed` diagnostic, naming both operands of
+/// the failing move when the raising site attached the second one.
+///
+/// The two receiver paths that can fail a backup - the commit path and the
+/// non-regular obstacle path - print the same upstream format string, so they
+/// share this one owner rather than keeping a copy each.
+///
+/// `full_fname` supplies the first pair of quotes and the format string the
+/// second; a failure raised before a destination was chosen has only the one
+/// operand to name, so it renders without the arrow.
+///
+/// upstream: `rsync-3.5.0/backup.c:402-403` - `rsyserr(FERROR, errno,
+/// "keep_backup failed: %s -> \"%s\"", full_fname(fname), buf)`.
+pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &str) -> String {
+    match crate::temp_guard::commit_op_destination(error) {
+        Some(backup) => format!(
+            "rsync: [receiver] keep_backup failed: {name} -> \"{}\": {reason}",
+            backup.display()
+        ),
+        None => format!("rsync: [receiver] keep_backup failed: {name}: {reason}"),
+    }
+}
+
 /// Renders an error the way upstream's `rsyserr` does: `strerror(errno)`
 /// followed by the numeric errno in parentheses.
 ///
@@ -1612,7 +1632,7 @@ mod tests {
     /// `Result`, so a `PermissionDenied` from any of them reaches the same
     /// reporting arm. Upstream gives each site its own text - `mkstemp %s
     /// failed` (`rsync-3.5.0/receiver.c:452-453`), `rename failed for %s`
-    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.0/backup.c:401-402`) -
+    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.0/backup.c:402-403`) -
     /// and oc must not label all three `mkstemp`.
     ///
     /// The untagged arm is the one that matters for regressions: an error
@@ -1675,6 +1695,103 @@ mod tests {
                 "every arm renders strerror + errno like rsyserr: {rendered}"
             );
         }
+    }
+
+    /// upstream prints BOTH operands of the failing copy: `keep_backup failed:
+    /// %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`
+    /// (`rsync-3.5.0/backup.c:402-403`). Naming only the pre-image loses the
+    /// path the backup was going TO, which is the half that identifies WHERE
+    /// the failure happened - under a restricted shell that path is the pinned
+    /// `/proc/self/fd/N/...` handle, and without it the message cannot be told
+    /// apart from an unrelated failure on the same file.
+    ///
+    /// The `->` arrow and the quotes around the destination are upstream's own
+    /// framing, so they are asserted rather than left to taste.
+    #[cfg(unix)]
+    #[test]
+    fn keep_backup_failure_names_the_backup_destination_it_was_moving_to() {
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let dest = std::path::Path::new("/srv/mod/payload");
+        let backup_dir = std::path::Path::new("/proc/self/fd/5/payload");
+
+        let both = pr.commit_failure(
+            dest,
+            &crate::temp_guard::attach_commit_op_between(
+                crate::temp_guard::CommitOp::Backup,
+                dest,
+                Some(backup_dir),
+                io::Error::from_raw_os_error(libc::ENOENT),
+            ),
+        );
+        assert!(
+            both.contains("-> \"/proc/self/fd/5/payload\""),
+            "the backup destination must be named, quoted, after the arrow: {both}"
+        );
+        assert!(
+            both.contains("payload") && both.contains("keep_backup failed"),
+            "the pre-image operand and upstream's text both survive: {both}"
+        );
+
+        // Non-vacuity: a backup failure raised before a destination was chosen
+        // still renders, with the one operand it has. Without this companion the
+        // assertion above would also pass for an implementation that printed the
+        // arrow unconditionally with an empty second operand.
+        let one_operand = pr.commit_failure(
+            dest,
+            &crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Backup,
+                dest,
+                io::Error::from_raw_os_error(libc::ENOENT),
+            ),
+        );
+        assert!(
+            one_operand.contains("keep_backup failed") && !one_operand.contains("->"),
+            "with no destination there is no arrow to print: {one_operand}"
+        );
+    }
+
+    /// Pins the shared owner directly, not just through `commit_failure`.
+    ///
+    /// Two receiver paths can fail a backup - the commit path and the
+    /// non-regular obstacle path (`receiver::directory::obstacle`) - and both
+    /// build their line here. Asserting on the owner keeps the contract stated
+    /// once, so the obstacle path cannot drift into printing one operand again
+    /// without this failing.
+    #[cfg(unix)]
+    #[test]
+    fn the_shared_keep_backup_line_names_both_operands() {
+        let backup = std::path::Path::new("/backup/authorized_keys");
+        let tagged = crate::temp_guard::attach_commit_op_between(
+            crate::temp_guard::CommitOp::Backup,
+            std::path::Path::new("./authorized_keys"),
+            Some(backup),
+            io::Error::from_raw_os_error(libc::ENOENT),
+        );
+        assert_eq!(
+            keep_backup_failed_line(
+                "./authorized_keys",
+                &tagged,
+                "No such file or directory (2)"
+            ),
+            "rsync: [receiver] keep_backup failed: ./authorized_keys -> \
+             \"/backup/authorized_keys\": No such file or directory (2)"
+        );
+
+        // Non-vacuity: without a destination there is no arrow, so the
+        // assertion above cannot be satisfied by emitting the arrow always.
+        let untagged = crate::temp_guard::attach_commit_op(
+            crate::temp_guard::CommitOp::Backup,
+            std::path::Path::new("./authorized_keys"),
+            io::Error::from_raw_os_error(libc::ENOENT),
+        );
+        assert_eq!(
+            keep_backup_failed_line(
+                "./authorized_keys",
+                &untagged,
+                "No such file or directory (2)"
+            ),
+            "rsync: [receiver] keep_backup failed: ./authorized_keys: No such file or directory (2)"
+        );
     }
 
     /// The errno must come from the error, not from a literal. A hardcoded
