@@ -57,7 +57,8 @@ pub(crate) fn append_filter_rules_from_files(
                 // `--exclude-from`/`--include-from` file, which upstream also
                 // redacts - `rule_src_file` is set for the whole read, so
                 // `TEXT_FROM_FILE` holds and the text is replaced by
-                // `FILE line N` (exclude.c:56-68, :103-124). oc does not carry a
+                // `FILE line N` (exclude.c:71, the wording `rule_src_where`
+                // builds at exclude.c:84). oc does not carry a
                 // line number through `load_filter_file_patterns`, and naming the
                 // file without one would claim upstream's word-split arm
                 // (`rule_src_line < 0`) for a line-counted read. Left as

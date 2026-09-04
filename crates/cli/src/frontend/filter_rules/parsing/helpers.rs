@@ -36,11 +36,12 @@ pub(super) struct InvalidModifier {
 impl InvalidModifier {
     /// Renders upstream's diagnostic for this byte.
     ///
-    /// upstream: exclude.c:1371-1379 - `invalid modifier%s in filter rule: %s`,
-    /// where the position is `(int)(s - (const uchar *)*rulestr_ptr)`, i.e. a
+    /// upstream: exclude.c:1376 - `invalid modifier%s in filter rule: %s`. The
+    /// position is built just above it as
+    /// `(int)(s - (const uchar *)*rulestr_ptr)` (exclude.c:1374-1375), i.e. a
     /// 0-based byte offset from the start of the whole rule. `rule_offset` is
     /// where the scanned slice begins within `rule`, so a one-character prefix
-    /// passes 1.
+    /// passes 1. The enclosing `default: invalid:` arm runs exclude.c:1371-1380.
     ///
     /// BOTH halves cross a provenance chokepoint. The rule text goes through
     /// `rule_text` (exclude.c:88-123) and the `'%c' at position %d` detail
