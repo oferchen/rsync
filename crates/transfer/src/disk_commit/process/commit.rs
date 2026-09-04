@@ -148,7 +148,7 @@ pub(super) fn commit_file(
                 clear_partial_dir_obstruction(parent)?;
                 create_dir_all_sandboxed(config.backup_env(), parent)?;
             }
-            let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)
+            let result = stage_into_partial_dir(config, cleanup_guard.path(), &staging_path)
                 .map_err(|e| {
                     crate::temp_guard::attach_commit_op(
                         crate::temp_guard::CommitOp::Rename,
@@ -501,6 +501,41 @@ pub(super) fn rename_config_sandboxed(
     {
         rename_with_io_uring_fallback(old_path, new_path)
     }
+}
+
+/// Moves the received temp into the `--delay-updates` staging path through the
+/// ownership walk, bound to the session's confinement root.
+///
+/// The staging path is `<--partial-dir>/<basename>`, and on a daemon receiver
+/// `--partial-dir` is PEER-SUPPLIED: a symlink standing at that name sends the
+/// staged file - a complete copy of the source - outside the served module, and
+/// the later sweep then renames it back over the destination. So this endpoint
+/// takes the confined walk rather than [`rename_config_sandboxed`], whose
+/// sandbox helper falls back to a path-based rename when the anchored open
+/// fails - exactly the drop-to-unconfined that upstream names as wrong.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/util1.c:1518-1530` `handle_partial_dir(..., PDIR_CREATE)` -
+///   the whole retention runs under `operator_path_resolve`.
+/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under that flag.
+#[cfg(unix)]
+fn stage_into_partial_dir(
+    _config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<bool> {
+    fast_io::operator_rename_confined(old_path, new_path, true)?;
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+fn stage_into_partial_dir(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<bool> {
+    rename_config_sandboxed(config, old_path, new_path)
 }
 
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).
