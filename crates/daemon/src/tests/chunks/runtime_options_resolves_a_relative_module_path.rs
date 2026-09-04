@@ -37,6 +37,14 @@ fn runtime_options_resolves_a_relative_module_path() {
 // upstream: `normalize_path`'s `*path != '/'` arm is the only one that
 // rewrites; an absolute path is merely cleaned, and the bare root `/` is
 // preserved verbatim (loadparm.c P_PATH).
+//
+// ⚠ This cell is the WINDOWS guard for `module_path_is_absolute`, and it is
+// trivially satisfied on Unix. `/srv/docs` is rooted but carries no drive
+// prefix, so `Path::is_absolute()` reports `false` for it on Windows: keying
+// the resolution on `is_absolute()` there joined an already-absolute module
+// path onto the current directory and produced `D:\srv\docs`. Do not
+// "simplify" that predicate back to `is_absolute()` - upstream's test is the
+// leading byte, which is `has_root()`.
 #[test]
 fn runtime_options_leaves_an_absolute_module_path_verbatim() {
     let mut file = NamedTempFile::new().expect("config file");

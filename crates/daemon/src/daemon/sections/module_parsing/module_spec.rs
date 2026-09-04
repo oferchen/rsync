@@ -251,7 +251,7 @@ fn parse_module_definition(
     // upstream treats it as a legitimate module path under either `use chroot`
     // setting (loadparm.c P_PATH preserves it; clientserver.c serves from it
     // directly when chroot is off and chroots into it as a no-op when on).
-    if !module.path.is_absolute() {
+    if !module_path_is_absolute(&module.path) {
         let current_dir = std::env::current_dir().map_err(|err| {
             config_error(format!(
                 "module path '{path_text}' is relative and the current directory \

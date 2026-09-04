@@ -4,6 +4,26 @@
 // applying defaults for unset fields and enforcing cross-field constraints
 // (e.g., `auth users` requires `secrets file`).
 
+/// Reports whether a configured module `path` is already absolute in upstream's
+/// sense, so it must be served verbatim rather than resolved against the
+/// current directory.
+///
+/// upstream: `normalize_path()` (util1.c:1405-1426) branches on the LEADING
+/// BYTE - `if (*path != '/')` - and only then joins onto `curr_dir`. That is a
+/// property of how the operator spelled the path in rsyncd.conf, not of the
+/// host platform.
+///
+/// ⚠ Deliberately [`Path::has_root`], NOT [`Path::is_absolute`]. On Windows
+/// `is_absolute()` additionally demands a drive prefix, so it reports `false`
+/// for `/srv/docs` - the ordinary spelling in every rsyncd.conf - and the
+/// caller would then join an already-absolute module path onto the current
+/// directory, yielding `D:\srv\docs`. `has_root()` is exactly upstream's test
+/// on Unix and keeps a rooted POSIX path verbatim on Windows, while still
+/// classifying a genuinely relative `data/docs` as relative.
+fn module_path_is_absolute(path: &Path) -> bool {
+    path.has_root()
+}
+
 /// Built-in `dont compress` suffix list a daemon module inherits when neither
 /// the module nor the global section sets the directive.
 ///
@@ -82,7 +102,7 @@ impl ModuleDefinitionBuilder {
         // and clientserver.c serves from it both with and without chroot (the
         // chroot("/") is a no-op). See the upstream daemon-path-root-read
         // scenario.
-        let path = if path.is_absolute() {
+        let path = if module_path_is_absolute(&path) {
             path
         } else {
             let current_dir = std::env::current_dir().map_err(|err| {
