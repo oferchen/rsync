@@ -819,8 +819,8 @@ fn filter_order_interleaves_short_f_and_uppercase_f() {
 
 #[test]
 fn parse_filter_directive_include_keyword_via_filter_arg() {
-    let result =
-        parse_filter_directive(OsStr::new("include *.rs")).expect("keyword include parses");
+    let result = parse_filter_directive(OsStr::new("include *.rs"), filters::RuleSource::Argument)
+        .expect("keyword include parses");
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Include);
@@ -832,8 +832,8 @@ fn parse_filter_directive_include_keyword_via_filter_arg() {
 
 #[test]
 fn parse_filter_directive_exclude_keyword_via_filter_arg() {
-    let result =
-        parse_filter_directive(OsStr::new("exclude *.bak")).expect("keyword exclude parses");
+    let result = parse_filter_directive(OsStr::new("exclude *.bak"), filters::RuleSource::Argument)
+        .expect("keyword exclude parses");
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::Exclude);
@@ -845,8 +845,11 @@ fn parse_filter_directive_exclude_keyword_via_filter_arg() {
 
 #[test]
 fn parse_filter_directive_dir_merge_long_keyword() {
-    let result = parse_filter_directive(OsStr::new("dir-merge .rsync-filter"))
-        .expect("dir-merge keyword parses");
+    let result = parse_filter_directive(
+        OsStr::new("dir-merge .rsync-filter"),
+        filters::RuleSource::Argument,
+    )
+    .expect("dir-merge keyword parses");
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
@@ -859,7 +862,8 @@ fn parse_filter_directive_dir_merge_long_keyword() {
 #[test]
 fn parse_filter_directive_colon_dir_merge_shorthand() {
     let result =
-        parse_filter_directive(OsStr::new(": .rsync-filter")).expect("colon dir-merge parses");
+        parse_filter_directive(OsStr::new(": .rsync-filter"), filters::RuleSource::Argument)
+            .expect("colon dir-merge parses");
     match result {
         FilterDirective::Rule(spec) => {
             assert_eq!(spec.kind(), FilterRuleKind::DirMerge);

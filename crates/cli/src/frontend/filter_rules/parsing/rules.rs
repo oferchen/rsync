@@ -12,24 +12,27 @@ use core::rsync_error;
 use super::super::directive::FilterDirective;
 use super::helpers::{split_keyword_modifiers, split_short_rule_modifiers};
 use super::modifiers::{apply_rule_modifiers, parse_rule_modifiers};
+use super::rule_line::RuleLine;
 use super::shorthand::parse_filter_shorthand;
 
 /// Parses the `P`/`H`/`S`/`R` single-letter shorthand rules (protect, hide,
 /// show, risk). Returns `None` when the text is not one of these forms.
-pub(super) fn parse_shorthand_rules(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
-    if let Some(result) = parse_filter_shorthand(trimmed, 'P', "P", FilterRuleSpec::protect) {
+pub(super) fn parse_shorthand_rules(
+    line: RuleLine<'_>,
+) -> Option<Result<FilterDirective, Message>> {
+    if let Some(result) = parse_filter_shorthand(line, 'P', "P", FilterRuleSpec::protect) {
         return Some(result);
     }
 
-    if let Some(result) = parse_filter_shorthand(trimmed, 'H', "H", FilterRuleSpec::hide) {
+    if let Some(result) = parse_filter_shorthand(line, 'H', "H", FilterRuleSpec::hide) {
         return Some(result);
     }
 
-    if let Some(result) = parse_filter_shorthand(trimmed, 'S', "S", FilterRuleSpec::show) {
+    if let Some(result) = parse_filter_shorthand(line, 'S', "S", FilterRuleSpec::show) {
         return Some(result);
     }
 
-    if let Some(result) = parse_filter_shorthand(trimmed, 'R', "R", FilterRuleSpec::risk) {
+    if let Some(result) = parse_filter_shorthand(line, 'R', "R", FilterRuleSpec::risk) {
         return Some(result);
     }
 
@@ -39,7 +42,10 @@ pub(super) fn parse_shorthand_rules(trimmed: &str) -> Option<Result<FilterDirect
 /// Parses an `exclude-if-present=MARKER` directive. Returns `None` when the
 /// text does not start with the `exclude-if-present` keyword, or an error when
 /// the marker file name is missing.
-pub(super) fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
+pub(super) fn parse_exclude_if_present(
+    line: RuleLine<'_>,
+) -> Option<Result<FilterDirective, Message>> {
+    let trimmed = line.text();
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
     if trimmed.len() < EXCLUDE_IF_PRESENT_PREFIX.len() {
         return None;
@@ -60,7 +66,10 @@ pub(super) fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDir
     if pattern_text.is_empty() {
         let message = rsync_error!(
             1,
-            format!("filter rule '{trimmed}' is missing a marker file after 'exclude-if-present'")
+            format!(
+                "filter rule '{}' is missing a marker file after 'exclude-if-present'",
+                line.shown()
+            )
         )
         .with_role(Role::Client);
         return Some(Err(message));
@@ -75,20 +84,21 @@ pub(super) fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDir
 /// applying any rule modifiers to the pattern via `builder`. Returns `None`
 /// when the text does not begin with `prefix`.
 pub(super) fn parse_short_include_rule(
-    trimmed: &str,
+    line: RuleLine<'_>,
     prefix: char,
     builder: fn(String) -> FilterRuleSpec,
 ) -> Option<Result<FilterDirective, Message>> {
+    let trimmed = line.text();
     let remainder = trimmed.strip_prefix(prefix)?;
     // `remainder` starts one byte past the `+`/`-`, so that is the offset the
     // position in upstream's diagnostic is measured from.
     let (modifier_text, remainder) = match split_short_rule_modifiers(remainder) {
         Ok(split) => split,
-        Err(invalid) => return Some(Err(invalid.into_message(prefix.len_utf8(), trimmed))),
+        Err(invalid) => return Some(Err(invalid.into_message(prefix.len_utf8(), line))),
     };
     // `+`/`-` rules never bind a side via their prefix, so the `s`/`r` modifiers
     // stay valid (prefix_specifies_side = false). upstream: exclude.c:1186-1190.
-    let modifiers = match parse_rule_modifiers(modifier_text, trimmed, true, true, false) {
+    let modifiers = match parse_rule_modifiers(modifier_text, line, true, true, false) {
         Ok(state) => state,
         Err(error) => return Some(Err(error)),
     };
@@ -97,9 +107,7 @@ pub(super) fn parse_short_include_rule(
     // is the pattern verbatim. Do not trim further leading whitespace/`_`.
     let pattern = remainder;
     if pattern.is_empty() {
-        let text = format!("filter rule '{trimmed}' is missing a pattern after '{prefix}'");
-        let message = rsync_error!(1, text).with_role(Role::Client);
-        return Some(Err(message));
+        return Some(Err(missing_pattern_after(line, &prefix.to_string())));
     }
 
     let rule = builder(pattern.to_owned());
@@ -113,7 +121,8 @@ pub(super) fn parse_short_include_rule(
 /// Parses a long-form keyword rule (`include`/`exclude`/`show`/`hide`/
 /// `protect`/`risk` plus pattern). Keywords are matched case-sensitively to
 /// mirror upstream; an unknown keyword yields a syntax error.
-pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Message> {
+pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
+    let trimmed = line.text();
     let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
@@ -129,14 +138,12 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
                       prefix_specifies_side: bool|
      -> Result<FilterDirective, Message> {
         if pattern.is_empty() {
-            let text = format!("filter rule '{trimmed}' is missing a pattern after '{keyword}'");
-            let message = rsync_error!(1, text).with_role(Role::Client);
-            return Err(message);
+            return Err(missing_pattern_after(line, keyword));
         }
 
         let modifiers = parse_rule_modifiers(
             keyword_modifiers,
-            trimmed,
+            line,
             allow_perishable,
             allow_xattr,
             prefix_specifies_side,
@@ -181,11 +188,29 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
         return build_rule(FilterRuleSpec::risk, true, true, true);
     }
 
+    // upstream: exclude.c:1363 `filter_rule_err("Unknown filter rule", *rulestr_ptr)`
+    // renders the rule through `rule_text` (exclude.c:88-123). This diagnostic is
+    // oc's expanded wording for the same refusal, and it echoes the same text, so
+    // it must cross the same chokepoint: the line may be one the peer chose to
+    // have merged, and echoing it makes the parser a read-any-line oracle.
     let message = rsync_error!(
         1,
         "unsupported filter rule '{}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' directives",
-        trimmed
+        line.shown()
     )
     .with_role(Role::Client);
     Err(message)
+}
+
+/// The rule text crosses `rule_text` (exclude.c:88-123); the prefix or keyword
+/// is oc's own token, not the peer's, so it is printed unconditionally.
+fn missing_pattern_after(line: RuleLine<'_>, after: &str) -> Message {
+    rsync_error!(
+        1,
+        format!(
+            "filter rule '{}' is missing a pattern after '{after}'",
+            line.shown()
+        )
+    )
+    .with_role(Role::Client)
 }

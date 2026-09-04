@@ -178,7 +178,7 @@ pub(crate) fn parse_merge_modifiers(
     directive: &str,
     allow_extended: bool,
 ) -> Result<(DirMergeOptions, bool), Message> {
-    filter_rules::parse_merge_modifiers(modifiers, directive, allow_extended)
+    filter_rules::parse_merge_modifiers_from_argument(modifiers, directive, allow_extended)
 }
 
 #[cfg(test)]
