@@ -133,9 +133,10 @@ impl GeneratorContext {
     /// The root is passed to `fast_io` rather than left ambient. `read_dir`'s
     /// own anchor is the process-global session pin, which oc never installs
     /// for a daemon, so this walk silently degraded to an ordinary
-    /// absolute-path read while [`Self::confine_root`] - already daemon-correct
-    /// - was consulted only by the CONTENT open. That split is exactly what let
-    /// a module symlink be enumerated but not read. Installing the global per
+    /// absolute-path read, while [`Self::confine_root`] (already
+    /// daemon-correct) was consulted only by the CONTENT open. That split is
+    /// exactly what let a module symlink be enumerated but not read.
+    /// Installing the global per
     /// connection is not the alternative: oc serves each connection on a worker
     /// thread of one process, so a per-connection value in a global would race
     /// between concurrent connections on different modules.
