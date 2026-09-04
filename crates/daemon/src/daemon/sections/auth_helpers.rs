@@ -60,15 +60,56 @@ fn log_module_lock_error(
     log_message(log, &message);
 }
 
-fn log_module_refused_option(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: IpAddr,
-    module: &str,
-    refused: &str,
-) {
-    let text = format!("refusing option '{refused}' for module '{module}' from {host} ({peer_ip})");
+/// The refusal text upstream builds once and delivers to BOTH the peer and the
+/// daemon log.
+///
+/// upstream: `options.c:1409-1423` `create_refuse_error()` fills `err_buf` with
+/// `"The server is configured to refuse --<longName>\n"`, and the post-`@RSYNCD:
+/// OK` failure branch at `clientserver.c:1254` reaches `option_error()`
+/// (`options.c:907-918`), which emits that same buffer via
+/// `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`. A daemon's `FERROR` lands in
+/// the log file, so upstream has ONE string serving as both the peer's `@ERROR`
+/// payload and the logged line.
+///
+/// This is a single owner for exactly that reason: oc previously formatted the
+/// peer's text and the log's text independently, and they drifted - the peer
+/// saw upstream's wording while the log carried an oc-invented
+/// `refusing option '...' for module '...'` line that no upstream site emits.
+pub(crate) fn refused_option_message(refused: &str) -> String {
+    format!("The server is configured to refuse {refused}")
+}
+
+/// Logs a refused option in upstream's words.
+///
+/// upstream: `options.c:915` - `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`.
+/// The logged line therefore carries the `rsync: ` prefix `option_error()` adds
+/// and nothing more: upstream names no module, host or peer here, because the
+/// connection is already identified by the line's pid stamp and by the
+/// preceding `rsync allowed access on module %s from %s (%s)`
+/// (`clientserver.c:787`), which oc emits faithfully.
+///
+/// The log CODE is deliberately left as it was. Upstream routes this at
+/// `FERROR` while oc records it at info level; both reach the daemon log file,
+/// which is the observable this mirrors, and re-coding it would change oc's
+/// message routing for a reason this change has not measured.
+fn log_module_refused_option(log: &SharedLogSink, refused: &str) {
+    let text = format!("rsync: {}", refused_option_message(refused));
     let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+/// Logs a failure to read the client's argument vector.
+///
+/// upstream: `io.c:1477-1478` - `read_args()` reports the refusal where it
+/// happens, e.g. `rprintf(FERROR, "too many daemon arguments\n")`, and a
+/// daemon's `FERROR` reaches the log file. oc sent that refusal to the peer and
+/// logged nothing at all, so an operator watching the log could not see why a
+/// connection was cut - the guard fired invisibly.
+///
+/// The text is the error's own and is emitted bare: unlike `option_error()`
+/// (`options.c:915`) upstream adds no `rsync: ` prefix at this site.
+fn log_client_args_failure(log: &SharedLogSink, error: &io::Error) {
+    let message = rsync_info!(error.to_string()).with_role(Role::Daemon);
     log_message(log, &message);
 }
 

@@ -274,10 +274,10 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 /// Used when refused-options are detected from `OPTION` directives sent before
 /// `@RSYNCD: OK`; at this point the client still reads raw text.
 fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
-    let error = AtError::message(format!("The server is configured to refuse {refused}"));
+    let error = AtError::message(refused_option_message(refused));
     send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
     if let Some(log) = ctx.log_sink {
-        log_module_refused_option(log, ctx.host_display(), ctx.peer_ip, ctx.request, refused);
+        log_module_refused_option(log, refused);
     }
     Ok(())
 }
@@ -318,7 +318,7 @@ fn handle_refused_option_post_handshake(
     client_args: &[String],
 ) -> io::Result<()> {
     finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
-    let error = AtError::message(format!("The server is configured to refuse {refused}"));
+    let error = AtError::message(refused_option_message(refused));
     send_multiplexed_error_and_exit(
         ctx.reader.get_mut(),
         ctx.limiter,
@@ -326,7 +326,7 @@ fn handle_refused_option_post_handshake(
         RERR_UNSUPPORTED_EXIT_CODE,
     )?;
     if let Some(log) = ctx.log_sink {
-        log_module_refused_option(log, ctx.host_display(), ctx.peer_ip, ctx.request, refused);
+        log_module_refused_option(log, refused);
     }
     Ok(())
 }

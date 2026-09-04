@@ -249,6 +249,14 @@ fn read_and_log_client_args(
     let phase1_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
         Ok(args) => args,
         Err(err) => {
+            // upstream: io.c:1477-1478 - `read_args()` reports its own refusal
+            // (`too many daemon arguments`) at FERROR, which for a daemon lands
+            // in the log file. Telling only the peer leaves the operator with a
+            // connection that was cut for no recorded reason, so the log gets
+            // the same failure the peer does.
+            if let Some(log) = ctx.log_sink {
+                log_client_args_failure(log, &err);
+            }
             let error = AtError::message(format!("failed to read client arguments: {err}"));
             send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
             return Ok(None);
