@@ -278,7 +278,60 @@ pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Res
         .file_name()
         .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
     let dirfd = crate::secure_open_dir(parent)?;
-    fchmodat(dirfd.as_fd(), leaf, mode, follow_symlinks)
+    chmodat_with_chmod_setgid_semantics(dirfd.as_fd(), leaf, mode, follow_symlinks)
+}
+
+/// `fchmodat` with the set-group-ID semantics `chmod(2)` has on this platform.
+///
+/// Upstream reaches every mode change through `do_chmod()` -> `chmod(2)`
+/// (syscall.c:761). oc anchors the same change on a walked parent dirfd for
+/// symlink-race safety, which means it issues `fchmodat(2)` instead - and the
+/// two syscalls do NOT agree about `S_ISGID` for an unprivileged caller.
+///
+/// MEASURED on macOS 26.5 (euid 501, caller owns the target), same inode and
+/// same mode word for both calls:
+///
+/// | requested            | `chmod(2)`         | `fchmodat(2)` |
+/// |----------------------|--------------------|---------------|
+/// | `0755`               | -                  | ok            |
+/// | `0755 \| S_ISUID`    | ok -> `04755`      | ok -> `04755` |
+/// | `0755 \| S_ISGID`    | ok -> `00755`      | **EPERM**     |
+/// | `0755 \| both`       | ok -> `04755`      | **EPERM**     |
+///
+/// So the kernel silently MASKS a set-group-ID bit it will not grant when the
+/// request arrives through `chmod`, but REFUSES the identical request through
+/// `fchmodat`. Linux masks on both, which is why this is not observable there.
+///
+/// Left unhandled, that turns `--chmod=a+s` into a fatal `EPERM` for an
+/// ordinary user on macOS where upstream completes with exit 0 - measured
+/// against the real rsync 3.5.0 binary, which leaves `drwsr-xr-x`.
+///
+/// This helper restores upstream's semantics WITHOUT giving up the anchor:
+/// on refusal it retries the same anchored `fchmodat` once with `S_ISGID`
+/// cleared, which is exactly the mode the platform's own `chmod` would have
+/// applied. The retry cannot mask a genuine permission error - a caller that
+/// does not own the target is refused for the setgid-free mode too, and that
+/// error propagates.
+///
+/// upstream: rsync-3.5.0 syscall.c:761 `do_chmod()` -> `chmod(2)`; rsync.c:658-668
+/// `set_file_attrs()` treats the chmod result as fatal for a non-symlink, which
+/// is why the refusal must not reach it.
+fn chmodat_with_chmod_setgid_semantics(
+    dirfd: BorrowedFd<'_>,
+    leaf: &OsStr,
+    mode: u32,
+    follow_symlinks: bool,
+) -> io::Result<()> {
+    // The set-group-ID bit, spelled as the POSIX-fixed literal: `libc::S_ISGID`
+    // is `u16` on macOS but already `u32` on Linux, so neither `u32::from` nor
+    // an `as` cast is lint-clean on both platforms.
+    const SETGID: u32 = 0o2000;
+    match fchmodat(dirfd, leaf, mode, follow_symlinks) {
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) && mode & SETGID != 0 => {
+            fchmodat(dirfd, leaf, mode & !SETGID, follow_symlinks)
+        }
+        other => other,
+    }
 }
 
 /// Path-based `chown(2)` / `lchown(2)` on `link_path` through the libc
@@ -532,5 +585,19 @@ pub fn utimensat_via_sandbox_or_fallback(
         filetime::set_file_times(link_path, atime, mtime)
     } else {
         filetime::set_symlink_file_times(link_path, atime, mtime)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `chmodat_with_chmod_setgid_semantics` spells the set-group-ID bit as a
+    /// literal because `libc::S_ISGID` has a different width per platform. Pin
+    /// the literal against libc so a wrong value cannot go unnoticed.
+    ///
+    /// Both sides widen to `u64`, which is a real conversion on every supported
+    /// platform - comparing in `u32` would be a no-op cast on Linux.
+    #[test]
+    fn setgid_literal_matches_libc() {
+        assert_eq!(u64::from(libc::S_ISGID), 0o2000);
     }
 }

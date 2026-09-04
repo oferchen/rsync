@@ -200,7 +200,7 @@ links pass
 log-control-chars pass
 log-file-symlink skip
 longdir pass
-macos-setgid-ordinary-mode-regression fail
+macos-setgid-ordinary-mode-regression pass
 malicious-dot-dir-delete-scope skip
 malicious-dot-file-delete-scope skip
 malicious-sender-delete-scope pass
