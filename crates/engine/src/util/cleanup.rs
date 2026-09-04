@@ -97,39 +97,57 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
 /// - `rsync-3.5.0/util1.c:1521-1528` `handle_partial_dir()` - `do_lstat_at`
 ///   then, when the entry exists and is not a directory,
 ///   `do_unlink_at(dir) < 0` aborts, otherwise `do_mkdir_at` runs against the
-///   cleared name. Without the unlink an obstruction is fatal, where upstream
-///   clears it and proceeds.
+///   cleared name.
 ///
 /// Only the FINAL component is cleared. Upstream's `handle_partial_dir` names
 /// exactly one directory, so an obstruction standing where an *ancestor*
 /// belongs is not something upstream removes and is not removed here either -
 /// it surfaces as the caller's create error.
 ///
-/// The probe is `symlink_metadata`, so a symlink at the name is removed as the
-/// non-directory it is rather than being followed to whatever it points at
-/// (upstream's `do_lstat_at` makes the same choice).
+/// Both the probe and the removal run through the ownership walk, exactly as
+/// upstream wraps its `do_lstat_at`/`do_unlink_at` pair in
+/// `operator_path_resolve` (util1.c:1516-1527). That is what makes clearing a
+/// SYMLINK safe: the walk resolves the parent chain and the leaf is handed to
+/// `unlinkat` as a single component, so the link is removed as the
+/// non-directory it is and is never followed to whatever it points at.
+///
+/// ⚠ A symlink here is exactly the shape that must NOT be left standing. A
+/// peer-supplied `--partial-dir` naming a symlink out of the served tree used
+/// to be accepted as "the directory is already there" - `mkdirat` reports
+/// `EEXIST` for a symlink and every caller treats `EEXIST` as success - after
+/// which the staging rename followed the link and wrote outside the module.
+/// MEASURED against a daemon push with `--delay-updates --partial-dir=/blink`
+/// where `blink` pointed outside: the outside file was replaced and then moved
+/// away by the delayed-updates sweep. Upstream never reaches that state because
+/// it clears the obstruction first, and fails the file outright if it cannot.
 ///
 /// # Errors
 ///
-/// Surfaces the `lstat` error for anything other than "not found", and any
-/// `unlink` error.
+/// Surfaces the walk's refusal, the `lstat` error for anything other than "not
+/// found", and any `unlink` error. A failure here is fatal to the file: upstream
+/// returns 0 from `handle_partial_dir()`, and `receiver.c:1302-1306` then
+/// discards the received temp rather than staging around the obstruction.
 pub fn clear_partial_dir_obstruction(dir: &Path) -> std::io::Result<()> {
-    match std::fs::symlink_metadata(dir) {
-        Ok(metadata) if metadata.is_dir() => Ok(()),
-        // A SYMLINK is deliberately left in place, which upstream would unlink.
-        // Upstream can afford to because its unlink runs inside
-        // `operator_path_resolve`, so a link leading out of the served tree is
-        // refused rather than followed; oc cannot use that walk here (it
-        // resolves from `/` and the daemon's Landlock ruleset admits only the
-        // module root, measured). Removing the link unconfined would be worse
-        // than not removing it: it destroys an operator-visible symlink AND
-        // pre-empts the confined rename that currently refuses the escape.
-        // Leaving it means the staging open follows the link and the confined
-        // rename makes the refusal, which is upstream's outcome for that shape.
-        Ok(metadata) if metadata.is_symlink() => Ok(()),
-        Ok(_) => std::fs::remove_file(dir),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
+    #[cfg(unix)]
+    {
+        match fast_io::operator_symlink_metadata(dir) {
+            Ok(metadata) if metadata.is_dir() => Ok(()),
+            // upstream: util1.c:1522-1527 - `statret == 0 && !S_ISDIR(st.st_mode)`
+            // covers a symlink and a regular file alike; both are unlinked, and a
+            // failure to unlink returns 0 (failure) rather than proceeding.
+            Ok(_) => fast_io::operator_unlink(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match std::fs::symlink_metadata(dir) {
+            Ok(metadata) if metadata.is_dir() => Ok(()),
+            Ok(_) => std::fs::remove_file(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -677,5 +695,77 @@ mod tests {
         manager1.register_temp_file(PathBuf::from("/tmp/test_global.tmp"));
 
         assert_eq!(manager2.temp_file_count(), 1);
+    }
+
+    /// A SYMLINK standing at the `--partial-dir` name is REMOVED, and what it
+    /// points at is left alone.
+    ///
+    /// This is the security shape: a peer-supplied `--partial-dir` naming a
+    /// symlink out of the served tree. Leaving the link standing let `mkdirat`
+    /// report `EEXIST`, every caller read that as "the directory is already
+    /// there", and the staging rename then wrote THROUGH the link - measured
+    /// destroying a file outside a daemon module.
+    ///
+    /// Both halves are asserted deliberately. "The link is gone" alone would
+    /// also hold for an implementation that followed the link and deleted its
+    /// TARGET, which is the opposite of the fix; and "the target survives"
+    /// alone would hold for the old pass-through that removed nothing.
+    ///
+    /// upstream: `util1.c:1522-1527` - `statret == 0 && !S_ISDIR(st.st_mode)`
+    /// unlinks, and a failure to unlink fails the whole call.
+    #[cfg(unix)]
+    #[test]
+    fn clearing_the_partial_dir_removes_a_symlink_without_touching_its_target() {
+        let dir = tempdir().expect("tempdir");
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).expect("mkdir outside");
+        let victim = outside.join("keep-me");
+        fs::write(&victim, b"PROTECTED").expect("write victim");
+
+        let obstruction = dir.path().join("partial");
+        std::os::unix::fs::symlink(&outside, &obstruction).expect("plant symlink");
+
+        clear_partial_dir_obstruction(&obstruction).expect("clear the obstruction");
+
+        assert!(
+            fs::symlink_metadata(&obstruction).is_err(),
+            "the symlink standing at the partial-dir name must be removed",
+        );
+        assert_eq!(
+            fs::read(&victim).expect("victim still readable"),
+            b"PROTECTED",
+            "the symlink's target must be untouched - the link is unlinked, never followed",
+        );
+        assert!(
+            outside.is_dir(),
+            "the directory the link pointed at survives"
+        );
+    }
+
+    /// The companion that keeps the test above honest: an ordinary regular file
+    /// at the name is cleared too (upstream's predicate is `!S_ISDIR`, not
+    /// "is a symlink"), and an existing DIRECTORY is reused rather than removed.
+    #[cfg(unix)]
+    #[test]
+    fn clearing_the_partial_dir_removes_a_regular_file_and_reuses_a_directory() {
+        let dir = tempdir().expect("tempdir");
+
+        let regular = dir.path().join("regular");
+        fs::write(&regular, b"obstruction").expect("write obstruction");
+        clear_partial_dir_obstruction(&regular).expect("clear the regular file");
+        assert!(
+            fs::symlink_metadata(&regular).is_err(),
+            "a regular file at the partial-dir name is cleared",
+        );
+
+        let existing = dir.path().join("existing");
+        fs::create_dir(&existing).expect("mkdir existing");
+        let inhabitant = existing.join("staged");
+        fs::write(&inhabitant, b"staged").expect("write inhabitant");
+        clear_partial_dir_obstruction(&existing).expect("reuse the directory");
+        assert!(
+            inhabitant.is_file(),
+            "an existing partial dir is REUSED, so its contents survive",
+        );
     }
 }

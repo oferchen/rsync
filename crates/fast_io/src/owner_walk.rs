@@ -30,7 +30,7 @@ use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Component, Path, PathBuf};
 
-use rustix::fs::{Mode, OFlags};
+use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
 
 use crate::dir_sandbox::at_syscalls;
@@ -620,6 +620,40 @@ pub fn owner_trusted_parent_kind(
         return Err(io::Error::from_raw_os_error(libc::ELOOP));
     }
     Ok((dirfd, leaf))
+}
+
+/// Remove a non-directory at an operator-supplied path through the ownership
+/// walk.
+///
+/// The `unlink` counterpart to [`operator_mkdir`], and its partner in upstream's
+/// `handle_partial_dir()`: the parent chain is resolved by the ownership walk
+/// and the leaf removed with `unlinkat` on the resulting descriptor, so the name
+/// that is cleared is the one the walk validated. Because the leaf is passed to
+/// `unlinkat` as a single component, a symlink standing at that name is removed
+/// as the link it is and never followed to its target.
+///
+/// An already-absent leaf is success, so the call is idempotent against a racing
+/// remover - the caller's goal is that the name be free, not that this call be
+/// the one that freed it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/util1.c:1521-1527` `handle_partial_dir()` - under
+///   `operator_path_resolve = 1`, `do_lstat_at()` finds a non-directory at the
+///   partial-dir name and `do_unlink_at(dir)` clears it; a failure to clear is
+///   fatal to that file rather than something to stage around.
+///
+/// # Errors
+///
+/// Surfaces any walk error (including the refusal of a foreign-owned symlink)
+/// and any `unlinkat` error other than `ENOENT`.
+pub fn operator_unlink(path: &Path) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent(path)?;
+    match rustix::fs::unlinkat(&parent, leaf.as_os_str(), AtFlags::empty()) {
+        Ok(()) => Ok(()),
+        Err(Errno::NOENT) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Create a directory at an operator-supplied path through the ownership walk.
