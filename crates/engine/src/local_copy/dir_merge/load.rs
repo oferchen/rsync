@@ -39,6 +39,80 @@ pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
     base.join(pattern)
 }
 
+/// Reports whether `error` says the *name* was too long, rather than something
+/// about the file it names.
+///
+/// upstream decides this before the syscall, against its own fixed buffer:
+/// `parse_merge_name` refuses when `d_len + fn_len >= MAXPATHLEN` after
+/// prepending the scanned directory (exclude.c:739-744). oc composes a
+/// `PathBuf` with no ceiling of its own, so the authority on "too long" is the
+/// platform - and `MAXPATHLEN` resolves to the same `PATH_MAX` the kernel
+/// enforces (rsync.h:760-762 only supplies 1024 when `<sys/param.h>` did not),
+/// so the two rules coincide on both supported platforms.
+///
+/// This is not the errno-as-policy shape that keying a confinement fallback on
+/// a runtime errno would be: `ENAMETOOLONG` *is* the condition being reported,
+/// not a proxy for a decision made elsewhere.
+#[cfg(unix)]
+fn name_too_long(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ENAMETOOLONG)
+}
+
+/// Windows reports the same condition as `ERROR_FILENAME_EXCED_RANGE`.
+#[cfg(not(unix))]
+fn name_too_long(error: &io::Error) -> bool {
+    const ERROR_FILENAME_EXCED_RANGE: i32 = 206;
+    error.raw_os_error() == Some(ERROR_FILENAME_EXCED_RANGE)
+}
+
+/// Probes `candidate` for a per-directory merge file, reporting whether there
+/// is one to load.
+///
+/// Returns `false` for every reason upstream has to skip a per-dir merge
+/// without failing the transfer: the file is absent, it is not a regular file,
+/// or the composed `<scanned directory>/<pattern>` name overflows the
+/// platform's path limit. The last case is announced first, at `FERROR`, with
+/// `pattern` routed through the provenance funnel; the other two are silent.
+///
+/// upstream: exclude.c:739-744 `parse_merge_name` prints
+/// `merge-file name overflows: %s` and returns NULL, and the caller drops the
+/// rule (exclude.c:1577-1580) rather than aborting - the per-dir merge is
+/// parsed without `XFLG_FATAL_ERRORS` (exclude.c:912), the same reason a
+/// missing merge file is not an error either.
+///
+/// `source` is the rule's provenance. The pattern is passed, never the resolved
+/// path: the resolved path is what overflowed, but it embeds the pattern
+/// verbatim and printing it would defeat the redaction the funnel exists for.
+pub(crate) fn dir_merge_file_present(
+    candidate: &Path,
+    pattern: &Path,
+    source: filters::RuleSource<'_>,
+) -> Result<bool, LocalCopyError> {
+    let metadata = match fs::metadata(candidate) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if name_too_long(&error) => {
+            let spelled = pattern.to_string_lossy();
+            logging::emit_info_coded(
+                logging::InfoFlag::Misc,
+                0,
+                logging::LogCode::Error,
+                filters::merge_name_overflows(&source.rule_text(&spelled)),
+            );
+            return Ok(false);
+        }
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect filter file",
+                candidate.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    Ok(metadata.is_file())
+}
+
 /// Applies the per-directory merge `options` to `rule` as defaults.
 ///
 /// Anchors the rule to the source root when configured, marks it perishable,
@@ -576,6 +650,116 @@ fn open_merge_file(path: &std::path::Path) -> io::Result<fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds a merge-file pattern long enough that the composed
+    /// `<scanned dir>/<pattern>` overflows the platform's path limit, while
+    /// every single component stays well inside `NAME_MAX` - so what the
+    /// platform refuses is the whole-path rule upstream applies, not a
+    /// per-component one.
+    #[cfg(unix)]
+    fn over_long_pattern() -> PathBuf {
+        let mut pattern = PathBuf::new();
+        for _ in 0..24 {
+            pattern.push("Q".repeat(200));
+        }
+        pattern
+    }
+
+    /// Drains the thread-local diagnostic buffer down to message strings.
+    #[cfg(unix)]
+    fn drained_messages() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .map(|event| match event {
+                logging::DiagnosticEvent::Info { message, .. }
+                | logging::DiagnosticEvent::Debug { message, .. } => message,
+            })
+            .collect()
+    }
+
+    /// WHY: this is the leak upstream's `merge-file name overflows` exists to
+    /// avoid. A deferred `: sub/NAME` rule is read out of a `.rsync-filter`,
+    /// so echoing the name hands the peer that file's contents from a plain
+    /// `-r -F` with no verbosity asked for at all.
+    ///
+    /// upstream: exclude.c:739-744 refuses before any open and returns NULL,
+    /// which drops the rule without failing the transfer.
+    #[cfg(unix)]
+    #[test]
+    fn an_over_long_file_sourced_merge_name_is_refused_without_echoing_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pattern = over_long_pattern();
+        let candidate = resolve_dir_merge_path(dir.path(), &pattern);
+        let _ = logging::drain_events();
+
+        let present =
+            dir_merge_file_present(&candidate, &pattern, filters::RuleSource::FileReadEarlier)
+                .expect("an over-long name is skipped, not a transfer failure");
+
+        assert!(!present, "there is nothing to load");
+        assert_eq!(
+            drained_messages(),
+            vec!["merge-file name overflows: <rule from a file read earlier>".to_owned()],
+        );
+    }
+
+    /// WHY: the non-vacuity companion. A blanket-silencing bug - or one that
+    /// stopped emitting the diagnostic at all - would satisfy the test above.
+    /// Upstream keeps an argument rule's own text because it is the operator's
+    /// and hiding it only makes typos harder to fix (exclude.c:90-95).
+    #[cfg(unix)]
+    #[test]
+    fn an_over_long_argument_merge_name_is_reported_verbatim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pattern = over_long_pattern();
+        let candidate = resolve_dir_merge_path(dir.path(), &pattern);
+        let _ = logging::drain_events();
+
+        let present = dir_merge_file_present(&candidate, &pattern, filters::RuleSource::Argument)
+            .expect("an over-long name is skipped, not a transfer failure");
+
+        assert!(!present, "there is nothing to load");
+        assert_eq!(
+            drained_messages(),
+            vec![format!("merge-file name overflows: {}", pattern.display())],
+        );
+    }
+
+    /// WHY: bounds the arm above. An absent merge file is upstream's ordinary
+    /// case - every directory the scan enters is probed - so it must stay
+    /// silent, or the diagnostic fires on every transfer.
+    #[cfg(unix)]
+    #[test]
+    fn an_absent_merge_file_is_skipped_silently() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pattern = Path::new(".rsync-filter");
+        let candidate = resolve_dir_merge_path(dir.path(), pattern);
+        let _ = logging::drain_events();
+
+        let present = dir_merge_file_present(&candidate, pattern, filters::RuleSource::Argument)
+            .expect("an absent merge file is not an error");
+
+        assert!(!present);
+        assert!(drained_messages().is_empty(), "nothing to report");
+    }
+
+    /// WHY: the positive control. Without it every assertion above would also
+    /// hold for a helper that reported `false` unconditionally.
+    #[cfg(unix)]
+    #[test]
+    fn a_present_merge_file_is_reported_as_loadable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pattern = Path::new(".rsync-filter");
+        let candidate = resolve_dir_merge_path(dir.path(), pattern);
+        fs::write(&candidate, b"- secret\n").expect("write the merge file");
+        let _ = logging::drain_events();
+
+        let present = dir_merge_file_present(&candidate, pattern, filters::RuleSource::Argument)
+            .expect("a readable merge file is not an error");
+
+        assert!(present);
+        assert!(drained_messages().is_empty(), "nothing to report");
+    }
 
     #[cfg(unix)]
     #[test]
