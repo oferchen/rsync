@@ -109,8 +109,8 @@ fn apply_global_directive(
             // daemon during config parse, before `listen()`, which is what
             // the 3.5.0 `daemon-config-symlink` cell observes as
             // `rsyncd exited before listening`.
-            let contents = crate::daemon::operator_file::read_to_string(&motd_path)
-                .unwrap_or_default();
+            let contents =
+                crate::daemon::operator_file::read_to_string(&motd_path).unwrap_or_default();
 
             // upstream: loadparm.c `motd_file` is a P_STRING slot written with
             // string_set(), so a second `motd file` directive replaces the
