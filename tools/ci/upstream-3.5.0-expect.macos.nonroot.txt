@@ -15,20 +15,22 @@
 # run's emitted `expect-result.macos.nonroot.txt` artifact and say so; do NOT
 # edit individual rows to make the job green.
 #
-# The 3 `fail` rows were classified 2026-09-04 by running each cell twice on
+# The 2 `fail` rows were classified 2026-09-04 by running each cell twice on
 # one host, varying ONLY $RSYNC between oc and the real 3.5.0 binary. That
 # upstream arm is the control; without it a failure cannot be attributed.
 #
 #   chmod-setid                             upstream FAILS too - unsatisfiable here
 #   partial-protected-regular-retry-policy  upstream FAILS too - unsatisfiable here
-#   filter-merge-content-echo               owned by task 1011
 #
-# Two of the three are therefore NOT oc divergences: the platform (or this
-# host's sysctl state) refuses what the cell asserts, and real rsync lands on
-# the same result. They stay `fail` because the assertion is unsatisfiable
-# here, not because oc is right - re-baselining them would hide the row rather
-# than resolve it. None of the three appears in upstream's own
-# testsuite/skiplist/macos.txt.
+# Neither is an oc divergence: the platform (or this host's sysctl state)
+# refuses what the cell asserts, and real rsync lands on the same result. They
+# stay `fail` because the assertion is unsatisfiable here, not because oc is
+# right - re-baselining them would hide the row rather than resolve it.
+# Neither appears in upstream's own testsuite/skiplist/macos.txt.
+#
+# `filter-merge-content-echo` was the third row and is now `pass`. It was a
+# real oc divergence and this change fixes it, so the row moves because the
+# BEHAVIOUR moved - the opposite of re-baselining a live failure.
 00-hello pass
 acl-symlink-race skip
 acls pass
@@ -175,7 +177,7 @@ files-from-leak skip
 files-from-path-clamp pass
 filter-depth pass
 filter-leak skip
-filter-merge-content-echo fail
+filter-merge-content-echo pass
 filter-merge-recursion pass
 filter-merge-symlink skip
 fuzzy pass

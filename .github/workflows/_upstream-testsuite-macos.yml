@@ -24,13 +24,16 @@ name: Upstream Testsuite (macOS)
 # WHAT THIS LEG BUYS (counted from the committed manifests, not transcribed:
 # `awk '!/^#/ && NF {c[$NF]++} END {...}' tools/ci/upstream-3.5.0-expect.*.txt`)
 # ---------------------------------------------------------------------------
-# 237 passed / 3 failed / 105 skipped, against 259 / 1 / 85 for the Linux
-# nonroot/pipe leg. Only ONE of the three failures is shared with Linux
-# (filter-merge-content-echo); the other TWO are divergences no existing
-# required context can observe:
+# 238 passed / 2 failed / 105 skipped, against 260 / 0 / 85 for the Linux
+# nonroot/pipe leg. NEITHER failure is shared with Linux - both are
+# divergences no other required context can observe:
 #
 #   chmod-setid                                      (passes on Linux)
 #   partial-protected-regular-retry-policy           (SKIPS on Linux)
+#
+# The two legs previously shared `filter-merge-content-echo`; it is fixed and
+# now `pass` everywhere, which is why this leg is the ONLY one that can still
+# observe a failing cell at all.
 #
 # The leg opened at 10 failures; seven have since been fixed, each in its own
 # PR (#7654, #7655, #7656, #7659 and the pipe-leg work before them). Two cells

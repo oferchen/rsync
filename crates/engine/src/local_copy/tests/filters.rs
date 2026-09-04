@@ -1,9 +1,11 @@
+use filters::RuleSource;
 #[test]
 fn parse_filter_directive_show_is_sender_only() {
-    let rule = match parse_filter_directive_line("show images/**").expect("parse") {
-        Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {other:?}"),
-    };
+    let rule =
+        match parse_filter_directive_line("show images/**", RuleSource::Argument).expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {other:?}"),
+        };
 
     assert!(rule.applies_to_sender());
     assert!(!rule.applies_to_receiver());
@@ -11,7 +13,8 @@ fn parse_filter_directive_show_is_sender_only() {
 
 #[test]
 fn parse_filter_directive_hide_is_sender_only() {
-    let rule = match parse_filter_directive_line("hide *.tmp").expect("parse") {
+    let rule = match parse_filter_directive_line("hide *.tmp", RuleSource::Argument).expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -22,7 +25,8 @@ fn parse_filter_directive_hide_is_sender_only() {
 
 #[test]
 fn parse_filter_directive_shorthand_show_is_sender_only() {
-    let rule = match parse_filter_directive_line("S logs/**").expect("parse") {
+    let rule = match parse_filter_directive_line("S logs/**", RuleSource::Argument).expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -33,7 +37,7 @@ fn parse_filter_directive_shorthand_show_is_sender_only() {
 
 #[test]
 fn parse_filter_directive_shorthand_hide_is_sender_only() {
-    let rule = match parse_filter_directive_line("H *.bak").expect("parse") {
+    let rule = match parse_filter_directive_line("H *.bak", RuleSource::Argument).expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -44,7 +48,8 @@ fn parse_filter_directive_shorthand_hide_is_sender_only() {
 
 #[test]
 fn parse_filter_directive_shorthand_protect_requires_receiver() {
-    let rule = match parse_filter_directive_line("P cache/**").expect("parse") {
+    let rule = match parse_filter_directive_line("P cache/**", RuleSource::Argument).expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -55,10 +60,11 @@ fn parse_filter_directive_shorthand_protect_requires_receiver() {
 
 #[test]
 fn parse_filter_directive_risk_requires_receiver() {
-    let rule = match parse_filter_directive_line("risk cache/**").expect("parse") {
-        Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {other:?}"),
-    };
+    let rule =
+        match parse_filter_directive_line("risk cache/**", RuleSource::Argument).expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {other:?}"),
+        };
 
     assert!(!rule.applies_to_sender());
     assert!(rule.applies_to_receiver());
@@ -66,7 +72,9 @@ fn parse_filter_directive_risk_requires_receiver() {
 
 #[test]
 fn parse_filter_directive_keyword_with_xattr_modifier() {
-    let rule = match parse_filter_directive_line("include,x user.keep").expect("parse") {
+    let rule = match parse_filter_directive_line("include,x user.keep", RuleSource::Argument)
+        .expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -82,7 +90,9 @@ fn parse_filter_directive_keyword_with_xattr_modifier() {
 /// `FILTRULE_INCLUDE|SENDER_SIDE|XATTR`: a sender-side xattr include.
 #[test]
 fn parse_filter_directive_accepts_xattr_on_show_keyword() {
-    let rule = match parse_filter_directive_line("show,x user.skip").expect("parse") {
+    let rule = match parse_filter_directive_line("show,x user.skip", RuleSource::Argument)
+        .expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -98,7 +108,8 @@ fn parse_filter_directive_accepts_xattr_on_show_keyword() {
 
 #[test]
 fn parse_filter_directive_shorthand_risk_requires_receiver() {
-    let rule = match parse_filter_directive_line("R cache/**").expect("parse") {
+    let rule = match parse_filter_directive_line("R cache/**", RuleSource::Argument).expect("parse")
+    {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
         other => panic!("expected rule, got {other:?}"),
     };
@@ -109,10 +120,11 @@ fn parse_filter_directive_shorthand_risk_requires_receiver() {
 
 #[test]
 fn parse_filter_directive_clear_keyword() {
-    let directive = parse_filter_directive_line("clear").expect("parse clear");
+    let directive =
+        parse_filter_directive_line("clear", RuleSource::Argument).expect("parse clear");
     assert!(matches!(directive, Some(ParsedFilterDirective::Clear)));
 
-    let bang = parse_filter_directive_line("!").expect("parse bang");
+    let bang = parse_filter_directive_line("!", RuleSource::Argument).expect("parse bang");
     assert!(matches!(bang, Some(ParsedFilterDirective::Clear)));
 }
 
@@ -126,7 +138,7 @@ fn parse_filter_directive_clear_keyword() {
 #[test]
 fn parse_filter_directive_clear_keyword_is_case_sensitive() {
     for spelling in ["CLEAR", "Clear", "  CLEAR  "] {
-        let error = parse_filter_directive_line(spelling)
+        let error = parse_filter_directive_line(spelling, RuleSource::Argument)
             .expect_err("an upper-case clear is not a filter rule oc knows");
         assert!(
             error.to_string().contains("Unknown filter rule"),
@@ -137,7 +149,7 @@ fn parse_filter_directive_clear_keyword_is_case_sensitive() {
 
 #[test]
 fn parse_filter_directive_exclude_if_present_support() {
-    let directive = parse_filter_directive_line("exclude-if-present=.git")
+    let directive = parse_filter_directive_line("exclude-if-present=.git", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -151,7 +163,7 @@ fn parse_filter_directive_exclude_if_present_support() {
 
 #[test]
 fn parse_filter_directive_dir_merge_without_modifiers() {
-    let directive = parse_filter_directive_line("dir-merge .rsync-filter")
+    let directive = parse_filter_directive_line("dir-merge .rsync-filter", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -169,7 +181,7 @@ fn parse_filter_directive_dir_merge_without_modifiers() {
 
 #[test]
 fn parse_filter_directive_per_dir_alias_without_modifiers() {
-    let directive = parse_filter_directive_line("per-dir .rsync-filter")
+    let directive = parse_filter_directive_line("per-dir .rsync-filter", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -187,9 +199,10 @@ fn parse_filter_directive_per_dir_alias_without_modifiers() {
 
 #[test]
 fn parse_filter_directive_dir_merge_with_modifiers() {
-    let directive = parse_filter_directive_line("dir-merge,+ne rules/filter.txt")
-        .expect("parse")
-        .expect("directive");
+    let directive =
+        parse_filter_directive_line("dir-merge,+ne rules/filter.txt", RuleSource::Argument)
+            .expect("parse")
+            .expect("directive");
 
     let (pattern, options) = match directive {
         ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
@@ -204,7 +217,7 @@ fn parse_filter_directive_dir_merge_with_modifiers() {
 
 #[test]
 fn parse_filter_directive_dir_merge_cvs_default_path() {
-    let directive = parse_filter_directive_line("dir-merge,C")
+    let directive = parse_filter_directive_line("dir-merge,C", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -222,7 +235,7 @@ fn parse_filter_directive_dir_merge_cvs_default_path() {
 
 #[test]
 fn parse_filter_directive_short_merge_inherits_context() {
-    let directive = parse_filter_directive_line(". per-dir")
+    let directive = parse_filter_directive_line(". per-dir", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -237,7 +250,7 @@ fn parse_filter_directive_short_merge_inherits_context() {
 
 #[test]
 fn parse_filter_directive_short_merge_cvs_defaults() {
-    let directive = parse_filter_directive_line(".C")
+    let directive = parse_filter_directive_line(".C", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -255,7 +268,7 @@ fn parse_filter_directive_short_merge_cvs_defaults() {
 
 #[test]
 fn parse_filter_directive_short_dir_merge_with_modifiers() {
-    let directive = parse_filter_directive_line(":- per-dir")
+    let directive = parse_filter_directive_line(":- per-dir", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -270,7 +283,7 @@ fn parse_filter_directive_short_dir_merge_with_modifiers() {
 
 #[test]
 fn parse_filter_directive_merge_with_modifiers() {
-    let directive = parse_filter_directive_line("merge,+ rules")
+    let directive = parse_filter_directive_line("merge,+ rules", RuleSource::Argument)
         .expect("parse")
         .expect("directive");
 
@@ -286,7 +299,8 @@ fn parse_filter_directive_merge_with_modifiers() {
 
 #[test]
 fn parse_filter_directive_dir_merge_conflicting_modifiers_error() {
-    let error = parse_filter_directive_line("dir-merge,+- rules").expect_err("conflict");
+    let error = parse_filter_directive_line("dir-merge,+- rules", RuleSource::Argument)
+        .expect_err("conflict");
     assert!(
         error
             .to_string()

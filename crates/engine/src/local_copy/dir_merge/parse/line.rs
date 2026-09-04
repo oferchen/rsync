@@ -221,6 +221,12 @@ const SINGLE_LETTER_PREFIXES: &str = "SHRP";
 
 /// Parses a single line of a per-directory merge file.
 ///
+/// `source` is where this line came from, and it decides how an unparsable
+/// rule is reported: the text verbatim for an argument, or `<rule from ...>`
+/// for a file's contents. It is a PARAMETER rather than a constant because
+/// upstream's decision has two arms, and picking one here would collapse
+/// them - see the `Err` arm at the bottom of this function.
+///
 /// Returns `Ok(None)` for blank or comment-only lines. Recognises list-clear
 /// (`!`/`clear`), short-form merges (`.`/`:`), `merge`/`dir-merge`/`per-dir`
 /// directives, `exclude-if-present`, the `+`/`-` short-form rule prefixes,
@@ -228,6 +234,7 @@ const SINGLE_LETTER_PREFIXES: &str = "SHRP";
 /// their `,modifier` suffix. Trailing whitespace is trimmed from patterns.
 pub(crate) fn parse_filter_directive_line(
     text: &str,
+    source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     if text.is_empty() || text.starts_with('#') {
         return Ok(None);
@@ -364,23 +371,29 @@ pub(crate) fn parse_filter_directive_line(
     // whose text argument is passed through `rule_text` (exclude.c:88-123) -
     // the chokepoint every diagnostic built from a rule's own text must cross.
     //
-    // The rule text is REPLACED, not echoed. Both production callers of this
-    // function are inside `load_dir_merge_rules_recursive`, i.e. the contents
-    // of a per-directory merge file. That file is named by a rule the PEER
-    // controls and which travelled over the protocol, so echoing an unparsable
-    // line back turns the filter parser into a read-any-line oracle for any
-    // file this process can open. Upstream describes that provenance as
-    // `a file read earlier` (exclude.c:78) because the naming rule was read and
-    // closed long ago and its origin is not retained.
+    // The rule TEXT is replaced whenever it came out of a file: that file is
+    // named by a rule the PEER controls and which travelled over the protocol,
+    // so echoing an unparsable line back turns the filter parser into a
+    // read-any-line oracle for any file this process can open.
     //
-    // ⚠ The replacement is NOT unconditional redaction: upstream still echoes a
-    // rule that came from an ARGUMENT, because that text is the operator's own.
-    // `RuleSource` encodes exactly that distinction, and `Argument` returns the
-    // text unchanged - which is why the funnel is used here rather than a local
-    // `format!`.
+    // ⚠ The replacement is NOT unconditional redaction, and it is NOT one
+    // description. Upstream keeps the text for a rule that came from an
+    // ARGUMENT (it is the operator's own), and for file-sourced text it picks
+    // among four descriptions in `rule_src_where` (exclude.c:72-86). The one
+    // that matters here is the split at exclude.c:1753,
+    //
+    //     rule_src_file = named_by_file ? NULL : src_name;
+    //
+    // where `named_by_file` is whether the merge file's OWN NAME came from a
+    // file. A `-F` merge file was named on the command line, so upstream shows
+    // `<file> line <n>` and the operator learns which file to fix; only a merge
+    // file NAMED BY another file collapses to `a file read earlier`
+    // (exclude.c:78). Hardcoding either arm here loses one of them, so the
+    // caller - which is the only thing that knows how the file was named -
+    // supplies it.
     Err(FilterParseError::new(format!(
         "Unknown filter rule: {}",
-        RuleSource::FileReadEarlier.rule_text(trimmed)
+        source.rule_text(trimmed)
     )))
 }
 
@@ -389,7 +402,7 @@ mod tests {
     use super::*;
 
     fn rule_of(line: &str) -> FilterRule {
-        match parse_filter_directive_line(line) {
+        match parse_filter_directive_line(line, RuleSource::Argument) {
             Ok(Some(ParsedFilterDirective::Rule(rule))) => rule,
             other => panic!("expected a rule from {line:?}, got {other:?}"),
         }
@@ -408,7 +421,7 @@ mod tests {
     fn uppercase_modifier_letters_are_not_modifiers() {
         for line in ["-R FOO", "-S FOO", "-P FOO", "-X FOO", "+R FOO"] {
             assert!(
-                parse_filter_directive_line(line).is_err(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_err(),
                 "{line:?} must be refused: upstream has no uppercase modifiers"
             );
         }
@@ -442,7 +455,7 @@ mod tests {
             "Hr FOO",
         ] {
             assert!(
-                parse_filter_directive_line(line).is_err(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_err(),
                 "{line:?} must be refused: the prefix already binds a side"
             );
         }
@@ -457,7 +470,7 @@ mod tests {
     fn a_side_bound_prefix_still_accepts_the_unguarded_perishable_modifier() {
         for line in ["protect,p FOO", "risk,p FOO", "show,p FOO", "P,p FOO"] {
             assert!(
-                parse_filter_directive_line(line).is_ok(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_ok(),
                 "{line:?} must parse: upstream's `p` arm has no prefix guard"
             );
         }
@@ -474,7 +487,7 @@ mod tests {
     fn a_single_letter_prefix_takes_adjacent_modifiers_the_keyword_form_needs_a_comma() {
         for line in ["Pp FOO", "P,p FOO", "Px user.drop", "P,x user.drop"] {
             assert!(
-                parse_filter_directive_line(line).is_ok(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_ok(),
                 "{line:?} must parse: the comma is optional after a one-letter prefix"
             );
         }
@@ -484,7 +497,7 @@ mod tests {
             "the two spellings must produce the same rule, not merely both parse"
         );
         assert!(
-            parse_filter_directive_line("protectx user.drop").is_err(),
+            parse_filter_directive_line("protectx user.drop", RuleSource::Argument).is_err(),
             "a long keyword still requires the comma (rule_strcmp, exclude.c:1218)"
         );
     }
@@ -500,13 +513,13 @@ mod tests {
     fn lower_case_single_letters_are_not_rule_prefixes() {
         for line in ["p *.tmp", "r *.tmp", "s *.tmp", "h *.tmp"] {
             assert!(
-                parse_filter_directive_line(line).is_err(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_err(),
                 "{line:?} must be refused: upstream has no lower-case prefix"
             );
         }
         for line in ["P *.tmp", "R *.tmp", "S *.tmp", "H *.tmp"] {
             assert!(
-                parse_filter_directive_line(line).is_ok(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_ok(),
                 "{line:?} is the upper-case prefix upstream does accept"
             );
         }
@@ -544,7 +557,7 @@ mod tests {
             ("PROTECT foo", "modifier 'R'"),
             ("Risk foo", "modifier 'i'"),
         ] {
-            let error = parse_filter_directive_line(line)
+            let error = parse_filter_directive_line(line, RuleSource::Argument)
                 .expect_err("an upper-case keyword is not a filter directive");
             assert!(
                 error.to_string().contains(expected_fragment),
@@ -567,7 +580,7 @@ mod tests {
             "risk foo",
         ] {
             assert!(
-                parse_filter_directive_line(line).is_ok(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_ok(),
                 "{line:?} is the spelling upstream accepts"
             );
         }
@@ -580,7 +593,7 @@ mod tests {
     /// from the `Unknown filter rule` the other five produce.
     #[test]
     fn an_upper_case_keyword_starting_with_a_prefix_letter_fails_in_the_modifier_run() {
-        let error = parse_filter_directive_line("SHOW foo")
+        let error = parse_filter_directive_line("SHOW foo", RuleSource::Argument)
             .expect_err("S is a prefix, so HOW is scanned as modifiers");
         let message = error.to_string();
         assert!(
@@ -596,7 +609,7 @@ mod tests {
     fn the_negate_modifier_is_accepted_after_every_non_merge_prefix() {
         for line in ["-! *.tmp", "+! *.tmp", "P! *.tmp", "R! *.tmp"] {
             assert!(
-                parse_filter_directive_line(line).is_ok(),
+                parse_filter_directive_line(line, RuleSource::Argument).is_ok(),
                 "{line:?} must parse: `!` carries no prefix guard upstream"
             );
         }
@@ -645,85 +658,89 @@ mod tests {
 
     #[test]
     fn parse_filter_directive_line_empty() {
-        let result = parse_filter_directive_line("").unwrap();
+        let result = parse_filter_directive_line("", RuleSource::Argument).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_filter_directive_line_comment() {
-        let result = parse_filter_directive_line("# this is a comment").unwrap();
+        let result =
+            parse_filter_directive_line("# this is a comment", RuleSource::Argument).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_filter_directive_line_whitespace() {
-        let result = parse_filter_directive_line("   ").unwrap();
+        let result = parse_filter_directive_line("   ", RuleSource::Argument).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_filter_directive_line_clear_exclamation() {
-        let result = parse_filter_directive_line("!").unwrap();
+        let result = parse_filter_directive_line("!", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Clear)));
     }
 
     #[test]
     fn parse_filter_directive_line_clear_keyword() {
-        let result = parse_filter_directive_line("clear").unwrap();
+        let result = parse_filter_directive_line("clear", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Clear)));
     }
 
     #[test]
     fn parse_filter_directive_line_include_short() {
-        let result = parse_filter_directive_line("+ *.txt").unwrap();
+        let result = parse_filter_directive_line("+ *.txt", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_exclude_short() {
-        let result = parse_filter_directive_line("- *.bak").unwrap();
+        let result = parse_filter_directive_line("- *.bak", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_include_keyword() {
-        let result = parse_filter_directive_line("include *.txt").unwrap();
+        let result = parse_filter_directive_line("include *.txt", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_exclude_keyword() {
-        let result = parse_filter_directive_line("exclude *.bak").unwrap();
+        let result = parse_filter_directive_line("exclude *.bak", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_protect() {
-        let result = parse_filter_directive_line("protect /important").unwrap();
+        let result =
+            parse_filter_directive_line("protect /important", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_risk() {
-        let result = parse_filter_directive_line("risk /temp").unwrap();
+        let result = parse_filter_directive_line("risk /temp", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_show() {
-        let result = parse_filter_directive_line("show *.log").unwrap();
+        let result = parse_filter_directive_line("show *.log", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_hide() {
-        let result = parse_filter_directive_line("hide *.secret").unwrap();
+        let result = parse_filter_directive_line("hide *.secret", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
     }
 
     #[test]
     fn parse_filter_directive_line_exclude_if_present() {
-        let result = parse_filter_directive_line("exclude-if-present .nobackup").unwrap();
+        let result =
+            parse_filter_directive_line("exclude-if-present .nobackup", RuleSource::Argument)
+                .unwrap();
         assert!(matches!(
             result,
             Some(ParsedFilterDirective::ExcludeIfPresent(_))
@@ -732,19 +749,19 @@ mod tests {
 
     #[test]
     fn parse_filter_directive_line_unsupported() {
-        let result = parse_filter_directive_line("unknown directive");
+        let result = parse_filter_directive_line("unknown directive", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_filter_directive_line_plus_missing_pattern() {
-        let result = parse_filter_directive_line("+ ");
+        let result = parse_filter_directive_line("+ ", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_filter_directive_line_minus_missing_pattern() {
-        let result = parse_filter_directive_line("- ");
+        let result = parse_filter_directive_line("- ", RuleSource::Argument);
         assert!(result.is_err());
     }
 
@@ -755,7 +772,7 @@ mod tests {
     /// against the enclosing directory.
     #[test]
     fn parse_filter_directive_line_dir_merge_keyword_emits_dir_merge_variant() {
-        let result = parse_filter_directive_line("dir-merge .filt2").unwrap();
+        let result = parse_filter_directive_line("dir-merge .filt2", RuleSource::Argument).unwrap();
         assert!(
             matches!(result, Some(ParsedFilterDirective::DirMerge { .. })),
             "dir-merge keyword must emit DirMerge variant"
@@ -764,7 +781,7 @@ mod tests {
 
     #[test]
     fn parse_filter_directive_line_colon_short_form_emits_dir_merge_variant() {
-        let result = parse_filter_directive_line(": .filt2").unwrap();
+        let result = parse_filter_directive_line(": .filt2", RuleSource::Argument).unwrap();
         assert!(
             matches!(result, Some(ParsedFilterDirective::DirMerge { .. })),
             "':' short form must emit DirMerge variant"
@@ -785,7 +802,7 @@ mod tests {
     fn an_unparsable_merged_line_is_not_echoed_back() {
         const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
-        let error = parse_filter_directive_line(SECRET)
+        let error = parse_filter_directive_line(SECRET, RuleSource::FileReadEarlier)
             .expect_err("an unparsable line must still be refused");
         let rendered = error.to_string();
 
@@ -809,5 +826,38 @@ mod tests {
         const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
         assert_eq!(RuleSource::Argument.rule_text(SECRET), SECRET);
+    }
+
+    /// A merge file the OPERATOR named is reported BY PATH AND LINE, so they
+    /// learn which file to fix. Upstream chooses between this and the arm above
+    /// at exclude.c:1753 - `rule_src_file = named_by_file ? NULL : src_name` -
+    /// keyed on whether the merge file's own NAME came from a file. Redaction of
+    /// the rule TEXT is unchanged: only the LOCATION is added.
+    ///
+    /// MEASURED against rsync 3.5.0 with `-r -F` and a `.rsync-filter`
+    /// containing `Zbad-perdir`:
+    /// `Unknown filter rule: <rule from /.../src/.rsync-filter line 1>`
+    #[test]
+    fn an_operator_named_merge_file_reports_its_path_and_line() {
+        const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
+
+        let error = parse_filter_directive_line(
+            SECRET,
+            RuleSource::File {
+                name: "src/.rsync-filter",
+                line: 1,
+            },
+        )
+        .expect_err("an unparsable line must still be refused");
+        let rendered = error.to_string();
+
+        assert!(
+            !rendered.contains(SECRET),
+            "the rule text is still redacted: {rendered}"
+        );
+        assert!(
+            rendered.contains("src/.rsync-filter line 1"),
+            "the diagnostic must name the merge file and line: {rendered}"
+        );
     }
 }

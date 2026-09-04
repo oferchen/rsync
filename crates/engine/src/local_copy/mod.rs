@@ -114,7 +114,7 @@ pub(crate) use context::{
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use dir_merge::{
-    FilterParseError, MergeFileRegistry, NestedDirMerge, ParsedFilterDirective,
+    FilterParseError, MergeFileOrigin, MergeFileRegistry, NestedDirMerge, ParsedFilterDirective,
     apply_dir_merge_rule_defaults, dir_merge_file_present, filter_program_local_error,
     load_dir_merge_rules_recursive, parse_filter_directive_line, resolve_dir_merge_path,
 };
