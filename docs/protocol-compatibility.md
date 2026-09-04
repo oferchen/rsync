@@ -1,9 +1,12 @@
 # Protocol Compatibility Matrix
 
 This document describes oc-rsync's wire protocol compatibility with upstream
-rsync across protocol versions 28-32 and upstream releases 2.6.9, 3.0.9,
-3.1.3, and 3.4.4. All claims are backed by automated CI tests that
-run on every pull request and nightly.
+rsync across protocol versions 28-32. The upstream releases the interop
+harness builds and exercises are listed once, in `versions=(...)` at
+`tools/ci/run_interop.sh:74`, rather than copied here - copying the list is what
+let it drift. At the time of writing that is 2.6.9, 3.0.9, 3.1.3, 3.4.4 and
+3.5.0. All claims are backed by automated CI tests that run on every pull
+request and nightly.
 
 ---
 
@@ -77,7 +80,10 @@ Batch files written by one implementation can be read by the other:
 
 The table below lists every feature tested in the comprehensive interop suite.
 Each feature is tested bidirectionally (upstream client -> oc-rsync daemon and
-oc-rsync client -> upstream daemon) against 3.0.9, 3.1.3, and 3.4.4. Rsync
+oc-rsync client -> upstream daemon) against every release in `versions=(...)`.
+The columns below record the measured results for 3.0.9, 3.1.3 and 3.4.4; 3.5.0
+is exercised by the same scenarios but has no column here yet, so read its
+status from the interop job rather than inferring it from these tables. Rsync
 3.4.4 supersedes the 3.4.1/3.4.2/3.4.3 point releases on the same protocol
 (32), so those intermediate releases are not tested separately. Rsync 2.6.9 (protocol 29) interop is
 validated via dedicated daemon push/pull cells (RP28.c/RP28.d) rather than
@@ -297,4 +303,4 @@ Interop testing is distributed across several CI workflows:
 - Interop test details: [docs/INTEROP.md](INTEROP.md)
 - Interop testing guide: [docs/interop_testing.md](interop_testing.md)
 - Interop test script: `tools/ci/run_interop.sh`
-- Upstream rsync source: `target/interop/upstream-src/rsync-3.4.4/`
+- Upstream rsync source: `target/interop/upstream-src/rsync-3.5.0/`

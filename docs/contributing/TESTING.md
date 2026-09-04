@@ -158,10 +158,24 @@ only the crates you changed.
 | interop (macOS) | macOS | Homebrew rsync smoke | Yes |
 | interop (Windows) | Windows | MSYS2 rsync smoke | No (best-effort) |
 
-Branch protection requires eight contexts: `fmt + clippy`, `nextest (stable)`,
+Branch protection requires ten contexts: `fmt + clippy`, `nextest (stable)`,
 `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`,
 `interop / interop with upstream rsync`, `upstream-testsuite / upstream testsuite`,
-and `upstream-testsuite / upstream testsuite (root)`.
+`upstream-testsuite / upstream testsuite (root)`,
+`upstream-testsuite-tcp / upstream testsuite`, and
+`upstream-testsuite-tcp / upstream testsuite (root)`.
+
+The ruleset is the authority, and this list is a copy of it, so re-derive it
+rather than trusting the copy:
+
+```sh
+gh api repos/oferchen/rsync/rulesets --jq '.[] | select(.name=="Protect master") | .id' \
+  | while read -r id; do
+      gh api "repos/oferchen/rsync/rulesets/$id" \
+        --jq '.rules[] | select(.type=="required_status_checks")
+              | .parameters.required_status_checks[].context'
+    done
+```
 
 ### Nextest configuration
 
