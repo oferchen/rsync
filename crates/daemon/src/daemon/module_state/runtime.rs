@@ -32,10 +32,7 @@ pub(in crate::daemon) fn build_module_runtimes_with_lock_file(
     definitions: Vec<ModuleDefinition>,
     lock_file: Option<PathBuf>,
 ) -> Result<(Vec<ModuleRuntime>, Option<Arc<ConnectionLimiter>>), DaemonError> {
-    let global_limiter = match lock_file {
-        Some(path) => Some(Arc::new(ConnectionLimiter::open(path)?)),
-        None => None,
-    };
+    let global_limiter = lock_file.map(|path| Arc::new(ConnectionLimiter::open(path)));
     let runtimes = build_module_runtimes(definitions, &global_limiter)?;
     Ok((runtimes, global_limiter))
 }
@@ -63,7 +60,7 @@ pub(in crate::daemon) fn build_module_runtimes(
                 let limiter = match cache.get(&path) {
                     Some(existing) => Arc::clone(existing),
                     None => {
-                        let created = Arc::new(ConnectionLimiter::open(path.clone())?);
+                        let created = Arc::new(ConnectionLimiter::open(path.clone()));
                         cache.insert(path, Arc::clone(&created));
                         created
                     }

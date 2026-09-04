@@ -121,6 +121,7 @@ include!("tests/chunks/connection_limiter_creates_the_lock_file_with_upstream_mo
 include!("tests/chunks/no_daemon_entry_point_hand_rolls_a_null_connection_limiter.rs");
 include!("tests/chunks/connection_limiter_enforces_limits_across_guards.rs");
 include!("tests/chunks/connection_limiter_open_preserves_existing_counts.rs");
+include!("tests/chunks/connection_limiter_open_survives_an_unopenable_lock_path.rs");
 include!("tests/chunks/connection_limiter_propagates_io_errors.rs");
 include!("tests/chunks/connection_limiter_reclaims_slot_on_close_without_decrement.rs");
 include!("tests/chunks/connection_status_messages_describe_active_sessions.rs");
@@ -323,6 +324,7 @@ include!("tests/chunks/runtime_options_loads_lock_file_from_config.rs");
 include!("tests/chunks/runtime_options_loads_max_connections_from_config.rs");
 include!("tests/chunks/runtime_options_loads_modules_from_included_config.rs");
 include!("tests/chunks/runtime_options_loads_motd_from_config_directives.rs");
+include!("tests/chunks/runtime_options_unreadable_motd_is_not_fatal.rs");
 include!("tests/chunks/runtime_options_loads_pid_file_from_config.rs");
 include!("tests/chunks/runtime_options_loads_refuse_options_from_config.rs");
 include!("tests/chunks/runtime_options_loads_reverse_lookup_from_config.rs");

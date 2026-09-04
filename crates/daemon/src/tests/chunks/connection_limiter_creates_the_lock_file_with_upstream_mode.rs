@@ -18,7 +18,7 @@ fn connection_limiter_creates_the_lock_file_with_upstream_mode() {
     let temp = tempdir().expect("lock dir");
     let lock_path = temp.path().join("daemon.lock");
 
-    let limiter = ConnectionLimiter::open(lock_path.clone()).expect("open lock file");
+    let limiter = ConnectionLimiter::open(lock_path.clone());
     drop(limiter);
 
     let mode = fs::metadata(&lock_path)

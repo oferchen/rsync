@@ -15,16 +15,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(windows)]
 use fs2::FileExt;
 
-use core::message::Role;
-use core::rsync_error;
-
-use crate::error::DaemonError;
-
 use super::max_connections::MaxConnections;
 use super::runtime::ModuleConnectionError;
-
-/// Exit code used when daemon functionality is unavailable.
-const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 
 /// Width in bytes of a single connection slot in the lock file.
 ///
@@ -52,18 +44,6 @@ const SLOT_LEN: i64 = 4;
 /// primitive, the limiter falls back to a counter serialised with `flock`.
 pub(crate) struct ConnectionLimiter {
     path: PathBuf,
-}
-
-/// Creates a [`DaemonError`] for lock file open failures.
-fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
-    DaemonError::new(
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-        rsync_error!(
-            FEATURE_UNAVAILABLE_EXIT_CODE,
-            format!("failed to open lock file '{}': {}", path.display(), error)
-        )
-        .with_role(Role::Daemon),
-    )
 }
 
 /// Mode applied when the lock file is created.
@@ -111,19 +91,32 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
 }
 
 impl ConnectionLimiter {
-    /// Opens or creates the lock file at the given path.
-    pub(crate) fn open(path: PathBuf) -> Result<Self, DaemonError> {
+    /// Records the lock file path, creating the file eagerly when it can.
+    ///
+    /// Construction CANNOT fail. upstream has no build-time open at all: the
+    /// lock file is opened inside `claim_connection()` (connection.c:33), and a
+    /// failed open there is `return 0` - that one connection is refused while
+    /// the daemon keeps listening. Propagating a build-time failure instead
+    /// killed the daemon before `listen()` whenever an operator-named lock path
+    /// was unopenable - including the refused-symlink case the 3.5.0
+    /// `daemon-config-symlink` cell plants, which upstream serves.
+    ///
+    /// The eager create is kept because it is where the 0600 mode is
+    /// established, but its failure is deliberately ignored: [`Self::acquire`]
+    /// re-opens per connection and reports the real error there, which is the
+    /// site upstream decides at.
+    pub(crate) fn open(path: PathBuf) -> Self {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
+            let _ = std::fs::create_dir_all(parent);
         }
 
-        let file = open_lock_file(&path).map_err(|error| lock_file_error(&path, error))?;
+        if let Ok(file) = open_lock_file(&path) {
+            drop(file);
+        }
 
-        drop(file);
-
-        Ok(Self { path })
+        Self { path }
     }
 
     /// Opens the lock file for read/write access.
