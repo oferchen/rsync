@@ -205,20 +205,6 @@ impl FilterSegment {
     }
 }
 
-/// Short-form action prefix used in `add_rule()` debug lines, mirroring
-/// upstream rsync's filter-rule syntax (`+`, `-`, `P`, `R`, `!`, `merge`, `dir-merge`).
-fn filter_action_prefix(action: FilterAction) -> &'static str {
-    match action {
-        FilterAction::Include => "+",
-        FilterAction::Exclude => "-",
-        FilterAction::Protect => "P",
-        FilterAction::Risk => "R",
-        FilterAction::Clear => "!",
-        FilterAction::Merge => "merge",
-        FilterAction::DirMerge => "dir-merge",
-    }
-}
-
 /// Emits a `--debug=FILTER` line for a rule that fired on `path`, naming the
 /// file, its type, and the matching pattern.
 ///
@@ -396,15 +382,13 @@ impl CompiledRule {
         let negate = rule.is_negated();
         let pattern = rule.pattern().to_owned();
 
-        // upstream: exclude.c:add_rule() logs every parsed rule at
-        // `DEBUG_GTE(FILTER, 2)` so the active rule set is observable.
-        debug_log!(
-            Filter,
-            2,
-            "add_rule({} {})",
-            filter_action_prefix(action),
-            pattern
-        );
+        // upstream: exclude.c:259-275 add_rule() logs every parsed rule at
+        // `DEBUG_GTE(FILTER, 2)`. That trace is emitted by the *parsers* -
+        // `DirMergeEntries::push_rule` for merge-file contents and
+        // `FilterProgram::compile` for the operator's own arguments - because
+        // that is where the rule's provenance is still in hand, and provenance
+        // is what decides whether the text may be shown. Emitting it here,
+        // downstream of every parse, echoed merged-file contents verbatim.
 
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 

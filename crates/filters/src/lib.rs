@@ -152,7 +152,7 @@ pub use merge::{
     read_rules_recursive,
 };
 pub use rule::FilterRule;
-pub use rule_source::RuleSource;
+pub use rule_source::{RuleSource, trace_add_rule};
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
 pub use wildmatch::{iwildmatch, wildmatch};
 
