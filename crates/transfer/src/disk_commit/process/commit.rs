@@ -107,13 +107,10 @@ pub(super) fn commit_file(
     // `process_whole_file` via `make_backup_copy` prior to the first write.
     let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
-            make_backup(&begin.file_path, backup_config, config.backup_env()).map_err(|e| {
-                crate::temp_guard::attach_commit_op(
-                    crate::temp_guard::CommitOp::Backup,
-                    &begin.file_path,
-                    e,
-                )
-            })?
+            // `make_backup` tags its own failures with CommitOp::Backup AND the
+            // backup destination it chose; re-wrapping here would nest a second
+            // payload and hide that destination from the reporter's downcast.
+            make_backup(&begin.file_path, backup_config, config.backup_env())?
         } else {
             None
         }
@@ -900,8 +897,21 @@ pub(crate) fn make_backup(
         &backup_config.suffix,
     );
 
+    // upstream: backup.c:402-403 reports BOTH operands - `keep_backup failed:
+    // %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`.
+    // `backup_path` is chosen here and nowhere else, so every failure below is
+    // tagged with it at the raising site; the reporter cannot recompute it.
+    let failed = |e: io::Error| {
+        crate::temp_guard::attach_commit_op_between(
+            crate::temp_guard::CommitOp::Backup,
+            file_path,
+            Some(&backup_path),
+            e,
+        )
+    };
+
     if let Some(parent) = backup_path.parent() {
-        create_backup_path_parents(parent, backup_config, env)?;
+        create_backup_path_parents(parent, backup_config, env).map_err(failed)?;
     }
 
     // upstream: backup.c:230-246 - `prefer_rename` is False here (rsync.c:897),
@@ -919,7 +929,7 @@ pub(crate) fn make_backup(
         return Ok(Some(backup_notice(backup_config, file_path, &backup_path)));
     }
 
-    let was_copy = backup_rename_sandboxed(env, file_path, &backup_path)?;
+    let was_copy = backup_rename_sandboxed(env, file_path, &backup_path).map_err(failed)?;
     if was_copy {
         // upstream: backup.c:414 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
         // successful." when the cross-device copy tier moved the pre-image.
