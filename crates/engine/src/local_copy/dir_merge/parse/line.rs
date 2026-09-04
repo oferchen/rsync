@@ -5,7 +5,7 @@ use super::{
     types::{FilterParseError, ParsedFilterDirective},
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
-use filters::FilterRule;
+use filters::{FilterRule, RuleSource};
 use std::fmt;
 
 #[derive(Default)]
@@ -360,8 +360,27 @@ pub(crate) fn parse_filter_directive_line(
         _ => {}
     }
 
+    // upstream: exclude.c:1363 `filter_rule_err("Unknown filter rule", ...)`,
+    // whose text argument is passed through `rule_text` (exclude.c:88-123) -
+    // the chokepoint every diagnostic built from a rule's own text must cross.
+    //
+    // The rule text is REPLACED, not echoed. Both production callers of this
+    // function are inside `load_dir_merge_rules_recursive`, i.e. the contents
+    // of a per-directory merge file. That file is named by a rule the PEER
+    // controls and which travelled over the protocol, so echoing an unparsable
+    // line back turns the filter parser into a read-any-line oracle for any
+    // file this process can open. Upstream describes that provenance as
+    // `a file read earlier` (exclude.c:78) because the naming rule was read and
+    // closed long ago and its origin is not retained.
+    //
+    // ⚠ The replacement is NOT unconditional redaction: upstream still echoes a
+    // rule that came from an ARGUMENT, because that text is the operator's own.
+    // `RuleSource` encodes exactly that distinction, and `Argument` returns the
+    // text unchanged - which is why the funnel is used here rather than a local
+    // `format!`.
     Err(FilterParseError::new(format!(
-        "Unknown filter rule: `{trimmed}'"
+        "Unknown filter rule: {}",
+        RuleSource::FileReadEarlier.rule_text(trimmed)
     )))
 }
 
@@ -750,5 +769,45 @@ mod tests {
             matches!(result, Some(ParsedFilterDirective::DirMerge { .. })),
             "':' short form must emit DirMerge variant"
         );
+    }
+
+    /// MEASURED against rsync 3.5.0 (`filter-merge-content-echo`): a per-directory
+    /// merge file holding an unparsable line makes upstream report
+    /// `<rule from a file read earlier>`, while oc echoed the line itself. The
+    /// merge file is named by a rule the peer controls, so the echo turned the
+    /// filter parser into a read-any-line oracle for any file this process can
+    /// open.
+    ///
+    /// upstream: exclude.c:1363 routes the text through `rule_text`
+    /// (exclude.c:78-123), whose `a file read earlier` arm is exactly this
+    /// provenance.
+    #[test]
+    fn an_unparsable_merged_line_is_not_echoed_back() {
+        const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
+
+        let error = parse_filter_directive_line(SECRET)
+            .expect_err("an unparsable line must still be refused");
+        let rendered = error.to_string();
+
+        assert!(
+            !rendered.contains(SECRET),
+            "the merged line's contents must not be echoed: {rendered}"
+        );
+        assert!(
+            rendered.contains("a file read earlier"),
+            "the diagnostic must name the rule's provenance: {rendered}"
+        );
+    }
+
+    /// Non-vacuity companion: the redaction is a PROVENANCE decision, not blanket
+    /// suppression. Upstream still echoes a rule that came from an argument,
+    /// because that text is the operator's own (`rule_text` returns it unchanged,
+    /// exclude.c:88-123). Without this, replacing the funnel with a constant
+    /// string would also satisfy the test above.
+    #[test]
+    fn an_argument_sourced_rule_is_still_echoed() {
+        const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
+
+        assert_eq!(RuleSource::Argument.rule_text(SECRET), SECRET);
     }
 }
