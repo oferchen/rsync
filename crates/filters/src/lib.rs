@@ -119,6 +119,8 @@ pub mod implied;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;
 mod merge_open;
+/// Upstream's `discarding over-long filter` refusal and its `MAXPATHLEN` bound.
+pub mod overlong;
 mod rule;
 pub mod rule_source;
 /// Traversal clamp for peer- and file-supplied names, mirroring
@@ -151,6 +153,7 @@ pub use merge::{
     MAX_MERGE_DEPTH, MergeFileError, depth_limit_exceeded, merge_name_overflows, parse_rules,
     read_rules, read_rules_recursive,
 };
+pub use overlong::{is_over_long, over_long_filter};
 pub use rule::FilterRule;
 pub use rule_source::{OwnedRuleSource, RuleSource, trace_add_rule};
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};

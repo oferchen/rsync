@@ -1033,3 +1033,121 @@ fn clear_token_grid_covers_both_spellings_and_every_separator() {
     // Both contexts must be exercised for every row.
     assert!(CLEAR_TOKEN_GRID.len() >= 2 * 5);
 }
+
+/// An over-long pattern, built the way upstream's cell does
+/// (`filter-merge-content-echo_test.py`): `MAXPATHLEN + 200`, so the refusal is
+/// unambiguous and the full-length assertion has room to fail.
+fn over_long_pattern() -> String {
+    "Q".repeat(fast_io::path_limit::max_path_len() + 200)
+}
+
+/// Drains the diagnostics this thread emitted, as rendered text.
+fn drained_messages() -> Vec<String> {
+    logging::drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            logging::DiagnosticEvent::Info { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
+/// WHY: upstream discards the rule and CONTINUES (`exclude.c:1533-1538`), so
+/// the directive must be a no-op rather than an error - and a pattern past
+/// `MAXPATHLEN` can still match (a long run of `*` matches everything), so
+/// keeping it would change which files transfer, not merely what is printed.
+#[test]
+fn an_over_long_argument_rule_is_discarded_and_reported() {
+    let _ = drained_messages();
+    let pattern = over_long_pattern();
+
+    let directive =
+        parse_filter_directive(OsStr::new(&format!("- {pattern}")), RuleSource::Argument)
+            .expect("an over-long rule is discarded, not a syntax error");
+
+    assert_eq!(directive, FilterDirective::Noop);
+    assert_eq!(
+        drained_messages(),
+        vec![filters::over_long_filter(&pattern)],
+        "the refusal must name the operator's own rule at full length",
+    );
+}
+
+/// The non-vacuity companion: an ordinary rule must still become a rule and
+/// must stay silent, or the guard would discard every filter ever written.
+#[test]
+fn an_ordinary_argument_rule_survives_and_is_silent() {
+    let _ = drained_messages();
+
+    let directive = parse_filter_directive(OsStr::new("- *.tmp"), RuleSource::Argument)
+        .expect("an ordinary rule parses");
+
+    match directive {
+        FilterDirective::Rule(spec) => assert_eq!(spec.pattern(), "*.tmp"),
+        other => panic!("expected a Rule directive, got {other:?}"),
+    }
+    assert!(drained_messages().is_empty());
+}
+
+/// WHY: upstream's check sits ABOVE the `FILTRULE_MERGE_FILE` branch
+/// (`exclude.c:1550`), so an over-long merge name is dropped before its file is
+/// ever named to the filesystem.
+#[test]
+fn an_over_long_merge_directive_is_discarded() {
+    let _ = drained_messages();
+    let pattern = over_long_pattern();
+
+    let directive = parse_filter_directive(
+        OsStr::new(&format!("merge {pattern}")),
+        RuleSource::Argument,
+    )
+    .expect("an over-long merge directive is discarded, not an error");
+
+    assert_eq!(directive, FilterDirective::Noop);
+    assert_eq!(
+        drained_messages(),
+        vec![filters::over_long_filter(&pattern)]
+    );
+}
+
+/// `--exclude` / `--include` reach `parse_filter_str` through the same token
+/// loop upstream - `XFLG_OLD_PREFIXES` is a flag on it, not a separate path -
+/// so the refusal governs them too.
+#[test]
+fn an_over_long_old_prefix_rule_is_discarded() {
+    let _ = drained_messages();
+    let pattern = over_long_pattern();
+
+    let directive = parse_old_prefix_rule(&pattern, FilterRuleKind::Exclude, RuleSource::Argument)
+        .expect("an over-long --exclude value is discarded, not an error");
+
+    assert_eq!(directive, FilterDirective::Noop);
+    assert_eq!(
+        drained_messages(),
+        vec![filters::over_long_filter(&pattern)]
+    );
+}
+
+/// WHY: the refusal crosses `rule_text` (`exclude.c:88-123`). A rule read out
+/// of a merge file is the peer's choice of content, so the diagnostic names the
+/// file, never the text - without this the guard would leak at no verbosity.
+#[test]
+fn an_over_long_file_sourced_rule_is_reported_without_its_text() {
+    let _ = drained_messages();
+    let pattern = over_long_pattern();
+    let source = RuleSource::File {
+        name: ".rsync-filter",
+        line: 1,
+    };
+
+    let directive = parse_filter_directive(OsStr::new(&format!("- {pattern}")), source)
+        .expect("an over-long rule is discarded, not a syntax error");
+
+    assert_eq!(directive, FilterDirective::Noop);
+    let messages = drained_messages();
+    assert_eq!(
+        messages,
+        vec!["discarding over-long filter: <rule from .rsync-filter line 1>".to_owned()],
+    );
+    assert!(!messages[0].contains('Q'));
+}

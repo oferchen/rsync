@@ -4,6 +4,7 @@
 //! entry points plus the `parse_rule_directive` dispatcher that routes a
 //! trimmed line to the more specialized parsers.
 
+use std::borrow::Cow;
 use std::ffi::OsStr;
 
 use core::client::{FilterRuleKind, FilterRuleSpec};
@@ -33,15 +34,54 @@ pub(crate) fn parse_filter_directive(
     // raises "Unknown filter rule" (RERR_SYNTAX). Do not trim the leading edge.
     let rule = RuleLine::new(&text, source);
 
-    if let Some(result) = parse_short_merge_directive(rule) {
-        return result;
+    let directive = parse_short_merge_directive(rule)
+        .or_else(|| parse_long_merge_directive(rule))
+        .unwrap_or_else(|| parse_rule_directive(rule))?;
+
+    Ok(discard_over_long(directive, source))
+}
+
+/// Reports and discards a directive whose pattern reaches `MAXPATHLEN`.
+///
+/// upstream: exclude.c:1533-1538, in `parse_filter_str`'s token loop. It
+/// measures `pat_len` - the pattern *alone*, since `parse_rule_tok` has already
+/// consumed the action prefix and any modifiers (exclude.c:1456-1464) - and
+/// `continue`s, so the rule contributes nothing and parsing exits 0.
+///
+/// Consulting the CONSTRUCTED directive is how oc reads that same quantity
+/// without duplicating the prefix stripping: the pattern a directive carries is
+/// exactly what upstream measures. `Clear`, `Noop` and `CvsDefaults` carry no
+/// pattern at all, so upstream's check can never fire for them.
+///
+/// upstream's check sits above the `FILTRULE_MERGE_FILE` branch (`:1550`), and
+/// so does this one in effect: the merge file is opened later, by the caller
+/// that consumes the directive, so an over-long merge name never reaches a
+/// filesystem here either.
+fn discard_over_long(directive: FilterDirective, source: RuleSource<'_>) -> FilterDirective {
+    let pattern = match &directive {
+        FilterDirective::Rule(spec) => Cow::Borrowed(spec.pattern()),
+        FilterDirective::Merge(merge) => merge.source().to_string_lossy(),
+        FilterDirective::Clear | FilterDirective::Noop | FilterDirective::CvsDefaults => {
+            return directive;
+        }
+    };
+
+    if !filters::is_over_long(&pattern) {
+        return directive;
     }
 
-    if let Some(result) = parse_long_merge_directive(rule) {
-        return result;
-    }
+    // The rule text crosses `rule_text` (exclude.c:88-123): upstream passes a
+    // NULL template here, which falls back to the am-I-parsing-a-file state
+    // (exclude.c:67-69) - the fact oc carries explicitly on `source`.
+    logging::emit_info_coded(
+        logging::InfoFlag::Misc,
+        0,
+        logging::LogCode::Error,
+        filters::over_long_filter(&source.rule_text(&pattern)),
+    );
 
-    parse_rule_directive(rule)
+    // upstream's `continue`: the rule is dropped and parsing carries on.
+    FilterDirective::Noop
 }
 
 /// Parses a line under upstream rsync's `XFLG_OLD_PREFIXES` compatibility mode
@@ -112,7 +152,7 @@ pub(crate) fn parse_old_prefix_rule(
         FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern.to_owned()),
         _ => unreachable!("default_kind is restricted to Include/Exclude above"),
     };
-    Ok(FilterDirective::Rule(rule))
+    Ok(discard_over_long(FilterDirective::Rule(rule), source))
 }
 
 /// Dispatches a trimmed rule line (no merge prefix) to the matching parser:
