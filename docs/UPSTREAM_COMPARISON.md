@@ -2,11 +2,13 @@
 
 This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.5.0 (protocol 32), treating the upstream C source at `target/interop/upstream-src/rsync-3.5.0/` as the source of truth.
 
-> **Retarget note (2026-08-13).** The comparisons below were verified line-by-line against rsync 3.4.4 and have been repointed at 3.5.0. That repoint is sound for everything protocol-level: 3.5.0 declares the same `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, ships a byte-identical `errcode.h`, and adds no `MSG_*`, `XMIT_*` or compat-flag constants, so every wire constant and algorithm claim here carries over unchanged.
+> **Retarget note (2026-08-13, narrowed 2026-09-04).** The comparisons below were verified line-by-line against rsync 3.4.4 and have been repointed at 3.5.0. That repoint is sound for everything protocol-level: 3.5.0 declares the same `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, ships a byte-identical `errcode.h`, and adds no `MSG_*`, `XMIT_*` or compat-flag constants, so every wire constant and algorithm claim here carries over unchanged.
 >
-> It is **not** a re-verification of the behavioural sections. 3.5.0 rewrote the path resolver and hardened the daemon across 33 CVEs, growing `syscall.c` by 85% and `generator.c`, `acls.c`, `sender.c`, `flist.c`, `exclude.c` and `receiver.c` substantially. Sections touching path resolution, symlink handling, chroot or daemon access control describe 3.4.4 behaviour until individually re-checked, and line-number citations point at 3.4.4 offsets.
+> The note originally warned that every section "touching path resolution, symlink handling, chroot or daemon access control" still described 3.4.4. That warning was broader than this document's contents: grepping those four topics returns 13 lines, of which only two subsections make behavioural claims — [Module Chroot Handling](#module-chroot-handling) (§19) and [Path Resolution](#path-resolution) (§22). Both have now been re-read against the 3.5.0 source and their citations corrected; the remaining hits are wire constants (`CF_SYMLINK_TIMES`, `CF_SYMLINK_ICONV`, the `DeleteStats` symlink counter) that the protocol-level argument above already covers.
+>
+> What this document still does **not** claim is coverage of 3.5.0's confinement model itself. 3.5.0 rewrote the path resolver and hardened the daemon across 33 CVEs, growing `syscall.c` by 85%; the resolver, `--confine-root`, `--insecure-links` and the new daemon directives have no section here at all. [`docs/design/upstream-3.5.0-path-confinement-model.md`](./design/upstream-3.5.0-path-confinement-model.md) owns that surface — absence from this table is not evidence of parity.
 
-**Last verified:** 2026-07-22 (against 3.4.4; see retarget note above)
+**Last verified:** 2026-09-04 (protocol sections against 3.5.0 by repoint; §19 and §22 behavioural claims re-read against the 3.5.0 source)
 **Validation commands:**
 ```sh
 cargo fmt --all -- --check \
@@ -668,18 +670,24 @@ Server: @RSYNCD: OK (success) or @ERROR: access denied (failure)
 
 ### Module Chroot Handling
 
-Mirrors upstream `clientserver.c:831` `rsync_module()`:
+Mirrors the `use_chroot` resolution inside upstream `rsync_module()`
+(`clientserver.c:739`), whose decision block is `clientserver.c:883-895`:
 
 | `use chroot` | Behavior |
 |--------------|----------|
-| explicit `yes`/`no` | Honored directly |
+| explicit `yes`/`no` | Honored directly - the resolution block is guarded by `use_chroot < 0` |
 | unset, path contains `/./` | Chroot enabled without probing |
-| unset, otherwise | Probe with a harmless `chroot("/")`: enable on success, fall back to no chroot on `EPERM` |
+| unset, otherwise | Probe with a harmless `chroot("/")`: enable on success, fall back to no chroot on **any** failure |
+
+The fallback is not conditioned on a particular errno: upstream tests only
+`chroot("/") < 0`, logs `strerror(errno)` for the operator, and switches
+`use chroot` from unset to false whatever the cause.
 
 Once chroot is resolved on, a real `chroot()` failure at the module directory is
-fatal (the connection is refused, not silently served unchrooted). A module `path`
-containing `/./` splits into an outer chroot root and an inner post-chroot working
-directory (`clientserver.c:845-862`).
+fatal - the connection is refused, not silently served unchrooted
+(`clientserver.c:1051-1055`, `return -1` after `@ERROR: chroot failed`). A module
+`path` containing `/./` splits into an outer chroot root and an inner post-chroot
+working directory (`clientserver.c:897-908`).
 
 **Source:** `crates/daemon/src/daemon/sections/privilege.rs`, `crates/platform/src/privilege.rs`
 
@@ -769,23 +777,35 @@ struct SparseWriteState {
 | Relative backup-dir | `--backup-dir backups` → `/dest/backups/file.txt~` |
 | Absolute backup-dir | `--backup-dir /var/backups` → `/var/backups/file.txt~` |
 
-### Placement Strategy (`link_or_rename`, `backup.c:187-221`)
+### Placement Strategy (`link_or_rename`, `backup.c:226`)
 
 The existing entry is preserved with the same tiered strategy as upstream
-`make_backup()` (called with `prefer_rename = 0` outside `--temp-dir`):
+`make_backup_inner()` (`backup.c:265`, reached from `make_backup()` at
+`backup.c:437`, called with `prefer_rename = 0` outside `--temp-dir`):
 
-1. Hard-link into the backup area first (the `HLINK` trace).
-2. Fall back to `rename(2)` when the entry cannot be hard-linked (`RENAME`).
-3. Cross-device: recreate the node (regular copy, symlink, or device/FIFO) and
-   unlink the original (`backup.c:288-300`).
+1. Hard-link into the backup area first (the `HLINK` trace) - `backup.c:316`.
+2. Fall back to `rename(2)` when the entry cannot be hard-linked (`RENAME`);
+   `link_or_rename` owns both, so this is one call, not two tiers in the caller.
+   On `EEXIST`/`EISDIR` upstream deletes the obstructing backup entry and retries
+   the same call (`backup.c:321-327`).
+3. Cross-device: recreate the node and unlink the original - device/FIFO via
+   `do_mknod_at` (`backup.c:360`), symlink via `do_symlink_at` (`backup.c:377`),
+   regular file via `copy_file` (`backup.c:401`).
 
 ### Backup Before Delete
 
 When `--backup` is set, extraneous files removed by the `--delete` pass are backed
 up before being unlinked, for both the local executor and the network receiver's
-delete pass, matching `delete.c:165-174`. The `make_backups && (backup_dir ||
-!is_backup_file(name))` guard applies, so an already-suffixed file with no
-`--backup-dir` is unlinked directly rather than re-backed-up.
+delete pass, matching `delete.c:228-230`. Upstream's guard has **three** terms:
+
+```c
+if (make_backups > 0 && !(flags & DEL_FOR_BACKUP) && (backup_dir || !is_backup_file(fbuf))) {
+```
+
+so an already-suffixed file with no `--backup-dir` is unlinked directly rather
+than re-backed-up, **and** a deletion issued by the backup machinery itself does
+not recurse into another backup - `make_backup_inner` sets `DEL_FOR_BACKUP` when
+it clears an obstructing backup entry (`backup.c:321`).
 
 **Source:** `crates/engine/src/local_copy/context_impl/state.rs`, `crates/transfer/src/receiver/directory/backup.rs`
 
