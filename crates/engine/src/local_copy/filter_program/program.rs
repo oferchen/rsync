@@ -119,6 +119,30 @@ impl FilterProgram {
                     }
                 }
                 FilterProgramEntry::DirMerge(rule) => {
+                    // upstream: exclude.c:1558-1571 - a `:e` directive
+                    // synthesises an exclude for the merge file's own BASENAME
+                    // at REGISTRATION, into the ENCLOSING list, then clears
+                    // FILTRULE_EXCLUDE_SELF so it is added exactly once. Here
+                    // that list is `current_segment`, and pushing before the
+                    // flush below keeps the exclude AHEAD of the merge rule's
+                    // own add_rule (:1590) - filter lists are first-match-wins,
+                    // so the order is part of the behaviour.
+                    //
+                    // Doing it at registration is the substance: it makes the
+                    // exclude exist whether or not a file by that name is ever
+                    // found. oc used to synthesise it when the merge file was
+                    // LOADED, so a `:e` naming an absent file excluded nothing.
+                    if rule.options().excludes_self() {
+                        let name = rule.pattern().to_string_lossy();
+                        let excluded = filters::merge_self_exclude_name(&name).to_owned();
+                        let excluded = filters::FilterRule::exclude(excluded);
+                        filters::trace_add_rule(
+                            excluded.action(),
+                            excluded.pattern(),
+                            &filters::RuleSource::Argument,
+                        );
+                        current_segment.push_rule(excluded)?;
+                    }
                     if !current_segment.is_empty() || instructions.is_empty() {
                         instructions.push(FilterInstruction::Segment(current_segment));
                         current_segment = FilterSegment::default();
