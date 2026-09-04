@@ -143,6 +143,9 @@ pub mod owner_walk;
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
 pub mod parallel;
+/// The platform's own `MAXPATHLEN`, for callers that must refuse an over-long
+/// path before issuing a syscall.
+pub mod path_limit;
 /// Total physical memory detection (for the buffer pool's RAM-derived cap).
 pub mod physical_memory;
 /// Source lookups anchored on the daemon's pinned module root.
