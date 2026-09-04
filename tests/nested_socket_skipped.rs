@@ -33,6 +33,10 @@
 
 mod integration;
 
+// Every item below that names these is `cfg(unix)`, so on Windows the import
+// has no consumer and `-D warnings` rejects it. Gate it on exactly the same
+// predicate its users carry, matching tests/integration_links.rs.
+#[cfg(unix)]
 use integration::helpers::{RsyncCommand, TestDir};
 
 /// Binds a unix socket at `dir/<rel>` using a short relative name, so the
