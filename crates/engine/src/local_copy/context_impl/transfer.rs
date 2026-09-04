@@ -285,6 +285,7 @@ impl<'a> CopyContext<'a> {
                 rule.options(),
                 self.options.delete_excluded_enabled(),
                 &mut visited,
+                MergeFileOrigin::Argument,
             ) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -483,6 +484,7 @@ impl<'a> CopyContext<'a> {
             &rule.options,
             self.options.delete_excluded_enabled(),
             &mut visited,
+            MergeFileOrigin::NamedByFile,
         )?;
 
         let mut segment = FilterSegment::default();
