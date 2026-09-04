@@ -98,7 +98,9 @@ fn push_filter_directive(
     merge_base: &std::path::Path,
     merge_stack: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
-    match parse_filter_directive(rule.as_os_str())? {
+    // The operator typed this `--filter` value, so its text is theirs to see:
+    // `rule_text` returns an argument-sourced rule unchanged (exclude.c:110-116).
+    match parse_filter_directive(rule.as_os_str(), RuleSource::Argument)? {
         FilterDirective::Rule(spec) => filter_rules.push(spec),
         FilterDirective::Merge(directive) => {
             let effective_options =
@@ -136,7 +138,8 @@ fn push_old_prefix_rule(
     default_kind: FilterRuleKind,
 ) -> Result<(), Message> {
     let text = os_string_to_pattern(pattern);
-    match parse_old_prefix_rule(&text, default_kind)? {
+    // Likewise for a `--exclude`/`--include` value given on the command line.
+    match parse_old_prefix_rule(&text, default_kind, RuleSource::Argument)? {
         FilterDirective::Rule(rule) => destination.push(rule),
         FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
         // A blank `--exclude`/`--include` value contributes nothing.

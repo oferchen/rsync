@@ -116,6 +116,13 @@ pub(crate) fn apply_merge_directive(
     // section of the per-merge-file rule list. Mirror that by parsing the
     // merge file into a scope-local buffer so a '!' inside the file cannot
     // wipe parent-scope rules already in `destination`.
+    // upstream: exclude.c:1735-1755 - `named_by_file = TEXT_FROM_FILE(template)`.
+    // When a rule we READ named this file, the file's OWN path is file content
+    // too, so upstream clears `rule_src_file` and reports only the LOCATION that
+    // named it (`rule_src_named_at`), snapshotted once for the whole file. An
+    // argument-named file keeps its own name, because the operator typed it.
+    let named_at = source.describe().map(std::borrow::Cow::into_owned);
+
     let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
@@ -132,7 +139,13 @@ pub(crate) fn apply_merge_directive(
         };
 
         parse_merge_contents(
-            &contents, &options, next_base, &display, &mut local, visited,
+            &contents,
+            &options,
+            next_base,
+            &display,
+            named_at.as_deref(),
+            &mut local,
+            visited,
         )
     })();
     visited.pop();
@@ -152,6 +165,7 @@ fn parse_merge_contents(
     options: &DirMergeOptions,
     base_dir: &Path,
     display: &str,
+    named_at: Option<&str>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
@@ -211,7 +225,10 @@ fn parse_merge_contents(
                 options,
                 base_dir,
                 display,
-                RuleSource::FileWordSplit { name: display },
+                match named_at {
+                    None => RuleSource::FileWordSplit { name: display },
+                    Some(location) => RuleSource::FileNamedAt { location },
+                },
                 destination,
                 visited,
             )?;
@@ -266,9 +283,12 @@ fn parse_merge_contents(
             options,
             base_dir,
             display,
-            RuleSource::File {
-                name: display,
-                line: line_number,
+            match named_at {
+                None => RuleSource::File {
+                    name: display,
+                    line: line_number,
+                },
+                Some(location) => RuleSource::FileNamedAt { location },
             },
             destination,
             visited,
@@ -290,7 +310,11 @@ pub(crate) fn process_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
-    match parse_filter_directive(OsStr::new(directive)) {
+    // `source` says where this line came from, and every diagnostic the parser
+    // builds from it now crosses `rule_text`/`rule_detail` (exclude.c:88-131).
+    // This is a line out of a merge file whose name the PEER can choose, so an
+    // unparsable line must be described, never echoed.
+    match parse_filter_directive(OsStr::new(directive), source) {
         Ok(FilterDirective::Rule(mut rule)) => {
             // upstream: exclude.c:1447-1456 - when the merge directive named a
             // side and the rule inside the file names one too, the inherit is
@@ -364,16 +388,16 @@ pub(crate) fn process_merge_directive(
             destination.extend(rules);
         }
         Err(error) => {
-            let detail = error.to_string();
-            let message = rsync_error!(
-                1,
-                format!(
-                    "failed to parse filter rule '{}' from merge file '{}': {}",
-                    directive, display, detail
-                )
-            )
-            .with_role(Role::Client);
-            return Err(message);
+            // upstream reports a syntax failure ONCE, from `filter_rule_err`
+            // (exclude.c:132-138), which renders the rule through `rule_text`
+            // and exits RERR_SYNTAX. There is no enclosing wrapper, and adding
+            // one here re-echoed both the rule text the funnel had just replaced
+            // and the merge file's name - which for a nested merge is a path the
+            // peer chose. That is precisely the failure mode upstream's own
+            // comment names: "a message added later cannot reintroduce the leak
+            // by forgetting to check" (exclude.c:96-99). The inner error already
+            // names the rule's provenance, so it is propagated unchanged.
+            return Err(error);
         }
     }
 

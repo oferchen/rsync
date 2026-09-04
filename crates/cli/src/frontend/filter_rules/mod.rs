@@ -23,7 +23,7 @@ pub(crate) use directive::MergeDirective;
 pub(crate) use merge::process_merge_directive;
 
 #[cfg(test)]
-pub(crate) use parsing::parse_merge_modifiers;
+pub(crate) use parsing::parse_merge_modifiers_from_argument;
 
 #[cfg(test)]
 pub(crate) use sources::load_filter_file_patterns;

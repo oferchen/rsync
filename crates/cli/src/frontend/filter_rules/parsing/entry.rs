@@ -9,11 +9,12 @@ use std::ffi::OsStr;
 use core::client::{FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
-use filters::{ClearToken, classify_clear_token};
+use filters::{ClearToken, RuleSource, classify_clear_token};
 
 use super::super::directive::FilterDirective;
 use super::directives::{parse_dir_merge_alias, parse_long_merge_directive};
 use super::merge::parse_short_merge_directive;
+use super::rule_line::RuleLine;
 use super::rules::{
     parse_exclude_if_present, parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules,
 };
@@ -21,13 +22,16 @@ use super::rules::{
 /// Parses a top-level `--filter` argument into a `FilterDirective`, trying the
 /// short and long merge forms before the general rule dispatcher. Leading
 /// whitespace is preserved to mirror upstream's non-word-split behaviour.
-pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
+pub(crate) fn parse_filter_directive(
+    argument: &OsStr,
+    source: RuleSource<'_>,
+) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
     // upstream: exclude.c:1100-1213 parse_rule_tok - leading whitespace is only
     // skipped under FILTRULE_WORD_SPLIT, which a top-level `--filter` rule never
     // carries. A leading space therefore reaches the prefix `switch` default and
     // raises "Unknown filter rule" (RERR_SYNTAX). Do not trim the leading edge.
-    let rule: &str = &text;
+    let rule = RuleLine::new(&text, source);
 
     if let Some(result) = parse_short_merge_directive(rule) {
         return result;
@@ -53,6 +57,7 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
 pub(crate) fn parse_old_prefix_rule(
     line: &str,
     default_kind: FilterRuleKind,
+    source: RuleSource<'_>,
 ) -> Result<FilterDirective, Message> {
     debug_assert!(
         matches!(
@@ -91,8 +96,14 @@ pub(crate) fn parse_old_prefix_rule(
     };
 
     if pattern.is_empty() {
-        let message =
-            rsync_error!(1, "filter rule is missing a pattern: '{}'", line).with_role(Role::Client);
+        // The rule text crosses `rule_text` (exclude.c:88-123): an
+        // `--exclude-from`/`--include-from` line is a file's contents.
+        let message = rsync_error!(
+            1,
+            "filter rule is missing a pattern: '{}'",
+            source.rule_text(line)
+        )
+        .with_role(Role::Client);
         return Err(message);
     }
 
@@ -107,7 +118,8 @@ pub(crate) fn parse_old_prefix_rule(
 /// Dispatches a trimmed rule line (no merge prefix) to the matching parser:
 /// `!`/`clear`, CVS convenience, shorthands, `exclude-if-present`, `+`/`-`
 /// short rules, then the long keyword rules.
-pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Message> {
+pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
+    let text = line.text();
     // upstream: exclude.c:1313 parse_rule_tok - the pattern length is strlen, so
     // trailing whitespace is part of the pattern and is never stripped. A rule
     // like `- *.o ` keeps the trailing space in its pattern, so `x.o` is not
@@ -132,7 +144,7 @@ pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Messag
     match classify_clear_token(trimmed.as_bytes()) {
         ClearToken::Clear => return Ok(FilterDirective::Clear),
         ClearToken::TrailingCharacters => {
-            let message = rsync_error!(1, "'!' rule has trailing characters: {}", trimmed)
+            let message = rsync_error!(1, "'!' rule has trailing characters: {}", line.shown())
                 .with_role(Role::Client);
             return Err(message);
         }
@@ -143,27 +155,27 @@ pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Messag
         return Ok(FilterDirective::CvsDefaults);
     }
 
-    if let Some(result) = parse_shorthand_rules(trimmed) {
+    if let Some(result) = parse_shorthand_rules(line) {
         return result;
     }
 
-    if let Some(result) = parse_exclude_if_present(trimmed) {
+    if let Some(result) = parse_exclude_if_present(line) {
         return result;
     }
 
-    if let Some(result) = parse_short_include_rule(trimmed, '+', FilterRuleSpec::include) {
+    if let Some(result) = parse_short_include_rule(line, '+', FilterRuleSpec::include) {
         return result;
     }
 
-    if let Some(result) = parse_short_include_rule(trimmed, '-', FilterRuleSpec::exclude) {
+    if let Some(result) = parse_short_include_rule(line, '-', FilterRuleSpec::exclude) {
         return result;
     }
 
-    if let Some(result) = parse_dir_merge_alias(trimmed) {
+    if let Some(result) = parse_dir_merge_alias(line) {
         return result;
     }
 
-    parse_keyword_rule(trimmed)
+    parse_keyword_rule(line)
 }
 
 /// Detects the cvs-convenience filter rule (`-C` or `+C`, with an optional
