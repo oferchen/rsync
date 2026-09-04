@@ -122,6 +122,39 @@ impl<'a> WalkScope<'a> {
 }
 
 impl GeneratorContext {
+    /// Enumerates a source directory, confined beneath this transfer's root
+    /// when it has one.
+    ///
+    /// Sole owner of the enumeration-anchor decision for the walk, so the two
+    /// scan sites cannot disagree about whether a directory read is confined -
+    /// the same reason [`Self::confine_root`] is the sole owner of the boundary
+    /// it reads.
+    ///
+    /// The root is passed to `fast_io` rather than left ambient. `read_dir`'s
+    /// own anchor is the process-global session pin, which oc never installs
+    /// for a daemon, so this walk silently degraded to an ordinary
+    /// absolute-path read, while [`Self::confine_root`] (already
+    /// daemon-correct) was consulted only by the CONTENT open. That split is
+    /// exactly what let a module symlink be enumerated but not read.
+    /// Installing the global per
+    /// connection is not the alternative: oc serves each connection on a worker
+    /// thread of one process, so a per-connection value in a global would race
+    /// between concurrent connections on different modules.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/flist.c:2028-2059` `secure_opendir()` - the confined open
+    ///   producing `scan_dirfd` for a daemon's scan.
+    /// - `rsync-3.5.0/flist.c:1878` - the `opendir` failure diagnostic both call
+    ///   sites report, unchanged by the anchoring.
+    fn scan_source_dir(&self, path: &Path) -> io::Result<fast_io::pinned_root::ReadDir> {
+        #[cfg(unix)]
+        if let Some(root) = self.confine_root() {
+            return fast_io::pinned_root::read_dir_under(&root, path);
+        }
+        fast_io::pinned_root::read_dir(path)
+    }
+
     /// Pre-checks a top-level source entry and walks it if it exists.
     ///
     /// Returns `true` if the entry was processed (exists or was handled as a
@@ -512,7 +545,7 @@ impl GeneratorContext {
         let should_recurse =
             metadata.is_dir() && self.config.flags.recursive && scope.descends_into_subdirs();
         let dir_read = if should_recurse {
-            match fast_io::pinned_root::read_dir(&path) {
+            match self.scan_source_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
@@ -685,7 +718,7 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         let entries = match opened {
             Some(entries) => entries,
-            None => match fast_io::pinned_root::read_dir(dir_path) {
+            None => match self.scan_source_dir(dir_path) {
                 Ok(entries) => entries,
                 Err(e) => {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)

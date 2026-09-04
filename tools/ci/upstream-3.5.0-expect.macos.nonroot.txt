@@ -129,7 +129,7 @@ daemon-refuse-compress pass
 daemon-refuse-compress-threads-alias skip
 daemon-refuse-delete-alias pass
 daemon-scan-cwd-desync pass
-daemon-scan-dir-escape fail
+daemon-scan-dir-escape pass
 daemon-secrets-file-symlink skip
 daemon-size-arg-overflow pass
 daemon-standalone-detach skip
@@ -320,7 +320,7 @@ scanner-batch-flag-mismatch pass
 scanner-daemon-log-checksum pass
 scanner-delete-delay-overread pass
 secure-relpath-validation pass
-sender-flist-symlink-leak fail
+sender-flist-symlink-leak pass
 sender-readlink-atfd pass
 sender-remove-source-relative-anchor pass
 sender-remove-source-root-anchor skip
