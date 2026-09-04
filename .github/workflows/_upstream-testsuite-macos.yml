@@ -21,23 +21,26 @@ name: Upstream Testsuite (macOS)
 # nothing to do with macOS. Duplicating ~60 lines of YAML is the cheaper and
 # safer half of that trade.
 #
-# WHAT THIS LEG BUYS (measured 2026-09-03, full 345-cell nonroot/pipe run)
+# WHAT THIS LEG BUYS (counted from the committed manifests, not transcribed:
+# `awk '!/^#/ && NF {c[$NF]++} END {...}' tools/ci/upstream-3.5.0-expect.*.txt`)
 # ---------------------------------------------------------------------------
-# 230 passed / 10 failed / 105 skipped, against 257 / 3 / 85 for the Linux
-# nonroot/pipe leg. Only TWO of the ten failures are shared with Linux; the
-# other EIGHT are divergences no existing required context can observe:
+# 237 passed / 3 failed / 105 skipped, against 259 / 1 / 85 for the Linux
+# nonroot/pipe leg. Only ONE of the three failures is shared with Linux
+# (filter-merge-content-echo); the other TWO are divergences no existing
+# required context can observe:
 #
-#   chmod-setid, daemon-scan-dir-escape, operator-path-partial-dir-daemon,
-#   sender-flist-symlink-leak, symlink-race-source   (pass on Linux)
-#   crtimes, macos-setgid-ordinary-mode-regression,
-#   partial-protected-regular-retry-policy           (SKIP on Linux)
+#   chmod-setid                                      (passes on Linux)
+#   partial-protected-regular-retry-policy           (SKIPS on Linux)
 #
-# The last three skip on Linux, so they had never executed in this repo's CI at
-# all - including `macos-setgid-ordinary-mode-regression`, a cell named for the
-# platform that no leg was running.
+# The leg opened at 10 failures; seven have since been fixed, each in its own
+# PR (#7654, #7655, #7656, #7659 and the pipe-leg work before them). Two cells
+# that SKIP on Linux now PASS here, so this leg is the only place they have
+# ever run.
 #
-# None of the ten appears in upstream's own `testsuite/skiplist/macos.txt`, so
-# none is a platform artefact upstream itself waives.
+# None of the three appears in upstream's own `testsuite/skiplist/macos.txt`,
+# so none is a platform artefact upstream itself waives. `chmod-setid` is the
+# one cell where the real rsync 3.5.0 binary lands on the same outcome on this
+# runner class, so it is recorded `fail` rather than re-baselined away.
 #
 # COVERAGE THIS LEG DOES *NOT* BUY
 # ---------------------------------------------------------------------------
