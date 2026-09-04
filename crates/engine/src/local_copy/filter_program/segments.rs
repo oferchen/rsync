@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::Path;
 
-use filters::{FilterAction, FilterRule};
+use filters::{FilterAction, FilterRule, OwnedRuleSource};
 use globset::{GlobBuilder, GlobMatcher};
 use logging::debug_log;
 
@@ -208,9 +208,20 @@ impl FilterSegment {
 /// Emits a `--debug=FILTER` line for a rule that fired on `path`, naming the
 /// file, its type, and the matching pattern.
 ///
-/// upstream: exclude.c:report_filter_result() - `[who] {action}ing {type}
+/// upstream: exclude.c:1099 report_filter_result() - `[who] {action}ing {type}
 /// {name} because of pattern {pattern}{/}`. `debug_log!` gates on the FILTER
 /// debug level internally, so the message is only formatted when enabled.
+///
+/// BOTH interpolated halves are redacted for a file-sourced rule, exactly as
+/// upstream does: the pattern through `rule_text()` and the trailing `/`
+/// through `rule_detail()`. The slash is not decoration - it reports whether
+/// the hidden rule was directory-only, which is a property OF the text being
+/// withheld, so upstream drops it "along with the text it describes"
+/// (exclude.c:127-131).
+///
+/// This trace runs at level 1 for a sender or generator (exclude.c:1093), so
+/// plain `-vv` reaches it with no `--debug` at all - which is why an unredacted
+/// pattern here echoes a peer-chosen merge file's contents to any client.
 fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &str) {
     let verb = match rule.action {
         FilterAction::Include => "including",
@@ -220,14 +231,40 @@ fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &st
         _ => return,
     };
     let kind = if is_dir { "directory" } else { "file" };
-    let slash = if rule.directory_only { "/" } else { "" };
+    let shown = match_trace_pattern(rule);
     debug_log!(
         Filter,
         1,
-        "[{who}] {verb} {kind} {} because of pattern {}{slash}",
+        "[{who}] {verb} {kind} {} because of pattern {shown}",
         path.display(),
-        rule.pattern,
     );
+}
+
+/// Renders the `{pattern}{/}` tail of the match trace, redacting BOTH halves
+/// for a file-sourced rule.
+///
+/// Split out from [`report_filter_result`] so the redaction can be asserted
+/// without capturing log output: the emitter decides *whether* to log, this
+/// decides *what the text says*.
+///
+/// upstream: exclude.c:1099 passes the two halves through separate redactors -
+/// `rule_text(ent, ent->pattern)` and `rule_detail(ent, ... ? "/" : "")`. The
+/// slash reports whether the withheld rule was directory-only, which is a
+/// property OF the hidden text, so upstream drops it too (exclude.c:127-131).
+///
+/// The trailing `/` is stripped from the pattern before the two halves are
+/// composed. Upstream's `add_rule` consumes it at parse time - it sets
+/// `FILTRULE_DIRECTORY` and stores a slash-free `ent->pattern`
+/// (exclude.c:259-275) - so the slash reaches the trace exactly once, from
+/// `rule_detail`. oc keeps the operator's raw spelling on the rule and derives
+/// `directory_only` from it, so without this strip a directory-only rule
+/// renders `sub//` where upstream renders `sub/` (measured against 3.5.0).
+fn match_trace_pattern(rule: &CompiledRule) -> String {
+    let pattern = rule.pattern.strip_suffix('/').unwrap_or(&rule.pattern);
+    let source = rule.source.as_source();
+    let shown = source.rule_text(pattern);
+    let slash = source.rule_detail(if rule.directory_only { "/" } else { "" });
+    format!("{shown}{slash}")
 }
 
 #[derive(Clone, Debug)]
@@ -372,6 +409,12 @@ struct CompiledRule {
     /// include/exclude and protect/risk chains back into the single
     /// first-match-wins pass upstream `check_filter()` runs (exclude.c:1038).
     order: usize,
+    /// Provenance of [`Self::pattern`], carried from the parse.
+    ///
+    /// upstream: `ent->rflags & FILTRULE_FROM_FILE` (`exclude.c:259-275`). The
+    /// match trace below runs long after the merge file was read and closed, so
+    /// the redaction has to travel on the rule rather than in parser scope.
+    source: OwnedRuleSource,
 }
 
 impl CompiledRule {
@@ -381,6 +424,7 @@ impl CompiledRule {
         let applies_to_receiver = rule.applies_to_receiver();
         let negate = rule.is_negated();
         let pattern = rule.pattern().to_owned();
+        let source = rule.source().clone();
 
         // upstream: exclude.c:259-275 add_rule() logs every parsed rule at
         // `DEBUG_GTE(FILTER, 2)`. That trace is emitted by the *parsers* -
@@ -448,6 +492,7 @@ impl CompiledRule {
             negate,
             pattern,
             order: 0,
+            source,
         })
     }
 
@@ -714,6 +759,39 @@ mod tests {
     fn filter_segment_is_empty() {
         let segment = FilterSegment::default();
         assert!(segment.is_empty());
+    }
+
+    /// A rule whose text came out of a merge file must not have that text
+    /// echoed by the match trace - and the trailing `/` goes with it, because
+    /// it reports a property of the withheld text.
+    ///
+    /// The trace runs at level 1 for a sender or generator (exclude.c:1093),
+    /// so plain `-vv` reaches it: an unredacted pattern here hands a
+    /// peer-chosen per-directory merge file's contents to any client.
+    #[test]
+    fn match_trace_redacts_a_merge_file_rules_text_and_its_slash() {
+        let rule = CompiledRule::new(
+            FilterRule::exclude("sec[r]et-marker-9x/".to_owned())
+                .with_source(OwnedRuleSource::FileReadEarlier),
+        )
+        .unwrap();
+
+        assert_eq!(
+            match_trace_pattern(&rule),
+            "<rule from a file read earlier>"
+        );
+    }
+
+    /// The non-vacuity companion: upstream shows an ARGUMENT rule's text
+    /// verbatim "because it is the user's own and hiding it only makes typos
+    /// harder to fix" (exclude.c:90-95), slash included. Without this row a
+    /// blanket-redaction bug would satisfy the test above.
+    #[test]
+    fn match_trace_shows_an_argument_rules_text_and_its_slash_verbatim() {
+        let rule =
+            CompiledRule::new(FilterRule::exclude("sec[r]et-marker-9x/".to_owned())).unwrap();
+
+        assert_eq!(match_trace_pattern(&rule), "sec[r]et-marker-9x/");
     }
 
     #[test]

@@ -255,17 +255,26 @@ impl<'a> CopyContext<'a> {
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
 
-            let metadata = match fs::metadata(&candidate) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            // A program-level dir-merge directive is the operator's own: it is
+            // built from a `FilterRuleSpec`, which carries no provenance and so
+            // renders as `RuleSource::Argument` everywhere else on this path.
+            // (A `:` rule that reached the program out of a `--filter '. file'`
+            // merge would want redacting, but `FilterRuleSpec` cannot say so
+            // yet; the rules this scan discovers *inside* merge files take the
+            // file-sourced arm below.)
+            let present = match dir_merge_file_present(
+                &candidate,
+                rule.pattern(),
+                filters::RuleSource::Argument,
+            ) {
+                Ok(present) => present,
                 Err(error) => {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
-                    return Err(LocalCopyError::io("inspect filter file", candidate, error));
+                    return Err(error);
                 }
             };
-
-            if !metadata.is_file() {
+            if !present {
                 continue;
             }
 
@@ -456,14 +465,15 @@ impl<'a> CopyContext<'a> {
         rule: &NestedDirMerge,
     ) -> Result<Option<LoadedNestedDirMerge>, LocalCopyError> {
         let candidate = resolve_dir_merge_path(source, &rule.pattern);
-        let metadata = match fs::metadata(&candidate) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(LocalCopyError::io("inspect filter file", candidate, error));
-            }
-        };
-        if !metadata.is_file() {
+        // Every `NestedDirMerge` came out of a merge file's *contents* - the
+        // only producer is `DirMergeEntries::nested_dir_merges` - so upstream
+        // describes it as `a file read earlier` (exclude.c:78) and its text
+        // must not reach a diagnostic.
+        if !dir_merge_file_present(
+            &candidate,
+            &rule.pattern,
+            filters::RuleSource::FileReadEarlier,
+        )? {
             return Ok(None);
         }
 

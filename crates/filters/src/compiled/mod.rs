@@ -51,6 +51,7 @@ impl CompiledRule {
             word_split: _,
             no_prefixes: _,
             no_prefixes_include: _,
+            source,
         } = rule;
         debug_assert!(
             !xattr_only,
@@ -198,6 +199,7 @@ impl CompiledRule {
             perishable,
             negate,
             order: 0,
+            source,
         })
     }
 }
@@ -205,6 +207,7 @@ impl CompiledRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rule_source::OwnedRuleSource;
 
     #[test]
     fn compiled_rule_new_simple_exclude() {
@@ -223,6 +226,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Exclude);
@@ -248,6 +252,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -270,6 +275,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
@@ -328,6 +334,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -360,6 +367,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -404,6 +412,7 @@ mod tests {
                 word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
+                source: OwnedRuleSource::Argument,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -437,6 +446,7 @@ mod tests {
                 word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
+                source: OwnedRuleSource::Argument,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -467,6 +477,7 @@ mod tests {
                 word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
+                source: OwnedRuleSource::Argument,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -495,6 +506,7 @@ mod tests {
                 word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
+                source: OwnedRuleSource::Argument,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -529,6 +541,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -565,6 +578,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -592,6 +606,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -654,6 +669,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         })
         .unwrap()
     }
@@ -855,6 +871,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.negate);
@@ -874,6 +891,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let compiled2 = CompiledRule::new(rule2).unwrap();
         assert!(!compiled2.negate);
