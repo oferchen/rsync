@@ -322,10 +322,13 @@ fn chmodat_with_chmod_setgid_semantics(
     mode: u32,
     follow_symlinks: bool,
 ) -> io::Result<()> {
-    let setgid = u32::from(libc::S_ISGID);
+    // The set-group-ID bit, spelled as the POSIX-fixed literal: `libc::S_ISGID`
+    // is `u16` on macOS but already `u32` on Linux, so neither `u32::from` nor
+    // an `as` cast is lint-clean on both platforms.
+    const SETGID: u32 = 0o2000;
     match fchmodat(dirfd, leaf, mode, follow_symlinks) {
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) && mode & setgid != 0 => {
-            fchmodat(dirfd, leaf, mode & !setgid, follow_symlinks)
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) && mode & SETGID != 0 => {
+            fchmodat(dirfd, leaf, mode & !SETGID, follow_symlinks)
         }
         other => other,
     }
@@ -582,5 +585,19 @@ pub fn utimensat_via_sandbox_or_fallback(
         filetime::set_file_times(link_path, atime, mtime)
     } else {
         filetime::set_symlink_file_times(link_path, atime, mtime)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `chmodat_with_chmod_setgid_semantics` spells the set-group-ID bit as a
+    /// literal because `libc::S_ISGID` has a different width per platform. Pin
+    /// the literal against libc so a wrong value cannot go unnoticed.
+    ///
+    /// Both sides widen to `u64`, which is a real conversion on every supported
+    /// platform - comparing in `u32` would be a no-op cast on Linux.
+    #[test]
+    fn setgid_literal_matches_libc() {
+        assert_eq!(u64::from(libc::S_ISGID), 0o2000);
     }
 }
