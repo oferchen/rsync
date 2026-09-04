@@ -22,6 +22,9 @@ pub(crate) struct ParsedConfigModules {
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// Global `log file` path. Opens the daemon-wide log at startup; see the
+    /// field of the same name on the parse state for the upstream contract.
+    log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// QUIC listener certificate path from the `quic cert file` global
     /// directive (oc extension, feature-gated). The paired private key lives in
     /// `quic_key_file`. Identity is per-listener, so both are global-only.

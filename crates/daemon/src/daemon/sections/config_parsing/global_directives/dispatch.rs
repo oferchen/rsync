@@ -578,10 +578,25 @@ fn apply_global_directive(
                 state.module_defaults.log_format = Some(value.to_owned());
             }
         }
+        // `log file` feeds TWO consumers, because upstream reads it through two
+        // different lenses. It is `P_LOCAL` (daemon-parm.h:289), so the global
+        // value is the default every module inherits - that is the
+        // `module_defaults` half. But `FN_LOCAL_STRING(lp_log_file, log_file)`
+        // also resolves to the global value at `module_id < 0`, and
+        // `daemon_main` calls `log_init(0)` (clientserver.c:1768) at startup,
+        // before any connection selects a module. That startup read is the
+        // `state.log_file` half, and it is what opens the daemon-wide log that
+        // carries the listening banner and every pre-module diagnostic
+        // (`clientserver.c:1394`'s proxy rejection among them).
+        //
+        // Recording only the module default leaves `log_init`'s equivalent with
+        // nothing to open, so the log file is never created and those lines are
+        // lost - measured against rsync 3.5.0, which writes three of them here.
         "logfile" => {
             if !value.is_empty() {
                 let resolved = resolve_config_relative_path(canonical, value);
-                state.module_defaults.log_file = Some(resolved);
+                state.module_defaults.log_file = Some(resolved.clone());
+                store_global_directive(&mut state.log_file, resolved, canonical, line_number);
             }
         }
         "hostsallow" => {

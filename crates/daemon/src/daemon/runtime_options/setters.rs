@@ -31,13 +31,28 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    /// Records `--log-file`, overriding any value the config file's global
+    /// `log file` already supplied.
+    ///
+    /// upstream: log.c:215 - `if (am_daemon && !logfile_name) logfile_name =
+    /// lp_log_file(module_id)`. The command-line name is set first and the
+    /// config value only fills a still-empty slot, so the CLI wins regardless
+    /// of the order `--log-file` and `--config` appear in. A second `--log-file`
+    /// is still a duplicate argument; only a config-sourced value yields.
     fn set_log_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
-        if self.log_file_configured {
-            return Err(duplicate_argument("--log-file"));
+        if let Some(existing) = &self.log_file {
+            if !self.log_file_from_config {
+                return Err(duplicate_argument("--log-file"));
+            }
+
+            if existing == &path {
+                self.log_file_from_config = false;
+                return Ok(());
+            }
         }
 
         self.log_file = Some(path);
-        self.log_file_configured = true;
+        self.log_file_from_config = false;
         Ok(())
     }
 
