@@ -467,7 +467,7 @@ All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is 
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
-Not vulnerable to (or mitigated against) the 2024 upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747), and the rsync 3.4.3 batch (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232) is closed - SEC-1, SEC-2, SEC-3 and SEC-MK series complete, TOCTOU path-based syscalls replaced with `*at` variants throughout. The rsync **3.5.0** batch of 33 CVEs is **partially closed and openly tracked**: it is a behavioural release, not a protocol one, so each item needs its own evidence rather than a blanket claim. See [`SECURITY.md`](./SECURITY.md) for per-CVE status, including which items are fixed and which remain under audit.
+Not vulnerable to (or mitigated against) the 2024 upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747), and the rsync 3.4.3 batch (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232) is closed - SEC-1, SEC-2, SEC-3 and SEC-MK series complete, TOCTOU path-based syscalls replaced with `*at` variants throughout. The rsync **3.5.0** batch of 33 CVEs is **partially closed and openly tracked**: it is a behavioural release, not a protocol one, so each item needs its own evidence rather than a blanket claim. Ten of them carry a per-CVE finding today; the other twenty-two are listed by id in [`SECURITY.md`](./SECURITY.md) as untriaged, so the gap is countable rather than implied.
 
 ### Upstream rsync 3.4.3 hardening
 
