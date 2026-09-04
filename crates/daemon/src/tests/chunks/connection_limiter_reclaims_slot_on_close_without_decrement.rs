@@ -17,7 +17,7 @@
 fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     let temp = tempdir().expect("lock dir");
     let lock_path = temp.path().join("daemon.lock");
-    let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("open lock file"));
+    let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()));
     let limit = NonZeroU32::new(1).expect("non-zero");
 
     let held = limiter
