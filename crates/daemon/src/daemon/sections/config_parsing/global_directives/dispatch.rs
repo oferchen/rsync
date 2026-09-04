@@ -594,7 +594,7 @@ fn apply_global_directive(
         // lost - measured against rsync 3.5.0, which writes three of them here.
         "logfile" => {
             if !value.is_empty() {
-                let resolved = resolve_config_relative_path(canonical, value);
+                let resolved = log_file_path(value);
                 state.module_defaults.log_file = Some(resolved.clone());
                 store_global_directive(&mut state.log_file, resolved, canonical, line_number);
             }

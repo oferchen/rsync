@@ -402,6 +402,23 @@ fn continuation_offset(line: &str) -> Option<usize> {
     trimmed.ends_with('\\').then(|| trimmed.len() - 1)
 }
 
+/// Resolves an operator-supplied `log file` value.
+///
+/// upstream: log.c:216-218 log_init() takes `logfile_name` from
+/// `lp_log_file(module_id)` - the raw config string, since loadparm.c stores
+/// parameter values verbatim - and log.c:169 logfile_open() hands that string
+/// straight to `open_no_attacker_symlinks()`. A relative value is therefore
+/// resolved against the daemon's working directory, never against the config
+/// file's directory.
+///
+/// The two `log file` sites share this function because they must agree: the
+/// module value and the global value are read through the same
+/// `lp_log_file()` accessor upstream, so a rule applied to one and not the
+/// other would open two different files for one config line.
+fn log_file_path(value: &str) -> PathBuf {
+    PathBuf::from(value)
+}
+
 fn resolve_config_relative_path(config_path: &Path, value: &str) -> PathBuf {
     let candidate = Path::new(value);
     if candidate.is_absolute() {
