@@ -55,7 +55,43 @@ pub fn apply_directory_metadata_with_options(
     }
     // upstream: rsync.c:589 - directories skip atime (`ATTRS_SKIP_ATIME`)
     // regardless of `--atimes`; only files get atime preservation.
+    //
+    // crtime is NOT subject to that rule. upstream: rsync.c:726-730 - the
+    // `S_ISDIR` test that forces `ATTRS_SKIP_ATIME` belongs to atime alone;
+    // the only directory that skips `ATTRS_SKIP_CRTIME` is the root folder of
+    // an HFS+ volume. So a directory's creation time is preserved exactly as a
+    // file's is, and omitting it here left every transferred directory
+    // carrying a creation time derived from its own mtime.
+    if options.crtimes() && !is_volume_root(destination) {
+        timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
+    }
     Ok(())
+}
+
+/// Reports whether `destination` is the root folder of an HFS+ volume, which
+/// upstream refuses to stamp with a creation time.
+///
+/// upstream: rsync.c:728-730 - `if (sxp->st.st_ino == 2 && S_ISDIR(sxp->st.st_mode))`.
+/// `sxp` is the *destination's* stat, so this consults the destination rather
+/// than the source metadata the caller already holds. The extra stat is only
+/// issued under `--crtimes`, and a stat failure answers "not a volume root" so
+/// an unreadable destination degrades to attempting the set - the same
+/// direction upstream takes when it cannot prove the special case.
+#[cfg(unix)]
+fn is_volume_root(destination: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    /// Inode number of an HFS+ volume root.
+    const HFS_VOLUME_ROOT_INO: u64 = 2;
+
+    fs::symlink_metadata(destination).is_ok_and(|meta| meta.ino() == HFS_VOLUME_ROOT_INO)
+}
+
+/// Non-Unix targets have no HFS+ volume-root inode convention, so no directory
+/// is exempt from the creation-time set.
+#[cfg(not(unix))]
+fn is_volume_root(_destination: &Path) -> bool {
+    false
 }
 
 /// Applies metadata from `metadata` to the destination file.

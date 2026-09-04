@@ -3,7 +3,7 @@
 # Source: release 3.5.0 (macOS / nonroot / pipe)
 #
 # Baseline: a real full 345-cell run on a local macOS aarch64 host, 2026-09-03.
-# 230 passed / 10 failed / 105 skipped.
+# 236 passed / 4 failed / 105 skipped (re-measured 2026-09-04).
 #
 # WARNING - this baseline is a PREDICTION about the GitHub `macos-latest` runner
 # until the first CI run confirms it. The two hosts can differ in ways this
@@ -15,10 +15,21 @@
 # run's emitted `expect-result.macos.nonroot.txt` artifact and say so; do NOT
 # edit individual rows to make the job green.
 #
-# The 10 `fail` rows are genuine oc-vs-upstream divergences, not platform
-# artefacts: none of them appears in upstream's own
-# testsuite/skiplist/macos.txt. Eight of the ten are invisible to both Linux
-# legs (five pass there, three skip there). See task 1128 for the full split.
+# The 4 `fail` rows were classified 2026-09-04 by running each cell twice on
+# one host, varying ONLY $RSYNC between oc and the real 3.5.0 binary. That
+# upstream arm is the control; without it a failure cannot be attributed.
+#
+#   chmod-setid                             upstream FAILS too - unsatisfiable here
+#   partial-protected-regular-retry-policy  upstream FAILS too - unsatisfiable here
+#   operator-path-partial-dir-daemon        upstream PASSES - real oc defect
+#   filter-merge-content-echo               owned by task 1011
+#
+# Two of the four are therefore NOT oc divergences: the platform (or this
+# host's sysctl state) refuses what the cell asserts, and real rsync lands on
+# the same result. They stay `fail` because the assertion is unsatisfiable
+# here, not because oc is right - re-baselining them would hide the row rather
+# than resolve it. None of the four appears in upstream's own
+# testsuite/skiplist/macos.txt.
 00-hello pass
 acl-symlink-race skip
 acls pass
@@ -73,7 +84,7 @@ connect-prog-nested-singlequote-host-injection pass
 copy-dest-source-symlink pass
 copy-dest-symlink-readleak skip
 copy-xattrs-symlink-race skip
-crtimes fail
+crtimes pass
 cvs-exclude pass
 daemon pass
 daemon-access pass
