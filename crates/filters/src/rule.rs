@@ -8,6 +8,7 @@
 //! upstream: exclude.c - filter_rule struct and FILTRULE_* flags
 
 use crate::FilterAction;
+use crate::rule_source::OwnedRuleSource;
 
 /// User-visible filter rule consisting of an action and a glob pattern.
 ///
@@ -100,6 +101,17 @@ pub struct FilterRule {
     /// upstream: exclude.c:1232-1237 - the merge-file `+` modifier sets
     /// `FILTRULE_NO_PREFIXES | FILTRULE_INCLUDE`.
     pub(crate) no_prefixes_include: bool,
+    /// Where this rule's text came from, retained so diagnostics raised after
+    /// the parse can still decide whether the text may be shown.
+    ///
+    /// upstream: the `FILTRULE_FROM_FILE` bit plus the retained `elt` location
+    /// (`exclude.c:259-275`). It is carried on the rule rather than held in the
+    /// parser because `report_filter_result` (`exclude.c:1099`) fires when a
+    /// rule MATCHES A PATH - long after the merge file that supplied it was
+    /// read and closed - and a deferred per-directory merge is parsed later
+    /// still. Rules built from an operator argument keep the default
+    /// [`OwnedRuleSource::Argument`], whose text is shown verbatim.
+    pub(crate) source: OwnedRuleSource,
 }
 
 impl FilterRule {
@@ -135,6 +147,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -170,6 +183,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -205,6 +219,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -230,6 +245,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -256,6 +272,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -285,6 +302,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -314,6 +332,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -347,6 +366,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -380,6 +400,7 @@ impl FilterRule {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         }
     }
 
@@ -440,6 +461,32 @@ impl FilterRule {
     pub const fn with_perishable(mut self, perishable: bool) -> Self {
         self.perishable = perishable;
         self
+    }
+
+    /// Records where this rule's text came from.
+    ///
+    /// Call this from the parser, which is the only place that knows. Rules
+    /// left at the default [`OwnedRuleSource::Argument`] have their text shown
+    /// verbatim in diagnostics; anything sourced from a file's contents is
+    /// replaced by `<rule from ...>`.
+    ///
+    /// upstream: `add_rule` sets `FILTRULE_FROM_FILE` and retains the location
+    /// on the rule at parse time (`exclude.c:259-275`), because the diagnostics
+    /// that need it run much later - see [`FilterRule::source`].
+    #[must_use]
+    pub fn with_source(mut self, source: OwnedRuleSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// Where this rule's text came from.
+    ///
+    /// Consumed by diagnostics raised after the parse - notably the match
+    /// trace, which fires when the rule matches a path (upstream:
+    /// `report_filter_result`, `exclude.c:1099`).
+    #[must_use]
+    pub const fn source(&self) -> &OwnedRuleSource {
+        &self.source
     }
 
     /// Marks the rule as applying exclusively to xattr names.

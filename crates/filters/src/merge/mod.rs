@@ -46,6 +46,7 @@
 
 mod depth;
 mod error;
+mod overflow;
 pub(crate) mod parse;
 pub(crate) mod read;
 
@@ -54,6 +55,7 @@ mod tests;
 
 pub use depth::{MAX_MERGE_DEPTH, depth_limit_exceeded};
 pub use error::MergeFileError;
+pub use overflow::merge_name_overflows;
 pub use parse::parse_rules;
 pub(crate) use read::scope_local_clear;
 pub use read::{read_rules, read_rules_recursive};

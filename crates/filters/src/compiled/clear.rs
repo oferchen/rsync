@@ -16,6 +16,7 @@ pub(crate) fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, rece
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rule_source::OwnedRuleSource;
     use crate::{FilterAction, FilterRule};
 
     #[test]
@@ -35,6 +36,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, false);
@@ -60,6 +62,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(false, true);
@@ -85,6 +88,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, true);
@@ -117,6 +121,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, false, false);
@@ -140,6 +145,7 @@ mod tests {
             word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            source: OwnedRuleSource::Argument,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, true, false);
