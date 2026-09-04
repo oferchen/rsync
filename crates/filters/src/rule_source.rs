@@ -233,31 +233,171 @@ fn action_prefix(action: FilterAction) -> &'static str {
     }
 }
 
-/// Logs a parsed rule at `--debug=FILTER2`, redacting text that came from a
-/// file's contents.
+/// The `--debug=FILTER` level a rule prints at, and the suffix it prints with.
 ///
-/// upstream: `add_rule` (`exclude.c:259-275`) routes *both* halves through
-/// redactors - `rule_text_len` replaces a file-sourced pattern with
-/// `<rule from ...>`, and `rule_detail` drops the action prefix that would
-/// otherwise describe the text it no longer shows.
+/// upstream: `add_rule` (`exclude.c:265-269`) gates the trace on *two* levels,
+/// not one. A rule whose last byte is a space or a tab is worth flagging on its
+/// own, so it prints from FILTER1 carrying a caution; everything else waits for
+/// FILTER2 and prints with an empty suffix. Below FILTER1 nothing prints.
+///
+/// The whitespace test reads the rule's raw text, so an empty pattern can never
+/// take the caution arm - matching upstream's leading `pat_len &&`.
+fn mention_rule_suffix(pattern: &str) -> Option<(u8, &'static str)> {
+    if logging::debug_gte(logging::DebugFlag::Filter, 1) && pattern.ends_with([' ', '\t']) {
+        return Some((1, " -- CAUTION: trailing whitespace!"));
+    }
+    if logging::debug_gte(logging::DebugFlag::Filter, 2) {
+        return Some((2, ""));
+    }
+    None
+}
+
+/// Logs a parsed rule under upstream's two-level `--debug=FILTER` gate,
+/// redacting text - and details *about* text - that came from a file's
+/// contents.
+///
+/// upstream: `add_rule` (`exclude.c:265-275`) routes all three variable halves
+/// through redactors - `rule_text_len` replaces a file-sourced pattern with
+/// `<rule from ...>`, and `rule_detail` drops both the action prefix and the
+/// trailing-whitespace caution, because each describes text the peer is no
+/// longer being shown. A caution on a hidden rule would report whether that
+/// rule ends in a space, which is exactly the kind of fact the redaction
+/// exists to withhold.
 ///
 /// This is called from the parser rather than from rule compilation because
 /// that is where upstream calls it: `add_rule` runs with the rule's provenance
 /// in hand. Emitting downstream of the parse, where provenance has already been
 /// dropped, is what made this trace echo merged-file contents verbatim.
+///
+/// Residual: upstream also prints `listp->debug_type` (`exclude.c:274`), the
+/// label naming *which* filter list the rule joined - `` for the main list,
+/// ` [daemon]`, ` [per-dir .rsync-filter]`. oc has no filter-list identity to
+/// pass here, so that field is absent rather than wrong.
 pub fn trace_add_rule(action: FilterAction, pattern: &str, source: &RuleSource<'_>) {
-    logging::debug_log!(
-        Filter,
-        2,
-        "add_rule({}{})",
-        source.rule_detail(action_prefix(action)),
-        source.rule_text(pattern)
+    let Some((level, suffix)) = mention_rule_suffix(pattern) else {
+        return;
+    };
+
+    logging::emit_debug(
+        logging::DebugFlag::Filter,
+        level,
+        format!(
+            "add_rule({}{}){}",
+            source.rule_detail(action_prefix(action)),
+            source.rule_text(pattern),
+            source.rule_detail(suffix)
+        ),
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Installs a `--debug=FILTER<level>` verbosity on this thread and clears
+    /// any events an earlier test left buffered, so each pin below observes
+    /// only what its own call emitted.
+    fn with_filter_debug(level: u8) {
+        logging::init(logging::VerbosityConfig::default());
+        for step in 1..=level {
+            logging::apply_debug_flag(&format!("filter{step}")).expect("filter debug flag");
+        }
+        drop(logging::drain_events());
+    }
+
+    fn drained_messages() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .map(|event| match event {
+                logging::DiagnosticEvent::Info { message, .. }
+                | logging::DiagnosticEvent::Debug { message, .. } => message,
+            })
+            .collect()
+    }
+
+    /// WHY: upstream prints a rule ending in whitespace from FILTER1, one level
+    /// earlier than every other rule, because that rule almost certainly does
+    /// not do what its author meant - the space is part of the pattern
+    /// (exclude.c:265-269).
+    #[test]
+    fn an_argument_rule_ending_in_whitespace_cautions_at_filter1() {
+        with_filter_debug(1);
+        trace_add_rule(FilterAction::Exclude, "my-own-rule ", &RuleSource::Argument);
+
+        assert_eq!(
+            drained_messages(),
+            vec!["add_rule(- my-own-rule ) -- CAUTION: trailing whitespace!".to_owned()],
+            "the operator's own trailing-whitespace rule must be flagged, and shown verbatim",
+        );
+    }
+
+    /// The caution is a fact ABOUT the rule's text, so it goes through
+    /// `rule_detail` with the text itself: telling the peer that a hidden rule
+    /// ends in a space leaks exactly what the redaction withholds
+    /// (exclude.c:274). The line still prints - upstream's gate fired - but
+    /// carries neither the pattern, the action prefix, nor the caution.
+    #[test]
+    fn a_file_sourced_rule_ending_in_whitespace_is_flagged_silently() {
+        with_filter_debug(1);
+        trace_add_rule(
+            FilterAction::Exclude,
+            "trailing-ws-probe ",
+            &RuleSource::File {
+                name: ".rsync-filter",
+                line: 1,
+            },
+        );
+
+        let messages = drained_messages();
+        assert_eq!(
+            messages,
+            vec!["add_rule(<rule from .rsync-filter line 1>)".to_owned()],
+            "a file-sourced rule must not report its own trailing whitespace",
+        );
+        assert!(
+            !messages[0].contains("CAUTION") && !messages[0].contains("trailing-ws-probe"),
+            "neither the caution nor the pattern may reach the peer: {messages:?}",
+        );
+    }
+
+    /// The non-vacuity companion for the level split: without it, a gate that
+    /// simply printed everything from FILTER1 would satisfy both pins above.
+    #[test]
+    fn a_rule_without_trailing_whitespace_is_silent_at_filter1() {
+        with_filter_debug(1);
+        trace_add_rule(FilterAction::Exclude, "plain-rule", &RuleSource::Argument);
+
+        assert!(
+            drained_messages().is_empty(),
+            "FILTER1 prints only the whitespace-flagged rules",
+        );
+    }
+
+    /// ...and the companion for the other direction: FILTER2 prints every rule,
+    /// with an empty suffix rather than the caution.
+    #[test]
+    fn every_rule_prints_at_filter2_without_a_caution() {
+        with_filter_debug(2);
+        trace_add_rule(FilterAction::Exclude, "plain-rule", &RuleSource::Argument);
+
+        assert_eq!(
+            drained_messages(),
+            vec!["add_rule(- plain-rule)".to_owned()],
+        );
+    }
+
+    /// upstream guards the whitespace test with `pat_len &&` (exclude.c:265),
+    /// so an empty pattern cannot take the caution arm and reach FILTER1.
+    #[test]
+    fn an_empty_pattern_never_takes_the_caution_arm() {
+        with_filter_debug(1);
+        trace_add_rule(FilterAction::Clear, "", &RuleSource::Argument);
+
+        assert!(
+            drained_messages().is_empty(),
+            "an empty pattern has no last byte to be whitespace",
+        );
+    }
 
     #[test]
     fn argument_text_is_returned_verbatim() {
