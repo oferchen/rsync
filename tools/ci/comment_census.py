@@ -65,9 +65,14 @@ import re
 import subprocess
 import sys
 
-# A comment that names a `*.c:123` site, a header, or simply says "upstream" is
-# the provenance trail for a port. Matching loosely here is deliberate: a false
-# UPSTREAM is a comment we decline to touch, which is the safe direction.
+# A comment naming an rsync source file - with or without a line number - a
+# header, or simply saying "upstream", is the provenance trail for a port.
+# Matching loosely is deliberate: a false UPSTREAM is a comment we decline to
+# touch, which is the safe direction.
+#
+# The shape is described rather than spelled out, because writing an example
+# citation here makes this file cite a source location that does not exist, and
+# the drift gate reads it as a real one.
 UPSTREAM = re.compile(
     r"""\b[a-z_0-9]+\.[ch]\b       # rsync source file, with or without a line
       | \bupstream\b
