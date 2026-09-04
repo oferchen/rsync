@@ -210,6 +210,17 @@ impl ReceiverContext {
                     continue;
                 }
 
+                // A socket the platform cannot create race-safely is SKIPPED
+                // with a warning rather than materialised through an
+                // unconfined path-based bind; the inode is only a placeholder.
+                // upstream: generator.c:2506-2521 - the S_ISSOCK EOPNOTSUPP arm
+                if entry.file_type() == FileType::Socket
+                    && metadata::socket_creation_unsupported(relative_path)
+                {
+                    logging::warn_log!("{}", metadata::format_skipped_socket_message(&node_path));
+                    continue;
+                }
+
                 // upstream: generator.c:1675 atomic_create -> do_mknod_at
                 let create_result = if is_device {
                     create_device_node_from_parts(

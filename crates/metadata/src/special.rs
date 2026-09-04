@@ -147,6 +147,73 @@ pub fn create_device_node_from_parts(
     }
 }
 
+/// Reports whether a socket node named `relative` cannot be created on this
+/// platform, so the caller must skip the entry rather than materialise it.
+///
+/// There is no `bindat(2)`, so a socket can only be bound through a path.
+/// Upstream therefore splits the decision on whether the entry has a parent
+/// to resolve: a top-level name lives in the receiver's own working directory
+/// (`dfd == AT_FDCWD`, nothing to subvert) and still binds through the
+/// path-based fallback, while a NESTED one is refused with `EOPNOTSUPP`
+/// rather than re-resolving a potentially unsafe parent. The test is
+/// upstream's `strrchr(pathname, '/')` on the receiver-relative name, which
+/// is why callers must pass the transfer-relative name and not the absolute
+/// destination.
+///
+/// A socket inode is only a placeholder - a live socket is not usefully
+/// transferred - so the refusal is a skip, never a transfer failure; see
+/// [`format_skipped_socket_message`].
+///
+/// Always `false` where `mknodat(2)` handles `S_IFSOCK` directly (Linux),
+/// matching the platform split the rest of this module already draws.
+// upstream: syscall.c:1369-1378 do_mknod_at() - the socket arm
+#[must_use]
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+pub fn socket_creation_unsupported(relative: &Path) -> bool {
+    relative
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty())
+}
+
+/// Reports whether a socket node named `relative` cannot be created on this
+/// platform. `mknodat(2)` materialises `S_IFSOCK` here, so nothing is refused.
+// upstream: syscall.c:1362 do_mknod_at() - mknodat handles every type on Linux
+#[must_use]
+#[cfg(not(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+)))]
+pub fn socket_creation_unsupported(_relative: &Path) -> bool {
+    false
+}
+
+/// Builds the notice upstream prints for a socket it cannot create, so both
+/// the local-copy and receiver call sites share one wording.
+///
+/// `destination` is the full name, matching upstream's `full_fname()`, which
+/// wraps the path in double quotes.
+// upstream: generator.c:2510-2519 - rprintf(FWARNING, "skipping socket ...")
+#[must_use]
+pub fn format_skipped_socket_message(destination: &Path) -> String {
+    format!(
+        "skipping socket (creation unsupported here): \"{}\"",
+        destination.display()
+    )
+}
+
 /// Creates an empty 0600 regular file used as a fake-super placeholder.
 ///
 /// Upstream `do_mknod()` performs the equivalent substitution by routing the
@@ -758,6 +825,57 @@ mod tests {
             created & requested,
             created,
             "created permissions must not exceed requested"
+        );
+    }
+
+    // The nested/top-level split is upstream's own discriminator: a name with
+    // no parent binds via the path-based fallback (`dfd == AT_FDCWD`), a
+    // nested one is refused. Pinned on the platforms that HAVE the refusal,
+    // so a regression that widens or narrows it is caught rather than merely
+    // observed through a testsuite cell.
+    // upstream: syscall.c:1369-1378 do_mknod_at() - the socket arm
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ))]
+    #[test]
+    fn a_nested_socket_is_unsupported_and_a_top_level_one_is_not() {
+        assert!(socket_creation_unsupported(Path::new("sub/thesock")));
+        assert!(socket_creation_unsupported(Path::new("a/b/thesock")));
+        assert!(!socket_creation_unsupported(Path::new("thesock")));
+    }
+
+    // `mknodat(2)` materialises S_IFSOCK where it is available, so nothing is
+    // refused there and the caller must never skip.
+    // upstream: syscall.c:1362 do_mknod_at() - mknodat handles every type
+    #[cfg(not(all(
+        unix,
+        any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    )))]
+    #[test]
+    fn no_socket_is_unsupported_where_mknodat_creates_them() {
+        assert!(!socket_creation_unsupported(Path::new("sub/thesock")));
+        assert!(!socket_creation_unsupported(Path::new("thesock")));
+    }
+
+    // The wording is upstream's verbatim, including `full_fname()`'s quotes:
+    // the testsuite cell greps stderr, so the text is part of the contract.
+    // upstream: generator.c:2510-2519
+    #[test]
+    fn the_skipped_socket_notice_matches_upstream_wording() {
+        assert_eq!(
+            format_skipped_socket_message(Path::new("/d/sub/thesock")),
+            "skipping socket (creation unsupported here): \"/d/sub/thesock\""
         );
     }
 

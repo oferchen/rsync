@@ -359,6 +359,20 @@ pub(crate) fn copy_fifo(
         }
     }
 
+    // A socket the platform cannot create race-safely is SKIPPED with a
+    // warning, not turned into a transfer error: a socket inode is only a
+    // placeholder, so upstream keeps going and still exits 0.
+    // upstream: generator.c:2506-2521 - atomic_create()'s do_mknod_at failure
+    // arm returns 0 for S_ISSOCK with EOPNOTSUPP/ENOSYS after rprintf(FWARNING).
+    #[cfg(unix)]
+    if std::os::unix::fs::FileTypeExt::is_socket(&file_type)
+        && let Some(name) = relative
+        && ::metadata::socket_creation_unsupported(name)
+    {
+        logging::warn_log!("{}", ::metadata::format_skipped_socket_message(destination));
+        return Ok(());
+    }
+
     // actually create a FIFO, or a 0600 placeholder when --fake-super is
     // active (mirrors upstream syscall.c:do_mknod()'s am_root < 0 branch).
     #[cfg(unix)]
