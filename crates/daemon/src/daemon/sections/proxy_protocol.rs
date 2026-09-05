@@ -211,14 +211,76 @@ fn parse_v1_header<R: Read>(prefix: &[u8; 12], reader: &mut R) -> io::Result<Opt
 ///
 /// upstream: clientserver.c:1298 - `read_proxy_protocol_header()` is called
 /// before any rsync protocol data when `proxy protocol = true` in the config.
+///
+/// ⚠ The stream is passed through **unbuffered, deliberately**. The PROXY
+/// header is immediately followed on the same connection by the client's
+/// `@RSYNCD:` greeting, and a proxy normally forwards both in one segment, so
+/// any read that consumes past the header destroys the greeting. That is why
+/// [`parse_v1_header`] reads a byte at a time - it mirrors upstream's
+/// `read_buf(fd, p, 1)` loop (clientname.c:245-247), whose entire purpose is
+/// to stop exactly at the newline. Wrapping this call in a `BufReader` defeats
+/// that: the reader pulls up to its capacity on the first `read_exact`, and
+/// the surplus is discarded when it drops. Measured symptom: the daemon read
+/// an empty module name and answered a module LIST instead of `@RSYNCD: OK`.
 pub(crate) fn parse_proxy_header(stream: &mut DaemonStream) -> io::Result<Option<SocketAddr>> {
-    let mut reader = BufReader::new(&mut *stream);
-    parse_proxy_header_from(&mut reader)
+    parse_proxy_header_from(stream)
 }
 
 #[cfg(test)]
 mod proxy_protocol_tests {
     use super::*;
+
+    /// The bytes after the PROXY header must survive the parse.
+    ///
+    /// A proxy forwards the header and the client's first data in the same
+    /// segment, so `PROXY ...\r\n@RSYNCD: 30.0\nmod\n` arrives as one read.
+    /// Upstream cannot lose the tail because it reads the v1 line one byte at
+    /// a time (clientname.c:245-247); oc must not either.
+    ///
+    /// This goes through `parse_proxy_header` - the wrapper - over a real
+    /// socket ON PURPOSE. The generic `parse_proxy_header_from` is already
+    /// exact-read and passes over a `Cursor` whether or not the wrapper
+    /// buffers, so a test at that level cannot see this defect: the over-read
+    /// lived in the caller, not the parser.
+    #[test]
+    fn the_bytes_after_the_header_are_left_on_the_stream() {
+        use std::io::Write as _;
+        use std::net::{TcpListener, TcpStream};
+
+        const TAIL: &[u8] = b"@RSYNCD: 30.0\nmod\n";
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        let writer = std::thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).expect("connect");
+            // One write, so the header and the greeting share a segment -
+            // exactly what a proxy produces.
+            let mut wire = Vec::new();
+            wire.extend_from_slice(b"PROXY TCP4 10.1.2.3 127.0.0.1 40000 873\r\n");
+            wire.extend_from_slice(TAIL);
+            client.write_all(&wire).expect("write");
+            client.flush().expect("flush");
+            // Hold the connection open until the reader is done.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        });
+
+        let (accepted, _) = listener.accept().expect("accept");
+        let mut stream = DaemonStream::Plain(accepted);
+
+        let addr = parse_proxy_header(&mut stream)
+            .expect("header parses")
+            .expect("TCP4 carries a proxied address");
+        assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)));
+
+        let mut tail = vec![0u8; TAIL.len()];
+        stream
+            .read_exact(&mut tail)
+            .expect("the greeting must still be on the stream");
+        assert_eq!(tail, TAIL);
+
+        writer.join().expect("writer thread");
+    }
 
     #[test]
     fn v1_tcp4_header() {
