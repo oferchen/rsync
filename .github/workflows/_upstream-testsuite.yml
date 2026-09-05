@@ -67,6 +67,14 @@ on:
           --expect-result manifest. Manifest rows may only be re-baselined from
           a measured run, so a leg opts in when someone is ready to measure the
           move, never as a side effect of an unrelated change.
+
+          This is therefore a THIRD manifest axis, alongside privilege and
+          transport: a manifest describes one (privilege, transport, oracle)
+          configuration. A caller that flips this input needs its OWN manifest -
+          it cannot keep sharing a file with a caller at the other setting,
+          because the two disagree on that row and runtests.py compares outcomes
+          exactly. Re-baselining the shared file moves the failure to the other
+          caller instead of removing it.
         type: string
         default: 'off'
 
