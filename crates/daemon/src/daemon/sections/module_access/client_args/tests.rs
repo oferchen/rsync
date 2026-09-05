@@ -612,3 +612,89 @@ mod daemon_partial_dir_sanitize_tests {
         );
     }
 }
+
+/// A peer-forwarded `--max-alloc` must be parsed and refused exactly as
+/// upstream's own `parse_arguments()` does when the daemon runs it.
+///
+/// upstream: `options.c:2065-2074`. The daemon executes the same block as the
+/// client, so a client that predates 3.5.0's zero refusal - and therefore still
+/// forwards `--max-alloc=0` on the wire - is refused by the SERVER rather than
+/// silently disabling the server's own `my_alloc()` ceiling.
+#[cfg(test)]
+mod daemon_max_alloc_arg_tests {
+    use super::{ClientArgRejection, ServerConfig, ServerRole, apply_long_form_args};
+    use std::ffi::OsString;
+
+    fn rejection(client_args: &[&str]) -> Option<ClientArgRejection> {
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            "-logDtpre.iLsfxCIvu".to_owned(),
+            vec![OsString::from(".")],
+        )
+        .expect("server flag string parses");
+        let owned: Vec<String> = client_args.iter().map(|a| (*a).to_owned()).collect();
+        apply_long_form_args(&owned, &mut config)
+    }
+
+    fn invalid_value_text(client_args: &[&str]) -> String {
+        match rejection(client_args) {
+            Some(ClientArgRejection::InvalidValue(text)) => text,
+            other => {
+                panic!("expected an InvalidValue rejection for {client_args:?}, got {other:?}")
+            }
+        }
+    }
+
+    /// The attack shape: every spelling of zero must be refused with upstream's
+    /// own wording, because the value arrives from a peer.
+    #[test]
+    fn a_wire_supplied_zero_is_refused() {
+        for value in ["--max-alloc=0", "--max-alloc=0B", "--max-alloc=0.0M"] {
+            assert_eq!(
+                invalid_value_text(&[value]),
+                "max-alloc must be greater than zero",
+                "{value} must be refused with upstream's text",
+            );
+        }
+    }
+
+    /// upstream: options.c:1172-1175 - an empty value parses as 0, so it lands
+    /// on the SAME refusal rather than a distinct parse error.
+    #[test]
+    fn an_empty_value_takes_the_zero_refusal() {
+        assert_eq!(
+            invalid_value_text(&["--max-alloc="]),
+            "max-alloc must be greater than zero",
+        );
+    }
+
+    /// upstream: options.c:2067 - the 1 MiB minimum is enforced on the daemon
+    /// side too, so a too-small forwarded value cannot shrink the ceiling below
+    /// what upstream permits.
+    #[test]
+    fn a_value_below_one_mib_is_refused() {
+        assert_eq!(
+            invalid_value_text(&["--max-alloc=512K"]),
+            "--max-alloc=512K is too small (min: 1.00M or 0 for unlimited)",
+        );
+    }
+
+    /// Non-vacuity, two ways. A legitimate value is ACCEPTED and APPLIED, so
+    /// the arm is not simply refusing every `--max-alloc` it sees; and an argv
+    /// without the option is accepted too, so the refusals above are
+    /// attributable to the value rather than to the harness.
+    #[test]
+    fn a_legitimate_value_is_accepted_and_applied() {
+        let restore = ::protocol::effective_max_alloc();
+        assert_eq!(rejection(&["--max-alloc=64M"]), None);
+        assert_eq!(
+            ::protocol::effective_max_alloc(),
+            64 * 1024 * 1024,
+            "upstream: util2.c:75 - parsing the value is pointless unless it \
+             rewrites the ceiling my_alloc() consults",
+        );
+        ::protocol::set_max_alloc(restore);
+
+        assert_eq!(rejection(&["--delete"]), None);
+    }
+}

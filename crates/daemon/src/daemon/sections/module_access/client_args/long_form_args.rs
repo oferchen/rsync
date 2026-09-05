@@ -390,6 +390,28 @@ fn apply_long_form_args(
                             rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
                         }
                     }
+                // upstream: options.c:2065-2074 - `server_options()` forwards
+                // `--max-alloc` (options.c:3029-3030) and the daemon runs the
+                // SAME `parse_arguments()` block the client does, so a peer
+                // value is both applied and refused there. The daemon decodes
+                // the client argv here rather than through the `--server` argv
+                // parser, so it needs its own arm; both call the one shared
+                // rule in `protocol::max_alloc`.
+                //
+                // Without this arm the option fell off the end of the chain and
+                // was SILENTLY IGNORED, which is exactly the shape 3.5.0's zero
+                // refusal exists to close: an older client that predates the
+                // check still forwards `--max-alloc=0` on the wire.
+                } else if let Some(val) = arg.strip_prefix("--max-alloc=") {
+                    match parse_max_alloc_limit(val) {
+                        // upstream: util2.c:75 - the rewritten `max_alloc`
+                        // global is what my_alloc() consults, so applying it is
+                        // the whole point of parsing it.
+                        Ok(limit) => ::protocol::set_max_alloc(limit),
+                        Err(message) => {
+                            rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
+                        }
+                    }
                 // upstream: options.c - server_options() forwards `--modify-window=NUM`.
                 // The daemon receiver's quick-check honours it via same_time() so
                 // files within the window are not needlessly re-transferred.
@@ -661,6 +683,35 @@ fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String>
             Err(size_arg_error(opt_name, value, "too large"))
         }
     }
+}
+
+/// Parses a peer-forwarded `--max-alloc` value into a byte ceiling.
+///
+/// upstream: `options.c:2066-2074` - `parse_size_arg(max_alloc_arg, 'B',
+/// "max-alloc", 1024*1024, -1, True)` followed by the zero refusal. The value
+/// RULES live in `protocol::max_alloc` because the client's own CLI applies
+/// exactly the same ones; only the front-end parse is restated here, since this
+/// parser reads raw wire strings rather than an `OsStr` argv.
+fn parse_max_alloc_limit(value: &str) -> Result<usize, String> {
+    // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
+    // terminator and `strtod("")` gives 0, so an empty value is exactly `=0`.
+    // For `--max-alloc` that resolves to the zero refusal rather than a parse
+    // error, which is what upstream reports for a forwarded `--max-alloc=`.
+    let text = if value.is_empty() { "0" } else { value };
+
+    // upstream: options.c:2067 passes def_suf 'B'.
+    let bytes = match ::core::bandwidth::parse_size_arg(text, b'B') {
+        Ok(parsed) => u64::try_from(parsed.bytes).unwrap_or(u64::MAX),
+        Err(::core::bandwidth::SizeArgError::Invalid) => {
+            return Err(size_arg_error("max-alloc", value, "invalid"));
+        }
+        Err(::core::bandwidth::SizeArgError::TooLarge) => {
+            return Err(size_arg_error("max-alloc", value, "too large"));
+        }
+    };
+
+    let limit = ::protocol::max_alloc::validate_max_alloc(bytes, value)?;
+    usize::try_from(limit).map_err(|_| size_arg_error("max-alloc", value, "too large"))
 }
 
 /// Renders upstream's size-argument failure text.
