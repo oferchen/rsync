@@ -53,13 +53,33 @@ name: Upstream Testsuite (macOS)
 # So the leg produces ~240 real outcomes, not 345 - do not read the row count as
 # the coverage figure.
 #
-# NON-ROOT ONLY, BY DESIGN
+# NON-ROOT ONLY - AND THAT IS NOW A KNOWN GAP, NOT A DESIGN CHOICE
 # ---------------------------------------------------------------------------
-# There is no root leg here. `sudo` on a GitHub macOS runner is available but
-# the root-only cells this would unlock (chown/devices/dir-sgid) are already in
-# upstream's macos.txt skip set or privilege-keyed away, so a root leg would run
-# the same 240 outcomes at twice the cost. Add one only if a measurement shows
-# it moves cells.
+# This file used to argue that a root leg "would run the same 240 outcomes at
+# twice the cost", on the grounds that the cells it unlocks are chown/devices/
+# dir-sgid - all either in upstream's macos.txt skip set or privilege-keyed
+# away. That reasoning does not survive the count.
+#
+# Crossing the committed manifests (root runs / nonroot skips on Linux, minus
+# upstream's macos.txt waivers) puts 29 cells in the set a macOS root leg would
+# newly RUN, and only 3 of the 32 privilege-keyed cells are upstream-waived.
+# They are not chown/devices: the set is dominated by the symlink-race and
+# confinement family - backup-dir-symlink-race, symlink-race-dest,
+# temp-dir-symlink-injection, daemon-module-chdir-symlink,
+# operator-path-backup-symlink, and all five chroot-*-inner-module.
+#
+# That is exactly the family whose Linux passes are known to rest on Landlock
+# rather than on the userspace confinement guard, so a platform without
+# Landlock is the only place the guard is tested unaided. A macOS root leg is
+# therefore the missing instrument, not a redundant one.
+#
+# It is NOT added here yet, for a reason worth stating: the 29 is a PREDICTION
+# derived from the Linux manifests, and the equivalent prediction for the tcp
+# leg below overshot (52 predicted, 32 measured) because cells can skip on
+# macOS for platform reasons the Linux manifests cannot show. A root manifest
+# must come from an executed macOS root run - dispatch this workflow with a
+# root variant and take the EMIT_EXPECT_RESULT artifact - never from the
+# prediction.
 
 on:
   workflow_call:
@@ -72,11 +92,23 @@ on:
         description: 'Upstream rsync version to build and test against'
         type: string
         default: '3.5.0'
+      transport:
+        description: >-
+          `pipe` (upstream's secure default: a stdio socketpair, no listening
+          socket) or `tcp` (a real rsyncd bound to 127.0.0.1). `tcp` also passes
+          --daemon-tests-only, the pairing upstream ships the option for: the
+          tests it drops never call start_test_daemon(), so they cannot observe
+          the transport and would only repeat the pipe leg. Mirrors the input of
+          the same name on `_upstream-testsuite.yml`.
+        type: string
+        default: 'pipe'
       expect_result_macos:
         description: >-
           Path to the per-leg expected-outcome manifest. ONLY the tests it names
           run, and every outcome must match - an unexpected PASS included - so
-          the file is the coverage set as well as the oracle.
+          the file is the coverage set as well as the oracle. Each transport
+          selects a different test set, so each carries its OWN manifest; a
+          shared file would fail the driver's coverage guard.
         type: string
         default: 'tools/ci/upstream-3.5.0-expect.macos.nonroot.txt'
       timeout_minutes:
@@ -249,12 +281,19 @@ jobs:
           CPPFLAGS: ${{ env.UPSTREAM_CPPFLAGS }}
           LDFLAGS: ${{ env.UPSTREAM_LDFLAGS }}
           EXPECT_RESULT: ${{ inputs.expect_result_macos }}
+          # `yes` only on the tcp leg; the driver refuses DAEMON_TESTS_ONLY
+          # without USE_TCP, so the two move together by construction.
+          USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
+          DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
           # Always emit the manifest this run would hold itself to, for the same
           # reason the Linux legs do: hand-curating the ledger is exactly how it
           # drifts, and because --expect-result runs ONLY the tests it names,
           # that drift shrinks coverage silently instead of failing. Uploaded as
           # an artifact so a re-baseline is a reviewable diff of outcomes.
-          EMIT_EXPECT_RESULT: target/interop/expect-result.macos.nonroot.txt
+          # Transport-scoped: both legs upload into the same artifact namespace,
+          # and one name would let the second leg overwrite the first - leaving a
+          # re-baseline diffing the wrong leg's outcomes.
+          EMIT_EXPECT_RESULT: target/interop/expect-result.macos.nonroot.${{ inputs.transport }}.txt
         run: |
           set -euo pipefail
           mkdir -p target/interop
@@ -319,10 +358,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-testsuite-logs-macos
+          # Transport-scoped, like the emitted manifest itself: an artifact name
+          # is unique per RUN, not per job, so two legs sharing one name is an
+          # upload collision - the second would fail or clobber the first, and a
+          # re-baseline would then be diffing the wrong leg.
+          name: upstream-testsuite-logs-macos-${{ inputs.transport }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-output.log
-            target/interop/expect-result.macos.nonroot.txt
+            target/interop/expect-result.macos.nonroot.${{ inputs.transport }}.txt
           if-no-files-found: ignore
           retention-days: 14

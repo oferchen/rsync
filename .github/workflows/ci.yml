@@ -1042,6 +1042,49 @@ jobs:
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
 
   # ===========================================================================
+  # Upstream testsuite - macOS over a real loopback TCP daemon (3.5.0)
+  # ---------------------------------------------------------------------------
+  # The macOS pipe leg above uses upstream's secure default, a stdio socketpair
+  # with no listening socket, so it never reaches accept(), the `hosts allow`
+  # decision, or peer-address resolution. Until this leg existed, NO macOS run
+  # covered any of that: the daemon surface was Linux-only.
+  #
+  # MEASURED before adding, on a real run of this exact configuration rather
+  # than predicted from the Linux manifests:
+  #
+  #   155 selected / 120 run - 113 pass, 7 fail, 35 skip
+  #   32 cells RUN here that the macOS pipe leg skips, 25 of them passing
+  #   0 regressions: nothing passing on macOS/pipe fails here
+  #   0 macOS-only failures: all 7 are shared with the Linux tcp legs
+  #     (the proto-* cluster, daemon-zstd-thread-exhaustion, and
+  #      malicious-server-partial-basis-symlink-overwrite - all already tracked)
+  #
+  # ⚠ The prediction that preceded this run said 52 cells, not 32: cells can
+  # skip on macOS for platform reasons the Linux manifests cannot show. That is
+  # why the committed manifest comes from the executed run and why a macOS ROOT
+  # leg must wait for its own - see the header of the reusable workflow.
+  #
+  # Not a required status check, matching the macOS pipe leg: registering a
+  # context in branch protection is a repo-admin action. The manifest makes it
+  # non-vacuous from the first run regardless - the 7 failures are recorded as
+  # EXPECTED, so the gate fires on drift.
+  #
+  # Reported as `upstream-testsuite-macos-tcp / upstream testsuite (macOS)`; the
+  # job id supplies the prefix that distinguishes it from the pipe leg, which is
+  # why the reusable workflow's own job name is a literal.
+  # ===========================================================================
+  upstream-testsuite-macos-tcp:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      transport: 'tcp'
+      # Its OWN manifest: --daemon-tests-only selects a different (smaller) set,
+      # so the pipe manifest would fail the driver's coverage guard outright.
+      expect_result_macos: tools/ci/upstream-3.5.0-expect.macos.nonroot.tcp.txt
+
+  # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)
   # ---------------------------------------------------------------------------
   # Runs the 1000-thread x 10K-iter stress in
