@@ -166,6 +166,10 @@ fn bind_error(address: SocketAddr, error: io::Error) -> DaemonError {
     network_error("bind listener", address, error)
 }
 
+/// Only the kqueue engine treats an `accept(2)` failure as fatal: a kevent
+/// error means its readiness surface is unusable. The portable poll engine
+/// mirrors upstream `socket.c:593`'s `if (fd < 0) continue;` and warns instead.
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 fn accept_error(address: SocketAddr, error: io::Error) -> DaemonError {
     network_error("accept connection on", address, error)
 }

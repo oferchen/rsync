@@ -1761,30 +1761,13 @@ fn resolve_bind_addresses_precedence() {
 }
 
 #[test]
-fn warn_per_family_accept_failure_labels_ipv6() {
-    // The dual-stack accept loop must produce an identifiable diagnostic
-    // when one family's acceptor dies while another is still healthy.
-    // Mirrors the bind-failure warning's labelling contract.
-    let addr: SocketAddr = "[::]:8873".parse().unwrap();
-    let error = io::Error::other("test failure");
-    warn_per_family_accept_failure(None, addr, &error);
-}
-
-#[test]
-fn warn_per_family_accept_failure_labels_ipv4() {
-    let addr: SocketAddr = "0.0.0.0:8873".parse().unwrap();
-    let error = io::Error::other("test failure");
-    warn_per_family_accept_failure(None, addr, &error);
-}
-
-#[test]
-fn single_listener_engine_poll_idle_when_no_connection() {
+fn poll_accept_engine_poll_idle_when_no_connection() {
     // A quiet daemon must yield control rather than error: the bounded
     // readiness wait times out, which the engine maps to AcceptOutcome::Idle
     // so the accept loop can re-check signal flags.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+    let mut engine = PollAcceptEngine::new(vec![listener], &[local], None).expect("engine");
 
     assert!(
         matches!(engine.poll().expect("poll"), AcceptOutcome::Idle),
@@ -1794,19 +1777,22 @@ fn single_listener_engine_poll_idle_when_no_connection() {
 
 #[test]
 #[cfg(unix)]
-fn wait_for_incoming_times_out_on_idle_listener() {
-    // With no pending connection the readiness wait must report Ok(false)
-    // after its bounded timeout - the signal-check path - instead of readable.
+fn poll_ready_times_out_on_idle_listener() {
+    // With no pending connection the readiness wait must report an empty
+    // ready set after its bounded timeout - the signal-check path.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
     assert!(
-        !wait_for_incoming(&listener, 10).expect("poll(2)"),
-        "an idle listener must time out as not-readable"
+        poll_ready(&[(listener, local)], 10)
+            .expect("poll(2)")
+            .is_empty(),
+        "an idle listener must time out with no listener reported ready"
     );
 }
 
 #[test]
 #[cfg(unix)]
-fn wait_for_incoming_wakes_on_connection_while_parked() {
+fn poll_ready_wakes_on_connection_while_parked() {
     // The park must wake on real readiness, not run its timeout to completion:
     // with a generous 5s timeout and a client connecting shortly after the
     // wait begins, the call must return readable well before the timeout. A
@@ -1821,10 +1807,14 @@ fn wait_for_incoming_wakes_on_connection_while_parked() {
     });
 
     let start = std::time::Instant::now();
-    let readable = wait_for_incoming(&listener, 5000).expect("poll(2)");
+    let ready = poll_ready(&[(listener, local)], 5000).expect("poll(2)");
     let elapsed = start.elapsed();
 
-    assert!(readable, "a pending connection must report readable");
+    assert_eq!(
+        ready,
+        vec![0],
+        "a pending connection must report its listener ready"
+    );
     assert!(
         elapsed < Duration::from_secs(4),
         "the park must wake on readiness, not run the 5s timeout down \
@@ -1834,7 +1824,7 @@ fn wait_for_incoming_wakes_on_connection_while_parked() {
 }
 
 #[test]
-fn single_listener_engine_accepts_queued_connection_on_first_poll() {
+fn poll_accept_engine_accepts_queued_connection_on_first_poll() {
     // Promptness contract, count-based: with a connection already queued on
     // the listen backlog, the very FIRST poll() must return Connection - no
     // Idle iterations, no polling-interval delay before the accept happens.
@@ -1845,7 +1835,7 @@ fn single_listener_engine_accepts_queued_connection_on_first_poll() {
     // Let the kernel finish the loopback handshake and queue the connection.
     thread::sleep(Duration::from_millis(20));
 
-    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+    let mut engine = PollAcceptEngine::new(vec![listener], &[local], None).expect("engine");
     assert!(
         matches!(
             engine.poll().expect("poll"),
@@ -1874,7 +1864,7 @@ fn accept_loop_stops_after_shutdown_signal_while_parked() {
 
     thread::scope(|scope| {
         let handle = scope.spawn(|| {
-            let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+            let mut engine = PollAcceptEngine::new(vec![listener], &[local], None).expect("engine");
             let mut state = test_accept_loop_state(
                 &flags,
                 &config_path,
@@ -1902,13 +1892,19 @@ fn accept_loop_stops_after_shutdown_signal_while_parked() {
 }
 
 #[test]
-fn multi_listener_engine_shutdown_joins_parked_acceptors() {
-    // Dual-stack teardown: shutdown() must wake and join acceptor threads that
-    // are parked in their readiness wait with no traffic. Event-based - a
-    // parked acceptor that never re-checks the flag would wedge join() and
-    // hang the test until the harness timeout kills it.
+fn poll_accept_engine_serves_every_listener_without_spawning_a_thread() {
+    // The fork prerequisite, asserted directly. `platform::session_fork` states
+    // that callers must fork from a single-threaded accept path: fork(2)
+    // duplicates only the calling thread, so a child of a multithreaded parent
+    // can inherit an allocator lock held by a thread that does not exist in the
+    // child and deadlock on its first allocation. A dual-stack daemon is the
+    // shape that previously spawned one acceptor thread per listener, so it is
+    // the shape that must stay single-threaded.
+    //
     // Two loopback listeners stand in for the dual-stack pair; the engine is
-    // family-agnostic and some CI sandboxes lack IPv6.
+    // family-agnostic and some CI sandboxes lack IPv6. Serving a connection
+    // from EACH is what makes the thread count meaningful - a count taken over
+    // an engine that never accepted anything would pass vacuously.
     let first = TcpListener::bind("127.0.0.1:0").expect("bind first");
     let second = TcpListener::bind("127.0.0.1:0").expect("bind second");
     let addrs = [
@@ -1916,27 +1912,65 @@ fn multi_listener_engine_shutdown_joins_parked_acceptors() {
         second.local_addr().expect("second addr"),
     ];
 
-    let flags = no_op_signal_flags();
-    let config_path: Option<PathBuf> = None;
-    let limiter: Option<Arc<ConnectionLimiter>> = None;
-    let log_sink: Option<SharedLogSink> = None;
-    let notifier = systemd::ServiceNotifier::new();
-    let state = test_accept_loop_state(
-        &flags,
-        &config_path,
-        &limiter,
-        &log_sink,
-        &notifier,
-        ConnectionCounter::new(),
-        None,
+    let before = live_thread_count();
+    let mut engine = PollAcceptEngine::new(vec![first, second], &addrs, None).expect("engine");
+
+    for addr in addrs {
+        let _client = TcpStream::connect(addr).expect("connect");
+        let accepted = poll_until_connection(&mut engine);
+        assert_eq!(
+            accepted, addr,
+            "the connection must be accepted on the listener it was made to"
+        );
+    }
+
+    assert_eq!(
+        live_thread_count(),
+        before,
+        "the accept path must not spawn a thread: session_fork requires a \
+         single-threaded parent"
     );
 
-    let mut engine = MultiListenerEngine::new(vec![first, second], &addrs, &state).expect("engine");
     engine.shutdown();
 }
 
+/// Polls until the engine yields a connection, returning the local address of
+/// the listener it arrived on. Idle polls are expected - the kernel may not
+/// have completed the loopback handshake when the first poll runs.
+fn poll_until_connection(engine: &mut PollAcceptEngine) -> SocketAddr {
+    for _ in 0..100 {
+        match engine.poll().expect("poll") {
+            AcceptOutcome::Connection(stream, _) => {
+                return stream.local_addr().expect("accepted local addr");
+            }
+            AcceptOutcome::Idle => continue,
+        }
+    }
+    panic!("engine never delivered the pending connection");
+}
+
+/// Number of threads alive in this process, or `None` where the platform
+/// offers no cheap answer.
+///
+/// Linux exposes it as the entry count of `/proc/self/task`. Elsewhere the
+/// count is reported as zero on both sides of the comparison, which keeps the
+/// assertion above compiling and honest: it pins nothing rather than pretending
+/// to pin something.
+fn live_thread_count() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/proc/self/task")
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
 #[test]
-fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
+fn poll_accept_engine_poll_returns_connection_with_blocking_reset() {
     // poll() must return Connection for an accepted client, and the accepted
     // socket must be reset to BLOCKING mode. On BSD-derived kernels (macOS) the
     // accepted socket inherits the listener's O_NONBLOCK; without the engine's
@@ -1946,7 +1980,7 @@ fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
     // called, so this discriminates blocking vs non-blocking on that host.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+    let mut engine = PollAcceptEngine::new(vec![listener], &[local], None).expect("engine");
 
     let client = thread::spawn(move || {
         let mut stream = TcpStream::connect(local).expect("connect");
@@ -1964,7 +1998,6 @@ fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
                 break;
             }
             AcceptOutcome::Idle => continue,
-            AcceptOutcome::Closed => panic!("single-listener engine never reports Closed"),
         }
     }
 
@@ -1985,7 +2018,7 @@ fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
 
 #[test]
 #[cfg(unix)]
-fn single_listener_engine_poll_survives_transient_accept_error() {
+fn poll_accept_engine_poll_survives_transient_accept_error() {
     // Regression: a transient per-connection accept(2) failure (EMFILE under a
     // descriptor shortage, or ECONNABORTED when a client resets during the
     // accept window) must NOT tear the daemon down. Upstream socket.c:593
@@ -2003,7 +2036,7 @@ fn single_listener_engine_poll_survives_transient_accept_error() {
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+    let mut engine = PollAcceptEngine::new(vec![listener], &[local], None).expect("engine");
 
     // Queue a connection so the next accept(2) has work to extract.
     let _client = TcpStream::connect(local).expect("connect");
@@ -2038,49 +2071,6 @@ fn single_listener_engine_poll_survives_transient_accept_error() {
         "a transient accept(2) error (EMFILE) must be non-fatal - the daemon \
          must keep serving instead of exiting"
     );
-}
-
-#[test]
-fn relay_accept_item_delivers_when_capacity_available() {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<AcceptItem>(1);
-    let shutdown = AtomicBool::new(false);
-    let graceful = AtomicBool::new(false);
-    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-
-    assert!(relay_accept_item(
-        &tx,
-        Err((addr, io::Error::other("boom"))),
-        &shutdown,
-        &graceful,
-    ));
-    assert!(rx.recv().is_ok());
-}
-
-#[test]
-fn relay_accept_item_bails_on_shutdown_when_full() {
-    // Capacity 1, never drained: the first item fills the relay.
-    let (tx, _rx) = std::sync::mpsc::sync_channel::<AcceptItem>(1);
-    let shutdown = AtomicBool::new(false);
-    let graceful = AtomicBool::new(false);
-    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-
-    assert!(relay_accept_item(
-        &tx,
-        Err((addr, io::Error::other("first"))),
-        &shutdown,
-        &graceful,
-    ));
-
-    // The relay is now full. With shutdown requested, a second relay must
-    // return false promptly instead of blocking forever on the full channel,
-    // which is what keeps join() from wedging at teardown under backpressure.
-    shutdown.store(true, Ordering::Relaxed);
-    assert!(!relay_accept_item(
-        &tx,
-        Err((addr, io::Error::other("second"))),
-        &shutdown,
-        &graceful,
-    ));
 }
 
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
@@ -2137,7 +2127,6 @@ fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
                 break;
             }
             AcceptOutcome::Idle => continue,
-            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
         }
     }
 
@@ -2189,7 +2178,6 @@ fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
                 }
             }
             AcceptOutcome::Idle => continue,
-            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
         }
     }
     assert_eq!(
@@ -2243,7 +2231,6 @@ fn kqueue_engine_needs_one_poll_per_queued_connection() {
                 }
             }
             AcceptOutcome::Idle => continue,
-            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
         }
     }
 
