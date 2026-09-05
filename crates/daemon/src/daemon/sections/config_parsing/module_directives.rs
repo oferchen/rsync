@@ -259,8 +259,7 @@ fn apply_module_directive(
                     "'log file' directive must not be empty",
                 ));
             }
-            let resolved = resolve_config_relative_path(canonical, value);
-            builder.set_log_file(resolved);
+            builder.set_log_file(daemon_parameter_path(value));
         }
         "dontcompress" => {
             let patterns = if value.is_empty() {

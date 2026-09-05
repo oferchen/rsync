@@ -248,6 +248,24 @@ mod config_parsing_tests {
         assert!(path.ends_with("rsync.pid"));
     }
 
+    /// A relative `pid file` is kept verbatim, so the daemon writes it against
+    /// its own working directory.
+    ///
+    /// upstream: clientserver.c:1584 `create_pid_file()` opens the string
+    /// `lp_pid_file()` returns, with no config-directory rebase. Prefixing the
+    /// config file's directory puts the pid file where nothing looks for it:
+    /// the 3.5.0 `daemon-standalone-detach` cell waits on the pid file it named
+    /// and times out.
+    #[test]
+    fn parse_global_pid_file_relative_is_kept_verbatim() {
+        let file = write_config("pid file = rsyncd.pid\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.pid_file.as_ref().map(|(path, _)| path.as_path()),
+            Some(Path::new("rsyncd.pid"))
+        );
+    }
+
     #[test]
     fn parse_global_reverse_lookup_true() {
         let file = write_config("reverse lookup = yes\n");
@@ -2907,8 +2925,16 @@ mod config_parsing_tests {
         );
     }
 
+    /// A relative `log file` is kept verbatim, so the daemon opens it against
+    /// its own working directory.
+    ///
+    /// upstream: log.c:216-218 log_init() assigns `lp_log_file(module_id)` -
+    /// loadparm.c's stored string - to `logfile_name`, and log.c:169
+    /// logfile_open() opens that string unchanged. Rebasing it on the config
+    /// file's directory prefixes a path that is already relative to the
+    /// daemon's cwd, and the resulting open fails with ENOENT.
     #[test]
-    fn parse_module_log_file_relative() {
+    fn parse_module_log_file_relative_is_kept_verbatim() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2919,10 +2945,37 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).unwrap();
-        let log_file = result.modules[0].log_file.as_ref().expect("log_file set");
-        let config_dir = file.path().canonicalize().unwrap();
-        let expected = config_dir.parent().unwrap().join("rsync-mod.log");
-        assert_eq!(*log_file, expected);
+        assert_eq!(
+            result.modules[0].log_file,
+            Some(PathBuf::from("rsync-mod.log"))
+        );
+    }
+
+    /// The global `log file` half takes the same rule as the module half.
+    ///
+    /// upstream reads both through one accessor (`lp_log_file`), so the
+    /// daemon-wide log opened at startup and the per-module log opened after
+    /// `log_init(1)` must name the same file for the same config line.
+    #[test]
+    fn parse_global_log_file_relative_is_kept_verbatim() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "log file = rsyncd.log\n\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.log_file.as_ref().map(|(path, _)| path.as_path()),
+            Some(Path::new("rsyncd.log"))
+        );
+        assert_eq!(
+            result.modules[0].log_file,
+            Some(PathBuf::from("rsyncd.log"))
+        );
     }
 
     #[test]
