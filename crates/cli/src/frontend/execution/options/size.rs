@@ -102,19 +102,9 @@ pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64
     }
 }
 
-/// Sanity ceiling for `--max-alloc`.
-///
-/// Limits the parsed value to at most one quarter of `u64::MAX` so the cap
-/// can be safely converted to `usize` and added to outstanding-byte counters
-/// without risking arithmetic overflow on 64-bit platforms. Upstream imposes
-/// no upper bound; this guard is oc-specific overflow protection.
-pub(crate) const MAX_ALLOC_CEILING: u64 = u64::MAX / 4;
-
-/// Lower bound for a non-zero `--max-alloc`, mirroring upstream's
-/// `parse_size_arg(arg, 'B', "max-alloc", 1024*1024, -1, True)` min value.
-///
-/// upstream: options.c:2067 `parse_size_arg()` call in `parse_arguments()`.
-const MAX_ALLOC_MIN: u64 = 1024 * 1024;
+// The `--max-alloc` value rules and their constants live in
+// `protocol::max_alloc`, because the daemon's client-argv parser applies the
+// same rules to a peer-forwarded value; see `validate_max_alloc` there.
 
 /// Upper bound for `--block-size` at protocol >= 30.
 ///
@@ -122,12 +112,6 @@ const MAX_ALLOC_MIN: u64 = 1024 * 1024;
 /// enforced by options.c:1692-1695 `parse_size_arg(arg, 'b', "block-size", 0,
 /// max_blength, False)`.
 const MAX_BLOCK_SIZE: u64 = 1 << 17;
-
-/// Error text for `--max-alloc=0`, byte-for-byte upstream's message.
-///
-/// upstream: `options.c:parse_arguments()` - `snprintf(err_buf, sizeof err_buf,
-/// "max-alloc must be greater than zero\n")` (options.c:2071).
-pub(crate) const MAX_ALLOC_ZERO_REJECTED: &str = "max-alloc must be greater than zero";
 
 /// Parses the `--max-alloc` argument as a byte ceiling.
 ///
@@ -140,8 +124,8 @@ pub(crate) const MAX_ALLOC_ZERO_REJECTED: &str = "max-alloc must be greater than
 ///   (CVE-2026-53794) because the value also arrives from a peer.
 /// - A non-zero value below 1 MiB is rejected ("too small").
 /// - Empty, negative, and non-numeric input is rejected.
-/// - Values above [`MAX_ALLOC_CEILING`] are rejected for overflow safety
-///   (an oc-specific guard; upstream has no upper bound).
+/// - Values above `protocol::max_alloc::MAX_ALLOC_CEILING` are rejected for
+///   overflow safety (an oc-specific guard; upstream has no upper bound).
 ///
 /// # Errors
 ///
@@ -158,36 +142,13 @@ pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
 
     let limit = parse_size_limit_argument(value, "--max-alloc")?;
 
-    // upstream: options.c:2069-2072 - `if (size == 0) { snprintf(err_buf, ...
-    // "max-alloc must be greater than zero\n"); goto cleanup; }`. The value can
-    // reach a daemon from the wire, so accepting zero would let a peer disable
-    // the my_alloc() ceiling (CVE-2026-53794).
-    if limit == 0 {
-        return Err(rsync_error!(1, MAX_ALLOC_ZERO_REJECTED.to_owned()).with_role(Role::Client));
-    }
-
-    // upstream: options.c:2067,1250-1259 - parse_size_arg rejects a value below
-    // the 1 MiB minimum with "is too small (min: 1.00M or 0 for unlimited)".
-    // do_big_num renders the constant 1 MiB minimum as "1.00M"; 3.5.0 left the
-    // "or 0 for unlimited" clause in place even though zero is now refused by
-    // the caller, so the text is mirrored verbatim.
-    if limit < MAX_ALLOC_MIN {
-        return Err(rsync_error!(
-            1,
-            format!("--max-alloc={display} is too small (min: 1.00M or 0 for unlimited)")
-        )
-        .with_role(Role::Client));
-    }
-
-    if limit > MAX_ALLOC_CEILING {
-        return Err(rsync_error!(
-            1,
-            format!("invalid --max-alloc '{display}': size exceeds the supported range")
-        )
-        .with_role(Role::Client));
-    }
-
-    Ok(limit)
+    // The zero / too-small / too-large rules are NOT restated here: the daemon
+    // applies the identical block to a peer-forwarded `--max-alloc`, and
+    // upstream runs one `parse_arguments()` body on both ends
+    // (options.c:2065-2074). This call site only adapts the shared owner's text
+    // into the client-role `Message` shape.
+    ::protocol::max_alloc::validate_max_alloc(limit, display)
+        .map_err(|text| rsync_error!(1, text).with_role(Role::Client))
 }
 
 /// Parses the `--block-size` argument into an optional override.
@@ -266,6 +227,9 @@ fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The rule's owner; these tests assert against ITS constants, so a change
+    // there cannot leave a stale copy asserting the old bound here.
+    use ::protocol::max_alloc::{MAX_ALLOC_CEILING, ZERO_REJECTED as MAX_ALLOC_ZERO_REJECTED};
     use std::ffi::OsString;
 
     fn os(s: &str) -> OsString {
