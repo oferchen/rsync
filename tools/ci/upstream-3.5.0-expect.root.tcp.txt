@@ -22,7 +22,7 @@ copy-dest-source-symlink pass
 daemon pass
 daemon-access pass
 daemon-access-ip pass
-daemon-argv-limit fail
+daemon-argv-limit pass
 daemon-auth pass
 daemon-auth-digest-floor pass
 daemon-auth-group pass
@@ -70,7 +70,7 @@ daemon-path-rsync-var pass
 daemon-proxy-protocol fail
 daemon-refuse pass
 daemon-refuse-compress pass
-daemon-refuse-compress-threads-alias fail
+daemon-refuse-compress-threads-alias pass
 daemon-refuse-delete-alias pass
 daemon-scan-cwd-desync pass
 daemon-scan-dir-escape pass
