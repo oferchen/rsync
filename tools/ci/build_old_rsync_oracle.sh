@@ -102,7 +102,25 @@ tar xzf "$tarball" -C "$WORKDIR"
 # -Wno-error and the implicit-declaration downgrades keep a release from an
 # older toolchain era compiling under a current one; upstream's build_static.sh
 # carries the same set for the same reason.
-oracle_cflags="-O2 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wno-error"
+#
+# -std=gnu17 is LOAD-BEARING for the same reason and cannot be spelled as a
+# warning downgrade. gcc 15 defaults to -std=gnu23, where an empty parameter
+# list means (void) rather than "unspecified", so these releases' own
+# forward declaration
+#
+#     extern OFF_T lseek64();       /* syscall.c, 3.1.3:355 and 3.2.7:392 */
+#
+# becomes a HARD ERROR against glibc's three-argument prototype:
+#
+#     error: conflicting types for 'lseek64'; have 'off64_t(void)'
+#     error: too many arguments to function 'lseek64'; expected 0, have 3
+#
+# MEASURED on gcc 15.2.0: both 3.1.3 and 3.2.7 fail to build without this and
+# build clean with it. There is no -Wno- for it - the meaning of `()` changed,
+# so the era has to be named. Pinning the standard is also what the rest of
+# this flag set is already doing implicitly, only for warnings.
+oracle_cflags="-O2 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -std=gnu17"
+oracle_cflags+=" -Wno-error"
 oracle_cflags+=" -Wno-implicit-function-declaration -Wno-int-conversion"
 oracle_cflags+=" -Wno-incompatible-pointer-types"
 
