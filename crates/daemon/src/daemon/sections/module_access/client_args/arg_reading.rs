@@ -201,34 +201,6 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
     })
 }
 
-/// Renders the daemon's per-connection client-argument log line.
-///
-/// Takes the argument vector and renders only its LENGTH. Upstream never
-/// writes the client's argument vector to the daemon log at all. Echoing it
-/// verbatim turns a connection into a log-amplification primitive: every byte
-/// a peer sends before authentication is appended to the operator's log file,
-/// and neither the token count nor the per-token length is under the daemon's
-/// control. `MAX_DAEMON_ARGS` bounds the count but not the total bytes, so the
-/// bound alone does not close this - the payload has to go.
-///
-/// The count is retained because it is daemon-derived, is bounded by
-/// construction, and is what an operator actually needs in order to correlate
-/// a connection with a refusal.
-fn client_args_log_line(
-    request: &str,
-    host_display: &str,
-    peer_ip: IpAddr,
-    client_args: &[String],
-) -> String {
-    format!(
-        "module '{}' from {} ({}): {} client args",
-        request,
-        host_display,
-        peer_ip,
-        client_args.len()
-    )
-}
-
 /// Reads and logs client arguments, handling the two-phase secluded-args
 /// protocol when the client sends `--protect-args` / `-s`.
 ///
@@ -346,11 +318,10 @@ fn read_and_log_client_args(
         let _ = socket.set_read_timeout(None);
     }
 
-    if let Some(log) = ctx.log_sink {
-        let text = client_args_log_line(ctx.request, ctx.host_display(), ctx.peer_ip, &client_args);
-        let message = rsync_info!(text).with_role(Role::Daemon);
-        log_message(log, &message);
-    }
+    // upstream emits no line here: the one per-request line it writes is the
+    // `rsync {on|to} <request> from ...` of `clientserver.c:1207-1220`, which
+    // runs later, once the argv is parsed and the hooks have fired. See
+    // `log_daemon_request`.
 
     Ok(Some(client_args))
 }

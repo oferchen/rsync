@@ -331,21 +331,9 @@ fn execute_transfer(
     read_stream: &mut dyn Read,
     write_stream: &mut dyn Write,
     role: ServerRole,
-    final_protocol: ProtocolVersion,
     module: &ModuleRuntime,
 ) -> i32 {
     if let Some(log) = ctx.log_sink {
-        let text = format!(
-            "module '{}' from {} ({}): protocol {}, role: {:?}",
-            ctx.request,
-            ctx.host_display(),
-            ctx.peer_ip,
-            final_protocol.as_u8(),
-            role
-        );
-        let message = rsync_info!(text).with_role(Role::Daemon);
-        log_message(log, &message);
-
         // upstream: the daemon sender announces the walk with the FLOG-only
         // `building file list` (flist.c:2248) and the daemon receiver mirrors
         // it with `receiving file list` (flist.c:2608); both land in the
