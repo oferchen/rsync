@@ -82,7 +82,7 @@ daemon-strict-modes-matrix pass
 daemon-subdir-climb-symlink pass
 daemon-symlink-escape-matrix fail
 daemon-unix-socket-atfd pass
-daemon-zstd-thread-exhaustion fail
+daemon-zstd-thread-exhaustion pass
 deep-path pass
 delete-missing-args-files-from pass
 early-input-symlink pass
