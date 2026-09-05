@@ -68,14 +68,22 @@ def workspace_edition(root: Path) -> str:
     return edition
 
 
-def tracked_rust_sources(root: Path) -> list[str]:
-    """Every `.rs` path git tracks, relative to the repository root.
+def rust_sources(root: Path) -> list[str]:
+    """Every `.rs` path in the working tree, relative to the repository root.
+
+    `--cached --others --exclude-standard` enumerates tracked files AND
+    untracked-but-not-ignored ones. Tracked-only was a hole: a brand-new `.rs`
+    file is invisible to this gate until it is `git add`ed, so a developer can
+    run the gate clean locally and still fail CI - which checks out a tree
+    where that file IS tracked. The file COUNT is the only tell, and nobody
+    compares it across machines. Matches the idiom the placeholder scanner
+    already uses.
 
     Paths stay relative and rustfmt runs with `cwd=root`: the absolute forms
     total roughly 400 KB of argv, which approaches the platform limit on macOS.
     """
     out = subprocess.run(
-        ["git", "ls-files", "-z", "--", "*.rs"],
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.rs"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -102,10 +110,10 @@ def main() -> int:
         return 1
     print(f"rustfmt edition {edition} (from [workspace.package] in Cargo.toml)")
 
-    targets = tracked_rust_sources(root)
+    targets = rust_sources(root)
     if not targets:
         print(
-            "no tracked .rs files found - the enumerator matched nothing",
+            "no .rs files found - the enumerator matched nothing",
             file=sys.stderr,
         )
         return 1
@@ -132,12 +140,12 @@ def main() -> int:
                 "that is only\nvalid at its include! site does not parse "
                 "standalone; this gate does not skip\nsuch files. Either give "
                 "the fragment a form that parses on its own, or make it\na real "
-                f"module. {len(targets)} tracked .rs file(s) were submitted.",
+                f"module. {len(targets)} .rs file(s) were submitted.",
                 file=sys.stderr,
             )
         elif not args.write:
             print(
-                f"\n{len(targets)} tracked .rs file(s) checked. Diffs in a file "
+                f"\n{len(targets)} .rs file(s) checked. Diffs in a file "
                 "that no `mod`\ndeclaration reaches are invisible to `cargo fmt "
                 "--all -- --check`.\n"
                 "Fix with: python3 tools/ci/check_rustfmt_all.py --write",
@@ -146,7 +154,7 @@ def main() -> int:
         return result.returncode
 
     verb = "reformatted" if args.write else "checked"
-    print(f"{verb} {len(targets)} tracked .rs file(s) at edition {edition}")
+    print(f"{verb} {len(targets)} .rs file(s) at edition {edition}")
     return 0
 
 
