@@ -251,10 +251,55 @@ fn perform_module_authentication(
         stream.flush()?;
     }
 
-    let response = if let Some(line) = read_trimmed_line(reader)? {
-        line
-    } else {
-        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
+    // upstream: clientserver.c:806-808 - once the module is known, its own
+    // `timeout` policy tightens the absolute deadline while the claimed slot
+    // awaits authentication:
+    //
+    //     read_only = lp_read_only(i);
+    //     set_daemon_handshake_timeout(daemon_handshake_timeout(i));
+    //     auth_user = auth_server(f_in, f_out, i, host, addr, "@RSYNCD: AUTHREQD ");
+    //
+    // The bound exists because an ANONYMOUS peer can hold a max-connections
+    // slot open indefinitely by never answering the challenge. Upstream arms it
+    // before `auth_server()` rather than at the read, but its own comment at
+    // :1147 records that "this deadline is checked only in the read path", so
+    // arming immediately before the read is the same bound - and it keeps the
+    // challenge write, which is local work, off the clock.
+    //
+    // ⚠ The deadline must be consulted per READ SYSCALL, not per line: a peer
+    // trickling one byte at a time keeps a per-line `SO_RCVTIMEO` alive
+    // forever. `DeadlineBufRead` owns that placement.
+    let deadline_socket = reader
+        .get_ref()
+        .tcp_stream()
+        .and_then(|stream| stream.try_clone().ok());
+    let deadline = HandshakeDeadline::armed(handshake_timeout(module.timeout));
+    let response_line = read_trimmed_line(&mut DeadlineBufRead::new(
+        reader,
+        deadline_socket.as_ref(),
+        &deadline,
+    ));
+
+    // upstream: clientserver.c:819 - `set_daemon_handshake_timeout(0)` disarms
+    // before the post-xfer parent and pre-xfer/name-converter children are
+    // forked, so local setup never inherits an armed deadline. oc's analogue is
+    // clearing the socket timeout the clamp left on the fd.
+    if let Some(socket) = deadline_socket.as_ref() {
+        let _ = socket.set_read_timeout(None);
+    }
+
+    let response = match response_line {
+        Ok(Some(line)) => line,
+        Ok(None) => return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials)),
+        // upstream: io.c:147-153 - an elapsed deadline exits `RERR_TIMEOUT`; the
+        // read error is only the messenger, so the deadline decides.
+        Err(_) if deadline.expired() => {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                handshake_timeout_message("rsyncd"),
+            ));
+        }
+        Err(error) => return Err(error),
     };
 
     // Parse `<user> <response>` via the shared protocol helper - the exact

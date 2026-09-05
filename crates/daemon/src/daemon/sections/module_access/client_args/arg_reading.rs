@@ -245,8 +245,30 @@ fn client_args_log_line(
 fn read_and_log_client_args(
     ctx: &mut ModuleRequestContext<'_>,
     negotiated_protocol: Option<ProtocolVersion>,
+    module_timeout: Option<NonZeroU64>,
 ) -> io::Result<Option<Vec<String>>> {
-    let phase1_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
+    // upstream: clientserver.c:1149-1151 - the module's own `timeout` bounds the
+    // argv read, armed ONCE before `@RSYNCD: OK` and spanning BOTH `read_args()`
+    // calls, then disarmed at :1169:
+    //
+    //     set_daemon_handshake_timeout(daemon_handshake_timeout(module_id));
+    //     io_printf(f_out, "@RSYNCD: OK\n");
+    //     ...
+    //     set_daemon_handshake_timeout(0);
+    //
+    // One deadline across both phases, not one per phase: a peer that trickles
+    // phase 1 and then trickles phase 2 must not get the budget twice.
+    let deadline_socket = ctx
+        .reader
+        .get_ref()
+        .tcp_stream()
+        .and_then(|stream| stream.try_clone().ok());
+    let deadline = HandshakeDeadline::armed(handshake_timeout(module_timeout));
+
+    let phase1_args = match read_client_arguments(
+        &mut DeadlineBufRead::new(ctx.reader, deadline_socket.as_ref(), &deadline),
+        negotiated_protocol,
+    ) {
         Ok(args) => args,
         Err(err) => {
             // upstream: io.c:1477-1478 - `read_args()` reports its own refusal
@@ -296,7 +318,7 @@ fn read_and_log_client_args(
         // the WILD_CHARS escape when `protect_args` is set - so no
         // `unbackslash_arg()` pass is needed on either phase.
         match protocol::secluded_args::recv_secluded_args(
-            ctx.reader,
+            &mut DeadlineBufRead::new(ctx.reader, deadline_socket.as_ref(), &deadline),
             None,
             Some(protocol::secluded_args::MAX_DAEMON_ARGS),
         ) {
@@ -315,6 +337,14 @@ fn read_and_log_client_args(
         // through `glob_expand()` which handles shell metacharacters itself.
         unescape_phase1_option_args(phase1_args)
     };
+
+    // upstream: clientserver.c:1169 - `set_daemon_handshake_timeout(0)` once the
+    // argv is in hand. The handshake is over at this point and the transfer
+    // itself is governed by the negotiated `--timeout`, not by this bound, so
+    // leaving the clamp on the fd would silently cap every later read.
+    if let Some(socket) = deadline_socket.as_ref() {
+        let _ = socket.set_read_timeout(None);
+    }
 
     if let Some(log) = ctx.log_sink {
         let text = client_args_log_line(ctx.request, ctx.host_display(), ctx.peer_ip, &client_args);
