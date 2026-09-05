@@ -171,7 +171,13 @@ mod daemon_request_line_tests {
     #[test]
     fn an_unauthenticated_pull_renders_upstreams_anonymous_arm() {
         assert_eq!(
-            daemon_request_log_line("mod/f", ServerRole::Generator, None, "client.example", peer()),
+            daemon_request_log_line(
+                "mod/f",
+                ServerRole::Generator,
+                None,
+                "client.example",
+                peer()
+            ),
             "rsync on mod/f from client.example (10.0.0.7)",
         );
     }

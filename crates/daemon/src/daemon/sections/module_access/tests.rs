@@ -4202,7 +4202,13 @@ mod daemon_client_arg_logging_tests {
     fn line_for(args: &[&str]) -> String {
         let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
         let request = daemon_request(&owned).expect("an operand follows the marker");
-        daemon_request_log_line(&request, ServerRole::Generator, None, "client.example", PEER)
+        daemon_request_log_line(
+            &request,
+            ServerRole::Generator,
+            None,
+            "client.example",
+            PEER,
+        )
     }
 
     #[test]
