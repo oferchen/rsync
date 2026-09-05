@@ -74,6 +74,7 @@ fn serve_connections(
         daemon_chroot,
         proxy_protocol,
         proxy_protocol_hosts,
+        daemon_timeout,
         ..
     } = options;
 
@@ -398,6 +399,7 @@ fn serve_connections(
         bandwidth_limit,
         reverse_lookup,
         proxy_policy,
+        daemon_timeout,
     };
 
     // Select the accept engine once from the bound listener topology, then run

@@ -602,11 +602,20 @@ fn apply_global_directive(
             let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
             state.module_defaults.hosts_deny = Some(patterns);
         }
+        // `timeout` feeds TWO consumers, for the same reason `log file` does.
+        // It is `P_LOCAL`, so the global value is every module's default - the
+        // `module_defaults` half. But `daemon_handshake_timeout(-1)`
+        // (clientserver.c:92-100) reads `lp_timeout(-1)`, i.e. the GLOBAL value,
+        // and clientserver.c:1441 arms it BEFORE any module has been selected,
+        // to bound the pre-module handshake. Recording only the module default
+        // leaves that phase reading nothing and silently falling back to the
+        // 60s built-in bound.
         "timeout" => {
             let timeout = parse_timeout_seconds(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
             })?;
             state.module_defaults.timeout = Some(timeout);
+            store_global_directive(&mut state.daemon_timeout, timeout, canonical, line_number);
         }
         "dontcompress" => {
             if !value.is_empty() {
