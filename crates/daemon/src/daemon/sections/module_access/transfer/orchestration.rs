@@ -637,21 +637,40 @@ fn process_approved_module(
     // `iouring-send-zc` cargo feature, so a stock build's default path is byte-
     // and behavior-identical.
     let zero_copy_policy = config.write.zero_copy_policy;
-    let mut streams = match setup_transfer_streams(ctx, arm_drain, zero_copy_policy)? {
-        Some(s) => s,
-        None => {
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user.as_deref(),
-                &client_args,
-                MODULE_ABORT_EXIT_CODE,
-            );
-            return Ok(());
+    // upstream: io.c:211-250 `check_timeout()`. The reconciled `io_timeout` is
+    // armed on the socket as `SO_RCVTIMEO`/`SO_SNDTIMEO`, but that option lives
+    // on the shared socket and the drain thread's own 50 ms poll cadence
+    // overwrites it on a `try_clone`d fd - so the session timeout needs a
+    // userspace clock of its own. See `io_progress.rs`.
+    //
+    // upstream: io.c:239-240 `if (am_receiver) return;`. A receiver can spend a
+    // long time hashing without touching the socket; upstream leaves the timing
+    // decision to the generator process sharing that socket. oc fuses both roles
+    // into one thread, so honouring the gate means a daemon RECEIVING a push has
+    // no transfer-phase deadline - the same exposure upstream accepts for its
+    // receiver, and the conservative reading while the roles are fused.
+    let transfer_deadline = match role {
+        ServerRole::Receiver => None,
+        ServerRole::Generator => {
+            TransferDeadline::arm(io_timeout.map(|secs| Duration::from_secs(secs.get())))
         }
     };
+    let mut streams =
+        match setup_transfer_streams(ctx, arm_drain, zero_copy_policy, transfer_deadline)? {
+            Some(s) => s,
+            None => {
+                let host_owned = ctx.host_display().to_owned();
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_owned,
+                    auth_user.as_deref(),
+                    &client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
+                return Ok(());
+            }
+        };
 
     // Extract host name before building structs that borrow ctx, so the
     // borrow is released before the FSM transition mutates ctx.conn_state.

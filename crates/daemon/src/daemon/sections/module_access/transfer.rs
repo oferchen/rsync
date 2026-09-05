@@ -16,6 +16,8 @@
 
 include!("transfer/sandbox.rs");
 
+include!("transfer/io_progress.rs");
+
 include!("transfer/draining_reader.rs");
 
 include!("transfer/graceful_close.rs");

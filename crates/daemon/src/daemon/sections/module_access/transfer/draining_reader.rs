@@ -177,7 +177,19 @@ impl DrainingReader {
     /// receiver only ever has a bounded window of outstanding file requests, so
     /// the peer can only stream a bounded amount of delta data ahead of what
     /// the consumer drains.
-    fn new<R: DrainSource + 'static>(source: R) -> (Self, DrainHandle) {
+    /// Spawns the drain thread.
+    ///
+    /// `deadline` - present only when the session has a timeout and the role is
+    /// one upstream checks - ends the session once BOTH directions have been
+    /// idle that long. Every successful read stamps its clock, supplying the
+    /// `last_io_in` half of upstream's `MAX(last_io_out, last_io_in)`. See
+    /// `io_progress.rs` for why the deadline cannot live in `SO_RCVTIMEO`
+    /// alongside `DRAIN_READ_TIMEOUT`.
+    fn new<R: DrainSource + 'static>(
+        source: R,
+        deadline: Option<TransferDeadline>,
+    ) -> (Self, DrainHandle) {
+        let progress = deadline.as_ref().map(TransferDeadline::progress);
         let (tx, rx): (
             std::sync::mpsc::Sender<DrainItem>,
             std::sync::mpsc::Receiver<DrainItem>,
@@ -224,6 +236,13 @@ impl DrainingReader {
                             break 'drain;
                         }
                         Ok(n) => {
+                            // upstream: io.c stamps `last_io_in` when a read
+                            // yields data. This is the READ half of
+                            // `MAX(last_io_out, last_io_in)`; the writer stamps
+                            // the same cell for the write half.
+                            if let Some(progress) = &progress {
+                                progress.mark();
+                            }
                             // Unbounded send never blocks, so the thread loops
                             // straight back to `read()` and keeps the socket
                             // receive buffer drained. A send error means the
@@ -250,6 +269,21 @@ impl DrainingReader {
                             ) =>
                         {
                             if thread_inner.stop.load(Ordering::Acquire) {
+                                break 'drain;
+                            }
+                            // upstream: io.c:243-249 - the session's OWN timeout
+                            // is checked here, on the same tick that observes an
+                            // idle socket. `DRAIN_READ_TIMEOUT` is only the poll
+                            // CADENCE; without this arm the expiry is retried
+                            // forever and the session never ends, which is
+                            // exactly the defect this fixes.
+                            if let Some(idle) =
+                                deadline.as_ref().and_then(TransferDeadline::expired)
+                            {
+                                let _ = tx.send(DrainItem::End(Err(io::Error::new(
+                                    io::ErrorKind::TimedOut,
+                                    io_timeout_message("rsyncd", idle),
+                                ))));
                                 break 'drain;
                             }
                             // The read timeout already paces the loop (each
@@ -346,10 +380,11 @@ impl Drop for DrainingReader {
 mod draining_reader_tests {
     //! Byte-pipe fidelity and anti-deadlock (#503) tests for `DrainingReader`.
 
-    use super::DrainingReader;
+    use super::{DrainingReader, TransferDeadline};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::thread;
+    use std::time::Duration;
 
     /// A loopback TCP pair: the background writer feeds `payload` in small
     /// chunks with a flush between them, mimicking a peer streaming delta
@@ -377,7 +412,7 @@ mod draining_reader_tests {
         // regardless of chunking: the wrapper is a transparent byte pipe.
         let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         let sock = spawn_socket_feeder(payload.clone(), 1500);
-        let (mut reader, _handle) = DrainingReader::new(sock);
+        let (mut reader, _handle) = DrainingReader::new(sock, None);
 
         let mut received = Vec::new();
         reader.read_to_end(&mut received).expect("read to end");
@@ -397,7 +432,7 @@ mod draining_reader_tests {
         // time, and all bytes still arrive intact.
         let payload: Vec<u8> = (0..500_000u32).map(|i| (i % 253) as u8).collect();
         let sock = spawn_socket_feeder(payload.clone(), 4096);
-        let (mut reader, _handle) = DrainingReader::new(sock);
+        let (mut reader, _handle) = DrainingReader::new(sock, None);
 
         let mut received = Vec::with_capacity(payload.len());
         let mut one = [0u8; 1];
@@ -419,7 +454,7 @@ mod draining_reader_tests {
         // calls it again). No panic, no hang.
         let payload = vec![7u8; 64];
         let sock = spawn_socket_feeder(payload, 16);
-        let (reader, handle) = DrainingReader::new(sock);
+        let (reader, handle) = DrainingReader::new(sock, None);
         handle.stop();
         handle.stop(); // idempotent
         drop(reader); // Drop's stop_and_join must also be a no-op now.
@@ -431,7 +466,7 @@ mod draining_reader_tests {
         // drained - no bytes dropped ahead of EOF.
         let payload = vec![1u8, 2, 3, 4, 5];
         let sock = spawn_socket_feeder(payload.clone(), 2);
-        let (mut reader, _handle) = DrainingReader::new(sock);
+        let (mut reader, _handle) = DrainingReader::new(sock, None);
         let mut got = Vec::new();
         reader.read_to_end(&mut got).expect("read to end");
         assert_eq!(got, payload);
@@ -466,7 +501,7 @@ mod draining_reader_tests {
         // Left with no read timeout on purpose: the drain thread arms it
         // itself, so the prompt join must not depend on any caller-side flag.
         let sock = TcpStream::connect(addr).expect("connect loopback");
-        let (reader, handle) = DrainingReader::new(sock);
+        let (reader, handle) = DrainingReader::new(sock, None);
 
         let start = std::time::Instant::now();
         handle.stop();
@@ -487,7 +522,7 @@ mod draining_reader_tests {
         // stops the handle; no byte the thread already buffered may be lost.
         let payload: Vec<u8> = (0..40_000u32).map(|i| (i % 249) as u8).collect();
         let sock = spawn_socket_feeder(payload.clone(), 3000);
-        let (mut reader, handle) = DrainingReader::new(sock);
+        let (mut reader, handle) = DrainingReader::new(sock, None);
 
         // Drain the entire payload through the reader (it arrives via the
         // background thread's queue), then stop.
@@ -543,7 +578,7 @@ mod draining_reader_tests {
         // The goodbye reader is a separate clone of the same socket, exactly as
         // the daemon splits `read_stream` (drain) from `ctx.reader` (goodbye).
         let mut goodbye_reader = drain_sock.try_clone().expect("clone for goodbye");
-        let (mut reader, handle) = DrainingReader::new(drain_sock);
+        let (mut reader, handle) = DrainingReader::new(drain_sock, None);
 
         // Consume the first burst through the drain reader.
         let mut got_first = vec![0u8; first.len()];
@@ -614,7 +649,7 @@ mod draining_reader_tests {
         let mut write_clone = sock.try_clone().expect("clone for write");
         // Arming the read timeout on the drain clone must NOT make `write_clone`
         // non-blocking (which would truncate the write below).
-        let (_reader, handle) = DrainingReader::new(sock);
+        let (_reader, handle) = DrainingReader::new(sock, None);
 
         // Write from a dedicated thread so the test cannot deadlock if the
         // invariant is violated: the peer drains concurrently.
@@ -638,5 +673,70 @@ mod draining_reader_tests {
             "write clone bytes must arrive intact and in order"
         );
         handle.stop();
+    }
+
+    /// A connected loopback pair whose PEER END IS HELD OPEN, so the drain
+    /// reader observes a silent socket rather than EOF. Returning the server
+    /// half is what keeps it silent: dropping it would close the connection and
+    /// the drain would end on EOF instead of on the deadline.
+    fn silent_socket_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let client = TcpStream::connect(addr).expect("connect loopback");
+        let (server, _) = listener.accept().expect("accept");
+        (client, server)
+    }
+
+    #[test]
+    fn an_expired_deadline_ends_a_silent_session() {
+        // The defect this fixes: `DRAIN_READ_TIMEOUT` makes every read on an
+        // idle socket return `TimedOut`, and the retry arm swallowed all of
+        // them - so a peer that went silent mid-transfer kept the session open
+        // forever. upstream ends it at `check_timeout()` (io.c:243-249).
+        //
+        // The deadline is armed at zero, so the first idle tick is already past
+        // the bound: the assertion is on the ARM being consulted at all, not on
+        // any elapsed wall-clock interval.
+        let (client, _peer) = silent_socket_pair();
+        let deadline = TransferDeadline::arm(Some(Duration::ZERO));
+        let (mut reader, handle) = DrainingReader::new(client, deadline);
+
+        // ⚠ The read runs on a worker with a bounded wait, NOT inline. Without
+        // the fix this read BLOCKS FOREVER on a silent socket, and a mutation
+        // that hangs reports nothing and stalls the suite instead of failing.
+        // The watchdog is a FAILURE deadline, not a timing assertion: the
+        // correct path answers within one `DRAIN_READ_TIMEOUT` tick (~50 ms),
+        // three orders of magnitude inside this bound.
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 16];
+            let _ = tx.send(reader.read(&mut buf).map(|_| ()));
+        });
+
+        let outcome = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the session must end rather than stay open on a silent peer");
+        let err = outcome.expect_err("an expired deadline must end the session");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            err.to_string().contains("io timeout after"),
+            "the peer must see upstream's diagnostic, got: {err}"
+        );
+        handle.stop();
+    }
+
+    #[test]
+    fn a_live_deadline_does_not_interrupt_a_healthy_transfer() {
+        // Non-vacuity companion: the arm above must fire on EXPIRY, not on
+        // every timed-out read. With a bound no run can reach, the same idle
+        // ticks occur and the payload still arrives intact.
+        let payload: Vec<u8> = (0..50_000u32).map(|i| (i % 251) as u8).collect();
+        let sock = spawn_socket_feeder(payload.clone(), 1024);
+        let deadline = TransferDeadline::arm(Some(Duration::from_secs(3600)));
+        let (mut reader, _handle) = DrainingReader::new(sock, deadline);
+
+        let mut received = Vec::new();
+        reader.read_to_end(&mut received).expect("read to end");
+        assert_eq!(received, payload);
     }
 }
