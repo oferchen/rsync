@@ -1080,9 +1080,49 @@ jobs:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
       transport: 'tcp'
-      # Its OWN manifest: --daemon-tests-only selects a different (smaller) set,
-      # so the pipe manifest would fail the driver's coverage guard outright.
+      # Its OWN manifests: --daemon-tests-only selects a different (smaller) set,
+      # so the pipe manifests would fail the driver's coverage guard outright.
       expect_result_macos: tools/ci/upstream-3.5.0-expect.macos.nonroot.tcp.txt
+      expect_result_macos_root: tools/ci/upstream-3.5.0-expect.macos.root.tcp.txt
+
+  # ===========================================================================
+  # 3.5.0 testsuite, macOS, ROOT - both transports
+  # ---------------------------------------------------------------------------
+  # These complete the {nonroot,root} x {pipe,tcp} matrix on macOS, which Linux
+  # has carried since PR #7408. The privilege axis is what unlocks the
+  # symlink-race and confinement family - the cells whose Linux passes rest on
+  # Landlock rather than on the userspace guard (task 1137 measured that guard
+  # failing on BOTH platforms under a symlinked ancestor). macOS has no
+  # Landlock, so this is the only place the guard is exercised unaided.
+  #
+  # MEASURED, each from an executed run of the leg it describes - never
+  # predicted from the Linux legs, because that prediction was measured wrong
+  # once already (52 cells forecast for the macOS tcp leg, 32 actually run):
+  #
+  #   root/pipe  266 pass /  2 fail / 77 skip   (345 selected)
+  #   root/tcp   124 pass / 12 fail / 19 skip   (155 selected)
+  #
+  # The root/tcp failure set is IDENTICAL to the Linux root/tcp one, cell for
+  # cell, all twelve. So the macOS privilege axis adds no divergence of its own
+  # over Linux on this transport; it re-runs the same known-failing cells
+  # unaided by Landlock, which is the point of having it.
+  #
+  # root/pipe's two are `daemon-module-private-parent` and
+  # `partial-protected-regular-retry-policy` - both pre-existing and owned, and
+  # both recorded as `fail` rows rather than hidden, exactly as the Linux legs
+  # record theirs. The gate therefore fires on DRIFT from this state.
+  #
+  # Non-required, matching the macOS pipe leg. NO new caller job: the two
+  # callers above already invoke the reusable workflow, whose `variant` input
+  # defaults to `all`, so each of them now publishes BOTH legs -
+  # `upstream-testsuite-macos / upstream testsuite (macOS, root)` and
+  # `upstream-testsuite-macos-tcp / upstream testsuite (macOS, root)`.
+  #
+  # That is the shape `_upstream-testsuite.yml` already uses on Linux, and it
+  # is the reason not to add a caller per privilege leg: pinning one variant
+  # per caller makes the deselected job report a permanently SKIPPED check,
+  # four of them here, which is noise no reader can act on.
+  # ===========================================================================
 
   # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)

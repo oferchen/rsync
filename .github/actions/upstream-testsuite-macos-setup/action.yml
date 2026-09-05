@@ -1,0 +1,174 @@
+name: 'Upstream testsuite macOS setup'
+description: >-
+  Everything the macOS upstream-testsuite legs need before runtests.py: the
+  toolchain, the caches, the checksum libraries upstream's ./configure demands,
+  and the oc-rsync binary under test.
+
+# WHY THIS IS A COMPOSITE ACTION
+# ---------------------------------------------------------------------------
+# `_upstream-testsuite-macos.yml` runs the same corpus under four
+# configurations: {nonroot,root} x {pipe,tcp}. The transport is an input to one
+# job, but the privilege axis cannot be - a root leg has to re-exec the harness
+# under sudo, so it is a SEPARATE job.
+#
+# Those two jobs differ only in their last three steps (run / summarise /
+# upload). Everything before that is identical, and `_upstream-testsuite.yml`
+# shows what happens when it is copied instead of shared: its nonroot and root
+# jobs carry two divergent copies of the same six-step preamble.
+#
+# Checkout deliberately stays in the CALLER. A local `uses: ./...` action can
+# only be resolved once the repository is on disk, so an action cannot check
+# out the tree it is loaded from.
+
+inputs:
+  cache_version:
+    description: 'Cache version for invalidation (the workflow''s CACHE_VERSION)'
+    required: true
+  upstream_rsync_version:
+    description: 'Upstream rsync version to fetch and build as the oracle'
+    required: true
+  rust_cache_key:
+    description: >-
+      Distinguishes this job's Rust cache from its sibling's. The nonroot and
+      root legs build the same binary but write different scratch trees, so
+      they take separate keys exactly as the Linux legs do.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (stable)
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      with:
+        toolchain: stable
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+      with:
+        shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ inputs.rust_cache_key }}
+        cache-on-failure: true
+
+    - name: Cache upstream rsync source
+      id: cache-upstream
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          target/interop/upstream-src/rsync-${{ inputs.upstream_rsync_version }}
+        # THIS FILE is part of the key because it is what supplies the
+        # CPPFLAGS/LDFLAGS that decide which checksum libraries upstream's
+        # ./configure finds. `run_upstream_testsuite.sh` skips ./configure when
+        # `shconfig` is present, so a tree cached under a different flag set
+        # would be reused with its ORIGINAL feature set and no step would
+        # notice.
+        #
+        # The calling workflow is hashed too: it still chooses the transport
+        # and the sudo re-exec, and a cached tree is only valid for the
+        # configuration that produced it.
+        key: upstream-testsuite-src-${{ inputs.upstream_rsync_version }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', '.github/actions/upstream-testsuite-macos-setup/action.yml', '.github/workflows/_upstream-testsuite-macos.yml') }}-${{ runner.os }}
+
+    # macOS runners ship Xcode CLT (cc, make) and autoconf/automake/libtool,
+    # which is what upstream's `./configure && make` needs. Recorded rather
+    # than installed: an unconditional `brew install` here would spend minutes
+    # on every run to re-assert what the image already provides, and a MISSING
+    # tool must surface as a build failure naming the tool, not as a silent
+    # capability difference in the rsync that gets built.
+    - name: Record the upstream build toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        for tool in cc make autoconf automake libtool python3; do
+          printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo '<ABSENT>')"
+        done
+
+    # The libraries are a different case from the tools above, and the first
+    # run of this leg is what showed the difference: ./configure ABORTED with
+    #
+    #   - Failed to find openssl/md4.h and openssl/md5.h for openssl crypto
+    #   - Failed to find xxhash.h for xxhash checksum support
+    #   configure.sh: error: Aborting configure run
+    #
+    # so the leg never ran a single test. That is upstream's deliberate
+    # design (configure.ac:629-643 aborts whenever `no_lib` is non-empty, so a
+    # missing library is never silently compiled out) and it is the behaviour
+    # the step above asks for. It leaves exactly two ways forward, and they
+    # produce DIFFERENT ORACLES:
+    #
+    #   (a) install the libraries        -> oracle matches the Linux legs
+    #   (b) --disable-openssl --xxhash   -> oracle diverges from the Linux legs
+    #
+    # (a) is what this does. `_upstream-testsuite.yml` installs libxxhash-dev
+    # (APT_PACKAGES) and the ubuntu image supplies openssl, so BOTH Linux legs
+    # build an oracle with openssl and xxhash ENABLED. Disabling them here
+    # would mean the macOS oracle advertises a different checksum list from
+    # the Linux one, and a macOS-only divergence could then be the oracle
+    # rather than oc - which is precisely the comparison this leg exists to
+    # make.
+    #
+    # MEASURED, and the reason CPPFLAGS/LDFLAGS are set rather than just
+    # installing: macOS `cc` does not search the Homebrew prefix, and
+    # `openssl@3` is keg-only so its headers are not linked into that prefix
+    # at all. A bare `cc` over both headers fails on `xxhash.h`; adding
+    # `-I$(brew --prefix)/include` compiles; adding the openssl prefix too
+    # compiles AND links. A `brew install` on its own would leave ./configure
+    # aborting exactly as before.
+    #
+    # The install is CONDITIONAL for the same reason the step above declines
+    # to install: re-asserting what the image already provides costs minutes
+    # per run and buys nothing.
+    - name: Provide the checksum libraries upstream's configure requires
+      shell: bash
+      run: |
+        set -euo pipefail
+        for formula in openssl@3 xxhash; do
+          if brew list --versions "$formula" >/dev/null 2>&1; then
+            printf '%-10s present\n' "$formula"
+          else
+            printf '%-10s installing\n' "$formula"
+            brew install "$formula"
+          fi
+        done
+
+        BREW_PREFIX=$(brew --prefix)
+        OPENSSL_PREFIX=$(brew --prefix openssl@3)
+        printf 'brew prefix     %s\n' "$BREW_PREFIX"
+        printf 'openssl@3       %s\n' "$OPENSSL_PREFIX"
+
+        CPPFLAGS="-I${BREW_PREFIX}/include -I${OPENSSL_PREFIX}/include"
+        LDFLAGS="-L${BREW_PREFIX}/lib -L${OPENSSL_PREFIX}/lib"
+
+        # Prove the flags actually resolve the headers AND the symbols
+        # ./configure probes (configure.ac AC_SEARCH_LIBS XXH64_createState /
+        # EVP_MD_CTX_copy). Without this the next observable symptom would be
+        # a silently feature-poor oracle, which is the failure mode this leg
+        # is least able to detect.
+        #
+        # Written with printf rather than a heredoc: a quoted heredoc
+        # terminator has to sit at column 0 of the shell script, which inside
+        # a YAML block scalar would close the block instead.
+        probe=$(mktemp -d)
+        printf '%s\n' \
+          '#include <xxhash.h>' \
+          '#include <openssl/md4.h>' \
+          '#include <openssl/md5.h>' \
+          '#include <openssl/evp.h>' \
+          'int main(void) { XXH64_createState(); EVP_MD_CTX_new(); return 0; }' \
+          >"${probe}/probe.c"
+        # shellcheck disable=SC2086
+        cc $CPPFLAGS $LDFLAGS "${probe}/probe.c" -lxxhash -lcrypto -o "${probe}/probe"
+        echo "checksum library probe: compiled and linked"
+
+        # Published under UPSTREAM_-prefixed names, NOT as CPPFLAGS/LDFLAGS.
+        # $GITHUB_ENV is process-wide for every later step, and bare
+        # CPPFLAGS/LDFLAGS naming the Homebrew prefix would also reach `Build
+        # oc-rsync (release)`, where cc-crate build scripts honour them - it
+        # could change which zlib/openssl the binary under test links against.
+        # The testsuite step maps these onto CPPFLAGS/LDFLAGS in its own
+        # `env:`, so only upstream's ./configure sees them.
+        {
+          echo "UPSTREAM_CPPFLAGS=${CPPFLAGS}"
+          echo "UPSTREAM_LDFLAGS=${LDFLAGS}"
+        } >> "$GITHUB_ENV"
+
+    - name: Build oc-rsync (release)
+      uses: ./.github/actions/build-oc-rsync
