@@ -4186,12 +4186,12 @@ mod daemon_argv_limit_tests {
     }
 }
 
-/// Pins that the daemon's client-argument log line carries the argument
-/// COUNT and never the argument bytes.
+/// Pins what a peer can and cannot get appended to the operator's log file
+/// through the daemon's per-request line.
 ///
-/// Upstream writes no argument vector to the daemon log at any verbosity, so
-/// there is no upstream line to mirror - the pin is that a peer cannot get its
-/// own bytes appended to the operator's log file.
+/// upstream: io.c:1486-1495 - `request` is assembled from the argv entries
+/// AFTER the `.` cwd marker, so a client's OPTION args never reach the log at
+/// any verbosity, while its file operands do, exactly as upstream writes them.
 #[cfg(test)]
 mod daemon_client_arg_logging_tests {
     use super::*;
@@ -4199,40 +4199,41 @@ mod daemon_client_arg_logging_tests {
 
     const PEER: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
 
-    #[test]
-    fn the_log_line_reports_the_count_and_not_the_arguments() {
-        let payload = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-        let args = vec![
-            "--server".to_string(),
-            payload.to_string(),
-            payload.to_string(),
-        ];
+    fn line_for(args: &[&str]) -> String {
+        let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        let request = daemon_request(&owned).expect("an operand follows the marker");
+        daemon_request_log_line(
+            &request,
+            ServerRole::Generator,
+            None,
+            "client.example",
+            PEER,
+        )
+    }
 
-        let line = client_args_log_line("data", "client.example", PEER, &args);
+    #[test]
+    fn option_arguments_never_reach_the_log_line() {
+        let payload = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let line = line_for(&["--server", payload, "-e.LsfxCIu", ".", "data/f"]);
 
         assert!(
             !line.contains(payload),
-            "a peer-supplied argument reached the daemon log: {line}"
+            "a peer-supplied option argument reached the daemon log: {line}"
         );
         assert!(
             !line.contains("--server"),
-            "a peer-supplied argument reached the daemon log: {line}"
+            "a peer-supplied option argument reached the daemon log: {line}"
         );
-        assert_eq!(
-            line,
-            "module 'data' from client.example (203.0.113.7): 3 client args"
-        );
+        assert_eq!(line, "rsync on data/f from client.example (203.0.113.7)");
     }
 
-    /// Non-vacuity companion: the count is real, so the line above is not
-    /// merely constant text that would pass however the arguments were
-    /// handled.
+    /// Non-vacuity companion: the operand IS carried, so the assertions above
+    /// are not passing merely because the line is constant text.
     #[test]
-    fn the_reported_count_tracks_the_vector_length() {
-        let empty: Vec<String> = Vec::new();
-        let one = vec!["-r".to_string()];
-
-        assert!(client_args_log_line("data", "h", PEER, &empty).ends_with("0 client args"));
-        assert!(client_args_log_line("data", "h", PEER, &one).ends_with("1 client args"));
+    fn the_operand_is_carried_verbatim() {
+        assert_eq!(
+            line_for(&["--server", ".", "data/other"]),
+            "rsync on data/other from client.example (203.0.113.7)",
+        );
     }
 }
