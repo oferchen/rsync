@@ -72,6 +72,8 @@ use crate::{
 };
 
 mod at_error;
+pub(crate) mod handshake_deadline;
+use handshake_deadline::{HandshakeDeadline, handshake_timeout, handshake_timeout_message};
 mod help;
 pub(crate) mod operator_file;
 pub(crate) mod peer_address;

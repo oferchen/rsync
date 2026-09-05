@@ -59,16 +59,30 @@ fn handle_session(
     // the server to send the @RSYNCD greeting first!
     // Always use Legacy mode for daemon connections.
     let style = SessionStyle::Legacy;
-    // The `@RSYNCD:` greeting exchange is deliberately left untimed, matching
-    // upstream. Upstream keeps io_timeout at 0 (options.c:102) until a module
-    // has been selected, only then arming lp_timeout(module_id)
-    // (clientserver.c:1206); the handshake itself runs with no I/O deadline.
-    // Arming one here tore down connections whose peer was momentarily
-    // CPU-starved under a burst: the handshake read timed out, the worker
-    // returned an error, and dropping the socket with the client's still-unread
-    // request in the kernel buffer sent an RST that the client surfaced as
-    // "Connection reset by peer". The per-module `timeout` directive still
-    // governs the data phase via apply_module_timeout once the module is known.
+    // The `@RSYNCD:` greeting exchange is bounded by upstream's handshake
+    // deadline - see `handshake_deadline` for the contract and its citations.
+    //
+    // ⚠ This block previously asserted the opposite ("deliberately left
+    // untimed, matching upstream") on the strength of io_timeout staying 0
+    // until a module is selected (options.c:102). That reading was accurate
+    // against the 3.4.4 pin and is FALSE at 3.5.0: `grep -c daemon_handshake`
+    // over io.c and clientserver.c gives 0 at 3.4.4 and 6 at each 3.5.0 file.
+    // The io_timeout premise is still true and simply does not carry the
+    // conclusion - 3.5.0's deadline is a SEPARATE mechanism from io_timeout.
+    //
+    // The regression that block recorded is real and is why the SHAPE matters:
+    // arming a short per-read timeout here tore down connections whose peer was
+    // momentarily CPU-starved, and dropping the socket with the client's unread
+    // request still buffered sent an RST surfacing as "Connection reset by
+    // peer". Upstream's mechanism does not do that - it is a 60s ABSOLUTE bound
+    // on the whole phase, which a starved peer clears by orders of magnitude,
+    // and on expiry it DIAGNOSES and exits RERR_TIMEOUT rather than dropping
+    // the socket mutely. A per-read idle timeout would re-introduce exactly the
+    // regression above AND be defeated by a client that trickles one byte at a
+    // time, which is the shape the upstream cell probes.
+    //
+    // The per-module `timeout` directive still governs the data phase via
+    // apply_module_timeout once the module is known.
 
     // upstream: clientserver.c:1443-1446 - `if (lp_proxy_protocol())` reads the
     // header before any rsync protocol data, but ONLY after the peer clears the
@@ -275,6 +289,31 @@ pub(crate) fn single_session_exit(
 /// Nothing reads the state once the handler returns, so what is worth
 /// recording is the invariant rather than the value: a handler must not reach
 /// a second teardown after already closing.
+/// Clamps the next handshake read to the time left before the deadline.
+///
+/// upstream: io.c:143-157 `handshake_poll_timeout_ms()` clamps the ordinary poll
+/// timeout down to the remaining time before every wait. Upstream owns its own
+/// poll loop; oc's legacy handshake reads a blocking socket, so the equivalent
+/// clamp is `SO_RCVTIMEO`. Same bound, same site - it is applied before every
+/// peer read, which is why the loop calls this everywhere it re-arms QUICKACK.
+///
+/// A disarmed deadline yields `Duration::MAX`, which is not a representable
+/// socket timeout; that case clears the timeout instead, leaving the read
+/// unbounded exactly as a disarmed deadline requires.
+fn arm_next_handshake_read(stream: Option<&TcpStream>, deadline: &HandshakeDeadline) {
+    let Some(stream) = stream else {
+        return;
+    };
+    let timeout = match deadline.remaining() {
+        // Expired: leave a previously-set timeout in place so the pending read
+        // returns promptly and the caller's `expired()` arm owns the decision.
+        None => return,
+        Some(left) if left == Duration::MAX => None,
+        Some(left) => Some(left),
+    };
+    let _ = stream.set_read_timeout(timeout);
+}
+
 fn end_session(state: ConnectionState, exit_code: Option<ExitCode>) -> Option<ExitCode> {
     debug_assert!(
         !state.is_terminal(),
@@ -354,11 +393,35 @@ fn handle_legacy_session(
     let mut session_exit_code: Option<ExitCode> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
+    // The pre-module phase takes upstream's full bound: it is armed before any
+    // module is known (clientserver.c:1441), and a module `timeout` can only
+    // ever shorten a later phase, never extend this one.
+    let deadline = HandshakeDeadline::armed(handshake_timeout(0));
+
     // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
     // round's ACK stays immediate across the multi-line greeting exchange.
-    fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
-    while let Some(line) = read_trimmed_line(&mut reader)? {
-        fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
+    // The deadline clamp rides the same site for the same reason - both must
+    // precede every peer read.
+    arm_next_handshake_read(reader.get_ref().tcp_stream(), &deadline);
+    while let Some(line) = match read_trimmed_line(&mut reader) {
+        Ok(line) => line,
+        // upstream: io.c:147-153 - the deadline is consulted at the wait, and an
+        // elapsed one DIAGNOSES then exits RERR_TIMEOUT. The read error itself
+        // is only the messenger: SO_RCVTIMEO surfaces as WouldBlock/TimedOut, so
+        // the deadline - not the errno - decides whether this is a timeout.
+        Err(error) if deadline.expired() => {
+            if let Some(log) = log_sink.as_ref() {
+                let message = rsync_error!(30, handshake_timeout_message("rsyncd"))
+                    .with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            let _ = error;
+            // FSM: -> Closing on the expired handshake deadline.
+            return Ok(end_session(conn_state, Some(ExitCode::Timeout)));
+        }
+        Err(error) => return Err(error),
+    } {
+        arm_next_handshake_read(reader.get_ref().tcp_stream(), &deadline);
         // upstream: clientserver.c:180-213 exchange_protocols() (am_client == 0) -
         // the daemon validates the client's version greeting before proceeding,
         // refusing a line that is not a banner at all, or one that omits the
