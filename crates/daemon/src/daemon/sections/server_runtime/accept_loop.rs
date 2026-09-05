@@ -295,6 +295,28 @@ fn serve_connections(
     #[cfg(not(unix))]
     let _ = detach;
 
+    // Announce the daemon BEFORE any readiness signal an observer can act on.
+    //
+    // upstream: clientserver.c:1770 logs "rsyncd version %s starting, listening
+    // on port %d" and only then calls start_accept_loop() (:1776), which is
+    // where socket.c binds AND listens. So upstream guarantees the banner is in
+    // the log before the port can complete a handshake.
+    //
+    // oc binds earlier than upstream on purpose (see become_daemon above: a bind
+    // failure must reach the launching terminal's stderr rather than a detached
+    // child's log), so by this point the socket is already listening and that
+    // guarantee cannot be expressed as "log before listen". The observable
+    // readiness signal is the pid file - it is what an operator, an init system
+    // and upstream's own `daemon-standalone-detach` cell wait on - so the banner
+    // is emitted before it is written. That inverts upstream's line order
+    // (pid file at :1759/:1705, banner at :1770) and is the deliberate cost of
+    // the earlier bind; the property upstream actually provides is preserved.
+    if let Some(log) = log_sink.as_ref() {
+        let text = format!("rsyncd version {version} starting, listening on port {port}");
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
     // Write the PID file after binding so the file only appears once the port
     // is ready to accept connections - matching upstream main.c write_pid_file().
     let pid_guard = if let Some(path) = pid_file {
@@ -355,12 +377,6 @@ fn serve_connections(
     };
     if let Err(error) = notifier.ready(Some(&ready_status)) {
         log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
-    }
-
-    if let Some(log) = log_sink.as_ref() {
-        let text = format!("rsyncd version {version} starting, listening on port {port}");
-        let message = rsync_info!(text).with_role(Role::Daemon);
-        log_message(log, &message);
     }
 
     let mut state = AcceptLoopState {
