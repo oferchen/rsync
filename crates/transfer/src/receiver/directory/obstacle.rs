@@ -56,7 +56,6 @@ use std::io;
 use std::path::Path;
 
 #[cfg(any(unix, windows))]
-use crate::pipeline::receiver::upstream_errno_text;
 #[cfg(any(unix, windows))]
 use crate::receiver::ReceiverContext;
 
@@ -378,7 +377,7 @@ impl ReceiverContext {
                 &format!(
                     "rsync: [receiver] delete_file: rmdir({}) failed: {}\n",
                     relative_path.display(),
-                    upstream_errno_text(&error)
+                    logging::upstream_errno_text(&error)
                 ),
             );
         }
@@ -408,7 +407,7 @@ impl ReceiverContext {
             &format!(
                 "rsync: [receiver] delete_file: unlink({}) failed: {}\n",
                 relative_path.display(),
-                upstream_errno_text(&error)
+                logging::upstream_errno_text(&error)
             ),
         );
         self.report_make_way_failure(writer, relative_path, make_way_for, error)
@@ -478,7 +477,7 @@ impl ReceiverContext {
             crate::pipeline::receiver::keep_backup_failed_line(
                 &relative_path.display().to_string(),
                 &error,
-                &upstream_errno_text(&error),
+                &logging::upstream_errno_text(&error),
             )
         );
         let _ = self.emit_error_line(writer, &line);
