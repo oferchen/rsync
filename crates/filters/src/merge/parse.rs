@@ -44,12 +44,10 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1; // 1-indexed for error messages
 
-        // upstream: exclude.c:1514 parse_filter_file - a line is skipped only
-        // when it is empty or (line parsing) begins with `;`/`#`. Whitespace is
-        // never stripped, so a whitespace-only line and a leading-whitespace
-        // rule both fall through to parse_rule_tok and raise "Unknown filter
-        // rule" (RERR_SYNTAX). Trailing whitespace stays part of the pattern.
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+        // upstream: exclude.c:1806 parse_filter_file. `filter_file_line_is_rule`
+        // is the single owner of that test; see `merge::skip` for why it must
+        // not trim first.
+        if !crate::filter_file_line_is_rule(line, true) {
             continue;
         }
 
@@ -124,11 +122,11 @@ pub(crate) fn parse_rules_no_prefixes(
         }
     } else {
         for line in content.lines() {
-            // upstream: exclude.c:1514 parse_filter_file - skip only empty and
-            // (line parsing) `;`/`#` comment lines; the surviving line becomes a
-            // literal pattern verbatim (FILTRULE_NO_PREFIXES takes strlen with no
-            // trimming, exclude.c:1313), so leading/trailing whitespace is kept.
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            // upstream: exclude.c:1806 parse_filter_file, via the single owner
+            // `filter_file_line_is_rule`. The surviving line becomes a literal
+            // pattern verbatim (FILTRULE_NO_PREFIXES takes strlen with no
+            // trimming, exclude.c:1465), so leading/trailing whitespace is kept.
+            if !crate::filter_file_line_is_rule(line, true) {
                 continue;
             }
             push_token(line);
