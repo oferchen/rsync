@@ -598,7 +598,30 @@ pub(super) fn operand_has_dotdir_marker(path: &Path) -> bool {
 /// `Path::components()` performs exactly the cleaning upstream's flags select:
 /// interior `.` components and redundant separators are dropped, a trailing `/`
 /// or `/.` disappears, and `..` is preserved verbatim (upstream rejects `..` in
-/// the active part of a relative path at `flist.c:2658-2668`).
+/// the active part of a relative path at `flist.c:2658-2668`). It is also the
+/// only spelling that parses a Windows path PREFIX (`C:\`, `\\?\`, UNC)
+/// correctly; a hand-rolled byte scan for separators would corrupt those.
+///
+/// # Separators on Windows
+///
+/// `components().collect()` re-joins with the PLATFORM separator, so on Windows
+/// this returns `src\d` for `src/d/`. That is correct at this layer, and it is
+/// not a new condition: every recursive child name is built with
+/// `PathBuf::push`/`join`, which has appended `\` on Windows since long before
+/// this function existed (`src/d` + `f.txt` = `src/d\f.txt`). Nothing
+/// downstream reads the local separator - all three consumers normalise:
+///
+/// - the wire encoder: `FileListWriter::write_entry()` takes
+///   `FileEntry::name_bytes()` (`protocol/src/flist/write/mod.rs:470`), which
+///   is `wire_path::path_bytes_to_wire()` and folds `\` to `/`;
+/// - the sort that the NDX stream depends on: `sort.rs` and `name_cmp.rs`
+///   compare `name_bytes()` / `path_bytes_to_wire(dirname())`, so ordering is
+///   decided on `/`-separated bytes;
+/// - filter matching: `filters/src/compiled/pattern.rs:path_match_bytes()`
+///   folds `\` to `/` before `wildmatch()`.
+///
+/// The unit test therefore asserts the WIRE bytes, not the local `OsStr`: that
+/// is the invariant with meaning, and it holds identically on both platforms.
 ///
 /// # Upstream Reference
 ///
@@ -744,8 +767,21 @@ pub(super) use protocol::flist::apply_permutation_in_place;
 #[cfg(test)]
 mod relative_operand_name_tests {
     use super::{operand_has_dotdir_marker, relative_walk_base};
-    use std::ffi::OsStr;
-    use std::path::Path;
+    use protocol::flist::FileEntry;
+    use std::path::{Path, PathBuf};
+
+    /// The bytes `path` would contribute to a transmitted file-list name.
+    ///
+    /// Routed through the production encoder rather than a reimplementation:
+    /// `FileEntry::name_bytes()` is what `FileListWriter::write_entry()` calls
+    /// (`protocol/src/flist/write/mod.rs:470`), and it applies
+    /// `wire_path::path_bytes_to_wire()`. Asserting here rather than on the
+    /// local `OsStr` makes the expectation platform-independent AND pins the
+    /// byte that actually leaves the process.
+    fn wire_name(path: &Path) -> String {
+        let entry = FileEntry::new_file(PathBuf::from(path), 0, 0o644);
+        String::from_utf8_lossy(&entry.name_bytes()).into_owned()
+    }
 
     /// upstream: flist.c:2642-2657 - the `--relative` transmitted name is
     /// `clean_fname(fn, CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR)`
@@ -757,11 +793,21 @@ mod relative_operand_name_tests {
     /// ("sender echoed NDX 4 but expected 2", exit 12). The `/.` spelling
     /// leaks `src/d/./f.txt` names instead.
     ///
-    /// ⚠ Compared as raw `OsStr` bytes, never as `Path`/`PathBuf`. `PathBuf`'s
+    /// ⚠ Compared as wire BYTES, never as `Path`/`PathBuf`. `PathBuf`'s
     /// `PartialEq` compares `components()`, under which `"src/d/"`,
     /// `"src/d/."` and `"src/d"` are all EQUAL - the exact distinction this
     /// test exists to make. A `PathBuf` comparison here passes even with the
     /// normalisation deleted.
+    ///
+    /// ⚠ And compared as WIRE bytes, not local `OsStr` bytes. `clean_fname`'s
+    /// stand-in here is `Path::components().collect()`, which re-joins with the
+    /// PLATFORM separator - so on Windows the local `PathBuf` is `src\d` where
+    /// on Unix it is `src/d`. That difference is correct and invisible past this
+    /// layer (see `clean_relative_name`'s note on the three normalisation
+    /// boundaries); an `OsStr` expectation would be a platform-conditional
+    /// literal asserting the wrong thing. `wire_name()` asserts the byte the
+    /// peer actually reads, identically on both platforms, and still
+    /// discriminates: `src/d/` encodes as `b"src/d/"`, not `b"src/d"`.
     #[test]
     fn relative_operand_name_drops_the_marker_upstream_normalises_away() {
         // (operand, expected base, expected transmitted path)
@@ -783,9 +829,9 @@ mod relative_operand_name_tests {
         for (operand, want_base, want_path) in cases {
             let (base, path) = relative_walk_base(Path::new(operand));
             assert_eq!(
-                (base.as_os_str(), path.as_os_str()),
-                (OsStr::new(want_base), OsStr::new(want_path)),
-                "relative_walk_base({operand:?})"
+                (wire_name(&base), wire_name(&path)),
+                (want_base.to_owned(), want_path.to_owned()),
+                "relative_walk_base({operand:?}); local paths were ({base:?}, {path:?})"
             );
         }
     }
