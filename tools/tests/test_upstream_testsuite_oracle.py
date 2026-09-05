@@ -22,13 +22,16 @@ So the machinery under test has two jobs, and a green CI run demonstrates
 neither of them: put the binary on disk when a leg asks for it, and make a
 failure to do so loud instead of letting the suite quietly assert less. Both
 are exercised here against synthetic trees and a stub builder - hermetic, no
-network, no compiler, no root, identical on a laptop and on a runner.
+network, no root, identical on a laptop and on a runner. The one cell that
+does invoke a compiler is OracleCflagsEraTests, and it self-skips with a
+reason when no usable one is present.
 """
 
 from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -355,6 +358,127 @@ class BuildOldRsyncOracleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(marker.exists(), "a second run reconfigured the tree")
         self.assertIn("already present", result.stderr)
+
+
+
+# The construct both 3.1.3 and 3.2.7 carry in syscall.c: an empty-parameter-list
+# forward declaration followed by a real definition and a three-argument call.
+# Under C17 `()` means "unspecified arguments" and this compiles; under C23 it
+# means `(void)`, and the same three lines are two hard errors. Reduced from
+# rsync-3.2.7/syscall.c:392-396 (`extern OFF_T lseek64();` then
+# `return lseek64(fd, offset, whence);`) with the glibc-only names removed, so
+# the fixture reproduces the CLASS rather than one platform's spelling.
+_ERA_PROBE_C = """\
+extern long probe_fn();
+long probe_fn(int a, long b, int c) { return a + b + c; }
+long call_probe(void) { return probe_fn(1, 2, 3); }
+"""
+
+
+class OracleCflagsEraTests(unittest.TestCase):
+    """The oracle's CFLAGS must compile a pre-C23 release on a C23 compiler.
+
+    A C23-default compiler is SIMULATED rather than required: the C23 flag is
+    prepended to the recorded CFLAGS, and both gcc and clang take the LAST
+    `-std` on the command line, so the leading one stands in for the compiler's
+    own default and an explicit pin in CFLAGS overrides it exactly as it would
+    on gcc 15. Without that, the cell would be vacuous on every host whose `cc`
+    still defaults to gnu17 - measured: it is, on macOS, where dropping the pin
+    from the builder killed nothing.
+
+    Not a text assertion on the flag string either: the flags are handed to a
+    real compiler along with the construct that breaks, and the same simulation
+    WITHOUT the recorded flags is the negative control.
+
+    ⚠ The C23 flag is DISCOVERED, not assumed. `-std=gnu23` is a gcc-14 spelling;
+    gcc 13 knows only `-std=gnu2x` and rejects the newer name outright. Assuming
+    one made both cells report on the wrong thing on a gcc-13 runner: a failed
+    compile meant "unrecognized option", so the control passed for the wrong
+    reason while the pin failed for the wrong reason. Acceptance is probed on an
+    EMPTY translation unit, which cannot fail for any reason but the flag.
+    """
+
+    def setUp(self) -> None:
+        self.cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc")
+        if not self.cc:
+            self.skipTest("no C compiler on PATH; the era pin cannot be exercised")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.probe = self.tmp / "era_probe.c"
+        self.probe.write_text(_ERA_PROBE_C)
+        self.empty = self.tmp / "empty.c"
+        self.empty.write_text("")
+        self.c23 = next(
+            (f for f in ("-std=gnu23", "-std=gnu2x")
+             if self._compile(self.empty, [f]) == 0),
+            None,
+        )
+        if self.c23 is None:
+            self.skipTest(
+                f"{self.cc} accepts neither -std=gnu23 nor -std=gnu2x; a C23 "
+                "default cannot be simulated here"
+            )
+        if self._compile(self.probe, [self.c23]) == 0:
+            self.skipTest(
+                f"{self.cc} does not treat `()` as (void) even at {self.c23}; "
+                "this compiler cannot exhibit the failure being guarded"
+            )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _compile(self, source: Path, extra: list[str]) -> int:
+        return subprocess.run(
+            [self.cc, *extra, "-c", str(source), "-o", os.devnull],
+            capture_output=True, text=True, check=False,
+        ).returncode
+
+    def _recorded_cflags(self) -> list[str]:
+        """Run the builder against a tarball whose configure records CFLAGS."""
+        workdir = self.tmp / "build"
+        workdir.mkdir()
+        record = self.tmp / "cflags.txt"
+        src = self.tmp / "src" / "rsync-3.2.7"
+        src.mkdir(parents=True)
+        (src / "configure").write_text(
+            "#!/bin/sh\n"
+            f'printf %s "$CFLAGS" > {shlex.quote(str(record))}\n'
+            "printf 'all:\\n\\tprintf \"#!/bin/sh\\\\necho \\\\\"rsync  version "
+            "3.2.7  protocol version 31\\\\\"\\\\n\" > rsync\\n"
+            "\\tchmod +x rsync\\n' > Makefile\n"
+        )
+        (src / "configure").chmod(0o755)
+        with tarfile.open(workdir / "rsync-3.2.7.tar.gz", "w:gz") as tar:
+            tar.add(src, arcname="rsync-3.2.7")
+        result = subprocess.run(
+            ["bash", str(BUILDER), "3.2.7", str(self.tmp / "old_versions"), str(workdir)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return shlex.split(record.read_text())
+
+    def test_the_oracle_cflags_compile_a_pre_c23_declaration(self) -> None:
+        cflags = self._recorded_cflags()
+        self.assertEqual(
+            self._compile(self.probe, [self.c23, *cflags]), 0,
+            "the CFLAGS the builder passes to ./configure do not override a "
+            "C23 default, so they cannot compile the empty-parameter-list "
+            "declaration rsync 3.1.3 and 3.2.7 both carry; on gcc 15 every "
+            "legacy oracle build fails and every oracle-backed testsuite cell "
+            "degrades to its fallback",
+        )
+
+    def test_the_simulated_c23_default_really_bites(self) -> None:
+        # The negative control for the simulation. Without the recorded flags
+        # the C23 flag must break the probe; if it stops doing so, the
+        # assertion above is passing for the wrong reason. setUp has already
+        # established that the flag itself is accepted, so a failure here can
+        # only be the construct.
+        self.assertNotEqual(
+            self._compile(self.probe, [self.c23]), 0,
+            f"the probe compiled under a bare {self.c23}, so the simulated "
+            "C23 default no longer reproduces the conflict",
+        )
 
 
 if __name__ == "__main__":
