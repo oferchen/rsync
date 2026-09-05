@@ -533,9 +533,28 @@ fn allow_proxy_protocol_peer(list: &[HostPattern], addr: IpAddr) -> bool {
 
 /// Parses a host allow/deny list from a config directive value.
 ///
-/// Splits the value by commas and whitespace, parses each token as a
-/// `HostPattern`, and returns the list. Returns an error if any token
-/// is invalid or the list is empty.
+/// Splits the value by commas and whitespace and parses each token as a
+/// [`HostPattern`]. An invalid token is an error; an *empty* value is not.
+///
+/// upstream: access.c:275-278 - `allow_access()` normalises an empty list
+/// string to `NULL` (`if (allow_list && !*allow_list) allow_list = NULL;`)
+/// before it decides anything, so `hosts allow =` is legal config meaning
+/// "no list", indistinguishable from the directive being absent.
+/// `allow_proxy_protocol_peer` (access.c:302-303) reads its own list through
+/// the same `!list || !*list` guard, where it means "trust nobody".
+///
+/// The empty list is what carries that meaning here, because both oc
+/// consumers already key on emptiness rather than on an `Option`:
+/// `ModuleDefinition::permits` skips the allow short-circuit when
+/// `hosts_allow` is empty, and the proxy-peer check matches nothing against
+/// an empty pattern set. Refusing the value instead aborted the daemon at
+/// startup, where upstream serves.
+///
+/// upstream: params.c:62 - "Leading and trailing whitespace is stripped
+/// from" the value before it is stored, so a whitespace-only value is the
+/// empty string on both implementations; oc's parser trims identically
+/// (`config_parsing/parser.rs`), which is what makes this equivalence exact
+/// rather than approximate.
 fn parse_host_list(
     value: &str,
     config_path: &Path,
@@ -558,14 +577,6 @@ fn parse_host_list(
             )
         })?;
         patterns.push(pattern);
-    }
-
-    if patterns.is_empty() {
-        return Err(config_parse_error(
-            config_path,
-            line,
-            format!("{directive} directive must specify at least one pattern"),
-        ));
     }
 
     Ok(patterns)
