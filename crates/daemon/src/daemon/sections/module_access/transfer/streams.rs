@@ -159,10 +159,17 @@ impl Write for ZeroCopyTcpWriter {
 /// path is skipped entirely and the current `TcpStream` box is used.
 ///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
+/// `deadline` is the session's transfer-phase idle timeout (`io_progress.rs`),
+/// present only when upstream's `check_timeout()` would check at all. When it is
+/// present both halves of the socket stamp its clock - the drain reader on every
+/// successful read, [`writer_marking_progress`] on every successful write - so
+/// idleness is measured as upstream's `MAX(last_io_out, last_io_in)` rather than
+/// from reads alone.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
     arm_drain: bool,
     zero_copy_policy: fast_io::ZeroCopyPolicy,
+    deadline: Option<TransferDeadline>,
 ) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
@@ -235,6 +242,12 @@ fn setup_transfer_streams(
     // module then dropped the socket without sending a transfer request - has no
     // delta phase to deadlock, so it reads the socket directly and returns EOF
     // promptly (see the fn-level doc for the Windows wedge this avoids).
+    // No drain thread means no tick that could observe an idle socket, so the
+    // deadline has no consumer on this path and the writer is left unwrapped
+    // rather than stamping a clock nobody reads. Both branches that land here
+    // are outside upstream's timeout concern: an empty-args connection never
+    // enters the transfer phase at all, and the non-Unix daemon has never armed
+    // the drain (see `should_arm_delta_drain`).
     if !arm_drain {
         return Ok(Some(TransferStreams {
             read: Box::new(read_stream),
@@ -247,11 +260,15 @@ fn setup_transfer_streams(
         }));
     }
 
-    let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
+    let writer = writer_marking_progress(
+        daemon_socket_writer(write_stream, zero_copy_policy),
+        deadline.as_ref(),
+    );
+    let (draining_reader, drain_handle) = DrainingReader::new(read_stream, deadline);
 
     Ok(Some(TransferStreams {
         read: Box::new(draining_reader),
-        write: daemon_socket_writer(write_stream, zero_copy_policy),
+        write: writer,
         supports_tcp_shutdown: true,
         drain_handle: Some(drain_handle),
     }))
