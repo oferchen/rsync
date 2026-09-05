@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 protocol = { path = "../protocol" }
 metadata = { path = "../metadata" }
 fast_io = { path = "../fast_io" }
+logging = { path = "../logging" }
 filetime = { workspace = true }
 
 [dev-dependencies]
