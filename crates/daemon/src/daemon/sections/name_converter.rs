@@ -136,6 +136,18 @@ impl NameConverter {
         // make the converter answer twice while this reads once, leaving the
         // surplus answer buffered for the *next* lookup to consume.
         if !is_safe_token(arg) {
+            // Upstream reports the refusal before returning, so the operator
+            // learns that a peer-supplied name was rejected rather than merely
+            // unknown. Emitting at the guard - not at a caller - keeps the one
+            // site that decides also the one site that speaks.
+            // upstream: clientserver.c:1317-1319 `rprintf(FERROR, "invalid
+            // name-converter token: %s\n", *name_p)` then `return False`.
+            logging::emit_info_coded(
+                logging::InfoFlag::Misc,
+                0,
+                logging::LogCode::Error,
+                format!("invalid name-converter token: {arg}"),
+            );
             return ConverterOutcome::Refused;
         }
         let request = format!("{cmd} {arg}\n");
@@ -573,6 +585,50 @@ mod name_converter_tests {
         // is actually capable of moving.
         assert_eq!(answered(nc.name_to_uid("alice")), Some(1001));
         assert_eq!(requests_seen(&log), 1, "a safe name reaches the converter");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_token_is_reported_not_merely_unresolved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut nc, log) = spawn_counting_converter(&dir.path().join("seen"));
+
+        // Refusing silently is a defect of its own: an operator reading the
+        // daemon log sees a name that "has no id", indistinguishable from an
+        // ordinary unknown user, when in fact a peer sent a control byte.
+        // upstream reports it before returning False
+        // (clientserver.c:1317-1319 `rprintf(FERROR, "invalid name-converter
+        // token: %s\n", *name_p)`).
+        let _ = logging::drain_events_for_daemon_log();
+        assert!(matches!(
+            nc.name_to_uid("bad\nname"),
+            ConverterOutcome::Refused
+        ));
+        assert_eq!(requests_seen(&log), 0, "nothing may reach the converter");
+
+        let reported: Vec<String> = logging::drain_events_for_daemon_log()
+            .into_iter()
+            .map(|event| {
+                let (logging::DiagnosticEvent::Info { message, .. }
+                | logging::DiagnosticEvent::Debug { message, .. }) = event;
+                message
+            })
+            .collect();
+        assert!(
+            reported
+                .iter()
+                .any(|line| line == "invalid name-converter token: bad\nname"),
+            "the refusal must be reported verbatim: {reported:?}"
+        );
+
+        // Non-vacuity: an accepted name reaches the converter and reports
+        // nothing, so the assertion above cannot pass on an emitter that
+        // fires for every lookup.
+        assert_eq!(answered(nc.name_to_uid("alice")), Some(1001));
+        assert!(
+            logging::drain_events_for_daemon_log().is_empty(),
+            "an accepted name must not be reported"
+        );
     }
 
     #[cfg(unix)]

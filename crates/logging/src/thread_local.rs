@@ -320,6 +320,26 @@ pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
     })
 }
 
+/// Drain the events a daemon must write to its log file, leaving the rest.
+///
+/// Upstream does not pick codes here: once a message reaches
+/// `rwrite()`'s `else if (am_daemon || logfile_name)` block it is handed to
+/// `logit()` whatever its code, and only the priority differs - `LOG_INFO`
+/// for `FINFO`/`FLOG`, `LOG_WARNING` for everything else
+/// (upstream: log.c:310-327). `FLOG` is not special-cased *into* the log; it
+/// is special-cased *out of* the stream switch that follows
+/// (upstream: log.c:329-331).
+///
+/// So this takes everything except [`LogCode::None`], upstream's `FNONE`,
+/// which `rwrite()` is never handed at all (upstream: rsync.h:276 "never
+/// sent"). Draining a narrower set would silently discard a daemon-side
+/// `FERROR`: the message would be produced, be correct, and never reach the
+/// operator.
+/// upstream: log.c:310-327 rwrite() `else if (am_daemon || logfile_name)`
+pub fn drain_events_for_daemon_log() -> Vec<DiagnosticEvent> {
+    drain_events_where(|code| code != LogCode::None)
+}
+
 /// Apply an info flag token to the current thread's configuration.
 ///
 /// Parses tokens like `"copy2"` or `"del"` and updates the corresponding
@@ -448,6 +468,54 @@ mod tests {
             &events[0],
             DiagnosticEvent::Info { code: LogCode::Log, message, .. } if message == "building file list"
         ));
+    }
+
+    /// A daemon logs every code it is handed, not just `FLOG`.
+    ///
+    /// The narrow reading - "the daemon log takes `FLOG`" - is what
+    /// `rwrite()`'s trailing `if (code == FLOG) return;` looks like from the
+    /// stream switch. Read from the top, `logit()` has already run for every
+    /// code that reached the `am_daemon` branch (upstream: log.c:310-327), so
+    /// a drain keyed on `FLOG` alone discards a daemon-side `FERROR`: the
+    /// message is produced, is correct, and never reaches the operator.
+    #[test]
+    fn the_daemon_log_takes_every_code_it_is_handed_not_only_flog() {
+        init(VerbosityConfig::default());
+        drain_events();
+
+        for code in [
+            LogCode::Log,
+            LogCode::Error,
+            LogCode::Warning,
+            LogCode::ErrorXfer,
+            LogCode::Info,
+        ] {
+            emit_info_coded(InfoFlag::Misc, 0, code, format!("{code:?}"));
+        }
+        // `FNONE` is the one code `rwrite()` is never handed
+        // (upstream: rsync.h:276 "never sent").
+        emit_info_coded(InfoFlag::Misc, 0, LogCode::None, "unsent".to_owned());
+
+        let logged: Vec<LogCode> = drain_events_for_daemon_log()
+            .iter()
+            .map(DiagnosticEvent::code)
+            .collect();
+        assert_eq!(
+            logged,
+            vec![
+                LogCode::Log,
+                LogCode::Error,
+                LogCode::Warning,
+                LogCode::ErrorXfer,
+                LogCode::Info,
+            ]
+        );
+
+        // The excluded code is left in the buffer rather than dropped, so a
+        // later drain still owns it - and this is what proves the filter is
+        // doing something at all.
+        let left: Vec<LogCode> = drain_events().iter().map(DiagnosticEvent::code).collect();
+        assert_eq!(left, vec![LogCode::None]);
     }
 
     #[test]
