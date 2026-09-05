@@ -797,6 +797,11 @@ fn process_approved_module(
         }
     }
 
+    // upstream: clientserver.c:1207-1220 - the per-request line, emitted once
+    // the argv is parsed, the refusals have been applied and the pre-xfer hook
+    // has run, and before the transfer's own output starts.
+    log_daemon_request(ctx, &client_args, role, auth_user.as_deref());
+
     // FSM: -> Transferring - auth passed (or was not required), all
     // pre-transfer validation complete, transfer engine about to run.
     ctx.conn_state = ctx
@@ -810,8 +815,6 @@ fn process_approved_module(
         client_args.clone(),
         io_timeout,
     );
-    let final_protocol = handshake.protocol;
-
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
     let exit_status = execute_transfer(
         ctx,
@@ -820,7 +823,6 @@ fn process_approved_module(
         &mut *streams.read,
         &mut *streams.write,
         role,
-        final_protocol,
         module,
     );
 

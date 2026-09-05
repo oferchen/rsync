@@ -17,6 +17,8 @@
 
 include!("client_args/arg_reading.rs");
 
+include!("client_args/request_line.rs");
+
 include!("client_args/path_resolution.rs");
 
 include!("client_args/server_config.rs");
