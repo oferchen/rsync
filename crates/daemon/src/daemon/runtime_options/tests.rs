@@ -364,6 +364,56 @@ mod runtime_options_tests {
         );
     }
 
+    /// A global `timeout` must reach the daemon-wide handshake bound, not just
+    /// the per-module default.
+    ///
+    /// upstream: `timeout` is `P_LOCAL` like `log file`, but
+    /// `daemon_handshake_timeout(-1)` (clientserver.c:92-100) reads
+    /// `lp_timeout(-1)` - the GLOBAL value - and clientserver.c:1441 arms it
+    /// before ANY peer input is read, while no module has been selected.
+    ///
+    /// Recording the directive only as a module default left this `None`, so
+    /// the pre-module phase silently took the 60s built-in bound instead of the
+    /// configured one. The 3.5.0 `daemon-handshake-timeout` cell configures
+    /// exactly this shape - a global `timeout = 2` with no module involved -
+    /// and observes the greeting phase end at ~2s.
+    #[test]
+    fn a_global_timeout_directive_bounds_the_handshake() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "timeout = 2\n\n[share]\npath = /srv").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(file.path().as_os_str()),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+
+        assert_eq!(
+            options.daemon_timeout(),
+            NonZeroU64::new(2),
+            "the global `timeout` must reach the handshake bound"
+        );
+    }
+
+    /// With no `timeout` directive the bound is unset, and the handshake takes
+    /// upstream's built-in `DAEMON_HANDSHAKE_TIMEOUT`.
+    ///
+    /// Non-vacuity companion for the test above: without it, an accessor that
+    /// always returned `Some(2)` would satisfy that assertion too.
+    #[test]
+    fn an_absent_timeout_directive_leaves_the_handshake_bound_unset() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[share]\npath = /srv").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(file.path().as_os_str()),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+
+        assert_eq!(options.daemon_timeout(), None);
+    }
+
     /// `--log-file` outranks the config global, in either argument order.
     ///
     /// upstream: log.c:215 - `if (am_daemon && !logfile_name) logfile_name =

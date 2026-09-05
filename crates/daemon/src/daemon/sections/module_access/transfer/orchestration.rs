@@ -335,7 +335,7 @@ fn process_approved_module(
     // input and sends its argv, which we read next.
     send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
 
-    let client_args = match read_and_log_client_args(ctx, negotiated_protocol)? {
+    let client_args = match read_and_log_client_args(ctx, negotiated_protocol, module.timeout)? {
         Some(args) => args,
         None => return Ok(()),
     };

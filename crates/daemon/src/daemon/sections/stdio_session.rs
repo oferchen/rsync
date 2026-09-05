@@ -85,6 +85,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
         log_file,
         reverse_lookup,
         lock_file,
+        daemon_timeout,
         ..
     } = options;
 
@@ -116,6 +117,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
             log_sink,
             peer_host: Some("localhost".to_owned()),
             reverse_lookup,
+            daemon_timeout,
         },
     );
 
