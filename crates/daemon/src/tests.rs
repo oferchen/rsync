@@ -364,6 +364,8 @@ include!("tests/chunks/runtime_options_parse_bwlimit_unlimited.rs");
 include!("tests/chunks/runtime_options_parse_bwlimit_rejects_suffix_and_burst.rs");
 include!("tests/chunks/runtime_options_module_bwlimit_directive_is_unknown.rs");
 include!("tests/chunks/runtime_options_parse_hostname_patterns.rs");
+include!("tests/chunks/runtime_options_accept_an_empty_hosts_directive.rs");
+include!("tests/chunks/runtime_options_empty_module_hosts_allow_overrides_the_global.rs");
 include!("tests/chunks/runtime_options_parse_hosts_allow_and_deny.rs");
 include!("tests/chunks/runtime_options_parse_lock_file_argument.rs");
 include!("tests/chunks/runtime_options_parse_log_file_argument.rs");
