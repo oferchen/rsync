@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn a_configured_timeout_can_only_shorten_the_phase() {
-        // upstream: clientserver.c:92-100 - the `> DAEMON_HANDSHAKE_TIMEOUT`
+        // upstream: clientserver.c:97 - the `> DAEMON_HANDSHAKE_TIMEOUT`
         // arm is what makes a longer configured value inert.
         assert_eq!(handshake_timeout(secs(10)), Duration::from_secs(10));
         assert_eq!(

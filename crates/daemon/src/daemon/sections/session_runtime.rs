@@ -414,8 +414,8 @@ fn handle_legacy_session(
         // surface as TimedOut, so the deadline - not the errno - decides.
         Err(error) if deadline.expired() => {
             if let Some(log) = log_sink.as_ref() {
-                let message = rsync_error!(30, handshake_timeout_message("rsyncd"))
-                    .with_role(Role::Daemon);
+                let message =
+                    rsync_error!(30, handshake_timeout_message("rsyncd")).with_role(Role::Daemon);
                 log_message(log, &message);
             }
             let _ = error;
