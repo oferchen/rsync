@@ -347,11 +347,25 @@ fn execute_transfer(
     // matching upstream rsync's socket I/O model.
     let result = run_daemon_transfer(config, handshake, read_stream, write_stream);
 
-    // upstream: log.c:290-305 - FLOG-classified diagnostics emitted while the
-    // transfer ran belong in the daemon log only; they never travel to the
-    // client. Consume them from the thread-local queue by log code.
+    // Diagnostics emitted while the transfer ran go to the daemon log.
+    //
+    // upstream: log.c:310-327 `else if (am_daemon || logfile_name)` calls
+    // `logit()` for EVERY code that reaches it, not for `FLOG` alone - `FLOG`
+    // is merely the code that `return`s afterwards instead of also reaching
+    // the stream switch. So a daemon that raises `FERROR` mid-session logs it
+    // too, and a drain that took only `FLOG` would discard it: the message
+    // would exist, be correct, and never be delivered.
+    //
+    // This runs after `run_daemon_transfer` returns, so anything the receiver
+    // pipeline already framed to the peer through `drain_events_for_peer` is
+    // gone from the buffer by now and cannot be logged twice. That ordering
+    // also states the residual honestly: upstream's `rwrite()` reaches
+    // `logit()` and then the `am_server` frame, feeding BOTH sinks, whereas a
+    // drain removes - so on the receiver role an `FERROR` reaches the peer
+    // instead of the log. Widening here can only add deliveries, never move
+    // one.
     if let Some(log) = ctx.log_sink {
-        for event in logging::drain_events_coded(logging::LogCode::Log) {
+        for event in logging::drain_events_for_daemon_log() {
             let (logging::DiagnosticEvent::Info { message, .. }
             | logging::DiagnosticEvent::Debug { message, .. }) = event;
             log_message(log, &rsync_info!(message).with_role(Role::Daemon));
