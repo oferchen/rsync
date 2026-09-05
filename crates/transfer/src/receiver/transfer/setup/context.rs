@@ -807,6 +807,10 @@ impl ReceiverContext {
         // `is_daemon_connection` instead - it is set on BOTH ends of an
         // `rsync://` transfer - made oc refuse an ordinary symlinked
         // destination on a daemon pull that upstream accepts.
+        //
+        // Both arms decline the sandbox outright when the session opted out of
+        // symlink confinement; each owns that test (see `sandbox.rs`), mirroring
+        // upstream's `secure_relpath_active()` short-circuit.
         #[cfg(unix)]
         let sandbox = match self.config.connection.served_module_root() {
             Some(module_root) => open_sandbox_for_dest_anchored(module_root, &dest_dir)?,

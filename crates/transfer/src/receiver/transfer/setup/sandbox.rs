@@ -12,6 +12,30 @@ use std::io;
 #[cfg(unix)]
 use std::sync::Arc;
 
+/// Whether this session opted out of receiver-side symlink confinement.
+///
+/// The `insecure links` opt-out is not a sender-only concession: it disables
+/// the secure resolver on the RECEIVER side too, so an opted-out module
+/// follows a pre-existing in-module symlink exactly as pre-3.4.3 rsync did.
+/// Declining the sandbox is oc's spelling of taking upstream's plain-open arm:
+/// the `*_via_sandbox_or_fallback` helpers then route through
+/// `fast_io::confined_fallback`, whose own first arm is the same opt-out.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:100-114` - `secure_relpath_active()` short-circuits to `0`
+///   under `symlink_optout_allowed()` before any of its other tests, and the
+///   comment above it records why the receiver is included.
+/// - `receiver.c:428`, `receiver.c:1204` - the two receiver consumers, each
+///   choosing the secure open only when that gate is active.
+/// - `syscall.c:122-127` - `symlink_optout_allowed()` reads the served
+///   module's `insecure links` for a daemon and `--insecure-links` otherwise;
+///   `fast_io::confinement::session_optout_allowed` is oc's port of it.
+#[cfg(unix)]
+fn confinement_opted_out() -> bool {
+    fast_io::confinement::session_optout_allowed()
+}
+
 /// Open the destination root as a [`fast_io::DirSandbox`] carrier for a
 /// receiver that applies no confinement.
 ///
@@ -47,6 +71,9 @@ use std::sync::Arc;
 pub(super) fn open_sandbox_for_dest(
     dest_dir: &std::path::Path,
 ) -> Option<Arc<fast_io::DirSandbox>> {
+    if confinement_opted_out() {
+        return None;
+    }
     match fast_io::DirSandbox::open_root(dest_dir) {
         Ok(sandbox) => Some(Arc::new(sandbox)),
         Err(err) => {
@@ -102,6 +129,14 @@ pub(super) fn open_sandbox_for_dest_anchored(
     module_root: &std::path::Path,
     dest_dir: &std::path::Path,
 ) -> io::Result<Option<Arc<fast_io::DirSandbox>>> {
+    // The opt-out disables the resolver, so the EXDEV refusal below must not
+    // fire either: `insecure links = yes` promises the pre-3.4.3 resolver
+    // verbatim, and refusing a destination the legacy open would have followed
+    // is not "confine less", it is a different behaviour entirely.
+    if confinement_opted_out() {
+        return Ok(None);
+    }
+
     let peer_tail = dest_dir.strip_prefix(module_root).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -297,7 +332,7 @@ mod symlink_race_tests {
     /// Identical errno for the case that must be followed and the case that
     /// must be refused. That is the whole divergence, and it is why the two
     /// tests below branch instead of asserting one answer.
-    fn peer_tail_walk_can_resolve_symlinks() -> bool {
+    pub(super) fn peer_tail_walk_can_resolve_symlinks() -> bool {
         cfg!(target_os = "linux") && fast_io::openat2_supported()
     }
 
@@ -411,6 +446,126 @@ mod symlink_race_tests {
         assert!(
             open_sandbox_for_dest(&missing).is_none(),
             "ENOENT must be a soft failure - first-run push will mkdir later"
+        );
+    }
+}
+
+/// The `insecure links` opt-out reaches the RECEIVER, not just the sender.
+///
+/// Upstream's `secure_relpath_active()` (`syscall.c:100-114`) short-circuits to
+/// `0` under `symlink_optout_allowed()` before every other test, and the
+/// comment above it says why in upstream's own words: without that, "an
+/// opted-out module still confined receiver writes/stats through a pre-existing
+/// in-module symlink -- failing to match the pre-3.4.3 behaviour the opt-out
+/// promises". Declining the sandbox is oc's spelling of the plain-open arm.
+///
+/// The confinement session is process-global (upstream reads the same answer
+/// from globals). nextest runs one process per test, which is what keeps these
+/// cells sound; they are not safe under a shared-process runner.
+#[cfg(all(test, unix))]
+mod insecure_links_optout_tests {
+    use super::symlink_race_tests::peer_tail_walk_can_resolve_symlinks;
+    use super::*;
+    use fast_io::confinement::{ModuleInsecureLinks, ModuleState, install_daemon_session};
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempdir().expect("tempdir");
+        let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
+        (dir, canon)
+    }
+
+    /// A served module at the requested opt-out setting. Everything except
+    /// `insecure_links` is held fixed, so a paired cell differs in exactly one
+    /// variable - which is what makes the pair an A/B rather than two
+    /// unrelated fixtures.
+    fn serve_module(root: &Path, insecure_links: bool) {
+        install_daemon_session(ModuleState {
+            root: Some(root.to_path_buf()),
+            chrooted: false,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(insecure_links),
+        });
+    }
+
+    /// `insecure links = yes` must decline the anchored sandbox outright, so
+    /// every later `*at` site falls to the plain path syscalls upstream uses.
+    #[test]
+    fn opted_out_module_declines_the_anchored_sandbox() {
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+
+        serve_module(&module_root, true);
+
+        let sandbox = open_sandbox_for_dest_anchored(&module_root, &module_root)
+            .expect("the opt-out is a policy decision, never an error");
+        assert!(
+            sandbox.is_none(),
+            "an opted-out module must take upstream's plain-open arm; holding a \
+             confined dirfd here keeps confining the writes the opt-out exists \
+             to un-confine"
+        );
+    }
+
+    /// Non-vacuity companion: the SAME fixture at the default setting still
+    /// opens a sandbox. Without this the cell above would also pass on a build
+    /// where the anchored open simply never succeeds.
+    #[test]
+    fn a_module_at_the_default_setting_still_opens_the_anchored_sandbox() {
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+
+        serve_module(&module_root, false);
+
+        let sandbox = open_sandbox_for_dest_anchored(&module_root, &module_root)
+            .expect("a real module root must open");
+        assert!(
+            sandbox.is_some(),
+            "confinement is the default; if this arm hands back None the \
+             opt-out cell above proves nothing"
+        );
+    }
+
+    /// The refusal itself is what the opt-out has to suppress. An escaping
+    /// peer tail is a hard `Err` at the default setting and must become the
+    /// plain-open arm under the opt-out - the single behaviour
+    /// `daemon-symlink-escape-matrix` asserts against a live rsync 3.2.7.
+    ///
+    /// ⚠ Keyed on the walk's resolver: without `openat2` the `O_NOFOLLOW` walk
+    /// reports `ENOTDIR` and already degrades to `Ok(None)` (task 604), so the
+    /// escape arm cannot discriminate there. The pair above does, on every
+    /// platform, which is why it is not conditioned.
+    #[test]
+    fn opted_out_module_stops_refusing_an_escaping_peer_tail() {
+        if !peer_tail_walk_can_resolve_symlinks() {
+            return;
+        }
+
+        let (_keep, root) = canonical_tempdir();
+        let module_root = root.join("module");
+        std::fs::create_dir(&module_root).expect("create module root");
+        std::fs::create_dir(root.join("outside")).expect("create outside dir");
+        symlink("../outside", module_root.join("escape")).expect("symlink escape -> ../outside");
+        let escaping_tail = module_root.join("escape");
+
+        serve_module(&module_root, false);
+        let refused = open_sandbox_for_dest_anchored(&module_root, &escaping_tail)
+            .expect_err("control: the default setting must refuse the escape");
+        assert!(
+            refused.to_string().contains("escapes module root"),
+            "control must fail as an escape, got: {refused}"
+        );
+
+        serve_module(&module_root, true);
+        let allowed = open_sandbox_for_dest_anchored(&module_root, &escaping_tail)
+            .expect("the opt-out restores the legacy follow, so no refusal");
+        assert!(
+            allowed.is_none(),
+            "the opt-out takes the plain-open arm rather than a confined dirfd"
         );
     }
 }
