@@ -30,6 +30,19 @@ pub enum BatchError {
     /// `RERR_SYNTAX`.
     #[error("{0}")]
     FlagMismatch(String),
+    /// The `--read-batch` file could not be opened, or the path resolved to a
+    /// non-regular file.
+    ///
+    /// Kept apart from [`BatchError::Io`] because upstream gives these two
+    /// failures their own exit code and their own bare wording: both
+    /// `batch.c:267-271` (open failure) and `batch.c:273-281` (the `!S_ISREG`
+    /// refusal) print a lone `Batch file %s ...` line and then
+    /// `exit_cleanup(RERR_FILEIO)`. Folding them into the generic I/O arm
+    /// re-labels them as a replay failure and reports exit 1.
+    ///
+    /// upstream: batch.c:267-281
+    #[error("{0}")]
+    BatchFileUnusable(String),
 }
 
 #[cfg(test)]

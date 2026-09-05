@@ -75,6 +75,7 @@
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 mod config;
+mod errno_text;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
 mod levels;
@@ -93,6 +94,7 @@ mod tracing_bridge;
 mod tracing_macros;
 
 pub use config::VerbosityConfig;
+pub use errno_text::upstream_errno_text;
 pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
 };

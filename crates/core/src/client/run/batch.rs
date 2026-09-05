@@ -415,6 +415,15 @@ fn replay_batch(
             {
                 ClientError::new(2, rsync_error!(2, "{}", io_err).with_role(Role::Client))
             }
+            // upstream: batch.c:271,280 - a batch file that cannot be opened, or
+            // that resolves to a non-regular node, aborts with
+            // `exit_cleanup(RERR_FILEIO)` (exit 11) and prints the bare
+            // `Batch file ...` line. The generic arm below would report exit 1
+            // under a "batch replay failed" prefix, which names the wrong phase:
+            // nothing was replayed, the input was refused.
+            engine::batch::BatchError::BatchFileUnusable(ref msg) => {
+                ClientError::new(11, rsync_error!(11, "{}", msg).with_role(Role::Client))
+            }
             other => {
                 let msg = format!("batch replay failed: {other}");
                 ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))

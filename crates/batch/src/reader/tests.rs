@@ -65,6 +65,69 @@ mod reader_creation_tests {
         );
     }
 
+    /// Both batch-file refusals must carry the variant that maps to
+    /// `RERR_FILEIO`, not the generic I/O variant.
+    ///
+    /// upstream: batch.c:271,280 - the failed open and the `!S_ISREG` refusal
+    /// both `exit_cleanup(RERR_FILEIO)`. oc renders the exit code from the
+    /// error variant, so a refusal filed as `BatchError::Io` reports exit 1
+    /// under a "batch replay failed" prefix - naming a phase that never ran.
+    #[test]
+    #[cfg(unix)]
+    fn a_refused_batch_path_is_filed_as_unusable_not_generic_io() {
+        let dev = BatchConfig::new(BatchMode::Read, "/dev/null".to_owned(), 30);
+        let missing = BatchConfig::new(
+            BatchMode::Read,
+            "/nonexistent/path/batch.file".to_owned(),
+            30,
+        );
+
+        for config in [dev, missing] {
+            let Err(err) = BatchReader::new(config) else {
+                panic!("an unusable batch path was accepted");
+            };
+            assert!(
+                matches!(err, BatchError::BatchFileUnusable(_)),
+                "expected BatchFileUnusable, got: {err}"
+            );
+        }
+    }
+
+    /// A failed open reports upstream's line verbatim.
+    ///
+    /// `full_fname` double-quotes the name and `rsyserr` appends
+    /// `strerror(errno) (errno)`, so the rendered text is
+    /// `Batch file "PATH" open error: REASON (N)`. The upstream testsuite cell
+    /// `batch-file-symlink` matches on the `open error` substring when the
+    /// device node cannot be opened at all (a `nodev` mount), and an operator
+    /// reads the errno - paraphrasing loses both.
+    ///
+    /// upstream: batch.c:268-271
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_open_reports_upstreams_wording_and_errno() {
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            "/nonexistent/path/batch.file".to_owned(),
+            30,
+        );
+
+        let Err(err) = BatchReader::new(config) else {
+            panic!("a missing batch file was accepted");
+        };
+
+        let text = err.to_string();
+        assert!(
+            text.starts_with("Batch file \"/nonexistent/path/batch.file\" open error: "),
+            "expected upstream's bare wording, got: {text}"
+        );
+        // rsyserr's parenthesised errno, not io::Error's " (os error N)".
+        assert!(
+            text.ends_with(" (2)"),
+            "expected the rsyserr ENOENT suffix, got: {text}"
+        );
+    }
+
     #[test]
     fn create_with_nonexistent_file() {
         let config = BatchConfig::new(

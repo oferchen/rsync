@@ -135,10 +135,17 @@ impl BatchReader {
             // `open_no_attacker_symlinks()`. The path is operator-supplied and
             // may transit attacker-writable parents, so a planted symlink would
             // feed the replay a batch stream the operator never named.
+            // upstream: batch.c:268-271 - `rsyserr(FERROR, errno, "Batch file %s
+            // open error", full_fname(batch_name))` then
+            // `exit_cleanup(RERR_FILEIO)`. `full_fname` double-quotes the name
+            // and `rsyserr` appends `strerror(errno) (errno)`, so the rendered
+            // line is reproduced rather than paraphrased: an operator (and the
+            // upstream testsuite) matches on this text.
             let file = crate::operator_file::open_read(path).map_err(|e| {
-                BatchError::Io(io::Error::new(
-                    e.kind(),
-                    format!("Failed to open batch file '{}': {}", path.display(), e),
+                BatchError::BatchFileUnusable(format!(
+                    "Batch file \"{}\" open error: {}",
+                    path.display(),
+                    logging::upstream_errno_text(&e)
                 ))
             })?;
             Self::reject_non_regular(&file, path)?;
@@ -163,9 +170,9 @@ impl BatchReader {
     /// upstream: batch.c:275-281
     fn reject_non_regular(file: &File, path: &Path) -> BatchResult<()> {
         match file.metadata() {
-            Ok(meta) if !meta.file_type().is_file() => Err(BatchError::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Batch file \"{}\" is not a regular file", path.display()),
+            Ok(meta) if !meta.file_type().is_file() => Err(BatchError::BatchFileUnusable(format!(
+                "Batch file \"{}\" is not a regular file",
+                path.display()
             ))),
             _ => Ok(()),
         }
