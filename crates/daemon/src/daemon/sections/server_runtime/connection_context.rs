@@ -24,6 +24,12 @@ struct ConnectionContext {
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_policy: ProxyProtocolPolicy,
+    /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
+    ///
+    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// `daemon_handshake_timeout(-1)` - the GLOBAL value, read before any
+    /// module is selected.
+    daemon_timeout: Option<NonZeroU64>,
 }
 
 impl ConnectionContext {
@@ -38,6 +44,7 @@ impl ConnectionContext {
         bandwidth_limit: Option<NonZeroU64>,
         reverse_lookup: bool,
         proxy_policy: ProxyProtocolPolicy,
+        daemon_timeout: Option<NonZeroU64>,
     ) -> Self {
         Self {
             modules,
@@ -47,6 +54,7 @@ impl ConnectionContext {
             bandwidth_limit,
             reverse_lookup,
             proxy_policy,
+            daemon_timeout,
         }
     }
 
@@ -80,6 +88,7 @@ impl ConnectionContext {
                     log_sink: log_for_worker.clone(),
                     reverse_lookup: self.reverse_lookup,
                     proxy_policy: self.proxy_policy.clone(),
+                    daemon_timeout: self.daemon_timeout,
                 },
             )
         }));

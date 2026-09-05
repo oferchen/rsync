@@ -40,6 +40,14 @@ impl RuntimeOptions {
             self.set_config_log_file(log_file, &origin)?;
         }
 
+        // upstream: clientserver.c:1441 - the handshake bound is armed from
+        // `lp_timeout(-1)`, so the daemon-wide value must survive parsing as a
+        // global and not only as the module default it also seeds. Last-wins,
+        // matching `lp_load()`: a later declaration replaces an earlier one.
+        if let Some((timeout, _origin)) = parsed.daemon_timeout {
+            self.daemon_timeout = timeout;
+        }
+
         // QUIC listener identity (oc extension). Directive parsing already
         // resolved the paths config-relative and rejected any module-scoped use;
         // a later occurrence overwrites an earlier one, matching the last-wins

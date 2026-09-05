@@ -27,6 +27,11 @@ struct AcceptLoopState<'a> {
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_policy: ProxyProtocolPolicy,
+    /// Daemon-wide `timeout`, bounding each connection's pre-module handshake.
+    ///
+    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// `daemon_handshake_timeout(-1)`, the GLOBAL value.
+    daemon_timeout: Option<NonZeroU64>,
 }
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
@@ -207,6 +212,7 @@ fn spawn_connection_worker(
         state.bandwidth_limit,
         state.reverse_lookup,
         state.proxy_policy.clone(),
+        state.daemon_timeout,
     );
     let conn_guard = state.connection_counter.acquire();
 

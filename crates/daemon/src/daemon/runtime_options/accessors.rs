@@ -121,6 +121,14 @@ impl RuntimeOptions {
         self.log_file.as_ref()
     }
 
+    /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
+    ///
+    /// upstream: clientserver.c:1441 reads `lp_timeout(-1)`; `None` is its
+    /// `timeout <= 0` arm, which falls back to `DAEMON_HANDSHAKE_TIMEOUT`.
+    pub(super) fn daemon_timeout(&self) -> Option<NonZeroU64> {
+        self.daemon_timeout
+    }
+
     pub(super) fn pid_file(&self) -> Option<&Path> {
         self.pid_file.as_deref()
     }

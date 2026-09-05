@@ -985,6 +985,7 @@ fn test_accept_loop_state<'a>(
         bandwidth_limit: None,
         reverse_lookup: false,
         proxy_policy: ProxyProtocolPolicy::Disabled,
+        daemon_timeout: None,
     }
 }
 

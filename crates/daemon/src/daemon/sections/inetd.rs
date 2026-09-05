@@ -56,6 +56,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         log_file,
         reverse_lookup,
         lock_file,
+        daemon_timeout,
         ..
     } = options;
 
@@ -159,6 +160,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
             log_sink,
             peer_host,
             reverse_lookup,
+            daemon_timeout,
         },
     );
 

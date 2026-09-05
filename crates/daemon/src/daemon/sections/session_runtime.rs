@@ -10,6 +10,13 @@ struct SessionParams<'a> {
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
     proxy_policy: ProxyProtocolPolicy,
+    /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
+    ///
+    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// `daemon_handshake_timeout(-1)`, i.e. `lp_timeout(-1)` - the GLOBAL
+    /// value, read before any module is selected. `None` is upstream's
+    /// `timeout <= 0`, which takes the built-in `DAEMON_HANDSHAKE_TIMEOUT`.
+    daemon_timeout: Option<NonZeroU64>,
 }
 
 /// Parameters for the legacy `@RSYNCD:` session handler.
@@ -27,6 +34,13 @@ struct LegacySessionParams<'a> {
     log_sink: Option<SharedLogSink>,
     peer_host: Option<String>,
     reverse_lookup: bool,
+    /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
+    ///
+    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// `daemon_handshake_timeout(-1)`, i.e. `lp_timeout(-1)` - the GLOBAL
+    /// value, read before any module is selected. `None` is upstream's
+    /// `timeout <= 0`, which takes the built-in `DAEMON_HANDSHAKE_TIMEOUT`.
+    daemon_timeout: Option<NonZeroU64>,
 }
 
 /// Handles a single daemon connection from accept to completion.
@@ -51,6 +65,7 @@ fn handle_session(
         log_sink,
         reverse_lookup,
         proxy_policy,
+        daemon_timeout,
     } = params;
 
     // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
@@ -166,6 +181,7 @@ fn handle_session(
                     log_sink,
                     peer_host,
                     reverse_lookup,
+                    daemon_timeout,
                 },
             )
             .map(|_| ())
@@ -289,31 +305,6 @@ pub(crate) fn single_session_exit(
 /// Nothing reads the state once the handler returns, so what is worth
 /// recording is the invariant rather than the value: a handler must not reach
 /// a second teardown after already closing.
-/// Clamps the next handshake read to the time left before the deadline.
-///
-/// upstream: io.c:143-157 `handshake_poll_timeout_ms()` clamps the ordinary poll
-/// timeout down to the remaining time before every wait. Upstream owns its own
-/// poll loop; oc's legacy handshake reads a blocking socket, so the equivalent
-/// clamp is `SO_RCVTIMEO`. Same bound, same site - it is applied before every
-/// peer read, which is why the loop calls this everywhere it re-arms QUICKACK.
-///
-/// A disarmed deadline yields `Duration::MAX`, which is not a representable
-/// socket timeout; that case clears the timeout instead, leaving the read
-/// unbounded exactly as a disarmed deadline requires.
-fn arm_next_handshake_read(stream: Option<&TcpStream>, deadline: &HandshakeDeadline) {
-    let Some(stream) = stream else {
-        return;
-    };
-    let timeout = match deadline.remaining() {
-        // Expired: leave a previously-set timeout in place so the pending read
-        // returns promptly and the caller's `expired()` arm owns the decision.
-        None => return,
-        Some(left) if left == Duration::MAX => None,
-        Some(left) => Some(left),
-    };
-    let _ = stream.set_read_timeout(timeout);
-}
-
 fn end_session(state: ConnectionState, exit_code: Option<ExitCode>) -> Option<ExitCode> {
     debug_assert!(
         !state.is_terminal(),
@@ -352,6 +343,7 @@ fn handle_legacy_session(
         log_sink,
         peer_host,
         reverse_lookup,
+        daemon_timeout,
     } = params;
     let mut reader = BufReader::new(stream);
     let mut limiter = BandwidthLimitComponents::new(daemon_limit).into_limiter();
@@ -393,22 +385,33 @@ fn handle_legacy_session(
     let mut session_exit_code: Option<ExitCode> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
-    // The pre-module phase takes upstream's full bound: it is armed before any
-    // module is known (clientserver.c:1441), and a module `timeout` can only
-    // ever shorten a later phase, never extend this one.
-    let deadline = HandshakeDeadline::armed(handshake_timeout(0));
+    // upstream: clientserver.c:1441 - `set_daemon_handshake_timeout(
+    // daemon_handshake_timeout(-1))` is armed before ANY peer input is read,
+    // from the DAEMON-WIDE `timeout` (module -1). No module has been selected
+    // here, and a module's own value can only shorten a LATER phase, so the
+    // global value is the only correct input to this arm.
+    let deadline = HandshakeDeadline::armed(handshake_timeout(daemon_timeout));
+    // A second descriptor onto the same socket, so the deadline can clamp
+    // SO_RCVTIMEO without aliasing the reader's borrow. `None` for stdio, where
+    // there is no socket to clamp and the deadline's own expiry arm is the
+    // whole bound.
+    let deadline_socket = reader
+        .get_ref()
+        .tcp_stream()
+        .and_then(|stream| stream.try_clone().ok());
 
     // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
     // round's ACK stays immediate across the multi-line greeting exchange.
-    // The deadline clamp rides the same site for the same reason - both must
-    // precede every peer read.
-    arm_next_handshake_read(reader.get_ref().tcp_stream(), &deadline);
-    while let Some(line) = match read_trimmed_line(&mut reader) {
+    while let Some(line) = match read_trimmed_line(&mut DeadlineBufRead::new(
+        &mut reader,
+        deadline_socket.as_ref(),
+        &deadline,
+    )) {
         Ok(line) => line,
         // upstream: io.c:147-153 - the deadline is consulted at the wait, and an
         // elapsed one DIAGNOSES then exits RERR_TIMEOUT. The read error itself
-        // is only the messenger: SO_RCVTIMEO surfaces as WouldBlock/TimedOut, so
-        // the deadline - not the errno - decides whether this is a timeout.
+        // is only the messenger: both the guard's own refusal and SO_RCVTIMEO
+        // surface as TimedOut, so the deadline - not the errno - decides.
         Err(error) if deadline.expired() => {
             if let Some(log) = log_sink.as_ref() {
                 let message = rsync_error!(30, handshake_timeout_message("rsyncd"))
@@ -421,7 +424,6 @@ fn handle_legacy_session(
         }
         Err(error) => return Err(error),
     } {
-        arm_next_handshake_read(reader.get_ref().tcp_stream(), &deadline);
         // upstream: clientserver.c:180-213 exchange_protocols() (am_client == 0) -
         // the daemon validates the client's version greeting before proceeding,
         // refusing a line that is not a banner at all, or one that omits the
@@ -508,6 +510,16 @@ fn handle_legacy_session(
 
         request = Some(line);
         break;
+    }
+
+    // upstream: clientserver.c:819, 1169 - `set_daemon_handshake_timeout(0)`
+    // DISARMS the deadline once the peer-driven phase ends, so local setup,
+    // operator hooks and the transfer itself are never measured against it.
+    // oc's analogue is clearing the socket timeout the clamp left behind: the
+    // deadline object goes out of scope here, but `SO_RCVTIMEO` would persist
+    // on the fd and bound every later read.
+    if let Some(socket) = deadline_socket.as_ref() {
+        let _ = socket.set_read_timeout(None);
     }
 
     let request = request.unwrap_or_default();
@@ -697,6 +709,7 @@ mod session_runtime_tests {
             log_sink: None,
             reverse_lookup: false,
             proxy_policy: ProxyProtocolPolicy::Disabled,
+            daemon_timeout: None,
         };
         assert!(params.modules.is_empty());
         assert!(params.motd_lines.is_empty());
@@ -717,6 +730,7 @@ mod session_runtime_tests {
             log_sink: None,
             reverse_lookup: true,
             proxy_policy: ProxyProtocolPolicy::Disabled,
+            daemon_timeout: None,
         };
         assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
         assert!(params.reverse_lookup);
@@ -733,6 +747,7 @@ mod session_runtime_tests {
             log_sink: None,
             peer_host: None,
             reverse_lookup: false,
+            daemon_timeout: None,
         };
         assert!(params.modules.is_empty());
         assert!(params.peer_host.is_none());
@@ -749,6 +764,7 @@ mod session_runtime_tests {
             log_sink: None,
             peer_host: Some("example.com".to_owned()),
             reverse_lookup: true,
+            daemon_timeout: None,
         };
         assert_eq!(params.peer_host.as_deref(), Some("example.com"));
         assert!(params.reverse_lookup);

@@ -25,6 +25,9 @@ pub(crate) struct ParsedConfigModules {
     /// Global `log file` path. Opens the daemon-wide log at startup; see the
     /// field of the same name on the parse state for the upstream contract.
     log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// Daemon-wide `timeout`. Bounds the pre-module handshake phase; see the
+    /// field of the same name on the parse state for the upstream contract.
+    daemon_timeout: Option<(Option<NonZeroU64>, ConfigDirectiveOrigin)>,
     /// QUIC listener certificate path from the `quic cert file` global
     /// directive (oc extension, feature-gated). The paired private key lives in
     /// `quic_key_file`. Identity is per-listener, so both are global-only.

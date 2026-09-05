@@ -22,6 +22,14 @@ struct GlobalParseState {
     /// daemon-wide log before any module is selected. Recording it only as a
     /// module default would lose every pre-module diagnostic.
     log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// Daemon-wide `timeout`, kept separately from the per-module default it
+    /// also seeds. `timeout` is `P_LOCAL` (daemon-parm.h), but
+    /// `daemon_handshake_timeout(-1)` reads `lp_timeout(-1)`, the GLOBAL value,
+    /// at clientserver.c:1441, before any module has been selected, to bound the
+    /// pre-module handshake. Recording it only as a module default leaves that
+    /// phase with nothing to read and silently falls back to the 60s built-in
+    /// bound.
+    daemon_timeout: Option<(Option<NonZeroU64>, ConfigDirectiveOrigin)>,
     /// QUIC listener certificate/key paths from the `quic cert file` /
     /// `quic key file` global directives (oc extension, feature-gated).
     #[cfg(feature = "quic")]
@@ -79,6 +87,7 @@ impl GlobalParseState {
             reverse_lookup: None,
             lock_file: None,
             log_file: None,
+            daemon_timeout: None,
             #[cfg(feature = "quic")]
             quic_cert_file: None,
             #[cfg(feature = "quic")]
@@ -184,6 +193,7 @@ impl GlobalParseState {
             reverse_lookup: self.reverse_lookup,
             lock_file: self.lock_file,
             log_file: self.log_file,
+            daemon_timeout: self.daemon_timeout,
             #[cfg(feature = "quic")]
             quic_cert_file: self.quic_cert_file,
             #[cfg(feature = "quic")]

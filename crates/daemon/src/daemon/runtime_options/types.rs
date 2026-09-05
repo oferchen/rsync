@@ -34,6 +34,15 @@ pub(crate) struct RuntimeOptions {
     port_overridden: bool,
     log_file: Option<PathBuf>,
     log_file_from_config: bool,
+    /// Daemon-wide `timeout`, read as the GLOBAL value rather than a module
+    /// default.
+    ///
+    /// upstream: clientserver.c:1441 - `set_daemon_handshake_timeout(
+    /// daemon_handshake_timeout(-1))` bounds the pre-module handshake with
+    /// `lp_timeout(-1)`, the global value, before any module is selected.
+    /// `None` is upstream's `timeout <= 0`: no configured bound, so the phase
+    /// takes the built-in `DAEMON_HANDSHAKE_TIMEOUT`.
+    daemon_timeout: Option<NonZeroU64>,
     global_refuse_options: Option<Vec<String>>,
     global_secrets_file: Option<PathBuf>,
     global_secrets_from_config: bool,
@@ -158,6 +167,7 @@ impl Default for RuntimeOptions {
             port_overridden: false,
             log_file: None,
             log_file_from_config: false,
+            daemon_timeout: None,
             global_refuse_options: None,
             global_secrets_file: None,
             global_secrets_from_config: false,

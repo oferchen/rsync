@@ -73,7 +73,9 @@ use crate::{
 
 mod at_error;
 pub(crate) mod handshake_deadline;
-use handshake_deadline::{HandshakeDeadline, handshake_timeout, handshake_timeout_message};
+use handshake_deadline::{
+    DeadlineBufRead, HandshakeDeadline, handshake_timeout, handshake_timeout_message,
+};
 mod help;
 pub(crate) mod operator_file;
 pub(crate) mod peer_address;
@@ -400,6 +402,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         log_file,
         reverse_lookup,
         lock_file,
+        daemon_timeout,
         ..
     } = options;
 
@@ -494,6 +497,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
             log_sink,
             peer_host,
             reverse_lookup,
+            daemon_timeout,
         },
     );
 
@@ -562,6 +566,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         daemon_uid,
         daemon_gid,
         daemon_chroot,
+        daemon_timeout,
         ..
     } = options;
 
@@ -639,6 +644,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         bandwidth_limit,
         reverse_lookup,
         proxy_policy,
+        daemon_timeout,
     );
 
     let bind_addr = std::net::SocketAddr::new(bind_address, port);
