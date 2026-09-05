@@ -29,7 +29,11 @@ jobs:
       upstream_rsync_version: '3.5.0'
       variant: 'root'
       transport: 'tcp'
-      expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
+      # BOOTSTRAP - see `legacy_oracles` below for why this leg cannot share
+      # ci.yml's manifest. Empty means "no gate": the whole corpus runs, reports
+      # its genuine result, and EMIT_EXPECT_RESULT writes the manifest as an
+      # artifact. Replace with the committed path once that run has happened.
+      expect_result_root: ''
       # The only leg that can run daemon-symlink-escape-matrix (it needs root
       # AND a real TCP peer), and that test takes the expected value of 100 of
       # its 200 cells from a live rsync 3.2.7 daemon when one is on disk and
@@ -38,11 +42,23 @@ jobs:
       # prediction, and it is the leg where the change is affordable: nightly,
       # not a required check, and already carrying 26 known failures.
       #
-      # EXPECTED, NOT YET MEASURED: the same binary un-skips
-      # daemon-max-alloc-zero, which stats old_versions/rsync_3.2.7 and calls
-      # test_skipped() when it is missing, and enables the md5-downgrade half of
-      # daemon-auth-digest-floor (old_versions/rsync_3.1.3). Both rows in
-      # upstream-3.5.0-expect.root.tcp.txt will move. Re-baseline them from this
-      # workflow's EMIT_EXPECT_RESULT artifact after the first run - never by
-      # guessing the new outcome here.
+      # LEGACY_ORACLES IS A THIRD MANIFEST AXIS, alongside privilege and
+      # transport. MEASURED: exactly one of the three archive consumers moves a
+      # manifest row. daemon-max-alloc-zero stats old_versions/rsync_3.2.7 and
+      # calls test_skipped() when it is absent, so it reads `skip` off this
+      # archive and `pass` on it. The other two degrade SILENTLY - both report
+      # PASS either way - so their rows are identical under both settings.
+      #
+      # That one row is enough to make a shared file impossible.
+      # tools/ci/upstream-3.5.0-expect.root.tcp.txt is ALSO ci.yml's PR caller's
+      # manifest, and that caller takes the default `off`, where the row is
+      # `skip`. runtests.py compares outcomes exactly - _cls() folds only
+      # fail/xfail together, never pass into skip (3.5.0 runtests.py:852-859) -
+      # so ONE file cannot satisfy both callers: whichever row it carries, the
+      # other leg reports a mismatch. Re-baselining the shared file would move
+      # the red rather than remove it.
+      #
+      # Hence a manifest of this leg's own, generated from an executed run of
+      # THIS oracle configuration. A leg that later opts in to `on` needs the
+      # same treatment; it is not free.
       legacy_oracles: 'on'
