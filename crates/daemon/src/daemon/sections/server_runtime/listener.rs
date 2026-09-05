@@ -398,35 +398,6 @@ fn warn_per_family_bind_failure(
     }
 }
 
-/// Emits a warning when one family's acceptor thread dies while another
-/// family is still serving connections in a dual-stack listener.
-///
-/// This is the GitHub Actions exit-10 failure mode: `bind(2)` to `[::]:873`
-/// succeeds on the runner but `accept(2)` later returns an unexpected
-/// address family or `EAFNOSUPPORT`, the IPv6 acceptor exits, and prior
-/// code treated that as fatal even though the IPv4 acceptor was healthy.
-/// Surfacing the family-specific failure as a warning preserves operator
-/// visibility into the degraded listener while keeping the daemon
-/// servicing traffic on the surviving family.
-fn warn_per_family_accept_failure(
-    log: Option<&SharedLogSink>,
-    local_addr: SocketAddr,
-    error: &io::Error,
-) {
-    let family = if local_addr.is_ipv6() { "IPv6" } else { "IPv4" };
-    let payload = format!(
-        "{family} accept on {local_addr} failed: {error}; \
-         remaining address families continue to serve connections"
-    );
-    let message = rsync_warning!(payload).with_role(Role::Daemon);
-
-    if let Some(sink) = log {
-        log_message(sink, &message);
-    } else {
-        eprintln!("{message}");
-    }
-}
-
 /// Emits a warning when `accept(2)` fails with a transient, per-connection
 /// error that the accept loop deliberately survives.
 ///
