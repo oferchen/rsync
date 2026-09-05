@@ -248,6 +248,24 @@ mod config_parsing_tests {
         assert!(path.ends_with("rsync.pid"));
     }
 
+    /// A relative `pid file` is kept verbatim, so the daemon writes it against
+    /// its own working directory.
+    ///
+    /// upstream: clientserver.c:1584 `create_pid_file()` opens the string
+    /// `lp_pid_file()` returns, with no config-directory rebase. Prefixing the
+    /// config file's directory puts the pid file where nothing looks for it:
+    /// the 3.5.0 `daemon-standalone-detach` cell waits on the pid file it named
+    /// and times out.
+    #[test]
+    fn parse_global_pid_file_relative_is_kept_verbatim() {
+        let file = write_config("pid file = rsyncd.pid\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.pid_file.as_ref().map(|(path, _)| path.as_path()),
+            Some(Path::new("rsyncd.pid"))
+        );
+    }
+
     #[test]
     fn parse_global_reverse_lookup_true() {
         let file = write_config("reverse lookup = yes\n");

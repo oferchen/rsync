@@ -142,7 +142,7 @@ fn apply_global_directive(
                 ));
             }
 
-            let resolved = resolve_config_relative_path(path, trimmed);
+            let resolved = daemon_parameter_path(trimmed);
             store_global_directive(&mut state.pid_file, resolved, canonical, line_number);
         }
         "reverselookup" => {
@@ -594,7 +594,7 @@ fn apply_global_directive(
         // lost - measured against rsync 3.5.0, which writes three of them here.
         "logfile" => {
             if !value.is_empty() {
-                let resolved = log_file_path(value);
+                let resolved = daemon_parameter_path(value);
                 state.module_defaults.log_file = Some(resolved.clone());
                 store_global_directive(&mut state.log_file, resolved, canonical, line_number);
             }

@@ -402,20 +402,24 @@ fn continuation_offset(line: &str) -> Option<usize> {
     trimmed.ends_with('\\').then(|| trimmed.len() - 1)
 }
 
-/// Resolves an operator-supplied `log file` value.
+/// Resolves an operator-supplied daemon path parameter.
 ///
-/// upstream: log.c:216-218 log_init() takes `logfile_name` from
-/// `lp_log_file(module_id)` - the raw config string, since loadparm.c stores
-/// parameter values verbatim - and log.c:169 logfile_open() hands that string
-/// straight to `open_no_attacker_symlinks()`. A relative value is therefore
-/// resolved against the daemon's working directory, never against the config
-/// file's directory.
+/// loadparm.c stores every parameter value verbatim, and each consumer opens
+/// that string as given, so a relative value is resolved against the daemon's
+/// working directory - never against the config file's directory:
 ///
-/// The two `log file` sites share this function because they must agree: the
-/// module value and the global value are read through the same
-/// `lp_log_file()` accessor upstream, so a rule applied to one and not the
-/// other would open two different files for one config line.
-fn log_file_path(value: &str) -> PathBuf {
+/// - `log file`: log.c:216-218 `log_init()` takes `logfile_name` from
+///   `lp_log_file(module_id)`, and log.c:169 `logfile_open()` hands it straight
+///   to `open_no_attacker_symlinks()`.
+/// - `pid file`: clientserver.c:1584 `create_pid_file()` opens
+///   `lp_pid_file()`'s value directly.
+///
+/// The three sites share this function because they must agree. `log file`'s
+/// module and global halves are read through one `lp_log_file()` accessor, so
+/// a rule applied to one and not the other would open two different files for
+/// one config line; `pid file` obeys the same storage rule, and rebasing it
+/// creates a pid file the operator cannot find.
+fn daemon_parameter_path(value: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
