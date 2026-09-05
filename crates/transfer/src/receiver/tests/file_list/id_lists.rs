@@ -278,6 +278,83 @@ fn remap_falls_back_to_local_name_resolution_when_no_rule_matches() {
     );
 }
 
+/// A converter that resolves every name to one recognisable id.
+///
+/// The id is deliberately not the sender's, so "the converter answered" and
+/// "the sender's id was kept" cannot be confused.
+#[cfg(unix)]
+struct ResolvingConverter;
+
+#[cfg(unix)]
+impl metadata::id_lookup::NameConverterCallbacks for ResolvingConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+    fn gid_to_name(&mut self, _gid: u32) -> metadata::id_lookup::ConverterOutcome<String> {
+        metadata::id_lookup::ConverterOutcome::Unknown
+    }
+    fn name_to_uid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Resolved(4242)
+    }
+    fn name_to_gid(&mut self, _name: &str) -> metadata::id_lookup::ConverterOutcome<u32> {
+        metadata::id_lookup::ConverterOutcome::Resolved(4242)
+    }
+}
+
+/// THE INLINE-NAME PATH. A peer may describe ownership on the file-list ENTRY
+/// (`XMIT_USER_NAME_FOLLOWS`) instead of in the trailing id list, and upstream
+/// resolves it right there - `flist.c:1004` calls `recv_user_name()`, the same
+/// `recv_add_id()` path `recv_id_list()` uses.
+///
+/// The wire here is exactly what such a peer sends: one entry carrying the
+/// name, then the single end-of-list flag byte and NOTHING else. Deferring
+/// every lookup to `receive_id_lists` leaves the name unmapped, because the
+/// list it would read never arrives.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:998-1010` - `recv_file_entry()` inline user-name arm
+/// - `uidlist.c:418-433` - `recv_user_name()` -> `recv_add_id()`
+#[cfg(unix)]
+#[test]
+fn an_inline_entry_name_is_resolved_without_a_trailing_id_list() {
+    let mut entry = protocol::flist::FileEntry::new_file(std::path::PathBuf::from("f"), 0, 0o644);
+    entry.set_uid(1000);
+    entry.set_user_name("alice".to_string());
+
+    let mut wire = Vec::new();
+    let mut writer = protocol::flist::FileListWriter::new(protocol::ProtocolVersion::V32)
+        .with_preserve_uid(true)
+        .with_name_follows(true);
+    writer.write_entry(&mut wire, &entry).expect("write entry");
+    // upstream: flist.c:2384 write_end_of_flist() - a single 0 flag byte ends
+    // the list in byte-flags mode.
+    wire.push(0);
+    // An EMPTY trailing id list: the terminator and nothing else. This is what
+    // makes the test discriminating rather than merely green - the only place
+    // `alice` appears on this wire is the entry itself, so a mapping can only
+    // have come from the inline registration.
+    protocol::idlist::IdList::new()
+        .write(&mut wire, false, 32)
+        .expect("write empty id list");
+
+    let handshake = test_handshake();
+    let config = config_with_flags(true, false, NumericIds::Off);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    metadata::id_lookup::set_name_converter(Box::new(ResolvingConverter));
+    let result = ctx.receive_file_list(&mut Cursor::new(wire.as_slice()));
+    metadata::id_lookup::clear_name_converter();
+
+    assert!(result.is_ok(), "the flist must decode: {result:?}");
+    assert_eq!(
+        ctx.uid_list.match_id(1000),
+        4242,
+        "the inline name must be resolved through the converter, not left at \
+         the sender's id - nothing else on this wire carries it"
+    );
+}
+
 /// A converter that answers exactly one name and disclaims the rest.
 #[cfg(unix)]
 struct DisclaimingConverter;

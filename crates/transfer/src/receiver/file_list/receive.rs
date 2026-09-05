@@ -54,6 +54,13 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[seg_start..])?
         {
+            // upstream: flist.c:1004 - `recv_user_name()` resolves an inline
+            // name AS THE ENTRY IS DECODED, not after the list. A peer that
+            // describes ownership only on the entry sends no trailing id list,
+            // so deferring every lookup to `receive_id_lists` below would leave
+            // those names unmapped and never consult the name converter.
+            #[cfg(unix)]
+            self.register_inline_id_names(&entry)?;
             self.file_list.push(entry);
             count += 1;
         }

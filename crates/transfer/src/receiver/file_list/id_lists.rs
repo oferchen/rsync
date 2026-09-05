@@ -85,6 +85,57 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Registers the user/group names a single file-list entry carried INLINE.
+    ///
+    /// At protocol >= 30 the sender may describe ownership on the entry itself
+    /// (`XMIT_USER_NAME_FOLLOWS` / `XMIT_GROUP_NAME_FOLLOWS`) instead of, or as
+    /// well as, in the trailing id list. Upstream resolves those names as it
+    /// decodes the entry - `flist.c:1004` calls `recv_user_name()`, which is
+    /// the same `recv_add_id()` path `recv_id_list()` uses - so the mapping (and
+    /// any `name converter` refusal it triggers) happens even when no trailing
+    /// list follows.
+    ///
+    /// Without this, a peer that only ever sends inline names is never mapped:
+    /// `receive_id_lists` reads a list that does not arrive, so nothing reaches
+    /// the converter and the entry keeps the sender's raw id.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:998-1020` - `recv_file_entry()` inline name arms
+    /// - `uidlist.c:418-449` - `recv_user_name()` / `recv_group_name()`
+    #[cfg(unix)]
+    pub(crate) fn register_inline_id_names(
+        &mut self,
+        entry: &protocol::flist::FileEntry,
+    ) -> io::Result<()> {
+        // upstream: uidlist.c:465,473 - the same `numeric_ids <= 0` gate the
+        // trailing list is read under. An explicit client --numeric-ids means
+        // the names are not consulted at all.
+        if self.config.flags.numeric_ids.is_explicit() {
+            return Ok(());
+        }
+
+        if self.config.flags.owner || self.config.flags.acls {
+            if let (Some(uid), Some(name)) = (entry.uid(), entry.user_name()) {
+                self.uid_list
+                    .register_inline_name(uid, name.as_bytes(), |n| {
+                        no_id_unless_converter_failed(lookup_user_by_name(n))
+                    })?;
+            }
+        }
+
+        if self.config.flags.group || self.config.flags.acls {
+            if let (Some(gid), Some(name)) = (entry.gid(), entry.group_name()) {
+                self.gid_list
+                    .register_inline_name(gid, name.as_bytes(), |n| {
+                        no_id_unless_converter_failed(lookup_group_by_name(n))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Reads UID/GID name-to-ID mapping lists from the sender (non-Unix platforms).
     ///
     /// On non-Unix platforms (e.g., Windows), this reads the ID lists from the wire

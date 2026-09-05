@@ -381,6 +381,52 @@ impl IdList {
         Ok((Some(name), local_id))
     }
 
+    /// Registers an `(id, name)` pair that arrived *inline on a file-list
+    /// entry* rather than in the trailing id list, resolving the name to a
+    /// local id through `name_to_id`.
+    ///
+    /// This is the same `recv_add_id()` step `read_with_kind` performs per
+    /// list element; the only difference is that the name is already decoded,
+    /// because `XMIT_USER_NAME_FOLLOWS` carries it in the entry itself.
+    /// Factoring it out keeps ONE owner of "resolve a peer name to a local id
+    /// and record the mapping", so the two arrival paths cannot drift.
+    ///
+    /// An id already present is left untouched: upstream's list is keyed by id
+    /// and each unique id is described once, so a repeat is the same mapping.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1004` - `uid = recv_user_name(f, uid)` on the entry decode
+    /// - `uidlist.c:418-433` - `recv_user_name()` -> `recv_add_id()`
+    pub fn register_inline_name<F>(&mut self, id: u32, name: &[u8], name_to_id: F) -> io::Result<()>
+    where
+        F: Fn(&[u8]) -> io::Result<Option<u32>>,
+    {
+        if self.entries.contains_key(&id) {
+            return Ok(());
+        }
+        // upstream: uidlist.c:429 - an empty name is `name = NULL`, i.e. "no
+        // name was sent", which keeps the sender's numeric id.
+        if name.is_empty() {
+            self.add_id(id, None);
+            return Ok(());
+        }
+        // A resolver that cannot answer propagates rather than degrading into
+        // "keep the sender's id" - the same rule `read_name_and_resolve`
+        // applies, and the reason the guard in the name converter is reachable
+        // at all from this path.
+        let local_id = name_to_id(name)?.unwrap_or(id);
+        self.entries.insert(
+            id,
+            IdEntry {
+                name: Some(name.to_vec()),
+                local_id,
+            },
+        );
+        self.order.push(id);
+        Ok(())
+    }
+
     /// Clears all entries from the list.
     pub fn clear(&mut self) {
         self.entries.clear();
