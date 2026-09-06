@@ -3412,9 +3412,14 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/sub/./file.txt".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload", true);
+        // Compared as raw bytes, NOT as `Path`: `Path::eq` walks `components()`,
+        // which silently skips a `.`, so `sub/./file.txt` and `sub/file.txt`
+        // compare EQUAL and the assertion could not fail. The kept dot is the
+        // entire subject of this cell.
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
         assert_eq!(
-            sources,
-            vec![std::path::PathBuf::from("/srv/upload/sub/./file.txt")]
+            rendered,
+            vec![std::ffi::OsStr::new("/srv/upload/sub/./file.txt")]
         );
     }
 
@@ -3427,9 +3432,11 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/sub/./file.txt".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload", false);
+        // Raw bytes for the same reason as the `--relative` cell above.
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
         assert_eq!(
-            sources,
-            vec![std::path::PathBuf::from("/srv/upload/sub/file.txt")]
+            rendered,
+            vec![std::ffi::OsStr::new("/srv/upload/sub/file.txt")]
         );
     }
 
@@ -3456,7 +3463,10 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload", true);
-        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
+        // Raw bytes: `components()` also drops a TRAILING separator, and that
+        // slash is the DOTDIR marker the engine reads (flist.c:2589-2594).
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
+        assert_eq!(rendered, vec![std::ffi::OsStr::new("/srv/upload/")]);
     }
 
     /// The receiver's destination rides the same axis - upstream sanitizes
@@ -3468,7 +3478,8 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/dest/.".to_owned()];
         let dest = resolve_receiver_dest(module_path, &args, "upload", true);
-        assert_eq!(dest, std::path::PathBuf::from("/srv/upload/dest/."));
+        // Raw bytes: as a `Path`, `dest/.` and `dest` compare equal.
+        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/dest/."));
     }
 
     #[test]
