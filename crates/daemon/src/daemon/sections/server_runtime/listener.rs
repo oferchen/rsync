@@ -468,9 +468,11 @@ fn bind_listeners_per_family(
         let requested_addr = SocketAddr::new(*addr, port);
 
         // Bind up to `replicas` SO_REUSEPORT sockets for this family. The kernel
-        // load-balances accepted connections across them, each driven by its own
-        // acceptor thread. With replicas == 1 this is the historical
-        // single-listener-per-family behaviour.
+        // load-balances accepted connections across them, but every replica is
+        // polled from the single accept thread - see `PollAcceptEngine`, whose
+        // single-threadedness is a fork precondition, not a preference. With
+        // replicas == 1 this is the historical single-listener-per-family
+        // behaviour.
         let mut family_bound = 0usize;
         let mut family_error: Option<io::Error> = None;
         for _ in 0..replicas {
