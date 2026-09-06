@@ -195,30 +195,133 @@ fn describe_panic_payload_handles_non_string_payload() {
     assert_eq!(description, "unknown panic payload");
 }
 
+/// Reporting must be total: every outcome the platform's backing can produce
+/// has to render without panicking, because the accept loop calls this on a
+/// path that must never fail.
 #[test]
-fn a_successful_session_reports_nothing() {
-    let handle = thread::spawn(|| Ok(()));
-    report_worker_outcome(join_backing(handle), None);
+fn every_session_outcome_reports_without_propagating() {
+    report_worker_outcome(SessionOutcome::Ok, None);
+    #[cfg(unix)]
+    {
+        report_worker_outcome(SessionOutcome::EndedWithStatus(SOCKET_IO_EXIT_CODE), None);
+        report_worker_outcome(
+            SessionOutcome::Died("session child killed by signal 9".to_owned()),
+            None,
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        report_worker_outcome(
+            SessionOutcome::Failed(
+                Some("127.0.0.1:12345".parse().unwrap()),
+                io::Error::new(io::ErrorKind::BrokenPipe, "connection closed"),
+            ),
+            None,
+        );
+        report_worker_outcome(
+            SessionOutcome::Died("simulated handler crash".to_owned()),
+            None,
+        );
+    }
 }
 
+/// The classification the parent's whole view of a session rests on: a clean
+/// exit is success, any other status is the child having already said why, and
+/// a fatal signal is a crash the parent must name itself.
+///
+/// upstream: `socket.c:679` reaps with a NULL status pointer, so it draws no
+/// distinction at all; oc reports session outcomes and therefore must.
+#[cfg(unix)]
 #[test]
-fn a_closed_connection_reports_nothing() {
-    let handle = thread::spawn(|| {
-        Err((
-            Some("127.0.0.1:12345".parse().unwrap()),
-            io::Error::new(io::ErrorKind::BrokenPipe, "connection closed"),
-        ))
-    });
-    report_worker_outcome(join_backing(handle), None);
+fn a_child_end_is_classified_by_how_the_process_ended() {
+    use platform::session_fork::ChildEnd;
+
+    assert!(matches!(
+        SessionOutcome::from_child_end(ChildEnd::Exited(0)),
+        SessionOutcome::Ok
+    ));
+    assert!(matches!(
+        SessionOutcome::from_child_end(ChildEnd::Exited(SOCKET_IO_EXIT_CODE)),
+        SessionOutcome::EndedWithStatus(status) if status == SOCKET_IO_EXIT_CODE
+    ));
+    assert!(matches!(
+        SessionOutcome::from_child_end(ChildEnd::Signalled(libc::SIGKILL)),
+        SessionOutcome::Died(_)
+    ));
 }
 
-#[test]
-fn a_panicking_session_is_reported_not_propagated() {
-    let handle = thread::spawn(|| -> WorkerResult {
-        panic!("simulated handler crash");
+/// Builds a worker for a session that has ALREADY ENDED, and does not return
+/// until that is true.
+///
+/// The proof matters more than the fixture. On Unix a session is a forked
+/// child, so the only honest way to know it ended is to observe the *process*
+/// end: the child inherits a pipe write end, and the kernel closes it at
+/// `_exit`, so the parent's read hits EOF exactly then. A byte written by the
+/// child before exiting would prove only that it got close.
+///
+/// Without that, every reap assertion below would race the child and pass or
+/// fail on scheduling.
+#[cfg(unix)]
+fn ended_session_worker(counter: &ConnectionCounter, exit_code: i32) -> SessionWorker {
+    let (mut ended, exited_marker) = std::io::pipe().expect("pipe");
+    // Acquired before the fork, exactly as production does: the guard is
+    // parent-owned, and the child's inherited copy dies unrun with `_exit`.
+    let slot = counter.acquire();
+    let worker = match platform::session_fork::fork_session().expect("fork failed") {
+        platform::session_fork::ForkSide::Child => platform::session_fork::exit_child(exit_code),
+        platform::session_fork::ForkSide::Parent { child_pid } => SessionWorker {
+            backing: SessionBacking { child_pid },
+            _slot: slot,
+        },
+    };
+    // The parent must not hold a write end of its own, or the read never ends.
+    drop(exited_marker);
+    let mut discard = Vec::new();
+    std::io::Read::read_to_end(&mut ended, &mut discard).expect("await the child's exit");
+    worker
+}
+
+/// Non-Unix counterpart: a thread that has finished. Same contract - the
+/// session is over by the time this returns.
+#[cfg(not(unix))]
+fn ended_session_worker(counter: &ConnectionCounter, exit_code: i32) -> SessionWorker {
+    let slot = counter.acquire();
+    let handle = thread::spawn(move || -> WorkerResult {
+        if exit_code == 0 {
+            Ok(())
+        } else {
+            Err((
+                Some("127.0.0.1:12345".parse().unwrap()),
+                io::Error::new(io::ErrorKind::BrokenPipe, "session failure"),
+            ))
+        }
     });
-    // `join_backing` blocks until the thread completes - no sleep needed.
-    report_worker_outcome(join_backing(handle), None);
+    while !handle.is_finished() {
+        thread::yield_now();
+    }
+    SessionWorker {
+        backing: SessionBacking {
+            handle: Some(handle),
+        },
+        _slot: slot,
+    }
+}
+
+/// Reaps until the worklist empties, failing rather than hanging if it never
+/// does.
+///
+/// A reap that never collects an ended session would otherwise stall the suite
+/// instead of reporting - a mutation that hangs is not a lethal mutation.
+fn reap_until_empty(workers: &mut Vec<SessionWorker>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !workers.is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "an ended session was never reaped"
+        );
+        reap_finished_workers(workers, None);
+        thread::yield_now();
+    }
 }
 
 /// The classification this fix rests on: a worker carries the outcome of one
@@ -233,35 +336,23 @@ fn a_panicking_session_is_reported_not_propagated() {
 fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
     let counter = ConnectionCounter::new();
     let mut workers: Vec<SessionWorker> = Vec::new();
-    for kind in [
-        io::ErrorKind::InvalidData,
-        io::ErrorKind::PermissionDenied,
-        io::ErrorKind::BrokenPipe,
-        io::ErrorKind::TimedOut,
-    ] {
-        workers.push(SessionWorker {
-            handle: thread::spawn(move || {
-                Err((
-                    Some("127.0.0.1:12345".parse().unwrap()),
-                    io::Error::new(kind, "session failure"),
-                ))
-            }),
-            _slot: counter.acquire(),
-        });
-    }
-    for worker in &workers {
-        // Read the backing directly: `try_reap` consumes the worker, so there
-        // is deliberately no borrowing readiness predicate on `SessionWorker`.
-        while !worker.handle.is_finished() {
-            thread::yield_now();
-        }
+    // Four distinct failure statuses. `reap_finished_workers` returns `()`, so
+    // the type system already forbids a fatal channel; what this pins is that
+    // none of them stops the drain.
+    for exit_code in [1, SOCKET_IO_EXIT_CODE, 23, 30] {
+        workers.push(ended_session_worker(&counter, exit_code));
     }
 
-    reap_finished_workers(&mut workers, None);
+    reap_until_empty(&mut workers);
 
     assert!(
         workers.is_empty(),
         "every finished worker must be reaped regardless of how its session ended"
+    );
+    assert_eq!(
+        counter.active(),
+        0,
+        "draining the worklist must release every slot it held"
     );
 }
 
@@ -277,49 +368,36 @@ fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
 #[test]
 fn a_finished_worker_holds_its_slot_until_reaped() {
     let counter = ConnectionCounter::new();
-    let mut workers = vec![SessionWorker {
-        handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
-        _slot: counter.acquire(),
-    }];
-    while !workers[0].handle.is_finished() {
-        thread::yield_now();
-    }
+    // `ended_session_worker` does not return until the session is really over,
+    // so this assertion is about a FINISHED worker, not a racing one.
+    let mut workers = vec![ended_session_worker(&counter, 0)];
     assert_eq!(
         counter.active(),
         1,
         "the session ended, but its slot belongs to the parent until the reap",
     );
-    reap_finished_workers(&mut workers, None);
+    reap_until_empty(&mut workers);
     assert_eq!(
         counter.active(),
         0,
         "reaping a finished worker must release the slot it was holding",
     );
 }
+
+/// `serve_session` wraps the handler in `catch_unwind` so a faulting
+/// connection cannot tear the process down. On Unix that process is the forked
+/// child, elsewhere it is the worker thread - either way the panic must be
+/// described rather than propagated.
 #[test]
 fn catch_unwind_isolates_panic_and_returns_ok() {
-    let peer_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-    let handle = thread::spawn(move || -> WorkerResult {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            panic!("connection handler for test panicked");
-        }));
-        match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => Err((Some(peer_addr), error)),
-            Err(payload) => {
-                let description = describe_panic_payload(payload);
-                assert!(
-                    description.contains("connection handler for test panicked"),
-                    "panic message should be preserved: {description}"
-                );
-                Ok(())
-            }
-        }
-    });
-    let result = handle.join().expect("thread should not propagate panic");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        panic!("connection handler for test panicked");
+    }));
+    let payload = result.expect_err("the closure panics, so this must be Err");
+    let description = describe_panic_payload(payload);
     assert!(
-        result.is_ok(),
-        "catch_unwind should convert panics into Ok(())"
+        description.contains("connection handler for test panicked"),
+        "panic message should be preserved: {description}"
     );
 }
 
@@ -1291,13 +1369,7 @@ fn admission_reaps_before_consulting_the_connection_cap() {
     );
 
     // One worker whose session has already ended, still holding the only slot.
-    state.workers.push(SessionWorker {
-        handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
-        _slot: counter.acquire(),
-    });
-    while !state.workers[0].handle.is_finished() {
-        thread::yield_now();
-    }
+    state.workers.push(ended_session_worker(&counter, 0));
     assert_eq!(
         counter.active(),
         1,
