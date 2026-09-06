@@ -586,15 +586,18 @@ pub(crate) fn load_dir_merge_rules_recursive(
             // physical line, so blanks and comments still advance it.
             for (index, line) in contents.lines().enumerate() {
                 let line_number = index + 1;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if allow_comments && trimmed.starts_with('#') {
+                // upstream: exclude.c:1806. `filters::filter_file_line_is_rule`
+                // is the single owner of that test - it does NOT trim, so
+                // trailing whitespace stays part of the pattern
+                // (exclude.c:1465, `len = strlen(s)`) and a leading-whitespace
+                // or whitespace-only line is a fatal `Unknown filter rule`
+                // (exclude.c:1363). This reader used to trim both ends, which
+                // changed which files transferred at exit 0.
+                if !filters::filter_file_line_is_rule(line, allow_comments) {
                     continue;
                 }
 
-                if trimmed == "!" || trimmed == "clear" {
+                if line == "!" || line == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
@@ -602,14 +605,14 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         continue;
                     }
                     return Err(map_error(FilterParseError::new(format!(
-                        "list-clearing '{trimmed}' is not permitted in this filter file"
+                        "list-clearing '{line}' is not permitted in this filter file"
                     ))));
                 }
 
                 if let Some(kind) = enforce_kind {
                     let rule = match kind {
-                        DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_owned()),
-                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_owned()),
+                        DirMergeEnforcedKind::Include => FilterRule::include(line.to_owned()),
+                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(line.to_owned()),
                     };
                     entries.push_rule(apply_dir_merge_rule_defaults(
                         rule,
@@ -620,13 +623,13 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 }
 
                 match parse_filter_directive_line(
-                    trimmed,
+                    line,
                     origin.rule_source(&src_name, Some(line_number)),
                 ) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         if dir_merge_side_conflict(&rule, options) {
                             return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {trimmed}"
+                                "specified-side merge file contains specified-side filter: {line}"
                             ))));
                         }
                         entries.push_rule(apply_dir_merge_rule_defaults(

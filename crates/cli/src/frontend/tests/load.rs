@@ -15,8 +15,15 @@ fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
     assert_eq!(patterns, vec![" include ".to_owned(), "pattern".to_owned()]);
 }
 
+/// A `;` comment must start in COLUMN ZERO; an indented one is a pattern.
+///
+/// upstream: exclude.c:1806 - `if (*line && (word_split || (*line != ';' &&
+/// *line != '#')))` tests the FIRST BYTE of the line, with no trimming first.
+/// MEASURED against rsync 3.5.0: an `--exclude-from` file holding only `  #a`
+/// excludes a file literally named `  #a`; oc used to transfer it, because the
+/// reader trimmed before testing.
 #[test]
-fn load_filter_file_patterns_skip_semicolon_comments() {
+fn load_filter_file_patterns_skip_only_column_zero_semicolon_comments() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -26,7 +33,10 @@ fn load_filter_file_patterns_skip_semicolon_comments() {
     let patterns =
         load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
-    assert_eq!(patterns, vec!["keep".to_owned()]);
+    assert_eq!(
+        patterns,
+        vec!["  ; spaced comment".to_owned(), "keep".to_owned()]
+    );
 }
 
 #[test]

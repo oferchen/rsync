@@ -258,9 +258,12 @@ pub(crate) fn read_filter_patterns_from_standard_input(
     })
 }
 
-/// Splits a reader into filter pattern records, skipping blank lines and `#`/`;`
-/// comments. Records split on newline, or on NUL when `eol_nulls` is set
-/// (`--from0`), in which case embedded newlines are literal pattern bytes.
+/// Splits a reader into filter pattern records, skipping EMPTY records and
+/// those whose FIRST BYTE is `#`/`;` - the test
+/// [`filters::filter_file_line_is_rule`] owns. Nothing is trimmed, so a
+/// whitespace-only record and an indented `#` are patterns. Records split on
+/// newline, or on NUL when `eol_nulls` is set (`--from0`), in which case
+/// embedded newlines are literal pattern bytes.
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
@@ -289,9 +292,17 @@ pub(super) fn read_filter_patterns<R: BufRead>(
             buffer.pop();
         }
 
+        // upstream: exclude.c:1806. `filters::filter_file_line_is_rule` is the
+        // single owner of that test; it looks at the FIRST BYTE and does not
+        // trim. `--*clude-from` files are always line-parsed, never word-split.
+        //
+        // MEASURED against rsync 3.5.0 over a source holding files named
+        // `   ` (three spaces) and `  #a`: with an `--exclude-from` file whose
+        // only line is `   `, upstream excludes the file named `   ` and oc
+        // transferred it; with `  #a`, upstream excludes `  #a` and oc
+        // transferred it. Both at exit 0 - silent data selection divergence.
         let line = String::from_utf8_lossy(&buffer);
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+        if !filters::filter_file_line_is_rule(&line, true) {
             continue;
         }
 
@@ -389,11 +400,26 @@ mod tests {
     }
 
     #[test]
-    fn read_filter_patterns_handles_whitespace_only_lines() {
+    fn read_filter_patterns_keeps_whitespace_only_lines() {
+        // upstream: exclude.c:1806 tests `*line`, the first BYTE, so a
+        // whitespace-only record is not empty and becomes a literal pattern.
+        // MEASURED against rsync 3.5.0: an `--exclude-from` file holding only
+        // `   ` excludes a file literally named `   `.
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
         let result = read_filter_patterns(&mut reader, false).expect("read");
-        assert_eq!(result, vec!["pattern1", "pattern2"]);
+        assert_eq!(result, vec!["pattern1", "   ", "\t", "pattern2"]);
+    }
+
+    #[test]
+    fn read_filter_patterns_keeps_an_indented_comment_marker() {
+        // upstream: exclude.c:1806 - only a `;`/`#` in COLUMN ZERO is a
+        // comment. MEASURED against rsync 3.5.0: an `--exclude-from` file
+        // holding only `  #a` excludes a file literally named `  #a`.
+        let input = b"  #a\n  ;b\n";
+        let mut reader = Cursor::new(input.to_vec());
+        let result = read_filter_patterns(&mut reader, false).expect("read");
+        assert_eq!(result, vec!["  #a", "  ;b"]);
     }
 
     #[test]

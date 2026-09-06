@@ -299,47 +299,59 @@ fn discard_over_long(
 /// upstream's decision has two arms, and picking one here would collapse
 /// them - see the `Err` arm at the bottom of this function.
 ///
-/// Returns `Ok(None)` for blank or comment-only lines. Recognises list-clear
-/// (`!`/`clear`), short-form merges (`.`/`:`), `merge`/`dir-merge`/`per-dir`
-/// directives, `exclude-if-present`, the `+`/`-` short-form rule prefixes,
-/// and the `include`/`exclude`/`show`/`hide`/`protect`/`risk` keywords with
-/// their `,modifier` suffix. Trailing whitespace is trimmed from patterns.
+/// Returns `Ok(None)` only for an EMPTY line. Blank-and-comment filtering is
+/// the file reader's job, not this parser's - upstream puts it in
+/// `parse_filter_file` (exclude.c:1806) and `parse_rule_tok` has no comment
+/// concept at all. Recognises list-clear (`!`/`clear`), short-form merges
+/// (`.`/`:`), `merge`/`dir-merge`/`per-dir` directives, `exclude-if-present`,
+/// the `+`/`-` short-form rule prefixes, and the
+/// `include`/`exclude`/`show`/`hide`/`protect`/`risk` keywords with their
+/// `,modifier` suffix.
+///
+/// Whitespace is NEVER trimmed. Exactly one separator is consumed after the
+/// rule character or keyword (exclude.c:1444-1445) and the pattern is then
+/// taken verbatim (`len = strlen(s)`, exclude.c:1465), so a trailing space is
+/// pattern text and a leading-whitespace line is an unknown rule.
 fn classify_filter_directive_line(
     text: &str,
     source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
-    if text.is_empty() || text.starts_with('#') {
+    // upstream: exclude.c:1806 - `if (*line && (word_split || (*line != ';' &&
+    // *line != '#')))`. A line is dropped only when it is EMPTY or when its
+    // FIRST byte is `;`/`#`. Whitespace is never stripped: `parse_rule_tok`
+    // skips leading whitespace only under FILTRULE_WORD_SPLIT (exclude.c:1249-
+    // 1253) and takes the pattern length as `strlen(s)` otherwise
+    // (exclude.c:1465), so trailing whitespace is part of the pattern.
+    //
+    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.0
+    // with a `.rsync-filter` holding `- a ` over a source containing `a` and
+    // `a ` (trailing space): upstream excludes `a ` and copies `a`; oc excluded
+    // `a` and copied `a `. A whitespace-only line and a leading-whitespace rule
+    // are fatal `Unknown filter rule` syntax errors upstream; oc accepted both.
+    if text.is_empty() {
         return Ok(None);
     }
 
-    let trimmed = text.trim_start();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    let trimmed = trimmed.trim_end();
-
-    if trimmed == "!" || trimmed == CLEAR_KEYWORD {
+    if text == "!" || text == CLEAR_KEYWORD {
         return Ok(Some(ParsedFilterDirective::Clear));
     }
 
-    if let Some(directive) = parse_short_merge_directive_line(trimmed)? {
+    if let Some(directive) = parse_short_merge_directive_line(text)? {
         return Ok(Some(directive));
     }
 
-    if let Some(directive) = parse_merge_directive(trimmed)? {
+    if let Some(directive) = parse_merge_directive(text)? {
         return Ok(Some(directive));
     }
 
-    if let Some(directive) = parse_dir_merge_directive(trimmed)? {
+    if let Some(directive) = parse_dir_merge_directive(text)? {
         return Ok(Some(directive));
     }
 
-    if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
-        && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
-            .eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
+    if text.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
+        && text[..EXCLUDE_IF_PRESENT_PREFIX.len()].eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
     {
-        let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..]
+        let mut remainder = text[EXCLUDE_IF_PRESENT_PREFIX.len()..]
             .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if let Some(rest) = remainder.strip_prefix('=') {
             remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
@@ -357,33 +369,42 @@ fn classify_filter_directive_line(
         )));
     }
 
-    if let Some(remainder) = trimmed.strip_prefix('+') {
+    if let Some(remainder) = text.strip_prefix('+') {
         let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, trimmed, false)?;
-        let pattern = remainder.trim_start();
+        let modifiers = parse_rule_modifiers(modifier_text, text, false)?;
+        // `split_short_rule_modifiers` already consumed the ONE separator that
+        // ends the modifier run (upstream exclude.c:1444-1445 `if (*s) s++`),
+        // and the pattern is then taken verbatim (`len = strlen(s)`, :1465).
+        // Trimming here made `+  a` match `a` where upstream matches ` a`.
+        let pattern = remainder;
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '+' requires a pattern"));
         }
         let rule = FilterRule::include(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        let rule = apply_rule_modifiers(rule, modifiers, text)?;
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
-    if let Some(remainder) = trimmed.strip_prefix('-') {
+    if let Some(remainder) = text.strip_prefix('-') {
         let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, trimmed, false)?;
-        let pattern = remainder.trim_start();
+        let modifiers = parse_rule_modifiers(modifier_text, text, false)?;
+        // See the `+` arm above: the single separator is already consumed, so
+        // any further whitespace is pattern text (upstream exclude.c:1465).
+        let pattern = remainder;
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '-' requires a pattern"));
         }
         let rule = FilterRule::exclude(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        let rule = apply_rule_modifiers(rule, modifiers, text)?;
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
-    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let mut parts = text.splitn(2, char::is_whitespace);
     let keyword = parts.next().unwrap_or("");
-    let remainder = parts.next().unwrap_or("").trim_start();
+    // `splitn` already consumed the single separator between the keyword and
+    // the pattern (upstream exclude.c:1444-1445), so the remainder is the
+    // pattern verbatim: `exclude  a` matches ` a`, not `a` (exclude.c:1465).
+    let remainder = parts.next().unwrap_or("");
     let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
 
     let handle_keyword = |pattern: &str,
@@ -393,9 +414,9 @@ fn classify_filter_directive_line(
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter directive missing pattern"));
         }
-        let modifiers = parse_rule_modifiers(keyword_modifiers, trimmed, prefix_specifies_side)?;
+        let modifiers = parse_rule_modifiers(keyword_modifiers, text, prefix_specifies_side)?;
         let rule = builder(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        let rule = apply_rule_modifiers(rule, modifiers, text)?;
         Ok(Some(ParsedFilterDirective::Rule(rule)))
     };
 
@@ -465,7 +486,7 @@ fn classify_filter_directive_line(
     // supplies it.
     Err(FilterParseError::new(format!(
         "Unknown filter rule: {}",
-        source.rule_text(trimmed)
+        source.rule_text(text)
     )))
 }
 
@@ -735,16 +756,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_filter_directive_line_comment() {
-        let result =
-            parse_filter_directive_line("# this is a comment", RuleSource::Argument).unwrap();
-        assert!(result.is_none());
+    fn parse_filter_directive_line_comment_is_the_readers_decision() {
+        // upstream: exclude.c:1806 - `;`/`#` are comments only in the FILE
+        // READER (`parse_filter_file`), never in the rule parser. MEASURED
+        // against rsync 3.5.0: `--filter='# a comment'` exits 1 with
+        // `Unknown filter rule: # a comment`. `load.rs` owns the skip.
+        let error = parse_filter_directive_line("# this is a comment", RuleSource::Argument)
+            .expect_err("a comment is not a rule the parser recognises");
+        assert!(
+            error.to_string().contains("Unknown filter rule"),
+            "unexpected diagnostic: {error}"
+        );
     }
 
     #[test]
-    fn parse_filter_directive_line_whitespace() {
-        let result = parse_filter_directive_line("   ", RuleSource::Argument).unwrap();
-        assert!(result.is_none());
+    fn parse_filter_directive_line_whitespace_is_a_syntax_error() {
+        // upstream: exclude.c:1249-1253 skips leading whitespace only under
+        // FILTRULE_WORD_SPLIT, so a whitespace-only line reaches the prefix
+        // switch's `default:` arm and dies at exclude.c:1363. MEASURED against
+        // rsync 3.5.0: a `.rsync-filter` whose first line is `   ` exits 1.
+        let error = parse_filter_directive_line("   ", RuleSource::Argument)
+            .expect_err("whitespace is not a rule");
+        assert!(
+            error.to_string().contains("Unknown filter rule"),
+            "unexpected diagnostic: {error}"
+        );
     }
 
     #[test]
