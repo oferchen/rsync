@@ -516,20 +516,39 @@ mod tests {
 
     #[cfg(unix)]
     use std::io::Write;
-    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
-    /// Polls `channel.collected()` until it contains `needle` or `deadline`
-    /// elapses. Returns the collected bytes on success.
-    #[cfg(unix)]
-    fn wait_for(
+    /// How long a test waits for the drain thread to publish its bytes.
+    ///
+    /// [`StderrAuxChannel::join`] is deliberately bounded by
+    /// [`DRAIN_JOIN_TIMEOUT`] (50 ms) and ABANDONS the drain thread when that
+    /// elapses - see `join_with_timeout` and the note on
+    /// [`PipeStderrChannel::shutdown_read`] explaining why the bound exists (a
+    /// forked ssh helper can hold the write end open, so EOF may never
+    /// arrive). A returning `join()` therefore does NOT promise the drain
+    /// completed, and asserting on `collected()` immediately after it is a
+    /// scheduler-latency assertion: on a loaded runner the drain thread simply
+    /// has not been scheduled yet, the buffer is empty, and the test fails
+    /// while the bytes are still in flight.
+    ///
+    /// Tests that need the drained bytes must poll to a deadline instead. This
+    /// is generous by design: it bounds a *failure*, never a pass, so a large
+    /// value costs nothing on the passing path.
+    const COLLECT_DEADLINE: Duration = Duration::from_secs(10);
+
+    /// Polls `channel.collected()` until `predicate` accepts the snapshot or
+    /// `deadline` elapses. Returns the accepted snapshot, else `None`.
+    ///
+    /// The single owner of the poll loop; [`wait_for`] and
+    /// [`expect_collected`] are thin wrappers over it.
+    fn wait_until(
         channel: &dyn StderrAuxChannel,
-        needle: &[u8],
+        predicate: impl Fn(&[u8]) -> bool,
         deadline: Instant,
     ) -> Option<Vec<u8>> {
         loop {
             let buf = channel.collected();
-            if buf.windows(needle.len()).any(|w| w == needle) {
+            if predicate(&buf) {
                 return Some(buf);
             }
             if Instant::now() >= deadline {
@@ -537,6 +556,33 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// Polls `channel.collected()` until it contains `needle` or `deadline`
+    /// elapses. Returns the collected bytes on success.
+    fn wait_for(
+        channel: &dyn StderrAuxChannel,
+        needle: &[u8],
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
+        wait_until(channel, |buf| contains(buf, needle), deadline)
+    }
+
+    /// Polls until `needle` appears, panicking with the observed buffer if it
+    /// never does. Use this wherever a test needs the drained bytes.
+    fn expect_collected(channel: &dyn StderrAuxChannel, needle: &[u8]) -> Vec<u8> {
+        let deadline = Instant::now() + COLLECT_DEADLINE;
+        wait_for(channel, needle, deadline).unwrap_or_else(|| {
+            panic!(
+                "expected {:?} within {COLLECT_DEADLINE:?}, last saw {:?}",
+                String::from_utf8_lossy(needle),
+                String::from_utf8_lossy(&channel.collected()),
+            )
+        })
     }
 
     #[cfg(unix)]
@@ -552,7 +598,7 @@ mod tests {
         drop(child);
         channel.join();
 
-        let collected = channel.collected();
+        let collected = expect_collected(&channel, b"hello-from-socketpair\n");
         assert_eq!(collected, b"hello-from-socketpair\n");
     }
 
@@ -585,8 +631,11 @@ mod tests {
         let _ = child.wait();
         pipe_channel.join();
 
-        assert_eq!(sp_channel.collected(), payload_bytes);
-        assert_eq!(pipe_channel.collected(), payload_bytes);
+        assert_eq!(expect_collected(&sp_channel, payload_bytes), payload_bytes);
+        assert_eq!(
+            expect_collected(&pipe_channel, payload_bytes),
+            payload_bytes
+        );
     }
 
     #[cfg(unix)]
@@ -602,14 +651,16 @@ mod tests {
         drop(child);
         channel.join();
 
-        let collected = channel.collected();
+        // `after` is written last, so waiting for it also settles `before`
+        // and the intervening non-UTF-8 bytes.
+        let collected = expect_collected(&channel, b"after");
         assert!(
-            collected.windows(b"before".len()).any(|w| w == b"before"),
+            contains(&collected, b"before"),
             "expected 'before' segment in {collected:?}"
         );
         assert!(
-            collected.windows(b"after".len()).any(|w| w == b"after"),
-            "expected 'after' segment in {collected:?}"
+            contains(&collected, b"\xff\xfe"),
+            "expected the non-UTF-8 segment in {collected:?}"
         );
     }
 
@@ -653,7 +704,17 @@ mod tests {
         drop(child);
         channel.join();
 
-        let collected = channel.collected();
+        // Wait for the window to SATURATE before asserting the bound. An
+        // empty buffer satisfies `len() <= CAP` trivially, so polling here is
+        // what makes the assertion non-vacuous as well as non-flaky.
+        let deadline = Instant::now() + COLLECT_DEADLINE;
+        let collected = wait_until(&channel, |buf| buf.len() >= STDERR_BUFFER_CAP, deadline)
+            .unwrap_or_else(|| {
+                panic!(
+                    "buffer never reached {STDERR_BUFFER_CAP} bytes; last saw {}",
+                    channel.collected().len()
+                )
+            });
         assert!(
             collected.len() <= STDERR_BUFFER_CAP,
             "collected {} bytes, expected <= {STDERR_BUFFER_CAP}",
@@ -743,11 +804,9 @@ mod tests {
         let _ = child.wait();
         channel.join();
 
-        let collected = channel.collected();
+        let collected = expect_collected(&*channel, b"fallback-to-pipe");
         assert!(
-            collected
-                .windows(b"fallback-to-pipe".len())
-                .any(|w| w == b"fallback-to-pipe"),
+            contains(&collected, b"fallback-to-pipe"),
             "expected 'fallback-to-pipe' in {collected:?}"
         );
     }
@@ -808,7 +867,7 @@ mod tests {
         let mut channel = build_stderr_channel(None, Some(stderr)).expect("expected a channel");
         let _ = child.wait();
         channel.join();
-        let collected = channel.collected();
+        let collected = expect_collected(&*channel, b"windows-pipe-payload");
         assert!(
             String::from_utf8_lossy(&collected).contains("windows-pipe-payload"),
             "expected payload in {:?}",
