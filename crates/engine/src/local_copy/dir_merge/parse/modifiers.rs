@@ -16,6 +16,43 @@ fn consume_rule_separator(remainder: &str) -> &str {
     }
 }
 
+/// Splits the text that follows a long-form filter keyword into
+/// `(modifiers, pattern)`, or returns `None` when the keyword is not terminated
+/// by a separator and is therefore not this keyword at all.
+///
+/// upstream: exclude.c:1218-1227 `rule_strcmp` - the keyword matches only when
+/// the byte after it is whitespace, `_`, `,`, or the end of the string. Any
+/// other byte returns NULL, `ch` stays 0, and the rule dies with
+/// `Unknown filter rule` (exclude.c:1363), so `mergeX` is a syntax error rather
+/// than a merge of `X`.
+///
+/// A `,` returns `str + rule_len` (exclude.c:1225-1226) and the modifier loop
+/// starts on the first modifier byte; every other separator returns
+/// `str + rule_len - 1` (exclude.c:1223), so the loop stops immediately and a
+/// long keyword only carries modifiers after a comma. Exactly ONE separator is
+/// then consumed (exclude.c:1444-1445) and the pattern is the remainder
+/// verbatim (`len = strlen(s)`, exclude.c:1465).
+///
+/// MEASURED against rsync 3.5.0: `--filter='merge  X'` (two spaces) opens a
+/// merge file named ` X`, and `--filter='dir-merge  '` merges a per-directory
+/// file named ` `; oc trimmed the whole run.
+pub(super) fn split_long_keyword_tail(after: &str) -> Option<(&str, &str)> {
+    let mut chars = after.chars();
+    match chars.next() {
+        None => Some(("", "")),
+        Some(',') => {
+            let body = chars.as_str();
+            Some(match body.find(['_', ' ']) {
+                // The separator is ASCII, so `idx + 1` stays on a char boundary.
+                Some(idx) => (&body[..idx], &body[idx + 1..]),
+                None => (body, ""),
+            })
+        }
+        Some(ch) if ch == '_' || ch == ' ' => Some(("", &after[ch.len_utf8()..])),
+        Some(_) => None,
+    }
+}
+
 /// Splits the modifier prefix of a short-form `+`/`-` rule from its pattern.
 ///
 /// Returns `(modifiers, pattern)`. The caller validates each modifier byte, so

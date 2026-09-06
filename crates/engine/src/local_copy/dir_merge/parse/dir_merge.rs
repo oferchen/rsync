@@ -1,3 +1,4 @@
+use super::modifiers::split_long_keyword_tail;
 use super::types::{FilterParseError, ParsedFilterDirective};
 use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
 use std::path::PathBuf;
@@ -32,25 +33,17 @@ pub(super) fn parse_dir_merge_directive(
         }
     }
 
-    let Some((label, mut remainder)) = matched else {
+    let Some((label, after)) = matched else {
         return Ok(None);
     };
 
-    if let Some(ch) = remainder.chars().next()
-        && ch != ','
-        && !ch.is_ascii_whitespace()
-    {
+    // upstream: exclude.c:1218-1227 `rule_strcmp` requires a separator after the
+    // keyword and exclude.c:1444-1445 consumes exactly ONE of them; the previous
+    // `trim_start()` ate the whole run, so `dir-merge  ` found no file name where
+    // upstream merges a per-directory file literally named ` `.
+    let Some((modifiers, remainder)) = split_long_keyword_tail(after) else {
         return Ok(None);
-    }
-
-    remainder = remainder.trim_start();
-
-    let mut modifiers = "";
-    if let Some(rest) = remainder.strip_prefix(',') {
-        let mut split = rest.splitn(2, char::is_whitespace);
-        modifiers = split.next().unwrap_or("");
-        remainder = split.next().unwrap_or("").trim_start();
-    }
+    };
 
     let mut options = DirMergeOptions::default();
     let mut saw_plus = false;
@@ -417,5 +410,36 @@ mod tests {
             }
             _ => panic!("expected DirMerge directive"),
         }
+    }
+
+    fn dir_merge_name(text: &str) -> PathBuf {
+        match parse_dir_merge_directive(text)
+            .expect("not a parse error")
+            .expect("the dir-merge keyword matches")
+        {
+            ParsedFilterDirective::DirMerge { pattern, .. } => pattern,
+            other => panic!("expected a DirMerge directive, got {other:?}"),
+        }
+    }
+
+    /// upstream: exclude.c:1444-1445 `if (*s) s++` consumes exactly ONE
+    /// separator after the keyword, and exclude.c:1465 then takes
+    /// `len = strlen(s)`. MEASURED against rsync 3.5.0: `--filter='dir-merge  '`
+    /// (two trailing spaces) merges a per-directory file literally named ` `,
+    /// where oc exited 1 reporting a missing file name.
+    #[test]
+    fn parse_dir_merge_consumes_exactly_one_separator() {
+        assert_eq!(dir_merge_name("dir-merge  "), PathBuf::from(" "));
+        assert_eq!(dir_merge_name("dir-merge  X"), PathBuf::from(" X"));
+        assert_eq!(dir_merge_name("dir-merge_X"), PathBuf::from("X"));
+        assert_eq!(dir_merge_name("dir-merge,n  X"), PathBuf::from(" X"));
+    }
+
+    /// Non-vacuity companion: the single-separator spellings must still parse,
+    /// or the test above would pass on a parser that recognises nothing.
+    #[test]
+    fn parse_dir_merge_accepts_every_upstream_separator() {
+        assert_eq!(dir_merge_name("dir-merge X"), PathBuf::from("X"));
+        assert_eq!(dir_merge_name("dir-merge,C"), PathBuf::from(".cvsignore"));
     }
 }

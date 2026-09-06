@@ -11,6 +11,7 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::super::directive::{FilterDirective, MergeDirective};
+use super::helpers::split_long_keyword_tail;
 use super::merge::parse_merge_modifiers;
 use super::rule_line::RuleLine;
 
@@ -20,18 +21,10 @@ pub(super) fn parse_long_merge_directive(
     line: RuleLine<'_>,
 ) -> Option<Result<FilterDirective, Message>> {
     let text = line.text();
-    let remainder = text.strip_prefix("merge")?;
-    let mut remainder =
-        remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    let mut modifiers = "";
-    if let Some(next) = remainder.strip_prefix(',') {
-        let mut split = next.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
-        modifiers = split.next().unwrap_or("");
-        remainder = split
-            .next()
-            .unwrap_or("")
-            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    }
+    let after = text.strip_prefix("merge")?;
+    // upstream: exclude.c:1218-1227 `rule_strcmp` requires a separator after the
+    // keyword and exclude.c:1444-1445 consumes exactly ONE of them.
+    let (modifiers, remainder) = split_long_keyword_tail(after)?;
     let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, false) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
@@ -79,24 +72,16 @@ pub(super) fn parse_dir_merge_alias(
     line: RuleLine<'_>,
 ) -> Option<Result<FilterDirective, Message>> {
     let trimmed = line.text();
-    // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
+    // upstream: exclude.c:1294 RULE_STRCMP(s, "dir-merge") is a case-sensitive
     // strncmp reached via `case 'd'`, so `DIR-MERGE`/`Dir-Merge` never match the
     // keyword. Compare bytes exactly; "dir-merge" is ASCII, so a matching prefix
     // lands on a char boundary, keeping the slices below panic-safe. (upstream
     // has no other dir-merge spelling, so no alias is accepted.)
     const KEYWORD: &str = "dir-merge";
-    let remainder = trimmed.strip_prefix(KEYWORD)?;
-    let mut remainder =
-        remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    let mut modifiers = "";
-    if let Some(rest) = remainder.strip_prefix(',') {
-        let mut split = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
-        modifiers = split.next().unwrap_or("");
-        remainder = split
-            .next()
-            .unwrap_or("")
-            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    }
+    let after = trimmed.strip_prefix(KEYWORD)?;
+    // upstream: exclude.c:1218-1227 `rule_strcmp` requires a separator after the
+    // keyword and exclude.c:1444-1445 consumes exactly ONE of them.
+    let (modifiers, remainder) = split_long_keyword_tail(after)?;
 
     let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, true) {
         Ok(result) => result,

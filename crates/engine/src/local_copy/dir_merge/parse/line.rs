@@ -399,7 +399,10 @@ fn classify_filter_directive_line(
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
-    let mut parts = text.splitn(2, char::is_whitespace);
+    // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
+    // alongside `isspace`. MEASURED against rsync 3.5.0: `--filter='exclude_b'`
+    // excludes `b`; oc split on whitespace only and rejected the rule.
+    let mut parts = text.splitn(2, |ch: char| ch == '_' || ch.is_whitespace());
     let keyword = parts.next().unwrap_or("");
     // `splitn` already consumed the single separator between the keyword and
     // the pattern (upstream exclude.c:1444-1445), so the remainder is the
@@ -967,5 +970,21 @@ mod tests {
             rendered.contains("src/.rsync-filter line 1"),
             "the diagnostic must name the merge file and line: {rendered}"
         );
+    }
+
+    /// upstream: exclude.c:1222 - `rule_strcmp` accepts `_` as a keyword
+    /// separator alongside `isspace`, and exclude.c:1444-1445 consumes exactly
+    /// that one byte. MEASURED against rsync 3.5.0: `--filter='exclude_b.txt'`
+    /// excludes `b.txt`; oc split the keyword on whitespace only and refused the
+    /// rule outright.
+    #[test]
+    fn an_underscore_separates_a_keyword_from_its_pattern() {
+        assert_eq!(rule_of("exclude_b.txt").pattern(), "b.txt");
+        assert_eq!(rule_of("include_b.txt").pattern(), "b.txt");
+        assert_eq!(rule_of("hide_b.txt").pattern(), "b.txt");
+        // Non-vacuity: a `_` inside the PATTERN is not a separator, because
+        // only the first one is consumed.
+        assert_eq!(rule_of("exclude a_b").pattern(), "a_b");
+        assert_eq!(rule_of("exclude__b").pattern(), "_b");
     }
 }

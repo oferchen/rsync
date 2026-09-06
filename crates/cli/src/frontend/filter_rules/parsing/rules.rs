@@ -123,12 +123,16 @@ pub(super) fn parse_short_include_rule(
 /// mirror upstream; an unknown keyword yields a syntax error.
 pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
     let trimmed = line.text();
-    let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
+    // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
+    // alongside `isspace`, and exclude.c:1444-1445 then consumes exactly that one
+    // byte. MEASURED against rsync 3.5.0: `--filter='exclude_b.txt'` excludes
+    // `b.txt`; oc split on whitespace only and rejected the rule as unknown.
+    let mut parts = trimmed.splitn(2, |ch: char| ch == '_' || ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
     let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
-    // `splitn` on the first whitespace already consumed the single separator
-    // between the keyword and the pattern (upstream exclude.c:1290-1291), so the
+    // `splitn` on the first separator already consumed the single separator
+    // between the keyword and the pattern (upstream exclude.c:1444-1445), so the
     // remainder is the pattern verbatim. Do not trim further leading separators.
     let pattern = remainder;
 

@@ -1151,3 +1151,183 @@ fn an_over_long_file_sourced_rule_is_reported_without_its_text() {
     );
     assert!(!messages[0].contains('Q'));
 }
+
+/// The long-keyword separator rule, measured against rsync 3.5.0.
+///
+/// `rule_strcmp` (exclude.c:1218-1227) accepts a keyword only when the next
+/// byte is whitespace, `_`, `,`, or the end of the string, and returns
+/// `str + rule_len - 1` for the first three of those. The modifier loop's
+/// `*++s` then lands ON the separator and stops, and `if (*s) s++`
+/// (exclude.c:1444-1445) consumes exactly ONE byte. `len = strlen(s)`
+/// (exclude.c:1465) takes everything after it verbatim.
+mod long_keyword_separator {
+    use super::*;
+
+    fn merge_path(text: &str) -> String {
+        let directive =
+            parse_filter_directive(OsStr::new(text), RuleSource::Argument).expect("parses");
+        match directive {
+            FilterDirective::Merge(merge) => merge.source().to_string_lossy().into_owned(),
+            other => panic!("expected a Merge directive, got {other:?}"),
+        }
+    }
+
+    fn dir_merge_name(text: &str) -> String {
+        let directive =
+            parse_filter_directive(OsStr::new(text), RuleSource::Argument).expect("parses");
+        match directive {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
+                spec.pattern().to_owned()
+            }
+            other => panic!("expected a dir-merge Rule directive, got {other:?}"),
+        }
+    }
+
+    /// MEASURED: `--filter='merge  X'` makes rsync 3.5.0 exit 11 with
+    /// `failed to open exclude file  X`, so the surviving space is part of the
+    /// NAME. oc trimmed the run and opened `X`.
+    #[test]
+    fn a_second_space_after_merge_belongs_to_the_file_name() {
+        assert_eq!(merge_path("merge  X"), " X");
+        assert_eq!(merge_path("merge   X"), "  X");
+    }
+
+    /// MEASURED: `--filter='merge__X'` exits 11 on `_X`. `_` is a separator
+    /// (exclude.c:1222) and exactly one of them is consumed.
+    #[test]
+    fn a_second_underscore_after_merge_belongs_to_the_file_name() {
+        assert_eq!(merge_path("merge__X"), "_X");
+    }
+
+    /// MEASURED: `--filter='merge,  X'` exits 11 on ` X`. The modifier run ends
+    /// at the first separator and only that one byte is consumed.
+    #[test]
+    fn modifiers_after_a_comma_still_consume_one_separator() {
+        assert_eq!(merge_path("merge,C  X"), " X");
+    }
+
+    /// MEASURED: `--filter='dir-merge  '` (two trailing spaces) transfers
+    /// successfully under rsync 3.5.0 and merges a per-directory file literally
+    /// named ` `; oc exited 1 with "missing a file name".
+    #[test]
+    fn a_dir_merge_of_two_spaces_names_a_file_called_space() {
+        assert_eq!(dir_merge_name("dir-merge  "), " ");
+    }
+
+    #[test]
+    fn a_second_space_after_dir_merge_belongs_to_the_file_name() {
+        assert_eq!(dir_merge_name("dir-merge  X"), " X");
+    }
+
+    /// MEASURED: `--filter='mergeX'` and `--filter='dir-mergeX'` both exit 1
+    /// with `Unknown filter rule` under rsync 3.5.0 - `rule_strcmp` returns NULL
+    /// (exclude.c:1227), `ch` stays 0, and the inner switch's `default:` reaches
+    /// `filter_rule_err` (exclude.c:1363). oc merged a file called `X`.
+    #[test]
+    fn a_keyword_not_followed_by_a_separator_is_not_that_keyword() {
+        assert!(parse_long_merge_directive(arg("mergeX")).is_none());
+        assert!(parse_dir_merge_alias(arg("dir-mergeX")).is_none());
+        assert!(parse_filter_directive(OsStr::new("mergeX"), RuleSource::Argument).is_err());
+        assert!(parse_filter_directive(OsStr::new("dir-mergeX"), RuleSource::Argument).is_err());
+    }
+
+    /// Non-vacuity companion: the separated spellings must still parse, or the
+    /// rejection test above would pass on a parser that recognises nothing.
+    #[test]
+    fn every_accepted_separator_still_reaches_the_merge_parsers() {
+        assert_eq!(merge_path("merge X"), "X");
+        assert_eq!(merge_path("merge_X"), "X");
+        assert_eq!(merge_path("merge,C"), ".cvsignore");
+        assert_eq!(dir_merge_name("dir-merge X"), "X");
+        assert_eq!(dir_merge_name("dir-merge_X"), "X");
+        assert_eq!(dir_merge_name("dir-merge,C"), ".cvsignore");
+    }
+
+    /// MEASURED: `--filter='exclude_b.txt'` excludes `b.txt` under rsync 3.5.0,
+    /// because `rule_strcmp` accepts `_` as a keyword separator
+    /// (exclude.c:1222). oc split the keyword on whitespace only and refused the
+    /// rule as unknown.
+    #[test]
+    fn an_underscore_separates_a_keyword_rule_from_its_pattern() {
+        for (text, kind) in [
+            ("exclude_b.txt", FilterRuleKind::Exclude),
+            ("include_b.txt", FilterRuleKind::Include),
+            // `hide` is a sender-side exclude (exclude.c:1348-1351).
+            ("hide_b.txt", FilterRuleKind::Exclude),
+        ] {
+            match parse_keyword_rule(arg(text)).expect("keyword rule parses") {
+                FilterDirective::Rule(spec) => {
+                    assert_eq!(spec.kind(), kind, "{text}");
+                    assert_eq!(spec.pattern(), "b.txt", "{text}");
+                }
+                other => panic!("expected a Rule directive for {text}, got {other:?}"),
+            }
+        }
+    }
+
+    /// REFUTATION, pinned. An empty merge name does NOT fall back to
+    /// `.cvsignore` on its own: `parse_rule_tok` raises
+    /// `unexpected end of filter rule` first (exclude.c:1474-1475) unless the
+    /// rule carries FILTRULE_CVS_IGNORE, which only the `C` modifier sets
+    /// (exclude.c:1402-1409). The `.cvsignore` default at exclude.c:1553-1557 is
+    /// therefore reachable only through `C`.
+    ///
+    /// MEASURED: rsync 3.5.0 exits 1 on `--filter='merge'`, `--filter='merge '`,
+    /// `--filter='dir-merge'` and `--filter='dir-merge '`, and exits 0 merging
+    /// `.cvsignore` on `--filter='merge,C'` and `--filter='dir-merge,C'`. oc
+    /// already agreed on every one of those six.
+    #[test]
+    fn an_empty_merge_name_needs_the_c_modifier_to_mean_cvsignore() {
+        for text in ["merge", "merge "] {
+            assert!(
+                parse_long_merge_directive(arg(text))
+                    .expect("the keyword matches")
+                    .is_err(),
+                "{text}"
+            );
+        }
+        for text in ["dir-merge", "dir-merge "] {
+            assert!(
+                parse_dir_merge_alias(arg(text))
+                    .expect("the keyword matches")
+                    .is_err(),
+                "{text}"
+            );
+        }
+        assert_eq!(merge_path("merge,C"), ".cvsignore");
+        assert_eq!(dir_merge_name("dir-merge,C"), ".cvsignore");
+    }
+
+    /// NEGATIVE CONTROL. None of the fixes above touches the short `.`, `:`,
+    /// `+` or `-` forms, nor a long keyword separated by a single space, so
+    /// every assertion here must stay green under a mutation that reverts any
+    /// one of them.
+    #[test]
+    fn negative_control_the_untouched_forms_keep_their_patterns() {
+        assert_eq!(merge_path(". X"), "X");
+        assert_eq!(merge_path(".  X"), " X");
+        assert_eq!(dir_merge_name(": X"), "X");
+        assert_eq!(dir_merge_name(":  X"), " X");
+        assert_eq!(merge_path("merge X"), "X");
+        assert_eq!(dir_merge_name("dir-merge X"), "X");
+
+        for (text, kind, pattern) in [
+            ("- b.txt", FilterRuleKind::Exclude, "b.txt"),
+            ("-  b.txt", FilterRuleKind::Exclude, " b.txt"),
+            ("+ b.txt", FilterRuleKind::Include, "b.txt"),
+            ("exclude b.txt", FilterRuleKind::Exclude, "b.txt"),
+            ("exclude  b.txt", FilterRuleKind::Exclude, " b.txt"),
+        ] {
+            match parse_filter_directive(OsStr::new(text), RuleSource::Argument)
+                .expect("directive parses")
+            {
+                FilterDirective::Rule(spec) => {
+                    assert_eq!(spec.kind(), kind, "{text}");
+                    assert_eq!(spec.pattern(), pattern, "{text}");
+                }
+                other => panic!("expected a Rule directive for {text}, got {other:?}"),
+            }
+        }
+    }
+}
