@@ -228,8 +228,53 @@ fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
     let Some(partial) = crate::temp_guard::partial_dir_fname(dest_path, dir) else {
         return;
     };
-    let _ = fs::remove_file(&partial);
+    remove_partial_basis_confined(config, &partial);
     engine::remove_partial_dir(Some(dir), &partial);
+}
+
+/// Unlinks the partial basis through the destination sandbox, falling back to
+/// a path-based removal only when there is no sandbox to anchor on.
+///
+/// A malicious pull server can leave a receiver-owned symlink where the partial
+/// basis is expected. A bare `fs::remove_file` FOLLOWS that symlink and unlinks
+/// an arbitrary client-local file outside the destination tree, which is what
+/// the upstream `malicious-server-partial-basis-symlink-overwrite` cell
+/// observes. Anchoring the unlink on the same sandbox dirfd
+/// [`rename_config_sandboxed`] already uses for the commit refuses it, and
+/// matches every sibling receiver removal sink.
+///
+/// The `strip_prefix` guard is what keeps this from regressing availability: an
+/// absolute `--partial-dir` on a different tree has no relative name beneath
+/// `dest_dir`, so it takes the unchanged path-based arm exactly as before.
+///
+/// # Upstream Reference
+///
+/// - `delete.c:75-77` - the no-held-dirfd arm is `robust_unlink(fbuf)`, and
+///   `util1.c:545` shows `robust_unlink` is `do_unlink_at(fname)` on both sides
+///   of its `ETXTBSY` `#ifdef`. Upstream's fallback is the confined `do_*_at()`
+///   wrapper, never a bare `unlink()`.
+#[cfg(unix)]
+fn remove_partial_basis_confined(config: &DiskCommitConfig, partial: &Path) {
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+        && let Ok(relative) = partial.strip_prefix(dest_dir)
+    {
+        let _ = fast_io::unlink_via_sandbox_or_fallback(
+            Some(sandbox.as_ref()),
+            dest_dir,
+            relative,
+            partial,
+            fast_io::UnlinkFlags::File,
+        );
+        return;
+    }
+    let _ = fs::remove_file(partial);
+}
+
+/// Non-Unix: the `*at` sandbox helpers do not exist, so the removal stays
+/// path-based, mirroring [`rename_config_sandboxed`]'s own platform split.
+#[cfg(not(unix))]
+fn remove_partial_basis_confined(_config: &DiskCommitConfig, partial: &Path) {
+    let _ = fs::remove_file(partial);
 }
 
 /// Resolves the `--delay-updates` staging path for a destination file.
@@ -1071,4 +1116,104 @@ pub(super) fn make_backup_copy(
         original: file_rel,
         backup: backup_rel,
     }))
+}
+
+/// The partial-basis cleanup must not delete a file outside the destination
+/// tree when a peer plants a symlinked `--partial-dir`.
+///
+/// The escape is the PREFIX, not the leaf. `unlink(2)` on a symlink leaf
+/// removes the link itself, but it resolves every earlier component, so with
+/// `dest/.partial -> ../outside` a path-based `remove_file("dest/.partial/x")`
+/// deletes `outside/x`. That is the vector the upstream testsuite cell
+/// `malicious-server-partial-basis-symlink-overwrite` observes.
+///
+/// The planted symlink is owned by this euid, so the ownership walk TRUSTS it -
+/// exactly as [`crate::temp_guard`]'s `confined_temp_create` cells record. What
+/// refuses the escape is the CONFINEMENT ROOT, which is why each cell installs
+/// a session carrying one. Without an installed session
+/// `ConfinedFallback::resolve` reads `session_optout_allowed()` and returns the
+/// unconfined arm, so a cell that omitted the install would measure the plain
+/// syscall and report a false escape.
+#[cfg(all(test, unix))]
+mod confined_partial_basis_cleanup {
+    use super::{DiskCommitConfig, remove_partial_basis_confined};
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+    use std::os::unix::fs::symlink;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// `TempDir` under a canonical root: the confinement root is compared
+    /// against a resolved path, so a `/tmp` -> `/private/tmp` style prefix
+    /// would make every cell below pass for the wrong reason.
+    fn canonical_tempdir() -> (TempDir, PathBuf) {
+        let keep = TempDir::new().expect("tempdir");
+        let root = keep.path().canonicalize().expect("canonicalize");
+        (keep, root)
+    }
+
+    /// `module/` is both the destination root and the confinement root.
+    fn confine_to(module: &Path) {
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(module.to_path_buf()),
+        });
+    }
+
+    fn config_for(module: &Path) -> DiskCommitConfig {
+        let sandbox = Arc::new(fast_io::DirSandbox::open_root(module).expect("open sandbox"));
+        DiskCommitConfig {
+            sandbox: Some(sandbox),
+            dest_dir: Some(module.to_path_buf()),
+            ..DiskCommitConfig::default()
+        }
+    }
+
+    /// The assertion is on WHAT THE OUT-OF-TREE FILE CONTAINS, not on the call
+    /// reporting an error: the removal is best-effort and returns nothing, so
+    /// only the victim's survival distinguishes a refusal from a success.
+    #[test]
+    fn partial_basis_cleanup_refuses_a_partial_dir_symlink_escaping_the_root() {
+        let (_keep, root) = canonical_tempdir();
+        let module = root.join("module");
+        std::fs::create_dir(&module).expect("module");
+        std::fs::create_dir(root.join("outside")).expect("outside");
+        let victim = root.join("outside/secret");
+        std::fs::write(&victim, b"OUTSIDE").expect("secret");
+        symlink("../outside", module.join(".partial")).expect("partial-dir symlink");
+        confine_to(&module);
+
+        remove_partial_basis_confined(&config_for(&module), &module.join(".partial/secret"));
+
+        assert!(
+            victim.exists(),
+            "partial-basis cleanup must not delete a file outside the destination tree",
+        );
+        assert_eq!(std::fs::read(&victim).expect("victim readable"), b"OUTSIDE");
+    }
+
+    /// Non-vacuity companion: on the SAME confined session, a genuine in-tree
+    /// partial basis is still removed. Without this the escape cell above
+    /// would also pass if the routing had turned the removal into a blanket
+    /// no-op, which is a silent availability regression rather than a fix.
+    #[test]
+    fn partial_basis_cleanup_still_removes_an_in_tree_basis() {
+        let (_keep, root) = canonical_tempdir();
+        let module = root.join("module");
+        std::fs::create_dir_all(module.join(".partial")).expect("partial dir");
+        let basis = module.join(".partial/payload.bin");
+        std::fs::write(&basis, b"stale partial basis").expect("basis");
+        confine_to(&module);
+
+        remove_partial_basis_confined(&config_for(&module), &basis);
+
+        assert!(
+            !basis.exists(),
+            "an in-tree partial basis must still be removed"
+        );
+    }
 }
