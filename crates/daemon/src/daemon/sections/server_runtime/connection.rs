@@ -4,7 +4,7 @@
 /// and dual-stack accept loops, avoiding excessive parameter lists.
 struct AcceptLoopState<'a> {
     signal_flags: &'a SignalFlags,
-    workers: Vec<thread::JoinHandle<WorkerResult>>,
+    workers: Vec<SessionWorker>,
     served: usize,
     active_connections: usize,
     connection_counter: ConnectionCounter,
@@ -188,10 +188,15 @@ pub(crate) fn log_max_connections_rejection(
     log_message(log, &message);
 }
 
-/// Spawns a worker thread for an accepted connection.
+/// Spawns a worker for an accepted connection.
 ///
-/// Applies socket options, normalizes the peer address, and spawns a session
-/// handler thread with `catch_unwind` panic isolation. Returns the join handle.
+/// Normalizes the peer address, claims the connection's `max connections`
+/// slot, and spawns a session handler thread with `catch_unwind` panic
+/// isolation. Returns the [`SessionWorker`] pairing the two.
+///
+/// The slot is claimed here but held by the returned worker rather than by the
+/// session, so the accept loop's reap is what releases it. See
+/// [`SessionWorker`] for why that placement is load-bearing.
 ///
 /// upstream: clientserver.c - fork per connection; we use threads with
 /// `catch_unwind` for equivalent crash isolation.
@@ -199,7 +204,7 @@ fn spawn_connection_worker(
     stream: DaemonStream,
     raw_peer_addr: SocketAddr,
     state: &AcceptLoopState<'_>,
-) -> thread::JoinHandle<WorkerResult> {
+) -> SessionWorker {
     let peer_addr = normalize_peer_address(raw_peer_addr);
     // Build the shareable per-connection context once; the same context type
     // and `serve_session` core drive the async accept path, keeping the wire
@@ -214,10 +219,9 @@ fn spawn_connection_worker(
         state.proxy_policy.clone(),
         state.daemon_timeout,
     );
-    let conn_guard = state.connection_counter.acquire();
+    let slot = state.connection_counter.acquire();
 
-    thread::spawn(move || {
-        let _conn_guard = conn_guard;
+    let handle = thread::spawn(move || {
         // upstream rsync forks per connection, so a crash only kills that
         // child. `serve_session` isolates panics via `catch_unwind` so a
         // faulting connection cannot tear down the daemon.
@@ -225,7 +229,12 @@ fn spawn_connection_worker(
             Ok(()) => Ok(()),
             Err(error) => Err((Some(peer_addr), error)),
         }
-    })
+    });
+
+    SessionWorker {
+        handle,
+        _slot: slot,
+    }
 }
 
 /// Applies socket options to an accepted stream and logs any failure.
@@ -295,13 +304,23 @@ fn handle_accepted_connection(
         state.log_sink.as_ref(),
     );
 
+    // Release the slots of sessions that ended while the loop was blocked in
+    // `poll`, so the capacity decision below reads freshly-reaped state.
+    //
+    // The slot guard is parent-owned (see `SessionWorker`), so a finished
+    // worker keeps its slot until a reap. Without this call the next reap is
+    // the following iteration's, and a session that ended during the poll
+    // would refuse a connection the daemon has room for. Under a forked
+    // backing this is also where `reap_finished_children` belongs.
+    reap_finished_workers(&mut state.workers, state.log_sink.as_ref());
+
     if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
         drop(stream);
         return false;
     }
 
-    let handle = spawn_connection_worker(stream, raw_peer_addr, state);
-    state.workers.push(handle);
+    let worker = spawn_connection_worker(stream, raw_peer_addr, state);
+    state.workers.push(worker);
     state.served = state.served.saturating_add(1);
 
     update_connection_status_after_accept(state);

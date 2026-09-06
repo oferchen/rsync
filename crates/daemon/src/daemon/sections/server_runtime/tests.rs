@@ -231,22 +231,26 @@ fn join_worker_swallows_panicking_thread() {
 /// session's outcome at all.
 #[test]
 fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
-    let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
+    let counter = ConnectionCounter::new();
+    let mut workers: Vec<SessionWorker> = Vec::new();
     for kind in [
         io::ErrorKind::InvalidData,
         io::ErrorKind::PermissionDenied,
         io::ErrorKind::BrokenPipe,
         io::ErrorKind::TimedOut,
     ] {
-        workers.push(thread::spawn(move || {
-            Err((
-                Some("127.0.0.1:12345".parse().unwrap()),
-                io::Error::new(kind, "session failure"),
-            ))
-        }));
+        workers.push(SessionWorker {
+            handle: thread::spawn(move || {
+                Err((
+                    Some("127.0.0.1:12345".parse().unwrap()),
+                    io::Error::new(kind, "session failure"),
+                ))
+            }),
+            _slot: counter.acquire(),
+        });
     }
-    for handle in &workers {
-        while !handle.is_finished() {
+    for worker in &workers {
+        while !worker.is_finished() {
             thread::yield_now();
         }
     }
@@ -259,6 +263,37 @@ fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
     );
 }
 
+/// A finished worker keeps its `max connections` slot until the accept loop
+/// reaps it, and the reap is what releases it.
+///
+/// Both halves matter. The slot guard is parent-owned so that a forked child
+/// cannot carry the only copy away with it (see `SessionWorker`); the price is
+/// that a session ending mid-`poll` no longer frees its slot at that moment.
+/// Nothing else releases it, which is why `handle_accepted_connection` reaps
+/// immediately before consulting the cap rather than relying on the reap at
+/// the top of the iteration.
+#[test]
+fn a_finished_worker_holds_its_slot_until_reaped() {
+    let counter = ConnectionCounter::new();
+    let mut workers = vec![SessionWorker {
+        handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
+        _slot: counter.acquire(),
+    }];
+    while !workers[0].is_finished() {
+        thread::yield_now();
+    }
+    assert_eq!(
+        counter.active(),
+        1,
+        "the session ended, but its slot belongs to the parent until the reap",
+    );
+    reap_finished_workers(&mut workers, None);
+    assert_eq!(
+        counter.active(),
+        0,
+        "reaping a finished worker must release the slot it was holding",
+    );
+}
 #[test]
 fn catch_unwind_isolates_panic_and_returns_ok() {
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
@@ -1214,6 +1249,63 @@ fn accept_loop_recovers_after_disconnect() {
     assert!(!refuse_if_at_capacity(&mut server_stream, peer, &state));
 }
 
+/// Admission reaps first, so a session that ended while the loop was blocked
+/// in `poll` does not hold its `max connections` slot against the next client.
+///
+/// The slot guard is parent-owned (see `SessionWorker`), which means a
+/// finished worker keeps its slot until some reap runs. The reap at the top of
+/// the accept iteration happens BEFORE the blocking poll, so without the reap
+/// inside `handle_accepted_connection` the cap would be read against a slot
+/// whose session has already ended.
+///
+/// `state.served` is what discriminates: the refusal arm returns before
+/// incrementing it, and both arms return `false`.
+#[test]
+fn admission_reaps_before_consulting_the_connection_cap() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let client_handle = thread::spawn(move || TcpStream::connect(local).expect("connect"));
+    let (server_stream, peer) = listener.accept().expect("accept");
+    let _client = client_handle.join().expect("client connect");
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let counter = ConnectionCounter::new();
+    let mut state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        counter.clone(),
+        Some(1),
+    );
+
+    // One worker whose session has already ended, still holding the only slot.
+    state.workers.push(SessionWorker {
+        handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
+        _slot: counter.acquire(),
+    });
+    while !state.workers[0].is_finished() {
+        thread::yield_now();
+    }
+    assert_eq!(
+        counter.active(),
+        1,
+        "fixture must start at the cap, or the admission below proves nothing",
+    );
+
+    handle_accepted_connection(server_stream, peer, &mut state);
+
+    assert_eq!(
+        state.served, 1,
+        "the finished worker's slot must be reaped before the cap is read, so \
+         this connection is admitted rather than refused",
+    );
+}
 #[test]
 fn default_listen_backlog_matches_upstream() {
     // upstream: daemon-parm.txt declares `INTEGER listen_backlog 5` and
