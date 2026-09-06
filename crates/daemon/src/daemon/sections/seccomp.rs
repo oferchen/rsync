@@ -321,6 +321,18 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
     // cannot see from here. Same shape as the `arch_prctl` push above.
     #[cfg(target_arch = "x86_64")]
     s.push(libc::SYS_mknod);
+    // Same lowering, different call: glibc turns `mkdir()` into the legacy
+    // `mkdir` syscall on x86_64 rather than `mkdirat`. The receiver creates its
+    // destination root through `std::fs`, which goes through that symbol, so
+    // without this the daemon EPERMs on its own dest root and the transfer dies
+    // at RERR_FILESELECT before a single file moves.
+    //
+    // This grants no reach the filter does not already grant: `mkdir(p, m)` is
+    // by definition `mkdirat(AT_FDCWD, p, m)`, and `SYS_mkdirat` is admitted in
+    // bucket A above. The legacy number is the same operation spelled the way
+    // this libc happens to spell it.
+    #[cfg(target_arch = "x86_64")]
+    s.push(libc::SYS_mkdir);
 
     // glibc 2.35+ initialises restartable sequences per thread. `SYS_rseq`
     // is missing from older libc bindings; fall back to the documented
@@ -455,6 +467,28 @@ mod seccomp_tests {
         assert!(
             list.binary_search(&libc::SYS_mknod).is_ok(),
             "legacy mknod missing: glibc < 2.33 on x86_64 lowers mknod() to it",
+        );
+    }
+
+    /// The receiver creates its destination root with `std::fs`, whose
+    /// `mkdir()` glibc lowers to the legacy `mkdir` syscall on x86_64.
+    ///
+    /// Measured before the legacy number was admitted: the daemon worker took
+    /// `mkdir("<mod>/dest/", 0777) = -1 EPERM` and the push died at
+    /// RERR_FILESELECT reporting only "failed to create destination root",
+    /// with `mkdirat` allowlisted the whole time.
+    #[test]
+    fn allowlist_admits_directory_creation() {
+        let list = worker_seccomp_allowlist();
+        assert!(
+            list.binary_search(&libc::SYS_mkdirat).is_ok(),
+            "mkdirat missing: the receiver could not create any directory",
+        );
+        #[cfg(target_arch = "x86_64")]
+        assert!(
+            list.binary_search(&libc::SYS_mkdir).is_ok(),
+            "legacy mkdir missing: glibc on x86_64 lowers mkdir() to it, so the \
+             receiver cannot create its own destination root",
         );
     }
 
