@@ -47,7 +47,14 @@ pub(super) fn parse_merge_directive(
         ));
     }
 
-    let path_text = remainder.trim_end();
+    // The merge PATH is the rest of the rule verbatim: upstream consumes one
+    // separator after the keyword (exclude.c:1444-1445) and then takes
+    // `len = strlen(s)` (exclude.c:1465); `parse_merge_name` (exclude.c:696-752)
+    // only runs `clean_fname` (:734), which never touches whitespace. MEASURED
+    // against rsync 3.5.0 with a `.rsync-filter` holding `merge inner ` and a
+    // filter file literally named `inner `: upstream opens it and excludes `b`;
+    // oc trimmed the name and failed the transfer with exit 24.
+    let path_text = remainder;
     let path_text = if path_text.is_empty() {
         if assume_cvsignore {
             ".cvsignore"
@@ -96,7 +103,19 @@ pub(super) fn parse_short_merge_directive_line(
     let (modifiers, rest) = split_short_merge_modifiers(remainder, allow_extended);
     let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, allow_extended)?;
 
-    let pattern = rest.trim();
+    // `split_short_merge_modifiers` already consumed the ONE separator that ends
+    // the modifier run (upstream exclude.c:1444-1445, `if (*s) s++`), and the
+    // merge FILENAME is then the rest of the rule verbatim (`len = strlen(s)`,
+    // exclude.c:1465). `parse_merge_name` (exclude.c:696-752) only runs
+    // `clean_fname` over it (:734), which collapses slashes and `..`, never
+    // whitespace. So a trailing space is part of the merge file's NAME.
+    //
+    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.0
+    // with a `.rsync-filter` holding `: inner ` over a source containing `a`,
+    // `b` and a filter file literally named `inner ` that reads `- b`:
+    // upstream copies `a` and `inner `; oc trimmed the name, found nothing,
+    // and copied `b` too. `. inner ` failed the transfer outright (exit 24).
+    let pattern = rest;
     let pattern = if pattern.is_empty() {
         if assume_cvsignore {
             ".cvsignore"
@@ -273,14 +292,24 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// upstream: exclude.c:1444-1445 consumes ONE separator after the `.`, and
+    /// exclude.c:1465 then takes `len = strlen(s)`, so every remaining byte -
+    /// two more leading spaces and three trailing ones - is part of the merge
+    /// file's NAME. `parse_merge_name` (exclude.c:696-752) only runs
+    /// `clean_fname` (:734), which never strips whitespace.
+    ///
+    /// This test previously asserted the trimmed name. MEASURED against rsync
+    /// 3.5.0, `--filter=':  '` transfers a file literally named `  ` and
+    /// `--filter='.  '` fails to open the merge file named ` `; both prove the
+    /// whitespace survives.
     #[test]
-    fn parse_short_merge_trims_pattern() {
+    fn parse_short_merge_keeps_the_whitespace_around_its_name() {
         let result = parse_short_merge_directive_line(".   .rsync-filter   ");
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
             ParsedFilterDirective::Merge { path, .. } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
+                assert_eq!(path, PathBuf::from("  .rsync-filter   "));
             }
             _ => panic!("expected Merge directive"),
         }

@@ -37,7 +37,15 @@ pub(super) fn parse_long_merge_directive(
         Err(error) => return Some(Err(error)),
     };
 
-    let mut path_text = remainder.trim_end();
+    // The merge PATH is the rest of the rule verbatim: upstream consumes one
+    // separator after the keyword (exclude.c:1444-1445) and then takes
+    // `len = strlen(s)` (exclude.c:1465); `parse_merge_name` (exclude.c:696-752)
+    // only runs `clean_fname` (:734), which collapses slashes and `..` but never
+    // whitespace. MEASURED against rsync 3.5.0 with a filter file literally
+    // named `.rsync-filter ` (trailing space) holding `- b`: upstream opens it
+    // through `--filter='merge DIR/.rsync-filter '` and copies only `a`; oc
+    // trimmed the path and aborted with `failed to open exclude file` (exit 11).
+    let mut path_text = remainder;
     if path_text.is_empty() {
         if assume_cvsignore {
             path_text = ".cvsignore";
@@ -95,7 +103,15 @@ pub(super) fn parse_dir_merge_alias(
         Err(error) => return Some(Err(error)),
     };
 
-    let mut path_text = remainder.trim_end();
+    // The dir-merge FILENAME is the rest of the rule verbatim: one separator is
+    // consumed after the keyword (exclude.c:1444-1445), the length is
+    // `strlen(s)` (exclude.c:1465), and `parse_merge_name` (exclude.c:696-752)
+    // only runs `clean_fname` (:734). MEASURED against rsync 3.5.0 over a source
+    // holding `a`, `b` and a filter file literally named `.rsync-filter `
+    // (trailing space) that reads `- b`, with
+    // `--filter='dir-merge .rsync-filter '`: upstream copies only `a`; oc
+    // trimmed the name, found no merge file, and copied `b` too.
+    let mut path_text = remainder;
     if path_text.is_empty() {
         if assume_cvsignore {
             path_text = ".cvsignore";

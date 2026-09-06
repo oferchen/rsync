@@ -168,7 +168,19 @@ pub(super) fn parse_short_merge_directive(
         Err(error) => return Some(Err(error)),
     };
 
-    let pattern = rest.trim();
+    // `split_short_merge_modifiers` already consumed the ONE separator that ends
+    // the modifier run (upstream exclude.c:1444-1445, `if (*s) s++`), and the
+    // merge FILENAME is then the rest of the rule verbatim (`len = strlen(s)`,
+    // exclude.c:1465). `parse_merge_name` (exclude.c:696-752) only runs
+    // `clean_fname` over it (:734), which collapses slashes and `..`, never
+    // whitespace. So a trailing space is part of the merge file's NAME.
+    //
+    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.0
+    // over a source holding `a`, `b` and a filter file literally named
+    // `.rsync-filter ` (trailing space) that reads `- b`, with
+    // `--filter=': .rsync-filter '`: upstream finds the merge file and copies
+    // only `a`; oc trimmed the name, found nothing, and copied `b` too.
+    let pattern = rest;
     let pattern = if pattern.is_empty() {
         if assume_cvsignore {
             ".cvsignore"
@@ -409,18 +421,53 @@ mod tests {
         assert!(result.is_some());
     }
 
+    /// `:  ` is NOT a missing file name: one separator is consumed
+    /// (exclude.c:1444-1445) and the remaining space is the name
+    /// (exclude.c:1465). MEASURED against rsync 3.5.0: `--filter=':  '` exits 0
+    /// and transfers a source file literally named `  `, so the dir-merge name
+    /// it registered was ` `.
     #[test]
-    fn parse_short_merge_directive_missing_file_error() {
-        let result = parse_short_merge_directive(arg(":  "));
-        assert!(result.is_some());
-        assert!(result.unwrap().is_err());
+    fn parse_short_merge_directive_keeps_a_space_only_name() {
+        let result = parse_short_merge_directive(arg(":  "))
+            .expect("`:  ` is a dir-merge directive")
+            .expect("a space is a legal file name");
+        match result {
+            FilterDirective::Rule(rule) => assert_eq!(rule.pattern(), " "),
+            other => panic!("expected a dir-merge rule, got {other:?}"),
+        }
     }
 
+    /// The `.` sibling of the cell above. MEASURED against rsync 3.5.0:
+    /// `--filter='.  '` reports `failed to open exclude file  ` and exits 11,
+    /// naming the file ` ` - it is a real path, not a parse error.
     #[test]
-    fn parse_short_merge_directive_dot_missing_file_error() {
-        let result = parse_short_merge_directive(arg(".  "));
-        assert!(result.is_some());
-        assert!(result.unwrap().is_err());
+    fn parse_short_merge_directive_dot_keeps_a_space_only_path() {
+        let result = parse_short_merge_directive(arg(".  "))
+            .expect("`.  ` is a merge directive")
+            .expect("a space is a legal file path");
+        match result {
+            FilterDirective::Merge(directive) => {
+                assert_eq!(directive.source(), OsString::from(" "));
+            }
+            other => panic!("expected a merge directive, got {other:?}"),
+        }
+    }
+
+    /// Non-vacuity control for the two cells above: a directive with NO
+    /// remainder at all is still the missing-name error, so those cells cannot
+    /// pass merely because the parser stopped erroring.
+    #[test]
+    fn parse_short_merge_directive_still_errors_with_no_name() {
+        assert!(
+            parse_short_merge_directive(arg(":"))
+                .expect("`:` is a dir-merge directive")
+                .is_err()
+        );
+        assert!(
+            parse_short_merge_directive(arg("."))
+                .expect("`.` is a merge directive")
+                .is_err()
+        );
     }
 
     #[test]
