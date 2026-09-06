@@ -872,7 +872,10 @@ mod relative_operand_name_tests {
         ];
 
         for (operand, want_base, want_path) in cases {
-            let (base, path) = relative_walk_base(Path::new(operand));
+            // `None` is the non-daemon arm: every case above expects the walk
+            // base derived from the operand itself (`.`, `/`, or the `/./`
+            // head), never a served module root.
+            let (base, path) = relative_walk_base(Path::new(operand), None);
             assert_eq!(
                 (wire_name(&base), wire_name(&path)),
                 (want_base.to_owned(), want_path.to_owned()),
