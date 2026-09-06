@@ -288,9 +288,12 @@ fn report_session_failure(
 /// Extracts a human-readable message from a panic payload.
 ///
 /// Handles the two common payload types (`String` and `&str`) and falls back
-/// to a generic description for anything else. A forked child's panic never
-/// crosses a process boundary as a payload, so this is thread-backed only.
-#[cfg(not(unix))]
+/// to a generic description for anything else.
+///
+/// Reachable on every platform: a forked child's panic never crosses the
+/// process boundary as a payload, but the child still runs
+/// [`ConnectionContext::serve_session`]'s own `catch_unwind`, which describes
+/// the panic in the child before it exits.
 fn describe_panic_payload(payload: Box<dyn std::any::Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,

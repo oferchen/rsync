@@ -27,6 +27,18 @@ trait AcceptEngine {
 
     /// Stops the engine, releasing its readiness resources. Idempotent.
     fn shutdown(&mut self);
+
+    /// Raw descriptors of every listener the engine owns.
+    ///
+    /// The engine owns the listeners, so it is the only thing that can name
+    /// them - and a forked session child must close all of them before it
+    /// serves. Borrowed, never transferred: the engine keeps accepting on
+    /// these in the parent.
+    ///
+    /// upstream: `socket.c:753-760` `start_accept_loop()` closes `fds[i]` for
+    /// every listener in the child.
+    #[cfg(unix)]
+    fn listener_fds(&self) -> Vec<std::os::fd::RawFd>;
 }
 
 /// Result of polling an [`AcceptEngine`].
@@ -246,6 +258,16 @@ impl AcceptEngine for PollAcceptEngine {
     }
 
     fn shutdown(&mut self) {}
+
+    #[cfg(unix)]
+    fn listener_fds(&self) -> Vec<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+
+        self.listeners
+            .iter()
+            .map(|(listener, _)| listener.as_raw_fd())
+            .collect()
+    }
 }
 
 /// macOS `kqueue` accept engine: one `EVFILT_READ` registration per listener,
@@ -426,6 +448,19 @@ impl AcceptEngine for KqueueAcceptEngine {
         // join. Clearing the listeners drops their fds too, matching the
         // portable engines' teardown. Idempotent: a second call finds it empty.
         self.listeners.clear();
+    }
+
+    #[cfg(unix)]
+    fn listener_fds(&self) -> Vec<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+
+        // Deliberately NOT the kqueue fd: that is the parent's readiness
+        // surface, and the child inherits a copy it never polls. Closing it
+        // here would conflate "listener" with "everything this engine owns".
+        self.listeners
+            .iter()
+            .map(|(listener, _)| listener.as_raw_fd())
+            .collect()
     }
 }
 

@@ -1023,6 +1023,10 @@ fn test_accept_loop_state<'a>(
         reverse_lookup: false,
         proxy_policy: ProxyProtocolPolicy::Disabled,
         daemon_timeout: None,
+        // No accept engine here, so no listeners to shed - matching the
+        // production state before `build_accept_engine` hands them over.
+        #[cfg(unix)]
+        listener_fds: Vec::new(),
     }
 }
 

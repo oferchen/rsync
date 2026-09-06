@@ -32,6 +32,16 @@ struct AcceptLoopState<'a> {
     /// upstream: clientserver.c:1441 arms the handshake deadline from
     /// `daemon_handshake_timeout(-1)`, the GLOBAL value.
     daemon_timeout: Option<NonZeroU64>,
+    /// Listener descriptors a forked session child must close before it serves.
+    ///
+    /// Filled from the accept engine once that engine owns the listeners - it
+    /// is the only thing that can name them. Empty until then, which is safe
+    /// because no connection can be accepted, and therefore no child forked,
+    /// before the loop starts.
+    ///
+    /// upstream: `socket.c:753-760` `start_accept_loop()`.
+    #[cfg(unix)]
+    listener_fds: Vec<std::os::fd::RawFd>,
 }
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
@@ -269,6 +279,12 @@ fn fork_session_backing(
 ) -> Option<SessionBacking> {
     match platform::session_fork::fork_session() {
         Ok(platform::session_fork::ForkSide::Child) => {
+            // Before anything else the child sheds the listening sockets it
+            // inherited: it serves exactly one already-accepted connection, and
+            // a listener held open here keeps the port bound for this child's
+            // whole lifetime.
+            // upstream: `socket.c:753-760`.
+            platform::session_fork::close_inherited_listeners(&state.listener_fds);
             let code = serve_forked_session(&context, stream, raw_peer_addr, peer_addr);
             // `_exit`, never a return: the child shares the parent's buffered
             // stdio and its `Drop`s (the pid-file guard above all), so
@@ -309,7 +325,7 @@ fn serve_forked_session(
     match context.serve_session(stream, raw_peer_addr) {
         Ok(()) => 0,
         Err(error) => {
-            report_session_failure(Some(peer_addr), &error, context.log_sink());
+            report_session_failure(Some(peer_addr), &error, context.log_sink.as_ref());
             SOCKET_IO_EXIT_CODE
         }
     }
