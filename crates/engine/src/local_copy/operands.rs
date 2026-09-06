@@ -15,7 +15,15 @@ pub(crate) struct SourceSpec {
 }
 
 impl SourceSpec {
-    pub(crate) fn from_operand(operand: &OsString) -> Result<Self, LocalCopyError> {
+    /// Builds a source operand.
+    ///
+    /// `relative_paths` is `--relative`. It scopes the trailing-`..` DOTDIR
+    /// rule, which upstream places in the arm `--relative` never reaches - see
+    /// [`operand_ends_in_parent_dir`].
+    pub(crate) fn from_operand(
+        operand: &OsString,
+        relative_paths: bool,
+    ) -> Result<Self, LocalCopyError> {
         if operand.is_empty() {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::EmptySourceOperand,
@@ -28,8 +36,9 @@ impl SourceSpec {
             ));
         }
 
-        let copy_contents =
-            has_trailing_separator(operand.as_os_str()) || operand_is_dot_dir(operand.as_os_str());
+        let copy_contents = has_trailing_separator(operand.as_os_str())
+            || operand_is_dot_dir(operand.as_os_str())
+            || (!relative_paths && operand_ends_in_parent_dir(operand.as_os_str()));
         let has_dot_dir_marker = detect_dot_dir_marker(operand.as_os_str());
         Ok(Self {
             path: PathBuf::from(operand),
@@ -381,6 +390,80 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
     }
 }
 
+/// Returns `true` when the operand's final path component is `..` (the operand
+/// is exactly `..` or ends with `/..`).
+///
+/// Upstream does not stat such an operand as typed. It APPENDS `/.` to it and
+/// records `DOTDIR_NAME`:
+///
+/// ```text
+/// } else if (len > 1 && fbuf[len-1] == '.' && fbuf[len-2] == '.'
+///     && (len == 2 || fbuf[len-3] == '/')) {
+///         fbuf[len++] = '/';
+///         fbuf[len++] = '.';
+///         fbuf[len] = '\0';
+///         name_type = DOTDIR_NAME;
+/// ```
+///
+/// The append is what makes the non-relative split at `flist.c:2610-2621` cut
+/// `src/../.` at its LAST `/`, yielding `dir = "src/.."` and `fn = "."`: the
+/// parent directory is chdir()ed into and its CONTENTS are transferred, exactly
+/// as a trailing `/` does. oc reaches the same place by flagging the operand
+/// `copy_contents` and leaving the path as typed, since it resolves operands
+/// instead of chdir()ing.
+///
+/// # Scope: NOT under `--relative`
+///
+/// The rule sits in the arm `--relative` never reaches. `flist.c:2581-2583`
+/// short-circuits the whole marker chain to `NORMAL_NAME` when
+/// `relative_paths` is set, and a `..` in the ACTIVE part of a `--relative`
+/// operand is instead rejected outright at `flist.c:2658-2667`
+/// (`found ".." dir in relative path: %s`, `exit_cleanup(RERR_SYNTAX)`).
+/// Callers must gate on `!--relative`; oc does not yet implement that
+/// rejection, so under `--relative` such an operand keeps its existing
+/// (divergent) handling rather than silently gaining contents semantics.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2595-2602` - the append and the `DOTDIR_NAME` assignment.
+/// - `flist.c:2581-2583` - the `--relative` short-circuit above it.
+/// - `flist.c:2658-2667` - the `--relative` `..` rejection.
+pub(crate) fn operand_ends_in_parent_dir(path: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = path.as_bytes();
+        let len = bytes.len();
+        len > 1
+            && bytes[len - 1] == b'.'
+            && bytes[len - 2] == b'.'
+            && (len == 2 || bytes[len - 3] == b'/')
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        const DOT: u16 = b'.' as u16;
+        const SLASH: u16 = b'/' as u16;
+        const BACKSLASH: u16 = b'\\' as u16;
+
+        let units: Vec<u16> = path.encode_wide().filter(|ch| *ch != 0).collect();
+        let len = units.len();
+        len > 1
+            && units[len - 1] == DOT
+            && units[len - 2] == DOT
+            && (len == 2 || units[len - 3] == SLASH || units[len - 3] == BACKSLASH)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let text = path.to_string_lossy();
+        text == ".." || text.ends_with("/..") || text.ends_with("\\..")
+    }
+}
+
 /// Returns `true` when the operand's final path component is a bare `.`
 /// (the operand is exactly `.` or ends with `/.`). Upstream treats such a
 /// source as contents-only, identical to a trailing slash. See upstream
@@ -497,14 +580,14 @@ mod tests {
 
     #[test]
     fn source_spec_from_operand_valid() {
-        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt"), false).unwrap();
         assert_eq!(spec.path(), Path::new("/tmp/file.txt"));
         assert!(!spec.copy_contents());
     }
 
     #[test]
     fn source_spec_from_operand_with_trailing_slash() {
-        let spec = SourceSpec::from_operand(&OsString::from("/tmp/dir/")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/dir/"), false).unwrap();
         assert!(spec.copy_contents());
     }
 
@@ -514,9 +597,53 @@ mod tests {
         // identical to a trailing slash; a bare `.` must not error out trying
         // to derive a directory name from `file_name()`.
         for operand in [".", "foo/.", "/tmp/dir/."] {
-            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            let spec = SourceSpec::from_operand(&OsString::from(operand), false).unwrap();
             assert!(spec.copy_contents(), "{operand:?} should copy contents");
         }
+    }
+
+    /// upstream flist.c:2595-2602 - a trailing `..` component is a DOTDIR
+    /// operand: upstream appends `/.` and sets `DOTDIR_NAME`, so the parent's
+    /// contents are what gets transferred.
+    #[test]
+    fn source_spec_from_operand_parent_dir_copies_contents() {
+        for operand in ["..", "foo/..", "/tmp/dir/..", "foo/./.."] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand), false).unwrap();
+            assert!(spec.copy_contents(), "{operand:?} should copy contents");
+        }
+    }
+
+    /// upstream flist.c:2581-2583 forces `NORMAL_NAME` before the `..` arm is
+    /// reached, and flist.c:2658-2667 rejects the operand instead. `--relative`
+    /// therefore never acquires the contents semantics.
+    #[test]
+    fn source_spec_from_operand_parent_dir_is_scoped_to_non_relative() {
+        for operand in ["..", "foo/..", "/tmp/dir/.."] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand), true).unwrap();
+            assert!(
+                !spec.copy_contents(),
+                "{operand:?} must not copy contents under --relative"
+            );
+        }
+    }
+
+    /// The guard is `fbuf[len-1] == '.' && fbuf[len-2] == '.' &&
+    /// (len == 2 || fbuf[len-3] == '/')` (flist.c:2595-2596): a whole trailing
+    /// COMPONENT, not the two bytes.
+    #[test]
+    fn operand_ends_in_parent_dir_classification() {
+        assert!(operand_ends_in_parent_dir(OsStr::new("..")));
+        assert!(operand_ends_in_parent_dir(OsStr::new("foo/..")));
+        assert!(operand_ends_in_parent_dir(OsStr::new("/tmp/dir/..")));
+        assert!(operand_ends_in_parent_dir(OsStr::new("/..")));
+
+        assert!(!operand_ends_in_parent_dir(OsStr::new(".")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("...")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("weird..")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("foo/../bar")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("foo/../")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("foo/../.")));
+        assert!(!operand_ends_in_parent_dir(OsStr::new("")));
     }
 
     #[test]
@@ -532,26 +659,26 @@ mod tests {
 
     #[test]
     fn source_spec_from_operand_empty_fails() {
-        let result = SourceSpec::from_operand(&OsString::from(""));
+        let result = SourceSpec::from_operand(&OsString::from(""), false);
         assert!(result.is_err());
     }
 
     #[test]
     fn source_spec_from_operand_remote_fails() {
-        let result = SourceSpec::from_operand(&OsString::from("host:/path"));
+        let result = SourceSpec::from_operand(&OsString::from("host:/path"), false);
         assert!(result.is_err());
     }
 
     #[test]
     fn source_spec_relative_root_simple() {
-        let spec = SourceSpec::from_operand(&OsString::from("file.txt")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("file.txt"), false).unwrap();
         let root = spec.relative_root();
         assert_eq!(root, Some(PathBuf::from("file.txt")));
     }
 
     #[test]
     fn source_spec_relative_root_absolute() {
-        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt"), false).unwrap();
         let root = spec.relative_root();
         assert_eq!(root, Some(PathBuf::from("tmp/file.txt")));
     }
@@ -578,28 +705,28 @@ mod tests {
 
     #[test]
     fn source_spec_eq() {
-        let a = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
-        let b = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
+        let a = SourceSpec::from_operand(&OsString::from("/src"), false).unwrap();
+        let b = SourceSpec::from_operand(&OsString::from("/src"), false).unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
     fn source_spec_has_dot_dir_marker_leading() {
-        let spec = SourceSpec::from_operand(&OsString::from("./a/b")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("./a/b"), false).unwrap();
         assert!(spec.has_dot_dir_marker());
     }
 
     #[test]
     fn source_spec_has_dot_dir_marker_mid_path() {
-        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b"), false).unwrap();
         assert!(spec.has_dot_dir_marker());
     }
 
     #[test]
     fn source_spec_has_dot_dir_marker_absent() {
-        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b"), false).unwrap();
         assert!(!spec.has_dot_dir_marker());
-        let spec = SourceSpec::from_operand(&OsString::from("a/b/c")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("a/b/c"), false).unwrap();
         assert!(!spec.has_dot_dir_marker());
     }
 
@@ -623,7 +750,7 @@ mod tests {
     #[test]
     fn a_trailing_dot_is_not_a_relative_root_pivot() {
         for operand in ["tree/.", "tree/sub/.", "/src/a/."] {
-            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            let spec = SourceSpec::from_operand(&OsString::from(operand), false).unwrap();
             assert!(
                 !spec.has_dot_dir_marker(),
                 "trailing `/.` must not pivot the --relative root: {operand}"
@@ -638,7 +765,7 @@ mod tests {
     #[test]
     fn a_dot_followed_by_a_separator_still_pivots() {
         for operand in ["tree/./", "tree/./sub", "./a/b", "/src/./a"] {
-            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            let spec = SourceSpec::from_operand(&OsString::from(operand), false).unwrap();
             assert!(
                 spec.has_dot_dir_marker(),
                 "`/./` must pivot the --relative root: {operand}"
@@ -649,19 +776,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn source_spec_dot_dir_anchor_with_prefix() {
-        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b"), false).unwrap();
         assert_eq!(spec.dot_dir_anchor(), Some(PathBuf::from("/src")));
     }
 
     #[test]
     fn source_spec_dot_dir_anchor_leading_returns_cwd_dot() {
-        let spec = SourceSpec::from_operand(&OsString::from("./a/b/c")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("./a/b/c"), false).unwrap();
         assert_eq!(spec.dot_dir_anchor(), Some(PathBuf::from(".")));
     }
 
     #[test]
     fn source_spec_dot_dir_anchor_none_when_no_marker() {
-        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b")).unwrap();
+        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b"), false).unwrap();
         assert_eq!(spec.dot_dir_anchor(), None);
     }
 }

@@ -129,6 +129,18 @@ impl GeneratorContext {
             // transmitted name, which is why the follow at flist.c:2697 still
             // fires for a `--relative` operand whose name is now marker-free.
             // Read it from the raw operand for exactly that reason.
+            //
+            // The trailing-`..` DOTDIR spelling (flist.c:2595-2602) is
+            // deliberately NOT folded in here. `is_dotdir` feeds exactly one
+            // thing, `resolve_symlink_metadata`'s follow disjunct, and that
+            // disjunct only fires when the operand itself lstat()s as a
+            // symlink. `lstat("X/..")` never can: `..` is resolved by the
+            // kernel, so the result is a directory or an error (MEASURED:
+            // real dir, symlinked dir, dangling symlink, and `/` all confirm
+            // it). Adding the disjunct there was inert - a mutation that
+            // reverted it killed no test - so it is left out rather than
+            // carried as a second, unexercised spelling of the same rule.
+            // `non_relative_walk_base` is where the spelling does its work.
             let operand_is_dotdir = operand_has_dotdir_marker(base_path);
             // upstream: flist.c:2254-2272 - pre-stat each top-level source and
             // apply missing_args handling. Separates "source never existed" from
@@ -593,6 +605,53 @@ pub(super) fn operand_has_dotdir_marker(path: &Path) -> bool {
     bytes == b"." || bytes.ends_with(b"/") || bytes.ends_with(b"/.")
 }
 
+/// Is this operand's last path component `..`?
+///
+/// Upstream does not stat such an operand as typed. It APPENDS `/.` and marks
+/// it `DOTDIR_NAME`:
+///
+/// ```text
+/// } else if (len > 1 && fbuf[len-1] == '.' && fbuf[len-2] == '.'
+///     && (len == 2 || fbuf[len-3] == '/')) {
+///         fbuf[len++] = '/';
+///         fbuf[len++] = '.';
+///         fbuf[len] = '\0';
+///         name_type = DOTDIR_NAME;
+/// ```
+///
+/// so the last-`/` split at `flist.c:2610-2621` cuts `src/../.` into
+/// `dir = "src/.."` and `fn = "."`. The parent directory becomes the walk root
+/// and its CONTENTS ride the wire under their own names - identical to the
+/// trailing-slash spelling, which is why this feeds
+/// [`non_relative_walk_base`]'s existing DOTDIR branch rather than a second one.
+///
+/// Without it `Path::parent()` hands the walk a base of `src` and a path of
+/// `src/..`, whose lexical `strip_prefix` leaves the transmitted name `..` -
+/// a name every conforming receiver rejects
+/// ("ABORTING due to unsafe pathname from sender: ..").
+///
+/// # Scope: NOT under `--relative`
+///
+/// `flist.c:2581-2583` short-circuits the whole marker chain to `NORMAL_NAME`
+/// when `relative_paths` is set; a `..` in the ACTIVE part of a `--relative`
+/// operand is rejected instead, at `flist.c:2658-2667`. The scoping is
+/// structural: the sole caller is [`non_relative_walk_base`], which IS the
+/// `else` arm of that same test (`flist.c:2610` `if (!relative_paths)`).
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:2595-2602` - the append and `DOTDIR_NAME`.
+/// - `rsync-3.5.0/flist.c:2581-2583` - the `--relative` short-circuit above it.
+/// - `rsync-3.5.0/flist.c:2658-2667` - the `--relative` `..` rejection.
+pub(super) fn operand_ends_in_parent_dir(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let len = bytes.len();
+    len > 1
+        && bytes[len - 1] == b'.'
+        && bytes[len - 2] == b'.'
+        && (len == 2 || bytes[len - 3] == b'/')
+}
+
 /// Normalises a `--relative` operand into the name that rides the wire.
 ///
 /// Upstream runs the operand through
@@ -785,7 +844,10 @@ fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
     // trailing `/.` is DOTDIR just as much as a trailing `/`, and routing it
     // through `Path::parent()` instead would name the entries under the
     // operand's own basename rather than transferring its contents.
-    if operand_has_dotdir_marker(path) {
+    // A trailing `..` is the third DOTDIR spelling (flist.c:2595-2602 appends
+    // `/.` to reach exactly this branch). Ungated here because this function IS
+    // the `!relative_paths` arm - flist.c:2610 `if (!relative_paths)`.
+    if operand_has_dotdir_marker(path) || operand_ends_in_parent_dir(path) {
         return (path.to_path_buf(), path.to_path_buf());
     }
     // `Path::parent()` returns the parent directory or `None` for a path

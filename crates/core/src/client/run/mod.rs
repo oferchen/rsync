@@ -437,10 +437,14 @@ fn run_client_internal(
         .as_deref()
         .unwrap_or_else(|| config.transfer_args());
 
-    let plan = match LocalCopyPlan::from_operands(plan_operands) {
-        Ok(plan) => plan,
-        Err(error) => return Err(map_local_copy_error(error)),
-    };
+    // `--relative` scopes upstream's trailing-`..` DOTDIR rule
+    // (flist.c:2595-2602 sits in the arm flist.c:2581-2583 short-circuits past),
+    // so the plan has to be built with the flag in hand.
+    let plan =
+        match LocalCopyPlan::from_operands_with_relative(plan_operands, config.relative_paths()) {
+            Ok(plan) => plan,
+            Err(error) => return Err(map_local_copy_error(error)),
+        };
 
     // upstream: main.c:760 validates destination directory access early,
     // returning FILE_SELECTION (3) for PermissionDenied instead of

@@ -21,7 +21,10 @@ pub struct LocalCopyPlan {
 }
 
 impl LocalCopyPlan {
-    /// Constructs a plan from CLI-style operands.
+    /// Constructs a plan from CLI-style operands, with `--relative` off.
+    ///
+    /// Use [`Self::from_operands_with_relative`] when the flag is known; it is
+    /// the operand rule at `flist.c:2595-2602` that reads it.
     ///
     /// The operands must contain at least one source and a destination. A
     /// trailing path separator on a source operand mirrors upstream rsync's
@@ -49,6 +52,23 @@ impl LocalCopyPlan {
     /// assert_eq!(plan.destination(), std::path::Path::new("dst"));
     /// ```
     pub fn from_operands(operands: &[OsString]) -> Result<Self, LocalCopyError> {
+        Self::from_operands_with_relative(operands, false)
+    }
+
+    /// [`Self::from_operands`] with `--relative` known.
+    ///
+    /// The flag scopes one operand rule: upstream's trailing-`..` DOTDIR
+    /// append (`flist.c:2595-2602`) sits in the arm `--relative` short-circuits
+    /// past (`flist.c:2581-2583`). See
+    /// `operands::operand_ends_in_parent_dir`, which carries the full citation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_operands`].
+    pub fn from_operands_with_relative(
+        operands: &[OsString],
+        relative_paths: bool,
+    ) -> Result<Self, LocalCopyError> {
         if operands.len() < 2 {
             return Err(LocalCopyError::missing_operands());
         }
@@ -59,7 +79,7 @@ impl LocalCopyPlan {
         // the same directory or file from being processed multiple times.
         let all_sources: Vec<SourceSpec> = operands[..operands.len() - 1]
             .iter()
-            .map(SourceSpec::from_operand)
+            .map(|operand| SourceSpec::from_operand(operand, relative_paths))
             .collect::<Result<_, _>>()?;
         let mut seen = HashSet::with_capacity(all_sources.len());
         let sources: Vec<SourceSpec> = all_sources
