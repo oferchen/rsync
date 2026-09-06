@@ -167,6 +167,11 @@ impl GeneratorContext {
     /// (upstream `link_stat ... failed`, exit 23), while a missing recursive
     /// child is "vanished during walk" (upstream `file has vanished`, exit 24).
     ///
+    /// `is_dotdir` is upstream's `name_type != NORMAL_NAME` for this operand.
+    /// It is a caller-supplied fact rather than something re-derived from
+    /// `path`, because `--relative` strips the marker out of the transmitted
+    /// name (`flist.c:2651-2657`) while keeping its effect on the follow.
+    ///
     /// # Upstream Reference
     ///
     /// - `flist.c:2254-2272` - `link_stat` + `missing_args` handling per source
@@ -174,6 +179,7 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         path: &Path,
+        is_dotdir: bool,
     ) -> io::Result<bool> {
         // upstream: options.c:2314-2320 - `xfer_dirs` resolves to `-d`, or `-r`
         // (`else if (recurse) xfer_dirs = 1`), or `list_only` when neither was
@@ -181,7 +187,7 @@ impl GeneratorContext {
         // why `build_file_list_with_base` passes `true` instead of this.
         let xfer_dirs =
             self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
-        self.try_walk_source_entry_dedup(base, path, None, xfer_dirs)
+        self.try_walk_source_entry_dedup(base, path, None, xfer_dirs, is_dotdir)
     }
 
     /// Upstream's `xfer_dirs` gate on a top-level directory argument.
@@ -258,6 +264,7 @@ impl GeneratorContext {
         path: &Path,
         emitted_dirs: Option<&HashSet<PathBuf>>,
         xfer_dirs: bool,
+        is_dotdir: bool,
     ) -> io::Result<bool> {
         // Record the transfer root so per-directory merge files re-anchor their
         // leading-`/` rules to the merge file's own directory (upstream
@@ -272,7 +279,7 @@ impl GeneratorContext {
         // upstream: flist.c:2425 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
-        match self.resolve_symlink_metadata(path, base) {
+        match self.resolve_symlink_metadata(path, base, is_dotdir) {
             Ok(metadata) => {
                 // upstream: flist.c:2723-2726 - a directory argument is dropped
                 // before any implied parent is emitted when `xfer_dirs` is off.
@@ -907,6 +914,12 @@ impl GeneratorContext {
     /// stat re-walks the module's ancestors as the dropped uid and `EACCES`es
     /// on an unsearchable one.
     ///
+    /// `is_dotdir` is upstream's `name_type != NORMAL_NAME` for this operand,
+    /// supplied by the caller. It cannot be re-derived from `path` here: the
+    /// `--relative` operand split already normalised the marker out of the name
+    /// (`flist.c:2651-2657`), which is precisely the step that keeps `name_type`
+    /// and `fbuf` separate upstream.
+    ///
     /// # Upstream Reference
     ///
     /// - `flist.c:217-244` - `readlink_stat()`
@@ -916,15 +929,15 @@ impl GeneratorContext {
         &self,
         path: &Path,
         base: &Path,
+        is_dotdir: bool,
     ) -> io::Result<std::fs::Metadata> {
         // upstream: flist.c:readlink_stat() operates on paths without the
         // DOTDIR marker. On Linux, lstat("path/") follows symlinks because the
         // kernel resolves the trailing slash, making a symlink appear as its
         // target directory - so the marker must be stripped before the stat to
-        // get a decision that is the same on every platform. Capture whether it
-        // was there FIRST: the marker is not noise to discard, it is upstream's
-        // `name_type`, and the follow decision below depends on it.
-        let is_dotdir = super::operand_has_dotdir_marker(path);
+        // get a decision that is the same on every platform. The marker itself
+        // is not noise to discard: it is upstream's `name_type`, and the follow
+        // decision below depends on the `is_dotdir` the caller passed in.
         let normalized: PathBuf;
         let path = {
             let bytes = path.as_os_str().as_encoded_bytes();
