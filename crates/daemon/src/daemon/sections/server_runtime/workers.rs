@@ -154,7 +154,10 @@ enum SessionOutcome {
     /// the same log sink and reports its own diagnostic before exiting, so on
     /// Unix a failure arrives as [`SessionOutcome::EndedWithStatus`] instead -
     /// re-reporting it in the parent would print the same line twice.
-    #[cfg_attr(unix, expect(dead_code, reason = "thread backing only; see SessionBacking"))]
+    #[cfg_attr(
+        unix,
+        expect(dead_code, reason = "thread backing only; see SessionBacking")
+    )]
     Failed(Option<SocketAddr>, io::Error),
     /// The session's own process exited non-zero, having already said why.
     EndedWithStatus(i32),
