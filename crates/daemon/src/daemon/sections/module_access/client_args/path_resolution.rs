@@ -196,22 +196,10 @@ fn resolve_receiver_dest(
     // and it emits one for shapes the raw tail does not end with - `sub/.` and
     // `sub/x/..` both sanitize to `sub/`. Testing the raw tail dropped those.
     //
-    // Built by pushing onto the OsString rather than `PathBuf::join`, which
-    // normalises a trailing separator away, for the same reason
-    // `resolve_sender_sources` below does it by hand.
-    if collapsed.ends_with('/') {
-        let mut buf = module_path.as_os_str().to_owned();
-        if !buf
-            .as_encoded_bytes()
-            .last()
-            .is_some_and(|b| *b == b'/' || *b == b'\\')
-        {
-            buf.push("/");
-        }
-        buf.push(&collapsed);
-        return std::path::PathBuf::from(buf);
-    }
-    module_path.join(collapsed)
+    // `join_module_relative` rather than `PathBuf::join`: the latter both
+    // normalises a trailing separator away and emits `\` at the boundary on
+    // Windows, and the trailing `/` is the DOTDIR marker the engine reads.
+    join_module_relative(module_path, &collapsed)
 }
 
 /// Resolves the sender's on-disk source paths from the client's positional
@@ -302,16 +290,7 @@ fn resolve_sender_sources(
         // re-append.
         // upstream flist.c tests `fbuf[len-1] == '/'` only - a trailing `\` is
         // part of the NAME on Unix, not a dotdir marker.
-        let mut buf = module_path.as_os_str().to_owned();
-        let needs_leading_sep = !buf
-            .as_encoded_bytes()
-            .last()
-            .is_some_and(|b| *b == b'/' || *b == b'\\');
-        if needs_leading_sep {
-            buf.push("/");
-        }
-        buf.push(trimmed);
-        sources.push(std::path::PathBuf::from(buf));
+        sources.push(join_module_relative(module_path, trimmed));
     }
     if all_empty {
         return vec![module_root_dotdir(module_path)];
@@ -358,6 +337,21 @@ fn resolve_sender_sources(
 /// `DOTDIR_NAME` branch, which is how the daemon distinguishes
 /// "transfer module contents" from "transfer a named sub-path".
 fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
+    join_module_relative(module_path, "")
+}
+
+/// Joins a module-relative `tail` onto `module_path` with a literal `/`.
+///
+/// upstream: `util1.c` `pathjoin()` builds module-relative paths with a literal
+/// `/` on every host. `PathBuf::join` cannot express that contract: it inserts
+/// the PLATFORM separator at the boundary (`\` on Windows) and normalises a
+/// trailing separator away. The trailing `/` is load-bearing here - it is the
+/// DOTDIR marker `flist.c:1886-1896` tests with `fbuf[len-1] == '/'` - and a
+/// `\` is part of the NAME on Unix, never a separator.
+///
+/// An empty `tail` yields the module root with exactly one trailing separator,
+/// which is the dotdir spelling `module_root_dotdir` needs.
+fn join_module_relative(module_path: &std::path::Path, tail: &str) -> std::path::PathBuf {
     let mut buf = module_path.as_os_str().to_owned();
     if !buf
         .as_encoded_bytes()
@@ -366,6 +360,7 @@ fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
     {
         buf.push("/");
     }
+    buf.push(tail);
     std::path::PathBuf::from(buf)
 }
 
