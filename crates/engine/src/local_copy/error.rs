@@ -397,12 +397,6 @@ pub enum LocalCopyArgumentError {
     LinkNameUnavailable,
     /// Encountered a file type that is unsupported.
     UnsupportedFileType,
-    /// Attempted to replace an existing directory with a symbolic link.
-    ReplaceDirectoryWithSymlink,
-    /// Attempted to replace an existing directory with a regular file.
-    ReplaceDirectoryWithFile,
-    /// Attempted to replace an existing directory with a special file.
-    ReplaceDirectoryWithSpecial,
     /// Attempted to replace a non-directory with a directory.
     ReplaceNonDirectoryWithDirectory,
     /// Encountered an operand that refers to a remote host or module.
@@ -423,13 +417,6 @@ impl LocalCopyArgumentError {
             Self::FileNameUnavailable => "cannot determine file name",
             Self::LinkNameUnavailable => "cannot determine link name",
             Self::UnsupportedFileType => "unsupported file type encountered",
-            Self::ReplaceDirectoryWithSymlink => {
-                "cannot replace existing directory with symbolic link"
-            }
-            Self::ReplaceDirectoryWithFile => "cannot replace existing directory with regular file",
-            Self::ReplaceDirectoryWithSpecial => {
-                "cannot replace existing directory with special file"
-            }
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
@@ -657,9 +644,6 @@ mod tests {
             LocalCopyArgumentError::FileNameUnavailable,
             LocalCopyArgumentError::LinkNameUnavailable,
             LocalCopyArgumentError::UnsupportedFileType,
-            LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
-            LocalCopyArgumentError::ReplaceDirectoryWithFile,
-            LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
             LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
             LocalCopyArgumentError::RemoteOperandUnsupported,
         ];

@@ -90,40 +90,64 @@ pub(crate) fn copy_file(
     };
 
     let mut destination_previously_existed = existing_metadata.is_some();
+    let destination_had_entry = destination_previously_existed;
 
-    if let Some(existing) = existing_metadata.as_ref()
-        && existing.file_type().is_dir()
+    // upstream: generator.c:1780-1804 - the `ignore_existing` skip is tested at
+    // `statret == 0` and `goto cleanup`s BEFORE either make-way removal
+    // (generator.c:2149 / 2477-2483), so `--ignore-existing` leaves the
+    // directory standing rather than clearing it; the skip itself is recorded
+    // by `handle_existing_skips` further down, which still sees the directory.
+    if existing_metadata
+        .as_ref()
+        .is_some_and(|existing| existing.file_type().is_dir())
+        && !context.ignore_existing_enabled()
     {
-        // upstream: generator.c:1734-1739 recv_generator() - a regular file is
+        // upstream: generator.c:2148-2153 recv_generator() - a regular file is
         // arriving over a destination directory. Upstream calls
-        // delete_item(fname, mode, del_opts | DEL_FOR_FILE) to make room, with
-        // del_opts carrying DEL_RECURSE only under --delete/--force. So a
-        // conflicting destination directory is removed to make way for the file
-        // under those modes and the file is created in its place.
+        // delete_item(fname, mode, del_opts | DEL_FOR_FILE) UNCONDITIONALLY;
+        // del_opts carries DEL_RECURSE only under --delete/--force and that
+        // flag selects the RECURSION, not the removal (delete.c:207-209 - "If
+        // DEL_RECURSE is not set, this just reports emptiness"). So an empty
+        // directory is rmdir'd and the file placed with no options at all, and
+        // a populated one is refused out loud at exit 23.
         //
         // Multi-source merges are the exception: flist.c:3067-3081
         // flist_sort_and_clean() drops the colliding regular file and keeps the
-        // directory, so a file contributed by one source must never blow away a
-        // directory contributed by another. Guard the delete-mode removal on
-        // !multi_source to preserve that, keeping the explicit --force override.
-        let replace_conflicting_directory = context.force_replacements_enabled()
+        // directory, so the entry never reaches recv_generator at all and a file
+        // contributed by one source must never blow away a directory
+        // contributed by another. That skip is kept below, with the explicit
+        // --force override upstream's flist merge does not have.
+        let recurse = context.force_replacements_enabled()
             || (!context.multi_source() && context.options().delete_extraneous());
-        if replace_conflicting_directory {
-            context.force_remove_destination(destination, relative, existing)?;
-            // The conflicting directory is gone, so the incoming file is created
-            // fresh: upstream sets statret = -1 after the make-room delete
-            // (generator.c:1737), so dest_mode() applies new-file permissions and
-            // the itemize row reports a creation (`>f+++++++++`) rather than an
-            // update against the removed directory.
-            destination_previously_existed = false;
-            existing_metadata = None;
-        } else {
-            // Mirror upstream's goto cleanup: no error, no destination mutation.
+        if context.multi_source() && !context.force_replacements_enabled() {
             return Ok(true);
         }
+        if !crate::local_copy::clear_directory_obstacle(
+            context,
+            destination,
+            relative,
+            recurse,
+            crate::local_copy::MakeWayFor::File,
+        )? {
+            // upstream: generator.c:2150 `goto cleanup` - this entry is skipped,
+            // the rest of the transfer continues, and the run finishes 23.
+            return Ok(true);
+        }
+        // The conflicting directory is gone, so the incoming file is created
+        // fresh: upstream sets statret = -1 after the make-room delete
+        // (generator.c:2151), so dest_mode() applies new-file permissions and
+        // the itemize row reports a creation (`>f+++++++++`) rather than an
+        // update against the removed directory.
+        destination_previously_existed = false;
+        existing_metadata = None;
     }
 
-    if context.existing_only_enabled() && existing_metadata.is_none() {
+    // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
+    // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
+    // the destination existed BEFORE the make-way removal. Reading the
+    // post-removal `None` instead would skip the very entry the removal just
+    // cleared the way for, leaving neither the directory nor the file.
+    if context.existing_only_enabled() && !destination_had_entry {
         context.summary_mut().record_regular_file_skipped_missing();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
             .virtualize_fake_super(source, metadata_options.fake_super_enabled());

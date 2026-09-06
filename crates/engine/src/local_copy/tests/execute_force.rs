@@ -39,15 +39,17 @@ fn force_file_replaces_non_empty_directory() {
     assert_eq!(summary.files_copied(), 1);
 }
 
+// upstream: generator.c:2148-2153 makes room for the arriving regular file with
+// `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`, called with no option
+// gate at all; `del_opts` carries DEL_RECURSE only under --delete/--force and
+// selects the RECURSION (delete.c:207-209). An EMPTY directory obstacle is
+// therefore rmdir'd and the file written, with no --force.
+//
+// The flist.c:3067-3081 rule this cell used to cite is the MULTI-SOURCE merge -
+// see `force_disabled_multi_source_keeps_the_directory` - and a single source
+// never reaches it. Measured against rsync 3.5.0.
 #[test]
-fn force_disabled_file_silently_skips_directory_collision_in_recursive_copy() {
-    // upstream: flist.c:3067-3081 flist_sort_and_clean() drops the conflicting
-    // file entry when a directory of the same name is also in the file list;
-    // generator.c:1734 likewise bails via `goto cleanup` without --force.
-    // Multi-source merge depends on this: a regular file in one source must
-    // not overwrite a directory contributed by another source. Mirror upstream
-    // by silently leaving the destination directory in place - no error,
-    // no destination mutation, exit code 0.
+fn force_disabled_file_replaces_an_empty_directory_in_recursive_copy() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -65,11 +67,11 @@ fn force_disabled_file_silently_skips_directory_collision_in_recursive_copy() {
         LocalCopyExecution::Apply,
         LocalCopyOptions::default().force_replacements(false),
     )
-    .expect("upstream silently keeps the directory");
+    .expect("an empty directory obstacle is rmdir'd, not refused");
 
-    assert!(
-        dest_root.join("item").is_dir(),
-        "directory should remain untouched"
+    assert_eq!(
+        fs::read(dest_root.join("item")).expect("the file must replace the directory"),
+        b"replacement",
     );
 }
 
@@ -235,11 +237,21 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
     );
 }
 
+// upstream: generator.c:2148-2153 calls `delete_item(fname, mode, del_opts |
+// DEL_FOR_FILE)` UNCONDITIONALLY when a regular file arrives over a
+// destination that is not a regular file. `del_opts` carries `DEL_RECURSE`
+// only under `--delete`/`--force`, and delete.c:207-209 says what that flag
+// selects: "If DEL_RECURSE is not set, this just reports emptiness". So an
+// EMPTY directory is rmdir'd and the file written with no options at all.
+//
+// This cell used to assert the opposite - that the directory survived and the
+// file was silently dropped at exit 0 - citing flist.c:3067-3081. That
+// citation is the MULTI-SOURCE merge rule (see
+// `force_disabled_multi_source_keeps_the_directory` below); it does not reach
+// a single-source recursive copy, where the file is in the flist and the
+// generator makes room for it. Measured against rsync 3.5.0.
 #[test]
-fn force_disabled_recursive_copy_silently_skips_type_conflict() {
-    // upstream: flist.c:3067-3081 keeps the directory and drops the duplicate
-    // regular file entry. Without --force, oc-rsync mirrors that by leaving
-    // the destination directory intact and not raising an error.
+fn force_disabled_recursive_copy_replaces_an_empty_directory() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -260,10 +272,54 @@ fn force_disabled_recursive_copy_silently_skips_type_conflict() {
         LocalCopyExecution::Apply,
         LocalCopyOptions::default().force_replacements(false),
     )
-    .expect("upstream silently keeps the directory");
+    .expect("an empty directory obstacle is rmdir'd, not refused");
 
-    // The conflicting directory should still be intact
-    assert!(dest_root.join("item").is_dir());
+    assert_eq!(
+        fs::read(dest_root.join("item")).expect("the file must replace the directory"),
+        b"file-data",
+    );
+}
+
+// The multi-source exception the cell above used to claim for itself.
+//
+// upstream: flist.c:3067-3081 flist_sort_and_clean() drops the colliding
+// regular file and keeps the directory, so the entry never reaches
+// recv_generator and the destination directory is left alone at exit 0.
+#[test]
+fn force_disabled_multi_source_keeps_the_directory() {
+    let temp = tempdir().expect("tempdir");
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    fs::create_dir_all(&first).expect("create first source");
+    fs::create_dir_all(second.join("item")).expect("create second source dir");
+    fs::write(first.join("item"), b"file-data").expect("write colliding file");
+    fs::write(second.join("item/child"), b"child").expect("write child");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(dest_root.join("item")).expect("create conflicting directory");
+
+    let mut first_operand = first.into_os_string();
+    first_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let mut second_operand = second.into_os_string();
+    second_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![
+        first_operand,
+        second_operand,
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().force_replacements(false),
+    )
+    .expect("the colliding file is dropped, not an error");
+
+    assert!(
+        dest_root.join("item").is_dir(),
+        "a file contributed by one source must never blow away a directory \
+         contributed by another"
+    );
 }
 
 #[test]
@@ -371,11 +427,20 @@ fn force_symlink_replaces_non_empty_directory() {
     assert_eq!(fs::read_link(&destination).expect("read link"), link_target);
 }
 
+// upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way` forces
+// `skip_atomic`, so a directory obstacle takes the `delete_item()` arm whether
+// or not --backup is set, and `del_opts` selects only the RECURSION. An EMPTY
+// directory is therefore rmdir'd and the symlink created in its place at exit
+// 0, with no --force.
+//
+// This cell used to assert that the run FAILED with the oc-only
+// `ReplaceDirectoryWithSymlink` argument error. Upstream has no such error and
+// never aborts a run for an obstacle; a POPULATED directory is refused per
+// entry at exit 23 instead (tests/local_directory_obstacle_removal.rs pins
+// that half end to end). Measured against rsync 3.5.0.
 #[cfg(unix)]
 #[test]
-fn force_disabled_symlink_cannot_replace_directory_in_recursive_copy() {
-    // When copying source/ -> dest/, if source has "link" as a symlink but dest
-    // has "link" as a directory, rsync must fail without --force.
+fn force_disabled_symlink_replaces_an_empty_directory_in_recursive_copy() {
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
@@ -393,22 +458,18 @@ fn force_disabled_symlink_cannot_replace_directory_in_recursive_copy() {
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default()
-                .links(true)
-                .force_replacements(false),
-        )
-        .expect_err("should fail without force");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .links(true)
+            .force_replacements(false),
+    )
+    .expect("an empty directory obstacle is rmdir'd, not refused");
 
-    match error.kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(*reason, LocalCopyArgumentError::ReplaceDirectoryWithSymlink);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
-    assert!(dest_root.join("link").is_dir(), "directory should remain");
+    assert_eq!(
+        fs::read_link(dest_root.join("link")).expect("the symlink must replace the directory"),
+        link_target,
+    );
 }
 
 // Creates no socket, so the Apple exclusion the neighbouring socket tests

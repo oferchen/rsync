@@ -444,7 +444,7 @@ impl<'a> CopyContext<'a> {
     /// `delete_dir_contents()` recursion (delete.c:83): the children are
     /// reported like delete-pass deletions (DEL_MAKE_ROOM stripped) while the
     /// directory node itself is removed silently by the caller.
-    fn record_make_room_contents(
+    pub(crate) fn record_make_room_contents(
         &mut self,
         destination: &Path,
         relative: Option<&Path>,

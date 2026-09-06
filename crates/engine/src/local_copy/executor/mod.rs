@@ -4,6 +4,7 @@ mod cleanup;
 mod directory;
 mod file;
 mod iconv;
+mod obstacle;
 mod reference;
 mod sources;
 mod special;
@@ -40,6 +41,7 @@ pub(crate) use file::{
 pub(crate) use iconv::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
+pub(crate) use obstacle::{MakeWayFor, clear_directory_obstacle};
 pub(crate) use reference::{
     ReferenceDecision, ReferenceQuery, find_compare_dest_symlink, find_copy_dest_basis,
     find_copy_dest_symlink, find_reference_action, reference_attrs_unchanged,
