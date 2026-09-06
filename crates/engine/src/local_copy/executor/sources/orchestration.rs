@@ -24,7 +24,7 @@ use super::destination::{ensure_destination_directory, query_destination_state};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
 };
-use super::metadata::{compute_relative_paths, fetch_source_metadata};
+use super::metadata::{compute_relative_paths, fetch_source_metadata, operand_stat_path};
 use super::types::{SourceMetadataResult, SourceProcessingContext};
 
 /// Returns the current time truncated to whole seconds since the Unix epoch.
@@ -663,9 +663,17 @@ pub(crate) fn copy_sources(
 /// Returns `None` when the operand has no parent (a bare relative name, or
 /// `/`), leaving the open to the `O_NOFOLLOW` leaf rule alone rather than
 /// anchoring somewhere arbitrary.
+///
+/// The marker alone does not make the operand a root: upstream's chdir lands
+/// only when the name resolves to a DIRECTORY (`change_pathname()` ->
+/// `change_dir()`). A marked operand that stats to a file, a symlink to a
+/// file, or a dangling symlink keeps its `link_stat` result (`flist.c:292-297`
+/// replaces the lstat only for a directory target) and is transferred as an
+/// entry under its parent, so the parent is its anchor. The stat follows
+/// symlinks because the chdir does.
 fn source_confinement_anchor(source: &SourceSpec) -> Option<PathBuf> {
     let path = source.path();
-    if source.copy_contents() {
+    if source.copy_contents() && fs::metadata(path).is_ok_and(|meta| meta.is_dir()) {
         return Some(path.to_path_buf());
     }
     path.parent()
@@ -686,7 +694,14 @@ fn process_single_source(
     context.set_safety_depth_offset(0);
     context.enforce_timeout()?;
 
-    let source_path = source.path();
+    // upstream: flist.c:2652-2657 - the operand's trailing DOTDIR marker is
+    // stripped from the name that gets stat'd, opened and read; the marker
+    // itself lives on in `name_type` (here `SourceSpec::copy_contents`). The
+    // two must stay separate: the raw `operand/` form makes the kernel resolve
+    // the trailing slash, which silently converts the lstat into a stat that
+    // also demands a directory.
+    let operand_path = operand_stat_path(context, source);
+    let source_path = operand_path.as_ref();
     let metadata_start = Instant::now();
 
     let (relative_root, relative_parent) = compute_relative_paths(context, source);
