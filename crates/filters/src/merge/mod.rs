@@ -49,6 +49,7 @@ mod error;
 mod overflow;
 pub(crate) mod parse;
 pub(crate) mod read;
+mod records;
 mod self_exclude;
 mod skip;
 
@@ -61,5 +62,6 @@ pub use overflow::merge_name_overflows;
 pub use parse::parse_rules;
 pub(crate) use read::scope_local_clear;
 pub use read::{read_rules, read_rules_recursive};
+pub use records::{FilterFileRecords, filter_file_records};
 pub use self_exclude::merge_self_exclude_name;
 pub use skip::filter_file_line_is_rule;

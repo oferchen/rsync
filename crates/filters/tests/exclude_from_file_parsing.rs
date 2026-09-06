@@ -600,18 +600,25 @@ mod line_ending_handling {
         assert_eq!(rules[2].pattern(), "*.log");
     }
 
-    /// Test: Old Mac line endings (CR only) - handled as single line.
+    /// Test: Old Mac line endings (CR only) - three separate rules.
+    ///
+    /// upstream: exclude.c:1774 - `ch == '\n' || ch == '\r'` ends the record,
+    /// so a CR-only file is three rules, not one. This test previously asserted
+    /// the opposite ("consistent with most Unix tools"), which is not the rule
+    /// rsync implements: the single record it produced carried the `\r` and the
+    /// later rules as pattern bytes and matched nothing, so every file those
+    /// rules named transferred instead. MEASURED against rsync 3.5.0.
     #[test]
     fn old_mac_line_endings() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
-        // CR-only line endings result in one long line
         fs::write(&path, "- *.tmp\r- *.bak\r- *.log\r").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
-        // Old Mac CR-only is treated as one line (no proper line separation)
-        // This is consistent with most Unix tools
-        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern(), "*.tmp");
+        assert_eq!(rules[1].pattern(), "*.bak");
+        assert_eq!(rules[2].pattern(), "*.log");
     }
 
     /// Test: No trailing newline.
