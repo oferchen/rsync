@@ -173,11 +173,24 @@ fn build_server_config(
     // the syscalls are issued - the confined source open and the file-list
     // scan anchored on the transfer's confinement root - not by these
     // resolvers.
+    // upstream: options.c:2402-2405 - the daemon sanitizes EVERY positional with
+    // `SP_KEEP_DOT_DIRS`, and `util1.c:1143` then reduces that flag to
+    // `drop_dot_dirs = !relative_paths`. The axis is the transfer's `--relative`
+    // (`options.c:2880` packs it into the compact argstr as `R`), not the role
+    // and not the daemon-ness, so it is decided once here and handed to both
+    // resolvers. `ParsedServerFlags::parse` is the single decoder of that
+    // string - it already stops at the `-e` capability separator, so a
+    // capability letter can never be misread as `-R`. A malformed string is
+    // reported by `from_flag_string_and_args` below; treat it as non-relative
+    // here rather than duplicating the diagnostic.
+    let relative_paths = core::server::ParsedServerFlags::parse(&flag_string)
+        .is_ok_and(|parsed| parsed.relative);
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
         let dest = resolve_receiver_dest(
             std::path::Path::new(&module.path),
             client_args,
             &module.name,
+            relative_paths,
         );
         vec![OsString::from(dest.as_os_str())]
     } else {
@@ -185,6 +198,7 @@ fn build_server_config(
             std::path::Path::new(&module.path),
             client_args,
             &module.name,
+            relative_paths,
         )
         .into_iter()
         .map(|p| OsString::from(p.as_os_str()))

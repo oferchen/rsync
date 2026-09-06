@@ -91,7 +91,30 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// check can reject an escaping alt-basis path. Four differences - input type,
 /// output type, separator policy, leading-`..` policy - so they are two
 /// functions with two contracts, not one to be deduplicated.
-fn collapse_module_relative(tail: &str) -> String {
+///
+/// # The `relative_paths` axis
+///
+/// `relative_paths` is the ONE thing that decides whether a `.` component
+/// survives. Upstream keeps that decision in a single expression,
+/// `util1.c:1143`:
+///
+/// ```c
+/// int drop_dot_dirs = !relative_paths || !(flags & SP_KEEP_DOT_DIRS);
+/// ```
+///
+/// The daemon's argv call (`options.c:2405`) always passes `SP_KEEP_DOT_DIRS`,
+/// so on this path `drop_dot_dirs == !relative_paths` exactly - the flag is
+/// gated on the transfer's `--relative`, never on the daemon-ness of the
+/// process. Hard-coding the drop conflated the two axes and destroyed the
+/// `/./` pivot before `flist.c:2623`'s `strstr(fbuf, "/./")` could split it,
+/// so a `rsync://host/mod/sub/./file` pull shipped `sub/file` where upstream
+/// ships `file`, and the receiver refused the unrequested `sub`
+/// (`flist.c:1145`).
+///
+/// This is the single owner of that decision: both resolvers below take
+/// `relative_paths` from their one caller and pass it straight through, so
+/// there is no second place where a `.` component could be dropped.
+fn collapse_module_relative(tail: &str, relative_paths: bool) -> String {
     // Inspects `/` ONLY. `tail` is a peer-supplied wire path, and the wire is
     // `/`-separated on every host (upstream `pathjoin()`); upstream's own
     // `sanitize_path` tests `== '/'` at every separator check and has no `\`
@@ -103,13 +126,14 @@ fn collapse_module_relative(tail: &str) -> String {
     // LOCAL path that may legitimately be Windows-style. `sanitize_path`
     // inspects only the ASCII `/` and `.` bytes, so it upholds that policy.
     //
-    // `drop_dot_dirs` is on, matching upstream's `util1.c:1141`
-    // `!relative_paths || !(flags & SP_KEEP_DOT_DIRS)`: the daemon's
-    // `options.c:2405` call passes `SP_KEEP_DOT_DIRS`, but the flag only takes
-    // effect under `--relative`, and under `--relative` a surviving `sub/.`
-    // is reduced to the same `sub/` by `clean_fname(CFN_DROP_TRAILING_DOT_DIR
-    // | CFN_KEEP_TRAILING_SLASH)` at `flist.c:2634` anyway.
-    let collapsed = filters::sanitize_path::sanitize_path(tail);
+    // upstream: `util1.c:1143` `drop_dot_dirs = !relative_paths || !(flags &
+    // SP_KEEP_DOT_DIRS)`. The daemon's `options.c:2405` call always passes
+    // `SP_KEEP_DOT_DIRS`, so the surviving condition is `!relative_paths`.
+    let collapsed = if relative_paths {
+        filters::sanitize_path::sanitize_path_keep_dot_dirs(tail)
+    } else {
+        filters::sanitize_path::sanitize_path(tail)
+    };
     if collapsed == "." {
         String::new()
     } else {
@@ -136,6 +160,7 @@ fn resolve_receiver_dest(
     module_path: &std::path::Path,
     client_args: &[String],
     module_name: &str,
+    relative_paths: bool,
 ) -> std::path::PathBuf {
     let positionals = extract_module_relative_paths(client_args, module_name);
     // upstream: main.c:1422-1423 - `local_name = get_local_name(flist, argv[0])`
@@ -154,7 +179,7 @@ fn resolve_receiver_dest(
     // absolute client path is interpreted against the module root, not the
     // host root. Collapsing then folds away every `.` and `..`, so the joined
     // destination is under `module_path` by construction on any host.
-    let collapsed = collapse_module_relative(tail.trim_start_matches('/'));
+    let collapsed = collapse_module_relative(tail.trim_start_matches('/'), relative_paths);
     if collapsed.is_empty() {
         return module_path.to_path_buf();
     }
@@ -236,6 +261,7 @@ fn resolve_sender_sources(
     module_path: &std::path::Path,
     client_args: &[String],
     module_name: &str,
+    relative_paths: bool,
 ) -> Vec<std::path::PathBuf> {
     let positionals = extract_module_relative_paths(client_args, module_name);
     if positionals.is_empty() {
@@ -255,7 +281,7 @@ fn resolve_sender_sources(
         // beneath the module root, so there is no traversing spelling left to
         // refuse; where it RESOLVES is decided by the sender's confined open
         // and its anchored directory scan, not here.
-        let collapsed = collapse_module_relative(tail.trim_start_matches('/'));
+        let collapsed = collapse_module_relative(tail.trim_start_matches('/'), relative_paths);
         let trimmed = collapsed.as_str();
         if trimmed.is_empty() {
             sources.push(module_root_dotdir(module_path));
