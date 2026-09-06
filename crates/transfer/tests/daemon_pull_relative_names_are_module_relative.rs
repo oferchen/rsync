@@ -25,6 +25,32 @@
 //! rsync -R -r rsync://host/mod/            dst/  ->  a, a/b, a/b/file.txt, a/c.txt, top.txt
 //! ```
 //!
+//! # The `/./` pivot
+//!
+//! Re-anchoring the walk base closed fourteen of the sixteen shapes. The two
+//! that survived both carry an INTERIOR `/./`, and they diverged for a second,
+//! independent reason: the daemon's own argv sanitize dropped the `.`
+//! component before the sender could split on it.
+//!
+//! Upstream keeps that decision on ONE axis. `options.c:2405` sanitizes every
+//! daemon positional with `SP_KEEP_DOT_DIRS`, and `util1.c:1143` reduces the
+//! flag to `drop_dot_dirs = !relative_paths || !(flags & SP_KEEP_DOT_DIRS)` -
+//! so on this path the surviving condition is `!relative_paths`. Under
+//! `--relative` the `.` therefore reaches `flist.c:2623`'s
+//! `strstr(fbuf, "/./")`, which splits the operand into the `dir` the sender
+//! walks from and the `fn` it transmits. oc hard-coded the drop, which made
+//! the axis "daemon-ness" instead of `--relative`: the pivot was erased, the
+//! sender transmitted the pre-pivot prefix too, and the receiver refused the
+//! list with `rejecting unrequested file-list name` (flist.c:1145, exit 4).
+//!
+//! Ground truth for the pivot shapes, captured from the same 3.5.0 daemon:
+//!
+//! ```text
+//! rsync -R -r rsync://host/mod/a/./b/file.txt dst/  ->  b, b/file.txt
+//! rsync -R -r rsync://host/mod/a/b/./file.txt dst/  ->  file.txt
+//! rsync    -r rsync://host/mod/a/./b/file.txt dst/  ->  file.txt
+//! ```
+//!
 //! # Upstream Reference
 //!
 //! - `rsync-3.5.0/clientserver.c:1059` - `change_dir(module_chdir, CD_NORMAL)`
@@ -32,6 +58,8 @@
 //! - `rsync-3.5.0/options.c:2405` - `sanitize_path(NULL, argv[i], "", 0, ..)`
 //! - `rsync-3.5.0/flist.c:2610-2660` - the per-positional `dir`/`fn` split
 //! - `rsync-3.5.0/flist.c:1144` - `rejecting unrequested file-list name`
+//! - `rsync-3.5.0/util1.c:1143` - `drop_dot_dirs = !relative_paths || ..`
+//! - `rsync-3.5.0/flist.c:2623` - `if ((p = strstr(fbuf, "/./")) != NULL)`
 
 #![cfg(unix)]
 
@@ -290,4 +318,166 @@ fn a_non_relative_pull_of_the_same_subpath_is_unchanged() {
         vec!["file.txt".to_owned()],
         "without `--relative` upstream sends the basename only",
     );
+}
+
+/// An interior `/./` pivots the transmitted name: everything before it is the
+/// directory the sender walks from, and only the tail rides the wire.
+///
+/// upstream: `flist.c:2623-2634` splits `a/./b/file.txt` into `dir = "a"` and
+/// `fn = "b/file.txt"`. The split can only happen if the `.` survived the
+/// daemon's `options.c:2405` sanitize, which it does exactly when
+/// `relative_paths` is on (`util1.c:1143`).
+///
+/// With the `.` dropped the sender transmitted `a/b/file.txt`, and the
+/// receiver refused the unrequested `a` (`flist.c:1145`), so this cell fails
+/// on the status line rather than hanging.
+#[test]
+fn relative_pull_pivots_the_name_at_an_interior_dot_dir() {
+    let Some(pulled) = pull("a/./b/file.txt", &["-R"]) else {
+        return;
+    };
+    assert!(
+        pulled.status.success(),
+        "`-R` pull of `{MODULE}/a/./b/file.txt` exited {:?}\nstderr:\n{}",
+        pulled.status,
+        pulled.stderr,
+    );
+    assert_eq!(
+        pulled.tree,
+        vec!["b".to_owned(), "b/file.txt".to_owned()],
+        "the `/./` names `a` as the sender's directory, so only `b/file.txt` \
+         rides the wire; an `a/` component here means the pivot was erased \
+         before `flist.c:2623` could split on it",
+    );
+}
+
+/// The pivot immediately before the leaf leaves the bare basename on the wire.
+///
+/// upstream: `a/b/./file.txt` splits into `dir = "a/b"` and `fn = "file.txt"`.
+#[test]
+fn relative_pull_pivots_at_the_leafs_parent() {
+    let Some(pulled) = pull("a/b/./file.txt", &["-R"]) else {
+        return;
+    };
+    assert!(
+        pulled.status.success(),
+        "`-R` pull of `{MODULE}/a/b/./file.txt` exited {:?}\nstderr:\n{}",
+        pulled.status,
+        pulled.stderr,
+    );
+    assert_eq!(
+        pulled.tree,
+        vec!["file.txt".to_owned()],
+        "with the pivot at `a/b`, `--relative` transmits only `file.txt`",
+    );
+}
+
+/// Negative control for the axis itself: the SAME pivot operand without
+/// `--relative` must still lose its `.`.
+///
+/// upstream: `util1.c:1143` makes `drop_dot_dirs` true whenever
+/// `relative_paths` is off, whatever `SP_KEEP_DOT_DIRS` says, and
+/// `flist.c:2608` then splits on the LAST `/` - so the wire name is the bare
+/// basename. A green pin beside the two red ones above proves the fix rides
+/// `--relative` and not the daemon-ness of the process.
+#[test]
+fn a_non_relative_pull_of_a_pivot_operand_still_drops_the_dot_dir() {
+    let Some(pulled) = pull("a/./b/file.txt", &[]) else {
+        return;
+    };
+    assert!(
+        pulled.status.success(),
+        "pull of `{MODULE}/a/./b/file.txt` exited {:?}\nstderr:\n{}",
+        pulled.status,
+        pulled.stderr,
+    );
+    assert_eq!(
+        pulled.tree,
+        vec!["file.txt".to_owned()],
+        "without `--relative` upstream sends the basename only",
+    );
+}
+
+/// Concurrency cell: one daemon, two SIMULTANEOUS connections whose operands
+/// pivot at different depths.
+///
+/// oc-rsync serves every daemon connection on a worker thread of one process
+/// (`spawn_connection_worker`), not a forked child like upstream, so any
+/// process-global carrying this decision - a `chdir()`, a `curr_dir`, a
+/// static `relative_paths` - would let one connection's operand shape decide
+/// the other's transmitted names. The fix threads the value as a parameter of
+/// the per-connection resolvers, so there is nothing shared to race; this cell
+/// is what says so out loud. It fails if the decision is ever hoisted to a
+/// global: the two destinations would converge on one pivot.
+#[test]
+fn concurrent_connections_do_not_share_the_relative_pivot() {
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(fixture) = Fixture::new() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &fixture.config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
+            return;
+        }
+    };
+
+    // Two shapes with DIFFERENT pivots and different expected trees, run at
+    // the same time against the same daemon process.
+    let cases: [(&str, Vec<String>); 2] = [
+        (
+            "a/./b/file.txt",
+            vec!["b".to_owned(), "b/file.txt".to_owned()],
+        ),
+        ("a/b/./file.txt", vec!["file.txt".to_owned()]),
+    ];
+
+    let handles: Vec<_> = cases
+        .into_iter()
+        .enumerate()
+        .map(|(i, (tail, expected))| {
+            let oc_bin = oc_bin.clone();
+            let dest = fixture.root.join(format!("cdest{i}"));
+            fs::create_dir_all(&dest).expect("create destination");
+            std::thread::spawn(move || {
+                let src_url = OsString::from(format!("rsync://127.0.0.1:{port}/{MODULE}/{tail}"));
+                let mut dest_arg = dest.clone().into_os_string();
+                dest_arg.push("/");
+                let output = Command::new(&oc_bin)
+                    .args([
+                        OsStr::new("-r"),
+                        OsStr::new("-R"),
+                        src_url.as_os_str(),
+                        dest_arg.as_os_str(),
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .expect("spawn oc-rsync client (concurrent daemon pull)");
+                (
+                    tail,
+                    expected,
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                    collect_tree(&dest, &dest),
+                )
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        let (tail, expected, status, stderr, tree) = handle.join().expect("client thread");
+        assert!(
+            status.success(),
+            "concurrent `-R` pull of `{MODULE}/{tail}` exited {status:?}\nstderr:\n{stderr}",
+        );
+        assert_eq!(
+            tree, expected,
+            "concurrent `-R` pull of `{MODULE}/{tail}` transmitted the wrong \
+             names; a shared pivot would make both connections agree on one",
+        );
+    }
 }
