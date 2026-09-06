@@ -241,15 +241,12 @@ fn parse_merge_contents(
     // filter at :1806, so comments and blank lines advance the count.
     for (index, line) in contents.lines().enumerate() {
         let line_number = index + 1;
-        // upstream: exclude.c:1514 parse_filter_file - a line is skipped only
-        // when it is empty or (line parsing) begins with `;`/`#`. Whitespace is
-        // never stripped, so leading whitespace and whitespace-only lines fall
-        // through to the rule parser and error, while trailing whitespace stays
-        // part of the pattern verbatim (exclude.c:1313, strlen length).
-        if line.is_empty() {
-            continue;
-        }
-        if options.allows_comments() && (line.starts_with('#') || line.starts_with(';')) {
+        // upstream: exclude.c:1806 parse_filter_file. `filter_file_line_is_rule`
+        // is the single owner of that test: whitespace is never stripped, so
+        // leading whitespace and whitespace-only lines fall through to the rule
+        // parser and error, while trailing whitespace stays part of the pattern
+        // verbatim (exclude.c:1465, strlen length).
+        if !filters::filter_file_line_is_rule(line, options.allows_comments()) {
             continue;
         }
 
