@@ -109,10 +109,17 @@ impl GeneratorContext {
             } else {
                 non_relative_walk_base(base_path)
             };
+            // upstream: flist.c:2589-2657 - `name_type` is a SEPARATE local
+            // from `fbuf`. It is decided from the operand as typed and then
+            // survives the normalisation that strips the marker out of the
+            // transmitted name, which is why the follow at flist.c:2697 still
+            // fires for a `--relative` operand whose name is now marker-free.
+            // Read it from the raw operand for exactly that reason.
+            let operand_is_dotdir = operand_has_dotdir_marker(base_path);
             // upstream: flist.c:2254-2272 - pre-stat each top-level source and
             // apply missing_args handling. Separates "source never existed" from
             // "source vanished during recursive walk".
-            if !self.try_walk_source_entry(&base, &path)? {
+            if !self.try_walk_source_entry(&base, &path, operand_is_dotdir)? {
                 continue;
             }
             // upstream: flist.c:2368-2369 - the first operand whose relative
@@ -415,7 +422,13 @@ impl GeneratorContext {
             // upstream: options.c:2307-2308 - `if (files_from) { ... if
             // (xfer_dirs < 0) xfer_dirs = 1; }`. A --files-from run always
             // transfers directories, so the flist.c:2723 skip is inert here.
-            if !self.try_walk_source_entry_dedup(&entry.base, &entry.path, Some(&scoped), true)? {
+            if !self.try_walk_source_entry_dedup(
+                &entry.base,
+                &entry.path,
+                Some(&scoped),
+                true,
+                operand_has_dotdir_marker(&entry.path),
+            )? {
                 continue;
             }
 
@@ -566,6 +579,65 @@ pub(super) fn operand_has_dotdir_marker(path: &Path) -> bool {
     bytes == b"." || bytes.ends_with(b"/") || bytes.ends_with(b"/.")
 }
 
+/// Normalises a `--relative` operand into the name that rides the wire.
+///
+/// Upstream runs the operand through
+/// `clean_fname(fn, CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR)` and
+/// then strips the trailing `/` that flag deliberately left in place, keeping
+/// only the fact that it was there in `name_type`
+/// (`SLASH_ENDING_NAME` / `DOTDIR_NAME`). The marker is therefore never part of
+/// the transmitted name: `-R src/d/` and `-R src/d/.` both send `src/d`.
+///
+/// Leaving the marker in the name is not cosmetic. `src/d/` sorts AFTER its own
+/// child `src/d/f.txt` under `f_name_cmp`, so the receiver's generator walks the
+/// list in an order the sender never intended and the NDX echo desynchronises
+/// ("sender echoed NDX 4 but expected 2", exit 12). The `/.` spelling produces
+/// `src/d/./f.txt` names that only survive because the destination filesystem
+/// happens to collapse them.
+///
+/// `Path::components()` performs exactly the cleaning upstream's flags select:
+/// interior `.` components and redundant separators are dropped, a trailing `/`
+/// or `/.` disappears, and `..` is preserved verbatim (upstream rejects `..` in
+/// the active part of a relative path at `flist.c:2658-2668`). It is also the
+/// only spelling that parses a Windows path PREFIX (`C:\`, `\\?\`, UNC)
+/// correctly; a hand-rolled byte scan for separators would corrupt those.
+///
+/// # Separators on Windows
+///
+/// `components().collect()` re-joins with the PLATFORM separator, so on Windows
+/// this returns `src\d` for `src/d/`. That is correct at this layer, and it is
+/// not a new condition: every recursive child name is built with
+/// `PathBuf::push`/`join`, which has appended `\` on Windows since long before
+/// this function existed (`src/d` + `f.txt` = `src/d\f.txt`). Nothing
+/// downstream reads the local separator - all three consumers normalise:
+///
+/// - the wire encoder: `FileListWriter::write_entry()` takes
+///   `FileEntry::name_bytes()` (`protocol/src/flist/write/mod.rs:470`), which
+///   is `wire_path::path_bytes_to_wire()` and folds `\` to `/`;
+/// - the sort that the NDX stream depends on: `sort.rs` and `name_cmp.rs`
+///   compare `name_bytes()` / `path_bytes_to_wire(dirname())`, so ordering is
+///   decided on `/`-separated bytes;
+/// - filter matching: `filters/src/compiled/pattern.rs:path_match_bytes()`
+///   folds `\` to `/` before `wildmatch()`.
+///
+/// The unit test therefore asserts the WIRE bytes, not the local `OsStr`: that
+/// is the invariant with meaning, and it holds identically on both platforms.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:2642` - `len = clean_fname(fn, CFN_KEEP_TRAILING_SLASH
+///   | CFN_DROP_TRAILING_DOT_DIR);`
+/// - `rsync-3.5.0/flist.c:2651-2657` - `else if (fn[len-1] == '/') { fn[--len] =
+///   '\0'; ... name_type = SLASH_ENDING_NAME; }`
+fn clean_relative_name(path: &Path) -> PathBuf {
+    let cleaned: PathBuf = path.components().collect();
+    if cleaned.as_os_str().is_empty() {
+        path.to_path_buf()
+    } else {
+        cleaned
+    }
+}
+
 /// Splits a source path for `--relative` mode into (base, full path).
 ///
 /// Mirrors upstream rsync's `--relative` handling in `flist.c:2316-2350`:
@@ -592,16 +664,14 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
         } else {
             PathBuf::from(head)
         };
-        // upstream: flist.c:2670-2673 - an empty remainder is forced to "."
-        // with `name_type = DOTDIR_NAME`. Joining "." rather than reusing
-        // `base` keeps the DOTDIR marker on the walked path, and that marker is
-        // what drives the follow decision at flist.c:2697
-        // (`copy_dirlinks || name_type != NORMAL_NAME`). Dropping it makes
-        // `<dir>/./` lstat a symlinked operand and send it under its basename.
+        // upstream: flist.c:2670-2673 - an empty remainder is forced to `.`,
+        // which after the `chdir(dir)` IS the base directory. The DOTDIR
+        // marker that made it so does not travel in the name; it travels in
+        // `name_type`, which the caller reads off the raw operand.
         let full = if rest.is_empty() {
-            base.join(".")
+            base.clone()
         } else {
-            base.join(rest)
+            clean_relative_name(&base.join(rest))
         };
         return (base, full);
     }
@@ -614,7 +684,7 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
     } else {
         PathBuf::from(".")
     };
-    (base, path.to_path_buf())
+    (base, clean_relative_name(path))
 }
 
 /// Returns true when a positional operand carries a bare leading `./` anchor
@@ -693,6 +763,99 @@ fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
 
 #[cfg(test)]
 pub(super) use protocol::flist::apply_permutation_in_place;
+
+#[cfg(test)]
+mod relative_operand_name_tests {
+    use super::{operand_has_dotdir_marker, relative_walk_base};
+    use protocol::flist::FileEntry;
+    use std::path::{Path, PathBuf};
+
+    /// The bytes `path` would contribute to a transmitted file-list name.
+    ///
+    /// Routed through the production encoder rather than a reimplementation:
+    /// `FileEntry::name_bytes()` is what `FileListWriter::write_entry()` calls
+    /// (`protocol/src/flist/write/mod.rs:470`), and it applies
+    /// `wire_path::path_bytes_to_wire()`. Asserting here rather than on the
+    /// local `OsStr` makes the expectation platform-independent AND pins the
+    /// byte that actually leaves the process.
+    fn wire_name(path: &Path) -> String {
+        let entry = FileEntry::new_file(PathBuf::from(path), 0, 0o644);
+        String::from_utf8_lossy(&entry.name_bytes()).into_owned()
+    }
+
+    /// upstream: flist.c:2642-2657 - the `--relative` transmitted name is
+    /// `clean_fname(fn, CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR)`
+    /// with the trailing `/` then stripped. The marker never travels in the
+    /// name; it travels in `name_type`.
+    ///
+    /// A name that keeps its marker (`src/d/`) sorts AFTER its own child
+    /// `src/d/f.txt` under `f_name_cmp`, which desynchronises the NDX stream
+    /// ("sender echoed NDX 4 but expected 2", exit 12). The `/.` spelling
+    /// leaks `src/d/./f.txt` names instead.
+    ///
+    /// ⚠ Compared as wire BYTES, never as `Path`/`PathBuf`. `PathBuf`'s
+    /// `PartialEq` compares `components()`, under which `"src/d/"`,
+    /// `"src/d/."` and `"src/d"` are all EQUAL - the exact distinction this
+    /// test exists to make. A `PathBuf` comparison here passes even with the
+    /// normalisation deleted.
+    ///
+    /// ⚠ And compared as WIRE bytes, not local `OsStr` bytes. `clean_fname`'s
+    /// stand-in here is `Path::components().collect()`, which re-joins with the
+    /// PLATFORM separator - so on Windows the local `PathBuf` is `src\d` where
+    /// on Unix it is `src/d`. That difference is correct and invisible past this
+    /// layer (see `clean_relative_name`'s note on the three normalisation
+    /// boundaries); an `OsStr` expectation would be a platform-conditional
+    /// literal asserting the wrong thing. `wire_name()` asserts the byte the
+    /// peer actually reads, identically on both platforms, and still
+    /// discriminates: `src/d/` encodes as `b"src/d/"`, not `b"src/d"`.
+    #[test]
+    fn relative_operand_name_drops_the_marker_upstream_normalises_away() {
+        // (operand, expected base, expected transmitted path)
+        let cases: [(&str, &str, &str); 8] = [
+            ("src/d", ".", "src/d"),
+            ("src/d/", ".", "src/d"),
+            ("src/d/.", ".", "src/d"),
+            ("/abs/d/", "/", "/abs/d"),
+            ("/abs/d/.", "/", "/abs/d"),
+            // A `/./` anchor splits first (flist.c:2623); the remainder is then
+            // normalised the same way.
+            ("src/./d/", "src", "src/d"),
+            ("src/./d/.", "src", "src/d"),
+            // An empty remainder is upstream's `fn = "."` after `chdir(dir)`,
+            // which IS the base directory (flist.c:2670-2673).
+            ("src/./", "src", "src"),
+        ];
+
+        for (operand, want_base, want_path) in cases {
+            let (base, path) = relative_walk_base(Path::new(operand));
+            assert_eq!(
+                (wire_name(&base), wire_name(&path)),
+                (want_base.to_owned(), want_path.to_owned()),
+                "relative_walk_base({operand:?}); local paths were ({base:?}, {path:?})"
+            );
+        }
+    }
+
+    /// The marker survives the normalisation as a separate fact, read off the
+    /// operand as typed. This is upstream's `name_type != NORMAL_NAME`, the
+    /// second disjunct of the `link_stat` follow at flist.c:2697 - without it
+    /// the normalisation above would silently disarm the follow.
+    #[test]
+    fn the_marker_survives_the_normalisation_as_name_type() {
+        for yes in ["src/d/", "src/d/.", "src/./", "src/./d/", ".", "/"] {
+            assert!(
+                operand_has_dotdir_marker(Path::new(yes)),
+                "{yes:?} must count as name_type != NORMAL_NAME"
+            );
+        }
+        for no in ["src/d", "/abs/d", "src/./d", "d"] {
+            assert!(
+                !operand_has_dotdir_marker(Path::new(no)),
+                "{no:?} must count as NORMAL_NAME"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod implied_dot_tests {
